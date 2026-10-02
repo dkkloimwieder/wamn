@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Write one digest-pinned registry image into an OCI archive for kind load
-# image-archive. The manifest and every blob come by digest with the login of
+# Write one digest-pinned registry image into an OCI archive for a kind node
+# import. The manifest and every blob come by digest with the login of
 # DOCKER_CONFIG on this machine, so the nodes get the pinned digest and no
 # credential (docs/operations/gcp.md §3.13).
 set -euo pipefail
@@ -37,8 +37,10 @@ manifest() { # digest
 manifest "$digest"
 top="$layout/blobs/sha256/${digest#sha256:}"
 printf '{"imageLayoutVersion":"1.0.0"}\n' > "$layout/oci-layout"
+# CRI reports a repository digest only from a digest name, so the archive
+# names the image by its tag and by its pinned digest.
 jq -n --arg type "$(jq -r .mediaType "$top")" --arg digest "$digest" \
-  --argjson size "$(stat -c %s "$top")" --arg name "$named" \
-  '{schemaVersion:2,manifests:[{mediaType:$type,digest:$digest,size:$size,
-    annotations:{"io.containerd.image.name":$name}}]}' > "$layout/index.json"
+  --argjson size "$(stat -c %s "$top")" --arg name "$named" --arg pinned "$host/$repository@$digest" \
+  '[$name, $pinned] | unique | {schemaVersion:2,manifests:[.[] | {mediaType:$type,digest:$digest,size:$size,
+    annotations:{"io.containerd.image.name":.}}]}' > "$layout/index.json"
 tar -C "$layout" -cf "$archive" oci-layout index.json blobs

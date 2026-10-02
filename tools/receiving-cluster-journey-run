@@ -33,7 +33,11 @@ case "$action" in
       for image in "$@"; do
         archive="$work/node-image.tar"
         "$(dirname -- "${BASH_SOURCE[0]}")/registry-image-archive" "$image" "$archive"
-        kind load image-archive "$archive" --name "$cluster"
+        # kind load image-archive adds an import name with the digest of the
+        # archive index, which CRI reports as a second repository digest.
+        for node in $(kind get nodes --name "$cluster"); do
+          docker exec -i "$node" ctr --namespace k8s.io images import --platform linux/amd64 - < "$archive"
+        done
         rm -f -- "$archive"
       done
       for node in $(kind get nodes --name "$cluster"); do
