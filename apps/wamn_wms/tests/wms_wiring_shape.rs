@@ -69,7 +69,7 @@ fn the_workflow_wiring_is_a_three_node_graph() {
 /// starts.
 #[test]
 fn a_location_change_starts_the_label_workflow() {
-    let manifest = read_json(&repository_root().join("apps/wamn_wms/wamn.json"));
+    let manifest = read_json(&repository_root().join("apps/wamn_wms/generated/wamn.json"));
     assert_eq!(
         manifest["workflows"]["movement_label"],
         serde_json::json!({"wiring": "inventory_move_and_label", "registration":

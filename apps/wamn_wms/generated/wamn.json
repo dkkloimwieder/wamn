@@ -1,8 +1,8 @@
 {
   "package": {
     "id": "wamn_wms",
-    "version": "2.0.0",
-    "predecessor_version": "1.0.0"
+    "version": "2.1.0",
+    "predecessor_version": "2.0.0"
   },
   "client_package": {
     "name": "@wamn/wms-client"
@@ -56,15 +56,15 @@
       "schema": "wms",
       "table": "location",
       "owner": "wamn_wms",
-      "min_lengths": {
-        "location_code": 1
-      },
       "server_owned_fields": [
         "id",
         "row_version",
         "created_at"
       ],
       "enum_fields": {},
+      "min_lengths": {
+        "location_code": 1
+      },
       "audit_log": {
         "columns": [
           "created_at"
@@ -121,9 +121,6 @@
       "schema": "wms",
       "table": "packaging",
       "owner": "wamn_wms",
-      "min_lengths": {
-        "packaging_code": 1
-      },
       "server_owned_fields": [
         "id",
         "row_version",
@@ -144,6 +141,9 @@
           "loose"
         ]
       },
+      "min_lengths": {
+        "packaging_code": 1
+      },
       "audit_log": {
         "columns": [
           "created_at",
@@ -161,7 +161,6 @@
         },
         "query": {
           "permission": "packaging.query",
-          "revision_field": "row_version",
           "authored_sql": {
             "default": "query/open_packaging.sql",
             "variants": [
@@ -207,6 +206,7 @@
               }
             ]
           },
+          "revision_field": "row_version",
           "filters": [
             {
               "field": "status"
@@ -310,15 +310,15 @@
       "schema": "wms",
       "table": "product",
       "owner": "wamn_wms",
-      "min_lengths": {
-        "product_code": 1
-      },
       "server_owned_fields": [
         "id",
         "row_version",
         "created_at"
       ],
       "enum_fields": {},
+      "min_lengths": {
+        "product_code": 1
+      },
       "audit_log": {
         "columns": [
           "created_at"
@@ -378,9 +378,6 @@
       "visibility": "public",
       "permission": "inventory.move",
       "connection": "postgres",
-      "transaction": "explicit_per_input",
-      "automatic_retry": false,
-      "idempotent_by": "claim",
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -446,12 +443,6 @@
             "nullable": false,
             "revision": true
           }
-        ]
-      },
-      "canonicalization": {
-        "excluded_fields": [
-          "request_id",
-          "value.idempotency_key"
         ]
       },
       "errors": [
@@ -601,6 +592,15 @@
             }
           ]
         }
+      },
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
       }
     },
     "inventory.adjust": {
@@ -608,9 +608,6 @@
       "visibility": "public",
       "permission": "inventory.adjust",
       "connection": "postgres",
-      "transaction": "explicit_per_input",
-      "automatic_retry": false,
-      "idempotent_by": "claim",
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -710,12 +707,6 @@
             "nullable": false,
             "revision": true
           }
-        ]
-      },
-      "canonicalization": {
-        "excluded_fields": [
-          "request_id",
-          "value.idempotency_key"
         ]
       },
       "errors": [
@@ -994,6 +985,15 @@
             }
           ]
         }
+      },
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
       }
     },
     "inventory.merge": {
@@ -1001,9 +1001,6 @@
       "visibility": "public",
       "permission": "inventory.merge",
       "connection": "postgres",
-      "transaction": "explicit_per_input",
-      "automatic_retry": false,
-      "idempotent_by": "claim",
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -1084,12 +1081,6 @@
             "nullable": false,
             "revision": true
           }
-        ]
-      },
-      "canonicalization": {
-        "excluded_fields": [
-          "request_id",
-          "value.idempotency_key"
         ]
       },
       "errors": [
@@ -1422,6 +1413,15 @@
             }
           ]
         }
+      },
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
       }
     },
     "inventory.split": {
@@ -1429,9 +1429,6 @@
       "visibility": "public",
       "permission": "inventory.split",
       "connection": "postgres",
-      "transaction": "explicit_per_input",
-      "automatic_retry": false,
-      "idempotent_by": "claim",
       "input": {
         "raw_body_maximum": 1048576,
         "envelope": {
@@ -1551,12 +1548,6 @@
             "nullable": false,
             "revision": true
           }
-        ]
-      },
-      "canonicalization": {
-        "excluded_fields": [
-          "request_id",
-          "value.idempotency_key"
         ]
       },
       "errors": [
@@ -1948,17 +1939,19 @@
             }
           ]
         }
+      },
+      "transaction": "explicit_per_input",
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
       }
     },
     "inventory.aggregate": {
       "type": "projection",
-      "lists": {
-        "key_field": [
-          "product_id",
-          "location_id",
-          "status"
-        ]
-      },
       "visibility": "public",
       "permission": "inventory.aggregate",
       "connection": "postgres",
@@ -2069,6 +2062,13 @@
             }
           ]
         }
+      },
+      "lists": {
+        "key_field": [
+          "product_id",
+          "location_id",
+          "status"
+        ]
       }
     }
   },

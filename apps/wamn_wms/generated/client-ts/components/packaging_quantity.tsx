@@ -47,12 +47,12 @@ import {
   PRODUCT_GET_ROUTE,
 } from "../product.js";
 
-/** The record that the detail for `wamn-wms:packaging-quantity/get@2.0.0` reads. */
+/** The record that the detail for `wamn-wms:packaging-quantity/get@2.1.0` reads. */
 export interface PackagingQuantityGetDetailInput {
   readonly id: Uuid;
 }
 
-/** What the detail screen for `wamn-wms:packaging-quantity/get@2.0.0` takes. */
+/** What the detail screen for `wamn-wms:packaging-quantity/get@2.1.0` takes. */
 export interface PackagingQuantityGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -63,7 +63,7 @@ export interface PackagingQuantityGetDetailProps {
 }
 
 /**
- * The detail screen for `wamn-wms:packaging-quantity/get@2.0.0`.
+ * The detail screen for `wamn-wms:packaging-quantity/get@2.1.0`.
  *
  * It reads when it mounts and again whenever its input changes, because the
  * input names the record it shows.
@@ -106,7 +106,7 @@ export function PackagingQuantityGetDetail(props: PackagingQuantityGetDetailProp
   );
 }
 
-/** What the table for `wamn-wms:packaging-quantity/query@2.0.0` takes. */
+/** What the table for `wamn-wms:packaging-quantity/query@2.1.0` takes. */
 export interface PackagingQuantityQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -120,7 +120,7 @@ export interface PackagingQuantityQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<PackagingQuantityQueryResult>) => void;
 }
 
-/** The table for `wamn-wms:packaging-quantity/query@2.0.0`: the QueryTable over `PACKAGING_QUANTITY_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-wms:packaging-quantity/query@2.1.0`: the QueryTable over `PACKAGING_QUANTITY_QUERY_TABLE`, in the table screen. */
 export function PackagingQuantityQueryTable(props: PackagingQuantityQueryTableProps) {
   return (
     <TableScreen>
@@ -129,7 +129,7 @@ export function PackagingQuantityQueryTable(props: PackagingQuantityQueryTablePr
   );
 }
 
-/** The table definition of `wamn-wms:packaging-quantity/query@2.0.0`. */
+/** The table definition of `wamn-wms:packaging-quantity/query@2.1.0`. */
 export const PACKAGING_QUANTITY_QUERY_TABLE = {
   name: "packaging-quantity",
   read: { route: PACKAGING_QUANTITY_QUERY_ROUTE, request: PACKAGING_QUANTITY_QUERY_REQUEST_FIELDS, result: PACKAGING_QUANTITY_QUERY_RESULT_FIELDS },
@@ -153,7 +153,7 @@ export const PACKAGING_QUANTITY_QUERY_TABLE = {
     { field: "status", label: "status", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-wms:packaging-quantity/get@2.0.0", reference: "wamn-wms:packaging-quantity/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:packaging-quantity/get@2.1.0", reference: "wamn-wms:packaging-quantity/get", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

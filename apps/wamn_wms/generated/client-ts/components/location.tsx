@@ -66,17 +66,17 @@ import {
   PACKAGING_QUERY_TABLE,
 } from "./packaging.js";
 
-/** What an operator types for `wamn-wms:location/create@2.0.0`. */
+/** What an operator types for `wamn-wms:location/create@2.1.0`. */
 const CREATE_INPUT = z.object({
   locationCode: z.string(),
 });
 
-/** What the form for `wamn-wms:location/create@2.0.0` can start with. */
+/** What the form for `wamn-wms:location/create@2.1.0` can start with. */
 export interface LocationCreateFormInitial {
   locationCode?: string;
 }
 
-/** What the form for `wamn-wms:location/create@2.0.0` takes. */
+/** What the form for `wamn-wms:location/create@2.1.0` takes. */
 export interface LocationCreateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -87,7 +87,7 @@ export interface LocationCreateFormProps {
 }
 
 /**
- * The form for `wamn-wms:location/create@2.0.0`.
+ * The form for `wamn-wms:location/create@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.
@@ -162,12 +162,12 @@ export function LocationCreateForm(props: LocationCreateFormProps) {
   );
 }
 
-/** The record that the detail for `wamn-wms:location/get@2.0.0` reads. */
+/** The record that the detail for `wamn-wms:location/get@2.1.0` reads. */
 export interface LocationGetDetailInput {
   readonly id: Uuid;
 }
 
-/** What the detail screen for `wamn-wms:location/get@2.0.0` takes. */
+/** What the detail screen for `wamn-wms:location/get@2.1.0` takes. */
 export interface LocationGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -178,7 +178,7 @@ export interface LocationGetDetailProps {
 }
 
 /**
- * The detail screen for `wamn-wms:location/get@2.0.0`.
+ * The detail screen for `wamn-wms:location/get@2.1.0`.
  *
  * It reads when it mounts and again whenever its input changes, because the
  * input names the record it shows.
@@ -219,7 +219,7 @@ export function LocationGetDetail(props: LocationGetDetailProps) {
   );
 }
 
-/** What the table for `wamn-wms:location/query@2.0.0` takes. */
+/** What the table for `wamn-wms:location/query@2.1.0` takes. */
 export interface LocationQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -233,7 +233,7 @@ export interface LocationQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<LocationQueryResult>) => void;
 }
 
-/** The table for `wamn-wms:location/query@2.0.0`: the QueryTable over `LOCATION_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-wms:location/query@2.1.0`: the QueryTable over `LOCATION_QUERY_TABLE`, in the table screen. */
 export function LocationQueryTable(props: LocationQueryTableProps) {
   return (
     <TableScreen>
@@ -242,7 +242,7 @@ export function LocationQueryTable(props: LocationQueryTableProps) {
   );
 }
 
-/** The table definition of `wamn-wms:location/query@2.0.0`. */
+/** The table definition of `wamn-wms:location/query@2.1.0`. */
 export const LOCATION_QUERY_TABLE = {
   name: "location",
   read: { route: LOCATION_QUERY_ROUTE, request: LOCATION_QUERY_REQUEST_FIELDS, result: LOCATION_QUERY_RESULT_FIELDS },
@@ -263,21 +263,21 @@ export const LOCATION_QUERY_TABLE = {
     { field: "locationCode", label: "location code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
-  update: { operation: "wamn-wms:location/update@2.0.0", binding: { route: LOCATION_UPDATE_ROUTE, request: LOCATION_UPDATE_REQUEST_FIELDS, result: LOCATION_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
+  update: { operation: "wamn-wms:location/update@2.1.0", binding: { route: LOCATION_UPDATE_ROUTE, request: LOCATION_UPDATE_REQUEST_FIELDS, result: LOCATION_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
     { field: "locationCode", input: ["change", "locationCode"] },
   ] },
   actions: [
-    { operation: "wamn-wms:location/get@2.0.0", reference: "wamn-wms:location/get", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/move@2.0.0", reference: "wamn-wms:inventory/move", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
-    { operation: "wamn-wms:inventory/split@2.0.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
-    { operation: "wamn-wms:packaging/create@2.0.0", reference: "wamn-wms:packaging/create", label: "create", many: false, opens: "form", fill: [{ field: "id", input: ["locationId"] }] },
+    { operation: "wamn-wms:location/get@2.1.0", reference: "wamn-wms:location/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/move@2.1.0", reference: "wamn-wms:inventory/move", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
+    { operation: "wamn-wms:inventory/split@2.1.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "toLocationId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
+    { operation: "wamn-wms:packaging/create@2.1.0", reference: "wamn-wms:packaging/create", label: "create", many: false, opens: "form", fill: [{ field: "id", input: ["locationId"] }] },
   ],
   childTables: [
     { label: "packaging", table: () => PACKAGING_QUERY_TABLE, scopeFilter: "locationId" },
   ],
 } as const;
 
-/** What an operator types for `wamn-wms:location/update@2.0.0`. */
+/** What an operator types for `wamn-wms:location/update@2.1.0`. */
 const UPDATE_INPUT = z.object({
   change: z.optional(
     z.object({
@@ -286,28 +286,28 @@ const UPDATE_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-wms:location/update@2.0.0` can start with. */
+/** What the form for `wamn-wms:location/update@2.1.0` can start with. */
 export interface LocationUpdateFormInitial {
   change?: {
     locationCode?: string;
   };
 }
 
-/** What the form for `wamn-wms:location/update@2.0.0` takes. */
+/** What the form for `wamn-wms:location/update@2.1.0` takes. */
 export interface LocationUpdateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: LocationUpdateFormInitial;
   /** The record this command changes. The form reads it when it opens, and
-   * sends the revision it read, because `wamn-wms:location/get@2.0.0` states that binding. */
+   * sends the revision it read, because `wamn-wms:location/get@2.1.0` states that binding. */
   readonly key: LocationGetDetailInput;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<LocationUpdateResult>) => void;
 }
 
 /**
- * The form for `wamn-wms:location/update@2.0.0`.
+ * The form for `wamn-wms:location/update@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.

@@ -47,12 +47,12 @@ import {
   PRODUCT_GET_ROUTE,
 } from "../product.js";
 
-/** The record that the detail for `wamn-wms:inventory-transaction/get@2.0.0` reads. */
+/** The record that the detail for `wamn-wms:inventory-transaction/get@2.1.0` reads. */
 export interface InventoryTransactionGetDetailInput {
   readonly id: Uuid;
 }
 
-/** What the detail screen for `wamn-wms:inventory-transaction/get@2.0.0` takes. */
+/** What the detail screen for `wamn-wms:inventory-transaction/get@2.1.0` takes. */
 export interface InventoryTransactionGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -63,7 +63,7 @@ export interface InventoryTransactionGetDetailProps {
 }
 
 /**
- * The detail screen for `wamn-wms:inventory-transaction/get@2.0.0`.
+ * The detail screen for `wamn-wms:inventory-transaction/get@2.1.0`.
  *
  * It reads when it mounts and again whenever its input changes, because the
  * input names the record it shows.
@@ -111,7 +111,7 @@ export function InventoryTransactionGetDetail(props: InventoryTransactionGetDeta
   );
 }
 
-/** What the table for `wamn-wms:inventory-transaction/query@2.0.0` takes. */
+/** What the table for `wamn-wms:inventory-transaction/query@2.1.0` takes. */
 export interface InventoryTransactionQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -125,7 +125,7 @@ export interface InventoryTransactionQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<InventoryTransactionQueryResult>) => void;
 }
 
-/** The table for `wamn-wms:inventory-transaction/query@2.0.0`: the QueryTable over `INVENTORY_TRANSACTION_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-wms:inventory-transaction/query@2.1.0`: the QueryTable over `INVENTORY_TRANSACTION_QUERY_TABLE`, in the table screen. */
 export function InventoryTransactionQueryTable(props: InventoryTransactionQueryTableProps) {
   return (
     <TableScreen>
@@ -134,7 +134,7 @@ export function InventoryTransactionQueryTable(props: InventoryTransactionQueryT
   );
 }
 
-/** The table definition of `wamn-wms:inventory-transaction/query@2.0.0`. */
+/** The table definition of `wamn-wms:inventory-transaction/query@2.1.0`. */
 export const INVENTORY_TRANSACTION_QUERY_TABLE = {
   name: "inventory-transaction",
   read: { route: INVENTORY_TRANSACTION_QUERY_ROUTE, request: INVENTORY_TRANSACTION_QUERY_REQUEST_FIELDS, result: INVENTORY_TRANSACTION_QUERY_RESULT_FIELDS },
@@ -163,7 +163,7 @@ export const INVENTORY_TRANSACTION_QUERY_TABLE = {
     { field: "toStatus", label: "to status", type: "text", role: "value" },
   ],
   actions: [
-    { operation: "wamn-wms:inventory-transaction/get@2.0.0", reference: "wamn-wms:inventory-transaction/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory-transaction/get@2.1.0", reference: "wamn-wms:inventory-transaction/get", label: "get", many: false, opens: "record", fill: [] },
   ],
   childTables: [],
 } as const;

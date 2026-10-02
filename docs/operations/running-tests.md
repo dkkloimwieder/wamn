@@ -597,7 +597,7 @@ Do not edit generated Rust directly.
 For Acme, pass `--migration-dir apps/wamn_receiving/migrations` before `--migration-dir apps/client_acme_receiving/migrations`.
 Pass `--history-manifest apps/client_acme_receiving/wamn.json`, and use `apps/client_acme_receiving` as the generation input.
 For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
-Pass `--history-manifest apps/wamn_wms/wamn.json`, and use `apps/wamn_wms` as the input.
+Pass `--history-manifest apps/wamn_wms/wamn.k`, and use `apps/wamn_wms` as the input.
 
 The platform fixture is an application too, and it generates the same way.
 The platform owns it, and a platform test takes it instead of an application.

@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-wms:product/create@2.0.0`. */
+/** Input for `wamn-wms:product/create@2.1.0`. */
 export interface ProductCreateRequest {
   /** `text` */
   idempotencyKey: string;
@@ -15,14 +15,14 @@ export interface ProductCreateRequest {
   requestId: string;
 }
 
-/** What `wamn-wms:product/create@2.0.0` calls its input members. */
+/** What `wamn-wms:product/create@2.1.0` calls its input members. */
 export const PRODUCT_CREATE_REQUEST_FIELDS: FieldMap = {
   "idempotency_key": "idempotencyKey",
   "product_code": "productCode",
   "request_id": "requestId",
 };
 
-/** Result of `wamn-wms:product/create@2.0.0`. */
+/** Result of `wamn-wms:product/create@2.1.0`. */
 export interface ProductCreateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -34,7 +34,7 @@ export interface ProductCreateResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-wms:product/create@2.0.0` calls its result members. */
+/** What `wamn-wms:product/create@2.1.0` calls its result members. */
 export const PRODUCT_CREATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -43,13 +43,13 @@ export const PRODUCT_CREATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:product/create@2.0.0`.
+ * Where the release publishes `wamn-wms:product/create@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PRODUCT_CREATE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:product/create@2.0.0",
+  operation: "wamn-wms:product/create@2.1.0",
   method: "POST",
   template: "/product/create",
   freshOnly: false,
@@ -74,7 +74,7 @@ export const PRODUCT_CREATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:product/create@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:product/create@2.1.0` through a transport the application supplies. */
 export async function create(
   transport: Transport,
   items: readonly ProductCreateRequest[],
@@ -88,18 +88,18 @@ export async function create(
   );
 }
 
-/** Input for `wamn-wms:product/get@2.0.0`. */
+/** Input for `wamn-wms:product/get@2.1.0`. */
 export interface ProductGetRequest {
   /** `uuid` */
   id: Uuid;
 }
 
-/** What `wamn-wms:product/get@2.0.0` calls its input members. */
+/** What `wamn-wms:product/get@2.1.0` calls its input members. */
 export const PRODUCT_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
 };
 
-/** Result of `wamn-wms:product/get@2.0.0`. */
+/** Result of `wamn-wms:product/get@2.1.0`. */
 export interface ProductGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -111,7 +111,7 @@ export interface ProductGetResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-wms:product/get@2.0.0` calls its result members. */
+/** What `wamn-wms:product/get@2.1.0` calls its result members. */
 export const PRODUCT_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -120,13 +120,13 @@ export const PRODUCT_GET_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:product/get@2.0.0`.
+ * Where the release publishes `wamn-wms:product/get@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PRODUCT_GET_ROUTE: OperationRoute = {
-  operation: "wamn-wms:product/get@2.0.0",
+  operation: "wamn-wms:product/get@2.1.0",
   method: "GET",
   template: "/product/get",
   freshOnly: false,
@@ -150,7 +150,7 @@ export const PRODUCT_GET_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:product/get@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:product/get@2.1.0` through a transport the application supplies. */
 export async function get(
   transport: Transport,
   items: readonly ProductGetRequest[],
@@ -164,7 +164,7 @@ export async function get(
   );
 }
 
-/** Input for `wamn-wms:product/query@2.0.0`. */
+/** Input for `wamn-wms:product/query@2.1.0`. */
 export interface ProductQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -179,7 +179,7 @@ export interface ProductQueryRequestFilter {
   productCode?: string[];
 }
 
-/** What `wamn-wms:product/query@2.0.0` calls its input members. */
+/** What `wamn-wms:product/query@2.1.0` calls its input members. */
 export const PRODUCT_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "filter": {
@@ -191,7 +191,7 @@ export const PRODUCT_QUERY_REQUEST_FIELDS: FieldMap = {
   "limit": "limit",
 };
 
-/** One row of `wamn-wms:product/query@2.0.0`. */
+/** One row of `wamn-wms:product/query@2.1.0`. */
 export interface ProductQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -203,7 +203,7 @@ export interface ProductQueryRow {
   readonly rowVersion: number;
 }
 
-/** Result of `wamn-wms:product/query@2.0.0`. */
+/** Result of `wamn-wms:product/query@2.1.0`. */
 export interface ProductQueryResult {
   /** The rows this page carries. */
   readonly item: readonly ProductQueryRow[];
@@ -211,7 +211,7 @@ export interface ProductQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-wms:product/query@2.0.0` calls its result members. */
+/** What `wamn-wms:product/query@2.1.0` calls its result members. */
 export const PRODUCT_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -226,13 +226,13 @@ export const PRODUCT_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:product/query@2.0.0`.
+ * Where the release publishes `wamn-wms:product/query@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PRODUCT_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-wms:product/query@2.0.0",
+  operation: "wamn-wms:product/query@2.1.0",
   method: "GET",
   template: "/product/query",
   freshOnly: false,
@@ -255,7 +255,7 @@ export const PRODUCT_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:product/query@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:product/query@2.1.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly ProductQueryRequest[],
@@ -269,7 +269,7 @@ export async function query(
   );
 }
 
-/** Input for `wamn-wms:product/update@2.0.0`. */
+/** Input for `wamn-wms:product/update@2.1.0`. */
 export interface ProductUpdateRequest {
   /** `object` */
   change: ProductUpdateRequestChange;
@@ -286,7 +286,7 @@ export interface ProductUpdateRequestChange {
   productCode?: string;
 }
 
-/** What `wamn-wms:product/update@2.0.0` calls its input members. */
+/** What `wamn-wms:product/update@2.1.0` calls its input members. */
 export const PRODUCT_UPDATE_REQUEST_FIELDS: FieldMap = {
   "change": {
     member: "change",
@@ -299,7 +299,7 @@ export const PRODUCT_UPDATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
 };
 
-/** Result of `wamn-wms:product/update@2.0.0`. */
+/** Result of `wamn-wms:product/update@2.1.0`. */
 export interface ProductUpdateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -311,7 +311,7 @@ export interface ProductUpdateResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-wms:product/update@2.0.0` calls its result members. */
+/** What `wamn-wms:product/update@2.1.0` calls its result members. */
 export const PRODUCT_UPDATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -320,13 +320,13 @@ export const PRODUCT_UPDATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:product/update@2.0.0`.
+ * Where the release publishes `wamn-wms:product/update@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PRODUCT_UPDATE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:product/update@2.0.0",
+  operation: "wamn-wms:product/update@2.1.0",
   method: "POST",
   template: "/product/update",
   freshOnly: false,
@@ -352,7 +352,7 @@ export const PRODUCT_UPDATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:product/update@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:product/update@2.1.0` through a transport the application supplies. */
 export async function update(
   transport: Transport,
   items: readonly ProductUpdateRequest[],

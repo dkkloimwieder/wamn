@@ -99,10 +99,13 @@ fn names_for_ids(metadata: &CargoMetadata, ids: &[String]) -> Vec<String> {
 fn package_components(root: &Path) -> Vec<String> {
     let mut names = BTreeSet::new();
     for entry in fs::read_dir(root.join("apps")).expect("read application packages") {
-        let path = entry
-            .expect("read application entry")
-            .path()
-            .join("wamn.json");
+        let package = entry.expect("read application entry").path();
+        // A package that authors wamn.k keeps its compiled manifest under generated/.
+        let path = if package.join("wamn.k").is_file() {
+            package.join("generated/wamn.json")
+        } else {
+            package.join("wamn.json")
+        };
         if path.is_file() {
             let manifest: Value =
                 serde_json::from_slice(&fs::read(path).expect("read application manifest"))

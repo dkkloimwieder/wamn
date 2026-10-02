@@ -374,7 +374,9 @@ fn private_file(path: &Path) -> anyhow::Result<()> {
 }
 
 pub(crate) fn package_coordinate() -> anyhow::Result<PackageCoordinate> {
-    let manifest = read_json(&package_root().join("wamn.json"))?;
+    let manifest = read_json(&wamn_schema_generator::package_manifest_path(
+        &package_root(),
+    ))?;
     PackageCoordinate::new(
         manifest["package"]["id"]
             .as_str()
@@ -614,7 +616,7 @@ pub async fn publish(
         wirings: targets,
         attachments: vec![root.join("publication/attachments.json")],
         route_host: Some(inputs.route_host.clone()),
-        package_manifests: vec![root.join("wamn.json")],
+        package_manifests: vec![wamn_schema_generator::package_manifest_path(&root)],
     })
     .await?;
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
@@ -805,7 +807,7 @@ async fn author_wirings(
 /// registration entity's subjects in this environment.
 pub fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::pull::Config>> {
     let manifest = wamn_schema_generator::PackageManifest::from_slice(&fs::read(
-        package_root().join("wamn.json"),
+        wamn_schema_generator::package_manifest_path(&package_root()),
     )?)?;
     let sanitize = |value: &str| {
         value

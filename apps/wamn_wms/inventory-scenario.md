@@ -1,7 +1,7 @@
 # WMS inventory scenario
 
 WMS moves stock between packagings and locations.
-It owns its [manifest](wamn.json), [migrations](migrations/), command SQL, guest, and application assertions.
+It owns its [manifest](wamn.k), [migrations](migrations/), command SQL, guest, and application assertions.
 WMS owns its `wms.location` and `wms.product` tables.
 It does not share Receiving's physical tables.
 
@@ -68,7 +68,7 @@ The [projection implementation](data/src/inventory_aggregate.rs) owns its result
 
 `/inventory/move` is a route to `inventory.move`, like every other operation.
 The move's row event starts the [label workflow](publication/wirings/inventory_move_and_label.json) off the request path.
-`wamn.json` declares it as the workflow `movement_label`, registered on the `packaging` update with the condition `old.location_id != new.location_id`:
+`wamn.k` declares it as the workflow `movement_label`, registered on the `packaging` update with the condition `old.location_id != new.location_id`:
 
 ```text
 packaging update → shape (jsonata) → label-render → blob-put

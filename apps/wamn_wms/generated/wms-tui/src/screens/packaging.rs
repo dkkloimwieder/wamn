@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static CREATE_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "packaging",
     name: "create",
-    operation: "wamn-wms:packaging/create@2.0.0",
+    operation: "wamn-wms:packaging/create@2.1.0",
     type_: "create",
     input: crate::packaging::PACKAGING_CREATE_INPUT_SCHEMA,
     input_schema: Some(
@@ -98,7 +98,7 @@ pub fn create(binding: submission::SessionBinding) -> screen::Screen {
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "packaging",
     name: "get",
-    operation: "wamn-wms:packaging/get@2.0.0",
+    operation: "wamn-wms:packaging/get@2.1.0",
     type_: "get",
     input: crate::packaging::PACKAGING_GET_INPUT_SCHEMA,
     input_schema: Some(
@@ -167,7 +167,7 @@ pub fn get(binding: submission::SessionBinding) -> screen::Screen {
 pub static QUERY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "packaging",
     name: "query",
-    operation: "wamn-wms:packaging/query@2.0.0",
+    operation: "wamn-wms:packaging/query@2.1.0",
     type_: "query",
     input: crate::packaging::PACKAGING_QUERY_INPUT_SCHEMA,
     input_schema: Some(

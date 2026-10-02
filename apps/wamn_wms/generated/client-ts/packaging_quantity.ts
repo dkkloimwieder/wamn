@@ -5,18 +5,18 @@
 import type { FieldMap, Numeric, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-wms:packaging-quantity/get@2.0.0`. */
+/** Input for `wamn-wms:packaging-quantity/get@2.1.0`. */
 export interface PackagingQuantityGetRequest {
   /** `uuid` */
   id: Uuid;
 }
 
-/** What `wamn-wms:packaging-quantity/get@2.0.0` calls its input members. */
+/** What `wamn-wms:packaging-quantity/get@2.1.0` calls its input members. */
 export const PACKAGING_QUANTITY_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
 };
 
-/** Result of `wamn-wms:packaging-quantity/get@2.0.0`. */
+/** Result of `wamn-wms:packaging-quantity/get@2.1.0`. */
 export interface PackagingQuantityGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -32,7 +32,7 @@ export interface PackagingQuantityGetResult {
   readonly status: string;
 }
 
-/** What `wamn-wms:packaging-quantity/get@2.0.0` calls its result members. */
+/** What `wamn-wms:packaging-quantity/get@2.1.0` calls its result members. */
 export const PACKAGING_QUANTITY_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -43,13 +43,13 @@ export const PACKAGING_QUANTITY_GET_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:packaging-quantity/get@2.0.0`.
+ * Where the release publishes `wamn-wms:packaging-quantity/get@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PACKAGING_QUANTITY_GET_ROUTE: OperationRoute = {
-  operation: "wamn-wms:packaging-quantity/get@2.0.0",
+  operation: "wamn-wms:packaging-quantity/get@2.1.0",
   method: "GET",
   template: "/packaging_quantity/get",
   freshOnly: false,
@@ -73,7 +73,7 @@ export const PACKAGING_QUANTITY_GET_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:packaging-quantity/get@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:packaging-quantity/get@2.1.0` through a transport the application supplies. */
 export async function get(
   transport: Transport,
   items: readonly PackagingQuantityGetRequest[],
@@ -87,7 +87,7 @@ export async function get(
   );
 }
 
-/** Input for `wamn-wms:packaging-quantity/query@2.0.0`. */
+/** Input for `wamn-wms:packaging-quantity/query@2.1.0`. */
 export interface PackagingQuantityQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -95,13 +95,13 @@ export interface PackagingQuantityQueryRequest {
   limit?: number;
 }
 
-/** What `wamn-wms:packaging-quantity/query@2.0.0` calls its input members. */
+/** What `wamn-wms:packaging-quantity/query@2.1.0` calls its input members. */
 export const PACKAGING_QUANTITY_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "limit": "limit",
 };
 
-/** One row of `wamn-wms:packaging-quantity/query@2.0.0`. */
+/** One row of `wamn-wms:packaging-quantity/query@2.1.0`. */
 export interface PackagingQuantityQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -117,7 +117,7 @@ export interface PackagingQuantityQueryRow {
   readonly status: string;
 }
 
-/** Result of `wamn-wms:packaging-quantity/query@2.0.0`. */
+/** Result of `wamn-wms:packaging-quantity/query@2.1.0`. */
 export interface PackagingQuantityQueryResult {
   /** The rows this page carries. */
   readonly item: readonly PackagingQuantityQueryRow[];
@@ -125,7 +125,7 @@ export interface PackagingQuantityQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-wms:packaging-quantity/query@2.0.0` calls its result members. */
+/** What `wamn-wms:packaging-quantity/query@2.1.0` calls its result members. */
 export const PACKAGING_QUANTITY_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -142,13 +142,13 @@ export const PACKAGING_QUANTITY_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:packaging-quantity/query@2.0.0`.
+ * Where the release publishes `wamn-wms:packaging-quantity/query@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PACKAGING_QUANTITY_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-wms:packaging-quantity/query@2.0.0",
+  operation: "wamn-wms:packaging-quantity/query@2.1.0",
   method: "GET",
   template: "/packaging_quantity/query",
   freshOnly: false,
@@ -171,7 +171,7 @@ export const PACKAGING_QUANTITY_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:packaging-quantity/query@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:packaging-quantity/query@2.1.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly PackagingQuantityQueryRequest[],

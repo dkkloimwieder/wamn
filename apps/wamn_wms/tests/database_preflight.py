@@ -43,7 +43,7 @@ try:
     db.sql('00-record-history-app-grants', 'CREATE ROLE wamn_app NOLOGIN;\n' + (tree / 'deploy/sql/record-history-app-grants.sql').read_text())
     # The commands claim their keys in the write log that app-schema.sql installs.
     db.sql('00-app-schema', (tree / 'deploy/sql/app-schema.sql').read_text())
-    for model in json.loads((tree / 'apps/wamn_wms/wamn.json').read_text())['models'].values():
+    for model in json.loads((tree / 'apps/wamn_wms/generated/wamn.json').read_text())['models'].values():
         columns = model['audit_log']['columns']
         if columns:
             db.sql('00-trigger-' + model['table'], f"CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON {model['schema']}.{model['table']} FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({', '.join(repr(column) for column in columns)});")

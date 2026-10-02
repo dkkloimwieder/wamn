@@ -165,6 +165,15 @@ application_manifest() {
     printf '%s\n' "$1/wamn.json"
   fi
 }
+# The package directory of an application manifest, compiled or authored.
+application_root() {
+  local -r directory="$(dirname -- "$1")"
+  if [[ "$(basename -- "$1")" == wamn.json && "$(basename -- "$directory")" == generated && -f "$(dirname -- "$directory")/wamn.k" ]]; then
+    dirname -- "$directory"
+  else
+    printf '%s\n' "$directory"
+  fi
+}
 declare -a WAMN_APPLICATION_MANIFESTS=()
 if [[ "$WAMN_PROFILE" == app ]]; then
   for application in "${WAMN_APPLICATIONS[@]}"; do
@@ -212,7 +221,7 @@ readonly WAMN_COMPOSITION_MEMBERS
 declare WAMN_WIRING_COMPONENTS
 WAMN_WIRING_COMPONENTS="$(
   for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
-    for wiring in "$(dirname -- "$application")"/publication/wirings/*.json; do
+    for wiring in "$(application_root "$application")"/publication/wirings/*.json; do
       [[ -f "$wiring" ]] || continue
       jq -r '.nodes[]?.component // empty' "$wiring" || {
         wamn_fail 65 "cannot read the wiring nodes of $wiring"
@@ -695,7 +704,7 @@ wamn_compose() {
 
   for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
     jq -e '(.base_dependencies // {}) | length > 0' "$application" >/dev/null || continue
-    application_root="$(dirname -- "$application")"
+    application_root="$(application_root "$application")"
     package_id="$(jq -r '.package.id' "$application")"
     component="$(wamn_single_component "$application")" || {
       wamn_fail 65 "compose $package_id: the overlay must declare exactly one component"
@@ -726,7 +735,7 @@ wamn_compose() {
       [[ -n "$base_manifest" ]] || {
         wamn_fail 65 "compose $package_id: select its base application $base_package@$base_version in the same build"
       }
-      base_root="$(dirname -- "$base_manifest")"
+      base_root="$(application_root "$base_manifest")"
       base_component="$(wamn_single_component "$base_manifest")" || {
         wamn_fail 65 "compose $package_id: base $base_package must declare exactly one component"
       }

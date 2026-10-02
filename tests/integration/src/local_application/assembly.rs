@@ -414,7 +414,9 @@ fn render_declaration(
     let mut base_digests =
         wamn_control::component_declaration::authored_base_digests(package.root)?;
     for base in input.packages {
-        let manifest: Value = serde_json::from_slice(&std::fs::read(base.root.join("wamn.json"))?)?;
+        let manifest: Value = serde_json::from_slice(&std::fs::read(
+            wamn_schema_generator::package_manifest_path(base.root),
+        )?)?;
         let coordinate = format!(
             "{}@{}",
             manifest["package"]["id"].as_str().context("package id")?,

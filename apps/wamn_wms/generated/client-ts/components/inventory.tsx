@@ -112,7 +112,7 @@ const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-
 /** What the release accepts: decimal text without an exponent. */
 const NUMERIC_TEXT = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
 
-/** What an operator types for `wamn-wms:inventory/adjust@2.0.0`. */
+/** What an operator types for `wamn-wms:inventory/adjust@2.1.0`. */
 const ADJUST_INPUT = z.object({
   value: z.optional(
     z.object({
@@ -125,7 +125,7 @@ const ADJUST_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-wms:inventory/adjust@2.0.0` can start with. */
+/** What the form for `wamn-wms:inventory/adjust@2.1.0` can start with. */
 export interface InventoryAdjustFormInitial {
   value?: {
     packagingId?: Uuid;
@@ -136,7 +136,7 @@ export interface InventoryAdjustFormInitial {
   };
 }
 
-/** What the form for `wamn-wms:inventory/adjust@2.0.0` takes. */
+/** What the form for `wamn-wms:inventory/adjust@2.1.0` takes. */
 export interface InventoryAdjustFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -154,7 +154,7 @@ export interface InventoryAdjustFormProps {
 }
 
 /**
- * The form for `wamn-wms:inventory/adjust@2.0.0`.
+ * The form for `wamn-wms:inventory/adjust@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.
@@ -411,7 +411,7 @@ export function InventoryAdjustForm(props: InventoryAdjustFormProps) {
   );
 }
 
-/** What the table for `wamn-wms:inventory/aggregate@2.0.0` takes. */
+/** What the table for `wamn-wms:inventory/aggregate@2.1.0` takes. */
 export interface InventoryAggregateTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -425,7 +425,7 @@ export interface InventoryAggregateTableProps {
   readonly onOutcome?: (outcome: Outcome<InventoryAggregateResult>) => void;
 }
 
-/** The table for `wamn-wms:inventory/aggregate@2.0.0`: the QueryTable over `INVENTORY_AGGREGATE_TABLE`, in the table screen. */
+/** The table for `wamn-wms:inventory/aggregate@2.1.0`: the QueryTable over `INVENTORY_AGGREGATE_TABLE`, in the table screen. */
 export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
   return (
     <TableScreen>
@@ -434,7 +434,7 @@ export function InventoryAggregateTable(props: InventoryAggregateTableProps) {
   );
 }
 
-/** The table definition of `wamn-wms:inventory/aggregate@2.0.0`. */
+/** The table definition of `wamn-wms:inventory/aggregate@2.1.0`. */
 export const INVENTORY_AGGREGATE_TABLE = {
   name: "inventory",
   read: { route: INVENTORY_AGGREGATE_ROUTE, request: INVENTORY_AGGREGATE_REQUEST_FIELDS, result: INVENTORY_AGGREGATE_RESULT_FIELDS },
@@ -460,7 +460,7 @@ export const INVENTORY_AGGREGATE_TABLE = {
   childTables: [],
 } as const;
 
-/** What an operator types for `wamn-wms:inventory/merge@2.0.0`. */
+/** What an operator types for `wamn-wms:inventory/merge@2.1.0`. */
 const MERGE_INPUT = z.object({
   value: z.optional(
     z.object({
@@ -470,7 +470,7 @@ const MERGE_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-wms:inventory/merge@2.0.0` can start with. */
+/** What the form for `wamn-wms:inventory/merge@2.1.0` can start with. */
 export interface InventoryMergeFormInitial {
   value?: {
     sourcePackagingId?: Uuid;
@@ -478,7 +478,7 @@ export interface InventoryMergeFormInitial {
   };
 }
 
-/** What the form for `wamn-wms:inventory/merge@2.0.0` takes. */
+/** What the form for `wamn-wms:inventory/merge@2.1.0` takes. */
 export interface InventoryMergeFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -496,7 +496,7 @@ export interface InventoryMergeFormProps {
 }
 
 /**
- * The form for `wamn-wms:inventory/merge@2.0.0`.
+ * The form for `wamn-wms:inventory/merge@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.
@@ -710,7 +710,7 @@ export function InventoryMergeForm(props: InventoryMergeFormProps) {
   );
 }
 
-/** What an operator types for `wamn-wms:inventory/move@2.0.0`. */
+/** What an operator types for `wamn-wms:inventory/move@2.1.0`. */
 const MOVE_INPUT = z.object({
   value: z.optional(
     z.object({
@@ -720,7 +720,7 @@ const MOVE_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-wms:inventory/move@2.0.0` can start with. */
+/** What the form for `wamn-wms:inventory/move@2.1.0` can start with. */
 export interface InventoryMoveFormInitial {
   value?: {
     packagingId?: Uuid;
@@ -728,7 +728,7 @@ export interface InventoryMoveFormInitial {
   };
 }
 
-/** What the form for `wamn-wms:inventory/move@2.0.0` takes. */
+/** What the form for `wamn-wms:inventory/move@2.1.0` takes. */
 export interface InventoryMoveFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -746,7 +746,7 @@ export interface InventoryMoveFormProps {
 }
 
 /**
- * The form for `wamn-wms:inventory/move@2.0.0`.
+ * The form for `wamn-wms:inventory/move@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.
@@ -960,7 +960,7 @@ export function InventoryMoveForm(props: InventoryMoveFormProps) {
   );
 }
 
-/** What an operator types for `wamn-wms:inventory/split@2.0.0`. */
+/** What an operator types for `wamn-wms:inventory/split@2.1.0`. */
 const SPLIT_INPUT = z.object({
   value: z.optional(
     z.object({
@@ -975,7 +975,7 @@ const SPLIT_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-wms:inventory/split@2.0.0` can start with. */
+/** What the form for `wamn-wms:inventory/split@2.1.0` can start with. */
 export interface InventorySplitFormInitial {
   value?: {
     newPackagingCode?: string;
@@ -988,7 +988,7 @@ export interface InventorySplitFormInitial {
   };
 }
 
-/** What the form for `wamn-wms:inventory/split@2.0.0` takes. */
+/** What the form for `wamn-wms:inventory/split@2.1.0` takes. */
 export interface InventorySplitFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -1006,7 +1006,7 @@ export interface InventorySplitFormProps {
 }
 
 /**
- * The form for `wamn-wms:inventory/split@2.0.0`.
+ * The form for `wamn-wms:inventory/split@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.

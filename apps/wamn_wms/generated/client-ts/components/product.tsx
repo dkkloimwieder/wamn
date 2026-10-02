@@ -63,17 +63,17 @@ import {
   ProductUpdateFormLabel,
 } from "./labels.js";
 
-/** What an operator types for `wamn-wms:product/create@2.0.0`. */
+/** What an operator types for `wamn-wms:product/create@2.1.0`. */
 const CREATE_INPUT = z.object({
   productCode: z.string(),
 });
 
-/** What the form for `wamn-wms:product/create@2.0.0` can start with. */
+/** What the form for `wamn-wms:product/create@2.1.0` can start with. */
 export interface ProductCreateFormInitial {
   productCode?: string;
 }
 
-/** What the form for `wamn-wms:product/create@2.0.0` takes. */
+/** What the form for `wamn-wms:product/create@2.1.0` takes. */
 export interface ProductCreateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -84,7 +84,7 @@ export interface ProductCreateFormProps {
 }
 
 /**
- * The form for `wamn-wms:product/create@2.0.0`.
+ * The form for `wamn-wms:product/create@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.
@@ -159,12 +159,12 @@ export function ProductCreateForm(props: ProductCreateFormProps) {
   );
 }
 
-/** The record that the detail for `wamn-wms:product/get@2.0.0` reads. */
+/** The record that the detail for `wamn-wms:product/get@2.1.0` reads. */
 export interface ProductGetDetailInput {
   readonly id: Uuid;
 }
 
-/** What the detail screen for `wamn-wms:product/get@2.0.0` takes. */
+/** What the detail screen for `wamn-wms:product/get@2.1.0` takes. */
 export interface ProductGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -175,7 +175,7 @@ export interface ProductGetDetailProps {
 }
 
 /**
- * The detail screen for `wamn-wms:product/get@2.0.0`.
+ * The detail screen for `wamn-wms:product/get@2.1.0`.
  *
  * It reads when it mounts and again whenever its input changes, because the
  * input names the record it shows.
@@ -216,7 +216,7 @@ export function ProductGetDetail(props: ProductGetDetailProps) {
   );
 }
 
-/** What the table for `wamn-wms:product/query@2.0.0` takes. */
+/** What the table for `wamn-wms:product/query@2.1.0` takes. */
 export interface ProductQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -230,7 +230,7 @@ export interface ProductQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<ProductQueryResult>) => void;
 }
 
-/** The table for `wamn-wms:product/query@2.0.0`: the QueryTable over `PRODUCT_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-wms:product/query@2.1.0`: the QueryTable over `PRODUCT_QUERY_TABLE`, in the table screen. */
 export function ProductQueryTable(props: ProductQueryTableProps) {
   return (
     <TableScreen>
@@ -239,7 +239,7 @@ export function ProductQueryTable(props: ProductQueryTableProps) {
   );
 }
 
-/** The table definition of `wamn-wms:product/query@2.0.0`. */
+/** The table definition of `wamn-wms:product/query@2.1.0`. */
 export const PRODUCT_QUERY_TABLE = {
   name: "product",
   read: { route: PRODUCT_QUERY_ROUTE, request: PRODUCT_QUERY_REQUEST_FIELDS, result: PRODUCT_QUERY_RESULT_FIELDS },
@@ -260,18 +260,18 @@ export const PRODUCT_QUERY_TABLE = {
     { field: "productCode", label: "product code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },
   ],
-  update: { operation: "wamn-wms:product/update@2.0.0", binding: { route: PRODUCT_UPDATE_ROUTE, request: PRODUCT_UPDATE_REQUEST_FIELDS, result: PRODUCT_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
+  update: { operation: "wamn-wms:product/update@2.1.0", binding: { route: PRODUCT_UPDATE_ROUTE, request: PRODUCT_UPDATE_REQUEST_FIELDS, result: PRODUCT_UPDATE_RESULT_FIELDS }, keyInput: ["id"], revisionInput: ["expectedRowVersion"], revisionField: "rowVersion", supplied: [{ input: ["requestId"], type: "requestId" }], fields: [
     { field: "productCode", input: ["change", "productCode"] },
   ] },
   actions: [
-    { operation: "wamn-wms:product/get@2.0.0", reference: "wamn-wms:product/get", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/adjust@2.0.0", reference: "wamn-wms:inventory/adjust", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
-    { operation: "wamn-wms:inventory/split@2.0.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
+    { operation: "wamn-wms:product/get@2.1.0", reference: "wamn-wms:product/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/adjust@2.1.0", reference: "wamn-wms:inventory/adjust", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
+    { operation: "wamn-wms:inventory/split@2.1.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "productId"] }], form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
   ],
   childTables: [],
 } as const;
 
-/** What an operator types for `wamn-wms:product/update@2.0.0`. */
+/** What an operator types for `wamn-wms:product/update@2.1.0`. */
 const UPDATE_INPUT = z.object({
   change: z.optional(
     z.object({
@@ -280,28 +280,28 @@ const UPDATE_INPUT = z.object({
   ),
 });
 
-/** What the form for `wamn-wms:product/update@2.0.0` can start with. */
+/** What the form for `wamn-wms:product/update@2.1.0` can start with. */
 export interface ProductUpdateFormInitial {
   change?: {
     productCode?: string;
   };
 }
 
-/** What the form for `wamn-wms:product/update@2.0.0` takes. */
+/** What the form for `wamn-wms:product/update@2.1.0` takes. */
 export interface ProductUpdateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
   /** Values the form starts with. */
   readonly initial?: ProductUpdateFormInitial;
   /** The record this command changes. The form reads it when it opens, and
-   * sends the revision it read, because `wamn-wms:product/get@2.0.0` states that binding. */
+   * sends the revision it read, because `wamn-wms:product/get@2.1.0` states that binding. */
   readonly key: ProductGetDetailInput;
   /** Called with the outcome of every submission. */
   readonly onSubmitted?: (outcome: Outcome<ProductUpdateResult>) => void;
 }
 
 /**
- * The form for `wamn-wms:product/update@2.0.0`.
+ * The form for `wamn-wms:product/update@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.

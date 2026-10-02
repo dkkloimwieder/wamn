@@ -77,7 +77,7 @@ import {
 /** What the release accepts: one UUID, hyphenated. */
 const UUID_TEXT = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-/** What an operator types for `wamn-wms:packaging/create@2.0.0`. */
+/** What an operator types for `wamn-wms:packaging/create@2.1.0`. */
 const CREATE_INPUT = z.object({
   locationId: z.string().check(z.regex(UUID_TEXT, "expected a UUID")),
   packagingCode: z.string(),
@@ -85,7 +85,7 @@ const CREATE_INPUT = z.object({
   type: z.enum(["bin", "case", "loose", "pallet", "tote"]),
 });
 
-/** What the form for `wamn-wms:packaging/create@2.0.0` can start with. */
+/** What the form for `wamn-wms:packaging/create@2.1.0` can start with. */
 export interface PackagingCreateFormInitial {
   locationId?: Uuid;
   packagingCode?: string;
@@ -93,7 +93,7 @@ export interface PackagingCreateFormInitial {
   type?: "bin" | "case" | "loose" | "pallet" | "tote";
 }
 
-/** What the form for `wamn-wms:packaging/create@2.0.0` takes. */
+/** What the form for `wamn-wms:packaging/create@2.1.0` takes. */
 export interface PackagingCreateFormProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -104,7 +104,7 @@ export interface PackagingCreateFormProps {
 }
 
 /**
- * The form for `wamn-wms:packaging/create@2.0.0`.
+ * The form for `wamn-wms:packaging/create@2.1.0`.
  *
  * It renders what the operator fills and nothing else. The reserved inputs
  * come from the runtime at submit time, and the operator never sees them.
@@ -260,12 +260,12 @@ export function PackagingCreateForm(props: PackagingCreateFormProps) {
   );
 }
 
-/** The record that the detail for `wamn-wms:packaging/get@2.0.0` reads. */
+/** The record that the detail for `wamn-wms:packaging/get@2.1.0` reads. */
 export interface PackagingGetDetailInput {
   readonly id: Uuid;
 }
 
-/** What the detail screen for `wamn-wms:packaging/get@2.0.0` takes. */
+/** What the detail screen for `wamn-wms:packaging/get@2.1.0` takes. */
 export interface PackagingGetDetailProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -276,7 +276,7 @@ export interface PackagingGetDetailProps {
 }
 
 /**
- * The detail screen for `wamn-wms:packaging/get@2.0.0`.
+ * The detail screen for `wamn-wms:packaging/get@2.1.0`.
  *
  * It reads when it mounts and again whenever its input changes, because the
  * input names the record it shows.
@@ -324,7 +324,7 @@ export function PackagingGetDetail(props: PackagingGetDetailProps) {
   );
 }
 
-/** What the table for `wamn-wms:packaging/query@2.0.0` takes. */
+/** What the table for `wamn-wms:packaging/query@2.1.0` takes. */
 export interface PackagingQueryTableProps {
   /** The transport the application supplies. */
   readonly transport: Transport;
@@ -338,7 +338,7 @@ export interface PackagingQueryTableProps {
   readonly onOutcome?: (outcome: Outcome<PackagingQueryResult>) => void;
 }
 
-/** The table for `wamn-wms:packaging/query@2.0.0`: the QueryTable over `PACKAGING_QUERY_TABLE`, in the table screen. */
+/** The table for `wamn-wms:packaging/query@2.1.0`: the QueryTable over `PACKAGING_QUERY_TABLE`, in the table screen. */
 export function PackagingQueryTable(props: PackagingQueryTableProps) {
   return (
     <TableScreen>
@@ -347,7 +347,7 @@ export function PackagingQueryTable(props: PackagingQueryTableProps) {
   );
 }
 
-/** The table definition of `wamn-wms:packaging/query@2.0.0`. */
+/** The table definition of `wamn-wms:packaging/query@2.1.0`. */
 export const PACKAGING_QUERY_TABLE = {
   name: "packaging",
   read: { route: PACKAGING_QUERY_ROUTE, request: PACKAGING_QUERY_REQUEST_FIELDS, result: PACKAGING_QUERY_RESULT_FIELDS },
@@ -376,10 +376,10 @@ export const PACKAGING_QUERY_TABLE = {
     { field: "updatedBy", label: "updated by", type: "uuid", role: "value" },
   ],
   actions: [
-    { operation: "wamn-wms:packaging/get@2.0.0", reference: "wamn-wms:packaging/get", label: "get", many: false, opens: "record", fill: [] },
-    { operation: "wamn-wms:inventory/adjust@2.0.0", reference: "wamn-wms:inventory/adjust", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
-    { operation: "wamn-wms:inventory/move@2.0.0", reference: "wamn-wms:inventory/move", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
-    { operation: "wamn-wms:inventory/split@2.0.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "sourcePackagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
+    { operation: "wamn-wms:packaging/get@2.1.0", reference: "wamn-wms:packaging/get", label: "get", many: false, opens: "record", fill: [] },
+    { operation: "wamn-wms:inventory/adjust@2.1.0", reference: "wamn-wms:inventory/adjust", label: "adjust", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryAdjustForm })) },
+    { operation: "wamn-wms:inventory/move@2.1.0", reference: "wamn-wms:inventory/move", label: "move", many: true, opens: "form", fill: [{ field: "id", input: ["value", "packagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventoryMoveForm })) },
+    { operation: "wamn-wms:inventory/split@2.1.0", reference: "wamn-wms:inventory/split", label: "split", many: true, opens: "form", fill: [{ field: "id", input: ["value", "sourcePackagingId"] }], revision: { field: "rowVersion", input: ["value", "expectedRowVersion"] }, form: () => import("./inventory.js").then((module) => ({ default: module.InventorySplitForm })) },
   ],
   childTables: [],
 } as const;

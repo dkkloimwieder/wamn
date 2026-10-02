@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-wms:location/create@2.0.0`. */
+/** Input for `wamn-wms:location/create@2.1.0`. */
 export interface LocationCreateRequest {
   /** `text` */
   idempotencyKey: string;
@@ -15,14 +15,14 @@ export interface LocationCreateRequest {
   requestId: string;
 }
 
-/** What `wamn-wms:location/create@2.0.0` calls its input members. */
+/** What `wamn-wms:location/create@2.1.0` calls its input members. */
 export const LOCATION_CREATE_REQUEST_FIELDS: FieldMap = {
   "idempotency_key": "idempotencyKey",
   "location_code": "locationCode",
   "request_id": "requestId",
 };
 
-/** Result of `wamn-wms:location/create@2.0.0`. */
+/** Result of `wamn-wms:location/create@2.1.0`. */
 export interface LocationCreateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -34,7 +34,7 @@ export interface LocationCreateResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-wms:location/create@2.0.0` calls its result members. */
+/** What `wamn-wms:location/create@2.1.0` calls its result members. */
 export const LOCATION_CREATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -43,13 +43,13 @@ export const LOCATION_CREATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:location/create@2.0.0`.
+ * Where the release publishes `wamn-wms:location/create@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const LOCATION_CREATE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:location/create@2.0.0",
+  operation: "wamn-wms:location/create@2.1.0",
   method: "POST",
   template: "/location/create",
   freshOnly: false,
@@ -74,7 +74,7 @@ export const LOCATION_CREATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:location/create@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:location/create@2.1.0` through a transport the application supplies. */
 export async function create(
   transport: Transport,
   items: readonly LocationCreateRequest[],
@@ -88,18 +88,18 @@ export async function create(
   );
 }
 
-/** Input for `wamn-wms:location/get@2.0.0`. */
+/** Input for `wamn-wms:location/get@2.1.0`. */
 export interface LocationGetRequest {
   /** `uuid` */
   id: Uuid;
 }
 
-/** What `wamn-wms:location/get@2.0.0` calls its input members. */
+/** What `wamn-wms:location/get@2.1.0` calls its input members. */
 export const LOCATION_GET_REQUEST_FIELDS: FieldMap = {
   "id": "id",
 };
 
-/** Result of `wamn-wms:location/get@2.0.0`. */
+/** Result of `wamn-wms:location/get@2.1.0`. */
 export interface LocationGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -111,7 +111,7 @@ export interface LocationGetResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-wms:location/get@2.0.0` calls its result members. */
+/** What `wamn-wms:location/get@2.1.0` calls its result members. */
 export const LOCATION_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -120,13 +120,13 @@ export const LOCATION_GET_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:location/get@2.0.0`.
+ * Where the release publishes `wamn-wms:location/get@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const LOCATION_GET_ROUTE: OperationRoute = {
-  operation: "wamn-wms:location/get@2.0.0",
+  operation: "wamn-wms:location/get@2.1.0",
   method: "GET",
   template: "/location/get",
   freshOnly: false,
@@ -150,7 +150,7 @@ export const LOCATION_GET_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:location/get@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:location/get@2.1.0` through a transport the application supplies. */
 export async function get(
   transport: Transport,
   items: readonly LocationGetRequest[],
@@ -164,7 +164,7 @@ export async function get(
   );
 }
 
-/** Input for `wamn-wms:location/query@2.0.0`. */
+/** Input for `wamn-wms:location/query@2.1.0`. */
 export interface LocationQueryRequest {
   /** `text`, omittable */
   cursor?: string;
@@ -179,7 +179,7 @@ export interface LocationQueryRequestFilter {
   locationCode?: string[];
 }
 
-/** What `wamn-wms:location/query@2.0.0` calls its input members. */
+/** What `wamn-wms:location/query@2.1.0` calls its input members. */
 export const LOCATION_QUERY_REQUEST_FIELDS: FieldMap = {
   "cursor": "cursor",
   "filter": {
@@ -191,7 +191,7 @@ export const LOCATION_QUERY_REQUEST_FIELDS: FieldMap = {
   "limit": "limit",
 };
 
-/** One row of `wamn-wms:location/query@2.0.0`. */
+/** One row of `wamn-wms:location/query@2.1.0`. */
 export interface LocationQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -203,7 +203,7 @@ export interface LocationQueryRow {
   readonly rowVersion: number;
 }
 
-/** Result of `wamn-wms:location/query@2.0.0`. */
+/** Result of `wamn-wms:location/query@2.1.0`. */
 export interface LocationQueryResult {
   /** The rows this page carries. */
   readonly item: readonly LocationQueryRow[];
@@ -211,7 +211,7 @@ export interface LocationQueryResult {
   readonly nextCursor: string | null;
 }
 
-/** What `wamn-wms:location/query@2.0.0` calls its result members. */
+/** What `wamn-wms:location/query@2.1.0` calls its result members. */
 export const LOCATION_QUERY_RESULT_FIELDS: FieldMap = {
   "item": {
     member: "item",
@@ -226,13 +226,13 @@ export const LOCATION_QUERY_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:location/query@2.0.0`.
+ * Where the release publishes `wamn-wms:location/query@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const LOCATION_QUERY_ROUTE: OperationRoute = {
-  operation: "wamn-wms:location/query@2.0.0",
+  operation: "wamn-wms:location/query@2.1.0",
   method: "GET",
   template: "/location/query",
   freshOnly: false,
@@ -255,7 +255,7 @@ export const LOCATION_QUERY_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:location/query@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:location/query@2.1.0` through a transport the application supplies. */
 export async function query(
   transport: Transport,
   items: readonly LocationQueryRequest[],
@@ -269,7 +269,7 @@ export async function query(
   );
 }
 
-/** Input for `wamn-wms:location/update@2.0.0`. */
+/** Input for `wamn-wms:location/update@2.1.0`. */
 export interface LocationUpdateRequest {
   /** `object` */
   change: LocationUpdateRequestChange;
@@ -286,7 +286,7 @@ export interface LocationUpdateRequestChange {
   locationCode?: string;
 }
 
-/** What `wamn-wms:location/update@2.0.0` calls its input members. */
+/** What `wamn-wms:location/update@2.1.0` calls its input members. */
 export const LOCATION_UPDATE_REQUEST_FIELDS: FieldMap = {
   "change": {
     member: "change",
@@ -299,7 +299,7 @@ export const LOCATION_UPDATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
 };
 
-/** Result of `wamn-wms:location/update@2.0.0`. */
+/** Result of `wamn-wms:location/update@2.1.0`. */
 export interface LocationUpdateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
@@ -311,7 +311,7 @@ export interface LocationUpdateResult {
   readonly rowVersion: number;
 }
 
-/** What `wamn-wms:location/update@2.0.0` calls its result members. */
+/** What `wamn-wms:location/update@2.1.0` calls its result members. */
 export const LOCATION_UPDATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
   "id": "id",
@@ -320,13 +320,13 @@ export const LOCATION_UPDATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-wms:location/update@2.0.0`.
+ * Where the release publishes `wamn-wms:location/update@2.1.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const LOCATION_UPDATE_ROUTE: OperationRoute = {
-  operation: "wamn-wms:location/update@2.0.0",
+  operation: "wamn-wms:location/update@2.1.0",
   method: "POST",
   template: "/location/update",
   freshOnly: false,
@@ -352,7 +352,7 @@ export const LOCATION_UPDATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-wms:location/update@2.0.0` through a transport the application supplies. */
+/** Invoke `wamn-wms:location/update@2.1.0` through a transport the application supplies. */
 export async function update(
   transport: Transport,
   items: readonly LocationUpdateRequest[],
