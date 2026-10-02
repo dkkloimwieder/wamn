@@ -241,6 +241,17 @@ describe("the app shell", () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/${PROD}/pallets`));
   });
 
+  it("shows only that no access has been granted when identity lists no environment", async () => {
+    const { state, fetch } = identity(false, []);
+    open("/", fetch);
+    await signIn();
+    expect(await screen.findByText("No access has been granted.")).toBeDefined();
+    expect(screen.queryByText("Stub app")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(state.calls).toEqual(["/password/environments"]);
+  });
+
   it("refuses an address that names an environment of another project", async () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:project-env:acme:gadgets:dev:k3m9x2p7/pallets", fetch);

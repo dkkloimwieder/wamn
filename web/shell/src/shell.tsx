@@ -470,7 +470,8 @@ function ofProject(aud: string, scope: Scope): boolean {
  * The page at `/`: identity lists the environments of the application's
  * project that the account can reach. With one, the account signs in to it at
  * once. With more, the one it chooses signs it in. The environment becomes
- * the first segment of the address.
+ * the first segment of the address. With none, the page shows only that no
+ * access has been granted, and names no project, environment or screen.
  */
 function ChooseEnvironment(props: {
   readonly title: string;
@@ -492,41 +493,44 @@ function ChooseEnvironment(props: {
       .then(() => navigate(props.home === "" ? `/${aud}` : `/${aud}/${props.home}`))
       .catch((error: unknown) => setTrouble(signInFailed(error)));
   };
+  const noAccess = () => credentials() !== null && reachable().length === 0;
   return (
-    <CardPage title={props.title}>
-      <SignInForm
-        trouble={null}
-        // eslint-disable-next-line solid/reactivity -- submit is the form's event callback, not a tracked scope.
-        submit={async (email, password) => {
-          const found = await environments(email, password, props.scope, props.options);
-          setReachable(found);
-          setCredentials({ email, password });
-          const only = found.length === 1 ? found[0] : undefined;
-          if (only !== undefined) {
-            enter(email, password, only.aud);
-          }
-        }}
-      />
-      <Show when={credentials()}>
-        {(held) => (
-          <FieldGroup>
-            <Show when={reachable().length === 0}>
-              <FieldError>This account reaches no environment of this application.</FieldError>
-            </Show>
-            <For each={reachable().length > 1 ? reachable() : []}>
-              {(environment) => (
-                <Button variant="outline" onClick={() => enter(held().email, held().password, environment.aud)}>
-                  {environment.org}/{environment.project}/{environment.env}
-                </Button>
-              )}
-            </For>
-            <Show when={trouble()}>{(text) => <FieldError>{text()}</FieldError>}</Show>
-          </FieldGroup>
-        )}
-      </Show>
-    </CardPage>
+    <Show when={!noAccess()} fallback={<CardPage title={NO_ACCESS}>{null}</CardPage>}>
+      <CardPage title={props.title}>
+        <SignInForm
+          trouble={null}
+          // eslint-disable-next-line solid/reactivity -- submit is the form's event callback, not a tracked scope.
+          submit={async (email, password) => {
+            const found = await environments(email, password, props.scope, props.options);
+            setReachable(found);
+            setCredentials({ email, password });
+            const only = found.length === 1 ? found[0] : undefined;
+            if (only !== undefined) {
+              enter(email, password, only.aud);
+            }
+          }}
+        />
+        <Show when={credentials()}>
+          {(held) => (
+            <FieldGroup>
+              <For each={reachable().length > 1 ? reachable() : []}>
+                {(environment) => (
+                  <Button variant="outline" onClick={() => enter(held().email, held().password, environment.aud)}>
+                    {environment.org}/{environment.project}/{environment.env}
+                  </Button>
+                )}
+              </For>
+              <Show when={trouble()}>{(text) => <FieldError>{text()}</FieldError>}</Show>
+            </FieldGroup>
+          )}
+        </Show>
+      </CardPage>
+    </Show>
   );
 }
+
+/** The whole page of an account with no audience (docs/plan/platform-ui.md §2.7, §4.8). */
+const NO_ACCESS = "No access has been granted.";
 
 /**
  * Everything below one environment. The keeper renews the session at once, so
