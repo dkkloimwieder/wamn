@@ -227,6 +227,36 @@ pub fn system_generation_state_sql() -> String {
     )
 }
 
+/// The one statement that records a fingerprint for every generation that
+/// holds a password before `registry.generation_passwords` existed.
+///
+/// The operator applies it once by hand, as a superuser, connected to the
+/// system database (owner ruling of 2026-10-02 on `wamn-zua8.3`). `pg_authid`
+/// is a cluster-wide catalog, so it covers every database of that cluster. The
+/// password is unknown, so the row holds the SHA-256 of the stored verifier.
+/// The provisioner reads only whether a row exists, and the next prepare of
+/// that generation replaces the row.
+pub fn backfill_generation_passwords_sql() -> String {
+    let parents = crate::WorkloadRoleFamily::ALL
+        .iter()
+        .map(|family| family.acl_role())
+        .chain([crate::identity_issuer::IDENTITY_ISSUER_ROLE])
+        .map(quote_literal)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "INSERT INTO registry.generation_passwords (role, sha256) \
+         SELECT DISTINCT generation.rolname, \
+                encode(sha256(convert_to(generation.rolpassword, 'UTF8')), 'hex') \
+           FROM pg_catalog.pg_authid generation \
+           JOIN pg_catalog.pg_auth_members edge ON edge.member = generation.oid \
+           JOIN pg_catalog.pg_roles parent ON parent.oid = edge.roleid \
+          WHERE parent.rolname IN ({parents}) \
+            AND generation.rolcanlogin AND generation.rolpassword IS NOT NULL \
+         ON CONFLICT (role) DO NOTHING;\n"
+    )
+}
+
 /// Remove the password fingerprint of generation `$1` after its retirement
 /// set `PASSWORD NULL`.
 pub fn forget_generation_password_sql() -> &'static str {

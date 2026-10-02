@@ -632,6 +632,13 @@ pub struct UpgradeSchemaArgs {
     /// Apply the pending files. Without it, the verb prints them and changes nothing.
     #[arg(long)]
     pub confirm: bool,
+
+    /// Also write the one statement that records a password fingerprint for
+    /// every generation prepared before system migration 0009. The operator
+    /// applies it once by hand, as a superuser, connected to the system
+    /// database (`docs/operations/gcp.md` §7).
+    #[arg(long, value_name = "PATH")]
+    pub emit_fingerprint_sql: Option<PathBuf>,
 }
 
 /// TLS credentials and the identity service endpoint for operator PAT issuance.
@@ -967,6 +974,13 @@ pub async fn delete_project_env(args: DeleteProjectEnvArgs) -> anyhow::Result<()
 
 /// Upgrade one installed database. The library prints each file.
 pub async fn upgrade_schema(args: UpgradeSchemaArgs) -> anyhow::Result<()> {
+    if let Some(path) = &args.emit_fingerprint_sql {
+        std::fs::write(
+            path,
+            wamn_control_provision::sql::backfill_generation_passwords_sql(),
+        )
+        .with_context(|| format!("write {}", path.display()))?;
+    }
     wamn_control::upgrade_schema::upgrade_schema(
         &wamn_control::upgrade_schema::UpgradeSchemaRequest {
             system_database_url: args.system_database_url,

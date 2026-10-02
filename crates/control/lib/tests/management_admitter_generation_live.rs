@@ -499,6 +499,28 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         BTreeSet::from([format!("database:{database}:{database}:CONNECT")]),
         "a generation carries CONNECT and nothing else"
     );
+    // A generation prepared before system migration 0009 has no fingerprint.
+    // The operator's one statement records it from `pg_authid`, for the
+    // LOGIN generation only, and the rotation below accepts it again.
+    catalog
+        .execute(sql::forget_generation_password_sql(), &[&role_a])
+        .await
+        .expect("remove A's fingerprint");
+    catalog
+        .batch_execute(&sql::backfill_generation_passwords_sql())
+        .await
+        .expect("apply the fingerprint statement");
+    let recorded: Vec<String> = catalog
+        .query(
+            "SELECT role FROM registry.generation_passwords ORDER BY role",
+            &[],
+        )
+        .await
+        .expect("read the fingerprints")
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(recorded, [role_a.clone()]);
     assert_eq!(
         direct_acl_set(&target, MANAGEMENT_ADMITTER_ROLE).await,
         expected_stable_acl(),

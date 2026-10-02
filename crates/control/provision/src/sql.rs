@@ -20,19 +20,19 @@ pub use database::{
     ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
 };
 
-pub(crate) use credentials::{
-    ensure_acl_role_sql, retire_acl_generation_sql, revoke_superuser_sql,
-};
 #[doc(inline)]
 pub use credentials::{
-    ensure_control_author_acl_role_sql, ensure_workload_acl_role_sql,
-    forget_generation_password_sql, generation_password_recorded_sql,
+    backfill_generation_passwords_sql, ensure_control_author_acl_role_sql,
+    ensure_workload_acl_role_sql, forget_generation_password_sql, generation_password_recorded_sql,
     normalize_workload_generation_membership_sql, prepare_control_author_generation_sql,
     prepare_workload_generation_sql, record_generation_password_sql,
     retire_control_author_generation_sql, retire_workload_generation_sql,
     system_generation_state_sql, terminate_control_author_generation_sessions_sql,
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
     workload_scope_lock_sql,
+};
+pub(crate) use credentials::{
+    ensure_acl_role_sql, retire_acl_generation_sql, revoke_superuser_sql,
 };
 
 #[doc(inline)]
