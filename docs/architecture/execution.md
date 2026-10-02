@@ -21,6 +21,13 @@ Publish folds each export's call graph into its released operation: the union of
 The host checks that grant once, before the entry runs, under the original caller.
 Component membership alone grants no permission to call an operation.
 
+An application host reads the status of its environment once for each request, before the auth policy of the route.
+It reads its row of `app_system.environment` through the guest login of its tenant, as `wamn_app`, and no row means active.
+While the status is `inactive`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
+A failed read answers 503 `authentication-unavailable`.
+The control host and an edge box read no status.
+The [status routes](#host-run-routes) of the control host write the row.
+
 An attachment with auth policy `none` has no principal, so it cannot write.
 If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release publish](../../crates/control/lib/src/publish_release/components.rs) refuses it.
 
@@ -90,6 +97,10 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:member/revoke@0.2.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while `org-admin` or `project-admin` covers the environment. |
 | `wamn-control:project-admin/grant@0.2.0` | Takes `project` and `principal_id` of an active member, and writes `project-admin` and a membership in every environment of the project. |
 | `wamn-control:project-admin/revoke@0.2.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
+| `wamn-control:environment/activate@0.2.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
+| `wamn-control:environment/inactivate@0.2.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
+| `wamn-control:project/activate@0.2.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
+| `wamn-control:project/inactivate@0.2.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
 
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
@@ -115,6 +126,10 @@ The control host reads that login from the mounted Secret `wamn-control-administ
 A grant commits its system rows first, and then writes the `users` row, with `admin` for `org-admin` and `project-admin`.
 A revoke or a deactivation removes the application rows first, and commits its system rows only when every environment is done.
 If an environment fails, the route answers `application_write_incomplete` with that `environment` and the environments that completed, and the system rows of a revoke stay as they were.
+The four status routes need `org-admin`, and they write `registry.project_envs.status` through the `control` family, which holds `UPDATE` on that column only.
+Each status route also writes the status into the one row of `app_system.environment` in each environment, with the same administration login.
+An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.
+Data, membership and role rows do not change with the status, and CDC stays attached.
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
@@ -376,6 +391,7 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 
 The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
 The configured environment supplies its current suffix.
+Identity offers and mints no audience of an environment whose `registry.project_envs.status` is `inactive`, so the shell does not list it.
 No historical suffix-uniqueness promise follows from that value.
 
 Session tokens use Ed25519 with `typ=wamn-session+jwt`.

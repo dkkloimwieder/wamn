@@ -594,17 +594,19 @@ Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps i
 The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
 
 Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
-These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, and `api_keys`.
+These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, `api_keys`, and `environment`.
+`environment` holds at most one row, the status of the environment that the host reads. No row means active.
 Each relation also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
 The file creates each history table with the tenant flag, so the table has a `tenant_id` column.
 Each history table has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
 `wamn_app` holds `INSERT` on the entry columns of `configurations_history`, because a guest writes only `configurations`.
 `wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
-The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles` and `permissions`.
-It holds `INSERT` on the entry columns of their four history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
+The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles`, `permissions` and `environment`.
+It holds `INSERT` on the entry columns of their five history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.effective_release_heads`, so a grant can read whether its release is the head.
-Project migration `0006` gives an installed database this read, and `0003` keeps the surface that installed databases recorded.
+Project migration `0007` creates `environment` in an installed database, and `0008` gives the family its write.
+`0006` and `0003` keep the surfaces that installed databases recorded.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
