@@ -1597,13 +1597,13 @@ Measured on `worktree-table` `7daecf82f` on 2026-10-02:
 - `web/shell/test/shell.test.tsx` fakes identity with a `fetch` stub and needs no browser. No browser test of the shell exists. The gallery's visual test runs a local Chrome through Playwright. `control_client_live` serves both route sets from local processes with no kind cluster.
 - `docs/plan/web-operator-client.md` says almost nothing about the shell. The shell rules are in `web/shell/README.md` and [execution](../architecture/execution.md).
 
-The commits depend on [§9](#9-questions-for-the-owner) questions 6 to 10. With the first option of each, they are:
+[§9](#9-questions-for-the-owner) questions 6 to 10, answered 2026-10-02, set the commits. Each one is green:
 
 1. No access. When `/password/environments` lists no audience, the sign in page shows only "No access has been granted.", with no environment, screen or other text, and mints no session.
-2. Application screens. Each `ShellScreen` and `ShellAction` names its operation reference. The `Session` reads `permission.mine` once after sign in, and the navigation, the actions and the routes show only what the caller holds, or every one for `admin`. An address of a screen the caller does not hold shows the no page text. The route tables of Receiving and WMS name their operations.
+2. Application screens. Each `ShellScreen` and `ShellAction` names its operation reference, which the route table takes from the generated `*_ROUTE` constant. The `Session` reads `permission.mine` once after sign in, and the navigation, the actions and the routes show only what the caller holds, or every one for `admin`. An address of a screen the caller does not hold shows the no page text. The route tables of Receiving and WMS name their operations.
 3. Application administration. Each application shell has an Administration section with `RoleGrid` and `UserGrid`, shown only when `permission.mine` answers `admin`.
-4. Control destinations. A control page in `web/control` signs in with no project, so identity lists the control audience of each org the caller administers. It reads `control.mine` once and shows the org screens only for `org-admin`, and the project screens only for the projects that `control.mine` names.
-5. Browser test. An ignored test serves an application host and a control host from local processes, as `control_client_live` does, and drives a headless Chrome through sign in, no access, a hidden screen, the application grids and the control screens.
+4. Control destinations. Identity lists the control audience `urn:wamn:control:<org>` of the shell's org when the caller holds `org-admin` or `project-admin` there, also when the request names a project. The shell offers it after sign in as Control, beside the environments. Under a control audience the shell reads `control.mine` once and shows the org destination only for `org-admin`, and a project destination only for each project that `control.mine` names. The org and project screens behind them are issue 8 of this epic.
+5. Browser test. An ignored test serves an application host and a control host from local processes, as `control_client_live` does, and drives a headless Chrome through sign in, no access, a hidden screen, the application grids and the control destinations.
 6. Documentation: the shell README address table and props, execution for the shell rules, and `web-operator-client.md`.
 
 Presentation is never authority. Every route repeats its own check, and a refusal still shows its contract text.
@@ -1686,12 +1686,8 @@ New-project grant materialization and deterministic empty-environment copy from 
 3. Issue 3, answered 2026-10-01. The shell text "No access has been granted." lands in issue 7 (owner ruling 2026-10-02, which corrected issue 6 to issue 7). The exit of issue 3 stays an invitation with no access, whose login lists no environment.
 4. Issue 5, answered 2026-10-01 with option A. Issue 5 adds the contract files of the application routes and the generated TypeScript client, and tests the routes through that client. Issue 6 starts from that client.
 5. Issue 6, answered 2026-10-02 with option A. Application `user.list` answers `admin_covered` for each user, so the grid shows the covering grant before any click. A route that changes its result shape changes its version, so the version of the control contract moves with it.
-6. Issue 7, open. Where do the control destinations live?
-   - A. A new page `web/control` signs in with no project and lists the control audience of each org. It needs a public host for the control hostgroup on the edge, which is a deployment change.
-   - B. Each application shell also lists its org's control audience and shows the control screens under it. Identity then lists the control audience when the request names a project, and the shell proxies `/api` to the control host for that audience.
-7. Issue 7, open. No org or project screen exists. Does issue 7 build the org and project screens over `@wamn/control-org-client`, or only the destinations, with the screens filed as their own issue?
-8. Issue 7, open. How does the shell know the operation of a screen?
-   - A. Each `ShellScreen` and `ShellAction` names its operation reference, written in the route table from the generated `*_ROUTE` constant.
-   - B. The generator writes the operation of each screen beside its label in `components/labels.js`.
-9. Issue 7, open. Do `RoleGrid` and `UserGrid` go into each application shell as an Administration section that only `admin` sees, or into the control page under each project?
-10. Issue 7, open. Is the browser test local processes with a headless Chrome, as above, or a kind run of the edge after the cutover?
+6. Issue 7, answered 2026-10-02 with option B. The accepted §4.8 shell is one shell with audiences, and Control is the audience `urn:wamn:control:<org>` that it offers after sign in, not a second page. The edge routing to the control host is a deployment change, filed for after the cutover, and issue 7 does not wait for it.
+7. Issue 7, answered 2026-10-02. Issue 7 builds the entry point only, as its list says. The org and project screens are issue 8 of this epic, specified after issue 7 closes.
+8. Issue 7, answered 2026-10-02 with option A. The route table names the operation of each screen from the generated route constants, with no generator change.
+9. Issue 7, answered 2026-10-02. `RoleGrid` and `UserGrid` are an Administration section in each application, which only `admin` sees.
+10. Issue 7, answered 2026-10-02. The browser test runs local processes and a headless Chrome, as `control_client_live` does.
