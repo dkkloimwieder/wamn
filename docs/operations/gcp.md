@@ -402,6 +402,16 @@ gcloud auth print-access-token | docker login -u oauth2accesstoken --password-st
 
 The nodes pull these images as `wamn-nodes`, which has `roles/artifactregistry.reader`, so no pull Secret exists.
 
+The repository `us-central1-docker.pkg.dev/wamn-dev/wamn-kind` holds the test pushes of the kind run of `upgrade-environment` (`wamn-m511.7`). Test pushes never go into `wamn`, because its tags are immutable and the live environments read it. `wamn-kind` is private, has immutable tags and deletes every version older than 7 days. Only the environment file of the kind stack names it. On 2026-10-02 the create and the policy took 4 seconds:
+
+```bash
+gcloud artifacts repositories create wamn-kind --project wamn-dev --location us-central1 \
+  --repository-format=docker --description="kind test pushes of upgrade-environment" --immutable-tags
+echo '[{"name":"delete-older-than-7-days","action":{"type":"Delete"},"condition":{"tagState":"any","olderThan":"7d"}}]' > policy.json
+gcloud artifacts repositories set-cleanup-policies wamn-kind --project wamn-dev --location us-central1 \
+  --policy=policy.json --no-dry-run
+```
+
 ```bash
 R=us-central1-docker.pkg.dev/wamn-dev/wamn
 for image in wamn-host:src-<identity> wamn-identity:src-<identity>; do

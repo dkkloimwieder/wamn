@@ -315,6 +315,7 @@ Owner rulings of 2026-09-27:
 - Bindings (2026-10-02, `wamn-m511.5`): stage 7 copies each binding of the current release to the new release id and records the copy. A binding is environment state, not an upgrade input.
 - Gate credentials (2026-10-02, `wamn-m511.5`): each run prepares the next control-author and management-admitter generation and issues a new management-author PAT through the PAT Job. Stage 11 retires the old generation and revokes only the older management-author PATs of the environment.
 - Upgrade kind run (2026-10-02, `wamn-m511.7`): the kind run covers stages 1 to 9, with no switches, no MinIO and no second edge. Stages 10 to 12 are tested once, in the first live run on `wamn-dev`. The kind result is reported before the live run, and the live run waits for the word of the owner.
+- Kind registry (2026-10-02, `wamn-m511.7`): the kind run pushes to a new private repository `us-central1-docker.pkg.dev/wamn-dev/wamn-kind`, with immutable tags and a cleanup policy that deletes versions older than 7 days. Test pushes never go into `wamn`, because its tags are immutable and the live environments read it. The environment file of the kind stack names it, and nothing else changes. `gcp.md` section 3.4 records it.
 
 ## 6. Benchmark
 
