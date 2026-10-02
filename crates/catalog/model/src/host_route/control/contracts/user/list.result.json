@@ -24,6 +24,12 @@
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "users[].org_admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
     }
   ]
 }

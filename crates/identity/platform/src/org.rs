@@ -356,7 +356,9 @@ const DROP_ORG_ROLES_SQL: &str = "DELETE FROM identity.org_roles \
 const DEACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'inactive' \
     WHERE principal_id = $1::text::uuid AND org = $2 AND status <> 'inactive'";
 
-const ORG_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, m.status \
+const ORG_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, m.status, \
+    EXISTS (SELECT 1 FROM identity.org_roles o \
+        WHERE o.principal_id = p.id AND o.org = $1 AND o.role = $2) \
     FROM identity.org_memberships m JOIN identity.principals p ON p.id = m.principal_id \
     WHERE m.org = $1 ORDER BY p.email";
 
@@ -476,6 +478,8 @@ pub struct OrgUser {
     pub display_name: String,
     /// The org-local status: `active` or `inactive`.
     pub status: String,
+    /// Whether the user holds `org-admin` in the org.
+    pub org_admin: bool,
 }
 
 /// The active and inactive members of `org`, by email.
@@ -485,7 +489,7 @@ pub async fn org_users(
 ) -> Result<Vec<OrgUser>, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     client
-        .query(ORG_USERS_SQL, &[&org])
+        .query(ORG_USERS_SQL, &[&org, &ORG_ADMIN_ROLE])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
@@ -495,6 +499,7 @@ pub async fn org_users(
                 email: row.try_get(1).map_err(|error| database_error(&error))?,
                 display_name: row.try_get(2).map_err(|error| database_error(&error))?,
                 status: row.try_get(3).map_err(|error| database_error(&error))?,
+                org_admin: row.try_get(4).map_err(|error| database_error(&error))?,
             })
         })
         .collect()

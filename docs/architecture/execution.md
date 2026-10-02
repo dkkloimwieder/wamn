@@ -77,7 +77,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:user-role/grant@0.2.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
 | `wamn-control:user-role/revoke@0.2.0` | Takes `user_id` and `role`, and takes the role. An `admin` revoke refuses while the user holds `project-admin` in the project. Answers `revoked`. |
 | `wamn-control:control/mine@0.2.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
-| `wamn-control:user/list@0.2.0` | `users`: each member of the org with `principal_id`, `email`, `display_name` and the org-local `status`. |
+| `wamn-control:user/list@0.2.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
 | `wamn-control:user/invite@0.2.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
 | `wamn-control:user/activate@0.2.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
 | `wamn-control:user/deactivate@0.2.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |

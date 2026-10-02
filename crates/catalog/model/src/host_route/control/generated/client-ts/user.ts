@@ -296,6 +296,8 @@ export interface UserListResultUsers {
   readonly displayName: string;
   /** `text` */
   readonly email: string;
+  /** `boolean` */
+  readonly orgAdmin: boolean;
   /** `uuid` */
   readonly principalId: Uuid;
   /** `text` */
@@ -309,6 +311,7 @@ export const USER_LIST_RESULT_FIELDS: FieldMap = {
     fields: {
       "display_name": "displayName",
       "email": "email",
+      "org_admin": "orgAdmin",
       "principal_id": "principalId",
       "status": "status",
     },

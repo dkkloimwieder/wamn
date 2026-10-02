@@ -35,7 +35,11 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
       status: "completed",
       value: { orgAdmin: false, projects: [{ project: "billing", projectAdmin: true }] },
     });
-    expect(await user.list(transport, [{}])).toMatchObject({ status: "refused", code: "permission-denied" });
+    expect(await user.list(transport, [{}])).toMatchObject({
+      status: "completed",
+      value: { users: [{ principalId: annId }, { principalId: bossId }, { principalId: catId }] },
+    });
+    expect(await project.list(transport, [{}])).toMatchObject({ status: "refused", code: "permission-denied" });
     expect(await member.list(transport, [{ project: "billing" }])).toMatchObject({
       status: "completed",
       value: {
@@ -53,9 +57,9 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
       status: "completed",
       value: {
         users: [
-          { principalId: annId, email: "ann@example.test", displayName: "Ann", status: "active" },
-          { principalId: bossId, email: "boss@example.test", displayName: "Boss", status: "active" },
-          { principalId: catId, email: "cat@example.test", displayName: "Cat", status: "active" },
+          { principalId: annId, email: "ann@example.test", displayName: "Ann", status: "active", orgAdmin: false },
+          { principalId: bossId, email: "boss@example.test", displayName: "Boss", status: "active", orgAdmin: true },
+          { principalId: catId, email: "cat@example.test", displayName: "Cat", status: "active", orgAdmin: false },
         ],
       },
     });

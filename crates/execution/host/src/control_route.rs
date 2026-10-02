@@ -34,7 +34,9 @@ use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invit
 use wamn_platform_identity::application::{
     ApplicationUser, environment_tenant, remove_admin, remove_user, write_admin, write_user,
 };
-use wamn_platform_identity::control::{is_org_admin, is_project_admin, org_projects};
+use wamn_platform_identity::control::{
+    control_projects, is_org_admin, is_project_admin, org_projects,
+};
 use wamn_platform_identity::org::{
     MemberGrants, deactivate_org_membership, grant_member, grant_org_admin, grant_project_admin,
     invite_member, org_environments, org_users, project_envs, project_members,
@@ -173,19 +175,27 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        let project = match attachment.route.authority {
-            HostRouteAuthority::OrgAdmin => None,
-            HostRouteAuthority::ProjectAdmin => Some(parse::<ProjectScope>(payload)?.project),
-            authority => {
+        let admitted = match attachment.route.authority {
+            HostRouteAuthority::OrgAdmin => self.admits(self.control, caller, None).await?,
+            HostRouteAuthority::ProjectAdmin => {
+                let project = parse::<ProjectScope>(payload)?.project;
+                self.admits(self.control, caller, Some(&project)).await?
+            }
+            // A read for every control caller: `org-admin`, or `project-admin`
+            // of a project of the org.
+            HostRouteAuthority::Member => {
+                self.admits(self.control, caller, None).await?
+                    || !control_projects(self.control, caller, self.org)
+                        .await?
+                        .is_empty()
+            }
+            authority @ HostRouteAuthority::Admin => {
                 return Err(Refusal::Failed(anyhow::anyhow!(
                     "the control host does not admit the authority {authority:?}"
                 )));
             }
         };
-        if !self
-            .admits(self.control, caller, project.as_deref())
-            .await?
-        {
+        if !admitted {
             return Err(denied(attachment));
         }
         match attachment.route.handler {

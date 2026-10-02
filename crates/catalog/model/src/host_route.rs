@@ -155,7 +155,9 @@ pub enum HostHandler {
 /// Who may call one host route, beside a valid credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostRouteAuthority {
-    /// Every authenticated caller.
+    /// Every authenticated caller. On the control set, that is a holder of
+    /// `org-admin` in the token's org or of `project-admin` in one of its
+    /// projects, and the handler checks it again.
     Member,
     /// A holder of the application role `admin`.
     Admin,
@@ -262,7 +264,7 @@ const ROUTES: &[HostRoute] = &[
         set: HostRouteSet::Control,
         operation: "user.list",
         type_: OperationType::Get,
-        authority: HostRouteAuthority::OrgAdmin,
+        authority: HostRouteAuthority::Member,
         handler: HostHandler::UserList,
     },
     HostRoute {
