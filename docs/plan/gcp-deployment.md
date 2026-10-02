@@ -309,6 +309,8 @@ Owner rulings of 2026-09-27:
 - Generation retirement (2026-10-02, `wamn-ld93.25`): a retire needs a live session of the replacement generation. The gate service runs with generation `b` while both retire commands run, and then it stops. A long-lived gate deployment removes this step.
 - WMS PATs (2026-10-02): each environment holds one current PAT. The older WMS management-author PATs `035c1540a0cedefc` and `8c047af277dd545a` are revoked, and `fdae8133ac59ae6d` stays. The ruling covers management-author PATs only, the PATs that upgrades issue. A PAT of a user is not revoked by an upgrade (`docs/plan/upgrade-environment.md` stage 11).
 - End-to-end check (2026-10-02): the owner runs B11 and reports the result. B12 and B13 follow.
+- Tool test fixture (2026-10-02, `wamn-m511.1`): the kind test of `tools/registry-image-archive` tests the tools, not the host. A small image that `tools/journey-image-cache` builds and relabels is the fixture. The guest is checked in its archive, because no node imports a guest.
+- Upgrade issues 6 to 9 (2026-10-02, `wamn-m511`): they run in order on `upgrade-env`, and each closes on its commit with its times. The live run of issue 9 on `wamn-dev` waits for the word of the owner.
 
 ## 6. Benchmark
 
