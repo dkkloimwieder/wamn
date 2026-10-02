@@ -3,7 +3,7 @@ Its command `sample.record` takes one item per sample, `{"request_id", "value": 
 The edge sample key is the idempotency key, so a repeated forward answers the first `sample_id` and records no second row.
 The stateless command `sample.read` is the device operation of an edge box: it turns one frame into one sample and declares no SQL.
 
-[Manifest](wamn.json): Package identity and declared operations.
+[Manifest](wamn.k): Package identity and declared operations. The generator compiles it to `generated/wamn.json`.
 [Migrations](migrations/): Authored application schema.
 [Command SQL](command/): The record statement of `sample.record`. The generated codec claims its key in the platform write log.
 [Data access](data/): SQL-backed operation implementations.

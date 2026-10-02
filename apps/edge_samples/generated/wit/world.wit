@@ -6,7 +6,7 @@ package edge-samples:generated;
 world generated {
   import wamn:postgres/types@0.3.0;
   import wamn:postgres/statements@0.3.0;
-  export edge-samples:sample/read@2.0.0;
-  export edge-samples:sample/%record@2.0.0;
-  export edge-samples:sample/get@2.0.0;
+  export edge-samples:sample/read@2.1.0;
+  export edge-samples:sample/%record@2.1.0;
+  export edge-samples:sample/get@2.1.0;
 }

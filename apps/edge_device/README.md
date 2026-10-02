@@ -4,7 +4,7 @@ Its one command `sample.read` is stateless: it takes `{"request_id", "value": {"
 The edge box stores the answer as the sample and forwards it to [`edge_samples`](../edge_samples/README.md).
 `wamn dev edge-bundle` writes the edge release bundle from a developer session of this package.
 
-[Manifest](wamn.json): Package identity and the declared command.
+[Manifest](wamn.k): Package identity and the declared command. The generator compiles it to `generated/wamn.json`.
 [Generated output](generated/): Derived contracts and client code.
 [Component](component/): Application guest.
 [Publication](publication/): The session route `/sample/read`.

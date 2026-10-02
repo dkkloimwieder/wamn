@@ -4,5 +4,5 @@ package edge-device:generated;
 
 /// Every operation of the package. An authored world includes it.
 world generated {
-  export edge-device:sample/read@2.0.0;
+  export edge-device:sample/read@2.1.0;
 }

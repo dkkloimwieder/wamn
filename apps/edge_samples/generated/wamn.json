@@ -1,8 +1,8 @@
 {
   "package": {
     "id": "edge_samples",
-    "version": "2.0.0",
-    "predecessor_version": "1.0.0"
+    "version": "2.1.0",
+    "predecessor_version": "2.0.0"
   },
   "required_platform_policy_contract": {
     "id": "edge_samples_data_access",
@@ -36,22 +36,14 @@
     "sample.record": {
       "type": "command",
       "visibility": "public",
-      "label": "Record a sample",
-      "description": "One reading that an edge box forwards. The edge sample key is the idempotency key.",
       "permission": "sample.record",
-      "idempotent_by": "claim",
-      "canonicalization": {
-        "excluded_fields": [
-          "request_id",
-          "value.idempotency_key"
-        ]
-      },
+      "connection": "postgres",
       "input": {
+        "raw_body_maximum": 1048576,
         "envelope": {
           "minimum": 1,
           "maximum": 100
         },
-        "raw_body_maximum": 1048576,
         "fields": [
           {
             "path": "request_id",
@@ -105,23 +97,22 @@
         }
       },
       "constraint_errors": {},
-      "connection": "postgres",
       "relations": [
         {
           "schema": "edge_samples",
           "table": "sample",
+          "select_fields": [
+            "id"
+          ],
           "insert_fields": [
             "captured_at",
             "frame"
           ],
-          "select_fields": [
-            "id"
-          ],
           "update_fields": [],
+          "lock": false,
           "constraints": [
             "sample_id_pkey"
-          ],
-          "lock": false
+          ]
         }
       ],
       "statements": {
@@ -131,34 +122,40 @@
           "parameters": [
             {
               "name": "frame",
-              "nullable": false,
-              "type": "text"
+              "type": "text",
+              "nullable": false
             },
             {
               "name": "captured_at",
-              "nullable": false,
-              "type": "timestamptz"
+              "type": "timestamptz",
+              "nullable": false
             }
           ],
           "row": [
             {
               "name": "id",
-              "nullable": false,
-              "type": "uuid"
+              "type": "uuid",
+              "nullable": false
             }
           ]
         }
       },
       "transaction": "explicit_per_input",
-      "automatic_retry": false
+      "automatic_retry": false,
+      "idempotent_by": "claim",
+      "canonicalization": {
+        "excluded_fields": [
+          "request_id",
+          "value.idempotency_key"
+        ]
+      },
+      "label": "Record a sample",
+      "description": "One reading that an edge box forwards. The edge sample key is the idempotency key."
     },
     "sample.read": {
       "type": "command",
       "visibility": "public",
-      "label": "Read a sample",
-      "description": "The device operation of an edge box. It turns one frame from the serial device into the sample that the box stores and forwards. It declares no SQL.",
       "permission": "sample.read",
-      "idempotent_by": "stateless",
       "input": {
         "fields": [
           {
@@ -202,7 +199,10 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {}
+      "error_details": {},
+      "idempotent_by": "stateless",
+      "label": "Read a sample",
+      "description": "The device operation of an edge box. It turns one frame from the serial device into the sample that the box stores and forwards. It declares no SQL."
     }
   },
   "connections": [

@@ -1,1 +1,1 @@
-{"contract":"edge_device_data_access","manifest_sha256":"sha256:4d00fdad10c67aaeababf33aefda5bae99c57b75cf7e477dd680623426d9aaa7","package":"edge_device@2.0.0","relations":[],"role":"wamn_app","schemas":[]}
+{"contract":"edge_device_data_access","manifest_sha256":"sha256:55d2168760bae14edfbebe85bdab0723e95d64e7db7d6c982773553730ce934b","package":"edge_device@2.1.0","relations":[],"role":"wamn_app","schemas":[]}

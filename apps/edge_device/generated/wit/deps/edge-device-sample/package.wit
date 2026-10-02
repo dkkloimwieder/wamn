@@ -1,4 +1,4 @@
-package edge-device:sample@2.0.0;
+package edge-device:sample@2.1.0;
 
 interface read {
   use wamn:node/types@0.1.0.{emission, node-context, node-error};

@@ -20,7 +20,7 @@ pub const SAMPLE_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `edge-device:sample/read@2.0.0`.
+/// Input for `edge-device:sample/read@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleReadRequest {
     /// `text`
@@ -37,7 +37,7 @@ pub struct SampleReadRequestValue {
     pub frame: String,
 }
 
-/// Result of `edge-device:sample/read@2.0.0`.
+/// Result of `edge-device:sample/read@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleReadResult {
     /// `timestamptz`
@@ -46,7 +46,7 @@ pub struct SampleReadResult {
     pub frame: String,
 }
 
-/// Input descriptors for `edge-device:sample/read@2.0.0`.
+/// Input descriptors for `edge-device:sample/read@2.1.0`.
 pub const SAMPLE_READ_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -68,7 +68,7 @@ pub const SAMPLE_READ_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `edge-device:sample/read@2.0.0`.
+/// Result descriptors for `edge-device:sample/read@2.1.0`.
 pub const SAMPLE_READ_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "captured_at",
@@ -168,13 +168,13 @@ pub const SAMPLE_READ_REQUIRES_COMPOSITION: bool = false;
 pub const SAMPLE_READ_REPLAY: Option<&str> = None;
 pub const SAMPLE_READ_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const SAMPLE_READ_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `edge-device:sample/read@2.0.0`.
-pub const SAMPLE_READ_GRANT: &str = "edge-device:sample/read@2.0.0";
+/// The grant a caller presents to invoke `edge-device:sample/read@2.1.0`.
+pub const SAMPLE_READ_GRANT: &str = "edge-device:sample/read@2.1.0";
 
-/// Typed refusals `edge-device:sample/read@2.0.0` declares.
+/// Typed refusals `edge-device:sample/read@2.1.0` declares.
 pub const SAMPLE_READ_ERRORS: &[&str] = &["internal_error", "invalid_input", "permission_denied"];
 
-/// Where the release publishes `edge-device:sample/read@2.0.0`.
+/// Where the release publishes `edge-device:sample/read@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -186,7 +186,7 @@ pub fn read_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `edge-device:sample/read@2.0.0` through a bound client.
+/// Invoke `edge-device:sample/read@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

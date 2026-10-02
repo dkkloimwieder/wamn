@@ -1,8 +1,8 @@
 {
   "package": {
     "id": "edge_device",
-    "version": "2.0.0",
-    "predecessor_version": "1.0.0"
+    "version": "2.1.0",
+    "predecessor_version": "2.0.0"
   },
   "required_platform_policy_contract": {
     "id": "edge_device_data_access",
@@ -13,10 +13,7 @@
     "sample.read": {
       "type": "command",
       "visibility": "public",
-      "label": "Read a sample",
-      "description": "The device operation of an edge box. It turns one frame from the serial device into the sample that the box stores and forwards. It declares no SQL.",
       "permission": "sample.read",
-      "idempotent_by": "stateless",
       "input": {
         "fields": [
           {
@@ -60,7 +57,10 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {}
+      "error_details": {},
+      "idempotent_by": "stateless",
+      "label": "Read a sample",
+      "description": "The device operation of an edge box. It turns one frame from the serial device into the sample that the box stores and forwards. It declares no SQL."
     }
   },
   "connections": [],
