@@ -342,6 +342,13 @@ pub fn print_reconciled(
             identity.user_rows_written,
         );
     }
+    if identity.admin_rows_written > 0 {
+        let written = if dry_run { "would write" } else { "wrote" };
+        println!(
+            "  {written} admin rows tenant={tenant:?} user={}",
+            identity.admin_rows_written
+        );
+    }
     if identity.user_rows_removed > 0 {
         let removed = if dry_run { "would remove" } else { "removed" };
         println!(

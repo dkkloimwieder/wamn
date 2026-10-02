@@ -397,6 +397,9 @@ struct TenantIdentitySource {
     platform_domain: Option<String>,
     services: Vec<ServicePrincipal>,
     users: Vec<UserPrincipal>,
+    /// The members of `users` who hold `project-admin` in the project, which
+    /// every `org-admin` of the org holds too (docs/plan/platform-ui.md §4.4).
+    admins: BTreeSet<String>,
 }
 
 /// Every service principal holding a role in one project, with the deployment
@@ -422,6 +425,16 @@ const TENANT_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_n
      WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
        AND p.type = 'user' AND p.status = 'active' \
      ORDER BY p.email";
+
+/// Every user member of ONE project environment who holds `project-admin` in
+/// its project.
+const TENANT_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text \
+     FROM identity.project_roles AS r \
+     JOIN identity.principals AS p ON p.id = r.principal_id \
+     JOIN identity.project_env_memberships AS m \
+       ON m.principal_id = r.principal_id AND m.org = r.org AND m.project = r.project \
+     WHERE r.org = $1 AND r.project = $2 AND m.env = $3 AND r.role = $4 \
+       AND p.type = 'user' AND p.status = 'active'";
 
 async fn read_tenant_identity_source(
     system_database_url: &str,
@@ -465,10 +478,26 @@ async fn read_tenant_identity_source(
                 display_name: row.get(2),
             })
             .collect();
+        let admins = client
+            .query(
+                TENANT_IDENTITY_ADMINS_SQL,
+                &[
+                    &org,
+                    &project,
+                    &env,
+                    &wamn_platform_identity::control::PROJECT_ADMIN_ROLE,
+                ],
+            )
+            .await
+            .context("read the project environment's administrators")?
+            .into_iter()
+            .map(|row| row.get(0))
+            .collect();
         Ok::<_, anyhow::Error>(TenantIdentitySource {
             platform_domain,
             services,
             users,
+            admins,
         })
     }
     .await;
@@ -491,6 +520,9 @@ pub struct TenantIdentityOutcome {
     /// User rows removed because their user has no membership in this
     /// environment any more, or is no longer an active user.
     pub user_rows_removed: usize,
+    /// `admin` rows written for administrators that had none, which repairs
+    /// an interrupted grant and the grants of `wamn-ctl invite`.
+    pub admin_rows_written: usize,
 }
 
 /// Install the tenant's `app_system` schema and its identity rows
@@ -618,12 +650,34 @@ async fn converge_tenant_identity(
         .collect();
     outcome.user_rows_written = missing_users.len();
     outcome.user_rows_removed = stale_users.len();
+    let present_admins: BTreeSet<String> = if app_schema_present {
+        client
+            .query(
+                "SELECT user_id::text FROM app_system.user_roles \
+                  WHERE tenant_id = $1 AND role_name = $2",
+                &[&tenant_id, &wamn_project_state::ADMIN_ROLE],
+            )
+            .await
+            .context("read the tenant's admin rows")?
+            .into_iter()
+            .map(|row| row.get(0))
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
+    let missing_admins: Vec<&UserPrincipal> = source
+        .users
+        .iter()
+        .filter(|user| source.admins.contains(&user.id) && !present_admins.contains(&user.id))
+        .collect();
+    outcome.admin_rows_written = missing_admins.len();
     if !apply
         || (app_schema_present
             && missing_platform.is_empty()
             && missing_services.is_empty()
             && missing_users.is_empty()
-            && stale_users.is_empty())
+            && stale_users.is_empty()
+            && missing_admins.is_empty())
     {
         return Ok(outcome);
     }
@@ -666,7 +720,11 @@ async fn converge_tenant_identity(
         .batch_execute(&platform_rows)
         .await
         .context("write the tenant's platform principal rows")?;
-    if !missing_services.is_empty() || !missing_users.is_empty() || !stale_users.is_empty() {
+    if !missing_services.is_empty()
+        || !missing_users.is_empty()
+        || !stale_users.is_empty()
+        || !missing_admins.is_empty()
+    {
         transaction
             .batch_execute(&bind_platform_principal_sql(
                 PlatformComponent::Provisioning,
@@ -709,6 +767,20 @@ async fn converge_tenant_identity(
                 )
                 .await
                 .with_context(|| format!("write the user row of principal {}", user.id))?;
+        }
+        for user in &missing_admins {
+            let principal_id: wamn_platform_identity::PrincipalId = user.id.parse()?;
+            wamn_platform_identity::application::write_admin(
+                &transaction,
+                tenant_id,
+                wamn_platform_identity::application::ApplicationUser {
+                    principal_id: &principal_id,
+                    email: &user.email,
+                    display_name: &user.display_name,
+                },
+            )
+            .await
+            .with_context(|| format!("write the admin row of principal {}", user.id))?;
         }
     }
     transaction

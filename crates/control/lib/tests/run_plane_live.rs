@@ -436,6 +436,43 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
     )
     .await
     .expect("remove the fixture role");
+
+    // A project admin of the project gets its admin row from the reconcile,
+    // which repairs an interrupted grant (docs/plan/platform-ui.md §4.4),
+    // and a second reconcile writes none.
+    system_su
+        .execute(
+            "INSERT INTO identity.project_roles (principal_id, org, project, role) \
+             VALUES ($1::text::uuid, 'acme', 'billing', 'project-admin')",
+            &[&FIXTURE_USER_ID],
+        )
+        .await
+        .expect("make the fixture user a project admin");
+    assert_eq!(reconcile().await.tenant_identity.admin_rows_written, 1);
+    let admin: i64 = su
+        .query_one(
+            "SELECT count(*) FROM app_system.user_roles \
+             WHERE tenant_id = 't1' AND user_id = $1::text::uuid AND role_name = 'admin'",
+            &[&FIXTURE_USER_ID],
+        )
+        .await
+        .expect("count the admin rows")
+        .get(0);
+    assert_eq!(admin, 1);
+    assert_eq!(reconcile().await.tenant_identity.admin_rows_written, 0);
+    system_su
+        .execute(
+            "DELETE FROM identity.project_roles WHERE principal_id = $1::text::uuid",
+            &[&FIXTURE_USER_ID],
+        )
+        .await
+        .expect("remove the fixture project admin");
+    su.execute(
+        "DELETE FROM app_system.user_roles WHERE tenant_id = 't1' AND user_id = $1::text::uuid",
+        &[&FIXTURE_USER_ID],
+    )
+    .await
+    .expect("remove the fixture admin row");
 }
 
 fn schema() -> BareSchemaName {
