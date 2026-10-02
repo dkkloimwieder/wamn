@@ -21,13 +21,18 @@ use crate::component_declaration::{
 use crate::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use crate::push_component::{AdmitComponentRequest, ComponentAdmission, admit_component};
 use crate::reconcile_package_data_access;
-use anyhow::{Context as _, anyhow};
+use crate::release_composition::{
+    ComponentBuildPlan, CompositionError, CompositionErrorKind, PackageInput,
+    SelectedComponentArtifact, SelectedPaletteArtifact, WiringInput, load_wirings,
+    select_component_artifacts, select_palette_artifacts,
+};
+use anyhow::Context as _;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::NoTls;
 use wamn_authoring_model::GateResult;
-use wamn_catalog::{PackageCoordinate, WiringDocument};
+use wamn_catalog::PackageCoordinate;
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_generator::{MaterializeMode, PackageManifest};
 use wamn_schema_introspection::ir::{CatalogIr, Table};
@@ -53,7 +58,6 @@ const RUN_SCHEMA: &str = "wamn_run";
 pub const BASE_PIN_STALE_NOTICE: &str = "pin stale";
 pub(super) const PACKAGE_ATTACHMENTS: &str = "publication/attachments.json";
 pub(super) const PACKAGE_COMPONENTS: &str = "publication/components";
-const PACKAGE_WIRINGS: &str = "publication/wirings";
 pub(super) const NODE_CAPABILITY: &str = "wamn:node";
 pub(super) const POSTGRES_CAPABILITY: &str = "wamn:postgres";
 
@@ -163,65 +167,25 @@ impl fmt::Display for ProductionDevStageError {
     }
 }
 
+impl From<CompositionError> for ProductionDevStageError {
+    fn from(error: CompositionError) -> Self {
+        match (error.kind, error.source) {
+            (CompositionErrorKind::Owner, Some(source)) => Self::owner(error.operation, source),
+            _ => Self::invalid(error.operation, error.detail),
+        }
+    }
+}
+
 impl Error for ProductionDevStageError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.source.as_ref().map(AsRef::as_ref)
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct ComponentBuildPlan {
-    virtualization: ComponentVirtualizationPlan,
-    palette: Vec<PaletteArtifactPlan>,
-}
-
-/// One palette component that a wiring of a selected package names, as
-/// `tools/build-components` found and built it (wamn-hw3n).
-#[derive(Clone, Debug, Deserialize)]
-struct PaletteArtifactPlan {
-    component: String,
-    declaration: PathBuf,
-    artifact: PathBuf,
-}
-
-#[derive(Debug, Deserialize)]
-struct ComponentVirtualizationPlan {
-    artifacts: Vec<ComponentArtifactPlan>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct ComponentArtifactPlan {
-    package: String,
-    output: PathBuf,
-}
-
 #[derive(Debug)]
 struct BuildStageOutput {
     bytes: Box<[u8]>,
     plan: ComponentBuildPlan,
-}
-
-#[derive(Clone, Debug)]
-struct SelectedComponentArtifact {
-    package_id: Box<str>,
-    package_version: Box<str>,
-    component: Box<str>,
-    path: PathBuf,
-    digest: Box<str>,
-}
-
-/// A palette component admitted into the scope of the package whose wiring
-/// names it.
-#[derive(Clone, Debug)]
-struct SelectedPaletteArtifact {
-    artifact: SelectedComponentArtifact,
-    declaration: PathBuf,
-}
-
-#[derive(Clone, Debug)]
-struct PackageInput {
-    root: PathBuf,
-    manifest: PackageManifest,
 }
 
 fn project_catalog_for_package(
@@ -353,14 +317,6 @@ fn project_catalog_for_package(
         );
     }
     Ok(CatalogIr::new(tables))
-}
-
-#[derive(Clone, Debug)]
-struct WiringInput {
-    package_id: Box<str>,
-    package_version: Box<str>,
-    document: Value,
-    wiring: WiringDocument,
 }
 
 #[derive(Debug)]
@@ -2475,127 +2431,6 @@ async fn reconcile_local_replica_identity(
     result
 }
 
-fn select_component_artifacts(
-    packages: &[PackageInput],
-    plan: &[ComponentArtifactPlan],
-) -> Result<Vec<SelectedComponentArtifact>, ProductionDevStageError> {
-    let mut selected = Vec::with_capacity(packages.len());
-    let mut build_packages = BTreeSet::new();
-    for package in packages {
-        if package.manifest.components.len() != 1 {
-            return Err(ProductionDevStageError::invalid(
-                "select package component artifact",
-                format!(
-                    "{}@{} must declare exactly one component for the POC loop",
-                    package.manifest.package.id, package.manifest.package.version
-                ),
-            ));
-        }
-        let component = package
-            .manifest
-            .components
-            .keys()
-            .next()
-            .expect("one package component was required above");
-        let build_package = canonical_component_build_package(component);
-        if !build_packages.insert(build_package.clone()) {
-            return Err(ProductionDevStageError::invalid(
-                "select package component artifact",
-                format!("more than one package derives build identity {build_package}"),
-            ));
-        }
-        let matches = plan
-            .iter()
-            .filter(|artifact| artifact.package == build_package)
-            .collect::<Vec<_>>();
-        let [artifact] = matches.as_slice() else {
-            return Err(ProductionDevStageError::invalid(
-                "select package component artifact",
-                format!(
-                    "{}@{} component {} derived build package {} with {} artifact matches",
-                    package.manifest.package.id,
-                    package.manifest.package.version,
-                    component,
-                    build_package,
-                    matches.len()
-                ),
-            ));
-        };
-        let bytes = fs::read(&artifact.output).map_err(|source| {
-            ProductionDevStageError::owner(
-                "read virtualized component output",
-                anyhow!(source).context(format!("read {}", artifact.output.display())),
-            )
-        })?;
-        if bytes.is_empty() {
-            return Err(ProductionDevStageError::invalid(
-                "read virtualized component output",
-                format!("{} is empty", artifact.output.display()),
-            ));
-        }
-        selected.push(SelectedComponentArtifact {
-            package_id: package.manifest.package.id.clone().into_boxed_str(),
-            package_version: package.manifest.package.version.clone().into_boxed_str(),
-            component: component.clone().into_boxed_str(),
-            path: artifact.output.clone(),
-            digest: wamn_engine::component_admission::component_digest(&bytes).into_boxed_str(),
-        });
-    }
-    Ok(selected)
-}
-
-/// The palette components that the wirings of each package name. A node
-/// component that the plan does not list as palette is a package component, or
-/// Gate refuses it.
-fn select_palette_artifacts(
-    packages: &[PackageInput],
-    plan: &[PaletteArtifactPlan],
-) -> Result<Vec<SelectedPaletteArtifact>, ProductionDevStageError> {
-    let mut named = BTreeSet::<(Box<str>, Box<str>, usize)>::new();
-    let wirings = load_wirings(packages)?;
-    for input in &wirings {
-        for node in input.wiring.nodes.values() {
-            if let Some(palette) = plan
-                .iter()
-                .position(|palette| palette.component == node.component)
-            {
-                named.insert((
-                    input.package_id.clone(),
-                    input.package_version.clone(),
-                    palette,
-                ));
-            }
-        }
-    }
-    let mut selected = Vec::with_capacity(named.len());
-    for (package_id, package_version, palette) in named {
-        let palette = &plan[palette];
-        let bytes = fs::read(&palette.artifact).map_err(|source| {
-            ProductionDevStageError::owner(
-                "read palette component output",
-                anyhow!(source).context(format!("read {}", palette.artifact.display())),
-            )
-        })?;
-        if bytes.is_empty() {
-            return Err(ProductionDevStageError::invalid(
-                "read palette component output",
-                format!("{} is empty", palette.artifact.display()),
-            ));
-        }
-        selected.push(SelectedPaletteArtifact {
-            artifact: SelectedComponentArtifact {
-                package_id,
-                package_version,
-                component: palette.component.clone().into_boxed_str(),
-                path: palette.artifact.clone(),
-                digest: wamn_engine::component_admission::component_digest(&bytes).into_boxed_str(),
-            },
-            declaration: palette.declaration.clone(),
-        });
-    }
-    Ok(selected)
-}
-
 /// Refuse an admission whose identity differs from the artifact selected for it.
 fn require_admitted_identity(
     admission: &ComponentAdmission,
@@ -2622,62 +2457,6 @@ fn require_admitted_identity(
         ));
     }
     Ok(())
-}
-
-fn canonical_component_build_package(component: &str) -> String {
-    component.replace('_', "-")
-}
-
-/// The wiring documents of every package. A package whose operations are all
-/// routes has no wiring directory.
-fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, ProductionDevStageError> {
-    let mut inputs = Vec::new();
-    for package in packages {
-        let directory = package.root.join(PACKAGE_WIRINGS);
-        let entries = match fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(source) => {
-                return Err(ProductionDevStageError::owner(
-                    "read package wiring directory",
-                    anyhow!(source).context(format!("read {}", directory.display())),
-                ));
-            }
-        };
-        let mut paths = entries
-            .map(|entry| {
-                entry.map(|entry| entry.path()).map_err(|source| {
-                    ProductionDevStageError::owner("read package wiring entry", source.into())
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        paths.sort();
-        for path in paths {
-            if path.extension().is_none_or(|extension| extension != "json") {
-                continue;
-            }
-            let document = wamn_schema_generator::operation_reference::read_authored_document(
-                &path,
-                wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
-            )
-            .map_err(|source| {
-                ProductionDevStageError::owner(
-                    "read package wiring",
-                    anyhow!(source).context(format!("read {}", path.display())),
-                )
-            })?;
-            let wiring = WiringDocument::parse(&document).map_err(|source| {
-                ProductionDevStageError::owner("validate package wiring", source.into())
-            })?;
-            inputs.push(WiringInput {
-                package_id: package.manifest.package.id.clone().into_boxed_str(),
-                package_version: package.manifest.package.version.clone().into_boxed_str(),
-                document,
-                wiring,
-            });
-        }
-    }
-    Ok(inputs)
 }
 
 /// Stamp the creation the recreate just minted onto the tenant's projected
@@ -2843,6 +2622,8 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::release_composition::ComponentArtifactPlan;
+    use wamn_catalog::WiringDocument;
     use wamn_schema_introspection::ir::{
         Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
         ExclusionElement, ExclusionKey,
@@ -3550,6 +3331,7 @@ mod tests {
             "edges": []
         });
         let wirings = [WiringInput {
+            path: PathBuf::from("wiring.json"),
             package_id: "wamn_wms".into(),
             package_version: "0.1.0".into(),
             wiring: WiringDocument::parse(&document).expect("fixture wiring"),

@@ -311,6 +311,9 @@ Owner rulings of 2026-09-27:
 - End-to-end check (2026-10-02): the owner runs B11 and reports the result. B12 and B13 follow.
 - Tool test fixture (2026-10-02, `wamn-m511.1`): the kind test of `tools/registry-image-archive` tests the tools, not the host. A small image that `tools/journey-image-cache` builds and relabels is the fixture. The guest is checked in its archive, because no node imports a guest.
 - Upgrade issues 6 to 9 (2026-10-02, `wamn-m511`): they run in order on `upgrade-env`, and each closes on its commit with its times. The live run of issue 9 on `wamn-dev` waits for the word of the owner.
+- Release composition (2026-10-02, `wamn-m511.5`): the derivation of the dev loop becomes one library function, and the dev loop and stage 7 both call it. No second file lists the components.
+- Bindings (2026-10-02, `wamn-m511.5`): stage 7 copies each binding of the current release to the new release id and records the copy. A binding is environment state, not an upgrade input.
+- Gate credentials (2026-10-02, `wamn-m511.5`): each run prepares the next control-author and management-admitter generation and issues a new management-author PAT through the PAT Job. Stage 11 retires the old generation and revokes only the older management-author PATs of the environment.
 
 ## 6. Benchmark
 

@@ -48,6 +48,7 @@ pub mod push_release_manifest;
 pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
+pub mod release_composition;
 pub mod role_permissions;
 pub mod sql_params;
 pub mod terminalize_effect_uncertain;

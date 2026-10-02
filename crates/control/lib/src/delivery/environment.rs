@@ -24,6 +24,9 @@ pub struct EnvironmentFile {
     /// The `<registry>/<repository>` of the images and the release artifacts.
     pub registry: String,
     pub system_database: SystemDatabase,
+    /// The package roots that the environment publishes, relative to the
+    /// repository. The registry names no package directory.
+    pub packages: Vec<PathBuf>,
     pub web_client: WebClient,
     pub route_host: String,
     /// The host group of the application in the host values.
@@ -100,16 +103,30 @@ impl EnvironmentFile {
             "the gates image of {} is not pinned by digest",
             path.display()
         );
-        for named in file
+        ensure!(
+            !file.packages.is_empty(),
+            "the environment file {} names no package",
+            path.display()
+        );
+        let named = file
             .workloads
             .iter()
-            .chain([&file.edge.values, &file.url_map.file])
-        {
+            .cloned()
+            .chain([file.edge.values.clone(), file.url_map.file.clone()]);
+        for named in named {
             ensure!(
-                repository.join(named).is_file(),
+                repository.join(&named).is_file(),
                 "the environment file {} names the absent file {}",
                 path.display(),
                 named.display()
+            );
+        }
+        for root in &file.packages {
+            ensure!(
+                repository.join(root).is_dir(),
+                "the environment file {} names the absent package {}",
+                path.display(),
+                root.display()
             );
         }
         Ok(file)
@@ -144,6 +161,7 @@ mod tests {
                 route_host: wms.route_host.clone(),
                 host_group: wms.host_group.clone(),
                 workloads: wms.workloads.clone(),
+                packages: wms.packages.clone(),
                 ..receiving
             },
             wms

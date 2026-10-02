@@ -74,7 +74,7 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
     while let Some(stage) = record.next_stage() {
         if !built(stage) {
             bail!(
-                "the stage {stage:?} is not built yet; stages 1 to 5 finished, and the run record is {}",
+                "the stage {stage:?} is not built yet, and the run record is {}",
                 path.display()
             );
         }
@@ -85,12 +85,16 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
             Stage::Images => run.images().await,
             Stage::Guests => run.guests(&record).await,
             Stage::Preflight => run.preflight().await,
+            Stage::Schema => run.schema().await,
+            Stage::Packages => run.packages(&record).await,
+            Stage::Qualify => run.qualify(&record).await,
+            Stage::PublishAndSelect => run.publish_and_select(&record).await,
             _ => unreachable!("only built stages start"),
         };
         match outcome {
             Ok((result, outputs)) => record.finish(&path, result, outputs)?,
             Err(error) => {
-                let cause = format!("{error:#}");
+                let cause = redact(&format!("{error:#}"));
                 record.finish(&path, StepResult::Failed { cause }, BTreeMap::new())?;
                 return Err(error.context(format!(
                     "the stage {stage:?} failed, and the run record is {}",
@@ -105,7 +109,15 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
 fn built(stage: Stage) -> bool {
     matches!(
         stage,
-        Stage::Source | Stage::Build | Stage::Images | Stage::Guests | Stage::Preflight
+        Stage::Source
+            | Stage::Build
+            | Stage::Images
+            | Stage::Guests
+            | Stage::Preflight
+            | Stage::Schema
+            | Stage::Packages
+            | Stage::Qualify
+            | Stage::PublishAndSelect
     )
 }
 
@@ -430,9 +442,10 @@ impl Run {
         };
         outputs.insert("WAMN_TAP".to_owned(), tap.to_owned());
 
-        let release = next_release(&environment, &kubectl, &self.arguments).await?;
-        outputs.insert("tenant".to_owned(), release.tenant);
-        outputs.insert("database".to_owned(), release.database);
+        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
+        let release = next_release(&databases, &self.arguments).await?;
+        outputs.insert("tenant".to_owned(), databases.tenant.clone());
+        outputs.insert("database".to_owned(), databases.database.clone());
         outputs.insert(
             "attested releases".to_owned(),
             release
@@ -443,6 +456,422 @@ impl Run {
                 .join(", "),
         );
         outputs.insert("release id".to_owned(), release.next.to_string());
+        Ok((StepResult::Done, outputs))
+    }
+
+    fn release_files(&self) -> PathBuf {
+        self.work.join("releases").join(format!(
+            "{}--{}--{}",
+            self.arguments.org, self.arguments.project, self.arguments.environment
+        ))
+    }
+
+    /// The credentials of the gate, kept until stage 11 retires the old
+    /// generation, then deleted.
+    fn secrets(&self) -> PathBuf {
+        self.work.join("secrets").join(format!(
+            "{}--{}--{}",
+            self.arguments.org, self.arguments.project, self.arguments.environment
+        ))
+    }
+
+    fn release_id(record: &RunRecord) -> anyhow::Result<u32> {
+        record
+            .output(Stage::Preflight, "release id")?
+            .parse()
+            .context("the release id of the preflight")
+    }
+
+    /// Stage 6: every pending system and project migration.
+    async fn schema(&self) -> Outcome {
+        let environment = self.environment()?;
+        let kubectl = Kubectl(environment.context.clone());
+        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
+        for admin_database_url in [None, Some(databases.project_url())] {
+            crate::upgrade_schema::upgrade_schema(&crate::upgrade_schema::UpgradeSchemaRequest {
+                system_database_url: databases.system_url(),
+                admin_database_url,
+                baseline: None,
+                confirm: true,
+            })
+            .await?;
+        }
+        let outputs = BTreeMap::from([
+            (
+                "system database".to_owned(),
+                databases.system_database.clone(),
+            ),
+            ("project database".to_owned(), databases.database.clone()),
+        ]);
+        Ok((StepResult::Done, outputs))
+    }
+
+    /// Stage 7: packages, components, gated wirings, the release under the
+    /// preflight id, and the bindings of the current release copied to it.
+    async fn packages(&self, record: &RunRecord) -> Outcome {
+        use crate::release_composition::{
+            ComponentBuildPlan, PackageInput, load_wirings, select_component_artifacts,
+            select_palette_artifacts, wiring_store_alias,
+        };
+        let environment = self.environment()?;
+        let kubectl = Kubectl(environment.context.clone());
+        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
+        let release_id = Self::release_id(record)?;
+        let tenant = databases.tenant.clone();
+        let project_url = databases.project_url();
+        let system_url = databases.system_url();
+        let mut outputs = BTreeMap::new();
+        private_directory(&self.release_files())?;
+
+        let roots: Vec<PathBuf> = environment
+            .packages
+            .iter()
+            .map(|root| self.checkout.join(root))
+            .collect();
+        let mut packages = Vec::new();
+        for root in &roots {
+            let path = wamn_schema_generator::package_manifest_path(root);
+            let manifest = wamn_schema_generator::PackageManifest::from_slice(
+                &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+            )
+            .with_context(|| format!("parse {}", path.display()))?;
+            packages.push(PackageInput {
+                root: root.clone(),
+                manifest,
+            });
+        }
+        for root in &roots {
+            let applied =
+                crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
+                    package: root.clone(),
+                    database_url: project_url.clone(),
+                    tenant: tenant.clone(),
+                })
+                .await?;
+            outputs.insert(
+                format!("package {}", applied.package_id),
+                format!(
+                    "{} ({} migrations applied)",
+                    applied.package_version, applied.migrations_applied
+                ),
+            );
+        }
+        crate::reconcile_package_data_access::reconcile_package_data_access(
+            crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
+                packages: roots.clone(),
+                database_url: project_url.clone(),
+                tenant: tenant.clone(),
+            },
+        )
+        .await?;
+        for root in &roots {
+            crate::reconcile_replica_identity::reconcile_package_replica_identity(
+                crate::reconcile_replica_identity::ReconcileReplicaIdentityRequest {
+                    admin_database_url: project_url.clone(),
+                    package: root.clone(),
+                    dry_run: false,
+                },
+            )
+            .await?;
+        }
+
+        // The release composition of the dev loop, over the stage 2 build.
+        let mut plan = Command::new(self.checkout.join("tools/build-components"));
+        plan.args(["build-only", "app"])
+            .args(&roots)
+            .env("CARGO_TARGET_DIR", self.delivery());
+        let plan: ComponentBuildPlan =
+            serde_json::from_str(&self.command("build-plan", &mut plan).await?)
+                .context("decode the build plan")?;
+        let artifacts = select_component_artifacts(&packages, &plan.virtualization.artifacts)?;
+        let palette = select_palette_artifacts(&packages, &plan.palette)?;
+        let wirings = load_wirings(&packages)?;
+
+        let registry = Registry::login(&environment.registry, &self.work).await?;
+        let publish = || crate::push_component::PublishAdmittedComponentRequest {
+            artifact_base: format!("{}/components", environment.registry),
+            registry_auth_file: registry.auth_file(),
+            insecure_registry: false,
+            oci_ca_paths: Vec::new(),
+            project_database_url: project_url.clone(),
+            control_database_url: system_url.clone(),
+        };
+        let mut pushed = BTreeMap::<String, String>::new();
+        for artifact in &artifacts {
+            let package = packages
+                .iter()
+                .find(|package| package.manifest.package.id == *artifact.package_id)
+                .context("a selected artifact has no package")?;
+            let template = package
+                .root
+                .join("publication/components")
+                .join(format!("{}.json.in", artifact.component));
+            let base = crate::component_declaration::authored_base_digests(&package.root)?;
+            let document = crate::component_declaration::render_declaration_document(
+                &template, &tenant, &base,
+            )?;
+            let declaration = self
+                .release_files()
+                .join(format!("{}.declaration.json", artifact.component));
+            fs::write(&declaration, serde_json::to_vec(&document)?)?;
+            let outcome = crate::push_component::push_component(
+                crate::push_component::AdmitComponentRequest {
+                    package: package.root.clone(),
+                    component_bytes: artifact.path.clone(),
+                    declaration,
+                    admitted_platform_packages: vec![
+                        "wamn:node".to_owned(),
+                        "wamn:postgres".to_owned(),
+                    ],
+                },
+                publish(),
+            )
+            .await?;
+            pushed.insert(artifact.component.to_string(), outcome.component_digest);
+        }
+        for selected in &palette {
+            let artifact = &selected.artifact;
+            let package = packages
+                .iter()
+                .find(|package| package.manifest.package.id == *artifact.package_id)
+                .context("a palette artifact has no package")?;
+            let scope = wamn_catalog::ComponentPackageScope {
+                tenant_id: tenant.clone(),
+                package_id: artifact.package_id.to_string(),
+                package_version: artifact.package_version.to_string(),
+            };
+            let alias = wiring_store_alias(&wirings, artifact)?;
+            let document = crate::component_declaration::render_palette_declaration(
+                &selected.declaration,
+                &scope,
+                alias.as_deref(),
+            )?;
+            let admitted = crate::component_declaration::declared_platform_packages(
+                &selected.declaration,
+                &document,
+            )?;
+            let declaration = self
+                .release_files()
+                .join(format!("{}.declaration.json", artifact.component));
+            fs::write(&declaration, serde_json::to_vec(&document)?)?;
+            let outcome = crate::push_component::push_component(
+                crate::push_component::AdmitComponentRequest {
+                    package: package.root.clone(),
+                    component_bytes: artifact.path.clone(),
+                    declaration,
+                    admitted_platform_packages: admitted,
+                },
+                publish(),
+            )
+            .await?;
+            pushed.insert(artifact.component.to_string(), outcome.component_digest);
+        }
+        for (component, digest) in &pushed {
+            outputs.insert(format!("component {component}"), digest.clone());
+        }
+
+        // The gate of every wiring, with a new generation and a new PAT.
+        let gate = GateCredentials::prepare(self, &kubectl, &databases, record).await?;
+        outputs.insert(
+            "control-author generation".to_owned(),
+            gate.control_author.as_str().to_owned(),
+        );
+        outputs.insert(
+            "management-admitter generation".to_owned(),
+            gate.management_admitter.as_str().to_owned(),
+        );
+        outputs.insert(
+            "management-author PAT prefix".to_owned(),
+            gate.pat_prefix.clone(),
+        );
+        let mut targets = Vec::new();
+        if !wirings.is_empty() {
+            let service = GateService::start(self, &gate, &databases).await?;
+            for input in &wirings {
+                let package = packages
+                    .iter()
+                    .find(|package| package.manifest.package.id == *input.package_id)
+                    .context("a wiring has no package")?;
+                let file = input.path.clone();
+                ensure!(
+                    file.starts_with(&package.root),
+                    "a wiring lies outside its package"
+                );
+                let report = service
+                    .gate(
+                        &gate,
+                        input,
+                        &self.arguments.project,
+                        &self.arguments.environment,
+                    )
+                    .await?;
+                outputs.insert(format!("gate {}", input.wiring.wiring_id), report);
+                crate::author_wiring::author_wiring_document(
+                    crate::author_wiring::AuthorWiringDocumentRequest {
+                        database_url: project_url.clone(),
+                        control_database_url: system_url.clone(),
+                        tenant: tenant.clone(),
+                        package_id: input.package_id.to_string(),
+                        package_version: input.package_version.to_string(),
+                        wiring_document: file,
+                    },
+                )
+                .await?;
+                targets.push(crate::publish_release::ReleaseWiringTarget {
+                    package_id: input.package_id.to_string(),
+                    package_version: input.package_version.to_string(),
+                    wiring_id: input.wiring.wiring_id.clone(),
+                    wiring_version: input.wiring.version,
+                });
+            }
+        }
+
+        let digest = crate::publish_release::publish_release(
+            crate::publish_release::PublishReleaseRequest {
+                database_url: project_url.clone(),
+                control_database_url: system_url.clone(),
+                org: self.arguments.org.clone(),
+                project: self.arguments.project.clone(),
+                tenant: tenant.clone(),
+                effective_release_id: release_id,
+                environment: self.arguments.environment.clone(),
+                verified_publisher_principal: format!(
+                    "wamn-management-author-{}--{}--{}",
+                    self.arguments.org, self.arguments.project, self.arguments.environment
+                ),
+                run_schema: "wamn_run".to_owned(),
+                packages: packages
+                    .iter()
+                    .map(|package| {
+                        wamn_catalog::PackageCoordinate::new(
+                            &package.manifest.package.id,
+                            &package.manifest.package.version,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?,
+                wirings: targets,
+                attachments: roots
+                    .iter()
+                    .map(|root| root.join("publication/attachments.json"))
+                    .filter(|path| path.is_file())
+                    .collect(),
+                route_host: Some(environment.route_host.clone()),
+                package_manifests: roots
+                    .iter()
+                    .map(|root| wamn_schema_generator::package_manifest_path(root))
+                    .collect(),
+            },
+        )
+        .await?;
+        outputs.insert("release id".to_owned(), release_id.to_string());
+        outputs.insert("release digest".to_owned(), digest.to_string());
+
+        for copied in copy_bindings(self, &databases, release_id, &pushed).await? {
+            outputs.insert(format!("binding {}", copied.0), copied.1);
+        }
+        Ok((StepResult::Done, outputs))
+    }
+
+    /// Stage 8: the candidate from the stage 2 target and `qualify-release`
+    /// at the commit. A failed qualification stops the run.
+    async fn qualify(&self, record: &RunRecord) -> Outcome {
+        let environment = self.environment()?;
+        let kubectl = Kubectl(environment.context.clone());
+        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
+        let release_id = Self::release_id(record)?;
+        let files = self.release_files();
+        private_directory(&files)?;
+        let manifest = files.join("manifest.json");
+        let candidate = files.join("candidate.json");
+        let qualification = files.join("qualification.json");
+        for path in [&manifest, &candidate, &qualification] {
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
+        crate::delivery::prepare(crate::delivery::PrepareReleaseRequest {
+            database_url: databases.project_url(),
+            org: self.arguments.org.clone(),
+            project: self.arguments.project.clone(),
+            tenant: databases.tenant.clone(),
+            effective_release_id: release_id,
+            artifact_base: format!("{}/releases", environment.registry),
+            target_directory: self.delivery(),
+            manifest_output: manifest.clone(),
+            candidate_output: candidate.clone(),
+            host_image: record.output(Stage::Images, "host")?.to_owned(),
+            gates_image: Some(record.output(Stage::Images, "gates")?.to_owned()),
+            identity_image: Some(record.output(Stage::Images, "identity")?.to_owned()),
+            native_registry_endpoint: None,
+            native_registry_insecure: false,
+            deployment_files: Vec::new(),
+        })
+        .await?;
+        // The kind cases fetch the pinned images with the login of this
+        // machine (tools/registry-image-archive), so the qualification runs
+        // as its own process with the private Docker configuration.
+        let registry = Registry::login(&environment.registry, &self.work).await?;
+        let mut qualify =
+            registry.command(&self.programs().join("debug/wamn-ctl").display().to_string());
+        qualify
+            .arg("qualify-release")
+            .arg("--repository")
+            .arg(&self.checkout)
+            .args(["--revision", &self.arguments.commit])
+            .arg("--candidate")
+            .arg(&candidate)
+            .arg("--result")
+            .arg(&qualification);
+        self.command(&format!("qualify-{}", self.arguments.project), &mut qualify)
+            .await
+            .context(
+                "the qualification failed, so the run stops (docs/plan/upgrade-environment.md §2)",
+            )?;
+        let outputs = BTreeMap::from([
+            ("candidate".to_owned(), candidate.display().to_string()),
+            (
+                "qualification".to_owned(),
+                qualification.display().to_string(),
+            ),
+        ]);
+        Ok((StepResult::Done, outputs))
+    }
+
+    /// Stage 9: the qualified publication and the selection of the
+    /// environment that the run changes.
+    async fn publish_and_select(&self, record: &RunRecord) -> Outcome {
+        let environment = self.environment()?;
+        let kubectl = Kubectl(environment.context.clone());
+        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
+        let qualification = PathBuf::from(record.output(Stage::Qualify, "qualification")?);
+        let registry = Registry::login(&environment.registry, &self.work).await?;
+        let request = crate::push_release_manifest::PushReleaseManifestRequest {
+            database_url: databases.project_url(),
+            org: self.arguments.org.clone(),
+            project: self.arguments.project.clone(),
+            tenant: databases.tenant.clone(),
+            effective_release_id: Self::release_id(record)?,
+            artifact_base: format!("{}/releases", environment.registry),
+            registry_auth_file: registry.auth_file(),
+            insecure_registry: false,
+            oci_ca_paths: Vec::new(),
+            control_database_url: databases.system_url(),
+        };
+        let pushed = crate::delivery::publication::publish(&qualification, &request)
+            .await
+            .context("the qualified publication refused, so the run stops")?;
+        let selected = crate::delivery::deployment::select(&qualification, &request).await?;
+        let outputs = BTreeMap::from([
+            ("published".to_owned(), format!("{pushed:?}")),
+            (
+                "selected release".to_owned(),
+                format!("{:?}", selected.release),
+            ),
+            (
+                "manifest digest".to_owned(),
+                selected.manifest_digest.clone(),
+            ),
+        ]);
         Ok((StepResult::Done, outputs))
     }
 
@@ -538,6 +967,584 @@ impl Run {
     }
 }
 
+/// The credentials of the gate service for one run: a new generation of the
+/// control-author and management-admitter logins, and a new management-author
+/// PAT (owner ruling of 2026-10-02 on `wamn-m511.5`).
+struct GateCredentials {
+    control_author: wamn_control_provision::CredentialGeneration,
+    management_admitter: wamn_control_provision::CredentialGeneration,
+    control_author_url: String,
+    management_admitter_url: String,
+    pat_token: String,
+    pat_prefix: String,
+}
+
+impl GateCredentials {
+    async fn prepare(
+        run: &Run,
+        kubectl: &Kubectl,
+        databases: &Databases,
+        record: &RunRecord,
+    ) -> anyhow::Result<Self> {
+        use crate::provision_project_env::{
+            WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
+            run_workload_action,
+        };
+        use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
+        let secrets = run.secrets();
+        private_directory(&secrets)?;
+        let arguments = &run.arguments;
+        let system = databases.system().await?;
+        let mut generations = Vec::new();
+        for (family, database, target) in [
+            (
+                WorkloadRoleFamily::ControlAuthor,
+                databases.system_database.clone(),
+                None,
+            ),
+            (
+                WorkloadRoleFamily::ManagementAdmitter,
+                databases.database.clone(),
+                Some(databases.project_url()),
+            ),
+        ] {
+            let role = |generation| match family {
+                WorkloadRoleFamily::ControlAuthor => {
+                    wamn_control_provision::control_author_generation_role(
+                        &arguments.org,
+                        &arguments.project,
+                        &arguments.environment,
+                        &database,
+                        generation,
+                    )
+                }
+                _ => wamn_control_provision::management_admitter_generation_role(
+                    &arguments.org,
+                    &arguments.project,
+                    &arguments.environment,
+                    &database,
+                    generation,
+                ),
+            };
+            let generation = next_generation(
+                &system,
+                &role(CredentialGeneration::A),
+                &role(CredentialGeneration::B),
+            )
+            .await?;
+            let file = secrets.join(format!("{}.json", family_file(family)));
+            run_workload_action(&WorkloadActionRequest {
+                org: arguments.org.clone(),
+                project: arguments.project.clone(),
+                env: arguments.environment.clone(),
+                tenant: Some(databases.tenant.clone()),
+                system_database_url: Some(databases.system_url()),
+                target_admin_database_url: target,
+                cluster: None,
+                db_host: Some(databases.cluster_host.clone()),
+                db_port: 5432,
+                namespace: databases.secret_namespace.clone(),
+                action: WorkloadGenerationAction {
+                    family,
+                    verb: WorkloadActionVerb::Prepare,
+                    generation,
+                },
+                secret: Some(file.clone()),
+                emit_role_sql: None,
+                control_administration_patch: None,
+            })
+            .await?;
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o600))?;
+            let url = secret_url(&file)?;
+            redact_later(&url);
+            generations.push((generation, databases.local(&url)?));
+        }
+        let [
+            (control_author, control_author_url),
+            (management_admitter, management_admitter_url),
+        ] = <[_; 2]>::try_from(generations).map_err(|_| anyhow::anyhow!("two generations"))?;
+        let (pat_token, pat_prefix) = mint_pat(run, kubectl, databases, record).await?;
+        Ok(Self {
+            control_author,
+            management_admitter,
+            control_author_url,
+            management_admitter_url,
+            pat_token,
+            pat_prefix,
+        })
+    }
+}
+
+fn family_file(family: wamn_control_provision::WorkloadRoleFamily) -> &'static str {
+    match family {
+        wamn_control_provision::WorkloadRoleFamily::ControlAuthor => "control-author",
+        _ => "management-admitter",
+    }
+}
+
+/// The URL of an emitted credential Secret file.
+fn secret_url(file: &Path) -> anyhow::Result<String> {
+    use base64::Engine as _;
+    let secret: Value = serde_json::from_slice(&fs::read(file)?)?;
+    if let Some(url) = secret["stringData"]["url"].as_str() {
+        return Ok(url.to_owned());
+    }
+    let encoded = secret["data"]["url"]
+        .as_str()
+        .with_context(|| format!("{} holds no url", file.display()))?;
+    Ok(String::from_utf8(
+        base64::engine::general_purpose::STANDARD.decode(encoded)?,
+    )?)
+}
+
+/// The generation to prepare: the other one of the current generation, which
+/// is the active login with the later expiry. With neither role present it is
+/// `a`.
+async fn next_generation(
+    system: &tokio_postgres::Client,
+    role_a: &str,
+    role_b: &str,
+) -> anyhow::Result<wamn_control_provision::CredentialGeneration> {
+    use wamn_control_provision::CredentialGeneration;
+    let rows = system
+        .query(
+            "SELECT rolname::text, rolcanlogin AND coalesce(rolvaliduntil > now(), true),
+                    coalesce(extract(epoch FROM rolvaliduntil)::float8, 'infinity'::float8)
+               FROM pg_roles WHERE rolname IN ($1, $2)",
+            &[&role_a, &role_b],
+        )
+        .await?;
+    let roles: Vec<(String, bool, f64)> = rows
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect();
+    choose_generation(&roles, role_a).map(|current| match current {
+        None => CredentialGeneration::A,
+        Some(current) => current.other(),
+    })
+}
+
+/// The current generation among the roles of `a` and `b`, or none when
+/// neither exists. Roles that exist but are all inactive refuse.
+fn choose_generation(
+    roles: &[(String, bool, f64)],
+    role_a: &str,
+) -> anyhow::Result<Option<wamn_control_provision::CredentialGeneration>> {
+    use wamn_control_provision::CredentialGeneration;
+    if roles.is_empty() {
+        return Ok(None);
+    }
+    let current = roles
+        .iter()
+        .filter(|(_, active, _)| *active)
+        .max_by(|a, b| a.2.total_cmp(&b.2))
+        .with_context(|| format!("no generation of {role_a} is active"))?;
+    Ok(Some(if current.0 == role_a {
+        CredentialGeneration::A
+    } else {
+        CredentialGeneration::B
+    }))
+}
+
+/// Issues a new management-author PAT through the Job of
+/// `deploy/gcp/operator/mint-pat.yaml` with the ctl image of stage 3
+/// (docs/operations/gcp.md §3.16). The PAT Secret file stays at mode 0600
+/// in the private directory of the run.
+async fn mint_pat(
+    run: &Run,
+    kubectl: &Kubectl,
+    databases: &Databases,
+    record: &RunRecord,
+) -> anyhow::Result<(String, String)> {
+    let arguments = &run.arguments;
+    let template = fs::read_to_string(run.checkout.join("deploy/gcp/operator/mint-pat.yaml"))?;
+    let job = mint_pat_job(
+        &template,
+        record.output(Stage::Images, "ctl")?,
+        arguments,
+        &databases.tenant,
+        &databases.secret_namespace,
+    )?;
+    let previous = kubectl
+        .run(&["-n", "identity", "logs", "job/mint-pat"])
+        .await;
+    fs::write(
+        run.work.join("logs").join("mint-pat-previous.log"),
+        previous.unwrap_or_default(),
+    )?;
+    kubectl
+        .run(&[
+            "-n",
+            "identity",
+            "delete",
+            "job",
+            "mint-pat",
+            "--ignore-not-found",
+            "--wait=true",
+        ])
+        .await?;
+    let file = run.secrets().join("mint-pat.yaml");
+    fs::write(&file, job)?;
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600))?;
+    let applied = kubectl
+        .run(&["apply", "-f", &file.display().to_string()])
+        .await;
+    fs::remove_file(&file)?;
+    applied?;
+    let uid = kubectl
+        .run(&[
+            "-n",
+            "identity",
+            "get",
+            "job",
+            "mint-pat",
+            "-o",
+            "jsonpath={.metadata.uid}",
+        ])
+        .await?;
+    // `kubectl create`, because `kubectl apply` copies the data into an annotation.
+    let secret = serde_json::json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": "wamn-system-admin",
+            "namespace": "identity",
+            "ownerReferences": [{"apiVersion": "batch/v1", "kind": "Job", "name": "mint-pat", "uid": uid.trim()}],
+        },
+        "stringData": {"url": databases.system_url_in_cluster()},
+    });
+    kubectl
+        .input(&["create", "-f", "-"], &serde_json::to_vec(&secret)?)
+        .await?;
+    let mut ready = false;
+    for _ in 0..60 {
+        if kubectl
+            .run(&[
+                "-n",
+                "identity",
+                "exec",
+                "job/mint-pat",
+                "--",
+                "test",
+                "-e",
+                "/out/pat.json",
+            ])
+            .await
+            .is_ok()
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    ensure!(
+        ready,
+        "the mint-pat Job wrote no PAT Secret file within 120 s"
+    );
+    let pat = kubectl
+        .run(&[
+            "-n",
+            "identity",
+            "exec",
+            "job/mint-pat",
+            "--",
+            "sh",
+            "-c",
+            "cat /out/pat.json && rm /out/pat.json",
+        ])
+        .await?;
+    let path = run.secrets().join("management-author-pat.json");
+    fs::write(&path, &pat)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+    let waited = kubectl
+        .run(&[
+            "-n",
+            "identity",
+            "wait",
+            "--for=condition=complete",
+            "job/mint-pat",
+            "--timeout=60s",
+        ])
+        .await;
+    let log = kubectl
+        .run(&["-n", "identity", "logs", "job/mint-pat"])
+        .await;
+    fs::write(
+        run.work.join("logs").join("mint-pat.log"),
+        log.unwrap_or_default(),
+    )?;
+    kubectl
+        .run(&[
+            "-n",
+            "identity",
+            "delete",
+            "job",
+            "mint-pat",
+            "--ignore-not-found",
+        ])
+        .await?;
+    waited?;
+    let secret: Value = serde_json::from_str(&pat).context("parse the PAT Secret file")?;
+    let token = secret["stringData"]["token"]
+        .as_str()
+        .context("the PAT Secret file holds no token")?
+        .to_owned();
+    redact_later(&token);
+    let prefix = secret["metadata"]["annotations"]["wamn.io/pat-prefix"]
+        .as_str()
+        .context("the PAT Secret file names no prefix")?
+        .to_owned();
+    Ok((token, prefix))
+}
+
+/// The mint-pat Job with the run values and the ctl image of the commit.
+fn mint_pat_job(
+    template: &str,
+    ctl_image: &str,
+    arguments: &RunArguments,
+    tenant: &str,
+    namespace: &str,
+) -> anyhow::Result<String> {
+    let mut images = 0;
+    let lines: Vec<String> = template
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("image: ") {
+                images += 1;
+                let indent = &line[..line.len() - line.trim_start().len()];
+                format!("{indent}image: {ctl_image}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    ensure!(
+        images == 1,
+        "the mint-pat Job names {images} images, not one"
+    );
+    let job = lines
+        .join("\n")
+        .replace("__ORG__", &arguments.org)
+        .replace("__PROJECT__", &arguments.project)
+        .replace("__ENV__", &arguments.environment)
+        .replace("__TENANT__", tenant)
+        .replace("__NAMESPACE__", namespace)
+        .replace("__PAT_FLAG__", "--emit-management-author-pat-secret");
+    let body: String = job
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    ensure!(!body.contains("__"), "the mint-pat Job keeps a placeholder");
+    Ok(job)
+}
+
+/// The gate service on this machine, from the stage 2 build. It ends with
+/// this value.
+struct GateService {
+    port: u16,
+    http: reqwest::Client,
+    _child: Child,
+}
+
+impl GateService {
+    async fn start(
+        run: &Run,
+        gate: &GateCredentials,
+        databases: &Databases,
+    ) -> anyhow::Result<Self> {
+        let arguments = &run.arguments;
+        let reader = wamn_control_provision::workload_secret_name(
+            wamn_control_provision::WorkloadRoleFamily::IdentityReader,
+            &arguments.org,
+            &arguments.project,
+            &arguments.environment,
+        );
+        let kubectl_context = run.environment()?.context;
+        let reader_url = Kubectl(kubectl_context)
+            .run(&[
+                "-n",
+                &databases.secret_namespace,
+                "get",
+                "secret",
+                &reader,
+                "-o",
+                "go-template={{.data.url | base64decode}}",
+            ])
+            .await?;
+        redact_later(&reader_url);
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?
+            .local_addr()?
+            .port();
+        let log = run
+            .work
+            .join("logs")
+            .join(format!("gate-{}.log", arguments.project));
+        let output = fs::File::create(&log)?;
+        let child = Command::new(run.programs().join("debug/wamn-scenario-worker"))
+            .args(["serve", "--bind", &format!("127.0.0.1:{port}")])
+            .env("WAMN_SYSTEM_URL", databases.local(&reader_url)?)
+            .env("WAMN_CONTROL_AUTHORING_PG_URL", &gate.control_author_url)
+            .env(
+                "WAMN_MANAGEMENT_ADMISSION_PG_URL",
+                &gate.management_admitter_url,
+            )
+            .env("WAMN_MANAGEMENT_ORG", &arguments.org)
+            .env("WAMN_MANAGEMENT_PROJECT", &arguments.project)
+            .env("WAMN_MANAGEMENT_ENVIRONMENT", &arguments.environment)
+            .env("WAMN_MANAGEMENT_TENANT", &databases.tenant)
+            .stdin(Stdio::null())
+            .stdout(output.try_clone()?)
+            .stderr(output)
+            .kill_on_drop(true)
+            .spawn()
+            .context("start the gate service")?;
+        for _ in 0..60 {
+            if fs::read_to_string(&log)?.contains("listening") {
+                return Ok(Self {
+                    port,
+                    http: reqwest::Client::new(),
+                    _child: child,
+                });
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        bail!(
+            "the gate service did not listen within 60 s; its log is {}",
+            log.display()
+        )
+    }
+
+    /// Gates one wiring and returns its report id.
+    async fn gate(
+        &self,
+        gate: &GateCredentials,
+        input: &crate::release_composition::WiringInput,
+        project: &str,
+        environment: &str,
+    ) -> anyhow::Result<String> {
+        use wamn_authoring_model::{
+            AuthoringCommand, AuthoringDocument, AuthoringRequest, AuthoringRequestEnvelope,
+            AuthoringScope, Gate, SCHEMA_VERSION,
+        };
+        let request = AuthoringDocument::Request(Box::new(AuthoringRequestEnvelope::Command(
+            AuthoringRequest {
+                schema_version: SCHEMA_VERSION.to_owned(),
+                command_id: format!(
+                    "gate-{}-{}-{}",
+                    input.package_id, input.package_version, input.wiring.wiring_id
+                ),
+                command: AuthoringCommand::Gate(Gate {
+                    scope: AuthoringScope {
+                        project_id: project.to_owned(),
+                        environment: environment.to_owned(),
+                    },
+                    package_id: input.package_id.to_string(),
+                    package_version: input.package_version.to_string(),
+                    document: input.document.clone(),
+                }),
+            },
+        )));
+        let reply: Value = self
+            .http
+            .post(format!("http://127.0.0.1:{}/authoring", self.port))
+            .bearer_auth(&gate.pat_token)
+            .json(&request)
+            .send()
+            .await
+            .context("post the gate request")?
+            .json()
+            .await
+            .context("read the gate reply")?;
+        let outcome = &reply["body"]["outcome"];
+        ensure!(
+            outcome["status"] == "completed",
+            "the gate of {} answered {}",
+            input.wiring.wiring_id,
+            redact(&outcome.to_string())
+        );
+        outcome["value"]["result"]["report-id"]
+            .as_str()
+            .map(str::to_owned)
+            .with_context(|| format!("the gate of {} gave no report-id", input.wiring.wiring_id))
+    }
+}
+
+/// Copies each active binding of the current release of the environment to
+/// the new release id, with the digest that this run pushed for the same
+/// component (owner ruling of 2026-10-02 on `wamn-m511.5`).
+async fn copy_bindings(
+    run: &Run,
+    databases: &Databases,
+    release_id: u32,
+    pushed: &BTreeMap<String, String>,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let client = databases.project().await?;
+    let rows = client
+        .query(
+            "SELECT b.effective_release_id, b.component_digest, b.store_alias, b.instance_id,
+                    i.requirement_type, g.definition_json::text, g.credential_set_handle,
+                    (SELECT l.component FROM catalog.component_library AS l
+                      WHERE l.tenant_id = b.tenant_id AND l.component_digest = b.component_digest
+                      ORDER BY l.admitted_at DESC LIMIT 1)
+               FROM catalog.effective_release_heads AS h
+               JOIN catalog.connection_bindings AS b
+                 ON b.tenant_id = h.tenant_id AND b.effective_release_id = h.effective_release_id
+               JOIN catalog.connection_instances AS i
+                 ON i.tenant_id = b.tenant_id AND i.environment = b.environment
+                AND i.instance_id = b.instance_id
+               JOIN catalog.connection_generations AS g
+                 ON g.tenant_id = i.tenant_id AND g.environment = i.environment
+                AND g.instance_id = i.instance_id AND g.generation = i.active_generation
+              WHERE h.tenant_id = $1 AND h.environment = $2 AND b.binding_status = 'active'
+              ORDER BY b.instance_id, b.store_alias",
+            &[&databases.tenant, &run.arguments.environment],
+        )
+        .await?;
+    let mut copied = Vec::new();
+    for row in rows {
+        let current: i32 = row.get(0);
+        let old_digest: String = row.get(1);
+        let store_alias: String = row.get(2);
+        let instance_id: String = row.get(3);
+        let requirement: String = row.get(4);
+        let definition: String = row.get(5);
+        let credential_handle: Option<String> = row.get(6);
+        let component: Option<String> = row.get(7);
+        let component = component
+            .with_context(|| format!("no component of the tenant has the digest {old_digest}"))?;
+        let new_digest = pushed.get(&component).with_context(|| {
+            format!(
+                "release {current} binds {instance_id} to the component {component}, which this run did not push"
+            )
+        })?;
+        let file = run
+            .release_files()
+            .join(format!("{instance_id}.definition.json"));
+        fs::write(&file, &definition)?;
+        let bound = crate::bind_connection::bind(&crate::bind_connection::BindConnectionRequest {
+            database_url: databases.project_url(),
+            tenant: databases.tenant.clone(),
+            environment: run.arguments.environment.clone(),
+            instance_id: instance_id.clone(),
+            requirement_type: serde_json::from_value(Value::String(requirement))?,
+            definition: file,
+            credential_handle,
+            effective_release_id: release_id,
+            component_digest: new_digest.clone(),
+            store_alias: store_alias.clone(),
+        })
+        .await?;
+        copied.push((
+            instance_id,
+            format!(
+                "{store_alias}: release {current} {old_digest} to release {release_id} {new_digest}, generation {}",
+                bound.generation
+            ),
+        ));
+    }
+    Ok(copied)
+}
+
 fn done(already: bool) -> StepResult {
     if already {
         StepResult::AlreadyDone
@@ -609,6 +1616,31 @@ impl Kubectl {
         Ok(String::from_utf8(output.stdout)?)
     }
 
+    /// Runs kubectl with `input` on its standard input. The input never
+    /// reaches the command line or a log.
+    async fn input(&self, arguments: &[&str], input: &[u8]) -> anyhow::Result<String> {
+        use tokio::io::AsyncWriteExt as _;
+        let mut child = self
+            .command(arguments)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("start kubectl")?;
+        let mut stdin = child.stdin.take().context("kubectl input")?;
+        stdin.write_all(input).await?;
+        drop(stdin);
+        let output = child.wait_with_output().await?;
+        ensure!(
+            output.status.success(),
+            "kubectl {} exited {}: {}",
+            arguments.join(" "),
+            output.status,
+            redact(&String::from_utf8_lossy(&output.stderr))
+        );
+        Ok(String::from_utf8(output.stdout)?)
+    }
+
     async fn json(&self, arguments: &[&str]) -> anyhow::Result<Value> {
         let mut arguments = arguments.to_vec();
         arguments.extend(["-o", "json"]);
@@ -650,6 +1682,7 @@ impl Registry {
             String::from_utf8_lossy(&output.stderr)
         );
         let token = String::from_utf8(output.stdout)?.trim().to_owned();
+        redact_later(&token);
         let config = work.join(format!("docker-{}", std::process::id()));
         private_directory(&config)?;
         let registry = Self {
@@ -674,6 +1707,11 @@ impl Registry {
 
     fn docker(&self) -> Command {
         self.command("docker")
+    }
+
+    /// The `.dockerconfigjson` file that the push verbs read.
+    fn auth_file(&self) -> PathBuf {
+        self.config.join("config.json")
     }
 
     /// The manifest digest of a tag, or none when the tag does not exist.
@@ -912,81 +1950,205 @@ fn tap_job(file: &str) -> anyhow::Result<String> {
     found.with_context(|| format!("the file has no Job {TAP_JOB}"))
 }
 
-struct NextRelease {
-    tenant: String,
+/// The superuser connections of the system database and the project
+/// database of one environment, through one pod port-forward. The password
+/// stays in memory, and every recorded cause is redacted of it.
+struct Databases {
+    forward: PortForward,
+    password: String,
+    system_database: String,
+    /// The in-cluster host that an emitted credential names.
+    cluster_host: String,
     database: String,
+    tenant: String,
+    /// `registry.project_envs.secret_namespace`, where the credential Secrets live.
+    secret_namespace: String,
+}
+
+impl Databases {
+    async fn open(
+        environment: &EnvironmentFile,
+        kubectl: &Kubectl,
+        arguments: &RunArguments,
+    ) -> anyhow::Result<Self> {
+        let system = &environment.system_database;
+        let forward = PortForward::open(kubectl, &system.namespace, &system.cluster).await?;
+        let password = kubectl
+            .run(&[
+                "-n",
+                &system.namespace,
+                "get",
+                "secret",
+                &format!("{}-superuser", system.cluster),
+                "-o",
+                "go-template={{.data.password | base64decode}}",
+            ])
+            .await?;
+        redact_later(&password);
+        let client = forward.connect(&system.database, &password).await?;
+        let row = client
+            .query_opt(
+                "SELECT o.placement_type, o.pool_cluster, e.instance_suffix,
+                        coalesce(e.secret_namespace, '')
+                   FROM registry.project_envs AS e JOIN registry.orgs AS o ON o.id = e.org
+                  WHERE e.org = $1 AND e.project = $2 AND e.env = $3",
+                &[&arguments.org, &arguments.project, &arguments.environment],
+            )
+            .await?
+            .with_context(|| {
+                format!(
+                    "registry.project_envs has no environment {}/{}/{}",
+                    arguments.org, arguments.project, arguments.environment
+                )
+            })?;
+        let placement: String = row.get(0);
+        let pool: Option<String> = row.get(1);
+        let suffix: String = row.get(2);
+        let secret_namespace: String = row.get(3);
+        ensure!(
+            placement == "pooled" && pool.as_deref() == Some(system.cluster.as_str()),
+            "the org {} is {placement} on {pool:?}; the verb reaches only the cluster {}",
+            arguments.org,
+            system.cluster
+        );
+        ensure!(
+            !secret_namespace.is_empty(),
+            "registry.project_envs names no secret namespace for the environment"
+        );
+        let database = wamn_control_provision::project_env_database_name(
+            &arguments.org,
+            &arguments.project,
+            &arguments.environment,
+            &suffix,
+        );
+        let project = forward.connect(&database, &password).await?;
+        let tenant: String = project
+            .query_one(
+                "SELECT tenant_id FROM catalog.tenant_environments
+                  WHERE org = $1 AND project = $2 AND env = $3",
+                &[&arguments.org, &arguments.project, &arguments.environment],
+            )
+            .await
+            .with_context(|| format!("read the tenant of {database}"))?
+            .get(0);
+        Ok(Self {
+            password,
+            system_database: system.database.clone(),
+            cluster_host: format!(
+                "{}-rw.{}.svc.cluster.local",
+                system.cluster, system.namespace
+            ),
+            database,
+            tenant,
+            secret_namespace,
+            forward,
+        })
+    }
+
+    fn url(&self, database: &str) -> String {
+        format!(
+            "postgresql://postgres:{}@127.0.0.1:{}/{database}?sslmode=disable",
+            percent_encode(&self.password),
+            self.forward.port
+        )
+    }
+
+    fn system_url(&self) -> String {
+        self.url(&self.system_database)
+    }
+
+    fn project_url(&self) -> String {
+        self.url(&self.database)
+    }
+
+    /// The superuser URL of the system database as a pod in the cluster
+    /// reaches it.
+    fn system_url_in_cluster(&self) -> String {
+        format!(
+            "postgresql://postgres:{}@{}:5432/{}",
+            percent_encode(&self.password),
+            self.cluster_host,
+            self.system_database
+        )
+    }
+
+    async fn system(&self) -> anyhow::Result<tokio_postgres::Client> {
+        self.forward
+            .connect(&self.system_database, &self.password)
+            .await
+    }
+
+    async fn project(&self) -> anyhow::Result<tokio_postgres::Client> {
+        self.forward.connect(&self.database, &self.password).await
+    }
+
+    /// An emitted credential URL that names the in-cluster host, pointed at
+    /// the forward for a process on this machine.
+    fn local(&self, url: &str) -> anyhow::Result<String> {
+        let in_cluster = format!("@{}:5432/", self.cluster_host);
+        ensure!(
+            url.matches(&in_cluster).count() == 1,
+            "a credential URL does not name the host {}",
+            self.cluster_host
+        );
+        Ok(url.replace(&in_cluster, &format!("@127.0.0.1:{}/", self.forward.port)))
+    }
+}
+
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+
+/// Every credential that this process read. A recorded cause never shows one.
+static SECRETS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn redact_later(secret: &str) {
+    if secret.len() >= 8
+        && let Ok(mut secrets) = SECRETS.lock()
+    {
+        secrets.push(secret.to_owned());
+        secrets.push(percent_encode(secret));
+    }
+}
+
+fn redact(text: &str) -> String {
+    let mut text = text.to_owned();
+    if let Ok(secrets) = SECRETS.lock() {
+        for secret in secrets.iter() {
+            text = text.replace(secret.as_str(), "[redacted]");
+        }
+    }
+    text
+}
+
+struct NextRelease {
     /// Each attested release id with its source commit.
     attested: Vec<(i32, String)>,
     next: i32,
 }
 
-/// Reads the database of the environment from `registry.project_envs`, and
-/// the attestations and releases of its tenant. The next free id is one above
-/// every release of the tenant in the environment.
+/// The attestations and releases of the tenant. The next free id is one
+/// above every release of the tenant.
 async fn next_release(
-    environment: &EnvironmentFile,
-    kubectl: &Kubectl,
+    databases: &Databases,
     arguments: &RunArguments,
 ) -> anyhow::Result<NextRelease> {
-    let system = &environment.system_database;
-    let forward = PortForward::open(kubectl, &system.namespace, &system.cluster).await?;
-    let password = kubectl
-        .run(&[
-            "-n",
-            &system.namespace,
-            "get",
-            "secret",
-            &format!("{}-superuser", system.cluster),
-            "-o",
-            "go-template={{.data.password | base64decode}}",
-        ])
-        .await?;
-    let client = forward.connect(&system.database, &password).await?;
-    let row = client
-        .query_opt(
-            "SELECT o.placement_type, o.pool_cluster, e.instance_suffix
-               FROM registry.project_envs AS e JOIN registry.orgs AS o ON o.id = e.org
-              WHERE e.org = $1 AND e.project = $2 AND e.env = $3",
-            &[&arguments.org, &arguments.project, &arguments.environment],
-        )
-        .await?
-        .with_context(|| {
-            format!(
-                "registry.project_envs has no environment {}/{}/{}",
-                arguments.org, arguments.project, arguments.environment
-            )
-        })?;
-    let placement: String = row.get(0);
-    let pool: Option<String> = row.get(1);
-    let suffix: String = row.get(2);
-    ensure!(
-        placement == "pooled" && pool.as_deref() == Some(system.cluster.as_str()),
-        "the org {} is {placement} on {pool:?}; the verb reaches only the cluster {}",
-        arguments.org,
-        system.cluster
-    );
-    let database = wamn_control_provision::project_env_database_name(
-        &arguments.org,
-        &arguments.project,
-        &arguments.environment,
-        &suffix,
-    );
-    let client = forward.connect(&database, &password).await?;
-    let tenant: String = client
-        .query_one(
-            "SELECT tenant_id FROM catalog.tenant_environments
-              WHERE org = $1 AND project = $2 AND env = $3",
-            &[&arguments.org, &arguments.project, &arguments.environment],
-        )
-        .await
-        .with_context(|| format!("read the tenant of {database}"))?
-        .get(0);
+    let client = databases.project().await?;
     let attested = client
         .query(
             "SELECT effective_release_id, coalesce(source_commit, '') FROM catalog.deployment_attestations
               WHERE tenant_id = $1 AND org_id = $2 AND project_id = $3 AND environment = $4
               ORDER BY effective_release_id",
-            &[&tenant, &arguments.org, &arguments.project, &arguments.environment],
+            &[&databases.tenant, &arguments.org, &arguments.project, &arguments.environment],
         )
         .await?
         .iter()
@@ -996,13 +2158,11 @@ async fn next_release(
         .query_one(
             "SELECT coalesce(max(effective_release_id), 0) FROM catalog.effective_releases
               WHERE tenant_id = $1",
-            &[&tenant],
+            &[&databases.tenant],
         )
         .await?
         .get(0);
     Ok(NextRelease {
-        tenant,
-        database,
         attested,
         next: highest + 1,
     })
@@ -1207,6 +2367,83 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_next_generation_follows_the_active_login_with_the_later_expiry() {
+        use wamn_control_provision::CredentialGeneration;
+        let role = |name: &str, active, until| (name.to_owned(), active, until);
+        assert_eq!(choose_generation(&[], "r_a").unwrap(), None);
+        assert_eq!(
+            choose_generation(&[role("r_a", true, 10.0), role("r_b", false, 0.0)], "r_a").unwrap(),
+            Some(CredentialGeneration::A)
+        );
+        assert_eq!(
+            choose_generation(&[role("r_a", true, 10.0), role("r_b", true, 20.0)], "r_a").unwrap(),
+            Some(CredentialGeneration::B)
+        );
+        assert!(choose_generation(&[role("r_a", false, 0.0)], "r_a").is_err());
+    }
+
+    #[test]
+    fn the_mint_job_takes_the_run_values_and_the_ctl_image_of_the_commit() {
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .unwrap();
+        let template =
+            fs::read_to_string(checkout.join("deploy/gcp/operator/mint-pat.yaml")).unwrap();
+        let arguments = RunArguments::new("dkk", "wms", "dev", &"a".repeat(40)).unwrap();
+        let image = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-x@sha256:00";
+        let job = mint_pat_job(&template, image, &arguments, "wms", "hosts").unwrap();
+        let document: serde_yaml::Value = serde_yaml::from_str(&job).unwrap();
+        let container = &document["spec"]["template"]["spec"]["containers"][0];
+        assert_eq!(container["image"], image);
+        let script = container["args"][0].as_str().unwrap();
+        assert!(
+            script.contains("--org dkk --project wms --env dev --tenant wms"),
+            "{script}"
+        );
+        assert!(script.contains("--namespace hosts"), "{script}");
+        assert!(
+            script.contains("--emit-management-author-pat-secret /out/pat.json"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn a_recorded_cause_never_shows_a_credential() {
+        redact_later("pass/word:with@signs");
+        let url = format!(
+            "postgresql://postgres:{}@127.0.0.1:1/x",
+            percent_encode("pass/word:with@signs")
+        );
+        assert_eq!(
+            redact(&format!("connect to {url} failed for pass/word:with@signs")),
+            "connect to postgresql://postgres:[redacted]@127.0.0.1:1/x failed for [redacted]"
+        );
+    }
+
+    #[test]
+    fn an_emitted_secret_names_its_url_in_string_data_or_data() {
+        let directory =
+            std::env::temp_dir().join(format!("wamn-upgrade-secret-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let plain = directory.join("plain.json");
+        fs::write(
+            &plain,
+            r#"{"stringData":{"url":"postgresql://u@h:5432/d"}}"#,
+        )
+        .unwrap();
+        assert_eq!(secret_url(&plain).unwrap(), "postgresql://u@h:5432/d");
+        let encoded = directory.join("encoded.json");
+        fs::write(
+            &encoded,
+            r#"{"data":{"url":"cG9zdGdyZXNxbDovL3VAaDo1NDMyL2Q="}}"#,
+        )
+        .unwrap();
+        assert_eq!(secret_url(&encoded).unwrap(), "postgresql://u@h:5432/d");
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
     fn git_sync(directory: &Path, arguments: &[&str]) -> String {
         let output = std::process::Command::new("git")
             .arg("-C")
@@ -1244,6 +2481,9 @@ mod tests {
         ];
         for workload in environment["workloads"].as_array().unwrap() {
             named.push(workload.as_str().unwrap().to_owned());
+        }
+        for package in environment["packages"].as_array().unwrap() {
+            named.push(format!("{}/README.md", package.as_str().unwrap()));
         }
         for path in &named {
             let target = repository.join(path);
