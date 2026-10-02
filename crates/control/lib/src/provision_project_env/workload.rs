@@ -22,6 +22,53 @@ use wamn_control_provision::render_control_administration_patch;
 
 const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
 
+/// The password fingerprints in `registry.generation_passwords` of the system
+/// database.
+///
+/// PostgreSQL shows a password only to a superuser, and the provisioner is not
+/// one (`docs/plan/platform-ui.md` §4.10). A prepare records the SHA-256 of the
+/// password that it sets, and a retirement removes the record. A generation is
+/// active only with a record.
+pub(super) struct GenerationPasswords {
+    client: tokio_postgres::Client,
+}
+
+impl GenerationPasswords {
+    pub(super) async fn connect(system: &PgConfig) -> anyhow::Result<Self> {
+        let (client, _task) = connect_config(system, "system database").await?;
+        Ok(Self { client })
+    }
+
+    async fn recorded(&self, role: &str) -> anyhow::Result<bool> {
+        Ok(self
+            .client
+            .query_one(sql::generation_password_recorded_sql(), &[&role])
+            .await
+            .context("read a generation password fingerprint")?
+            .get(0))
+    }
+
+    async fn record(&self, role: &str, password: &str) -> anyhow::Result<()> {
+        let sha256 = hex::encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            password.as_bytes(),
+        ));
+        self.client
+            .execute(sql::record_generation_password_sql(), &[&role, &sha256])
+            .await
+            .context("record a generation password fingerprint")?;
+        Ok(())
+    }
+
+    async fn forget(&self, role: &str) -> anyhow::Result<()> {
+        self.client
+            .execute(sql::forget_generation_password_sql(), &[&role])
+            .await
+            .context("remove a generation password fingerprint")?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -90,7 +137,6 @@ impl WorkloadRoleState {
         !self.login
             && self.restrictive_attributes()
             && self.inherit
-            && !self.password_set
             && self.valid_until.as_deref() == Some("1970-01-01T00:00:00Z")
             && self.valid_until_finite
             && self.member_roles.is_empty()
@@ -270,10 +316,11 @@ fn workload_action_identity<'a>(
 
 async fn converge_workload_generation_state(
     client: &(impl GenericClient + Sync),
+    passwords: &GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     role: &str,
 ) -> anyhow::Result<Option<WorkloadRoleState>> {
-    let state = read_workload_role_state(client, role, &lifecycle.label()).await?;
+    let state = read_workload_role_state(client, passwords, role, &lifecycle.label()).await?;
     let Some(found) = state.as_ref() else {
         return Ok(None);
     };
@@ -300,16 +347,22 @@ async fn converge_workload_generation_state(
                 lifecycle.label()
             )
         })?;
-    read_workload_role_state(client, role, &lifecycle.label()).await
+    read_workload_role_state(client, passwords, role, &lifecycle.label()).await
 }
 
 async fn converge_stable_workload_memberships(
     client: &(impl GenericClient + Sync),
+    passwords: &GenerationPasswords,
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
 ) -> anyhow::Result<()> {
-    let Some(stable) =
-        read_workload_role_state(client, lifecycle.family.acl_role(), &lifecycle.label()).await?
+    let Some(stable) = read_workload_role_state(
+        client,
+        passwords,
+        lifecycle.family.acl_role(),
+        &lifecycle.label(),
+    )
+    .await?
     else {
         return Ok(());
     };
@@ -332,7 +385,7 @@ async fn converge_stable_workload_memberships(
                     lifecycle.label()
                 )
             })?;
-        let child = read_workload_role_state(client, &role, &lifecycle.label())
+        let child = read_workload_role_state(client, passwords, &role, &lifecycle.label())
             .await?
             .with_context(|| {
                 format!(
@@ -454,6 +507,9 @@ pub async fn run_workload_action(
         (admin_url, database, config, Some(instance))
     };
     let lifecycle = workload_lifecycle(family, identity, &database);
+    let passwords =
+        GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
+            .await?;
     let db_host = match (&args.db_host, &args.cluster) {
         (Some(host), _) => host.clone(),
         (None, Some(cluster)) => format!("{cluster}-rw"),
@@ -480,6 +536,7 @@ pub async fn run_workload_action(
             let key = tenant_key(tenant, &database);
             prepare_workload_generation(
                 &admin_config,
+                &passwords,
                 lifecycle,
                 generation,
                 &expires_at,
@@ -554,11 +611,11 @@ pub async fn run_workload_action(
             })
         }
         WorkloadActionVerb::Retire => {
-            retire_workload_generation(&admin_config, lifecycle, generation).await?;
+            retire_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
             Ok(WorkloadActionOutcome::Retired)
         }
         WorkloadActionVerb::Abort => {
-            abort_workload_generation(&admin_config, lifecycle, generation).await?;
+            abort_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
             Ok(WorkloadActionOutcome::Aborted)
         }
     }
@@ -594,6 +651,7 @@ pub async fn run_org_workload_action(
         },
         control_tenant: None,
     };
+    let passwords = GenerationPasswords::connect(&admin_config).await?;
     match verb {
         WorkloadActionVerb::Prepare => {
             let secret_path = args.secret.as_deref().with_context(|| {
@@ -607,6 +665,7 @@ pub async fn run_org_workload_action(
             let expires_at = workload_expires_at(Utc::now());
             prepare_workload_generation(
                 &admin_config,
+                &passwords,
                 lifecycle,
                 generation,
                 &expires_at,
@@ -636,11 +695,11 @@ pub async fn run_org_workload_action(
             })
         }
         WorkloadActionVerb::Retire => {
-            retire_workload_generation(&admin_config, lifecycle, generation).await?;
+            retire_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
             Ok(WorkloadActionOutcome::Retired)
         }
         WorkloadActionVerb::Abort => {
-            abort_workload_generation(&admin_config, lifecycle, generation).await?;
+            abort_workload_generation(&admin_config, &passwords, lifecycle, generation).await?;
             Ok(WorkloadActionOutcome::Aborted)
         }
     }
@@ -669,6 +728,7 @@ pub async fn run_org_workload_action(
 /// must drop the roles themselves, not rely on a failed run to have done it.
 async fn prepare_workload_generation<F>(
     admin_config: &PgConfig,
+    passwords: &GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     generation: CredentialGeneration,
     expires_at: &str,
@@ -691,9 +751,11 @@ where
         .await
         .context("converge cluster PUBLIC CONNECT floor")?;
     verify_public_access_floor(&transaction, &lifecycle.label()).await?;
-    converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
-    let desired = converge_workload_generation_state(&transaction, lifecycle, &role).await?;
-    let other = converge_workload_generation_state(&transaction, lifecycle, &other_role).await?;
+    converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
+    let desired =
+        converge_workload_generation_state(&transaction, passwords, lifecycle, &role).await?;
+    let other =
+        converge_workload_generation_state(&transaction, passwords, lifecycle, &other_role).await?;
     let recovering_active = match (generation, desired.as_ref(), other.as_ref()) {
         (CredentialGeneration::A, desired, None)
             if desired.is_none_or(WorkloadRoleState::is_inactive) =>
@@ -751,6 +813,7 @@ where
         && let Some(grant_set) = stable_grant_set(lifecycle.family)
         && read_workload_role_state(
             &transaction,
+            passwords,
             lifecycle.family.acl_role(),
             &lifecycle.label(),
         )
@@ -778,6 +841,7 @@ where
         ))
         .await
         .with_context(|| format!("prepare {} credential generation", lifecycle.label()))?;
+    passwords.record(&role, &password).await?;
     if let (
         Some(tenant),
         WorkloadRoleScope::Control {
@@ -801,10 +865,14 @@ where
             "control-author login identity already maps to a different tenant"
         );
     }
-    transaction
-        .commit()
-        .await
-        .with_context(|| format!("commit {} generation prepare", lifecycle.label()))?;
+    if let Err(error) = transaction.commit().await {
+        // The role never received the password, so its fingerprint goes too.
+        // A forget that fails here leaves a fingerprint on an inactive role,
+        // which the inactive shape ignores.
+        let _ = passwords.forget(&role).await;
+        return Err(error)
+            .with_context(|| format!("commit {} generation prepare", lifecycle.label()));
+    }
 
     // App prepare has now made the stable role NOLOGIN, so old credentials
     // cannot reconnect. Do not drain its existing sessions here: they bridge
@@ -818,7 +886,7 @@ where
             .await
             .with_context(|| format!("authenticate prepared {} generation", lifecycle.label()))?;
 
-        let prepared = read_workload_role_state(&admin, &role, &lifecycle.label())
+        let prepared = read_workload_role_state(&admin, passwords, &role, &lifecycle.label())
             .await?
             .with_context(|| format!("prepared {} generation disappeared", lifecycle.label()))?;
         anyhow::ensure!(
@@ -837,14 +905,20 @@ where
             RoleAclExpectation::Generation { database },
         )
         .await?;
-        verify_stable_workload_role(&admin, admin_config, lifecycle).await?;
+        verify_stable_workload_role(&admin, passwords, admin_config, lifecycle).await?;
         publish(&role, &password)?;
         Ok::<(), anyhow::Error>(())
     }
     .await;
     if let Err(error) = publish_result {
-        let rollback =
-            rollback_prepared_workload_generation(&admin, admin_config, lifecycle, &role).await;
+        let rollback = rollback_prepared_workload_generation(
+            &admin,
+            passwords,
+            admin_config,
+            lifecycle,
+            &role,
+        )
+        .await;
         drop(admin);
         let _ = admin_task.await;
         if let Err(rollback_error) = rollback {
@@ -867,6 +941,7 @@ where
 /// refused prepare leaves behind.
 async fn rollback_prepared_workload_generation(
     admin: &(impl GenericClient + Sync),
+    passwords: &GenerationPasswords,
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
     role: &str,
@@ -879,6 +954,7 @@ async fn rollback_prepared_workload_generation(
         ))
         .await
         .with_context(|| format!("revoke prepared {} generation authority", lifecycle.label()))?;
+    passwords.forget(role).await?;
     admin
         .batch_execute(&sql::terminate_workload_generation_sessions_sql(role))
         .await
@@ -888,7 +964,7 @@ async fn rollback_prepared_workload_generation(
                 lifecycle.label()
             )
         })?;
-    let state = read_workload_role_state(admin, role, &lifecycle.label())
+    let state = read_workload_role_state(admin, passwords, role, &lifecycle.label())
         .await?
         .with_context(|| format!("rolled-back {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
@@ -901,6 +977,7 @@ async fn rollback_prepared_workload_generation(
 
 async fn retire_workload_generation(
     admin_config: &PgConfig,
+    passwords: &GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
@@ -914,12 +991,12 @@ async fn retire_workload_generation(
         .await
         .with_context(|| format!("begin {} generation retirement", lifecycle.label()))?;
     verify_public_access_floor(&transaction, &lifecycle.label()).await?;
-    converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
-    let old = converge_workload_generation_state(&transaction, lifecycle, &old_role)
+    converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
+    let old = converge_workload_generation_state(&transaction, passwords, lifecycle, &old_role)
         .await?
         .with_context(|| format!("old {} generation does not exist", lifecycle.label()))?;
     let replacement =
-        converge_workload_generation_state(&transaction, lifecycle, &replacement_role)
+        converge_workload_generation_state(&transaction, passwords, lifecycle, &replacement_role)
             .await?
             .with_context(|| {
                 format!(
@@ -966,6 +1043,7 @@ async fn retire_workload_generation(
         .commit()
         .await
         .with_context(|| format!("commit {} generation retirement", lifecycle.label()))?;
+    passwords.forget(&old_role).await?;
     admin
         .batch_execute(&sql::terminate_workload_generation_sessions_sql(&old_role))
         .await
@@ -975,7 +1053,7 @@ async fn retire_workload_generation(
                 lifecycle.label()
             )
         })?;
-    let retired = read_workload_role_state(&admin, &old_role, &lifecycle.label())
+    let retired = read_workload_role_state(&admin, passwords, &old_role, &lifecycle.label())
         .await?
         .with_context(|| format!("retired {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
@@ -990,6 +1068,7 @@ async fn retire_workload_generation(
 
 async fn abort_workload_generation(
     admin_config: &PgConfig,
+    passwords: &GenerationPasswords,
     lifecycle: WorkloadLifecycle<'_>,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
@@ -1002,12 +1081,13 @@ async fn abort_workload_generation(
         .await
         .with_context(|| format!("begin {} generation abort", lifecycle.label()))?;
     verify_public_access_floor(&transaction, &lifecycle.label()).await?;
-    converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
-    let prepared = converge_workload_generation_state(&transaction, lifecycle, &role)
+    converge_stable_workload_memberships(&transaction, passwords, admin_config, lifecycle).await?;
+    let prepared = converge_workload_generation_state(&transaction, passwords, lifecycle, &role)
         .await?
         .with_context(|| format!("prepared {} generation does not exist", lifecycle.label()))?;
     let other_role = lifecycle.role(generation.other());
-    let _ = converge_workload_generation_state(&transaction, lifecycle, &other_role).await?;
+    let _ =
+        converge_workload_generation_state(&transaction, passwords, lifecycle, &other_role).await?;
     anyhow::ensure!(
         prepared.is_active_for(lifecycle.family, database),
         "prepared {} generation is not the exact active credential",
@@ -1024,7 +1104,7 @@ async fn abort_workload_generation(
         RoleAclExpectation::Generation { database },
     )
     .await?;
-    verify_stable_workload_role(&transaction, admin_config, lifecycle).await?;
+    verify_stable_workload_role(&transaction, passwords, admin_config, lifecycle).await?;
     transaction
         .batch_execute(&sql::retire_workload_generation_sql(
             lifecycle.family,
@@ -1042,6 +1122,7 @@ async fn abort_workload_generation(
         .commit()
         .await
         .with_context(|| format!("commit {} generation abort", lifecycle.label()))?;
+    passwords.forget(&role).await?;
     admin
         .batch_execute(&sql::terminate_workload_generation_sessions_sql(&role))
         .await
@@ -1051,7 +1132,7 @@ async fn abort_workload_generation(
                 lifecycle.label()
             )
         })?;
-    let aborted = read_workload_role_state(&admin, &role, &lifecycle.label())
+    let aborted = read_workload_role_state(&admin, passwords, &role, &lifecycle.label())
         .await?
         .with_context(|| format!("aborted {} generation disappeared", lifecycle.label()))?;
     anyhow::ensure!(
@@ -1127,11 +1208,12 @@ async fn lock_workload_family(
 
 async fn verify_stable_workload_role(
     client: &(impl GenericClient + Sync),
+    passwords: &GenerationPasswords,
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
 ) -> anyhow::Result<()> {
     let role = lifecycle.family.acl_role();
-    let state = read_workload_role_state(client, role, &lifecycle.label())
+    let state = read_workload_role_state(client, passwords, role, &lifecycle.label())
         .await?
         .with_context(|| format!("stable {} ACL role does not exist", lifecycle.label()))?;
     anyhow::ensure!(
@@ -1155,6 +1237,7 @@ async fn verify_stable_workload_role(
 
 async fn read_workload_role_state(
     client: &(impl GenericClient + Sync),
+    passwords: &GenerationPasswords,
     role: &str,
     label: &str,
 ) -> anyhow::Result<Option<WorkloadRoleState>> {
@@ -1162,7 +1245,11 @@ async fn read_workload_role_state(
         .query_opt(sql::workload_generation_state_sql(), &[&role])
         .await
         .with_context(|| format!("read {label} generation state"))?;
-    Ok(row.map(|row| WorkloadRoleState {
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let password_set = passwords.recorded(role).await?;
+    Ok(Some(WorkloadRoleState {
         login: row.get("rolcanlogin"),
         superuser: row.get("rolsuper"),
         inherit: row.get("rolinherit"),
@@ -1170,7 +1257,7 @@ async fn read_workload_role_state(
         create_db: row.get("rolcreatedb"),
         replication: row.get("rolreplication"),
         bypass_rls: row.get("rolbypassrls"),
-        password_set: row.get("password_set"),
+        password_set,
         valid_until: row.get("valid_until"),
         valid_until_finite: row.get("valid_until_finite"),
         memberships: row.get("memberships"),

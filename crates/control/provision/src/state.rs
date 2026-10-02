@@ -17,8 +17,12 @@ pub fn ensure_ops_role_sql() -> &'static str {
                      WHERE rolname = 'wamn_ops' \
                        AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
                             OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-         ALTER ROLE wamn_ops NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+         ALTER ROLE wamn_ops NOLOGIN NOCREATEDB NOCREATEROLE \
            NOINHERIT NOREPLICATION NOBYPASSRLS; \
+         IF EXISTS (SELECT FROM pg_catalog.pg_roles \
+                    WHERE rolname = 'wamn_ops' AND rolsuper) THEN \
+           ALTER ROLE wamn_ops NOSUPERUSER; \
+         END IF; \
        END IF; \
      END $ops_role$;"
 }

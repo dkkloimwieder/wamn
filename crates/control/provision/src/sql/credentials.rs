@@ -17,15 +17,30 @@ pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
              EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-           ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = role_name \
+           ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name \
                          AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                              OR rolinherit OR rolreplication OR rolbypassrls \
-                              OR rolpassword IS NOT NULL)) THEN \
-             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+                              OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
+             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB \
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+             {nosuperuser} \
            END IF; \
          END $workload_acl$;",
+        nosuperuser = revoke_superuser_sql("role_name"),
         role_lit = quote_literal(role),
+    )
+}
+
+/// `ALTER ROLE … NOSUPERUSER` for the role that the PL/pgSQL expression
+/// `role_expr` names, only when that role is a superuser.
+///
+/// Only a superuser can write the clause, and the provisioner is not one
+/// (`docs/plan/platform-ui.md` §4.10). A role that never was a superuser gets
+/// no clause, so a replay stays idempotent.
+pub(crate) fn revoke_superuser_sql(role_expr: &str) -> String {
+    format!(
+        "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {role_expr} AND rolsuper) THEN \
+           EXECUTE format('ALTER ROLE %I NOSUPERUSER', {role_expr}); \
+         END IF;"
     )
 }
 
@@ -123,7 +138,6 @@ pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
 pub fn workload_generation_state_sql() -> &'static str {
     "SELECT r.rolcanlogin, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, \
             r.rolreplication, r.rolbypassrls, \
-            r.rolpassword IS NOT NULL AS password_set, \
             CASE WHEN r.rolvaliduntil IS NULL THEN NULL \
                  ELSE to_char(r.rolvaliduntil AT TIME ZONE 'UTC', \
                               'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') END AS valid_until, \
@@ -183,7 +197,40 @@ pub fn workload_generation_state_sql() -> &'static str {
             (SELECT count(*)::bigint FROM pg_shdepend d \
               WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = r.oid \
                 AND d.deptype = 'o') AS owned_objects \
-       FROM pg_catalog.pg_authid r WHERE r.rolname = $1"
+       FROM pg_catalog.pg_roles r WHERE r.rolname = $1"
+}
+
+/// Record the SHA-256 of the password that a prepare sets on generation `$1`.
+///
+/// `$2` is the lowercase hex digest. PostgreSQL shows a password only to a
+/// superuser, so the system database keeps this fingerprint instead
+/// (`docs/plan/platform-ui.md` §4.10). The password itself never leaves the
+/// provisioner.
+pub fn record_generation_password_sql() -> &'static str {
+    "INSERT INTO registry.generation_passwords (role, sha256) VALUES ($1, $2) \
+     ON CONFLICT (role) DO UPDATE SET sha256 = EXCLUDED.sha256, recorded_at = now()"
+}
+
+/// Whether a password fingerprint is recorded for generation `$1`.
+pub fn generation_password_recorded_sql() -> &'static str {
+    "SELECT EXISTS (SELECT FROM registry.generation_passwords WHERE role = $1)"
+}
+
+/// [`workload_generation_state_sql`] with a `password_set` column, for a role
+/// whose database is the system database that holds its fingerprint.
+pub fn system_generation_state_sql() -> String {
+    format!(
+        "SELECT state.*, EXISTS (SELECT FROM registry.generation_passwords p \
+                                  WHERE p.role = $1::text) AS password_set \
+           FROM ({}) state",
+        workload_generation_state_sql()
+    )
+}
+
+/// Remove the password fingerprint of generation `$1` after its retirement
+/// set `PASSWORD NULL`.
+pub fn forget_generation_password_sql() -> &'static str {
+    "DELETE FROM registry.generation_passwords WHERE role = $1"
 }
 
 /// Session-scoped serialization primitive for workload credential mutation.

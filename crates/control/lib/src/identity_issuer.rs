@@ -213,7 +213,7 @@ pub async fn provision_identity_issuer(
 
 async fn state(client: &(impl GenericClient + Sync), role: &str) -> anyhow::Result<Option<Row>> {
     client
-        .query_opt(sql::workload_generation_state_sql(), &[&role])
+        .query_opt(&sql::system_generation_state_sql(), &[&role])
         .await
         .context("read identity database role state")
 }
@@ -508,6 +508,17 @@ async fn prepare(
         )?)
         .await
         .map_err(|_| anyhow::anyhow!("prepare identity database credential failed"))?;
+    let fingerprint = hex::encode(ring::digest::digest(
+        &ring::digest::SHA256,
+        password.as_bytes(),
+    ));
+    transaction
+        .execute(
+            sql::record_generation_password_sql(),
+            &[&role, &fingerprint],
+        )
+        .await
+        .context("record the identity credential password fingerprint")?;
     // The accepted old surface must have converged completely before commit.
     stable(&transaction, false).await?;
     transaction.commit().await?;
@@ -559,6 +570,9 @@ async fn deactivate(
         .batch_execute(&retire_identity_issuer_generation_sql(issuer, generation)?)
         .await?;
     admin
+        .execute(sql::forget_generation_password_sql(), &[&role])
+        .await?;
+    admin
         .batch_execute(&sql::terminate_workload_generation_sessions_sql(&role))
         .await?;
     let row = state(admin, &role)
@@ -604,6 +618,9 @@ async fn retire(
     }
     transaction
         .batch_execute(&retire_identity_issuer_generation_sql(issuer, generation)?)
+        .await?;
+    transaction
+        .execute(sql::forget_generation_password_sql(), &[&role])
         .await?;
     transaction.commit().await?;
     deactivate(admin, issuer, generation).await

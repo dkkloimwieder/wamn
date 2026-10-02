@@ -22,6 +22,17 @@ use wamn_control_provision::{
 use wamn_pg_core::quote_ident;
 use wamn_test_infrastructure::locked_database;
 
+/// The generation state with the role's real password state. The test connects
+/// as a superuser, which alone can read `pg_authid`; the provisioner reads the
+/// fingerprint table instead (`docs/plan/platform-ui.md` §4.10).
+fn state_sql() -> String {
+    format!(
+        "SELECT state.*, (SELECT rolpassword IS NOT NULL FROM pg_catalog.pg_authid \
+                           WHERE rolname = $1::text) AS password_set FROM ({}) state",
+        sql::workload_generation_state_sql()
+    )
+}
+
 const ORG: &str = "sessioncli";
 const PROJECT: &str = "widgets";
 const ENVIRONMENT: &str = "dev";
@@ -186,10 +197,7 @@ fn read_target(path: &Path, generation: CredentialGeneration) -> anyhow::Result<
 
 async fn inactive(admin: &Client, generation: CredentialGeneration) -> anyhow::Result<()> {
     let row = admin
-        .query_one(
-            sql::workload_generation_state_sql(),
-            &[&generation_role(generation)],
-        )
+        .query_one(&state_sql(), &[&generation_role(generation)])
         .await?;
     anyhow::ensure!(
         !row.get::<_, bool>("rolcanlogin")

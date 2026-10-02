@@ -11,8 +11,7 @@ use super::{DB_OWNER_ROLE, quote_ident};
 /// to hold title; nothing connects as it, so it is deliberately outside the
 /// credential-rotation machinery. Ownership is conferred declaratively by the
 /// `Database` CR's `spec.owner`
-/// ([`render_project_env_database`](crate::render_project_env_database)) and
-/// convergently by [`set_database_owner_sql`].
+/// ([`render_project_env_database`](crate::render_project_env_database)).
 ///
 /// **Apply this to the target cluster BEFORE any `Database` CR naming it** —
 /// CNPG maps `spec.owner` to `CREATE DATABASE … OWNER` / `ALTER DATABASE …
@@ -28,30 +27,24 @@ pub fn ensure_db_owner_role_sql() -> &'static str {
                      WHERE rolname = 'wamn_db_owner' \
                        AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
                             OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
-         ALTER ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB \
+         ALTER ROLE wamn_db_owner NOLOGIN NOCREATEDB \
            NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+         IF EXISTS (SELECT FROM pg_catalog.pg_roles \
+                    WHERE rolname = 'wamn_db_owner' AND rolsuper) THEN \
+           ALTER ROLE wamn_db_owner NOSUPERUSER; \
+         END IF; \
        END IF; \
      END $db_owner$;"
 }
 
-/// `ALTER DATABASE "<database>" OWNER TO "wamn_db_owner"` — the convergence
-/// half of the ownership migration, for databases that already exist.
+/// `ALTER DATABASE "<database>" OWNER TO "wamn_db_owner"` for a database
+/// created before its `Database` CR set `spec.owner`.
 ///
-/// A `REVOKE` cannot express ownership, so moving an already-provisioned
-/// project-env database off its old owner is this `ALTER`, not a grant edit.
-/// It is naturally idempotent (setting the owner a database already has is a
-/// no-op), so the privilege batch stays re-runnable and no one-shot migration
-/// script is needed: fresh databases arrive owned correctly from the CR, old
-/// ones converge here, and re-applying converges again.
-///
-/// **Order is load-bearing: this must run BEFORE the privilege batch's
-/// `CONNECT` revokes.** `ALTER DATABASE … OWNER TO` rewrites the outgoing
-/// owner's ACL entry to the incoming owner, so a revoke applied before it can be
-/// undone by the entry the owner change carries over.
-///
-/// Run as the superuser provisioning principal (which needs no membership in
-/// the new owner), connected to any database on the target cluster, AFTER the
-/// database exists.
+/// The provisioner never runs it, because it is not a superuser
+/// (`docs/plan/platform-ui.md` §4.10). The operator runs it once by hand, as a
+/// superuser, for such a database. Run it BEFORE the privilege batch: `ALTER
+/// DATABASE … OWNER TO` rewrites the outgoing owner's ACL entry, so it can undo
+/// a revoke applied before it.
 pub fn set_database_owner_sql(database: &str) -> String {
     format!(
         "ALTER DATABASE {db} OWNER TO {owner}",

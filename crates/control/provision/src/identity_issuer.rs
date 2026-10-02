@@ -468,12 +468,14 @@ mod tests {
              IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
              EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
              NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-             ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = role_name \
+             ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name \
              AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-             OR rolinherit OR rolreplication OR rolbypassrls \
-             OR rolpassword IS NOT NULL)) THEN \
-             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+             OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
+             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB \
              NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+             IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name AND rolsuper) THEN \
+             EXECUTE format('ALTER ROLE %I NOSUPERUSER', role_name); \
+             END IF; \
              END IF; END $workload_acl$; \
              GRANT USAGE ON SCHEMA identity, registry TO \"wamn_identity_issuer\"; \
              GRANT SELECT, INSERT, UPDATE, DELETE ON \

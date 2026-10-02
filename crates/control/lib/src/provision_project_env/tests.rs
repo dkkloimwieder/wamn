@@ -231,23 +231,13 @@ fn secret_writes_replace_links_without_following_or_sharing_them() {
 /// database is a generation, and a generation is granted `CONNECT` directly
 /// by its own prepare.
 #[test]
-fn the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_statement() {
+fn the_privilege_batch_revokes_every_stable_role_connect_and_sets_no_owner() {
     let batch = privilege_sql("wamn-db-demo--billing--dev");
     assert_eq!(
         batch,
-        "ALTER DATABASE \"wamn-db-demo--billing--dev\" OWNER TO \"wamn_db_owner\";\n\
-             REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-demo--billing--dev\" FROM PUBLIC; \
+        "REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-demo--billing--dev\" FROM PUBLIC; \
              REVOKE CONNECT ON DATABASE \"wamn-db-demo--billing--dev\" FROM \"wamn_app\";\n"
     );
-
-    // The ordering assertion, stated independently of the frozen literal so
-    // a deliberate re-pin cannot silently drop it. `ALTER DATABASE … OWNER
-    // TO` rewrites the outgoing owner's ACL entry, so a revoke applied
-    // before it can be undone by what the owner change carries over.
-    let owner = batch
-        .find("ALTER DATABASE")
-        .expect("the owner statement is emitted");
-    assert_eq!(owner, 0, "ownership must be the first statement: {batch}");
 
     // NOBODY is granted CONNECT here, and the PUBLIC confinement stands.
     assert!(!batch.contains("GRANT CONNECT"));
@@ -271,12 +261,6 @@ fn the_privilege_batch_never_grants_the_stable_guest_acl_role_connect() {
             "REVOKE CONNECT ON DATABASE \"wamn-db-demo--billing--dev\" FROM \"{APP_ROLE}\""
         )),
         "the batch must CONVERGE a pre-cutover CONNECT away: {batch}"
-    );
-    // The revoke follows the owner statement for the same reason the grants
-    // did: ALTER DATABASE … OWNER TO rewrites the outgoing owner's entry.
-    assert!(
-        batch.find("ALTER DATABASE") < batch.find("REVOKE CONNECT ON DATABASE"),
-        "ownership converges first: {batch}"
     );
 }
 

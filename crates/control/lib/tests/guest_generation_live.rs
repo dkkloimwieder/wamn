@@ -26,6 +26,17 @@ use wamn_control_provision::{
     project_env_database_name, project_env_guest_secret_name, sql, workload_generation_role,
 };
 
+/// The generation state with the role's real password state. The test connects
+/// as a superuser, which alone can read `pg_authid`; the provisioner reads the
+/// fingerprint table instead (`docs/plan/platform-ui.md` §4.10).
+fn state_sql() -> String {
+    format!(
+        "SELECT state.*, (SELECT rolpassword IS NOT NULL FROM pg_catalog.pg_authid \
+                           WHERE rolname = $1::text) AS password_set FROM ({}) state",
+        sql::workload_generation_state_sql()
+    )
+}
+
 const ORG: &str = "pg18guest";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
@@ -104,7 +115,7 @@ fn action_args(
 
 async fn role_state(admin: &Client, role: &str) -> tokio_postgres::Row {
     admin
-        .query_one(sql::workload_generation_state_sql(), &[&role])
+        .query_one(&state_sql(), &[&role])
         .await
         .expect("read exact role state")
 }

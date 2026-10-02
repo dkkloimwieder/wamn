@@ -24,6 +24,17 @@ use wamn_control_provision::{
 use wamn_platform_identity::{PrincipalId, authenticate_pat, issue_pat};
 use wamn_test_infrastructure::locked_database;
 
+/// The generation state with the role's real password state. The test connects
+/// as a superuser, which alone can read `pg_authid`; the provisioner reads the
+/// fingerprint table instead (`docs/plan/platform-ui.md` §4.10).
+fn state_sql() -> String {
+    format!(
+        "SELECT state.*, (SELECT rolpassword IS NOT NULL FROM pg_catalog.pg_authid \
+                           WHERE rolname = $1::text) AS password_set FROM ({}) state",
+        sql::workload_generation_state_sql()
+    )
+}
+
 const ISSUER: &str = "https://identity-issuer-cli-test.wamn-system.svc";
 
 #[test]
@@ -156,9 +167,7 @@ fn secret_url(path: &Path, generation: CredentialGeneration) -> anyhow::Result<S
 
 async fn inactive(admin: &Client, generation: CredentialGeneration) -> anyhow::Result<()> {
     let role = identity_issuer_generation_role(ISSUER, generation)?;
-    let row = admin
-        .query_one(sql::workload_generation_state_sql(), &[&role])
-        .await?;
+    let row = admin.query_one(&state_sql(), &[&role]).await?;
     anyhow::ensure!(
         !row.get::<_, bool>("rolcanlogin")
             && !row.get::<_, bool>("password_set")

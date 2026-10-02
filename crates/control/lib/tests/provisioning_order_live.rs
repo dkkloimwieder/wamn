@@ -23,9 +23,20 @@ use wamn_control::provision_project_env::{
 };
 use wamn_control_provision::tenant_key::authority_derivations_bootstrap_sql;
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope,
+    APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
     project_env_database_name, sql, workload_generation_role,
 };
+
+/// The generation state with the role's real password state. The test connects
+/// as a superuser, which alone can read `pg_authid`; the provisioner reads the
+/// fingerprint table instead (`docs/plan/platform-ui.md` §4.10).
+fn state_sql() -> String {
+    format!(
+        "SELECT state.*, (SELECT rolpassword IS NOT NULL FROM pg_catalog.pg_authid \
+                           WHERE rolname = $1::text) AS password_set FROM ({}) state",
+        sql::workload_generation_state_sql()
+    )
+}
 
 const ORG: &str = "pg18order";
 const PROJECT: &str = "inventory";
@@ -86,7 +97,7 @@ fn prepare_args(
 
 async fn role_state(admin: &Client, role: &str) -> Option<tokio_postgres::Row> {
     admin
-        .query_opt(sql::workload_generation_state_sql(), &[&role])
+        .query_opt(&state_sql(), &[&role])
         .await
         .expect("read exact role state")
 }
@@ -182,10 +193,8 @@ async fn reset_cluster(catalog: &Client, database: &str, roles: &[&str]) {
 
 /// Apply the runbook's steps 1-3 with the EXACT text the verb emits.
 ///
-/// Step 2 is the CNPG `Database` CR, which this arm stands in for with a plain
-/// `CREATE DATABASE` owned by the connecting superuser — the harder case, since
-/// step 3's `ALTER DATABASE … OWNER TO` then has an outgoing owner ACL entry to
-/// rewrite, which is the ordering hazard `privilege_sql` documents.
+/// Step 2 is the CNPG `Database` CR, which this arm stands in for with the
+/// `CREATE DATABASE … OWNER` that its `spec.owner` runs.
 async fn apply_documented_order(catalog: &Client, database: &str) {
     catalog
         .batch_execute(&role_posture_sql())
@@ -196,7 +205,9 @@ async fn apply_documented_order(catalog: &Client, database: &str) {
         .await
         .expect("step 1b: retired shared-login session drain");
     catalog
-        .batch_execute(&format!("CREATE DATABASE \"{database}\""))
+        .batch_execute(&format!(
+            "CREATE DATABASE \"{database}\" OWNER \"{DB_OWNER_ROLE}\""
+        ))
         .await
         .expect("step 2: the Database CR stand-in");
     catalog

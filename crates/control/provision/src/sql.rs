@@ -20,13 +20,17 @@ pub use database::{
     ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
 };
 
-pub(crate) use credentials::{ensure_acl_role_sql, retire_acl_generation_sql};
+pub(crate) use credentials::{
+    ensure_acl_role_sql, retire_acl_generation_sql, revoke_superuser_sql,
+};
 #[doc(inline)]
 pub use credentials::{
     ensure_control_author_acl_role_sql, ensure_workload_acl_role_sql,
+    forget_generation_password_sql, generation_password_recorded_sql,
     normalize_workload_generation_membership_sql, prepare_control_author_generation_sql,
-    prepare_workload_generation_sql, retire_control_author_generation_sql,
-    retire_workload_generation_sql, terminate_control_author_generation_sessions_sql,
+    prepare_workload_generation_sql, record_generation_password_sql,
+    retire_control_author_generation_sql, retire_workload_generation_sql,
+    system_generation_state_sql, terminate_control_author_generation_sessions_sql,
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
     workload_scope_lock_sql,
 };
@@ -90,19 +94,21 @@ pub fn ensure_app_acl_role_sql() -> String {
            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {role_lit}) THEN \
              CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           ELSIF EXISTS (SELECT FROM pg_catalog.pg_authid WHERE rolname = {role_lit} \
+           ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {role_lit} \
                          AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                              OR rolinherit OR rolreplication OR rolbypassrls \
-                              OR rolpassword IS NOT NULL)) THEN \
-             ALTER ROLE {role} NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+                              OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
+             ALTER ROLE {role} NOLOGIN PASSWORD NULL NOCREATEDB \
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+             {nosuperuser} \
            END IF; \
          EXCEPTION WHEN duplicate_object THEN \
-           ALTER ROLE {role} NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+           ALTER ROLE {role} NOLOGIN PASSWORD NULL NOCREATEDB \
              NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           {nosuperuser} \
          END $app_role$;",
         role = quote_ident(APP_ROLE),
         role_lit = quote_literal(APP_ROLE),
+        nosuperuser = revoke_superuser_sql(&quote_literal(APP_ROLE)),
     )
 }
 
@@ -322,14 +328,15 @@ pub fn ensure_platform_group_role_sql() -> String {
                NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
            ELSIF EXISTS (SELECT FROM pg_roles WHERE rolname = role_name \
                          AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
-                              OR rolinherit OR rolreplication OR rolbypassrls \
-                              OR rolpassword IS NOT NULL)) THEN \
-             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB \
+                              OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
+             EXECUTE format('ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB \
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+             {nosuperuser} \
            END IF; \
          EXCEPTION WHEN duplicate_object THEN NULL; \
          END $platform_group$;",
         role_lit = quote_literal(PLATFORM_GROUP_ROLE),
+        nosuperuser = revoke_superuser_sql("role_name"),
     )
 }
 
@@ -1028,8 +1035,17 @@ mod tests {
         assert!(sql.contains("CREATE ROLE \"wamn_app\" NOLOGIN"));
         assert!(sql.contains("ALTER ROLE \"wamn_app\" NOLOGIN PASSWORD NULL"));
         assert!(sql.contains("rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
-        assert!(sql.contains("OR rolpassword IS NOT NULL"));
-        assert!(sql.contains("FROM pg_catalog.pg_authid WHERE rolname = 'wamn_app'"));
+        assert!(sql.contains("FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app'"));
+        assert!(
+            !sql.contains("pg_authid"),
+            "a non-superuser cannot read pg_authid"
+        );
+        // NOSUPERUSER only for a role that is a superuser (platform-ui §4.10).
+        assert!(sql.contains(
+            "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app' AND rolsuper) \
+             THEN EXECUTE format('ALTER ROLE %I NOSUPERUSER', 'wamn_app');"
+        ));
+        assert!(!sql.contains("PASSWORD NULL NOSUPERUSER"));
         assert!(sql.contains("EXCEPTION WHEN duplicate_object THEN"));
         assert!(!sql.contains("pg_terminate_backend"));
         for attr in [
@@ -1530,7 +1546,8 @@ mod tests {
         assert!(sql.contains("CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE"));
         // A replay that finds a drifted attribute must repair it, not succeed.
         assert!(sql.contains("ELSIF EXISTS"));
-        assert!(sql.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB"));
+        assert!(sql.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL NOCREATEDB"));
+        assert!(sql.contains("EXECUTE format('ALTER ROLE %I NOSUPERUSER', role_name)"));
         for other_plane in ["wamn_scenario_author", "wamn_app"] {
             assert!(
                 !sql.contains(other_plane),
@@ -1633,8 +1650,8 @@ mod tests {
         let sql = workload_generation_state_sql();
         assert!(sql.starts_with("SELECT"));
         assert!(sql.contains("rolcanlogin"));
-        assert!(sql.contains("FROM pg_catalog.pg_authid r"));
-        assert!(sql.contains("r.rolpassword IS NOT NULL AS password_set"));
+        assert!(sql.contains("FROM pg_catalog.pg_roles r"));
+        assert!(!sql.contains("rolpassword IS NOT NULL AS"));
         assert!(sql.contains("pg_auth_members"));
         assert!(sql.contains("NOT m.admin_option AND m.inherit_option AND NOT m.set_option"));
         assert!(sql.contains("AS generation_children_exact"));
@@ -1712,8 +1729,9 @@ mod tests {
         // An existing role gets the same password and attributes (wamn-fipl).
         assert!(sql.contains(
             "ELSE ALTER ROLE \"wamn_cdc_acme__billing__dev\" LOGIN REPLICATION PASSWORD 's3cr3t' \
-             NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;"
+             NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;"
         ));
+        assert!(sql.contains("AND rolsuper) THEN EXECUTE format('ALTER ROLE %I NOSUPERUSER'"));
         assert!(sql.contains("PASSWORD 's3cr3t'"));
         // The R8b tier: REPLICATION but nothing else elevated. NOINHERIT is the
         // house default every other minted role carries.
@@ -1816,9 +1834,10 @@ mod tests {
         // A replay that finds a drifted attribute repairs it, not succeeds.
         assert!(sql.contains("ELSIF EXISTS"));
         assert!(sql.contains(
-            "ALTER ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB \
+            "ALTER ROLE wamn_db_owner NOLOGIN NOCREATEDB \
              NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
         ));
+        assert!(sql.contains("AND rolsuper) THEN ALTER ROLE wamn_db_owner NOSUPERUSER;"));
         // Owner-only by construction: no grants, no memberships, no generation
         // pair — a role nobody logs in as has nothing to rotate.
         for forbidden in ["GRANT ", "PASSWORD", "VALID UNTIL", "LOGIN PASSWORD"] {
@@ -1828,8 +1847,8 @@ mod tests {
         assert!(!sql.contains("postgres"), "db owner is not a superuser");
     }
 
-    /// The convergence half of the ownership migration: an `ALTER`, because a
-    /// `REVOKE` cannot express ownership.
+    /// The statement the operator runs by hand for a database created before
+    /// its `Database` CR set `spec.owner`.
     #[test]
     fn database_owner_converges_to_the_title_role() {
         assert_eq!(

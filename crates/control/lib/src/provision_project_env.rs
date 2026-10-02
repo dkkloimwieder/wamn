@@ -390,10 +390,10 @@ pub fn role_posture_sql() -> String {
 
 /// The privilege batch the runbook applies AFTER the database exists (step 3).
 ///
-/// **Ownership converges FIRST and must stay first.** `ALTER DATABASE … OWNER
-/// TO` rewrites the outgoing owner's ACL entry, and that entry is where a
-/// `CONNECT` granted to a role that still owned the database has merged (the
-/// hazard measured at `47b404cf`). Everything else therefore follows it.
+/// The batch sets no owner. The `Database` CR sets `wamn_db_owner` in
+/// `spec.owner` when it creates the database, and the provisioner is not a
+/// superuser, so it never runs `ALTER DATABASE … OWNER TO`
+/// (`docs/plan/platform-ui.md` §4.10).
 ///
 /// **`wamn_app` is REVOKED, not granted (`wamn-0h0g.12.179`).** Until the
 /// `wamn-0h0g.22.6` cutover `wamn_app` was the guest LOGIN role and this batch
@@ -413,10 +413,8 @@ pub fn role_posture_sql() -> String {
 pub fn privilege_sql(database: &str) -> String {
     let db = quote_ident(database);
     format!(
-        "{owner};\n\
-         REVOKE CONNECT, TEMPORARY ON DATABASE {db} FROM PUBLIC; \
+        "REVOKE CONNECT, TEMPORARY ON DATABASE {db} FROM PUBLIC; \
          REVOKE CONNECT ON DATABASE {db} FROM {app};\n",
-        owner = sql::set_database_owner_sql(database),
         app = quote_ident(APP_ROLE),
     )
 }

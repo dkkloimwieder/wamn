@@ -31,6 +31,17 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 
+/// The generation state with the role's real password state. The test connects
+/// as a superuser, which alone can read `pg_authid`; the provisioner reads the
+/// fingerprint table instead (`docs/plan/platform-ui.md` §4.10).
+fn state_sql() -> String {
+    format!(
+        "SELECT state.*, (SELECT rolpassword IS NOT NULL FROM pg_catalog.pg_authid \
+                           WHERE rolname = $1::text) AS password_set FROM ({}) state",
+        sql::workload_generation_state_sql()
+    )
+}
+
 const ORG: &str = "pg18admit";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
@@ -143,7 +154,7 @@ async fn assert_role(
     connect_databases: &[&str],
 ) {
     let row = admin
-        .query_one(sql::workload_generation_state_sql(), &[&role])
+        .query_one(&state_sql(), &[&role])
         .await
         .expect("read exact role state");
     assert_eq!(row.get::<_, bool>("rolcanlogin"), login, "{role} LOGIN");
@@ -200,7 +211,7 @@ async fn assert_role(
 async fn await_zero_sessions(admin: &Client, role: &str) {
     for _ in 0..100 {
         let sessions: i64 = admin
-            .query_one(sql::workload_generation_state_sql(), &[&role])
+            .query_one(&state_sql(), &[&role])
             .await
             .expect("read role sessions")
             .get("sessions");
@@ -239,7 +250,7 @@ async fn family_state(admin: &Client, roles: &[&str]) -> Vec<(String, Vec<String
     let mut snapshot = Vec::new();
     for role in roles {
         let row = admin
-            .query_opt(sql::workload_generation_state_sql(), &[role])
+            .query_opt(&state_sql(), &[role])
             .await
             .expect("read family role state");
         let members = match &row {

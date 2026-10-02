@@ -628,7 +628,7 @@ DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
-  ASSERT tbls = 'identity.org_memberships,identity.org_roles,identity.password_attempts,identity.password_credentials,identity.password_logins,identity.password_tokens,identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.renewal_credentials,identity.session_keys,identity.session_signing_state,provisioning.sagas,registry.capture_gap,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs,registry.schema_migrations',
+  ASSERT tbls = 'identity.org_memberships,identity.org_roles,identity.password_attempts,identity.password_credentials,identity.password_logins,identity.password_tokens,identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.renewal_credentials,identity.session_keys,identity.session_signing_state,provisioning.sagas,registry.capture_gap,registry.env_policies,registry.event_readers,registry.generation_passwords,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs,registry.schema_migrations',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 

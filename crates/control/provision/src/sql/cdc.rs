@@ -37,12 +37,14 @@ pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
                NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
            ELSE \
              ALTER ROLE {role} LOGIN REPLICATION PASSWORD {pw} \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
+               NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS; \
+             {nosuperuser} \
            END IF; \
          END $$;",
         role = quote_ident(role),
         role_lit = quote_literal(role),
         pw = quote_literal(password),
+        nosuperuser = super::revoke_superuser_sql(&quote_literal(role)),
     )
 }
 
