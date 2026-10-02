@@ -1,8 +1,8 @@
 //! The shared classification cases, read from the same file the browser reads.
 //!
-//! `classify()` owns the rule. `web/runtime/src/transport.ts` implements the
-//! same rule for the browser, and `web/runtime/test/classification.test.ts`
-//! reads this file too. A case that one client reads differently is a defect
+//! `classify()` and `classify_each()` own the rule. `web/runtime/src/transport.ts`
+//! implements the same rule for the browser, and
+//! `web/runtime/test/classification.test.ts` reads this file too. A case that one client reads differently is a defect
 //! in one of them.
 
 use std::collections::BTreeMap;
@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use wamn_client::HttpResponse;
 use wamn_client::descriptor::FieldSchema;
-use wamn_client_tui::submission::{ErrorCase, Evidence, Replay, ResponseContract, classify};
+use wamn_client_tui::submission::{
+    ErrorCase, Evidence, Replay, ResponseContract, classify, classify_each,
+};
 
 /// The contract holds `'static` references, so every case leaks its own.
 fn response_contract(contract: &Value) -> ResponseContract {
@@ -69,53 +71,88 @@ fn every_shared_case_classifies_as_the_table_states() {
         // A read case states a null identity: its outcome matches by position.
         let request_id = case["request_id"].as_str();
         let evidence = classify(&contract, request_id, Ok(response));
-        let expect = &case["expect"];
-        let outcome = expect["outcome"].as_str().expect("an expected outcome");
-        match (&evidence, outcome) {
-            (Evidence::Succeeded { value, .. }, "completed") => {
-                assert_eq!(value, &expect["value"], "{name}");
-            }
-            (Evidence::Refused(refusal), "refused") => match expect["code"].as_str() {
-                Some(code) => {
-                    assert_eq!(refusal["code"], code, "{name}");
-                    // The detail is everything the refusal states besides
-                    // its code, which is how the browser carries it too.
-                    let mut detail = refusal.clone();
-                    detail
-                        .as_object_mut()
-                        .expect("a refusal object")
-                        .remove("code");
-                    if expect["detail"].is_null() {
-                        assert_eq!(
-                            detail,
-                            serde_json::json!({}),
-                            "{name}: the refusal states nothing besides its code"
-                        );
-                    } else {
-                        assert_eq!(detail, expect["detail"], "{name}");
-                    }
-                }
-                // A refusal that states no code carries its text instead.
-                None => assert_eq!(refusal, &expect["detail"], "{name}"),
-            },
-            (
-                Evidence::PartiallyCompleted {
-                    committed_result,
-                    failed_outcome,
-                },
-                "partially_completed",
-            ) => {
-                assert_eq!(committed_result, &expect["committed_result"], "{name}");
-                assert_eq!(failed_outcome, &expect["failed_outcome"], "{name}");
-            }
-            (Evidence::Uncertain(reason), "uncertain") => {
-                assert_eq!(
-                    reason,
-                    expect["reason"].as_str().expect("an expected reason"),
-                    "{name}"
-                );
-            }
-            (evidence, outcome) => panic!("{name}: expected {outcome}, read {evidence:?}"),
+        assert_outcome(name, &evidence, &case["expect"]);
+    }
+}
+
+#[test]
+fn every_shared_many_item_case_classifies_as_the_table_states() {
+    let table: Value = serde_json::from_str(include_str!("data/classification-cases.json"))
+        .expect("the shared case table parses");
+    let cases = table["many_cases"]
+        .as_array()
+        .expect("the table lists many-item cases");
+    assert!(!cases.is_empty(), "the table covers many-item replies");
+
+    for case in cases {
+        let name = case["name"].as_str().expect("a case name");
+        let contract = response_contract(&table["contracts"][case["contract"].as_str().unwrap()]);
+        let response = HttpResponse {
+            actor_labels: BTreeMap::new(),
+            status: u16::try_from(case["status"].as_u64().expect("a status")).expect("a status"),
+            body: case["body"].as_str().expect("a body").to_owned(),
+        };
+        let request_ids: Vec<Option<&str>> = case["request_ids"]
+            .as_array()
+            .expect("the submitted identities")
+            .iter()
+            .map(Value::as_str)
+            .collect();
+        let outcomes = classify_each(&contract, &request_ids, Ok(response));
+        let expected = case["expect"].as_array().expect("one outcome per item");
+        assert_eq!(outcomes.len(), expected.len(), "{name}");
+        for (evidence, expect) in outcomes.iter().zip(expected) {
+            assert_outcome(name, evidence, expect);
         }
+    }
+}
+
+fn assert_outcome(name: &str, evidence: &Evidence, expect: &Value) {
+    let outcome = expect["outcome"].as_str().expect("an expected outcome");
+    match (evidence, outcome) {
+        (Evidence::Succeeded { value, .. }, "completed") => {
+            assert_eq!(value, &expect["value"], "{name}");
+        }
+        (Evidence::Refused(refusal), "refused") => match expect["code"].as_str() {
+            Some(code) => {
+                assert_eq!(refusal["code"], code, "{name}");
+                // The detail is everything the refusal states besides
+                // its code, which is how the browser carries it too.
+                let mut detail = refusal.clone();
+                detail
+                    .as_object_mut()
+                    .expect("a refusal object")
+                    .remove("code");
+                if expect["detail"].is_null() {
+                    assert_eq!(
+                        detail,
+                        serde_json::json!({}),
+                        "{name}: the refusal states nothing besides its code"
+                    );
+                } else {
+                    assert_eq!(detail, expect["detail"], "{name}");
+                }
+            }
+            // A refusal that states no code carries its text instead.
+            None => assert_eq!(refusal, &expect["detail"], "{name}"),
+        },
+        (
+            Evidence::PartiallyCompleted {
+                committed_result,
+                failed_outcome,
+            },
+            "partially_completed",
+        ) => {
+            assert_eq!(committed_result, &expect["committed_result"], "{name}");
+            assert_eq!(failed_outcome, &expect["failed_outcome"], "{name}");
+        }
+        (Evidence::Uncertain(reason), "uncertain") => {
+            assert_eq!(
+                reason,
+                expect["reason"].as_str().expect("an expected reason"),
+                "{name}"
+            );
+        }
+        (evidence, outcome) => panic!("{name}: expected {outcome}, read {evidence:?}"),
     }
 }
