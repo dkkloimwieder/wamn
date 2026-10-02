@@ -268,6 +268,13 @@ pub const API_KEYS: Table = Table {
     columns: &["tenant_id", "user_id", "key_hash", "prefix"],
 };
 
+/// The status of the environment, mirrored from the system database. No row
+/// means active.
+pub const ENVIRONMENT: Table = Table {
+    name: "environment",
+    columns: &["tenant_id", "status"],
+};
+
 /// Every table in the system schema, in dependency order (a superset FK order:
 /// users and roles before the linkage / permissions / api_keys that reference
 /// them).
@@ -278,6 +285,7 @@ pub const TABLES: &[Table] = &[
     PERMISSIONS,
     CONFIGURATIONS,
     API_KEYS,
+    ENVIRONMENT,
 ];
 
 /// Test databases with the tenant+app_system floor.
@@ -312,8 +320,8 @@ mod tests {
     #[test]
     fn table_manifest_is_complete_and_unique() {
         // Five auth/RBAC concepts, with the user↔role linkage split out as its
-        // own table, make six tables.
-        assert_eq!(TABLES.len(), 6);
+        // own table, and the environment status make seven tables.
+        assert_eq!(TABLES.len(), 7);
         let mut names: Vec<&str> = TABLES.iter().map(|t| t.name).collect();
         names.sort_unstable();
         names.dedup();

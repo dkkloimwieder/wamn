@@ -92,7 +92,8 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 29] = [
+const MATRIX_RELATIONS: [&str; 30] = [
+    "app_system.environment",
     "app_system.permissions",
     "app_system.user_roles",
     "app_system.users",
@@ -174,6 +175,7 @@ const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
+            "app_system.environment|SELECT|table",
             "app_system.permissions|SELECT|table",
             "app_system.user_roles|SELECT|table",
             "app_system.users|SELECT|table",
@@ -291,11 +293,16 @@ const MATRIX: [FamilyReach; 10] = [
         routines: &[],
     },
     // `wamn-a40n.2`: the host-run administration routes read and write the
-    // application authorization relations. `app_system.roles`, the history
+    // application authorization relations, and the status routes write the
+    // environment status (`wamn-zua8.2`). `app_system.roles`, the history
     // tables and `wamn_history.row_image` are outside the matrix universe.
     FamilyReach {
         family: WorkloadRoleFamily::Administration,
         relations: &[
+            "app_system.environment|DELETE|table",
+            "app_system.environment|INSERT|table",
+            "app_system.environment|SELECT|table",
+            "app_system.environment|UPDATE|table",
             "app_system.permissions|DELETE|table",
             "app_system.permissions|INSERT|table",
             "app_system.permissions|SELECT|table",

@@ -66,13 +66,14 @@ const WRITE_LOG: &str = "write_log";
 
 fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
-        "users" | "roles" | "user_roles" | "permissions" | "api_keys" => "SELECT",
+        "users" | "roles" | "user_roles" | "permissions" | "api_keys" | "environment" => "SELECT",
         "configurations" => "SELECT, INSERT, UPDATE, DELETE",
         "users_history"
         | "roles_history"
         | "user_roles_history"
         | "permissions_history"
-        | "api_keys_history" => "",
+        | "api_keys_history"
+        | "environment_history" => "",
         "configurations_history" => {
             "INSERT (tenant_id, row_key, type, operation, changed_by, changed_at, \
              transaction_id, before, after)"

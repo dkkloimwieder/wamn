@@ -530,8 +530,10 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 }
 
 /// The application authorization relations the administration family reads
-/// and writes (docs/plan/platform-ui.md §2.1).
-pub const ADMINISTRATION_RELATIONS: [&str; 4] = ["users", "roles", "user_roles", "permissions"];
+/// and writes (docs/plan/platform-ui.md §2.1), and the environment status that
+/// the status routes mirror (§5.4).
+pub const ADMINISTRATION_RELATIONS: [&str; 5] =
+    ["users", "roles", "user_roles", "permissions", "environment"];
 
 /// Converge the stable administration role to its exact surface
 /// (`wamn-a40n.2`).

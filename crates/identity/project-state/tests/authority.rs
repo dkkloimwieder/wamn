@@ -6,13 +6,14 @@
 //!
 //! One test per adjudicated class:
 //! - `users` / `roles` / `user_roles` / `permissions` / `api_keys` are the rows
-//!   the trust chain reads as authorization INPUT, so an App generation may
+//!   the trust chain reads as authorization INPUT, and `environment` is the
+//!   status the host admits a request by, so an App generation may
 //!   inherit their stable `wamn_app` reads and nothing more, so a tenant or an
 //!   application cannot create a platform row or a `wamn:` name;
 //! - `configurations` stays fully writable — the class the platform has no
 //!   jurisdiction over, and the control proving the other test fails for the
 //!   revoked privilege rather than for an over-broad narrowing;
-//! - the six history tables take no read and no direct write from an App
+//! - the seven history tables take no read and no direct write from an App
 //!   generation, except the entries that its `configurations` writes append.
 //!
 //! Each test runs as the superuser of a test database on the test PostgreSQL
@@ -165,7 +166,8 @@ fn author_sql_cannot_write_the_relations_that_authorize_it() {
 DO $$
 DECLARE relation text; operation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['users','roles','user_roles','permissions','api_keys'] LOOP
+  FOREACH relation IN ARRAY ARRAY['users','roles','user_roles','permissions','api_keys',
+                                  'environment'] LOOP
     ASSERT has_table_privilege('wamn_app'::name, ('app_system.'||relation)::text, 'SELECT'::text),
       format('%s must stay readable — the platform revokes writes, not reads', relation);
     FOREACH operation IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
@@ -207,7 +209,10 @@ BEGIN
     'DELETE FROM app_system.permissions',
     'INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES (''{TENANT}'', ''{U1}'', ''forged'', ''hash-2'', ''wk_b'')',
     'UPDATE app_system.api_keys SET revoked_at = now()',
-    'DELETE FROM app_system.api_keys'
+    'DELETE FROM app_system.api_keys',
+    'INSERT INTO app_system.environment (tenant_id, status) VALUES (''{TENANT}'', ''active'')',
+    'UPDATE app_system.environment SET status = ''active''',
+    'DELETE FROM app_system.environment'
   ] LOOP
     BEGIN
       EXECUTE probe_sql;
@@ -349,6 +354,11 @@ fn author_sql_appends_history_only_through_the_configurations_trigger() {
             &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#),
         ),
         entry(
+            "environment_history",
+            None,
+            &format!(r#"{{"tenant_id": "{TENANT}"}}"#),
+        ),
+        entry(
             "configurations_history",
             Some(-5),
             &format!(r#"{{"tenant_id": "{TENANT}", "config_key": "theme"}}"#),
@@ -363,7 +373,7 @@ DECLARE history text; operation text;
 BEGIN
   FOREACH history IN ARRAY ARRAY['users_history','roles_history','user_roles_history',
                                  'permissions_history','configurations_history',
-                                 'api_keys_history'] LOOP
+                                 'api_keys_history','environment_history'] LOOP
     FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
       ASSERT NOT has_table_privilege('wamn_app'::name, ('app_system.'||history)::text, operation),
         format('wamn_app holds table %s on %s', operation, history);
@@ -396,6 +406,7 @@ BEGIN
     'SELECT count(*) FROM app_system.permissions_history',
     'SELECT count(*) FROM app_system.configurations_history',
     'SELECT count(*) FROM app_system.api_keys_history',
+    'SELECT count(*) FROM app_system.environment_history',
     {direct_writes},
     'UPDATE app_system.configurations_history SET operation = ''admin:forge-history''',
     'DELETE FROM app_system.configurations_history'

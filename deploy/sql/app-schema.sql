@@ -1,7 +1,7 @@
 -- The per-project SYSTEM SCHEMA v1 (wamn-as5, docs/archive/platform-plan.md §2.4). The
 -- application-facing auth/RBAC/config tables that live IN a project database:
--- users, roles (+ the user↔role linkage), permissions, configurations, and
--- api_keys.
+-- users, roles (+ the user↔role linkage), permissions, configurations,
+-- api_keys, and environment.
 --
 -- This is the AUTH/RBAC half of item 2.4. Package coordinates, immutable
 -- migration tables, effective releases, and release membership are already
@@ -52,7 +52,8 @@
 -- "which rows"; the GRANT answers "which relations at all", and the two questions
 -- have different answers here:
 --
---   PLATFORM-PROTECTED — users, roles, user_roles, permissions, api_keys.
+--   PLATFORM-PROTECTED — users, roles, user_roles, permissions, api_keys,
+--   environment.
 --   SELECT only. The trust chain consumes these rows as authorization INPUT: the
 --   3.5 RLS builder compiles app.user_id and app.role into the data policies it
 --   generates, and 4.2 resolves both claims from users + user_roles. Author SQL
@@ -73,7 +74,7 @@
 --   The engine claims the key of every create, update, delete and command here. It is outside
 --   the tenant floor and the record history: see THE WRITE LOG below.
 --
---   HISTORY: the six <table>_history tables. No SELECT. The log trigger fires
+--   HISTORY: the seven <table>_history tables. No SELECT. The log trigger fires
 --   as the writer, and wamn_app writes configurations only, so wamn_app holds
 --   INSERT on the entry columns of configurations_history and nothing else.
 --   The grant leaves out position, so a guest cannot choose a position with
@@ -440,6 +441,41 @@ CREATE INDEX api_keys_tkey
 GRANT SELECT ON app_system.api_keys TO wamn_app;
 
 -- ---------------------------------------------------------------------------
+-- Environment — the status of this environment, mirrored from
+-- registry.project_envs.status in the system database (docs/plan/platform-ui.md
+-- §5.4, owner rulings of 2026-10-02 on wamn-zua8.2). The host reads it as
+-- wamn_app on each request and answers environment-inactive while it is
+-- inactive. No row means active: the first status route of the control host
+-- writes the row through the administration login.
+-- ---------------------------------------------------------------------------
+CREATE TABLE app_system.environment (
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
+    status     text NOT NULL CHECK (status IN ('active', 'inactive')),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    PRIMARY KEY (tenant_id)
+);
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON app_system.environment
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+ALTER TABLE app_system.environment ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_system.environment FORCE ROW LEVEL SECURITY;
+CREATE POLICY environment_tenant ON app_system.environment
+    TO wamn_app
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY environment_platform ON app_system.environment
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
+CREATE INDEX environment_tkey
+    ON app_system.environment ((wamn_authority.tenant_key(tenant_id)));
+GRANT SELECT ON app_system.environment TO wamn_app;
+
+-- ---------------------------------------------------------------------------
 -- HISTORY TABLES. wamn_history.create_history_table creates <table>_history
 -- for each table with the tenant flag, so each history table has tenant_id.
 -- The applier owns each history table. Each history table has the tenant
@@ -453,7 +489,7 @@ GRANT SELECT ON app_system.api_keys TO wamn_app;
 DO $history_tables$ BEGIN
   PERFORM wamn_history.create_history_table('app_system', relation, true)
      FROM unnest(ARRAY['users', 'roles', 'user_roles', 'permissions',
-                       'configurations', 'api_keys']) AS relation;
+                       'configurations', 'api_keys', 'environment']) AS relation;
 END $history_tables$;
 
 ALTER TABLE app_system.users_history ENABLE ROW LEVEL SECURITY;
@@ -559,6 +595,23 @@ CREATE INDEX api_keys_history_tkey
     ON app_system.api_keys_history ((wamn_authority.tenant_key(tenant_id)));
 CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.api_keys
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+
+ALTER TABLE app_system.environment_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_system.environment_history FORCE ROW LEVEL SECURITY;
+CREATE POLICY environment_history_tenant ON app_system.environment_history
+    TO wamn_app
+    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+CREATE POLICY environment_history_platform ON app_system.environment_history
+    AS PERMISSIVE FOR ALL TO wamn_platform
+    USING (true)
+    WITH CHECK (true);
+CREATE INDEX environment_history_tkey
+    ON app_system.environment_history ((wamn_authority.tenant_key(tenant_id)));
+CREATE TRIGGER wamn_record_history_log
+    AFTER INSERT OR UPDATE OR DELETE ON app_system.environment
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 

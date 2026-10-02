@@ -373,8 +373,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "40",
-        "the sweep must cover exactly the 40 governed relations"
+        governed, "42",
+        "the sweep must cover exactly the 42 governed relations"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
@@ -2820,7 +2820,8 @@ fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
     );
     assert_eq!(
         logs,
-        "api_keys:unlimited\\000 configurations:unlimited\\000 permissions:unlimited\\000 \
+        "api_keys:unlimited\\000 configurations:unlimited\\000 environment:unlimited\\000 \
+         permissions:unlimited\\000 \
          roles:unlimited\\000 user_roles:unlimited\\000 users:unlimited\\000",
         "every app_system relation must log with the retention unlimited"
     );
