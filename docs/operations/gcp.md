@@ -1880,3 +1880,25 @@ kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_sy
 ```
 
 The apply took 1 second. The table owner is `wamn_system`, and `wamn_registry_reader` holds `SELECT` only.
+
+
+## 8. Package upgrade acceptance prerequisite audit
+
+On 2026-10-01, the owner accepted proceeding after `wamn-ld93.33` closed. Remote `main` was `3e8ff89392d3548a0968374ebb3bc922ededf834`. The final WMS acceptance remains pending under `wamn-xvu5.5`.
+
+The read-only audit used the existing GKE kubeconfig:
+
+```bash
+KUBECONFIG=/tmp/claude-1000/-home-kaalin-dev-wamn/8f6326b9-1dc5-4a4f-b106-5a08992a6757/scratchpad/gke.kubeconfig
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get deployments -o json
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get pods -o wide
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s get nodes
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get events \
+  --field-selector involvedObject.name=hostgroup-wms-76df684b4-kdmmg -o json
+```
+
+Both host Deployments requested one replica and reported zero ready replicas. Their pods were Pending with no assigned node. `get nodes` returned `No resources found`. The WMS event reported `FailedScheduling` with `no nodes available to schedule pods`.
+
+`hostgroup-wms` still named release 1 digest `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6`. The cutover tasks B0 through B13 remained open. Thus the environment did not establish the required serving WMS 2.0.0 predecessor.
+
+No live upgrade, schema change, release selection, or deployment ran. `wamn-xvu5.5` now depends on `wamn-ld93.24`, the cutover end-to-end check. Epic 1 remains open.

@@ -84,6 +84,8 @@ enum Command {
     UpgradeSchema(provisioning_verbs::UpgradeSchemaArgs),
     /// Apply one exact package-owned migration stream to a project database.
     ApplyPackage(package_verbs::ApplyPackageArgs),
+    /// Prove a package successor on a copy of the serving predecessor database.
+    QualifyUpgrade(package_verbs::QualifyUpgradeArgs),
     /// Reconcile generated package data privileges after apply-package.
     ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Validate/publish component bytes, then exact-project their facts to both planes
@@ -157,6 +159,7 @@ async fn main() -> anyhow::Result<()> {
         Command::DeleteProjectEnv(args) => provisioning_verbs::delete_project_env(args).await,
         Command::UpgradeSchema(args) => provisioning_verbs::upgrade_schema(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
+        Command::QualifyUpgrade(args) => package_verbs::qualify_upgrade(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await

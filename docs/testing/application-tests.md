@@ -62,7 +62,8 @@ An unrelated build failure does not establish compatibility refusal.
 Keep overlay artifact digests unchanged throughout the comparison.
 
 This tests fresh-install compatibility, not an upgrade of an existing database.
-Do not apply a migration suffix to an installed predecessor or activate an upgrade candidate.
+Keep this paired test limited to fresh installations.
+The separate [package upgrade tests](database-tests.md#package-upgrades) exercise migration suffixes on copied predecessor data and accepted production evidence.
 The installed-schema observer does not claim production schema-admission enforcement.
 
 ## Committed events

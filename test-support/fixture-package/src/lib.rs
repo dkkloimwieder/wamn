@@ -44,6 +44,63 @@ pub fn overlay_root() -> PathBuf {
     repository_root().join("apps").join(OVERLAY_PACKAGE_ID)
 }
 
+/// Copy the fixture into a test-owned 2.1.0 successor of 2.0.0.
+///
+/// The successor adds a nullable `widget_maker.note` field without a default.
+/// Every inherited migration and authored statement stays byte-identical. The
+/// copied generated tree must be regenerated with `materialize_package` against
+/// the successor schema before checking generated artifacts or qualification.
+/// The existing fixture and its overlay keep their package coordinates.
+///
+/// # Panics
+/// Panics if `root` already exists or a fixture file cannot be read or written.
+pub fn write_upgrade_package(root: &Path) {
+    copy_directory(&package_root(), root);
+    let tui_manifest_path = root.join("generated/fixture-tui/Cargo.toml");
+    let tui_manifest =
+        std::fs::read_to_string(&tui_manifest_path).expect("read copied fixture UI manifest");
+    let workspace_entry = "workspace = \"../../../..\"";
+    assert_eq!(
+        tui_manifest.matches(workspace_entry).count(),
+        1,
+        "the fixture UI manifest must declare its repository workspace once"
+    );
+    let workspace =
+        serde_json::to_string(&repository_root()).expect("quote fixture workspace path");
+    std::fs::write(
+        tui_manifest_path,
+        tui_manifest.replacen(workspace_entry, &format!("workspace = {workspace}"), 1),
+    )
+    .expect("point the copied fixture UI at its repository workspace");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&manifest_bytes()).expect("parse fixture manifest");
+    manifest["package"]["version"] = serde_json::json!("2.1.0");
+    manifest["package"]["predecessor_version"] = serde_json::json!("2.0.0");
+    std::fs::write(
+        root.join("wamn.json"),
+        serde_json::to_vec_pretty(&manifest).expect("serialize successor manifest"),
+    )
+    .expect("write successor manifest");
+    std::fs::write(
+        root.join("migrations/0002_widget_maker_note.sql"),
+        "ALTER TABLE inventory.widget_maker ADD COLUMN note text;\n",
+    )
+    .expect("write successor migration");
+}
+
+fn copy_directory(source: &Path, destination: &Path) {
+    std::fs::create_dir(destination).expect("create test-owned fixture directory");
+    for entry in std::fs::read_dir(source).expect("read fixture directory") {
+        let entry = entry.expect("read fixture entry");
+        let target = destination.join(entry.file_name());
+        if entry.file_type().expect("read fixture entry type").is_dir() {
+            copy_directory(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).expect("copy exact fixture bytes");
+        }
+    }
+}
+
 /// The authored manifest bytes of the fixture application.
 ///
 /// # Panics
