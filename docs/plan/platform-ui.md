@@ -1630,10 +1630,11 @@ Measured on `worktree-table` `27054619a` on 2026-10-02:
 - A grant that reaches application rows reads the administration logins from a mounted directory. `control_route_live` gives the control host such a directory over its fixture project database. `shell_browser_live` and `control_client_live` give it none, so a write that reaches an environment refuses there, and the browser test cannot complete one.
 - `ORG_SCREEN` and `PROJECT_ROUTE` in `web/shell/src/shell.tsx` render only "Org administration." and "Project administration of {project}.".
 
-The commits, each green:
+[§9](#9-questions-for-the-owner) questions 11 to 14, answered 2026-10-02, set the commits. Each one is green:
 
+0. Org `user.list` answers `org_admin` for each member, and it admits a `project-admin` of any project in the org, read only.
 1. Org screen. Under `org`, a members table from org `user.list` with activate, deactivate, `org-admin` grant and revoke, and an invite form with its memberships, `org-admin` and `project-admin` choices from `project.list` and `environment.list`.
-2. Project screen. Under `projects/:project`, a members table from `member.list` with one membership toggle for each environment from `environment.list`, `member.grant` and `member.revoke`, and `project-admin` grant and revoke.
+2. Project screen. Under `projects/:project`, a members table from `member.list` with one membership toggle for each environment from `environment.list`, `member.grant` and `member.revoke`, and `project-admin` grant and revoke. A new member is chosen from org `user.list`.
 3. Browser test. `shell_browser_live` grants and revokes through both screens.
 4. Documentation: the shell README, execution and `web-operator-client.md`.
 
@@ -1721,7 +1722,7 @@ New-project grant materialization and deterministic empty-environment copy from 
 8. Issue 7, answered 2026-10-02 with option A. The route table names the operation of each screen from the generated route constants, with no generator change.
 9. Issue 7, answered 2026-10-02. `RoleGrid` and `UserGrid` are an Administration section in each application, which only `admin` sees.
 10. Issue 7, answered 2026-10-02. The browser test runs local processes and a headless Chrome, as `control_client_live` does.
-11. Issue 8, open. Org `user.list` does not say who holds `org-admin`. Option A: it answers `org_admin` for each member, as application `user.list` answers `admin_covered`, and the control contract stays at 0.2.0, because 0.2.0 is not on main. Option B: the screen shows both controls and lets the server refuse. A is recommended.
-12. Issue 8, open. A `project-admin` has no list from which to choose a new member. Option A: `member.list` also answers the active org members with no membership in the project. Option B: a `project-admin` may call org `user.list`. Option C: only an `org-admin` adds a new member to a project, and a `project-admin` manages the members that the project already has.
-13. Issue 8, open. Where the screens live. Option A: hand-written `OrgScreen` and `ProjectScreen` in `@wamn/ui/admin` over `@wamn/control-org-client`, with gallery entries and component tests, as issue 6 built the grids. Option B: the generator emits components for the control route set. A is recommended.
-14. Issue 8, open. The browser test. Option A: `shell_browser_live` gives the control host an administration login directory over its fixture project database, as `control_route_live` does, and completes a membership grant and an `org-admin` grant. `user.invite` needs the identity service, so its form is tested in the component tests with a stub. Option B: the browser test covers only the reads and the refusals.
+11. Issue 8, answered 2026-10-02 with option A. Org `user.list` answers `org_admin` for each member. The control contract stays at 0.2.0, because 0.2.0 is not on main.
+12. Issue 8, answered 2026-10-02 with option B. Org `user.list` also admits a `project-admin` of any project in the org, read only. Grant and revoke keep their authority as [§4.5](#45-project-level) states.
+13. Issue 8, answered 2026-10-02 with option A. `OrgScreen` and `ProjectScreen` are hand-written in `@wamn/ui/admin`, built like the grids.
+14. Issue 8, answered 2026-10-02 with option A. The browser test completes a membership grant and an `org-admin` grant through the control host's test database, as `control_route_live` does. The invite form is a stub in the component tests.
