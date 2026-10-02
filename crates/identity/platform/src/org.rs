@@ -257,6 +257,58 @@ async fn refuse_under_org_admin(
     Ok(())
 }
 
+/// `project-admin` in the project for every holder of `org-admin` in the
+/// org.
+const ORG_ADMINS_PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
+    (principal_id, org, project, role) \
+    SELECT r.principal_id, r.org, $2, $3 FROM identity.org_roles r \
+    WHERE r.org = $1 AND r.role = $4 \
+    ON CONFLICT DO NOTHING";
+
+/// A membership in the environment for every holder of `project-admin` in
+/// its project.
+const PROJECT_ADMINS_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_memberships \
+    (principal_id, org, project, env) \
+    SELECT r.principal_id, r.org, r.project, $3 FROM identity.project_roles r \
+    WHERE r.org = $1 AND r.project = $2 AND r.role = $4 \
+    ON CONFLICT DO NOTHING";
+
+/// Give a new project, or a new environment, the rows of the current
+/// administrators: `project-admin` in the project for each `org-admin` of the
+/// org, then a membership in the environment for each `project-admin` of the
+/// project, which now includes every `org-admin`. Rows that exist stay as
+/// they are, so provisioning the same environment again changes nothing.
+pub async fn materialize_admin_grants(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<(), IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    let env = checked_scope_segment("env", env)?;
+    client
+        .execute(
+            ORG_ADMINS_PROJECT_ADMIN_SQL,
+            &[
+                &org,
+                &project,
+                &control::PROJECT_ADMIN_ROLE,
+                &ORG_ADMIN_ROLE,
+            ],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    client
+        .execute(
+            PROJECT_ADMINS_MEMBERSHIP_SQL,
+            &[&org, &project, &env, &control::PROJECT_ADMIN_ROLE],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
 /// The checked org, when the principal is an active member of it.
 async fn active_member(
     client: &(impl GenericClient + Sync),

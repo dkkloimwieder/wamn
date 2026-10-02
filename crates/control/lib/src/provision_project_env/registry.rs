@@ -217,6 +217,22 @@ pub(super) async fn do_record_project_env(
         )
         .await
         .context("upsert registry.project_envs row")?;
+    // The current org admins and project admins reach a new project or
+    // environment in the same way a grant reaches an existing one
+    // (docs/plan/platform-ui.md §4.4).
+    let transaction = super::provisioning_transaction(client).await?;
+    wamn_platform_identity::org::materialize_admin_grants(
+        &transaction,
+        &triple.org,
+        &triple.project,
+        env,
+    )
+    .await
+    .context("give the environment the rows of the current administrators")?;
+    transaction
+        .commit()
+        .await
+        .context("commit the administrator rows")?;
     // Read-or-mint: the upsert RETURNS the STORED suffix, which is the freshly
     // minted one on a first provision and the EXISTING one when this triple was
     // already provisioned — the upsert deliberately never refreshes it, because

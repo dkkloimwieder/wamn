@@ -6,7 +6,9 @@ use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
     IdentityErrorType, PrincipalId, create_or_reuse_user,
-    org::{activate_org_membership, grant_org_admin, grant_project_admin},
+    org::{
+        activate_org_membership, grant_org_admin, grant_project_admin, materialize_admin_grants,
+    },
 };
 
 /// Two orgs. `acme` has two projects and three environments. `other` has a
@@ -144,6 +146,51 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
     assert_eq!(
         other.to_string(),
         format!("principal {ben} is not an active member of org other")
+    );
+
+    // A new project and a new environment receive the rows of the current
+    // administrators, and a second run changes nothing.
+    client
+        .batch_execute(
+            "INSERT INTO registry.env_policies \
+               (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
+               VALUES ('acme', 'test', '\"own\"', 2, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
+             INSERT INTO registry.projects (org, id) VALUES ('acme', 'store'); \
+             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix) VALUES \
+               ('acme', 'store', 'dev', 's5', 'aaaaaaa5'), ('acme', 'billing', 'test', 's6', 'aaaaaaa6');",
+        )
+        .await
+        .expect("add a project and an environment");
+    for _ in 0..2 {
+        materialize_admin_grants(&client, "acme", "store", "dev")
+            .await
+            .expect("materialize the new project");
+        materialize_admin_grants(&client, "acme", "billing", "test")
+            .await
+            .expect("materialize the new environment");
+    }
+    assert_eq!(
+        grants(&client, &ann).await,
+        [
+            "env acme/billing/dev",
+            "env acme/billing/prod",
+            "env acme/billing/test",
+            "env acme/shop/dev",
+            "env acme/store/dev",
+            "org acme org-admin",
+            "project acme/billing project-admin",
+            "project acme/shop project-admin",
+            "project acme/store project-admin",
+        ]
+    );
+    assert_eq!(
+        grants(&client, &ben).await,
+        [
+            "env acme/billing/dev",
+            "env acme/billing/prod",
+            "env acme/billing/test",
+            "project acme/billing project-admin",
+        ]
     );
 
     // An inactive membership refuses a grant, and activation makes it active.
