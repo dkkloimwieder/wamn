@@ -104,7 +104,13 @@ async fn run(evidence: &Path) -> anyhow::Result<()> {
         activate_session_key(&cluster, &issuer).await?;
         serve_passwords(&cluster).await?;
         let account = account(&cluster, &route.database_url).await?;
-        let edge = install_edge(&cluster, &carrier.manifest_digest.to_string()).await?;
+        select_head(&route.database_url).await?;
+        let edge = install_edge(
+            &cluster,
+            &route.database_url,
+            &carrier.manifest_digest.to_string(),
+        )
+        .await?;
         check_edge(&cluster, &edge, &account, &audience).await?;
         if std::env::var_os(BY_HAND).is_some() {
             hold(&cluster, &edge, &audience, &route.database_url).await?;
@@ -286,9 +292,37 @@ struct Edge {
     ca: PathBuf,
 }
 
+/// The session release becomes the head of the environment, with the upsert
+/// that `select-release` runs. `wamn web upload` refuses any other release.
+/// The case publishes the session release without a qualification, so it
+/// cannot run `select-release` itself.
+async fn select_head(database_url: &str) -> anyhow::Result<()> {
+    let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
+    let driver = tokio::spawn(connection);
+    let release = i32::try_from(identity().effective_release_id + 1)?;
+    let result = client
+        .execute(
+            "INSERT INTO catalog.effective_release_heads \
+                    (tenant_id, environment, effective_release_id) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (tenant_id, environment) DO UPDATE \
+             SET effective_release_id = EXCLUDED.effective_release_id, updated_at = now()",
+            &[&identity().tenant, &identity().environment, &release],
+        )
+        .await
+        .context("select the session release as the head");
+    driver.abort();
+    result?;
+    Ok(())
+}
+
 /// The release's web client in a bucket, written by `wamn web upload`, and
 /// the edge chart in front of it.
-async fn install_edge(cluster: &ReceivingCluster, release: &str) -> anyhow::Result<Edge> {
+async fn install_edge(
+    cluster: &ReceivingCluster,
+    database_url: &str,
+    release: &str,
+) -> anyhow::Result<Edge> {
     let resources = &cluster.resources;
     let secret = uuid::Uuid::new_v4().simple().to_string();
     write_private(
@@ -308,6 +342,8 @@ async fn install_edge(cluster: &ReceivingCluster, release: &str) -> anyhow::Resu
             .current_dir(&resources.repository)
             .args(["web", "upload", "apps/wamn_receiving", "--release", release])
             .args(["--bucket", "s3://web/clients"])
+            .args(["--org", identity().org.as_str()])
+            .args(["--database-url", database_url])
             .env("AWS_ENDPOINT", format!("http://{minio}:9000"))
             .env("AWS_ALLOW_HTTP", "true")
             .env("AWS_REGION", "us-east-1")
