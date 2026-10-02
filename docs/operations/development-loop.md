@@ -9,7 +9,7 @@ Local saves do not publish components or release manifests to a registry.
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
 Build `wamn`, `wamn-host`, `wamn-identity`, the flow-http component, and the materializer component before starting a session.
-If you change the manifest vocabulary of `wamn.json`, build `wamn` again first.
+If you change the manifest vocabulary of `wamn.json` or the KCL schema module, build `wamn` again first.
 The loop runs the binary you built, so an older one refuses the manifest with `unknown field`.
 Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
 The system administrator URL must name `wamn_system` without a query or fragment.
@@ -125,6 +125,7 @@ SQLx metadata is prepared again only when [its inputs](running-tests.md#applicat
 Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
 The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover, such as `web/dist`.
 The watcher uses the same ignore rules.
+In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `generated/wamn.json` as generated output.
 Missing or changed generated files prevent reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
@@ -134,7 +135,7 @@ When these inputs change, the loop stops the operator and host before it applies
 These changes keep the target database and the rows it holds:
 
 - a migration file appended after the last applied migration
-- a changed `wamn.json` at the same package coordinate
+- a changed `wamn.json` or `wamn.k` at the same package coordinate
 - a change to `enum_fields`, `server_owned_fields`, or `audit_log`
 
 The loop applies them to the kept target and reads its catalogs again.

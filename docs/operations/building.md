@@ -78,6 +78,21 @@ The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream,
 The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
 Application contracts remain under each package's `generated/wit` directory. Do not copy platform WIT into application directories.
 
+## Package manifests
+
+A package that holds `wamn.k` authors its manifest in KCL.
+The generator compiles `wamn.k` to `generated/wamn.json` before it generates anything else.
+Every reader, including `tools/build-components`, reads that compiled file.
+`write` puts the compiled file in place, and `check` refuses a compiled file that differs from the compile.
+The refusal names the first differing JSON path.
+A package that holds both `wamn.k` and an authored `wamn.json` is refused.
+
+The compile runs the KCL CLI that [`tools/install-kcl`](../../tools/install-kcl) installs.
+That script pins the version and digest, and installs the binary under `.tools/kcl/`.
+The generator runs the script itself, so you do not install KCL by hand.
+If the repository is absent, set `WAMN_KCL` to a `kcl` binary of the pinned version.
+The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
+
 ## The edge box binary
 
 The edge box is an aarch64 Linux computer, for example a Raspberry Pi 3B.

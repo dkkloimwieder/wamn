@@ -55,6 +55,13 @@ The native runtime refuses absent membership at the existing guest error boundar
 The generator supplies fixed protocol rules. It rejects their former authored fields.
 Receiving, Acme, and WMS use the same declaration format.
 
+A package can author its manifest in `wamn.k`, a KCL file, instead.
+The generator compiles it to `generated/wamn.json`, and every reader reads that compiled file.
+The table below does not change: the author still writes everything that it retains.
+The schema module fills only authoring defaults, and the compiled file states what an authored `wamn.json` states.
+An optional key that the author does not write stays absent. To leave out a key that has a default, such as `connection`, the author sets it to `None`.
+A package converts to `wamn.k` with its next version, because sealed bytes never change.
+
 The following map covers the Receiving manifest fields and their nested declarations.
 A schema fact describes the database. A permission or writable-field list selects authority over that database.
 The generator compares those choices with the schema and SQL. It does not replace them with broader inferred authority.
