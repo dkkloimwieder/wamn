@@ -349,7 +349,7 @@ CREATE TABLE catalog.wirings (
         FOREIGN KEY (tenant_id, package_id, package_version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version),
     CONSTRAINT wirings_definition_key
-        UNIQUE (tenant_id, package_id, wiring_id, wiring_hash)
+        UNIQUE (tenant_id, package_id, package_version, wiring_id, wiring_hash)
 );
 
 CREATE TABLE catalog.wiring_tombstones (

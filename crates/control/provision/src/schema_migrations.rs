@@ -148,6 +148,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0004_user_type.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0004_user_type.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0005_wiring_definition_key.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0005_wiring_definition_key.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

@@ -411,3 +411,62 @@ async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
     project_task.await.expect("join the project connection");
     control_task.await.expect("join the control connection");
 }
+
+/// One graph under two package versions of one package is two rows, and the
+/// same graph twice under one version stays one row (owner ruling of
+/// 2026-10-02 on the definition key, migration project/0005). The fixture's
+/// operation names carry the package version, so the second version is
+/// written with the statement of the verb, as for the WMS 2.0.0 graph.
+#[tokio::test]
+async fn one_graph_is_one_row_per_package_version() {
+    let _lock = wamn_test_postgres::lock();
+    let project_database = wamn_project_state::test_database::tenant_app_system();
+    let control_database = wamn_control_provision::test_database::system();
+    let project_url = project_database.url().to_owned();
+    let control_url = control_database.url().to_owned();
+    let (mut project, project_task) = connect(&project_url).await;
+    let (control, control_task) = connect(&control_url).await;
+    provision_project(&project, &project_url).await;
+    provision_control(&control).await;
+
+    let document = wiring("versioned", 1);
+    record_report(&control, &document.wiring_hash(), true).await;
+    for _ in 0..2 {
+        let authored = author(&control, &mut project, &document)
+            .await
+            .expect("the same gated graph under one version is an exact-match no-op");
+        assert_eq!(authored, document.wiring_hash());
+    }
+    assert_eq!(stored_wirings(&project, "versioned").await, 1);
+
+    project
+        .batch_execute(
+            "CREATE TEMP TABLE next_package AS SELECT * FROM catalog.packages \
+              WHERE package_version = '1.0.0'; \
+             UPDATE next_package SET package_version = '2.0.0'; \
+             INSERT INTO catalog.packages SELECT * FROM next_package;",
+        )
+        .await
+        .expect("record package version 2.0.0 of the fixture package");
+    let inserted = project
+        .execute(
+            "INSERT INTO catalog.wirings \
+                    (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash) \
+             SELECT tenant_id, package_id, '2.0.0', wiring_id, version, graph_json, wiring_hash \
+               FROM catalog.wirings WHERE wiring_id = 'versioned' \
+             ON CONFLICT DO NOTHING",
+            &[],
+        )
+        .await
+        .expect("write the same graph under package version 2.0.0");
+    assert_eq!(
+        inserted, 1,
+        "the definition key admits a second package version"
+    );
+    assert_eq!(stored_wirings(&project, "versioned").await, 2);
+
+    drop(project);
+    drop(control);
+    project_task.await.expect("join the project connection");
+    control_task.await.expect("join the control connection");
+}
