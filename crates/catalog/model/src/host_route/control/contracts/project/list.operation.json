@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:project/list@0.1.0",
+  "operation": "wamn-control:project/list@0.2.0",
   "type": "get",
   "label": "Projects",
-  "grant": "wamn-control:project/list@0.1.0",
+  "grant": "wamn-control:project/list@0.2.0",
   "permission_token": "project.list",
   "result": "one",
   "transaction": "implicit",

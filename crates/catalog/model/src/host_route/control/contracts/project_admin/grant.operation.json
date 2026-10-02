@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:project-admin/grant@0.1.0",
+  "operation": "wamn-control:project-admin/grant@0.2.0",
   "type": "command",
   "label": "Grant project-admin",
-  "grant": "wamn-control:project-admin/grant@0.1.0",
+  "grant": "wamn-control:project-admin/grant@0.2.0",
   "permission_token": "project_admin.grant",
   "result": "one",
   "transaction": "explicit_per_input",

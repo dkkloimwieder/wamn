@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:org-admin/revoke@0.1.0",
+  "operation": "wamn-control:org-admin/revoke@0.2.0",
   "type": "command",
   "label": "Revoke org-admin",
-  "grant": "wamn-control:org-admin/revoke@0.1.0",
+  "grant": "wamn-control:org-admin/revoke@0.2.0",
   "permission_token": "org_admin.revoke",
   "result": "one",
   "transaction": "explicit_per_input",

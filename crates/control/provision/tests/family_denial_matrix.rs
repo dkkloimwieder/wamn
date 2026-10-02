@@ -308,6 +308,7 @@ const MATRIX: [FamilyReach; 10] = [
             "app_system.users|INSERT|table",
             "app_system.users|SELECT|table",
             "app_system.users|UPDATE|table",
+            "catalog.effective_release_heads|SELECT|table",
         ],
         routines: &["wamn_authority.tenant_key(text)"],
     },

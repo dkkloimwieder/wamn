@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:member/grant@0.1.0",
+  "operation": "wamn-control:member/grant@0.2.0",
   "type": "command",
   "label": "Grant an environment membership",
-  "grant": "wamn-control:member/grant@0.1.0",
+  "grant": "wamn-control:member/grant@0.2.0",
   "permission_token": "member.grant",
   "result": "one",
   "transaction": "explicit_per_input",

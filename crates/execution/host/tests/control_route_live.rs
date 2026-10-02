@@ -337,7 +337,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     ] {
         assert_eq!(
             call(&delivery, operation, ann.as_str(), json!({})).await,
-            Err(format!("permission denied wamn-control:{operation}@0.1.0"))
+            Err(format!("permission denied wamn-control:{operation}@0.2.0"))
         );
     }
 
@@ -486,7 +486,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         .await?;
     assert_eq!(
         call(&delivery, "user/list", boss, json!({})).await,
-        Err("permission denied wamn-control:user/list@0.1.0".to_owned())
+        Err("permission denied wamn-control:user/list@0.2.0".to_owned())
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -563,7 +563,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     ] {
         assert_eq!(
             call(&delivery, operation, ann, payload).await,
-            Err(format!("permission denied wamn-control:{operation}@0.1.0"))
+            Err(format!("permission denied wamn-control:{operation}@0.2.0"))
         );
     }
     assert_eq!(
@@ -574,11 +574,11 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "shop"})
         )
         .await,
-        Err("permission denied wamn-control:environment/list@0.1.0".to_owned())
+        Err("permission denied wamn-control:environment/list@0.2.0".to_owned())
     );
     assert_eq!(
         call(&delivery, "user/list", cat, json!({})).await,
-        Err("permission denied wamn-control:user/list@0.1.0".to_owned())
+        Err("permission denied wamn-control:user/list@0.2.0".to_owned())
     );
     assert_eq!(
         call(
@@ -676,7 +676,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing"})
         )
         .await,
-        Err("permission denied wamn-control:environment/list@0.1.0".to_owned())
+        Err("permission denied wamn-control:environment/list@0.2.0".to_owned())
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())

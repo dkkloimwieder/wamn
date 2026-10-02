@@ -8,7 +8,8 @@
 //! role or permission write first takes the tenant lock that `wamn-ctl` and
 //! release reconciliation take. The writes are the functions of
 //! `wamn_platform_identity::application`, which `wamn-ctl` also calls, so no
-//! second writer exists. A grant writes the closure of the loaded release.
+//! second writer exists. A grant writes the closure of the loaded release,
+//! and refuses when that release is no longer the head of its environment.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,6 +32,12 @@ use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 use crate::control_route::{Refusal, parse};
+
+/// The release that the environment's head names. Release reconciliation
+/// advances it in the transaction that rewrites the closures, under the
+/// tenant lock, so a read under that lock is exact.
+const RELEASE_HEAD_SQL: &str = "SELECT effective_release_id FROM catalog.effective_release_heads \
+    WHERE tenant_id = $1 AND environment = $2";
 
 /// What the application routes of one host use.
 pub(crate) struct ApplicationRoutes<'a> {
@@ -167,6 +174,7 @@ impl ApplicationRoutes<'_> {
                 }
                 let closures = ReleaseClosures::from_manifest(self.release.manifest());
                 self.run(attachment, principal, true, async |client| {
+                    self.require_head(client).await?;
                     let outcome = grant_permission(
                         client,
                         tenant,
@@ -261,6 +269,28 @@ impl ApplicationRoutes<'_> {
                 },
             )
             .await?
+    }
+
+    /// Refuse a grant while the loaded release is not the head, because its
+    /// closures are not the ones that reconciliation wrote.
+    async fn require_head(&self, client: &Client) -> Result<(), Refusal> {
+        let release = &self.release.manifest().release;
+        let head: Option<i32> = client
+            .query_opt(
+                RELEASE_HEAD_SQL,
+                &[&release.tenant_id, &release.environment],
+            )
+            .await?
+            .map(|row| row.get(0));
+        if head.and_then(|head| u32::try_from(head).ok())
+            == Some(release.effective_release_id.get())
+        {
+            return Ok(());
+        }
+        Err(Refusal::Declared {
+            code: "release_not_current",
+            detail: json!({ "field": "operation" }),
+        })
     }
 
     /// Each operation the release serves and each stored row of the role:

@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:user/invite@0.1.0",
+  "operation": "wamn-control:user/invite@0.2.0",
   "type": "command",
   "label": "Invite a user",
-  "grant": "wamn-control:user/invite@0.1.0",
+  "grant": "wamn-control:user/invite@0.2.0",
   "permission_token": "user.invite",
   "result": "one",
   "transaction": "explicit_per_input",

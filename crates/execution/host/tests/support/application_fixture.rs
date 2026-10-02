@@ -104,6 +104,22 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
             &[&first],
         )
         .await?;
+    // The loaded release is the head of its environment. A second release
+    // lets a test move the head away from it.
+    admin
+        .execute(
+            "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
+             VALUES ($1, 1, 'dev'), ($1, 2, 'dev')",
+            &[&TENANT],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) \
+             VALUES ($1, 'dev', 1)",
+            &[&TENANT],
+        )
+        .await?;
     for role in ["admin", "purchase-reader"] {
         admin
             .execute(

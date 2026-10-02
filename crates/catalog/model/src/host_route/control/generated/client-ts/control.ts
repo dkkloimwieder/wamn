@@ -5,14 +5,14 @@
 import type { FieldMap, OperationRoute, Outcome, Transport } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:control/mine@0.1.0`. */
+/** Input for `wamn-control:control/mine@0.2.0`. */
 export interface ControlMineRequest {
 }
 
-/** What `wamn-control:control/mine@0.1.0` calls its input members. */
+/** What `wamn-control:control/mine@0.2.0` calls its input members. */
 export const CONTROL_MINE_REQUEST_FIELDS: FieldMap = {};
 
-/** Result of `wamn-control:control/mine@0.1.0`. */
+/** Result of `wamn-control:control/mine@0.2.0`. */
 export interface ControlMineResult {
   /** `boolean` */
   readonly orgAdmin: boolean;
@@ -27,7 +27,7 @@ export interface ControlMineResultProjects {
   readonly projectAdmin: boolean;
 }
 
-/** What `wamn-control:control/mine@0.1.0` calls its result members. */
+/** What `wamn-control:control/mine@0.2.0` calls its result members. */
 export const CONTROL_MINE_RESULT_FIELDS: FieldMap = {
   "org_admin": "orgAdmin",
   "projects": {
@@ -40,13 +40,13 @@ export const CONTROL_MINE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:control/mine@0.1.0`.
+ * Where the release publishes `wamn-control:control/mine@0.2.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const CONTROL_MINE_ROUTE: OperationRoute = {
-  operation: "wamn-control:control/mine@0.1.0",
+  operation: "wamn-control:control/mine@0.2.0",
   method: "GET",
   template: "/wamn_control/control/mine",
   freshOnly: false,
@@ -65,7 +65,7 @@ export const CONTROL_MINE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:control/mine@0.1.0` through a transport the application supplies. */
+/** Invoke `wamn-control:control/mine@0.2.0` through a transport the application supplies. */
 export async function mine(
   transport: Transport,
   items: readonly ControlMineRequest[],

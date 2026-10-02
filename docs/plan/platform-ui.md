@@ -773,7 +773,8 @@ It holds nothing on `registry.orgs`, because the control host takes its org from
 
 The control host of an org holds the `wamn_administration` login of every environment in that org, and of no other org.
 It is the login that the application host of the environment holds: one login per environment, the same family and the same privileges.
-In each project database the login holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `app_system.users`, `app_system.roles`, `app_system.user_roles` and `app_system.permissions`, and nothing else beside the history writes of those tables.
+In each project database the login holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `app_system.users`, `app_system.roles`, `app_system.user_roles` and `app_system.permissions`, and `SELECT` on `catalog.effective_release_heads`, and nothing else beside the history writes of those tables.
+A grant reads the release head, so it knows whether the release it holds is the head (`wamn-a40n.9`).
 
 The logins of an org are in one Secret, `wamn-control-administration-<org>`, with one key per environment named `<project>--<env>`.
 The control host mounts the Secret as a volume and reads it at each write, so a new environment needs no restart.

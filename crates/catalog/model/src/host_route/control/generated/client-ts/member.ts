@@ -5,7 +5,7 @@
 import type { FieldMap, OperationRoute, Outcome, Transport, Uuid } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:member/grant@0.1.0`. */
+/** Input for `wamn-control:member/grant@0.2.0`. */
 export interface MemberGrantRequest {
   /** `text` */
   requestId: string;
@@ -22,7 +22,7 @@ export interface MemberGrantRequestValue {
   project: string;
 }
 
-/** What `wamn-control:member/grant@0.1.0` calls its input members. */
+/** What `wamn-control:member/grant@0.2.0` calls its input members. */
 export const MEMBER_GRANT_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -35,7 +35,7 @@ export const MEMBER_GRANT_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:member/grant@0.1.0`. */
+/** Result of `wamn-control:member/grant@0.2.0`. */
 export interface MemberGrantResult {
   /** `text` */
   readonly env: string;
@@ -47,7 +47,7 @@ export interface MemberGrantResult {
   readonly project: string;
 }
 
-/** What `wamn-control:member/grant@0.1.0` calls its result members. */
+/** What `wamn-control:member/grant@0.2.0` calls its result members. */
 export const MEMBER_GRANT_RESULT_FIELDS: FieldMap = {
   "env": "env",
   "member": "member",
@@ -56,13 +56,13 @@ export const MEMBER_GRANT_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:member/grant@0.1.0`.
+ * Where the release publishes `wamn-control:member/grant@0.2.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const MEMBER_GRANT_ROUTE: OperationRoute = {
-  operation: "wamn-control:member/grant@0.1.0",
+  operation: "wamn-control:member/grant@0.2.0",
   method: "POST",
   template: "/wamn_control/member/grant",
   freshOnly: false,
@@ -86,7 +86,7 @@ export const MEMBER_GRANT_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:member/grant@0.1.0` through a transport the application supplies. */
+/** Invoke `wamn-control:member/grant@0.2.0` through a transport the application supplies. */
 export async function grant(
   transport: Transport,
   items: readonly MemberGrantRequest[],
@@ -100,18 +100,18 @@ export async function grant(
   );
 }
 
-/** Input for `wamn-control:member/list@0.1.0`. */
+/** Input for `wamn-control:member/list@0.2.0`. */
 export interface MemberListRequest {
   /** `text` */
   project: string;
 }
 
-/** What `wamn-control:member/list@0.1.0` calls its input members. */
+/** What `wamn-control:member/list@0.2.0` calls its input members. */
 export const MEMBER_LIST_REQUEST_FIELDS: FieldMap = {
   "project": "project",
 };
 
-/** Result of `wamn-control:member/list@0.1.0`. */
+/** Result of `wamn-control:member/list@0.2.0`. */
 export interface MemberListResult {
   /** `array` */
   readonly members: readonly MemberListResultMembers[];
@@ -132,7 +132,7 @@ export interface MemberListResultMembers {
   readonly projectAdmin: boolean;
 }
 
-/** What `wamn-control:member/list@0.1.0` calls its result members. */
+/** What `wamn-control:member/list@0.2.0` calls its result members. */
 export const MEMBER_LIST_RESULT_FIELDS: FieldMap = {
   "members": {
     member: "members",
@@ -148,13 +148,13 @@ export const MEMBER_LIST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:member/list@0.1.0`.
+ * Where the release publishes `wamn-control:member/list@0.2.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const MEMBER_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:member/list@0.1.0",
+  operation: "wamn-control:member/list@0.2.0",
   method: "GET",
   template: "/wamn_control/member/list",
   freshOnly: false,
@@ -174,7 +174,7 @@ export const MEMBER_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:member/list@0.1.0` through a transport the application supplies. */
+/** Invoke `wamn-control:member/list@0.2.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly MemberListRequest[],
@@ -188,7 +188,7 @@ export async function list(
   );
 }
 
-/** Input for `wamn-control:member/revoke@0.1.0`. */
+/** Input for `wamn-control:member/revoke@0.2.0`. */
 export interface MemberRevokeRequest {
   /** `text` */
   requestId: string;
@@ -205,7 +205,7 @@ export interface MemberRevokeRequestValue {
   project: string;
 }
 
-/** What `wamn-control:member/revoke@0.1.0` calls its input members. */
+/** What `wamn-control:member/revoke@0.2.0` calls its input members. */
 export const MEMBER_REVOKE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -218,7 +218,7 @@ export const MEMBER_REVOKE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:member/revoke@0.1.0`. */
+/** Result of `wamn-control:member/revoke@0.2.0`. */
 export interface MemberRevokeResult {
   /** `text` */
   readonly env: string;
@@ -230,7 +230,7 @@ export interface MemberRevokeResult {
   readonly project: string;
 }
 
-/** What `wamn-control:member/revoke@0.1.0` calls its result members. */
+/** What `wamn-control:member/revoke@0.2.0` calls its result members. */
 export const MEMBER_REVOKE_RESULT_FIELDS: FieldMap = {
   "env": "env",
   "member": "member",
@@ -239,13 +239,13 @@ export const MEMBER_REVOKE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:member/revoke@0.1.0`.
+ * Where the release publishes `wamn-control:member/revoke@0.2.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const MEMBER_REVOKE_ROUTE: OperationRoute = {
-  operation: "wamn-control:member/revoke@0.1.0",
+  operation: "wamn-control:member/revoke@0.2.0",
   method: "POST",
   template: "/wamn_control/member/revoke",
   freshOnly: false,
@@ -267,7 +267,7 @@ export const MEMBER_REVOKE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:member/revoke@0.1.0` through a transport the application supplies. */
+/** Invoke `wamn-control:member/revoke@0.2.0` through a transport the application supplies. */
 export async function revoke(
   transport: Transport,
   items: readonly MemberRevokeRequest[],

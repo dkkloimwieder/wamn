@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:member/revoke@0.1.0",
+  "operation": "wamn-control:member/revoke@0.2.0",
   "type": "command",
   "label": "Revoke an environment membership",
-  "grant": "wamn-control:member/revoke@0.1.0",
+  "grant": "wamn-control:member/revoke@0.2.0",
   "permission_token": "member.revoke",
   "result": "one",
   "transaction": "explicit_per_input",

@@ -437,6 +437,29 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         .await,
         json!({"code": "operation_not_grantable", "detail": {"field": "operation"}})
     );
+    // A host whose release is no longer the head writes no closure.
+    admin
+        .execute(
+            "UPDATE catalog.effective_release_heads SET effective_release_id = 2 \
+             WHERE tenant_id = $1 AND environment = 'dev'",
+            &[&TENANT],
+        )
+        .await?;
+    assert_eq!(
+        refusal(
+            "wamn-control:permission/grant",
+            json!({"role": "clerk", "operation": write})
+        )
+        .await,
+        json!({"code": "release_not_current", "detail": {"field": "operation"}})
+    );
+    admin
+        .execute(
+            "UPDATE catalog.effective_release_heads SET effective_release_id = 1 \
+             WHERE tenant_id = $1 AND environment = 'dev'",
+            &[&TENANT],
+        )
+        .await?;
     let listed = answer("wamn-control:permission/list", json!({"role": "clerk"})).await;
     let entry = |operation: &str| {
         listed["operations"]
@@ -499,7 +522,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     assert_eq!(
         (stamp.get::<_, String>(0), stamp.get::<_, String>(1)),
         (
-            "wamn-control:user-role/grant@0.1.0".to_owned(),
+            "wamn-control:user-role/grant@0.2.0".to_owned(),
             first.clone()
         )
     );
@@ -545,7 +568,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     Ok(())
 }
 
-/// `wamn-control:control/mine@0.1.0` on a control host: the control
+/// `wamn-control:control/mine@0.2.0` on a control host: the control
 /// serving root, the control route authenticator and the org's real
 /// `control` login. Only a browser session of a current `project-admin` or
 /// `org-admin` is admitted, and a revoked role refuses the next request.

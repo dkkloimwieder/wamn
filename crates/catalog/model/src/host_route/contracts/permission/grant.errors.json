@@ -52,6 +52,16 @@
       "text": "This operation is fixed to admin or to every member, so no role takes it."
     },
     {
+      "literal": "release_not_current",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The release of this host is no longer the current release. Try again when the host serves the current release."
+    },
+    {
       "literal": "permission_denied",
       "from": "permission_denied",
       "detail": {

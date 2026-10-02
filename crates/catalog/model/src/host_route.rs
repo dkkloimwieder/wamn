@@ -355,7 +355,7 @@ const ROUTES: &[HostRoute] = &[
 #[derive(Debug)]
 pub struct HostAttachment {
     pub route: &'static HostRoute,
-    /// The sealed operation id, such as `wamn-control:permission/mine@0.1.0`.
+    /// The sealed operation id, such as `wamn-control:permission/mine@0.2.0`.
     /// A host-run write stamps it.
     pub operation: String,
     /// The operation id without its version, as a stored permission names it.
@@ -457,7 +457,7 @@ mod tests {
         let application = HostRouteSet::Application
             .attachment("wamn-control-permission-mine-http")
             .expect("permission.mine is an application host route");
-        assert_eq!(application.operation, "wamn-control:permission/mine@0.1.0");
+        assert_eq!(application.operation, "wamn-control:permission/mine@0.2.0");
         assert_eq!(application.reference, "wamn-control:permission/mine");
         assert_eq!(application.registered_operation(), None);
         assert_eq!(
@@ -472,7 +472,7 @@ mod tests {
         let control = HostRouteSet::Control
             .attachment("wamn-control-control-mine-http")
             .expect("control.mine is a control host route");
-        assert_eq!(control.operation, "wamn-control:control/mine@0.1.0");
+        assert_eq!(control.operation, "wamn-control:control/mine@0.2.0");
         assert_eq!(control.auth_policy, json!({"modes": ["session"]}));
         assert!(
             HostRouteSet::Application
@@ -482,7 +482,7 @@ mod tests {
         );
         assert_eq!(host_route_package(), "wamn_control");
         assert!(is_host_route_operation("wamn-control:role/create"));
-        assert!(is_host_route_operation("wamn-control:role/create@0.1.0"));
+        assert!(is_host_route_operation("wamn-control:role/create@0.2.0"));
         assert!(!is_host_route_operation("wamn-receiving:receipt/get"));
 
         let users = HostRouteSet::Application
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!(users.operation, members.operation);
         assert_eq!(
             users.registered_operation(),
-            Some("wamn-control:user/list@0.1.0")
+            Some("wamn-control:user/list@0.2.0")
         );
         assert_eq!(host_route_path_prefix(), "/wamn_control/");
     }
