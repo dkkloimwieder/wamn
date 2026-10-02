@@ -289,21 +289,21 @@ async fn qualify_candidate(
     )
     .await?;
     result.assert_artifacts()?;
-    let images = [
-        ("host", Some(result.candidate.host_image.clone())),
-        ("gates", result.candidate.gates_image.clone()),
-        ("identity", result.candidate.identity_image.clone()),
-    ];
-    for (target, image) in images {
-        if let Some(image) = image {
-            compare_built_image(
-                root,
-                target,
-                &image,
-                &result.source_commit,
-                &mut result.checks,
-            )
-            .await?;
+    for (target, image, proof) in image_proofs(&result.candidate) {
+        match proof {
+            ImageProof::SourceBuild => {
+                compare_built_image(
+                    root,
+                    target,
+                    &image,
+                    &result.source_commit,
+                    &mut result.checks,
+                )
+                .await?;
+            }
+            ImageProof::Pinned => {
+                pull_pinned_image(root, &image, &mut result.checks).await?;
+            }
         }
     }
     let executable =
@@ -589,13 +589,37 @@ fn member_workspace(package: &str, metadata: &[(PathBuf, Vec<u8>)]) -> anyhow::R
     Ok(workspaces[0].clone())
 }
 
-async fn compare_built_image(
+/// How qualification proves one pinned image of the candidate.
+#[derive(Debug, PartialEq, Eq)]
+enum ImageProof {
+    /// The image ships, so a build from the selected commit must equal it.
+    SourceBuild,
+    /// The gates image is test equipment and never ships. It is pulled and
+    /// recorded by its pinned digest, not built (`wamn-1s38`).
+    Pinned,
+}
+
+fn image_proofs(candidate: &Candidate) -> Vec<(&'static str, String, ImageProof)> {
+    let mut images = vec![(
+        "host",
+        candidate.host_image.clone(),
+        ImageProof::SourceBuild,
+    )];
+    if let Some(image) = &candidate.identity_image {
+        images.push(("identity", image.clone(), ImageProof::SourceBuild));
+    }
+    if let Some(image) = &candidate.gates_image {
+        images.push(("gates", image.clone(), ImageProof::Pinned));
+    }
+    images
+}
+
+/// Pull one pinned image and record its image id.
+async fn pull_pinned_image(
     root: &Path,
-    target: &str,
     image: &str,
-    source_commit: &str,
     checks: &mut Vec<CheckResult>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Output> {
     run(
         root,
         &strings(&["docker", "pull", "--quiet", image]),
@@ -603,13 +627,23 @@ async fn compare_built_image(
         checks,
     )
     .await?;
-    let expected = run(
+    run(
         root,
         &strings(&["docker", "image", "inspect", "--format", "{{.Id}}", image]),
         &[],
         checks,
     )
-    .await?;
+    .await
+}
+
+async fn compare_built_image(
+    root: &Path,
+    target: &str,
+    image: &str,
+    source_commit: &str,
+    checks: &mut Vec<CheckResult>,
+) -> anyhow::Result<()> {
+    let expected = pull_pinned_image(root, image, checks).await?;
     let lease = format!("qualification-{}", nonce()?);
     let tag = format!("wamn-{target}:{lease}");
     let built = async {
@@ -842,6 +876,37 @@ mod tests {
         ] {
             assert!(require_one_case(&failed).is_err());
         }
+    }
+
+    #[test]
+    fn only_shipped_images_are_compared_with_a_source_build() {
+        let pinned = |name: &str| format!("registry.example/{name}@sha256:{}", "a".repeat(64));
+        let mut candidate = Candidate {
+            org: "acme".into(),
+            project: "billing".into(),
+            manifest_path: "unused".into(),
+            target_directory: "unused".into(),
+            host_image: pinned("host"),
+            gates_image: Some(pinned("gates")),
+            identity_image: Some(pinned("identity")),
+            deployment_files: Vec::new(),
+            native_registry_endpoint: None,
+            native_registry_insecure: false,
+        };
+        assert_eq!(
+            image_proofs(&candidate),
+            [
+                ("host", pinned("host"), ImageProof::SourceBuild),
+                ("identity", pinned("identity"), ImageProof::SourceBuild),
+                ("gates", pinned("gates"), ImageProof::Pinned),
+            ]
+        );
+        candidate.gates_image = None;
+        candidate.identity_image = None;
+        assert_eq!(
+            image_proofs(&candidate),
+            [("host", pinned("host"), ImageProof::SourceBuild)]
+        );
     }
 
     #[test]

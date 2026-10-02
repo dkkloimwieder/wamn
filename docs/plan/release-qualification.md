@@ -140,7 +140,7 @@ Acme takes part in `record_receipt` only through its own route `/acme/receiving/
 
 The WMS fixture publishes the authored attachments unchanged, so the bytes keep `["pat","session"]`. The change deletes `pat_only_attachments` (`apps/wamn_wms/tests/environment.rs:394-425` at `01ca2425d`) and its caller. The fixture installs the session issuer the way the Receiving cluster cases do, with `prepare_application`, `prepare` and `adjust_host`. These functions move from `route_authentication_live/cluster/session_cluster.rs` to `test-support`, and both fixtures call them. Without a candidate, the WMS fixture builds `wamn-identity:<name>` itself. With a candidate, it takes the image of `--identity-image`. The WMS cases keep calling PAT routes.
 
-Every candidate of the cutover carries three images, all built by B0 from the cutover commit: `--host-image`, `--identity-image` and `--gates-image` (`docs/plan/kind-to-type.md` §3.2 B0, B7 and B8).
+Every candidate carries three images: `--host-image`, `--identity-image` and `--gates-image` (`docs/plan/kind-to-type.md` §3.2 B0, B7 and B8). The host and identity images ship, so B0 builds them from the qualified commit, and `qualify-release` builds them again and compares the image ids. The gates image is test equipment and never ships. Since `wamn-1s38` (2026-10-02) the candidate names a pinned gates digest, and `qualify-release` pulls it and records its image id but does not build it. Only a change to the source of the gates image changes the pinned digest, in its own commit. The pin today is `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4`, built at `351f71337`.
 
 ## 5. Issues
 
