@@ -109,7 +109,8 @@ pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, CONTROL_AUTHOR_SECRET_PREFIX, DB_OWNER_ROLE,
     DB_PREFIX, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN, MANAGEMENT_ADMITTER_SECRET_PREFIX,
     MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
-    NAMESPACE_PREFIX, cdc_object_name, compose_url, control_author_secret_name, event_stream_name,
+    NAMESPACE_PREFIX, cdc_object_name, compose_url, control_administration_key,
+    control_administration_secret_name, control_author_secret_name, event_stream_name,
     management_admitter_secret_name, org_workload_secret_name, project_env_cdc_secret_name,
     project_env_database_name, project_env_guest_secret_name, project_env_namespace,
     project_env_secret_name, validate_instance_suffix, validate_project_env,
@@ -130,10 +131,11 @@ pub use system_reader::{
 };
 
 pub use secret::{
-    WorkloadSecretBody, render_control_author_secret_manifest, render_guest_secret_manifest,
-    render_management_admitter_secret_manifest, render_org_workload_secret_manifest,
-    render_project_env_cdc_secret_manifest, render_project_env_secret_manifest,
-    render_workload_secret_manifest,
+    WorkloadSecretBody, render_control_administration_patch,
+    render_control_administration_secret_manifest, render_control_author_secret_manifest,
+    render_guest_secret_manifest, render_management_admitter_secret_manifest,
+    render_org_workload_secret_manifest, render_project_env_cdc_secret_manifest,
+    render_project_env_secret_manifest, render_workload_secret_manifest,
 };
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_project_state::PlatformComponent;

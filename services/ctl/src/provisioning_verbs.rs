@@ -153,6 +153,13 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub emit_role_sql: Option<PathBuf>,
 
+    /// Write the JSON merge patch that puts the prepared administration login
+    /// into the control host's Secret `wamn-control-administration-<org>`.
+    /// Every administration prepare, the first one and each rotation,
+    /// requires it, because the control host holds the same login.
+    #[arg(long, value_name = "PATH", value_parser = parse_secret_path)]
+    pub emit_control_administration_patch: Option<PathBuf>,
+
     /// Write the privilege SQL (`ALTER DATABASE … OWNER TO wamn_db_owner`, then
     /// `REVOKE CONNECT,TEMPORARY FROM PUBLIC` and `REVOKE CONNECT` from
     /// `wamn_app`; apply AFTER the database is
@@ -594,6 +601,12 @@ pub struct DeleteProjectEnvArgs {
     /// Run the deletes. Without it, the verb prints the plan and changes nothing.
     #[arg(long)]
     pub confirm: bool,
+
+    /// Write the JSON merge patch that removes the environment's key from the
+    /// control host's Secret `wamn-control-administration-<org>`. Apply it
+    /// before the run, as the plan says.
+    #[arg(long, value_name = "PATH")]
+    pub emit_control_administration_patch: Option<PathBuf>,
 }
 
 /// Arguments of `upgrade-schema` (docs/plan/schema-upgrade.md).
@@ -713,6 +726,10 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         args.target_admin_database_url.is_none(),
         "--target-admin-database-url is valid only for a workload generation action"
     );
+    anyhow::ensure!(
+        args.emit_control_administration_patch.is_none(),
+        "--emit-control-administration-patch is valid only for an administration prepare"
+    );
 
     let request = provisioning_request(args);
     let outcome = provision_project_env::provision_project_env(&request).await?;
@@ -758,6 +775,7 @@ fn workload_action_request(
         action,
         secret,
         emit_role_sql: args.emit_role_sql,
+        control_administration_patch: args.emit_control_administration_patch,
     })
 }
 
@@ -942,6 +960,7 @@ pub async fn delete_project_env(args: DeleteProjectEnvArgs) -> anyhow::Result<()
         nats_username: args.nats_username,
         nats_password_file: args.nats_password_file,
         confirm: args.confirm,
+        control_administration_patch: args.emit_control_administration_patch,
     })
     .await
 }
@@ -1161,6 +1180,12 @@ pub struct ProvisionOrgArgs {
     /// of the org's control host.
     #[arg(long, env = "WAMN_NAMESPACE", default_value = "hosts")]
     pub namespace: String,
+
+    /// Write the empty Secret `wamn-control-administration-<org>` here. Each
+    /// `provision-project-env` of the org adds the administration login of
+    /// its environment to it with a patch, and the control host mounts it.
+    #[arg(long, value_name = "PATH")]
+    pub emit_control_administration_secret: Option<PathBuf>,
 }
 
 /// Stamp one org, then print what was recorded and write the CRs it owns.
@@ -1188,6 +1213,13 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     })
     .await?;
     print_provisioned_org(&provisioned);
+    if let Some(path) = &args.emit_control_administration_secret {
+        let secret = wamn_control_provision::render_control_administration_secret_manifest(
+            &provisioned.org.id,
+            &args.namespace,
+        );
+        write_json(path, &secret).context("emit the control administration Secret")?;
+    }
     if let Some(action) = args.credential.action {
         let system_database_url = system_database_url
             .context("an org credential action requires --system-database-url")?;

@@ -25,9 +25,10 @@ use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, workload_generation_role,
 };
 use wamn_control_provision::{
-    CredentialGeneration, cdc_object_name, event_stream_name, project_env_cdc_secret_name,
-    project_env_database_name, project_env_secret_name, validate_instance_suffix,
-    validate_project_env_cdc, workload_secret_name,
+    CredentialGeneration, cdc_object_name, control_administration_key,
+    control_administration_secret_name, event_stream_name, project_env_cdc_secret_name,
+    project_env_database_name, project_env_secret_name, render_control_administration_patch,
+    validate_instance_suffix, validate_project_env_cdc, workload_secret_name,
 };
 use wamn_control_registry::Triple;
 use wamn_event_wire::delivery_advisory_stream;
@@ -90,6 +91,10 @@ pub struct DeleteProjectEnvRequest {
 
     /// Without it, the verb prints the plan and changes nothing.
     pub confirm: bool,
+
+    /// Write the patch that removes the environment's key from the control
+    /// host's Secret here (docs/plan/platform-ui.md §4.4).
+    pub control_administration_patch: Option<PathBuf>,
 }
 
 /// Every name one run deletes, derived from the triple, the instance and the
@@ -207,6 +212,12 @@ impl TeardownPlan {
                 "delete before this run: Secret {name}{place}; stop every workload that reads it"
             ));
         }
+        lines.push(format!(
+            "remove before this run: key {} of Secret {}; apply the patch of \
+             --emit-control-administration-patch",
+            control_administration_key(&self.triple.project, self.triple.env.as_str()),
+            control_administration_secret_name(&self.triple.org)
+        ));
         lines.push(format!(
             "delete: streams {} and {}, with the consumers of {}",
             self.source_stream, self.advisory_stream, self.source_stream
@@ -336,6 +347,12 @@ pub async fn delete_project_env(args: &DeleteProjectEnvRequest) -> anyhow::Resul
     )?;
     for line in plan.lines() {
         println!("{line}");
+    }
+    if let Some(path) = args.control_administration_patch.as_deref() {
+        let patch = render_control_administration_patch(&triple, None);
+        std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&patch)?)).with_context(
+            || format!("write the control administration patch {}", path.display()),
+        )?;
     }
 
     let admin = connect(&args.admin_database_url).await?;
@@ -579,6 +596,12 @@ mod tests {
             lines[3],
             "delete before this run: Secret wamn-mgmt-admitter-dkk--receiving--dev; \
              stop every workload that reads it"
+        );
+        assert_eq!(
+            lines[13],
+            "remove before this run: key receiving--dev of Secret \
+             wamn-control-administration-dkk; apply the patch of \
+             --emit-control-administration-patch"
         );
     }
 

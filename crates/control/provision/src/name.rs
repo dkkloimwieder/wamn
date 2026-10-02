@@ -219,6 +219,19 @@ pub fn org_workload_secret_name(family: WorkloadRoleFamily, org: &str) -> String
     format!("{}{org}", family.secret_prefix())
 }
 
+/// The Secret of an org's control host that holds the administration login of
+/// every environment of the org (docs/plan/platform-ui.md §4.4):
+/// `wamn-control-administration-<org>`.
+pub fn control_administration_secret_name(org: &str) -> String {
+    format!("wamn-control-administration-{org}")
+}
+
+/// The key of one environment in [`control_administration_secret_name`]:
+/// `<project>--<env>`, the file name the mounted Secret shows.
+pub fn control_administration_key(project: &str, env: &str) -> String {
+    format!("{project}--{env}")
+}
+
 /// Scoped control-author Secret name consumed by scenario-worker.
 pub fn control_author_secret_name(org: &str, project: &str, env: &str) -> String {
     workload_secret_name(WorkloadRoleFamily::ControlAuthor, org, project, env)

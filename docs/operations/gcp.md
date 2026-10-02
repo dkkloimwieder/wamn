@@ -673,6 +673,12 @@ target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env 
 
 Apply the Secret before the host rollout, because [values-host.yaml](../../deploy/gcp/values-host.yaml) names it with `optional: false`.
 
+Since `wamn-a40n.6`, an administration prepare also needs `--emit-control-administration-patch $P/administration.patch.json`, because the control host of the org holds the same login. A rotation writes both files too. Apply the patch to the Secret of section 3.22 after that Secret exists:
+
+```bash
+kubectl -n hosts patch secret wamn-control-administration-dkk --type merge --patch-file $P/administration.patch.json
+```
+
 Create the Google service account of the registry token CronJob. Give it read access to repository `wamn` only, and bind it to the Kubernetes service account `hosts/registry-token`:
 
 ```bash
@@ -967,6 +973,21 @@ target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg \
 
 Apply the Secret before the host rollout, because [values-host.yaml](../../deploy/gcp/values-host.yaml) names it with `optional: false`.
 The host values program of section 5.5 renders the control group, so the same `helm upgrade` starts it.
+
+Since `wamn-a40n.6`, the control host also holds the administration login of each environment of the org, in the Secret `wamn-control-administration-dkk` with one key per `<project>--<env>`.
+Emit the empty Secret with `provision-org --emit-control-administration-secret $P/control-administration.json` and apply it.
+Then copy the login of each environment that already exists into it, so no rotation is needed:
+
+```bash
+for project in receiving wms; do
+  (umask 077; kubectl -n hosts get secret wamn-administration-dkk--$project--dev -o json \
+    | jq --arg key "$project--dev" '{data: {($key): .data.url}}' > $P/control-administration-$project.patch.json)
+  kubectl -n hosts patch secret wamn-control-administration-dkk --type merge \
+    --patch-file $P/control-administration-$project.patch.json
+done
+```
+
+A later environment adds its key through the patch of its administration prepare, and `delete-project-env --emit-control-administration-patch` removes it.
 
 ## 4. Public edge
 

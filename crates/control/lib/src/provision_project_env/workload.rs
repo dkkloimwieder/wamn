@@ -18,6 +18,8 @@ use super::{
     workload_generation_role, workload_secret_flag, workload_url, write_output, write_secret_json,
 };
 
+use wamn_control_provision::render_control_administration_patch;
+
 const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -388,6 +390,27 @@ pub async fn run_workload_action(
         "{label} generation actions cannot render ordinary provisioning or PAT artifacts; only \
          App prepare may emit the canonical shared-login retirement role SQL"
     );
+    // The control host of the org holds the same administration login as the
+    // application host, so each prepare, the first one and every rotation,
+    // writes the patch that reaches it.
+    let control_patch =
+        if family == WorkloadRoleFamily::Administration && verb == WorkloadActionVerb::Prepare {
+            let path = args.control_administration_patch.as_deref().with_context(|| {
+            format!(
+                "--{} requires --emit-control-administration-patch PATH: the control host of \
+                 the org holds the same login",
+                workload_action_flag(family, verb)
+            )
+        })?;
+            ensure_secret_path(path, "--emit-control-administration-patch")?;
+            Some(path)
+        } else {
+            anyhow::ensure!(
+                args.control_administration_patch.is_none(),
+                "only an administration prepare emits the control host's patch"
+            );
+            None
+        };
     let identity = workload_action_identity(args, &label)?;
     let WorkloadActionIdentity {
         org,
@@ -505,7 +528,15 @@ pub async fn run_workload_action(
                         }
                     };
                     write_secret_json(secret_path, &secret)
-                        .with_context(|| format!("write authenticated {label} Secret"))
+                        .with_context(|| format!("write authenticated {label} Secret"))?;
+                    if let Some(path) = control_patch {
+                        write_secret_json(
+                            path,
+                            &render_control_administration_patch(&triple, Some(&credential_url)),
+                        )
+                        .context("write the control host's administration patch")?;
+                    }
+                    Ok(())
                 },
             )
             .await?;

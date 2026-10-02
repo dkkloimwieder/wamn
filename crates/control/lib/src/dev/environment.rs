@@ -369,6 +369,10 @@ pub fn generation_args(
         },
         secret: Some(secret.to_path_buf()),
         emit_role_sql: None,
+        // The dev loop runs no control host, so the patch stays beside the
+        // Secret.
+        control_administration_patch: (family == WorkloadRoleFamily::Administration)
+            .then(|| secret.with_extension("control-administration-patch.json")),
     }
 }
 

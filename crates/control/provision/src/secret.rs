@@ -9,8 +9,9 @@ use serde_json::{Value, json};
 use wamn_control_registry::Triple;
 
 use crate::name::{
-    APP_ROLE, cdc_object_name, org_workload_secret_name, project_env_cdc_secret_name,
-    project_env_secret_name, workload_secret_name,
+    APP_ROLE, cdc_object_name, control_administration_key, control_administration_secret_name,
+    org_workload_secret_name, project_env_cdc_secret_name, project_env_secret_name,
+    workload_secret_name,
 };
 use crate::session_target::{SESSION_TARGET_KEY, SessionTarget};
 use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
@@ -171,6 +172,38 @@ pub fn render_org_workload_secret_manifest(
     })
 }
 
+/// Render the empty Secret that holds the administration login of every
+/// environment of `org` for its control host. `provision-project-env` adds a
+/// key to it with [`render_control_administration_patch`].
+pub fn render_control_administration_secret_manifest(org: &str, namespace: &str) -> Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": control_administration_secret_name(org),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "control-administration-credentials",
+                "wamn.org": org,
+            },
+        },
+        "type": "Opaque",
+    })
+}
+
+/// The JSON merge patch of [`render_control_administration_secret_manifest`]
+/// for one environment: it sets the environment's key to `url`, or removes
+/// the key when `url` is `None`. A patch leaves the keys of the other
+/// environments as they are.
+pub fn render_control_administration_patch(triple: &Triple, url: Option<&str>) -> Value {
+    let key = control_administration_key(&triple.project, triple.env.as_str());
+    match url {
+        Some(url) => json!({ "stringData": { (key): url } }),
+        None => json!({ "data": { (key): null } }),
+    }
+}
+
 /// Render the scoped control-author URL Secret consumed by scenario-worker.
 pub fn render_control_author_secret_manifest(triple: &Triple, namespace: &str, url: &str) -> Value {
     render_workload_secret_manifest(
@@ -273,6 +306,28 @@ pub fn render_project_env_cdc_secret_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_control_administration_patch_sets_or_removes_one_environment() {
+        let triple = Triple::new("acme", "widgets", "dev");
+        assert_eq!(
+            render_control_administration_patch(&triple, Some("postgres://u:p@h/d")),
+            json!({"stringData": {"widgets--dev": "postgres://u:p@h/d"}})
+        );
+        assert_eq!(
+            render_control_administration_patch(&triple, None),
+            json!({"data": {"widgets--dev": null}})
+        );
+        let secret = render_control_administration_secret_manifest("acme", "hosts");
+        assert_eq!(
+            secret["metadata"]["name"],
+            "wamn-control-administration-acme"
+        );
+        assert!(
+            secret.get("stringData").is_none(),
+            "the Secret starts empty"
+        );
+    }
 
     #[test]
     fn session_reader_secret_round_trips_the_checked_target() {

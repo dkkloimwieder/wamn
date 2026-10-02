@@ -98,6 +98,7 @@ fn action_args(
             .expect("each call names one workload action"),
         secret: prepare.map(|(_, path)| path.to_path_buf()),
         emit_role_sql: None,
+        control_administration_patch: None,
     }
 }
 

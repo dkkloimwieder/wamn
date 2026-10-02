@@ -282,6 +282,11 @@ pub struct WorkloadActionRequest {
     /// Write the shared App-login retirement role SQL here. Only App prepare may
     /// name it.
     pub emit_role_sql: Option<PathBuf>,
+
+    /// Write the patch that puts the prepared administration login into the
+    /// control host's Secret here. An administration prepare requires it, and
+    /// no other action may name it (docs/plan/platform-ui.md §4.4).
+    pub control_administration_patch: Option<PathBuf>,
 }
 
 /// Inputs of one org-scoped workload-generation action, run by

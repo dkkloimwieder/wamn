@@ -80,6 +80,7 @@ fn prepare_args(
         },
         secret: Some(path.to_path_buf()),
         emit_role_sql: None,
+        control_administration_patch: None,
     }
 }
 
@@ -468,8 +469,19 @@ async fn the_administration_prepare_accepts_its_own_write_surface() {
         .expect("install the application schema");
 
     let path_a = secret_path("administration-a");
+    let control_patch = secret_path("administration-a-control-patch");
     let mut request = prepare_args(&target_url, CredentialGeneration::A, &path_a);
     request.action.family = WorkloadRoleFamily::Administration;
+    let refused = provision_project_env::run_workload_action(&request)
+        .await
+        .expect_err("an administration prepare without the control host's patch refuses");
+    assert!(
+        refused
+            .to_string()
+            .contains("requires --emit-control-administration-patch PATH"),
+        "{refused:#}"
+    );
+    request.control_administration_patch = Some(control_patch.clone());
     provision_project_env::run_workload_action(&request)
         .await
         .expect("the verb accepts the administration surface it applied");
@@ -477,6 +489,16 @@ async fn the_administration_prepare_accepts_its_own_write_surface() {
     let secret: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path_a).expect("read emitted Secret"))
             .expect("emitted Secret is JSON");
+    let patch: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&control_patch).expect("read emitted patch"))
+            .expect("emitted patch is JSON");
+    assert_eq!(
+        patch,
+        serde_json::json!({"stringData": {
+            (format!("{PROJECT}--{ENVIRONMENT}")): secret["stringData"]["url"].clone()
+        }}),
+        "the control host gets the login the application host gets"
+    );
     let administration = connect(
         secret["stringData"]["url"]
             .as_str()
@@ -496,4 +518,5 @@ async fn the_administration_prepare_accepts_its_own_write_surface() {
         .expect("the administration login writes and appends history");
 
     let _ = std::fs::remove_file(&path_a);
+    let _ = std::fs::remove_file(&control_patch);
 }
