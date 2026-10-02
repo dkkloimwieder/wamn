@@ -32,12 +32,22 @@ export default defineConfig({
         find: "@wamn/control-client",
         replacement: local("../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"),
       },
+      {
+        find: "@wamn/control-org-client",
+        replacement: local("../../crates/catalog/model/src/host_route/control/generated/client-ts/index.ts"),
+      },
     ],
     dedupe: ["solid-js", "@tanstack/solid-table"],
   },
   server: {
     // The UI stylesheet names its font files by path outside this directory.
-    fs: { allow: [local(".."), local("../../crates/catalog/model/src/host_route/generated/client-ts")] },
+    fs: {
+      allow: [
+        local(".."),
+        local("../../crates/catalog/model/src/host_route/generated/client-ts"),
+        local("../../crates/catalog/model/src/host_route/control/generated/client-ts"),
+      ],
+    },
   },
   test: {
     include: ["gallery/*.visual.tsx"],

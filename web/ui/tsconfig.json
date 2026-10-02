@@ -18,7 +18,8 @@
     "baseUrl": ".",
     "paths": {
       "@wamn/web-runtime": ["../runtime/src/index.ts"],
-      "@wamn/control-client": ["../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"]
+      "@wamn/control-client": ["../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"],
+      "@wamn/control-org-client": ["../../crates/catalog/model/src/host_route/control/generated/client-ts/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]

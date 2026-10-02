@@ -88,7 +88,7 @@ try {
 
   await step("an org-admin enters Control and sees the org and its projects", async () => {
     const page = await signIn("boss@example.test");
-    await visible(page, "Org administration.");
+    await visible(page, "members");
     await page.getByText("billing", { exact: true }).click();
     await visible(page, "Project administration of billing.");
   });

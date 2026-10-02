@@ -40,6 +40,10 @@ export default defineConfig({
         find: "@wamn/control-client",
         replacement: local("../../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"),
       },
+      {
+        find: "@wamn/control-org-client",
+        replacement: local("../../../crates/catalog/model/src/host_route/control/generated/client-ts/index.ts"),
+      },
     ],
     // A folder alias for solid-js would select its server build, so the
     // package name resolves through dedupe instead.
@@ -48,6 +52,12 @@ export default defineConfig({
   server: {
     // The UI stylesheet names its font files by path, and a path outside this
     // directory is refused unless it is allowed here.
-    fs: { allow: [local("../.."), local("../../../crates/catalog/model/src/host_route/generated/client-ts")] },
+    fs: {
+      allow: [
+        local("../.."),
+        local("../../../crates/catalog/model/src/host_route/generated/client-ts"),
+        local("../../../crates/catalog/model/src/host_route/control/generated/client-ts"),
+      ],
+    },
   },
 });

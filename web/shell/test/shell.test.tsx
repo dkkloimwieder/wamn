@@ -438,7 +438,7 @@ describe("the app shell", () => {
     open("/", fetch);
     await signIn();
     fireEvent.click(await screen.findByText("Control"));
-    expect(await screen.findByText("Org administration.")).toBeDefined();
+    expect(await screen.findByText("members")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/org`));
     expect(state.calls).toContain("/wamn_control/control/mine");
     expect(state.calls.some((call) => call.includes("permission/mine"))).toBe(false);

@@ -222,11 +222,6 @@ const ADMINISTRATION: ShellSection = {
   ],
 };
 
-/** The org destination of a control session. Its screens are issue 8 (docs/plan/platform-ui.md §6). */
-function OrgDestination(): JSX.Element {
-  return <p>Org administration.</p>;
-}
-
 /** One project destination of a control session, only for a project the caller administers. */
 function ProjectDestination(): JSX.Element {
   const view = useContext(ViewContext);
@@ -238,12 +233,12 @@ function ProjectDestination(): JSX.Element {
   );
 }
 
-/** The org destination, which `org-admin` holds through the org operation `user.list`. */
+/** The org destination, which `org-admin` holds, with the org screen of `@wamn/ui/admin`. */
 const ORG_SCREEN: ShellScreen = {
   path: "org",
   operation: orgUser.USER_LIST_ROUTE.operation,
   label: "org",
-  component: OrgDestination,
+  component: screen(admin, (m) => (props) => <m.OrgScreen transport={props.transport} />),
 };
 
 /** The project destination, which `project-admin` holds through `member.list`. */
