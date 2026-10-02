@@ -1,6 +1,6 @@
 # Manifest authoring
 
-Updated through: 2026-10-02, `main` at `6c9241c9a`. Accepted by the owner on 2026-10-02, with the rulings recorded in §7.
+Updated through: 2026-10-02, `main` at `ebac92ef4` with epic 1 issues 1 to 4 on top. Accepted by the owner on 2026-10-02, with the rulings recorded in §7.
 
 **Scoping rule.** This document names two epics. Only epic 1 is scoped to issues. Epic 2 is named with its goal and boundary and nothing more, and is scoped only after epic 1 is closed and reviewed by the owner. An agent that finishes epic 1 stops.
 
@@ -44,11 +44,13 @@ KCL. It has schemas with typed fields and defaults, mixins, comments, and compil
 
 ### 4.2 The schema module
 
-One module, `wamn`, with one schema per manifest object: `Package`, `Model`, `Get`, `Query`, `Create`, `Update`, `Delete`, `Command`, `Projection`, `Statement`, `Relation`, `Field`, `Ref`, `Revision`, `AuditLog`, `Connection`, `Component`, `Workflow`, `BaseDependency`. Each schema's fields are the retained declarations of the Retain/Derive table; each default is one of the §2 list. Typed field constructors `uuid(name)`, `text(name)`, `int32(name)`, `numeric(name)`, `timestamptz(name)` give `{name, type, nullable: false}`; `nullable(...)` wraps one. Two shared values: `command_inputs` (the three platform inputs) and `platform_errors` (the seven codes with their standard details). The module is data, not code: no function beyond the constructors.
+One module, `manifest`, with one schema per manifest object: `Package`, `Model`, `Get`, `Query`, `Create`, `Update`, `Delete`, `Command`, `Projection`, `Statement`, `Relation`, `Field`, `Ref`, `Revision`, `AuditLog`, `Connection`, `Component`, `Workflow`, `BaseDependency`. Each schema's fields are the retained declarations of the Retain/Derive table; each default is one of the §2 list. Typed field constructors `uuid(name)`, `text(name)`, `int32(name)`, `numeric(name)`, `timestamptz(name)` give `{name, type, nullable: false}`; `nullable(...)` wraps one. Two shared values: `command_inputs` (the three platform inputs) and `platform_errors` (the seven codes with their standard details). The module is data, not code: no function beyond the constructors.
+
+The module is named `manifest` because `wamn.k` cannot import a module named `wamn` (§7, ruling 7). As built, it also has `int64(name)` and `json(name)` constructors. The shared values are `request_id`, `idempotency_key`, `occurred_at`, `command_inputs` and `platform_errors`, and the standard details `not_found_details` and `conflict_details` are separate values. A model's `operations` must use the union form `operations: {...}`, because the `=` form replaces the permissions that the model fills, and the package refuses it.
 
 ### 4.3 The compile step
 
-The generator reads `wamn.k`, compiles it with the pinned `kcl` CLI, writes `generated/wamn.json`, and compares it with the checked-in file; a difference fails generation with the first differing path. The output format is 2-space indent with keys in the order the schema lists them. From the first converted version on, that format is the format of the package. Every reader of `wamn.json` (`manifest.rs`, `publish_release.rs`, `dev/config.rs`, `tools/build-components`) reads `generated/wamn.json`; none reads `wamn.k`. A package with `wamn.json` at its root and no `wamn.k` is refused with "the manifest is authored in wamn.k; wamn.json is generated".
+The generator reads `wamn.k`, compiles it with the pinned `kcl` CLI, writes `generated/wamn.json`, and compares it with the checked-in file; a difference fails generation with the first differing path. The output format is 2-space indent with keys in the order the schema lists them. From the first converted version on, that format is the format of the package. Every reader of `wamn.json` (`manifest.rs`, `publish_release.rs`, `dev/config.rs`, `tools/build-components`) reads `generated/wamn.json`; none reads `wamn.k`. A package that holds both `wamn.json` and `wamn.k` at its root is refused with "the manifest is authored in wamn.k; wamn.json is generated". A package with a root `wamn.json` and no `wamn.k` is read as today until the last conversion issue (§5) lands, and that issue adds its refusal (§7, ruling 8).
 
 ### 4.4 Overlay composition
 
@@ -62,12 +64,12 @@ Each converted package compiles to a document semantically identical to its `wam
 
 One branch, the routes agent, after the kind→type cutover lands. Each issue with its tests; every commit green.
 
-1. `tools/install-kcl`, the `wamn` schema module and the compile step in the generator: `wamn.k` → JSON through the pinned CLI, the `generated/wamn.json` check, the refusal of an authored `wamn.json`. Unit tests: each authoring default fills; a key the reader defaults stays absent; a wrong enum value (`fetch`, `transaction`, `match`) fails at compile with its path.
-2. Convert `platform_fixture` as version 2.1.0 and `platform_fixture_overlay` as its next version. Acceptance: the semantic comparison of §4.5; the generator and the fixture tests pass. §4.4 proved on the overlay.
-3. Convert `edge_samples` and `edge_device`, each as its next version. Same acceptance. Record the line counts before and after on the bead.
-4. Documentation: `data-access.md` gains the sentence that `wamn.json` is generated from `wamn.k` and that the Retain/Derive table is unchanged; `docs/operations/building.md` names the compile step; `development-loop.md` names `wamn.k` as the watched file. Closes the epic.
+1. `tools/install-kcl`, the `wamn` schema module and the compile step in the generator: `wamn.k` → JSON through the pinned CLI, the `generated/wamn.json` check, the refusal of an authored `wamn.json`. Unit tests: each authoring default fills; a key the reader defaults stays absent; a wrong enum value (`fetch`, `transaction`, `match`) fails at compile with its path. Closed, `2657618d7`.
+2. Convert `platform_fixture` as version 2.1.0 and `platform_fixture_overlay` as its next version. Acceptance: the semantic comparison of §4.5; the generator and the fixture tests pass. §4.4 proved on the overlay. Closed, `4d1fb0f7a`.
+3. Convert `edge_samples` and `edge_device`, each as its next version. Same acceptance. Record the line counts before and after on the bead. Closed, `942d0d6fe`.
+4. Documentation: `data-access.md` gains the sentence that `wamn.json` is generated from `wamn.k` and that the Retain/Derive table is unchanged; `docs/operations/building.md` names the compile step; `development-loop.md` names `wamn.k` as the watched file. Closes the epic. Closed, `2e0897520`.
 
-`wamn_wms`, `wamn_receiving` and `client_acme_receiving` convert when their next version is authored, each in the issue that authors that version. Test fixtures that feed the JSON reader stay JSON. Only packages under `apps/` convert.
+`wamn_wms`, `wamn_receiving` and `client_acme_receiving` convert when their next version is authored, each in the issue that authors that version. Test fixtures that feed the JSON reader stay JSON. Only packages under `apps/` convert. The last of these conversions adds the refusal of a root `wamn.json` with no `wamn.k` (§4.3).
 
 ## 6. Out of scope
 
@@ -87,3 +89,6 @@ Recorded 2026-10-02.
 4. The generator runs a pinned `kcl` CLI and takes no source dependency on the KCL workspace (§4.1).
 5. The compiled JSON states what today's files state. The schema's defaults are authoring defaults (§2).
 6. A conversion is new bytes and lands as the package's next version. The comparison is semantic (§4.5).
+7. The schema module is `manifest`, because `wamn.k` cannot import a module named `wamn` (§4.2).
+8. Now, only a package holding both `wamn.json` and `wamn.k` is refused. The refusal of a root `wamn.json` with no `wamn.k` lands with the last conversion issue (§4.3). The extra constructors, shared values and the union form are recorded as built (§4.2).
+9. An accepted plan is not trimmed. A closed issue gets a status line.
