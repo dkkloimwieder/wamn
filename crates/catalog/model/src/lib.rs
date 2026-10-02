@@ -15,6 +15,7 @@ mod connection;
 pub mod edge_bundle;
 mod host_route;
 mod package;
+mod release_closures;
 mod route_identity;
 mod serving_manifest;
 mod wiring;
@@ -45,6 +46,7 @@ pub use host_route::{
     host_route_path_prefix, is_host_route_operation,
 };
 pub use package::{EffectiveReleaseId, PackageCoordinate};
+pub use release_closures::ReleaseClosures;
 pub use route_identity::{
     operation_token, route_attachment_id, route_path, sealed_operation_reference,
     split_sealed_operation,

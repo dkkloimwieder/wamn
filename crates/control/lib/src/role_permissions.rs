@@ -9,11 +9,12 @@
 //! removes each root the candidate does not serve and rewrites the closure of
 //! each surviving root from the candidate. `admin` has no rows.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use anyhow::Context as _;
 use tokio_postgres::{Client, Transaction};
-use wamn_catalog::{ServingComponent, ServingManifest, sealed_operation_reference};
+pub use wamn_catalog::ReleaseClosures;
+use wamn_catalog::ServingManifest;
+use wamn_platform_identity::application;
+pub use wamn_platform_identity::application::{PermissionGrantOutcome, PermissionRevokeOutcome};
 
 use crate::user_roles::{EnvironmentTarget, connect_target};
 use wamn_control_provision::operation_grants::{
@@ -21,64 +22,6 @@ use wamn_control_provision::operation_grants::{
     operation_grant_floor_check_sql,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
-use wamn_project_state::ADMIN_ROLE;
-
-/// The permission closure of every operation a serving release registers,
-/// keyed by stable reference. Each closure holds the operation itself.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ReleaseClosures {
-    closures: BTreeMap<String, BTreeSet<String>>,
-}
-
-impl ReleaseClosures {
-    /// Read the closures that publish folded into the release components.
-    pub fn from_manifest(manifest: &ServingManifest) -> Self {
-        Self::from_components(&manifest.components)
-    }
-
-    /// Read the closures of `components`. A palette export registers no
-    /// operation and contributes none.
-    pub fn from_components<'a>(components: impl IntoIterator<Item = &'a ServingComponent>) -> Self {
-        let mut closures: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for operation in components
-            .into_iter()
-            .flat_map(|component| component.operations.values())
-        {
-            let Some(sealed) = &operation.registered_operation else {
-                continue;
-            };
-            let root = sealed_operation_reference(sealed).to_owned();
-            let closure = closures.entry(root.clone()).or_default();
-            closure.insert(root);
-            closure.extend(
-                operation
-                    .permissions
-                    .iter()
-                    .map(|permission| sealed_operation_reference(permission).to_owned()),
-            );
-        }
-        Self { closures }
-    }
-
-    /// The closure of `reference`, or `None` when the release does not serve it.
-    pub fn closure(&self, reference: &str) -> Option<&BTreeSet<String>> {
-        self.closures.get(reference)
-    }
-
-    /// Every `(root, permission)` pair with `permission != root`, as two
-    /// parallel arrays.
-    fn required_pairs(&self) -> (Vec<&str>, Vec<&str>) {
-        self.closures
-            .iter()
-            .flat_map(|(root, closure)| {
-                closure
-                    .iter()
-                    .filter(move |permission| *permission != root)
-                    .map(move |permission| (root.as_str(), permission.as_str()))
-            })
-            .unzip()
-    }
-}
 
 /// What [`reconcile_release_permissions`] changed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -166,7 +109,7 @@ pub async fn reconcile_release_permissions(
     closures: &ReleaseClosures,
 ) -> anyhow::Result<ReleasePermissionOutcome> {
     prepare(tx, tenant).await?;
-    let served: Vec<&str> = closures.closures.keys().map(String::as_str).collect();
+    let served: Vec<&str> = closures.roots().collect();
     let (roots, permissions) = closures.required_pairs();
     let roots_removed = tx
         .execute(REMOVE_UNSERVED_ROOTS_SQL, &[&tenant, &served])
@@ -187,25 +130,6 @@ pub async fn reconcile_release_permissions(
     })
 }
 
-/// What a permission grant changed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PermissionGrantOutcome {
-    /// Rows written: the selected root and each required permission not yet
-    /// held through it. A second grant writes none.
-    pub rows_added: u64,
-    /// The closure of the root in the current serving release, the root
-    /// included.
-    pub closure: BTreeSet<String>,
-}
-
-/// What a permission revoke changed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PermissionRevokeOutcome {
-    /// The other selected roots of the role that still require the revoked
-    /// permission, so it stays effective through them.
-    pub still_required_by: Vec<String>,
-}
-
 /// Select `reference` for the authored `role` and write its closure in the
 /// current serving release, whose closures are `current`.
 pub async fn grant_permission(
@@ -215,38 +139,11 @@ pub async fn grant_permission(
     reference: &str,
     current: &ReleaseClosures,
 ) -> anyhow::Result<PermissionGrantOutcome> {
-    anyhow::ensure!(
-        role != ADMIN_ROLE,
-        "admin holds every operation the release serves, so it takes no permission"
-    );
     prepare(tx, tenant).await?;
-    require_role(tx, tenant, role).await?;
-    let closure = current.closure(reference).with_context(|| {
-        format!("the current serving release does not serve the operation {reference}")
-    })?;
-    let permissions: Vec<&str> = closure.iter().map(String::as_str).collect();
-    // The root row goes first, because every closure row references it.
-    let mut rows_added = tx
-        .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
-            &[&tenant, &role, &reference],
-        )
-        .await
-        .context("write the selected permission")?;
-    rows_added += tx
-        .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             SELECT $1, $2, permission, $3 FROM unnest($4::text[]) AS permission \
-              WHERE permission <> $3 ON CONFLICT DO NOTHING",
-            &[&tenant, &role, &reference, &permissions],
-        )
-        .await
-        .context("write the permissions the selection requires")?;
-    Ok(PermissionGrantOutcome {
-        rows_added,
-        closure: closure.clone(),
-    })
+    Ok(
+        application::grant_permission(tx, tenant, role, reference, current.closure(reference))
+            .await?,
+    )
 }
 
 /// Remove the selection of `reference` from `role` and every permission that
@@ -260,91 +157,20 @@ pub async fn revoke_permission(
     reference: &str,
 ) -> anyhow::Result<PermissionRevokeOutcome> {
     prepare(tx, tenant).await?;
-    require_role(tx, tenant, role).await?;
-    let removed = tx
-        .execute(
-            "DELETE FROM app_system.permissions \
-             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3 AND required_by = $3",
-            &[&tenant, &role, &reference],
-        )
-        .await
-        .context("remove the selected permission")?;
-    let still_required_by: Vec<String> = tx
-        .query(
-            "SELECT required_by FROM app_system.permissions \
-             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3 ORDER BY required_by",
-            &[&tenant, &role, &reference],
-        )
-        .await
-        .context("read the roots that require the permission")?
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
-    if removed == 0 {
-        anyhow::ensure!(
-            !still_required_by.is_empty(),
-            "role {role} does not hold {reference}"
-        );
-        anyhow::bail!(
-            "{reference} is not directly granted to role {role}; it is required by {}",
-            still_required_by.join(", ")
-        );
-    }
-    Ok(PermissionRevokeOutcome { still_required_by })
+    Ok(application::revoke_permission(tx, tenant, role, reference).await?)
 }
 
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(tx: &Transaction<'_>, tenant: &str, role: &str) -> anyhow::Result<bool> {
-    anyhow::ensure!(
-        role != ADMIN_ROLE,
-        "admin is the built-in role; apply-package creates it"
-    );
-    anyhow::ensure!(
-        wamn_session::token::is_role_slug(role),
-        "role {role:?} is not a role name: lowercase letters, digits and hyphens after the \
-         first character, at most 64 bytes"
-    );
     prepare(tx, tenant).await?;
-    let written = tx
-        .execute(
-            "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2) \
-             ON CONFLICT (tenant_id, name) DO NOTHING",
-            &[&tenant, &role],
-        )
-        .await
-        .context("create the role")?;
-    Ok(written == 1)
+    Ok(application::create_role(tx, tenant, role).await?)
 }
 
 /// Delete the authored role `role` with its assignments and permissions. A
 /// delete of an absent role changes nothing.
 pub async fn delete_role(tx: &Transaction<'_>, tenant: &str, role: &str) -> anyhow::Result<bool> {
-    anyhow::ensure!(
-        role != ADMIN_ROLE,
-        "admin is the built-in role and cannot be deleted"
-    );
     prepare(tx, tenant).await?;
-    let removed = tx
-        .execute(
-            "DELETE FROM app_system.roles WHERE tenant_id = $1 AND name = $2",
-            &[&tenant, &role],
-        )
-        .await
-        .context("delete the role")?;
-    Ok(removed == 1)
-}
-
-async fn require_role(tx: &Transaction<'_>, tenant: &str, role: &str) -> anyhow::Result<()> {
-    let exists = tx
-        .query_opt(
-            "SELECT 1 FROM app_system.roles WHERE tenant_id = $1 AND name = $2",
-            &[&tenant, &role],
-        )
-        .await
-        .context("read the role row")?
-        .is_some();
-    anyhow::ensure!(exists, "role {role} does not exist in tenant {tenant}");
-    Ok(())
+    Ok(application::delete_role(tx, tenant, role).await?)
 }
 
 /// The closures of the release that the environment head of `environment`

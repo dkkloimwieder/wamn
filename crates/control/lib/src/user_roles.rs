@@ -13,6 +13,7 @@ use wamn_control_provision::{
     PlatformComponent, bind_platform_principal_sql, project_env_database_name, validate_project_env,
 };
 use wamn_control_registry::Triple;
+use wamn_platform_identity::application;
 
 /// One grant or revoke of a user role in one environment.
 #[derive(Debug, Clone)]
@@ -119,46 +120,16 @@ async fn change_user_role(
         .await
         .context("bind wamn:provisioning for the role change")?;
     let changed = match change {
-        Change::Grant => {
-            let role_exists = transaction
-                .query_opt(
-                    "SELECT 1 FROM app_system.roles WHERE tenant_id = $1 AND name = $2",
-                    &[&tenant, &role],
-                )
-                .await
-                .context("read the role row")?
-                .is_some();
-            anyhow::ensure!(
-                role_exists,
-                "role {role} does not exist in tenant {tenant}: apply-package writes \
-                 admin, and every other role is authored"
-            );
-            transaction
-                .execute(
-                    "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-                     VALUES ($1, $2::text::uuid, $3) ON CONFLICT DO NOTHING",
-                    &[&tenant, &user_id, &role],
-                )
-                .await
-                .context("write the user role row")?
+        Change::Grant => application::grant_user_role(&transaction, tenant, &user_id, role).await?,
+        Change::Revoke => {
+            application::revoke_user_role(&transaction, tenant, &user_id, role).await?
         }
-        Change::Revoke => transaction
-            .execute(
-                "DELETE FROM app_system.user_roles \
-                 WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3",
-                &[&tenant, &user_id, &role],
-            )
-            .await
-            .context("remove the user role row")?,
     };
     transaction
         .commit()
         .await
         .context("commit the user role change")?;
-    Ok(UserRoleOutcome {
-        user_id,
-        changed: changed == 1,
-    })
+    Ok(UserRoleOutcome { user_id, changed })
 }
 
 /// Resolve the email to exactly one user of the tenant. Email matching ignores
