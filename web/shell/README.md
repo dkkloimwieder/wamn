@@ -22,8 +22,8 @@ A reload renews the session from the renewal cookie, so the page keeps nothing i
 | `/<audience>/<path>?<query>` | One form, for example `/<audience>/inventory/move?value.palletId=<id>`. The query holds the values that a row filled. |
 | `/<audience>/administration/roles` | The role grid of the application. Only `admin` sees it. |
 | `/<audience>/administration/users` | The user grid of the application. Only `admin` sees it. |
-| `/urn:wamn:control:<org>/org` | The org destination of Control. Only `org-admin` sees it. |
-| `/urn:wamn:control:<org>/projects/<project>` | The destination of one project in Control. Only a caller whose `control.mine` names the project sees it. |
+| `/urn:wamn:control:<org>/org` | The org screen of Control. Only `org-admin` sees it. |
+| `/urn:wamn:control:<org>/projects/<project>` | The project screen of one project in Control. Only a caller whose `control.mine` names the project sees it. |
 | Any other address | A page that says no page is there. An address of a screen that the caller does not hold shows the same page. |
 
 ## Use it in an application
@@ -117,8 +117,14 @@ It holds `RoleGrid` and `UserGrid` from `@wamn/ui/admin`, which call the applica
 
 Control is the audience `urn:wamn:control:<org>` of the shell's org, and identity lists it beside the environments for `org-admin` or `project-admin`.
 Under Control, the shell reads `control.mine` once and calls the control route set at `/wamn_control`, with no `/api` prefix.
-It shows the org destination only to `org-admin`, and one project destination for each project that `control.mine` names.
-Each destination shows only its name. The org and project screens are not built yet, and `wamn-a40n.12` holds them.
+It shows the org screen only to `org-admin`, and one project screen for each project that `control.mine` names.
+Both screens come from `@wamn/ui/admin` and load only when they open.
+
+`OrgScreen` lists the members of the org with an `org-admin` toggle and an activate or deactivate button, and its form invites a user.
+`ProjectScreen` lists the members of one project with a membership toggle for each environment and a `project-admin` toggle.
+A grant that a higher grant covers shows as hierarchy-controlled, with no toggle.
+A new member of a project is chosen from the members of the org.
+A refused write shows its contract text, and a partial write also names the environments that completed.
 
 ## The dev server
 

@@ -723,7 +723,9 @@ Each screen, route and action names its operation from the generated route const
 An address of a screen that the caller does not hold shows the no page text. This is presentation only, because every route repeats its own check.
 Every application shell has an Administration section with the role grid and the user grid, and only `admin` sees it.
 An account that reaches no audience sees only "No access has been granted.", and the shell mints no session for it.
-The shell offers the [control session](#control-sessions) of its org as Control. Under it, the shell reads `control.mine` once and shows the org destination to `org-admin` and one destination for each project that it names.
+The shell offers the [control session](#control-sessions) of its org as Control. Under it, the shell reads `control.mine` once and shows the org screen to `org-admin` and one project screen for each project that it names.
+The org screen grants and revokes `org-admin`, activates and deactivates a member, and invites a user. The project screen grants and revokes a membership of each environment and `project-admin`, and it adds a member of the org.
+A grant that a higher grant covers shows as hierarchy-controlled, with no toggle, because the route refuses its revoke.
 Each command form has its own route. A create or merge form opens from a button above its table, and an update form from a button above its record page.
 A row that fills a form opens it with the filled values in the query, so a reload keeps them. A completed submission returns to the page that opened the form, and a refusal stays on the form.
 A packaging form, such as `inventory.move`, sends the revision of the packaging row that its packaging selector holds, so no route reads the packaging for it.
