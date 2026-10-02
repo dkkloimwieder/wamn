@@ -11,6 +11,7 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Google Cloud deployment](gcp-deployment.md): Epic 23 proposal for the first deployment to the `wamn-dev` project, with costs, a limited mode and shutdown commands.
 - [Host-owned transaction](host-transaction.md): Design for one idempotency path, in which the host owns the transaction of an operation and the engine runs the intent rules around every call.
 - [User identity and login](identity-plan.md): Incremental password login, later account lifecycle, and PAT-free sensitive operations with planning at each epic start.
+- [Manifest authoring](manifest-authoring.md): Epic 1 design for authoring the manifest in `wamn.k`, compiled by a pinned `kcl` CLI to the committed `generated/wamn.json`.
 - [NATS outage](nats-outage.md): Design for the host and the runtime operator to stay up and connect again when the scheduler NATS stops or moves.
 - [Operation ids](operation-ids.md): Design for authoring the package version once, in `wamn.json`, and deriving each sealed operation id from it.
 - [Operator image](operator-image.md): Design for the image and the Jobs that run the verbs that call identity inside the cluster (findings `wamn-n5d1` and `wamn-lo7z`).
