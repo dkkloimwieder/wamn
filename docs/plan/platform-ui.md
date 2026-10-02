@@ -1651,6 +1651,23 @@ Exit includes:
 
 Starts after the administration epic and the supported teardown verb.
 
+The epic is `wamn-zua8`. Its first issue, `wamn-zua8.1`, closed on 2026-10-02 on evidence that `wamn-psss` closed at `fa04f19e1`. The items below keep their plan numbers 8 to 10, which repeat the numbers of the administration issues ([§9](#9-questions-for-the-owner) question 15).
+
+Measured on main `6eba50b90` on 2026-10-02:
+
+- No table holds an environment status. `registry.project_envs` has `org`, `project`, `env`, `secret_name`, `secret_namespace`, `instance_suffix` and `disposable`. `catalog.tenant_environments` in the control store has no status either.
+- `wamn-o8b9` closed. A system schema change is now a file in `deploy/sql/migrations/system/` (0001 to 0007), applied by `wamn-ctl upgrade-schema`. Item 8 therefore needs no hand-applied statement ([§9](#9-questions-for-the-owner) question 16).
+- Identity offers an application audience for each `--session-target` file it reads at start. Helm builds those files from `sessionTargetSecrets`. A new environment therefore needs a new Secret and an identity upgrade, as `docs/operations/gcp.md` section 3.10 does by hand.
+- A host serves the one release that its pod arguments pin. Nothing turns off the routes of one environment.
+- `control.mine` answers projects only. `environment.list` reads `registry.project_envs`.
+- `provisioning.sagas` exists with `type` in (`provision-org`, `provision-project-env`), one `step` number and `last_error`. It has no steps table, and no code writes it. The only saga writer is `copy-project-env` in `wamn-ctl-ops`, which copies data into `provisioning.copy_sagas`. That verb is not the environment copy of [§5.3](#53-environment-copy).
+- `wamn-ctl` has no `serve` subcommand, and no loop reads a saga.
+- `registry.projects` gets a row only inside `provision-project-env`. No control route creates a project, creates or copies an environment, or inactivates one.
+- Each step of the [§5.2](#52-environment-creation) chain has a library function, except the client UI upload. `wamn web upload` is private to the `wamn_ctl` crate and runs `pnpm`. Role permission closures reconcile inside release selection, and `materialize_admin_grants` runs inside `provision-project-env`.
+- `provision-org`, `provision-project-env` and `enable-cdc-project-env` hold no Kubernetes client. They write SQL and Kubernetes manifests that an operator applies with the cluster superuser and `kubectl`, in a set order. `deploy-release` runs `kubectl`. The release selection reads a qualification file. A new environment also needs its host workload, which the chain of [§5.2](#52-environment-creation) does not name.
+
+[§9](#9-questions-for-the-owner) questions 15 to 25 set the commits of each item. No code starts before they are answered.
+
 **8. Environment status.**
 
 - active/inactive schema and behavior across identity, router, shell and CDC;
@@ -1726,3 +1743,15 @@ New-project grant materialization and deterministic empty-environment copy from 
 12. Issue 8, answered 2026-10-02 with option B. Org `user.list` also admits a `project-admin` of any project in the org, read only. Grant and revoke keep their authority as [§4.5](#45-project-level) states.
 13. Issue 8, answered 2026-10-02 with option A. `OrgScreen` and `ProjectScreen` are hand-written in `@wamn/ui/admin`, built like the grids.
 14. Issue 8, answered 2026-10-02 with option A. The browser test completes a membership grant and an `org-admin` grant through the control host's test database, as `control_route_live` does. The invite form is a stub in the component tests.
+
+15. Lifecycle numbering. The lifecycle items are numbered 8 to 10, and administration issue 8 now exists. Renumber them 9 to 11, or keep 8 to 10 and name them by bead id?
+16. Item 8. The plan says a hand-applied `wamn_system` statement adds the status column on wamn-dev. Use system migration `0008` and `upgrade-schema` instead, and drop the hand statement?
+17. Item 8. Where does the status live: a `status` column on `registry.project_envs` with `active` and `inactive`, default `active`?
+18. Item 8. How does the router serve none of the routes of an inactive environment: the host refuses each request after it reads the status, or the host workload is stopped?
+19. Item 8. Which routes change the status, and who may call them: `project.inactivate` only, or also `project.activate`, `environment.inactivate` and `environment.activate`, all `org-admin`?
+20. Item 9. The worker must apply role SQL as the cluster superuser, and apply `Database` CRs and Secrets with Kubernetes. Does the worker hold those credentials, limited to the org namespace and cluster, or does it stop at a step for an operator to apply?
+21. Item 9. Extend `provisioning.sagas` with a new type and add a steps table by system migration, or make a new saga table?
+22. Item 9. What does `environment.create` name as its input: a release of another environment of the project, package coordinates already in the registry, or something else?
+23. Item 9. The chain has no host workload step, and identity reads its session targets at start. Does the saga deploy the host and add the identity session target, or does an operator do both by hand?
+24. Item 9. The client UI upload runs `pnpm` today. Does the saga upload a built UI artifact named by the input, or leave the UI out?
+25. Items 9 and 10. The live test of the worker needs a kind cluster. Does it wait for wamn-93 to report the cutover done, or does a local process test with no Kubernetes count as the exit?
