@@ -45,8 +45,8 @@ use wamn_runtime::component_artifact_source::{
 };
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
-    ControlRouteAuthenticator, PlatformRouteAuthenticator, RouteAuthentication,
-    SessionRouteAuthentication,
+    ControlRouteAuthenticator, EnvironmentStatusReader, PlatformRouteAuthenticator,
+    RouteAuthentication, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
@@ -1050,6 +1050,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let guest_url = std::env::var("WAMN_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
+    // An application host refuses every route while its environment is
+    // inactive, from its row read as `wamn_app` (docs/plan/platform-ui.md §5.4).
+    let reads_environment_status = application.is_some() && guest_url.is_some();
     let queue_credentials_complete = require_queue_admission(
         application.is_some(),
         guest_url.as_deref(),
@@ -1227,6 +1230,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             connection.verifier.clone(),
             Arc::clone(&connection.client),
         ))),
+        None if reads_environment_status => flow_http
+            .with_authenticator(Arc::new(authenticator))
+            .with_environment_status(Arc::new(EnvironmentStatusReader::new(
+                Arc::clone(&postgres),
+                args.project.clone(),
+            ))),
         None => flow_http.with_authenticator(Arc::new(authenticator)),
     };
 

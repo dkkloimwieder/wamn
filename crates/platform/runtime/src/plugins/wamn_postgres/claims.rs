@@ -31,6 +31,10 @@ use super::{DEFAULT_PROJECT, PgError, RowSet};
 mod pools;
 mod transactions;
 
+/// The status row of the environment, which `wamn_app` reads under its
+/// tenant floor.
+const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM app_system.environment";
+
 /// Each signed role that the active user still holds, with each stored
 /// permission reference of that role. A role without permission rows, such as
 /// `admin`, yields one row with a null reference.
@@ -1951,6 +1955,26 @@ impl WamnPostgres {
     /// returns `Ok` and rolls back when `work` returns `Err`, whose value is
     /// the inner result. The outer error is a failure of the transaction
     /// itself.
+    /// Whether the environment of `tenant` is inactive, from its row of
+    /// `app_system.environment`, read as `wamn_app` (docs/plan/platform-ui.md
+    /// §5.4). No row means active.
+    pub async fn environment_inactive(&self, project: &str, tenant: &str) -> anyhow::Result<bool> {
+        anyhow::ensure!(valid_project(project), "invalid environment-status project");
+        anyhow::ensure!(valid_tenant(tenant), "invalid environment-status tenant");
+        let (connection, _pool) = self
+            .checkout_guest(project, tenant)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let row = match connection.query_opt(ENVIRONMENT_INACTIVE_SQL, &[]).await {
+            Ok(row) => row,
+            Err(error) => {
+                self.destroy(connection);
+                return Err(error).context("read the environment status");
+            }
+        };
+        Ok(row.is_some_and(|row| row.get(0)))
+    }
+
     pub async fn administration_transaction<T, E>(
         &self,
         project: &str,

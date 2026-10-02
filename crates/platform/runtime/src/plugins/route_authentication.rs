@@ -109,6 +109,41 @@ impl RouteAuthentication {
     }
 }
 
+/// The application host's read of the status of its environment
+/// (docs/plan/platform-ui.md §5.4): its row of `app_system.environment`, as
+/// `wamn_app`, once for each request.
+pub struct EnvironmentStatusReader {
+    postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+    project: String,
+}
+
+impl std::fmt::Debug for EnvironmentStatusReader {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EnvironmentStatusReader")
+            .field("project", &self.project)
+            .finish_non_exhaustive()
+    }
+}
+
+impl EnvironmentStatusReader {
+    pub fn new(
+        postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+        project: String,
+    ) -> Self {
+        Self { postgres, project }
+    }
+}
+
+#[async_trait::async_trait]
+impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusReader {
+    async fn inactive(&self, tenant: &str) -> anyhow::Result<bool> {
+        self.postgres
+            .environment_inactive(&self.project, tenant)
+            .await
+    }
+}
+
 /// Session authentication with current identity and tenant permission reads.
 pub struct SessionRouteAuthentication {
     identity_reader: Arc<tokio_postgres::Client>,

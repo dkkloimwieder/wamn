@@ -264,6 +264,10 @@ const AUTHENTICATION_UNAVAILABLE_CODE: &str = "authentication-unavailable";
 /// mechanism — the caller can do nothing to satisfy a policy nothing implements.
 const UNSUPPORTED_POLICY_STATUS: u16 = 501;
 const UNSUPPORTED_POLICY_CODE: &str = "auth-policy-unsupported";
+/// 503, because the environment exists and serves again once it is active
+/// (docs/plan/platform-ui.md §5.4, owner ruling of 2026-10-02).
+const ENVIRONMENT_INACTIVE_STATUS: u16 = 503;
+const ENVIRONMENT_INACTIVE_CODE: &str = "environment-inactive";
 
 struct CompiledInputSchema {
     schemas: Schemas,
@@ -503,6 +507,18 @@ pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
     ) -> Result<AuthenticatedCaller, AuthRejection>;
 }
 
+/// The host's read of whether its environment is inactive.
+///
+/// The route plugin asks it once for each request, before the route's policy,
+/// so an anonymous route is refused too. An inactive environment answers
+/// `environment-inactive` with 503. A failed read answers
+/// `authentication-unavailable`.
+#[async_trait::async_trait]
+pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
+    /// Whether the environment of `tenant` is inactive.
+    async fn inactive(&self, tenant: &str) -> anyhow::Result<bool>;
+}
+
 /// One request to a protected route, as the route plugin resolved it.
 #[derive(Clone, Copy)]
 pub struct AuthenticationRequest<'a> {
@@ -542,6 +558,9 @@ pub struct FlowHttpRouting {
     /// `None` on a host with no credential mechanism. Such a host refuses every
     /// protected route as authentication-unavailable.
     authenticator: Option<Arc<dyn RouteAuthenticator>>,
+    /// `None` on a host that serves no project environment, such as the
+    /// control host or an edge box.
+    environment: Option<Arc<dyn EnvironmentStatus>>,
     limiter: Arc<RouteLimiter>,
 }
 
@@ -566,6 +585,7 @@ impl std::fmt::Debug for FlowHttpRouting {
             .field("route_in_flight_limit", &self.limiter.limit)
             .field("route_limit_scope", &self.limiter.scope)
             .field("authenticator", &self.authenticator)
+            .field("environment", &self.environment)
             .finish_non_exhaustive()
     }
 }
@@ -581,6 +601,7 @@ impl FlowHttpRouting {
             release,
             input_schemas,
             authenticator: None,
+            environment: None,
             limiter: RouteLimiter::new(route_in_flight_limit, LimitScope::Route),
         }
     }
@@ -592,6 +613,13 @@ impl FlowHttpRouting {
             limiter: RouteLimiter::new(limit, LimitScope::Box),
             ..Self::new(release, limit)
         }
+    }
+
+    /// Refuse every route while the host's environment is inactive.
+    #[must_use]
+    pub fn with_environment_status(mut self, environment: Arc<dyn EnvironmentStatus>) -> Self {
+        self.environment = Some(environment);
+        self
     }
 
     /// Hand every protected route to the host's credential mechanism.
@@ -644,6 +672,21 @@ impl FlowHttpRouting {
             .as_ref()
             .ok_or_else(authentication_unavailable)?;
         let manifest = loaded_release.manifest();
+        if let Some(environment) = &self.environment {
+            let inactive = environment
+                .inactive(&manifest.release.tenant_id)
+                .await
+                .map_err(|error| {
+                    tracing::warn!(error = %error, "environment status unavailable");
+                    authentication_unavailable()
+                })?;
+            if inactive {
+                return Err(AuthRejection {
+                    status: ENVIRONMENT_INACTIVE_STATUS,
+                    code: ENVIRONMENT_INACTIVE_CODE.to_string(),
+                });
+            }
+        }
         let attachment = manifest
             .served_attachment(attachment_id)
             .filter(|attachment| carries_http_route(attachment.attachment_type()))
