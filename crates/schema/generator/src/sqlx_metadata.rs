@@ -69,7 +69,8 @@ pub fn verify_sqlx_metadata(mode: SqlxMetadataMode, package_root: &Path) -> Resu
 
     let database_url = std::env::var("DATABASE_URL")
         .context("DATABASE_URL must name the package's migrated PostgreSQL database")?;
-    let manifest = fs::read(package_root.join("wamn.json")).context("read package manifest")?;
+    let manifest =
+        fs::read(crate::package_manifest_path(package_root)).context("read package manifest")?;
     let manifest = PackageManifest::from_slice(&manifest).context("parse package manifest")?;
     let database_url = package_database_url(&database_url, &manifest)?;
 

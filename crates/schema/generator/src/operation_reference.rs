@@ -13,7 +13,8 @@ use serde_json::{Value, json};
 
 use crate::{GenerateError, GenerateErrorType, OperationOwners, resolve_operation_reference};
 
-/// The package manifest file at a package root.
+/// The hand-written package manifest file at a package root. A package
+/// authored in `wamn.k` reads `generated/wamn.json` in its place.
 pub const PACKAGE_MANIFEST: &str = "wamn.json";
 
 /// The prefix of a platform interface. A document names one with its WIT
@@ -21,27 +22,28 @@ pub const PACKAGE_MANIFEST: &str = "wamn.json";
 const PLATFORM_PREFIX: &str = "wamn:";
 
 /// Read the operation owners of the package that holds an authored document,
-/// from the nearest `wamn.json` among the ancestors of the document, and the
-/// package root that holds it.
+/// from the manifest of the nearest package root among the ancestors of the
+/// document, and that package root.
 ///
 /// # Errors
 ///
-/// [`GenerateError`] when no ancestor holds a `wamn.json`, or it does not parse.
+/// [`GenerateError`] when no ancestor holds a `wamn.k` or a `wamn.json`, or the
+/// manifest does not parse.
 pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), GenerateError> {
     let root = document
         .ancestors()
         .skip(1)
-        .find(|directory| directory.join(PACKAGE_MANIFEST).is_file())
+        .find(|directory| crate::is_package_root(directory))
         .ok_or_else(|| {
             GenerateError::new(
                 GenerateErrorType::InvalidManifest,
                 format!(
-                    "{} is outside a package: no ancestor holds {PACKAGE_MANIFEST}",
+                    "{} is outside a package: no ancestor holds wamn.k or {PACKAGE_MANIFEST}",
                     document.display()
                 ),
             )
         })?;
-    let path = root.join(PACKAGE_MANIFEST);
+    let path = crate::package_manifest_path(root);
     let bytes = std::fs::read(&path).map_err(|error| {
         GenerateError::with_source(
             GenerateErrorType::InvalidManifest,

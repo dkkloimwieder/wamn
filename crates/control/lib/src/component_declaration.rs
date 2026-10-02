@@ -122,7 +122,7 @@ impl Error for ComponentDeclarationError {
 pub fn authored_base_digests(
     package_root: &Path,
 ) -> Result<BTreeMap<Box<str>, Box<str>>, ComponentDeclarationError> {
-    let manifest = package_root.join(PACKAGE_MANIFEST);
+    let manifest = wamn_schema_generator::package_manifest_path(package_root);
     let bytes =
         fs::read(&manifest).map_err(|source| ComponentDeclarationError::read(&manifest, source))?;
     let document: Value = serde_json::from_slice(&bytes)

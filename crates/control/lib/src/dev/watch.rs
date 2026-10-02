@@ -216,7 +216,7 @@ impl PackageRoot {
                 source,
             )
         })?;
-        let manifest_path = root.join("wamn.json");
+        let manifest_path = wamn_schema_generator::package_manifest_path(&root);
         let manifest_bytes = fs::read(&manifest_path).map_err(|source| {
             FilesystemInvalidationError::with_source(
                 FilesystemInvalidationErrorType::PackageRoot,
@@ -241,7 +241,7 @@ impl PackageRoot {
     }
 
     fn refresh_authored_inputs(&mut self) {
-        let manifest_path = self.root.join("wamn.json");
+        let manifest_path = wamn_schema_generator::package_manifest_path(&self.root);
         let Ok(bytes) = fs::read(manifest_path) else {
             return;
         };
@@ -258,6 +258,7 @@ impl PackageRoot {
         };
         relative.as_os_str().is_empty()
             || relative == Path::new("wamn.json")
+            || relative == Path::new(wamn_schema_generator::AUTHORED_MANIFEST)
             || relative.starts_with("migrations")
             || self.authored_inputs.contains(path)
             || relative.starts_with("publication/components")
@@ -648,7 +649,7 @@ impl WatchRoots {
 
     fn refresh_manifest(&mut self, path: &Path) {
         for package in &mut self.packages {
-            if path == package.root.join("wamn.json") {
+            if path == wamn_schema_generator::package_manifest_path(&package.root) {
                 package.refresh_authored_inputs();
             }
         }
@@ -1231,6 +1232,7 @@ mod tests {
 
         for input in [
             "wamn.json",
+            "wamn.k",
             "migrations/0002.sql",
             "query/widget.sql",
             "publication/components/fixture.json.in",

@@ -84,7 +84,7 @@ fn selected_package(repository: &Path, selector: &str) -> anyhow::Result<PathBuf
         authored.display()
     );
     ensure!(
-        root.join("wamn.json").is_file(),
+        wamn_schema_generator::is_package_root(&root),
         "{} is not a declared package directory",
         root.display()
     );
@@ -99,8 +99,10 @@ fn scaffold_package(repository: &Path, args: &ScaffoldArgs) -> anyhow::Result<Pa
         "{} already exists; edit the existing Rust crate",
         output.display()
     );
-    let manifest = PackageManifest::from_slice(&fs::read(package.join("wamn.json"))?)
-        .context("read the package manifest")?;
+    let manifest = PackageManifest::from_slice(&fs::read(
+        wamn_schema_generator::package_manifest_path(&package),
+    )?)
+    .context("read the package manifest")?;
     let ir = ClientContractIr::from_release(
         &manifest.package.id,
         &package.join("generated/contracts"),

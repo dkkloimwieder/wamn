@@ -82,7 +82,8 @@ fn resolve_generated_input_schemas(
                     error,
                 )
             })?;
-        let root = path.parent().unwrap_or_else(|| std::path::Path::new(""));
+        let root = wamn_schema_generator::manifest_package_root(path)
+            .unwrap_or_else(|| std::path::Path::new(""));
         roots.insert(manifest.package.id, root.to_owned());
     }
     for (attachment_id, attachment) in attachments {

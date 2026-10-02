@@ -1166,7 +1166,7 @@ impl ProductionDevStageRunner {
             .collect();
         let package_manifests = packages
             .iter()
-            .map(|package| package.root.join(PACKAGE_MANIFEST))
+            .map(|package| wamn_schema_generator::package_manifest_path(&package.root))
             .collect();
         let identity = self.config.activation_identity();
         let request = PublishReleaseRequest {

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Install the exact upstream KCL CLI that compiles a package's wamn.k.
+set -euo pipefail
+
+readonly version=0.13.0
+readonly archive_digest=1cb3490c4df4c823ae6b76289797791c1077611f677d2b3a3d0bc292dc704f2e
+readonly digest=ffe77911e6af9cf7f99dcf12270ab30be217df44f9d8fcb4756e2148c2f84126
+readonly asset=kcl-v$version-linux-amd64.tar.gz
+readonly repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly install_dir="$repo_root/.tools/kcl/$version"
+readonly binary="$install_dir/kcl"
+
+if [[ "$(uname -s)/$(uname -m)" != Linux/x86_64 ]]; then
+  echo 'install-kcl: the pinned artifact requires Linux x86_64' >&2
+  exit 2
+fi
+
+matches_digest() {
+  printf '%s  %s\n' "$1" "$2" | sha256sum --status --check
+}
+
+if [[ -x "$binary" ]] && matches_digest "$digest" "$binary"; then
+  printf '%s\n' "$binary"
+  exit 0
+fi
+
+mkdir -p -- "$install_dir"
+install_temp=$(mktemp -d "$install_dir/.kcl.XXXXXXXX")
+trap 'rm -rf -- "$install_temp"' EXIT
+curl --fail --silent --show-error --location --retry 2 \
+  "https://github.com/kcl-lang/cli/releases/download/v$version/$asset" \
+  --output "$install_temp/$asset"
+if ! matches_digest "$archive_digest" "$install_temp/$asset"; then
+  echo 'install-kcl: downloaded bytes do not match the pinned SHA-256' >&2
+  exit 1
+fi
+tar -xzf "$install_temp/$asset" -C "$install_temp" kcl
+if ! matches_digest "$digest" "$install_temp/kcl"; then
+  echo 'install-kcl: the extracted kcl does not match the pinned SHA-256' >&2
+  exit 1
+fi
+chmod 755 -- "$install_temp/kcl"
+mv -f -- "$install_temp/kcl" "$binary"
+printf '%s\n' "$binary"

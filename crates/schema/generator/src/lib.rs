@@ -16,6 +16,7 @@
 //! search path frozen by
 //! `crates/platform/runtime/wit/deps/wamn-postgres-0.3/package.wit`.
 
+mod authoring;
 pub mod client_component;
 mod client_fields;
 pub mod client_ir;
@@ -38,6 +39,10 @@ mod rustfmt;
 mod sql;
 mod sql_lex;
 mod sqlx_metadata;
+pub use authoring::{
+    AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, check_compiled_manifest, compile_manifest,
+    is_authored, is_package_root, manifest_package_root, package_manifest_path,
+};
 /// The write log's three fixed statements.
 pub use cursor::{
     CursorError, CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor,

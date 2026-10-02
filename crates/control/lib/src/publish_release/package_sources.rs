@@ -46,7 +46,7 @@ pub(super) fn read_package_manifests(
                 error,
             )
         })?;
-        let root = path.parent().ok_or_else(|| {
+        let root = wamn_schema_generator::manifest_package_root(path).ok_or_else(|| {
             PublishManifestError::new(
                 PublishManifestErrorType::GeneratedPackageMetadata,
                 format!(
@@ -146,7 +146,7 @@ pub fn package_route(
             )
         })?;
     let contract = if contract.inherited.is_some() {
-        let path = root.join("wamn.json");
+        let path = wamn_schema_generator::package_manifest_path(root);
         let bytes = std::fs::read(&path).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,

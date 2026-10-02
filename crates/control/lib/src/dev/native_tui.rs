@@ -72,7 +72,7 @@ impl Error for NativeTuiError {
 pub(super) fn operator_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>, NativeTuiError> {
     let mut packages = BTreeMap::new();
     for root in roots {
-        let path = root.join("wamn.json");
+        let path = wamn_schema_generator::package_manifest_path(root);
         let bytes = std::fs::read(&path).map_err(|source| {
             NativeTuiError::with_source(
                 "read operator component",

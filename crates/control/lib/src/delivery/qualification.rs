@@ -447,7 +447,7 @@ fn schema_database_prefix(
     schema: &str,
 ) -> anyhow::Result<Vec<String>> {
     let app_root = root.join("apps").join(package);
-    let manifest_path = app_root.join("wamn.json");
+    let manifest_path = wamn_schema_generator::package_manifest_path(&app_root);
     let manifest =
         fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest = wamn_schema_generator::PackageManifest::from_slice(&manifest)
@@ -476,7 +476,9 @@ fn schema_database_prefix(
         "--migration-dir".to_owned(),
         app_root.join("migrations").display().to_string(),
         "--history-manifest".to_owned(),
-        app_root.join("wamn.json").display().to_string(),
+        wamn_schema_generator::package_manifest_path(&app_root)
+            .display()
+            .to_string(),
         "--url-env".to_owned(),
         "DATABASE_URL".to_owned(),
         "--".to_owned(),

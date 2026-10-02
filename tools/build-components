@@ -157,15 +157,25 @@ readonly WAMN_APPLICATION_LIST="$(printf '%s\n' "${WAMN_APPLICATIONS[@]}" | jq -
 
 # Application manifests declare the components that need virtualization.
 # The all argument selects every Cargo member and reads all application declarations.
+# A package authored in wamn.k reads its compiled generated/wamn.json.
+application_manifest() {
+  if [[ -f "$1/wamn.k" ]]; then
+    printf '%s\n' "$1/generated/wamn.json"
+  else
+    printf '%s\n' "$1/wamn.json"
+  fi
+}
 declare -a WAMN_APPLICATION_MANIFESTS=()
 if [[ "$WAMN_PROFILE" == app ]]; then
   for application in "${WAMN_APPLICATIONS[@]}"; do
-    WAMN_APPLICATION_MANIFESTS+=("$application/wamn.json")
+    WAMN_APPLICATION_MANIFESTS+=("$(application_manifest "$application")")
   done
 else
-  for application in "$WAMN_REPOSITORY_ROOT"/apps/*/wamn.json; do
-    [[ -f "$application" ]] || continue
-    WAMN_APPLICATION_MANIFESTS+=("$application")
+  for application in "$WAMN_REPOSITORY_ROOT"/apps/*/; do
+    application="${application%/}"
+    manifest="$(application_manifest "$application")"
+    [[ -f "$manifest" ]] || continue
+    WAMN_APPLICATION_MANIFESTS+=("$manifest")
   done
 fi
 declare WAMN_PACKAGE_COMPONENTS

@@ -11,6 +11,10 @@ use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::StatementTransactionality;
+use crate::authoring::{
+    COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, is_authored,
+    package_manifest_path,
+};
 use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_plan::ClientPlan;
@@ -307,6 +311,22 @@ pub fn materialize_package_classified(
     let output_root = package_root.join("generated");
     let client = client_bindings(package_root, &package)?;
     let mut expected = expected_files(&package)?;
+    // The compiled manifest is one more file of the owned set.
+    let compiled_manifest = if is_authored(package_root) {
+        let (bytes, _) = load_manifest(package_root)?;
+        if mode == MaterializeMode::Check {
+            check_compiled_manifest(package_root, &bytes)?;
+        }
+        Some(bytes)
+    } else {
+        None
+    };
+    if let Some(bytes) = &compiled_manifest {
+        let relative = Path::new(COMPILED_MANIFEST)
+            .strip_prefix("generated")
+            .context("the compiled manifest lies under generated/")?;
+        expected.insert(relative.to_owned(), bytes.as_slice());
+    }
     for file in &client {
         let relative = Path::new(file.path())
             .strip_prefix("generated")
@@ -497,10 +517,15 @@ pub async fn materialize_package_verified_with_catalog(
     materialize_package_classified(mode, catalog, package_root, &verdicts)
 }
 
+/// The manifest bytes and their parse. A package authored in `wamn.k` compiles
+/// it here, so generation reads the source and never the committed output.
 fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {
-    let manifest_path = package_root.join("wamn.json");
-    let manifest_bytes =
-        fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest_bytes = if is_authored(package_root) {
+        compile_manifest(package_root)?
+    } else {
+        let manifest_path = package_manifest_path(package_root);
+        fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?
+    };
     let manifest =
         PackageManifest::from_slice(&manifest_bytes).context("parse package manifest")?;
     Ok((manifest_bytes, manifest))

@@ -76,8 +76,14 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         .context("--release must be sha256: and 64 lowercase hexadecimal digits")?;
     require_head(&args.database_url, &args.release).await?;
     let manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(args.app.join("wamn.json"))
-            .with_context(|| format!("read {}/wamn.json", args.app.display()))?,
+        &std::fs::read(wamn_schema_generator::package_manifest_path(&args.app)).with_context(
+            || {
+                format!(
+                    "read {}",
+                    wamn_schema_generator::package_manifest_path(&args.app).display()
+                )
+            },
+        )?,
     )?;
     let package = manifest
         .pointer("/package/id")

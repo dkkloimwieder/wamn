@@ -67,6 +67,7 @@ const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
 const MATERIALIZER_NATS_BINDING_FILE: &str = "materializer_nats_binding_file";
 const CREDENTIALS_FILE: &str = "credentials_file";
 const CDC_READER: &str = "cdc_reader";
+#[cfg(test)]
 const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
 
 pub(super) const POSTGRES_SYSTEM_DATABASES: [&str; 3] = ["postgres", "template0", "template1"];
@@ -1352,7 +1353,7 @@ pub fn resolve_dev_packages(
 }
 
 pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
-    let path = root.join(PACKAGE_MANIFEST_FILE);
+    let path = wamn_schema_generator::package_manifest_path(root);
     let bytes = fs::read(&path).map_err(|source| {
         DevPackageError::manifest(DevPackageErrorType::ManifestRead, path.clone(), source)
     })?;
@@ -1370,7 +1371,7 @@ fn validate_package_manifest(
         .map_err(|source| {
             DevPackageError::manifest(
                 DevPackageErrorType::ManifestInvalid,
-                root.join(PACKAGE_MANIFEST_FILE),
+                wamn_schema_generator::package_manifest_path(root),
                 source,
             )
         })

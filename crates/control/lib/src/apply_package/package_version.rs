@@ -187,7 +187,7 @@ pub async fn load_applied_package(
 /// Read the exact package bytes under `root`. The migrations are sorted by
 /// file name, so the result does not depend on the file system order.
 pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
-    let manifest_path = root.join("wamn.json");
+    let manifest_path = wamn_schema_generator::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let migrations_path = root.join("migrations");
