@@ -97,6 +97,10 @@ pub struct Step {
     pub started_at: String,
     pub ended_at: Option<String>,
     pub inputs: BTreeMap<String, String>,
+    /// What the step made or read that a later stage uses, such as a pinned
+    /// image reference.
+    #[serde(default)]
+    pub outputs: BTreeMap<String, String>,
     pub result: Option<StepResult>,
 }
 
@@ -180,19 +184,43 @@ impl RunRecord {
             started_at: now(),
             ended_at: None,
             inputs,
+            outputs: BTreeMap::new(),
             result: None,
         });
         self.save(path)
     }
 
-    /// Records the result of the open step.
-    pub fn finish(&mut self, path: &Path, result: StepResult) -> anyhow::Result<()> {
+    /// Records the result and the outputs of the open step.
+    pub fn finish(
+        &mut self,
+        path: &Path,
+        result: StepResult,
+        outputs: BTreeMap<String, String>,
+    ) -> anyhow::Result<()> {
         let Some(step) = self.steps.last_mut().filter(|step| step.result.is_none()) else {
             bail!("the run record has no open step");
         };
         step.ended_at = Some(now());
+        step.outputs = outputs;
         step.result = Some(result);
         self.save(path)
+    }
+
+    /// An output of the finished step of `stage`.
+    pub fn output(&self, stage: Stage, name: &str) -> anyhow::Result<&str> {
+        self.steps
+            .iter()
+            .rev()
+            .find(|step| {
+                step.stage == stage
+                    && matches!(
+                        step.result,
+                        Some(StepResult::Done | StepResult::AlreadyDone)
+                    )
+            })
+            .and_then(|step| step.outputs.get(name))
+            .map(String::as_str)
+            .with_context(|| format!("the stage {stage:?} recorded no output {name}"))
     }
 
     /// Writes the whole record to a new file and renames it over the old one,
@@ -244,12 +272,14 @@ mod tests {
         assert_eq!(record.next_stage(), Some(Stage::Source));
         let inputs = BTreeMap::from([("commit".to_owned(), COMMIT.to_owned())]);
         record.start(&path, Stage::Source, inputs).expect("start");
-        record.finish(&path, StepResult::Done).expect("finish");
+        record
+            .finish(&path, StepResult::Done, BTreeMap::new())
+            .expect("finish");
         record
             .start(&path, Stage::Build, BTreeMap::new())
             .expect("start");
         record
-            .finish(&path, StepResult::AlreadyDone)
+            .finish(&path, StepResult::AlreadyDone, BTreeMap::new())
             .expect("finish");
         record
             .start(&path, Stage::Images, BTreeMap::new())
@@ -260,6 +290,7 @@ mod tests {
                 StepResult::Failed {
                     cause: "push refused".to_owned(),
                 },
+                BTreeMap::new(),
             )
             .expect("finish");
         record
@@ -299,7 +330,9 @@ mod tests {
         let mut record = RunRecord::open(&path, arguments()).expect("new record");
         for stage in Stage::ALL {
             record.start(&path, stage, BTreeMap::new()).expect("start");
-            record.finish(&path, StepResult::Done).expect("finish");
+            record
+                .finish(&path, StepResult::Done, BTreeMap::new())
+                .expect("finish");
         }
         assert_eq!(record.next_stage(), None);
         fs::remove_dir_all(&directory).expect("remove test directory");

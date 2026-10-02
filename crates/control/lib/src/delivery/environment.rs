@@ -23,6 +23,7 @@ pub struct EnvironmentFile {
     pub context: String,
     /// The `<registry>/<repository>` of the images and the release artifacts.
     pub registry: String,
+    pub system_database: SystemDatabase,
     pub web_client: WebClient,
     pub route_host: String,
     /// The host group of the application in the host values.
@@ -33,6 +34,16 @@ pub struct EnvironmentFile {
     pub workloads: Vec<PathBuf>,
     /// The pinned gates image of `qualify-release`, with its digest.
     pub gates_image: String,
+}
+
+/// The CloudNativePG cluster and database of `wamn_system`. The registry
+/// cannot name its own location. The superuser Secret is `<cluster>-superuser`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SystemDatabase {
+    pub namespace: String,
+    pub cluster: String,
+    pub database: String,
 }
 
 /// The bucket and prefix that `wamn web upload` writes the client to.

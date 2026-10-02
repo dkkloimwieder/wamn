@@ -51,6 +51,7 @@ pub mod reconcile_run_plane;
 pub mod role_permissions;
 pub mod sql_params;
 pub mod terminalize_effect_uncertain;
+pub mod upgrade_environment;
 pub mod upgrade_schema;
 pub mod user_roles;
 pub mod verification_policy;

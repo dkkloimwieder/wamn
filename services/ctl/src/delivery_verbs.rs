@@ -382,6 +382,54 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
     .await
 }
 
+/// Take one installed environment to the bytes of one commit
+/// (docs/plan/upgrade-environment.md).
+#[derive(Debug, Args)]
+pub struct UpgradeEnvironmentArgs {
+    #[arg(long)]
+    pub org: String,
+    #[arg(long)]
+    pub project: String,
+    #[arg(long = "env")]
+    pub environment: String,
+    /// A full 40-hex commit.
+    #[arg(long)]
+    pub commit: String,
+    /// The repository that holds the commit. The verb builds in its own checkout.
+    #[arg(long, default_value = ".")]
+    pub repository: PathBuf,
+    /// The parent of the work directory of each commit. The default is
+    /// `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-upgrade`.
+    #[arg(long)]
+    pub work_root: Option<PathBuf>,
+}
+
+pub async fn upgrade_environment(args: UpgradeEnvironmentArgs) -> anyhow::Result<()> {
+    use wamn_control::upgrade_environment::{UpgradeEnvironmentRequest, upgrade_environment};
+    let work_root = match args.work_root {
+        Some(root) => root,
+        None => std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+            .context("neither XDG_CACHE_HOME nor HOME is set; pass --work-root")?
+            .join("wamn-upgrade"),
+    };
+    let record = upgrade_environment(&UpgradeEnvironmentRequest {
+        repository: std::fs::canonicalize(&args.repository)
+            .with_context(|| format!("find {}", args.repository.display()))?,
+        work_root,
+        arguments: wamn_control::delivery::run_record::RunArguments::new(
+            &args.org,
+            &args.project,
+            &args.environment,
+            &args.commit,
+        )?,
+    })
+    .await?;
+    println!("{}", serde_json::to_string_pretty(&record)?);
+    Ok(())
+}
+
 /// Execute selected existing tests before integration.
 pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
     qualification::check_changes(qualification::CheckChangesRequest {

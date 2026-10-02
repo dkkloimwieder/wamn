@@ -5753,6 +5753,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "base64",
  "chrono",
  "futures-util",
  "hex",
