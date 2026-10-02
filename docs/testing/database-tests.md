@@ -38,6 +38,13 @@ Predecessor SQL must pass before candidate grant reconciliation and again afterw
 A whole-row query must fail when the added column lacks a predecessor grant, even when candidate grants restore access.
 The tests also compare source state, refuse changed package evidence, and require failed suffix execution to roll back.
 
+The [overlay upgrade tests](../../crates/control/lib/src/qualify_upgrade/tests/overlay.rs) retain predecessor rows, overlay values, ownership, and constraints.
+They require exact base pins and successors for every affected overlay, including a case with two overlays.
+An injected failure in an overlay successor must roll back the base migration and accepted evidence.
+They also refuse changed contracts and nontransactional statements without changing the source database.
+These PostgreSQL results define the Epic 2 exit. Its later live forward upgrade uses `upgrade-environment` on `wamn-dev`.
+The owner records that live result on `wamn-orb5`, without a scheduled rollback and re-forward cycle.
+
 The [statement planner test](../../crates/schema/generator/tests/statement_check_live.rs) uses one exact runtime schema without an added `public` fallback.
 It requires planning to preserve grants, session authority, and the caller's surrounding transaction.
 The [workload tests](../../crates/control/lib/src/qualify_upgrade/workload.rs) exercise captured Kubernetes resources to establish convergence and the actual serving schema.

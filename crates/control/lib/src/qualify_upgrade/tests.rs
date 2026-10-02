@@ -6,6 +6,8 @@ use wamn_catalog::{
 };
 use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
+mod overlay;
+
 const TENANT: &str = "upgrade-proof";
 const ENVIRONMENT: &str = "dev";
 const PREDECESSOR_VERSION: &str = "2.1.0";
@@ -19,7 +21,7 @@ struct Fixture {
     suffix: PathBuf,
     manifest: ServingManifest,
     serving: workload::ServingWorkloads,
-    _server: OwnedPostgres,
+    server: OwnedPostgres,
 }
 
 impl Drop for Fixture {
@@ -144,7 +146,7 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
         suffix,
         manifest,
         serving: serving(digest.as_str()),
-        _server: server,
+        server,
     }
 }
 
@@ -228,6 +230,8 @@ fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
         environment: ENVIRONMENT.to_owned(),
         package: package.clone(),
         presented_packages: vec![package],
+        predecessor_packages: Vec::new(),
+        base_component: None,
         result: fixture.root.join(result),
         workload: workload::WorkloadTarget {
             kubeconfig: fixture.root.join("unused-test-kubeconfig"),

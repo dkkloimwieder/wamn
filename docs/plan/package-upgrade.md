@@ -1,8 +1,8 @@
 # Package upgrade
 
-**Implementation governance — Beads.** This specification is implemented as **four Beads epics**, and only one epic is fully scoped at a time. Epic 1 is the only epic that may have issue children now. Epics 2 to 4 may exist only as placeholder Beads epics containing the goal and boundary written here; they get **no issue decomposition** until the owner reviews the completed predecessor epic and explicitly opens the next one. Closing an epic does not automatically scope or start its successor. An agent assigned Epic 1 stops when Epic 1 closes.
+Beads tracks this specification through four epics. Only one epic is scoped for implementation at a time. The owner reviewed completed Epic 1 and opened Epic 2 on 2026-10-02. Epics 3 and 4 remain goal-only placeholders without child issues. Each later epic requires a separate owner instruction after review of its predecessor.
 
-Updated through: 2026-10-01, `main` at `c2eadc85a`. Owner accepted Epic 1 implementation on 2026-10-01. Epic 1 is `wamn-xvu5`, with issues `wamn-xvu5.1` through `wamn-xvu5.5`. Epics 2, 3 and 4 are goal-only placeholders `wamn-orb5`, `wamn-5ihq` and `wamn-eycl`.
+Updated through the owner decisions of 2026-10-02. Completed Epic 1 is `wamn-xvu5`. Epic 2 implementation and acceptance are tracked on `wamn-orb5`. Epics 3 and 4 are placeholders `wamn-5ihq` and `wamn-eycl`.
 
 ## 1. Goal
 
@@ -512,9 +512,33 @@ Epic 1 proves:
 
 ### 7.2 Epic 2: base upgrade under an overlay
 
-Goal only: a base package moves while an overlay pins it; define the overlay's successor version, updated base pin, compatibility/reverification rules, and the order of the two package changes.
+A base package moves to an additive successor while every installed overlay that pins it moves to a direct successor.
+The owner opened `wamn-orb5` after reviewing Epic 1 and set these rules on 2026-10-02.
 
-Scoped after Epic 1 closes.
+The base applies first, then every affected overlay successor, in one transaction.
+All package records, migrations, ownership updates, and accepted qualification commit together or roll back together.
+Each statement that cannot run in a transaction is refused and named, including `CREATE INDEX CONCURRENTLY`.
+
+An overlay successor changes only its package coordinate and exact base version and component digest.
+Its cumulative migration bytes remain unchanged.
+Every consumed operation contract remains unchanged.
+A changed or removed contract is named as Epic 3 work, without implementing that transition here.
+
+Qualification proves the complete installed predecessor and successor root sets against copied predecessor data.
+The original manifests and migration hashes must match installed package records.
+The exact candidate base artifact supplies the digest for every affected overlay pin.
+Both serving and candidate SQL keep the observed runtime schema and pass under the qualified grant states.
+Ordinary component admission and release qualification remain required.
+
+PostgreSQL tests with retained predecessor data are the Epic 2 exit.
+They prove preserved overlay rows, fields, constraints, and ownership, exact retries, and complete rollback on failure.
+After Epic 2 lands, the single live forward upgrade uses `upgrade-environment` on `wamn-dev` and is recorded on `wamn-orb5`.
+No live rollback or re-forward is scheduled.
+TUI work remains deferred.
+
+The PostgreSQL acceptance cases pass on 2026-10-02.
+They include two affected overlays, an omitted successor, exact retries, and an injected overlay failure that rolls back the base and evidence.
+The tracker records the exact commands, results, and fixing commit on `wamn-orb5` and its child issues.
 
 ### 7.3 Epic 3: changes outside the predecessor-compatible additive subset
 

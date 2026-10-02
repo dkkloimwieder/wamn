@@ -501,6 +501,23 @@ fn validate_statement(
         None
     };
     if let Some((kind, detail)) = refusal {
+        if kind == MigrationPolicyErrorType::NontransactionalOperation {
+            let operation = tokens
+                .iter()
+                .take(4)
+                .filter_map(|token| match token {
+                    Token::Word(word) => Some(word.to_ascii_uppercase()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Err(policy_error(
+                kind,
+                path,
+                Some(statement_index),
+                format!("{detail}: {operation}"),
+            ));
+        }
         return refuse_statement(kind, path, statement_index, detail);
     }
     if words(tokens, 0, &["create", "table"]) {

@@ -153,7 +153,10 @@ ALTER TABLE inventory.widget ADD CONSTRAINT widget_description_check
         &["inventory"],
     )
     .expect_err("a check can reject predecessor writes even when their SQL plans successfully");
-    assert_eq!(error.kind(), MigrationPolicyErrorType::UnsupportedStatement);
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnsupportedStatement
+    );
     assert_eq!(error.statement_index(), Some(2));
     assert_eq!(error.path(), artifact.path());
     assert!(error.to_string().contains("predecessor-compatible"));
@@ -180,7 +183,7 @@ fn predecessor_upgrade_preserves_ordinary_policy_refusals() {
             &["inventory"],
         )
         .expect_err("an upgrade must not widen ordinary migration authority");
-        assert_eq!(upgrade.kind(), ordinary.kind(), "{sql}");
+        assert_eq!(upgrade.error_type(), ordinary.error_type(), "{sql}");
         assert_eq!(
             upgrade.statement_index(),
             ordinary.statement_index(),

@@ -165,6 +165,7 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
     let privileges = read_upgrade_privileges(&tx, &schemas).await.unwrap();
     tx.rollback().await.unwrap();
     let evidence = UpgradeQualification {
+        overlay: None,
         format_version: 1,
         tenant: "upgrade-test".to_owned(),
         environment: "test".to_owned(),

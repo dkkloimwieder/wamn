@@ -124,10 +124,13 @@ Installed additive upgrades use a separate `qualify-upgrade` proof before `apply
 Qualification copies predecessor data and ownership, observes the actual runtime schema, and requires the successor to retain that schema.
 It proves predecessor SQL under both predecessor and candidate grants, then records the exact candidate roots and final privileges.
 Application stores accepted evidence with the successor in one transaction.
+For a base upgrade, that transaction installs the base first and every affected overlay successor afterward.
+Each overlay preserves its consumed operation contracts and pins the exact candidate base version and component digest.
+Qualification refuses an omitted overlay, a changed contract, or a migration statement that cannot run inside the transaction.
 Reconciliation requires evidence for the complete current package set and privileges, without selecting by timestamp.
 Selection and kind deployment share the same rule for rollback to the qualified immediate predecessor while retaining committed migrations.
 The [package upgrade procedure](../operations/deployment.md#package-upgrades) owns command order and recovery.
-Overlay upgrades, migration exceptions, and broader rollback remain in [upgrade plans](../plan/upgrades.md).
+Changed operation contracts, migration exceptions, and broader rollback remain in [upgrade plans](../plan/upgrades.md).
 
 ## Runtime owners
 

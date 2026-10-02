@@ -37,6 +37,132 @@ pub(crate) fn read_evidence(path: &Path) -> anyhow::Result<AcceptedUpgrade> {
     })
 }
 
+/// Apply the proved base and all overlay re-pins in one production transaction.
+pub(crate) async fn apply_coordinated(
+    request: crate::apply_package::ApplyPackageRequest,
+    roots: &[PathBuf],
+    accepted: AcceptedUpgrade,
+) -> anyhow::Result<Vec<crate::apply_package::ApplyOutcome>> {
+    use crate::apply_package::{
+        apply_in_transaction, bind_apply_package_principal, prepare_package,
+    };
+    use tokio_postgres::NoTls;
+
+    let evidence = &accepted.evidence;
+    let proof = evidence
+        .overlay
+        .as_ref()
+        .context("coordinated application requires base and overlay qualification")?;
+    require_prefix(evidence)?;
+    ensure!(
+        request.tenant == evidence.tenant,
+        "qualified tenant changed"
+    );
+    require_candidate_root(&request.package, evidence)?;
+    let mut presented = roots
+        .iter()
+        .map(|root| qualify_upgrade::presented_root_identity(root))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+    ensure!(
+        presented == evidence.presented_roots,
+        "application roots differ from the exact qualified complete successor set"
+    );
+    let mut ordered = vec![prepare_package(&request.package)?];
+    for overlay in &proof.overlays {
+        let root = roots
+            .iter()
+            .find(|root| {
+                qualify_upgrade::presented_root_identity(root)
+                    .is_ok_and(|identity| identity.package == overlay.candidate)
+            })
+            .context("application roots omit a qualified overlay successor")?;
+        ordered.push(prepare_package(root)?);
+    }
+    let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
+        .await
+        .context("connect for coordinated package application")?;
+    let driver = tokio::spawn(connection);
+    let result = async {
+        let tx = client
+            .transaction()
+            .await
+            .context("begin atomic base and overlay application")?;
+        tx.query_one(
+            "SELECT set_config('app.tenant', $1, true)",
+            &[&request.tenant],
+        )
+        .await?;
+        bind_apply_package_principal(&tx).await?;
+        tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
+            .await?;
+        for package in &evidence.presented_packages {
+            tx.query_one(
+                crate::apply_package::LOCK_PACKAGE_SQL,
+                &[&request.tenant, &package.package_id],
+            )
+            .await?;
+        }
+        let base = &ordered[0];
+        let installed = read_current_packages(&tx, &request.tenant).await?;
+        let leaf = installed
+            .iter()
+            .find(|package| package.package_id == evidence.candidate_package.package_id)
+            .context("qualified base has no installed leaf")?;
+        let applied = crate::apply_package::load_applied_package(
+            &tx,
+            &request.tenant,
+            &leaf.package_id,
+            &leaf.package_version,
+        )
+        .await?
+        .context("qualified base has no installed coordinate")?;
+        let plan = wamn_schema_control::plan_package_migrations(&base.directory, Some(&applied))?;
+        let persist = require_application(
+            &tx,
+            &request.tenant,
+            &base.root,
+            &base.directory,
+            &plan,
+            Some(&accepted),
+            true,
+        )
+        .await?;
+        if persist.is_none() {
+            ensure!(
+                installed == evidence.presented_packages,
+                "accepted retry differs from the complete qualified installed state"
+            );
+        }
+        let mut outcomes = Vec::with_capacity(ordered.len());
+        for package in &ordered {
+            outcomes.push(apply_in_transaction(&tx, &request.tenant, package).await?);
+        }
+        ensure!(
+            read_current_packages(&tx, &request.tenant).await? == evidence.presented_packages,
+            "atomic application does not match the complete qualified successor state"
+        );
+        if let Some(accepted) = &persist {
+            self::persist(&tx, accepted).await?;
+        }
+        tx.commit()
+            .await
+            .context("commit base, overlay successors, and qualification together")?;
+        Ok(outcomes)
+    }
+    .await;
+    drop(client);
+    if result.is_err() {
+        driver.abort();
+    } else {
+        driver
+            .await
+            .context("join coordinated package connection")?
+            .context("drive coordinated package connection")?;
+    }
+    result
+}
+
 #[cfg(test)]
 pub(crate) fn read_evidence_with_observation(
     path: &Path,
@@ -84,7 +210,8 @@ async fn read_accepted(
     let value = serde_json::to_value(&evidence)?;
     let sha256 = wamn_execution_contract::canonical_json_sha256(&value);
     ensure!(
-        evidence.format_version == 1
+        ((evidence.format_version == 1 && evidence.overlay.is_none())
+            || (evidence.format_version == 2 && evidence.overlay.is_some()))
             && wamn_execution_contract::canonical_json_bytes(&value) == bytes
             && sha256 == row.get::<_, String>(1)
             && evidence.tenant == tenant
@@ -111,7 +238,12 @@ pub(crate) async fn require_application(
     directory: &PackageDirectory,
     plan: &PackageMigrationPlan,
     supplied: Option<&AcceptedUpgrade>,
+    coordinated: bool,
 ) -> anyhow::Result<Option<AcceptedUpgrade>> {
+    ensure!(
+        supplied.is_none_or(|accepted| coordinated == accepted.evidence.overlay.is_some()),
+        "coordinated base and overlay evidence requires apply-package with the complete presented package roots"
+    );
     if plan.predecessor_version.is_none() {
         ensure!(
             supplied.is_none(),
@@ -157,6 +289,17 @@ pub(crate) async fn require_application(
         return Ok(None);
     }
     if plan.pending.is_empty() {
+        let manifest =
+            wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)?;
+        ensure!(
+            candidate.package_version
+                == current
+                    .as_ref()
+                    .expect("installed package exists")
+                    .get::<_, String>(0)
+                || manifest.base_dependencies.is_empty(),
+            "installed overlay successors require coordinated base upgrade qualification"
+        );
         ensure!(
             supplied.is_none(),
             "upgrade qualification names no pending successor suffix"
@@ -268,9 +411,23 @@ fn require_prefix(evidence: &UpgradeQualification) -> anyhow::Result<()> {
         "qualified predecessor differs from its source root set"
     );
     *installed = candidate.clone();
+    if let Some(proof) = &evidence.overlay {
+        qualify_upgrade::overlay::validate_evidence(proof, predecessor, candidate)?;
+        for overlay in &proof.overlays {
+            let installed = expected
+                .iter_mut()
+                .find(|package| package.package_id == overlay.predecessor.package_id)
+                .context("qualified overlay is absent from the complete source root set")?;
+            ensure!(
+                *installed == overlay.predecessor,
+                "qualified overlay differs from its installed predecessor"
+            );
+            *installed = overlay.candidate.clone();
+        }
+    }
     ensure!(
         expected == evidence.presented_packages,
-        "qualified candidate changes unrelated package roots"
+        "qualified transition changes unrelated package roots"
     );
     Ok(())
 }

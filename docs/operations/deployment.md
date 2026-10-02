@@ -416,7 +416,10 @@ If a change breaks a running binary, stop that binary before the run.
 
 This path advances one installed package to its direct successor while retaining its rows.
 The successor names the installed version as `predecessor_version` and preserves its migration stream as an exact byte prefix.
-An installed overlay that pins the package excludes this path. Overlay upgrades remain [deferred work](../plan/upgrades.md).
+An installed overlay that pins the base requires a coordinated upgrade with every affected overlay successor.
+An overlay is a package that consumes a pinned base.
+Each overlay successor changes only its package coordinate and exact base version/digest pin.
+Every consumed operation contract stays unchanged. Changed or removed contracts remain named Epic 3 work.
 
 Use a patch version for an internal correction without an application migration suffix.
 Use a minor version for predecessor-compatible additive schema or operation changes.
@@ -449,12 +452,12 @@ The successor keeps that schema. Predecessor and candidate SQL use the same exac
 Absent or ambiguous workloads, multiple schema surfaces, conflicting replica schemas, and schema changes refuse qualification.
 There are no predecessor-schema or candidate-schema flags.
 Packages with no SQL need no application schema or `--package-workload` selector. Host convergence still applies.
-Schema relocation or multiple-schema support requires a future persisted deployment fact outside Epic 1.
+Schema relocation or multiple-schema support requires a future persisted deployment fact outside the additive upgrade path.
 
 Apply pending [platform schema migrations](#platform-schema-upgrades) before application upgrade, including the `catalog.package_upgrade_qualifications` carrier.
 Keep the exact predecessor release available for recovery.
 Prepare the complete candidate root set, including generated artifacts. Ordinary release qualification must support the environment's candidate shape.
-The final WMS proof waits for `wamn-ld93.33` to close and for the owner to schedule the run.
+The completed Epic 1 WMS proof is recorded in [Google Cloud operations](gcp.md).
 
 Run qualification on a machine authorized to hold copied production data, with PostgreSQL 18 tools and enough temporary storage.
 The command owns its temporary PostgreSQL server and private dump directory and removes them after use.
@@ -510,6 +513,56 @@ Kind delivery uses `deploy-release` after selection.
 wamn-dev/GCP uses generated host values, `helm upgrade`, and `kubectl apply` of the released workloads, as [Google Cloud operations](gcp.md) records.
 Wait for readiness and prove a meaningful authenticated application operation before reporting success.
 Upload web files only after selecting their release.
+
+### Coordinated base and overlay upgrade
+
+Epic 2 permits additive base migrations and metadata-only overlay successors with exact base version and component digest pins.
+Qualification compares predecessor and successor declarations of every consumed operation and refuses changed or removed contracts.
+It hashes the exact built base artifact and requires every overlay to pin that digest.
+The successor root set includes every affected overlay and every unchanged installed package.
+The original root set must match every currently installed package.
+Qualification records format 2 evidence for this coordinated transition. Existing format 1 evidence remains unchanged.
+
+The application transaction applies the base first, then affected overlay successors sorted by package ID.
+It commits all registrations, migrations, and accepted evidence together, or rolls them all back.
+SQL that cannot run inside a transaction is refused as `NontransactionalOperation`, with `nontransactional SQL is forbidden`.
+This includes `CREATE INDEX CONCURRENTLY`. There is no separate application step for that SQL.
+The same actual serving schema rule applies to the base and overlays.
+
+Set `BASE_PREDECESSOR` and `OVERLAY_PREDECESSOR` to the installed package roots.
+Set `BASE_SUCCESSOR` and `OVERLAY_SUCCESSOR` to their prepared direct successor roots.
+Set `BASE_COMPONENT` to the exact built successor base artifact named by each overlay pin.
+Use the owner connection and Kubernetes scope from [upgrade prerequisites](#upgrade-prerequisites).
+Repeat `--predecessor-package` for the complete original root set, including unchanged packages.
+Repeat `--presented-package` for the complete successor root set in both commands.
+Repeat `--package-workload PACKAGE=NAME` for every SQL-bearing package in the proof.
+
+```bash
+wamn-ctl qualify-upgrade \
+  --database-url "$OWNER_URL" --tenant "$TENANT" --environment "$ENVIRONMENT" \
+  --package "$BASE_SUCCESSOR" --base-component "$BASE_COMPONENT" \
+  --predecessor-package "$BASE_PREDECESSOR" --predecessor-package "$OVERLAY_PREDECESSOR" \
+  --presented-package "$BASE_SUCCESSOR" --presented-package "$OVERLAY_SUCCESSOR" \
+  --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
+  --host-deployment "$HOST_DEPLOYMENT" \
+  --package-workload "$BASE_PACKAGE_ID=$BASE_WORKLOAD_DEPLOYMENT" \
+  --package-workload "$OVERLAY_PACKAGE_ID=$OVERLAY_WORKLOAD_DEPLOYMENT" \
+  --result "$UPGRADE_RESULT"
+
+wamn-ctl apply-package \
+  --database-url "$OWNER_URL" --tenant "$TENANT" \
+  --package "$BASE_SUCCESSOR" --upgrade-qualification "$UPGRADE_RESULT" \
+  --presented-package "$BASE_SUCCESSOR" --presented-package "$OVERLAY_SUCCESSOR"
+```
+
+The coordinated application requires accepted upgrade evidence. Supplying roots does not bypass qualification.
+After application, reconcile the complete successor root set and continue through the ordinary release commands above.
+Ordinary overlay admission and release qualification remain separate requirements.
+
+PostgreSQL tests with retained predecessor data provide the Epic 2 exit evidence.
+When Epic 2 lands, run one live forward upgrade through `upgrade-environment` on `wamn-dev`.
+Record its command and result on `wamn-orb5`.
+Epic 2 does not require a scheduled live rollback and re-forward cycle.
 
 ### Upgrade failures
 

@@ -1,5 +1,6 @@
 //! Prove one installed package successor on an owned copy before production mutation.
 
+pub(crate) mod overlay;
 mod scratch;
 #[cfg(test)]
 mod tests;
@@ -37,6 +38,10 @@ pub struct QualifyUpgradeRequest {
     pub environment: String,
     pub package: PathBuf,
     pub presented_packages: Vec<PathBuf>,
+    /// Complete original roots for a coordinated base and overlay upgrade.
+    pub predecessor_packages: Vec<PathBuf>,
+    /// Exact successor base artifact to which affected overlays re-pin.
+    pub base_component: Option<PathBuf>,
     pub workload: workload::WorkloadTarget,
     pub result: PathBuf,
 }
@@ -96,6 +101,8 @@ pub(crate) struct UpgradeQualification {
     pub(crate) post_privileges: UpgradePrivileges,
     pub(crate) workload_target: workload::WorkloadTarget,
     pub(crate) serving_workloads: workload::ServingWorkloads,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) overlay: Option<overlay::OverlayEvidence>,
 }
 
 struct PresentedPackage {
@@ -136,6 +143,11 @@ async fn qualify_upgrade_with_observer(
         "upgrade result must be a new file"
     );
     let packages = read_presented_packages(&request.presented_packages)?;
+    let predecessors = if request.predecessor_packages.is_empty() {
+        Vec::new()
+    } else {
+        read_presented_packages(&request.predecessor_packages)?
+    };
     let candidate_root = request
         .package
         .canonicalize()
@@ -169,6 +181,7 @@ async fn qualify_upgrade_with_observer(
         &mut source,
         &request,
         &packages,
+        &predecessors,
         candidate,
         &schemas,
         &observer,
@@ -188,7 +201,7 @@ async fn qualify_upgrade_with_observer(
         scratch.url(),
         &request,
         &packages,
-        candidate,
+        &predecessors,
         &predecessor_manifest,
         &mut evidence,
     )
@@ -203,7 +216,7 @@ async fn qualify_upgrade_with_observer(
     proof?;
     // Both callers and the scratch executors consume paths. Recheck their exact
     // migration/manifest inputs before publishing an identity for those bytes.
-    for package in &packages {
+    for package in packages.iter().chain(&predecessors) {
         ensure!(
             read_package_directory(&package.root)? == package.directory,
             "presented package changed during qualification: {}",
@@ -213,6 +226,27 @@ async fn qualify_upgrade_with_observer(
             presented_root_identity(&package.root)? == package.root_identity,
             "presented generated or SQL bytes changed during qualification: {}",
             package.identity.package_id
+        );
+    }
+    if let Some(qualified) = &evidence.overlay {
+        let predecessor_base = predecessors
+            .iter()
+            .find(|package| package.identity.package_id == candidate.identity.package_id)
+            .context("predecessor roots omit the upgraded base")?;
+        let rechecked = overlay::validate_transition(
+            predecessor_base,
+            candidate,
+            &predecessors,
+            &packages,
+            &predecessor_manifest,
+            request
+                .base_component
+                .as_deref()
+                .context("coordinated upgrade requires the exact base component artifact")?,
+        )?;
+        ensure!(
+            rechecked == *qualified,
+            "consumed contracts or base component bytes changed during qualification"
         );
     }
     let value = serde_json::to_value(&evidence).context("serialize upgrade qualification")?;
@@ -231,6 +265,7 @@ async fn copy_predecessor(
     source: &mut Client,
     request: &QualifyUpgradeRequest,
     packages: &[PresentedPackage],
+    predecessors: &[PresentedPackage],
     candidate: &PresentedPackage,
     schemas: &[String],
     observer: &WorkloadObserver,
@@ -258,6 +293,8 @@ async fn copy_predecessor(
         "upgrade-schema must install the package qualification carrier before qualification"
     );
     let predecessor_packages = read_current_packages(&tx, &request.tenant).await?;
+    let (manifest, manifest_digest) =
+        read_selected_manifest(&tx, &request.tenant, &request.environment).await?;
     let predecessor = predecessor_packages
         .iter()
         .find(|package| package.package_id == candidate.identity.package_id)
@@ -298,16 +335,69 @@ async fn copy_predecessor(
         .find(|package| package.package_id == candidate.identity.package_id)
         .context("installed predecessor disappeared from the snapshot")?;
     *upgraded = candidate.identity.clone();
+    let overlay = if request.predecessor_packages.is_empty() && request.base_component.is_none() {
+        for package in packages {
+            ensure!(
+                !package
+                    .manifest
+                    .base_dependencies
+                    .values()
+                    .any(|pin| pin.package == candidate.identity.package_id),
+                "base-only upgrade of {} is refused: installed overlay {} requires a coordinated successor qualification",
+                candidate.identity.package_id,
+                package.identity.package_id
+            );
+        }
+        ensure!(
+            candidate.manifest.base_dependencies.is_empty(),
+            "overlay successors require coordinated base upgrade qualification"
+        );
+        None
+    } else {
+        ensure!(
+            predecessors
+                .iter()
+                .map(|package| package.identity.clone())
+                .collect::<Vec<_>>()
+                == predecessor_packages,
+            "predecessor roots must match every currently installed package and migration identity"
+        );
+        let predecessor_base = predecessors
+            .iter()
+            .find(|package| package.identity.package_id == candidate.identity.package_id)
+            .context("predecessor roots omit the upgraded base")?;
+        let proof = overlay::validate_transition(
+            predecessor_base,
+            candidate,
+            predecessors,
+            packages,
+            &manifest,
+            request
+                .base_component
+                .as_deref()
+                .context("coordinated upgrade requires the exact base component artifact")?,
+        )?;
+        for transition in &proof.overlays {
+            let installed = expected_roots
+                .iter_mut()
+                .find(|package| package.package_id == transition.predecessor.package_id)
+                .context("qualified overlay is not installed")?;
+            ensure!(
+                *installed == transition.predecessor,
+                "qualified overlay predecessor differs from installed identity"
+            );
+            *installed = transition.candidate.clone();
+        }
+        Some(proof)
+    };
     ensure!(
         expected_roots
             == packages
                 .iter()
                 .map(|package| package.identity.clone())
                 .collect::<Vec<_>>(),
-        "presented roots must contain exactly the installed leaves with only the candidate advanced"
+        "presented roots must contain exactly the installed leaves with only the qualified base and overlay successors advanced"
     );
-    let (manifest, manifest_digest) =
-        read_selected_manifest(&tx, &request.tenant, &request.environment).await?;
     ensure!(
         manifest
             .release
@@ -343,7 +433,7 @@ async fn copy_predecessor(
         .get(0);
     let scratch = scratch::copy_database(&request.database_url, &snapshot).await?;
     let evidence = UpgradeQualification {
-        format_version: 1,
+        format_version: if overlay.is_some() { 2 } else { 1 },
         tenant: request.tenant.clone(),
         environment: request.environment.clone(),
         predecessor_release_id: i32::try_from(manifest.release.effective_release_id.get())?,
@@ -359,6 +449,7 @@ async fn copy_predecessor(
                 sha256: migration.sha256,
             })
             .collect(),
+        overlay,
         predecessor_packages,
         presented_packages: packages
             .iter()
@@ -384,7 +475,7 @@ async fn prove_copy(
     database_url: &str,
     request: &QualifyUpgradeRequest,
     packages: &[PresentedPackage],
-    candidate: &PresentedPackage,
+    predecessors: &[PresentedPackage],
     manifest: &ServingManifest,
     evidence: &mut UpgradeQualification,
 ) -> anyhow::Result<()> {
@@ -397,7 +488,7 @@ async fn prove_copy(
         database_url,
         request,
         packages,
-        candidate,
+        predecessors,
         manifest,
         evidence,
     )
@@ -418,10 +509,14 @@ async fn prove_connected_copy(
     database_url: &str,
     request: &QualifyUpgradeRequest,
     packages: &[PresentedPackage],
-    candidate: &PresentedPackage,
+    predecessors: &[PresentedPackage],
     manifest: &ServingManifest,
     evidence: &mut UpgradeQualification,
 ) -> anyhow::Result<()> {
+    let candidate = packages
+        .iter()
+        .find(|package| package.identity == evidence.candidate_package)
+        .context("qualified candidate is absent from the captured successor roots")?;
     let tx = client
         .transaction()
         .await
@@ -440,13 +535,66 @@ async fn prove_connected_copy(
     tx.commit()
         .await
         .context("commit exact predecessor scratch privileges")?;
-    apply_qualification_package(ApplyPackageRequest {
-        package: candidate.root.clone(),
-        database_url: database_url.to_owned(),
-        tenant: request.tenant.clone(),
-    })
-    .await
-    .context("apply candidate suffix on the owned predecessor copy")?;
+    if evidence.overlay.is_some() {
+        let installed = predecessors
+            .iter()
+            .map(|package| package.manifest.clone())
+            .collect::<Vec<_>>();
+        for package in predecessors {
+            let catalog =
+                wamn_schema_generator::introspect_package(database_url, &package.root).await?;
+            let projected = wamn_schema_generator::project_package_catalog(
+                &catalog,
+                &package.manifest,
+                &installed,
+            )?;
+            let schema = evidence
+                .serving_workloads
+                .packages
+                .get(&package.identity.package_id)
+                .map_or("public", |workload| workload.schema.as_str());
+            wamn_schema_generator::materialize_package_verified_with_existing_grants(
+                MaterializeMode::Check,
+                &projected,
+                database_url,
+                &package.root,
+                schema,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "verify predecessor generated contracts for {} on the installed copy",
+                    package.identity.package_id
+                )
+            })?;
+        }
+    }
+    if let Some(proof) = &evidence.overlay {
+        let mut roots = vec![candidate.root.clone()];
+        for transition in &proof.overlays {
+            roots.push(
+                packages
+                    .iter()
+                    .find(|package| package.identity == transition.candidate)
+                    .context("qualified overlay root is absent")?
+                    .root
+                    .clone(),
+            );
+        }
+        crate::apply_package::apply_qualification_packages(database_url, &request.tenant, &roots)
+            .await
+            .context(
+                "apply base and overlay successors atomically on the owned predecessor copy",
+            )?;
+    } else {
+        apply_qualification_package(ApplyPackageRequest {
+            package: candidate.root.clone(),
+            database_url: database_url.to_owned(),
+            tenant: request.tenant.clone(),
+        })
+        .await
+        .context("apply candidate suffix on the owned predecessor copy")?;
+    }
     plan_predecessor(client, manifest, &evidence.serving_workloads)
         .await
         .context("predecessor statements fail before candidate grant reconciliation")?;
@@ -475,11 +623,17 @@ async fn prove_connected_copy(
             &package.manifest,
             &installed,
         )?;
-        wamn_schema_generator::materialize_package_verified_with_catalog(
+        let schema = evidence
+            .serving_workloads
+            .packages
+            .get(&package.identity.package_id)
+            .map_or("public", |workload| workload.schema.as_str());
+        wamn_schema_generator::materialize_package_verified_with_existing_grants(
             MaterializeMode::Check,
             &projected,
             database_url,
             &package.root,
+            schema,
         )
         .await
         .with_context(|| {
@@ -809,7 +963,8 @@ pub(crate) fn decode_qualification(bytes: &[u8]) -> anyhow::Result<UpgradeQualif
     let evidence: UpgradeQualification =
         serde_json::from_slice(bytes).context("parse upgrade qualification")?;
     ensure!(
-        evidence.format_version == 1,
+        (evidence.format_version == 1 && evidence.overlay.is_none())
+            || (evidence.format_version == 2 && evidence.overlay.is_some()),
         "unsupported upgrade qualification format"
     );
     let value = serde_json::to_value(&evidence)?;

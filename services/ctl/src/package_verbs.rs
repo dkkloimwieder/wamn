@@ -49,6 +49,10 @@ pub struct ApplyPackageArgs {
     /// Exact qualification result for an installed successor migration.
     #[arg(long)]
     pub upgrade_qualification: Option<PathBuf>,
+
+    /// Complete successor roots for a coordinated base and overlay upgrade.
+    #[arg(long = "presented-package", requires = "upgrade_qualification")]
+    pub presented_packages: Vec<PathBuf>,
 }
 
 /// Prove one package successor against the installed predecessor snapshot.
@@ -60,6 +64,12 @@ pub struct QualifyUpgradeArgs {
     /// Complete package roots for the resulting installed environment.
     #[arg(long = "presented-package", required = true)]
     pub presented_packages: Vec<PathBuf>,
+    /// Complete original roots for a coordinated base and overlay upgrade.
+    #[arg(long = "predecessor-package")]
+    pub predecessor_packages: Vec<PathBuf>,
+    /// Exact built base component artifact for a coordinated upgrade.
+    #[arg(long)]
+    pub base_component: Option<PathBuf>,
     /// Owner connection to the installed predecessor database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
@@ -114,6 +124,8 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
         environment: args.environment,
         package: args.package,
         presented_packages: args.presented_packages,
+        predecessor_packages: args.predecessor_packages,
+        base_component: args.base_component,
         result: args.result,
         workload: WorkloadTarget {
             kubeconfig: args.kubeconfig,
@@ -281,12 +293,24 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
         database_url: args.database_url,
         tenant: args.tenant,
     };
-    let outcome = if let Some(path) = args.upgrade_qualification {
-        apply_package::apply_qualified_package(request, &path).await?
+    if args.presented_packages.is_empty() {
+        let outcome = if let Some(path) = args.upgrade_qualification {
+            apply_package::apply_qualified_package(request, &path).await?
+        } else {
+            apply_package::apply_package(request).await?
+        };
+        print_applied(&outcome);
     } else {
-        apply_package::apply_package(request).await?
-    };
-    print_applied(&outcome);
+        let path = args.upgrade_qualification.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("--presented-package requires --upgrade-qualification")
+        })?;
+        let outcomes =
+            apply_package::apply_qualified_package_set(request, &args.presented_packages, path)
+                .await?;
+        for outcome in &outcomes {
+            print_applied(outcome);
+        }
+    }
     Ok(())
 }
 

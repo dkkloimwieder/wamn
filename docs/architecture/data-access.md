@@ -34,12 +34,18 @@ It reads the actual serving workloads and requires each SQL-bearing package to r
 Predecessor SQL must plan against the candidate schema before grants change and again after the complete candidate root set reconciles.
 Candidate SQL must plan under those same final grants. Planning preserves the grants it examines.
 
+A base upgrade requires a successor for every installed overlay that pins that base.
+Each overlay successor preserves its migrations and consumed operation contracts, then pins the exact candidate base version and component digest.
+Qualification binds the complete predecessor and successor root sets and the candidate component bytes.
+Application installs the base first, then every affected overlay, in one transaction with the accepted evidence.
+A failure rolls back the complete transition. Nontransactional migration statements refuse with the named operation.
+
 `apply-package` records accepted evidence in `catalog.package_upgrade_qualifications` within the transaction that installs the successor.
 Reconciliation requires evidence that matches the complete installed package set, exact presented roots, and derived privileges.
 It selects evidence by those identities, never by timestamp. Earlier qualifications remain immutable history.
 Release rollback retains committed migrations and admits only the exact immediate predecessor whose accepted evidence still matches the live database.
 The [package upgrade procedure](../operations/deployment.md#package-upgrades) defines prerequisites, command order, and recovery.
-Overlay upgrades and migration-specific exceptions remain [deferred work](../plan/upgrades.md).
+Changed or removed operation contracts and migration-specific exceptions remain [deferred work](../plan/upgrades.md).
 
 Package migrations cannot create roles, grants, extensions, routines, triggers, rules, or row policies.
 Managed schemas refuse foreign tables, authored views, materialized views, unsupported types, and unsupported generated properties.

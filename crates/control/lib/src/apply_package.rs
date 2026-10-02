@@ -83,6 +83,33 @@ pub struct ApplyOutcome {
     pub changed: bool,
 }
 
+/// Package bytes and migration policy prepared before database mutation.
+#[derive(Debug)]
+pub(crate) struct PreparedPackage {
+    pub root: PathBuf,
+    pub directory: PackageDirectory,
+    pub manifest: PackageManifest,
+    migration_policy: MigrationPolicyPlan,
+}
+
+/// Validate one package directory before opening an application transaction.
+pub(crate) fn prepare_package(root: &Path) -> anyhow::Result<PreparedPackage> {
+    let directory = read_package_directory(root)?;
+    let presented = plan_package_migrations(&directory, None)
+        .context("validate package directory before database work")?;
+    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
+        .context("parse strict package manifest for definition ownership")?;
+    wamn_schema_generator::validate_operation_vocabulary(&manifest)
+        .context("validate package manifest for registration projection")?;
+    let migration_policy = validate_migration_policy(root, &directory, &presented)?;
+    Ok(PreparedPackage {
+        root: root.to_owned(),
+        directory,
+        manifest,
+        migration_policy,
+    })
+}
+
 #[derive(Clone, Copy)]
 enum ApplicationMode<'a> {
     Production(Option<&'a crate::package_upgrade::AcceptedUpgrade>),
@@ -104,6 +131,27 @@ pub async fn apply_qualified_package(
     apply_request(request, ApplicationMode::Production(Some(&evidence))).await
 }
 
+/// Apply a qualified base and its overlay successors atomically, base first.
+pub async fn apply_qualified_package_set(
+    request: ApplyPackageRequest,
+    presented_packages: &[PathBuf],
+    evidence_path: &Path,
+) -> anyhow::Result<Vec<ApplyOutcome>> {
+    let evidence = crate::package_upgrade::read_evidence(evidence_path)?;
+    crate::package_upgrade::apply_coordinated(request, presented_packages, evidence).await
+}
+
+#[cfg(test)]
+pub(crate) async fn apply_qualified_package_set_observed(
+    request: ApplyPackageRequest,
+    presented_packages: &[PathBuf],
+    evidence_path: &Path,
+    observed: crate::qualify_upgrade::workload::ServingWorkloads,
+) -> anyhow::Result<Vec<ApplyOutcome>> {
+    let evidence = crate::package_upgrade::read_evidence_with_observation(evidence_path, observed)?;
+    crate::package_upgrade::apply_coordinated(request, presented_packages, evidence).await
+}
+
 #[cfg(test)]
 pub(crate) async fn apply_qualified_package_observed(
     request: ApplyPackageRequest,
@@ -119,6 +167,69 @@ pub(crate) async fn apply_qualification_package(
     request: ApplyPackageRequest,
 ) -> anyhow::Result<ApplyOutcome> {
     apply_request(request, ApplicationMode::Qualification).await
+}
+
+/// Apply base and overlay successors atomically to an owned qualification database.
+pub(crate) async fn apply_qualification_packages(
+    database_url: &str,
+    tenant: &str,
+    roots: &[PathBuf],
+) -> anyhow::Result<Vec<ApplyOutcome>> {
+    ensure!(!tenant.is_empty(), "tenant must not be empty");
+    ensure!(
+        !roots.is_empty(),
+        "qualification requires at least one package"
+    );
+    let packages = roots
+        .iter()
+        .map(|root| prepare_package(root))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+        .await
+        .context("connect to qualification environment")?;
+    let connection_task = tokio::spawn(connection);
+    let result = async {
+        let tx = client
+            .transaction()
+            .await
+            .context("begin coordinated qualification apply")?;
+        tx.query_one(CLAIM_TENANT_SQL, &[&tenant])
+            .await
+            .context("claim package tenant")?;
+        bind_apply_package_principal(&tx).await?;
+        tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
+            .await
+            .context("lock data access before coordinated package application")?;
+        let families = packages
+            .iter()
+            .map(|package| package.manifest.package.id.clone())
+            .collect::<BTreeSet<_>>();
+        for package_id in families {
+            tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
+                .await
+                .context("lock package family")?;
+        }
+        let mut outcomes = Vec::with_capacity(packages.len());
+        // Input order is the qualification coordinator's base-first order.
+        for package in &packages {
+            outcomes.push(apply_in_transaction(&tx, tenant, package).await?);
+        }
+        tx.commit()
+            .await
+            .context("commit coordinated package suffixes")?;
+        Ok(outcomes)
+    }
+    .await;
+    drop(client);
+    if result.is_err() {
+        connection_task.abort();
+    } else {
+        connection_task
+            .await
+            .context("join qualification database connection")?
+            .context("drive qualification database connection")?;
+    }
+    result
 }
 
 /// Apply one package directory to a local target that wamn dev created.
@@ -145,26 +256,12 @@ async fn apply_request(
     mode: ApplicationMode<'_>,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure!(!request.tenant.is_empty(), "tenant must not be empty");
-    let directory = read_package_directory(&request.package)?;
-    let presented = plan_package_migrations(&directory, None)
-        .context("validate package directory before database work")?;
-    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
-        .context("parse strict package manifest for definition ownership")?;
-    let migration_policy = validate_migration_policy(&request.package, &directory, &presented)?;
+    let package = prepare_package(&request.package)?;
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = apply(
-        &mut client,
-        &request.tenant,
-        &request.package,
-        &directory,
-        &manifest,
-        migration_policy,
-        mode,
-    )
-    .await;
+    let result = apply(&mut client, &request.tenant, &package, mode).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -180,21 +277,10 @@ async fn apply_request(
 async fn apply(
     client: &mut tokio_postgres::Client,
     tenant: &str,
-    package_root: &Path,
-    directory: &PackageDirectory,
-    manifest: &PackageManifest,
-    migration_policy: MigrationPolicyPlan,
+    package: &PreparedPackage,
     mode: ApplicationMode<'_>,
 ) -> anyhow::Result<ApplyOutcome> {
-    wamn_schema_generator::validate_operation_vocabulary(manifest)
-        .context("validate package manifest for registration projection")?;
-    let registrations = derive_catalog_registrations(manifest);
-    let presented =
-        plan_package_migrations(directory, None).context("validate package directory")?;
-    let package_id = presented.coordinate.package_id().to_owned();
-    let package_version = presented.coordinate.package_version().to_owned();
-    let coordinate_label = format!("{package_id}@{package_version}");
-    let coordinate_text = coordinate_label.as_str();
+    let presented = plan_package_migrations(&package.directory, None)?;
     let tx = client.transaction().await.context("begin package apply")?;
     tx.query_one(CLAIM_TENANT_SQL, &[&tenant])
         .await
@@ -205,17 +291,53 @@ async fn apply(
     tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
         .await
         .context("lock data access before package application")?;
-    tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
-        .await
-        .context("lock package family")?;
+    tx.query_one(
+        LOCK_PACKAGE_SQL,
+        &[&tenant, &presented.coordinate.package_id()],
+    )
+    .await
+    .context("lock package family")?;
+    let outcome = apply_prepared(&tx, tenant, package, mode).await?;
+    tx.commit().await.context("commit whole package suffix")?;
+    Ok(outcome)
+}
+
+/// Apply within a transaction whose caller already checked qualification evidence.
+///
+/// The caller owns the tenant binding, locks, evidence persistence, and commit.
+pub(crate) async fn apply_in_transaction(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    package: &PreparedPackage,
+) -> anyhow::Result<ApplyOutcome> {
+    apply_prepared(tx, tenant, package, ApplicationMode::Qualification).await
+}
+
+async fn apply_prepared(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    package: &PreparedPackage,
+    mode: ApplicationMode<'_>,
+) -> anyhow::Result<ApplyOutcome> {
+    let package_root = &package.root;
+    let directory = &package.directory;
+    let manifest = &package.manifest;
+    let migration_policy = &package.migration_policy;
+    let registrations = derive_catalog_registrations(manifest);
+    let presented =
+        plan_package_migrations(directory, None).context("validate package directory")?;
+    let package_id = presented.coordinate.package_id().to_owned();
+    let package_version = presented.coordinate.package_version().to_owned();
+    let coordinate_label = format!("{package_id}@{package_version}");
+    let coordinate_text = coordinate_label.as_str();
     let mut local_comment = match mode {
         ApplicationMode::Local(environment) => {
-            Some(local_target::lift_release_seal(&tx, tenant, environment).await?)
+            Some(local_target::lift_release_seal(tx, tenant, environment).await?)
         }
         _ => None,
     };
 
-    let applied = load_applied_package(&tx, tenant, &package_id, &package_version).await?;
+    let applied = load_applied_package(tx, tenant, &package_id, &package_version).await?;
     let plan = if let Some(applied) = applied.as_ref() {
         let compared = if local_comment.is_some() {
             // A local target takes a changed wamn.json at the same coordinate.
@@ -233,7 +355,7 @@ async fn apply(
         };
         compared.context("compare package bytes with immutable records")?
     } else {
-        match current_package_version(&tx, tenant, &package_id).await? {
+        match current_package_version(tx, tenant, &package_id).await? {
             None => presented,
             Some(current_version) => {
                 plan_package_registration(
@@ -250,7 +372,7 @@ async fn apply(
                         &current_version,
                     )
                 })?;
-                let predecessor = load_applied_package(&tx, tenant, &package_id, &current_version)
+                let predecessor = load_applied_package(tx, tenant, &package_id, &current_version)
                     .await?
                     .expect("the selected package-family leaf is an applied package");
                 plan_package_migrations(directory, Some(&predecessor)).map_err(|source| {
@@ -284,7 +406,7 @@ async fn apply(
         .collect::<Vec<_>>();
 
     validate_definition_ownership_before_apply(
-        &tx,
+        tx,
         tenant,
         coordinate_text,
         &package_id,
@@ -293,19 +415,26 @@ async fn apply(
     )
     .await?;
     if let Some(deferred) = deferred {
-        return Err(deferred.source)
+        // Recreate the owned error only on refusal, preserving its typed source.
+        let reparsed = validate_migration_policy(package_root, directory, &plan)?;
+        let source = reparsed
+            .deferred
+            .expect("the same immutable migration bytes retain their policy refusal")
+            .source;
+        return Err(source)
             .with_context(|| format!("validate {} before apply", deferred.relative_path));
     }
 
     let accepted_upgrade = match mode {
         ApplicationMode::Production(evidence) => {
             crate::package_upgrade::require_application(
-                &tx,
+                tx,
                 tenant,
                 package_root,
                 directory,
                 &plan,
                 evidence,
+                false,
             )
             .await?
         }
@@ -325,9 +454,9 @@ async fn apply(
     // package escalating itself. This host-issued SET LOCAL ROLE moves in the
     // opposite direction, narrowing the administrator to the existing
     // package-owner role while package DDL runs.
-    set_package_owner_role(&tx).await?;
-    ensure_model_schemas(&tx, &plan).await?;
-    reset_host_role(&tx).await?;
+    set_package_owner_role(tx).await?;
+    ensure_model_schemas(tx, &plan).await?;
+    reset_host_role(tx).await?;
     // catalog.packages is immutable, so a local target keeps the first recorded
     // manifest hash there and records the current one in its comment.
     let registered_manifest_sha256 = match (&local_comment, &applied) {
@@ -335,7 +464,7 @@ async fn apply(
         _ => &plan.manifest_sha256,
     };
     let package_inserted = register_package(
-        &tx,
+        tx,
         tenant,
         &plan.coordinate,
         registered_manifest_sha256,
@@ -347,17 +476,17 @@ async fn apply(
         // The planner carries exact package bytes as its parameter-free batch
         // statements; every host-authored record statement has binds.
         if statement.params.is_empty() {
-            set_package_owner_role(&tx).await?;
-            execute(&tx, statement, coordinate_text).await?;
-            reset_host_role(&tx).await?;
+            set_package_owner_role(tx).await?;
+            execute(tx, statement, coordinate_text).await?;
+            reset_host_role(tx).await?;
         } else {
-            assert_host_role(&tx).await?;
-            execute(&tx, statement, coordinate_text).await?;
+            assert_host_role(tx).await?;
+            execute(tx, statement, coordinate_text).await?;
         }
     }
-    assert_host_role(&tx).await?;
+    assert_host_role(tx).await?;
     let ownership_changed = reconcile_definition_ownership(
-        &tx,
+        tx,
         tenant,
         coordinate_text,
         &package_id,
@@ -365,23 +494,22 @@ async fn apply(
         &pending_mutations,
     )
     .await?;
-    let history_changed = create_history_tables(&tx, manifest).await?;
-    reconcile_entity_maps(&tx, &plan, manifest).await?;
-    let triggers_changed = reconcile_record_history_triggers(&tx, manifest).await?;
-    let admin_role_changed = ensure_admin_role(&tx, tenant).await?;
+    let history_changed = create_history_tables(tx, manifest).await?;
+    reconcile_entity_maps(tx, &plan, manifest).await?;
+    let triggers_changed = reconcile_record_history_triggers(tx, manifest).await?;
+    let admin_role_changed = ensure_admin_role(tx, tenant).await?;
     let registrations_changed =
-        reconcile_package_registrations(&tx, tenant, &package_id, &registrations).await?;
+        reconcile_package_registrations(tx, tenant, &package_id, &registrations).await?;
     let comment_changed = match local_comment.as_mut() {
         Some(comment) => {
-            local_target::record_manifest(&tx, comment, coordinate_text, &plan.manifest_sha256)
+            local_target::record_manifest(tx, comment, coordinate_text, &plan.manifest_sha256)
                 .await?
         }
         None => false,
     };
     if let Some(evidence) = &accepted_upgrade {
-        crate::package_upgrade::persist(&tx, evidence).await?;
+        crate::package_upgrade::persist(tx, evidence).await?;
     }
-    tx.commit().await.context("commit whole package suffix")?;
     Ok(ApplyOutcome {
         package_id,
         package_version,
@@ -448,7 +576,7 @@ pub async fn reconcile_local_package_configuration(
 /// Bind `wamn:apply-package` as the actor and the operation of the
 /// transaction, so its writes, including the admin role, record that
 /// component.
-async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow::Result<()> {
+pub(crate) async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow::Result<()> {
     tx.batch_execute(&bind_platform_principal_sql(
         PlatformComponent::ApplyPackage,
     ))

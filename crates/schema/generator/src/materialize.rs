@@ -596,6 +596,36 @@ pub async fn materialize_package_verified_with_catalog(
     materialize_package_classified(mode, catalog, package_root, &verdicts)
 }
 
+/// Materialize package artifacts against the runtime schema and existing grants.
+///
+/// The caller supplies the catalog projected for this package and installs the
+/// complete root set's grants before calling. This check preserves those grants
+/// and plans every statement using the exact serving runtime schema.
+pub async fn materialize_package_verified_with_existing_grants(
+    mode: MaterializeMode,
+    catalog: &CatalogIr,
+    database_url: &str,
+    package_root: &Path,
+    runtime_schema: &str,
+) -> Result<()> {
+    let (corpus, _) = statement_corpus(package_root, catalog)?;
+
+    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
+        .await
+        .context("connect to plan the package statements under existing grants")?;
+    let connection_task = tokio::spawn(connection);
+    let verdicts =
+        classify_statements_with_existing_grants(&mut client, &corpus, runtime_schema).await;
+    drop(client);
+    connection_task
+        .await
+        .context("join PostgreSQL connection task")?
+        .context("drive PostgreSQL connection")?;
+    let verdicts = verdicts?;
+
+    materialize_package_classified(mode, catalog, package_root, &verdicts)
+}
+
 /// The manifest bytes and their parse. A package authored in `wamn.k` compiles
 /// it here, so generation reads the source and never the committed output.
 fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {
