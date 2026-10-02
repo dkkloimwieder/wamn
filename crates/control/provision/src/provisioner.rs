@@ -11,6 +11,8 @@
 //! and `createrole_self_grant = 'set, inherit'`, so that it is a member of
 //! every role it creates.
 
+use wamn_pg_core::quote_literal;
+
 use crate::name::DB_OWNER_ROLE;
 
 /// The login of the provisioning worker.
@@ -36,5 +38,18 @@ pub fn ensure_provisioner_role_sql() -> String {
          END $provisioner$;\n\
          GRANT pg_signal_backend, wamn_system, {DB_OWNER_ROLE} TO {PROVISIONER_ROLE};\n\
          ALTER ROLE {PROVISIONER_ROLE} SET createrole_self_grant = 'set, inherit';\n"
+    )
+}
+
+/// The statement that `provision-system --emit-provisioner-sql` writes for
+/// the operator to apply once as superuser (`docs/operations/gcp.md` §7):
+/// [`ensure_provisioner_role_sql`], then the password as its SCRAM-SHA-256
+/// verifier. The plain password is only in the Secret `wamn-provisioner`
+/// (owner ruling of 2026-10-02 on `wamn-zua8.3`).
+pub fn provisioner_statement_sql(scram_verifier: &str) -> String {
+    format!(
+        "{}ALTER ROLE {PROVISIONER_ROLE} PASSWORD {};\n",
+        ensure_provisioner_role_sql(),
+        quote_literal(scram_verifier)
     )
 }

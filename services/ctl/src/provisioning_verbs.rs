@@ -22,7 +22,7 @@ use wamn_control::provision_project_env::{
     WorkloadActionOutcome, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
     ensure_secret_path, parse_pat_prefix, workload_action_flag, workload_secret_flag,
 };
-use wamn_control::provision_system::{self, ProvisionSystemRequest};
+use wamn_control::provision_system::{self, EmitProvisionerRequest, ProvisionSystemRequest};
 use wamn_control_provision::{CredentialGeneration, DB_OWNER_ROLE, WorkloadRoleFamily};
 use wamn_control_registry::{Template, Triple};
 
@@ -35,15 +35,54 @@ pub struct ProvisionSystemArgs {
 
     /// Email domain of the platform principal rows, written to
     /// `registry.meta.platform_domain`.
-    #[arg(long)]
-    pub platform_domain: String,
+    #[arg(long, required_unless_present = "emit_secret")]
+    pub platform_domain: Option<String>,
+
+    /// Install nothing. Write the Secret manifest `wamn-provisioner` of the
+    /// `platform` namespace here, mode 0600, with a new password.
+    #[arg(
+        long,
+        requires_all = ["emit_provisioner_sql", "db_host"],
+        conflicts_with = "platform_domain"
+    )]
+    pub emit_secret: Option<PathBuf>,
+
+    /// Write the role statement of `wamn_provisioner` here, with the SCRAM
+    /// verifier of the password in `--emit-secret`. The operator applies it
+    /// once as superuser.
+    #[arg(long, requires = "emit_secret")]
+    pub emit_provisioner_sql: Option<PathBuf>,
+
+    /// Host the URL in the emitted Secret names.
+    #[arg(long, requires = "emit_secret")]
+    pub db_host: Option<String>,
+
+    /// Port the URL in the emitted Secret names.
+    #[arg(long, default_value_t = 5432)]
+    pub db_port: u16,
 }
 
-/// Install the control store into an empty system database, once.
+/// Install the control store into an empty system database, once. With the
+/// emit flags, write only the provisioner's Secret manifest and role statement.
 pub async fn provision_system(args: ProvisionSystemArgs) -> anyhow::Result<()> {
+    if let (Some(emit_secret), Some(emit_provisioner_sql), Some(db_host)) =
+        (args.emit_secret, args.emit_provisioner_sql, args.db_host)
+    {
+        provision_system::emit_provisioner_credential(&EmitProvisionerRequest {
+            system_database_url: args.system_url,
+            emit_secret,
+            emit_provisioner_sql,
+            db_host,
+            db_port: args.db_port,
+        })?;
+        println!("provision-system: provisioner Secret and role statement written");
+        return Ok(());
+    }
     provision_system::provision_system(&ProvisionSystemRequest {
         system_database_url: args.system_url,
-        platform_domain: args.platform_domain,
+        platform_domain: args
+            .platform_domain
+            .context("--platform-domain is required")?,
     })
     .await?;
     println!("provision-system: control store installed");

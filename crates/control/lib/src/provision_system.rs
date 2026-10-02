@@ -8,10 +8,29 @@
 //! `wamn_provisioner` of the provisioning worker, and writes
 //! `registry.meta.platform_domain`. It refuses a database that already has
 //! the schema `registry`, so a second run changes nothing.
+//!
+//! With the emit flags, the verb installs nothing. It writes the Secret
+//! manifest of `wamn_provisioner` and the role statement that sets its
+//! password, see [`emit_provisioner_credential`].
+
+use std::fmt;
+use std::num::NonZeroU32;
+use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use ring::rand::{SecureRandom as _, SystemRandom};
+use ring::{digest, hmac, pbkdf2};
+use serde_json::json;
 use tokio_postgres::{Client, NoTls};
+use url::Url;
+use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statement_sql};
 use wamn_control_provision::schema_migrations::MigrationTarget;
+
+use crate::provision_project_env::{
+    ensure_distinct_secret_paths, ensure_secret_path, write_secret_json,
+};
 use wamn_control_provision::{CONTROL_BOOTSTRAP_SQL, sql, validate_platform_domain};
 
 /// Inputs of one `provision-system` run.
@@ -112,4 +131,105 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
         .await
         .context("create the provisioning worker's login")?;
     Ok(())
+}
+
+/// Inputs of one `provision-system` run with the emit flags.
+pub struct EmitProvisionerRequest {
+    /// Superuser URL of the system database. The run reads only its database
+    /// name and opens no connection.
+    pub system_database_url: String,
+    /// Where the Secret manifest `wamn-provisioner` goes, mode 0600.
+    pub emit_secret: PathBuf,
+    /// Where the role statement goes.
+    pub emit_provisioner_sql: PathBuf,
+    /// Host the URL in the Secret names.
+    pub db_host: String,
+    /// Port the URL in the Secret names.
+    pub db_port: u16,
+}
+
+impl fmt::Debug for EmitProvisionerRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EmitProvisionerRequest")
+            .field("system_database_url", &"[REDACTED]")
+            .field("emit_secret", &self.emit_secret)
+            .field("emit_provisioner_sql", &self.emit_provisioner_sql)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Generate the password of `wamn_provisioner` and write the two outputs of
+/// one run: the Secret manifest `wamn-provisioner` in `platform`, which holds
+/// the password, and the role statement, which holds only its SCRAM-SHA-256
+/// verifier. The operator applies the Secret with `kubectl apply` and the
+/// statement as superuser (owner rulings of 2026-10-02 on `wamn-zua8.3`).
+pub fn emit_provisioner_credential(request: &EmitProvisionerRequest) -> anyhow::Result<()> {
+    ensure_secret_path(&request.emit_secret, "--emit-secret")?;
+    ensure_distinct_secret_paths([
+        ("--emit-secret", Some(request.emit_secret.as_path())),
+        (
+            "--emit-provisioner-sql",
+            Some(request.emit_provisioner_sql.as_path()),
+        ),
+    ])?;
+    let mut url = Url::parse(&request.system_database_url)
+        .map_err(|_| anyhow::anyhow!("the system database URL cannot be parsed"))?;
+    ensure!(
+        url.path().len() > 1,
+        "the system database URL names no database"
+    );
+    let rng = SystemRandom::new();
+    let mut random = [0_u8; 32];
+    rng.fill(&mut random)
+        .map_err(|_| anyhow::anyhow!("operating system could not supply credential entropy"))?;
+    let password = hex::encode(random);
+    let mut salt = [0_u8; 16];
+    rng.fill(&mut salt)
+        .map_err(|_| anyhow::anyhow!("operating system could not supply credential entropy"))?;
+    url.set_username(PROVISIONER_ROLE)
+        .map_err(|()| anyhow::anyhow!("cannot encode the provisioner user"))?;
+    url.set_password(Some(&password))
+        .map_err(|()| anyhow::anyhow!("cannot encode the provisioner password"))?;
+    url.set_host(Some(&request.db_host))
+        .context("cannot encode the provisioner host")?;
+    url.set_port(Some(request.db_port))
+        .map_err(|()| anyhow::anyhow!("cannot encode the provisioner port"))?;
+    url.set_query(None);
+    url.set_fragment(None);
+    let document = json!({
+        "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+        "metadata": {"name": "wamn-provisioner", "namespace": "platform",
+            "labels": {"app.kubernetes.io/name": "wamn-provisioner", "app.kubernetes.io/managed-by": "wamn"}},
+        "stringData": {"url": url.as_str()}
+    });
+    write_secret_json(&request.emit_secret, &document)?;
+    let statement = provisioner_statement_sql(&scram_sha256_verifier(&password, &salt));
+    std::fs::write(&request.emit_provisioner_sql, statement)
+        .with_context(|| format!("write {}", request.emit_provisioner_sql.display()))
+}
+
+/// The SCRAM-SHA-256 verifier that PostgreSQL stores for `password`
+/// (RFC 7677, PostgreSQL's default 4096 iterations). The password is ASCII
+/// hex, so SASLprep leaves it unchanged.
+fn scram_sha256_verifier(password: &str, salt: &[u8]) -> String {
+    const ITERATIONS: u32 = 4096;
+    let mut salted = [0_u8; 32];
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        NonZeroU32::new(ITERATIONS).expect("4096 is not zero"),
+        salt,
+        password.as_bytes(),
+        &mut salted,
+    );
+    let key = hmac::Key::new(hmac::HMAC_SHA256, &salted);
+    let client_key = hmac::sign(&key, b"Client Key");
+    let stored_key = digest::digest(&digest::SHA256, client_key.as_ref());
+    let server_key = hmac::sign(&key, b"Server Key");
+    format!(
+        "SCRAM-SHA-256${ITERATIONS}:{}${}:{}",
+        STANDARD.encode(salt),
+        STANDARD.encode(stored_key.as_ref()),
+        STANDARD.encode(server_key.as_ref())
+    )
 }
