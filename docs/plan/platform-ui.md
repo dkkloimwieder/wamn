@@ -1693,7 +1693,7 @@ Measured on main `6eba50b90` on 2026-10-02:
 
 - `environment.create` takes `{project, env, tenant, packages: [{package_id, version}]}`. Each package is an artifact in the registry that `push-package` pushed, with its built UI, which the worker copies to the bucket path of the release digest. The worker never runs `pnpm` (questions 34 and 36).
 - `provisioning.sagas` gets the new saga type, and its own migration adds `provisioning.saga_steps`.
-- `wamn-ctl serve` runs the [§5.2](#52-environment-creation) chain to the run plane and the UI. It holds an in-cluster ServiceAccount with RBAC on `Database` CRs in `platform` and Secrets in `hosts`, and nothing else. It runs the role and privilege SQL as the Postgres login `wamn_provisioner`, which has `CREATEROLE` and `CREATEDB` and is not a superuser. No key file exists. If a statement of the role SQL needs a superuser, the work stops and names it.
+- `wamn-ctl serve` runs the [§5.2](#52-environment-creation) chain to the run plane and the UI. It holds an in-cluster ServiceAccount with RBAC on `Database` and `Publication` CRs in `platform` and a Role on Secrets in each of `hosts`, `identity` and `platform`, and nothing else (questions 32 and 37). It runs `kubectl` (question 38). It runs the role and privilege SQL as the Postgres login `wamn_provisioner`, which has `CREATEROLE` and `CREATEDB` and is not a superuser. No key file exists. If a statement of the role SQL needs a superuser, the work stops and names it.
 - The last step is `awaiting operator`, with the exact commands for the host workload and the identity restart, shown in `environment.list`. The worker never pauses for an operator before that step.
 - Resume, abandon and the status UI.
 - Exit: a local-process test with no Kubernetes.
@@ -1709,7 +1709,17 @@ Measured on `worktree-table` `1d6c0dc83` on 2026-10-02:
 - The workspace has no Kubernetes client crate. `deploy-release` runs `kubectl`.
 - The grant surfaces name schemas that the applier owns, so a login that neither owns them nor inherits their owner cannot grant on them. `reconcile-run-plane` requires a `SUPERUSER` or `BYPASSRLS` admin login.
 
-[§9](#9-questions-for-the-owner) questions 34 to 40, answered 2026-10-02, set the commits of issue 10.
+[§9](#9-questions-for-the-owner) questions 34 to 40, answered 2026-10-02, set the commits of issue 10. Each commit is green:
+
+1. Role SQL without a superuser. A hardener writes `NOSUPERUSER` only when `pg_roles.rolsuper` is true. Attribute reads use `pg_roles`. System migration `0009` adds `registry.generation_passwords (role, sha256, recorded_at)`, which replaces `password_set`. `privilege_sql` drops `ALTER DATABASE ... OWNER TO`.
+2. The CNPG `Publication` CR is rendered, and `create_publication_sql` leaves the CDC SQL bundle.
+3. `provision-system` creates `wamn_provisioner` with exactly the grants of question 40.
+4. The verb `push-package`, and one package-source library function that `apply-package` uses.
+5. `select` reuses a qualification with an equal package set and equal image digests, and records which one it reused.
+6. The saga type, and `provisioning.saga_steps` from system migration `0010`.
+7. `wamn-ctl serve` runs one saga per org, step by step, with resume and abandon. The last step is `awaiting operator`, with the host workload and identity restart commands.
+8. The `environment.create` route, the saga steps in `environment.list`, and the status UI.
+9. The local-process test and the documentation.
 
 **11. Project creation and environment copy (`wamn-zua8.4`).**
 
