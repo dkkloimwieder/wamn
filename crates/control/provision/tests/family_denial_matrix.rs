@@ -342,7 +342,8 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
     // The org control host reads who is a user and whether a control
     // session's password login is live. It writes the org memberships and the
     // org, project and environment grants of the org operations, and reads
-    // the projects and environments those grants cover.
+    // the projects and environments those grants cover, and it writes the
+    // status of an environment and no other column of it.
     FamilyReach {
         family: WorkloadRoleFamily::Control,
         relations: &[
@@ -365,6 +366,7 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
             "identity.project_roles|SELECT|table",
             "identity.project_roles|UPDATE|table",
             "registry.project_envs|SELECT|table",
+            "registry.project_envs|UPDATE|column",
             "registry.projects|SELECT|table",
         ],
         routines: &[],

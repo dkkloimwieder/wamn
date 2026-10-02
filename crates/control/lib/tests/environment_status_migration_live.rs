@@ -1,13 +1,15 @@
 //! Live test of `system/0008_environment_status.sql` (wamn-zua8.2): on a
 //! control database installed before it, the migration gives
 //! `registry.project_envs` the status column as a fresh install has it, and
-//! the identity issuer the read of it that its prepare grants. The test holds
+//! the identity issuer and the control family the grants on it that their
+//! prepares grant. The test holds
 //! the process lock of its server, because the installers create cluster-wide
 //! roles.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_control_provision::identity_issuer::grant_identity_issuer_surface_sql;
+use wamn_control_provision::sql::grant_control_surface_sql;
 use wamn_test_infrastructure::locked_database;
 
 const MIGRATION: &str =
@@ -48,19 +50,25 @@ async fn definition(client: &Client) -> Vec<String> {
         .collect()
 }
 
-/// The column reads of the identity issuer on `registry.project_envs`.
-async fn issuer_reads(client: &Client) -> Vec<String> {
+/// The table and column grants of `role` on `registry.project_envs`.
+async fn grants(client: &Client, role: &str) -> Vec<String> {
     client
         .query(
-            "SELECT a.attname || ' ' || x.privilege_type \
-               FROM pg_attribute a, aclexplode(a.attacl) x, pg_roles r \
-              WHERE a.attrelid = 'registry.project_envs'::regclass \
-                AND x.grantee = r.oid AND r.rolname = 'wamn_identity_issuer' \
-              ORDER BY 1",
-            &[],
+            "SELECT entry FROM ( \
+               SELECT 'table ' || x.privilege_type AS entry \
+                 FROM pg_class c, aclexplode(c.relacl) x, pg_roles r \
+                WHERE c.oid = 'registry.project_envs'::regclass \
+                  AND x.grantee = r.oid AND r.rolname = $1 \
+               UNION ALL \
+               SELECT 'column ' || a.attname || ' ' || x.privilege_type \
+                 FROM pg_attribute a, aclexplode(a.attacl) x, pg_roles r \
+                WHERE a.attrelid = 'registry.project_envs'::regclass \
+                  AND x.grantee = r.oid AND r.rolname = $1 \
+             ) q ORDER BY entry",
+            &[&role],
         )
         .await
-        .expect("read the issuer column grants")
+        .expect("read the grants on registry.project_envs")
         .iter()
         .map(|row| row.get(0))
         .collect()
@@ -86,14 +94,24 @@ async fn the_migration_adds_the_status_column_as_a_fresh_install_has_it() {
     .await
     .expect("install the control store");
     client
-        .batch_execute(&grant_identity_issuer_surface_sql())
+        .batch_execute(&format!(
+            "{} {}",
+            grant_identity_issuer_surface_sql(),
+            grant_control_surface_sql()
+        ))
         .await
-        .expect("prepare the identity issuer surface");
+        .expect("prepare the identity issuer and control surfaces");
     let fresh = definition(&client).await;
-    let prepared = issuer_reads(&client).await;
+    let issuer = grants(&client, "wamn_identity_issuer").await;
+    let control = grants(&client, "wamn_control").await;
     assert!(
-        prepared.iter().any(|entry| entry == "status SELECT"),
-        "the issuer prepare grants the status read: {prepared:?}"
+        issuer.iter().any(|entry| entry == "column status SELECT"),
+        "the issuer prepare grants the status read: {issuer:?}"
+    );
+    assert_eq!(
+        control,
+        ["column status UPDATE", "table SELECT"],
+        "the control prepare grants the status write and no other write"
     );
     assert!(
         fresh
@@ -118,8 +136,13 @@ async fn the_migration_adds_the_status_column_as_a_fresh_install_has_it() {
         "the migration adds the status column as a fresh install has it"
     );
     assert_eq!(
-        issuer_reads(&client).await,
-        prepared,
+        grants(&client, "wamn_identity_issuer").await,
+        issuer,
         "the migration grants the issuer the read that its prepare grants"
+    );
+    assert_eq!(
+        grants(&client, "wamn_control").await,
+        control,
+        "the migration grants the control family the write that its prepare grants"
     );
 }

@@ -881,10 +881,19 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 8] = [
     ("registry", "projects", &["SELECT"]),
 ];
 
+/// The columns the control host writes in a relation of which it otherwise
+/// only reads, with the privilege it holds on them. The status routes write
+/// the status of an environment (docs/plan/platform-ui.md §5.4, owner ruling
+/// of 2026-10-02 on `wamn-zua8.2`). The other columns of
+/// `registry.project_envs` belong to provisioning.
+pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
+    [("registry", "project_envs", "UPDATE", &["status"])];
+
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
 pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
 
-/// Converge the stable control role to exactly [`CONTROL_SURFACE`] in the
+/// Converge the stable control role to exactly [`CONTROL_SURFACE`] and
+/// [`CONTROL_COLUMN_SURFACE`] in the
 /// control database. The role is not a [`PLATFORM_GROUP_ROLE`] member and
 /// holds nothing else.
 pub fn grant_control_surface_sql() -> String {
@@ -897,8 +906,9 @@ pub fn grant_control_surface_sql() -> String {
 
 /// The grants of [`grant_control_surface_sql`] without the role bootstrap.
 ///
-/// System migration 0007 runs these as `wamn_system`, which owns the tables
-/// and cannot create a role, so it carries the grants alone.
+/// The latest system migration that changes them, 0008, runs these as
+/// `wamn_system`, which owns the tables and cannot create a role, so it
+/// carries the grants alone.
 pub fn control_surface_grants_sql() -> String {
     let role = quote_ident(WorkloadRoleFamily::Control.acl_role());
     let plane = SYSTEM_PLANE_SCHEMAS
@@ -921,6 +931,20 @@ pub fn control_surface_grants_sql() -> String {
             sql,
             " GRANT {privileges} ON TABLE {schema}.{relation} TO {role};",
             privileges = privileges.join(", "),
+            schema = quote_ident(schema),
+            relation = quote_ident(relation),
+        )
+        .expect("writing to a String cannot fail");
+    }
+    for (schema, relation, privilege, columns) in CONTROL_COLUMN_SURFACE {
+        write!(
+            sql,
+            " GRANT {privilege} ({columns}) ON TABLE {schema}.{relation} TO {role};",
+            columns = columns
+                .iter()
+                .map(|column| quote_ident(column))
+                .collect::<Vec<_>>()
+                .join(", "),
             schema = quote_ident(schema),
             relation = quote_ident(relation),
         )

@@ -254,11 +254,11 @@ mod tests {
     }
 
     #[test]
-    fn system_migration_0007_carries_the_rendered_control_surface() {
+    fn system_migration_0008_carries_the_rendered_control_surface() {
         let migration = SYSTEM_MIGRATIONS
             .iter()
-            .find(|migration| migration.ordinal() == 7)
-            .expect("system migration 0007 exists");
+            .find(|migration| migration.ordinal() == 8)
+            .expect("system migration 0008 exists");
         let grants = format!(
             "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control') THEN\n    {}\n  END IF;",
             crate::sql::control_surface_grants_sql()

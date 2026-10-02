@@ -865,8 +865,8 @@ pub(super) fn verify_system_reader_grants(
     Ok(())
 }
 
-/// The exact control grant set, [`sql::CONTROL_SURFACE`], held in the control
-/// database alone.
+/// The exact control grant set, [`sql::CONTROL_SURFACE`] and
+/// [`sql::CONTROL_COLUMN_SURFACE`], held in the control database alone.
 pub(super) fn verify_control_grants(
     role: &str,
     database: &str,
@@ -910,6 +910,16 @@ pub(super) fn verify_control_grants(
                 schema.to_string(),
                 relation.to_string(),
                 (*privilege).to_string(),
+            ));
+        }
+    }
+    for (schema, relation, privilege, columns) in sql::CONTROL_COLUMN_SURFACE {
+        for column in columns {
+            expected.insert((
+                "column".to_string(),
+                schema.to_string(),
+                format!("{relation}.{column}"),
+                privilege.to_string(),
             ));
         }
     }
