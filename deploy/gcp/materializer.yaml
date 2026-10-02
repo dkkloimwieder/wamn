@@ -39,7 +39,7 @@ spec:
         interfaces:
         - delivery
       service:
-        image: us-central1-docker.pkg.dev/wamn-dev/wamn/components@sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0
+        image: us-central1-docker.pkg.dev/wamn-dev/wamn/components@sha256:f98dbc816d281b815f4e5d57f1ac92548b478802c1e62198dac92607fb0b296c
         localResources:
           config:
             wamn.tenant: dev

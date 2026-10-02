@@ -519,8 +519,8 @@ os.close(fd)' $A
    CARGO_TARGET_DIR="$DELIVERY_TARGET" tools/build-components all
    ```
 
-3. Build and push the host, identity and gates images by source identity (`gcp.md` §3.4). Record the three digests. Set `IDENTITY_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:src-<identity>@<digest>` and `GATES_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-<identity>@<digest>`. The kind cases of `qualify-release` start the identity service and the gates from these two images (`docs/operations/delivery.md` §Candidate qualification, `docs/plan/release-qualification.md` §4.4). Set `HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-<identity>@<digest>`. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:251`, `:370`, `:482` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
-4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does, from `$DELIVERY_TARGET/wasm32-wasip2/release`. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:523`). Receiving and WMS run the same bytes, so both name the same digest. The running workloads name their guests by digest (`gcp.md:868`), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
+3. Build and push the host, identity and gates images by source identity (`gcp.md` §3.4). Push the image that `tools/journey-image-cache` relabels, `wamn-<name>:gcp` with the label `wamn.dev/source-head`, under the `src-` tag. `qualify-release` compares each pin with that relabeled build, so an unlabeled push fails qualification. Build and push the ctl image the same way. Record the four digests. Set `IDENTITY_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:src-<identity>@<digest>` and `GATES_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-<identity>@<digest>`. The kind cases of `qualify-release` start the identity service and the gates from these two images (`docs/operations/delivery.md` §Candidate qualification, `docs/plan/release-qualification.md` §4.4). Set `HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-<identity>@<digest>`. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:251`, `:370`, `:482` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
+4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does, from `$DELIVERY_TARGET/wasm32-wasip2/release`. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:523`). Receiving and WMS run the same bytes, so both name the same digest. A second push of the same file gives a new manifest digest and moves the tag. B10 uses the digest that the tag names after the last push. The running workloads name their guests by digest (`gcp.md:868`), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
 5. Run the ops-schema query of §4.3.4 on wamn_system and the PAT Secret listing of §4.3.5. Record both answers.
 6. Run the check query of §4.3 on the three databases. Record the result. It must equal the §4.1 names for that database plus the function bodies of §4.3.
 7. Choose the gate branch of B8 step 3. Read the `VALID UNTIL` of the generation `a` roles in the gate files of `gcp.md` §5.3, and the expiry of the WMS management-author PAT. `G` names the private directory of those files. B0 runs before B2, so the query joins on columns that B2 does not rename:
@@ -542,6 +542,8 @@ os.close(fd)' $A
    If both answers are `t`, set `BASELINE=2`. If only the first is `t`, set `BASELINE=1`. B12 records the query and its answer.
 
    If a file is missing, or a role or the PAT is expired, B8 takes branch `b`. Otherwise it takes branch `a`. Record the answer.
+
+Cutover record (2026-10-02): B0 ran four times, because the cutover commit moved: `0069d6bd3` (the gates build failed with E0063, fixed by `f31b33a12`), `71fc165f8` (owner: start from the head of `main`), `6c9241c9a` and `ebc75d513` (delivery-path fixes of B7), and `351f71337` on branch `cutover` (B8). B0 step 7 found no generation `a` gate file and no WMS management-author PAT file on the operator machine, so B8 took branch `b`. B0 step 8 answered `t` and `f`, so the baseline was 1. psql over the port-forward with the default `sslmode` ends each connection with a reset, and kubectl 1.36 then drops the forward. `SYS`, `TR` and `TW` carry `?sslmode=disable`, because the tunnel is the authenticated kubectl stream. The `mint-pat` and `invite` Jobs pin a ctl image from before B2, so B0 also builds the ctl image and the Jobs run with it.
 
 **Drain. Before B1.** The old binaries finish every open run under release 1. Nothing is stranded.
 
@@ -636,8 +638,9 @@ target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --admin-databa
 target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --admin-database-url "$TW" --baseline 0 --confirm
 ```
 
-Each project database was installed before its record table and holds no project migration, so the baseline is 0. Each run creates the record table and applies every project migration. The list is the list of the cutover commit on the day. Today it is `0001_kind_to_type.sql`, `0002_authored_roles.sql`, `0003_administration_grants.sql` and `0004_user_type.sql`.
+Each project database was installed before its record table and holds no project migration, so the baseline is 0. Each run creates the record table and applies every project migration. The list is the list of the cutover commit on the day. Today it is `0001_kind_to_type.sql`, `0002_authored_roles.sql`, `0003_administration_grants.sql`, `0004_user_type.sql` and `0005_wiring_definition_key.sql`.
 `0004_user_type.sql` changes the user type `person` to `user` (`wamn-a40n.3`). No hand statement does this.
+`0005_wiring_definition_key.sql` adds `package_version` to `wirings_definition_key` (`wamn-ld93.21`). Without it, B8 step 4 refuses a 2.0.0 wiring whose graph equals the 1.0.0 graph. Cutover record (2026-10-02): `0005` came at `ebac92ef4`, after B3 had run. It ran on both project databases without `--baseline`, because the verb refuses `--baseline` after its first run.
 
 B4. Run the new `reconcile-run-plane` twice for each environment (§4.3.2, §4.8, `gcp.md` §3.8, §5.2). The second run of each reports no action:
 
@@ -729,6 +732,8 @@ kubectl -n identity rollout status deploy/identity --timeout=300s
 
 The command is the one of `gcp.md:413`. The chart sets `replicas: 1` (`deploy/platform/identity/templates/deployment.yaml:19`). If `kubectl -n identity get deploy identity` still shows 0 replicas, run `kubectl -n identity scale deploy/identity --replicas=1`. Proof: the TLS check of `gcp.md` §3.10 answers, and the key set still lists the active `kid` (`gcp.md` §3.15).
 
+Cutover record (2026-10-02): B6 to B10 wrote their values into private copies, so the cutover checkout stayed clean for `qualify-release`. B12 commits the same edits. The identity check failed once with HTTP 000 right after the rollout, because the Service did not route yet. The rerun answered 200.
+
 The hosts stay stopped until B10. At this point the host values name only format 3 digests, and a new host refuses them (`crates/catalog/model/src/serving_manifest.rs:1073` to `:1076`). The republish in B7 to B9 runs from the operator machine and needs no host.
 
 **B7. Receiving republish.** Set `T="$TR"`, and write `$A/config.json` again before step 3.
@@ -767,7 +772,7 @@ The hosts stay stopped until B10. At this point the host values name only format
      --route-host receiving.wamn.dev --package-manifest apps/wamn_receiving/wamn.json
    ```
 
-5. Capture the published release and its exact artifact locations as the candidate (`docs/operations/delivery.md` §Candidate qualification). `HOST_IMAGE`, `IDENTITY_IMAGE`, `GATES_IMAGE` and `DELIVERY_TARGET` come from B0:
+5. Capture the published release and its exact artifact locations as the candidate (`docs/operations/delivery.md` §Candidate qualification). `HOST_IMAGE`, `IDENTITY_IMAGE`, `GATES_IMAGE` and `DELIVERY_TARGET` come from B0. B0 must build `DELIVERY_TARGET` at the cutover commit before this step, because step 6 rebuilds it and refuses an artifact that changed ("qualified artifacts changed or disappeared"):
 
    ```bash
    target/debug/wamn-ctl prepare-release --database-url "$T" --org dkk --project receiving \
@@ -809,6 +814,8 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dk
 ```
 
 It prints release 1 with format 3 and release 2 with format 4. The table name holds no format. Each row states its own format in the `format-version` of its bytes (§4.3.6).
+
+Cutover record (2026-10-02): qualify-release failed four times before it passed. Run 1 failed on an unlabeled image (B0 step 3). The other fixes were one commit each in the delivery path. The kind nodes could not pull from the private registry, so `tools/registry-image-archive` (`6c9241c9a`, `37d1fe4c8`) fetches each pinned image by digest into an archive that names the pinned digest, and each node imports it with `ctr`. The credential check refused the control administration patch beside the Secrets, fixed by `ebc75d513`. Run 5 passed in 215 seconds, and step 7 attested release 2 at `ebc75d513`. B8 then needed `ebac92ef4` and `351f71337`, so the cutover commit moved. The attestation does not change, so the qualified publish of the same bytes at `351f71337` refused `deployment-attestation-content-conflict`. By owner ruling Receiving published release 3 with the same bytes (`sha256:28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7`) and qualified it in 216 seconds. Release 2 is attested and never selected. Every later "release 2" of Receiving in this section means release 3.
 
 **B8. WMS republish.** Set `T="$TW"`, and write `$A/config.json` again before step 2.
 
@@ -886,6 +893,8 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
 
    The service needs about one second before it listens, so the post waits for its "listening" line. The reply has `body.outcome.status` `completed` and a `report-id`. The example derives the command id `gate-<package>-<version>-<wiring>` (`test-support/infrastructure/examples/gate_request.rs`, since A11), so the 2.0.0 gate uses `gate-wamn_wms-2.0.0-inventory_move_and_label`. The 1.0.0 gate holds its own id in `catalog.authoring_command_audit` for this principal (`control-portable-store.sql:287`), and that row stays where it is. In branch `b`, shred the PAT file after B8 with `shred -u $P/management-author-pat.json`. B12 retires generation `a` and revokes the old PAT prefix, and records both.
 
+   Cutover record (2026-10-02): The gate service runs on the operator machine, so its three URLs must name the database forward `127.0.0.1:15432` in place of `wamn-pg-rw.platform.svc.cluster.local:5432`. The gate refuses a query on these URLs, so they carry no `sslmode`. Run 3 completed in 6 seconds with report `sha256:4f683ca7a42ee5b291c11650f8b1e2a5758ffe0b910c4e95dce5edd8bc067a74`.
+
 4. Record the wiring (`gcp.md` §5.3 "target/debug/wamn-ctl author-wiring"). It prints the digest of the validated draft, which equals the `report-id` of the gate. The wiring version `<V>` of step 5 is the `version` field of the wiring document (`wamn-ld93.33.5`):
 
    ```bash
@@ -935,6 +944,8 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
 
    Record the manifest digest.
 
+   Cutover record (2026-10-02): WMS release 2 is `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4`. qualify-release failed three times before it passed. A candidate prepared before the target was built at the cutover commit failed with "qualified artifacts changed or disappeared". Two runs failed the idle materializer check: three host replicas pull one consumer that allows one waiting pull (`max_waiting: 1`), and the others logged `Exceeded MaxWaiting`. The fix `351f71337` (`wamn-z9cp`) treats `limit-exceeded` as an empty fetch and refuses `WAMN_MAT_BATCH` above 64. A Spot preemption at 15:03 UTC restarted the broker and the database, so the tap-stream Job and the check of `gcp.md` §3.5 ran again. The passing run took 677 seconds.
+
 Proof: the snapshot query of B7 on the WMS database prints release 1 with format 3 and release 2 with format 4.
 
 The event users and consumers need no change. The consumer names come from the package id and the registration name (`gcp.md` §5.4), and neither changes. As a check, compare the `consumers.jsonl` that B4 wrote with the one of `gcp.md` §5.4. They are equal:
@@ -944,6 +955,8 @@ diff $P/evt-check/consumers.jsonl <private directory of gcp.md §5.4>/consumers.
 ```
 
 **B9. Web clients and edge. The hosts are still stopped.** Write `$A/config.json` again before step 0.
+
+Cutover record (2026-10-02): the heads are Receiving release 3 and WMS release 2 (B7 record). The uploads and the edge name the Receiving release 3 digest.
 
 0. Set the head of each environment to release 2 (`services/ctl/src/main.rs:40`, `services/ctl/src/delivery_verbs.rs:298`, `crates/control/lib/src/delivery/deployment.rs:62`, `docs/operations/delivery.md` §Selection and deployment). `wamn-ctl promote` also writes a head, but only for a format 1 release (`crates/control/lib/src/promote.rs`), and the cutover does not use it:
 
@@ -1003,7 +1016,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
    kubectl apply -f deploy/gcp/registry-helper.yaml
    ```
 
-2. Write `HOST_IMAGE` of B0 into the constant `HOST_IMAGE` of `test-support/infrastructure/examples/host_values_files.rs`. Render the values with both release 2 digests (`gcp.md` §5.5 "cargo run"). The program writes the metadata token pull: no `WAMN_REGISTRY_AUTH_FILE`, `WAMN_REGISTRY_TOKEN_METADATA=true`, and the `registry-pull` volume from ConfigMap `wamn-registry-helper`:
+2. Write `HOST_IMAGE` of B0 into the constant `HOST_IMAGE` of `test-support/infrastructure/examples/host_values_files.rs`. Render the values with the digests of the two selected releases (Receiving release 3 and WMS release 2 on 2026-10-02) (`gcp.md` §5.5 "cargo run"). The program writes the metadata token pull: no `WAMN_REGISTRY_AUTH_FILE`, `WAMN_REGISTRY_TOKEN_METADATA=true`, and the `registry-pull` volume from ConfigMap `wamn-registry-helper`:
 
    ```bash
    cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp \
@@ -1026,6 +1039,8 @@ The switch comes before the hosts start. So no old client ever calls a new host,
    kubectl -n hosts get deploy
    ```
 
+   Cutover record (2026-10-02): the values start `hostgroup-control` (`7b6e00cd3`), which needs the Secrets `wamn-control-dkk` and `wamn-control-administration-dkk` of `gcp.md` §3.22 before this upgrade. wamn-dev had no administration Secret, so each environment prepared administration generation `a` with `--prepare-administration-generation a --emit-administration-secret PATH --emit-control-administration-patch PATH`, and the Secret and the patch were applied. `provision-org` with `--system-database-url` needs `--owner-email`. The control host requests 500m CPU and did not fit on 2 nodes, so by owner ruling pool `main` went to 3 nodes in 284 seconds (`gcp.md` §1.3). The first upgrade timed out at 605 seconds. Spot preemptions at about 16:08 and 16:15 UTC restarted the broker, so the hosts restarted on `JsError::ConnectionUnavailable`. The tap-stream Job ran again, the CDC readers were restarted, and the second upgrade took 5 seconds (revision 9).
+
 5. Apply the four workloads and wait for them (`gcp.md` §3.20 "kubectl apply", §5.5). Before this apply, the operator can place the old `flow-http` guest on a new host. That guest imports `wamn:router-delivery@0.2.0`, so it does not link. No traffic reaches it, because the apply follows at once:
 
    ```bash
@@ -1042,9 +1057,11 @@ kubectl -n hosts port-forward svc/hostgroup-default 18080:80 &
 kubectl -n hosts port-forward svc/hostgroup-wms 18081:80 &
 curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/location/list
 curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/nope
-curl -s -i -H 'Host: wms.wamn.dev' http://127.0.0.1:18081/pallet/query
+curl -s -i -H 'Host: wms.wamn.dev' http://127.0.0.1:18081/packaging/query
 curl -s -i -H 'Host: wms.wamn.dev' http://127.0.0.1:18081/nope
 ```
+
+WMS 2.0.0 renamed `pallet` to `packaging` (`cacde6a8e`), so the released read route is `/packaging/query`. Cutover record (2026-10-02): both hosts answered 401 on the released routes and 404 on `/nope`.
 
 After the serve check passes, delete the token CronJob with its Secret and its service account. Then delete the Google service account `wamn-registry-reader` and its two bindings (`gcp.md` §3.11, §3.12):
 
@@ -1075,6 +1092,8 @@ target/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --
   --retire-management-admitter-generation a
 target/debug/wamn-ctl provision-project-env --revoke-pat-prefix <previous WMS PAT prefix> --system-database-url "$SYS"
 ```
+
+The retire refuses while no session of the replacement generation is live (`crates/control/lib/src/provision_project_env/workload.rs:942`). Generation `b` serves only the gate service, so start the gate service with generation `b` as B8 step 3 does, run both retire commands while it holds its sessions, and stop it. A long-lived gate deployment removes this step (`wamn-ld93.25`). Cutover record (2026-10-02): retire took 7 and 8 seconds. Both older WMS PATs, `035c1540a0cedefc` and `8c047af277dd545a`, were revoked, so `fdae8133ac59ae6d` is the one current PAT. B12 also pins the ctl image of B0 in `deploy/gcp/operator/mint-pat.yaml` and `invite.yaml`.
 
 **B13. Immutable tags on the `wamn` registry. After B12.**
 
