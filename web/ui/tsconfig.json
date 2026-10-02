@@ -17,7 +17,8 @@
     "types": [],
     "baseUrl": ".",
     "paths": {
-      "@wamn/web-runtime": ["../runtime/src/index.ts"]
+      "@wamn/web-runtime": ["../runtime/src/index.ts"],
+      "@wamn/control-client": ["../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
