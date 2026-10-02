@@ -1667,13 +1667,13 @@ Measured on main `6eba50b90` on 2026-10-02:
 - Each step of the [§5.2](#52-environment-creation) chain has a library function, except the client UI upload. `wamn web upload` is private to the `wamn_ctl` crate and runs `pnpm`. Role permission closures reconcile inside release selection, and `materialize_admin_grants` runs inside `provision-project-env`.
 - `provision-org`, `provision-project-env` and `enable-cdc-project-env` hold no Kubernetes client. They write SQL and Kubernetes manifests that an operator applies with the cluster superuser and `kubectl`, in a set order. `deploy-release` runs `kubectl`. The release selection reads a qualification file. A new environment also needs its host workload, which the chain of [§5.2](#52-environment-creation) does not name.
 
-[§9](#9-questions-for-the-owner) questions 15 to 27, answered 2026-10-02, set the items. Questions 28 to 31 are open.
+[§9](#9-questions-for-the-owner) questions 15 to 27, answered 2026-10-02, set the items.
 
 **9. Environment status (`wamn-zua8.2`).**
 
 - System migration `0008` adds `registry.project_envs.status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive'))`. `upgrade-schema` applies it on wamn-dev. No statement is applied by hand.
 - Identity offers and mints no audience of an inactive environment, so the shell does not list it.
-- The application host refuses every route of an inactive environment after it reads its own row `app_system.environment (status)` in the project database. Each status route writes that row through the administration login, leaves first ([§9](#9-questions-for-the-owner) question 26). The host workload keeps running.
+- The application host answers every request of an inactive environment with `environment-inactive` and status 503, after it reads its own row `app_system.environment (status)` in the project database as `wamn_app` (questions 28 to 31). No row means `active`. Each status route writes that row through the administration login, leaves first ([§9](#9-questions-for-the-owner) question 26). The host workload keeps running.
 - The control family holds `UPDATE (status)` on `registry.project_envs` and nothing else on that table. The grant check and the denial matrix learn column grants (question 27).
 - Control routes `environment.activate`, `environment.inactivate`, `project.activate` and `project.inactivate`, for `org-admin` only. The project routes change every environment of the project.
 - CDC, data, memberships and role rows stay as they are.
@@ -1765,7 +1765,7 @@ The epic closes on one kind run after B13 of the cutover.
 25. Issue 10, answered 2026-10-02. Issue 10 exits on the local-process test. The epic closes on one kind run after B13.
 26. Issue 9, answered 2026-10-02. The host gets no new login and never holds a system connection. Each status route mirrors the status into one row of `app_system.environment (status)` in the project database, through the administration login, as the control host writes application rows (`wamn-a40n.6`). The order is leaves first: inactivate writes the application row and then the system row, and activate writes the system row and then the application row. The host reads its own row for each request.
 27. Issue 9, answered 2026-10-02. The control family gets `UPDATE (status)` on `registry.project_envs` and nothing else on that table, because `secret_name` and `instance_suffix` belong to provisioning. The grant check and the denial matrix learn column grants.
-28. Issue 9. Every request to a host passes `FlowHttpRouting` before it selects a route, and an anonymous route reads no database there. Where does the host refuse an inactive environment, and with what answer: (A) its route list is empty, so every request gets the existing 404 and no new word, or (B) a new code `environment-inactive` with 503 in the existing `{"error":{"code"}}` body?
-29. Issue 9. Which login of the application host reads `app_system.environment` for each request: the administration login, which also writes the row, or another pool the host holds (`wamn_app`, `wamn_executor_platform`)?
-30. Issue 9. Does `app_system.environment` follow its sibling tables: `tenant_id` as the key, the stamp columns and trigger, forced RLS with the tenant and platform policies, a `_history` table, and an entry in the project-state table list that the schema tests check?
-31. Issue 9. A project migration cannot know the tenant of an installed database, so it cannot write the row. Does a missing row mean `active`, with the first status route writing the row?
+28. Issue 9, answered 2026-10-02 with option B. The host answers an inactive environment with the new code `environment-inactive` and status 503, in the existing `{"error":{"code"}}` body. A 404 would hide the state.
+29. Issue 9, answered 2026-10-02. `wamn_app` reads `app_system.environment`, with SELECT only, as on every `app_system` authority table. The administration login writes it.
+30. Issue 9, answered 2026-10-02. `app_system.environment` follows the full pattern of its sibling tables: the tenant key, the stamp columns and trigger, forced RLS with the tenant and platform policies, a `_history` table, and the project-state list that the schema tests check.
+31. Issue 9, answered 2026-10-02. No row means `active`. The first status route writes the row.
