@@ -596,6 +596,10 @@ CREATE TABLE identity.session_signing_state (
 -- carries the projected copy the admit path reads (deploy/sql/control-portable-store.sql).
 -- It is deliberately NOT `registry.env_policies.durability_class`, which is
 -- run-retention policy for admitted runs and means something else.
+--
+-- `status` is `active` or `inactive` (docs/plan/platform-ui.md §5.4). Identity
+-- offers no audience of an inactive environment, and its host serves none of
+-- its routes. CDC, data and grants stay as they are.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.project_envs (
     org              text NOT NULL,
@@ -605,12 +609,14 @@ CREATE TABLE registry.project_envs (
     secret_namespace text,
     instance_suffix  text NOT NULL,
     disposable       boolean NOT NULL DEFAULT false,
+    status           text NOT NULL DEFAULT 'active',
     PRIMARY KEY (org, project, env),
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)
         DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT project_envs_instance_suffix_check
-        CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
+        CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),
+    CONSTRAINT project_envs_status_check CHECK (status IN ('active', 'inactive'))
 );
 
 -- User project access is an explicit grant to one project-environment
