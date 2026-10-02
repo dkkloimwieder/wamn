@@ -1514,7 +1514,8 @@ Commits, each one green:
 1. The routes. The application set gains `user.list`, `role.list`, `role.create`, `role.delete`, `permission.list`, `permission.grant`, `permission.revoke`, `user_role.grant` and `user_role.revoke`, all `Admin`. The route table keys a route by its set and its attachment id, so the two `user.list` routes keep the ids, paths and operation ids that §4.4 and §4.6 name. `permits` refuses a `wamn-control` reference to a caller without `admin` (§2.5), and `permission.grant` refuses it.
 2. The shared writes. `ReleaseClosures` moves to `wamn-catalog`. The role, permission and user role writes move to `wamn_platform_identity::application` and take a prepared transaction. `wamn-ctl` keeps its own preparation and calls them, so the command line and the host write the same rows.
 3. The handlers. A write takes the tenant lock that release reconciliation takes, binds the caller and the route's sealed operation id, and uses the closures of the loaded release. `permission.list` reports the roots, the effective rows, the roots that require each row, and whether each served operation is grantable or fixed to `admin`. `user_role.grant` refuses a user without an application user row. `user_role.revoke` of `admin` refuses while the user holds `project-admin` in the project, read through the identity reader.
-4. Documentation: execution and data access.
+4. The client. The application routes gain contract files, and the generator projects them through the client IR into a generated TypeScript client, as it does for every generated route. No client is written by hand.
+5. Documentation: execution and data access.
 
 Exit includes:
 
@@ -1528,7 +1529,7 @@ Exit includes:
 - each write stamped with the caller and the route's sealed operation id
 - the same rows from `wamn-ctl` and from the routes
 
-The route tests run over HTTP in `host_route_live`. [§9](#9-questions-for-the-owner) question 4 asks where the generated client goes.
+The route tests call the routes through the generated client ([§9](#9-questions-for-the-owner) question 4).
 
 **6. Web administration grids.**
 
@@ -1615,4 +1616,4 @@ New-project grant materialization and deterministic empty-environment copy from 
 1. Issue 4, answered 2026-10-01 with option A. The control host of an org holds the `wamn_administration` login of every environment in that org, the login the application host holds, in the Secret `wamn-control-administration-<org>` ([application writes](#application-writes)). A write reaches each project database in its own transaction, leaves first on a revoke, and reports success only when every environment is done.
 2. Issue 3, answered 2026-10-01. `wamn-ctl invite` writes as its sibling does: `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
 3. Issue 3, answered 2026-10-01. The shell text "No access has been granted." lands in issue 6. The exit of issue 3 stays an invitation with no access, whose login lists no environment.
-4. Issue 5, open. No generated client or component covers a host route, and the control contract has no contract files. Option A: issue 5 adds the contract files of the application routes and a generated TypeScript client, and tests the routes through that client. Option B: issue 5 tests the routes over HTTP, and issue 6 adds the contract files and the generated client, because its grids are their first reader.
+4. Issue 5, answered 2026-10-01 with option A. Issue 5 adds the contract files of the application routes and the generated TypeScript client, and tests the routes through that client. Issue 6 starts from that client.
