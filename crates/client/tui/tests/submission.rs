@@ -516,7 +516,7 @@ fn widget_update_validates_the_public_success_row_without_sql_bookkeeping_column
         .models
         .iter()
         .flat_map(|model| &model.operations)
-        .find(|operation| operation.operation == "platform-fixture:widget/update@2.0.0")
+        .find(|operation| operation.operation == "platform-fixture:widget/update@2.1.0")
         .expect("fixture update operation");
     let route = operation.route.as_ref().expect("served update route");
     let contract = ResponseContract {

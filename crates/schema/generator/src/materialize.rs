@@ -309,6 +309,17 @@ pub fn materialize_package_classified(
 ) -> Result<()> {
     let package = generate_package(catalog, package_root, transactional)?;
     let output_root = package_root.join("generated");
+    // The route readers below read the compiled manifest from its file, so a
+    // write puts the file in place before them.
+    if mode == MaterializeMode::Write && is_authored(package_root) {
+        let (bytes, _) = load_manifest(package_root)?;
+        let path = package_root.join(COMPILED_MANIFEST);
+        fs::create_dir_all(&output_root)
+            .with_context(|| format!("create generated directory {}", output_root.display()))?;
+        if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+            fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
+        }
+    }
     let client = client_bindings(package_root, &package)?;
     let mut expected = expected_files(&package)?;
     // The compiled manifest is one more file of the owned set.

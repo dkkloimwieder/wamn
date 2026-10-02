@@ -602,9 +602,10 @@ Pass `--history-manifest apps/wamn_wms/wamn.json`, and use `apps/wamn_wms` as th
 The platform fixture is an application too, and it generates the same way.
 The platform owns it, and a platform test takes it instead of an application.
 For the fixture, pass `--schema inventory` and `--migration-dir apps/platform_fixture/migrations`.
-Pass `--history-manifest apps/platform_fixture/wamn.json`, and use `apps/platform_fixture` as the input.
+Pass `--history-manifest apps/platform_fixture/wamn.k`, and use `apps/platform_fixture` as the input.
 For the fixture overlay, pass `--schema inventory`, then the fixture migrations, then `--migration-dir apps/platform_fixture_overlay/migrations`.
-Pass `--history-manifest apps/platform_fixture_overlay/wamn.json`, and use `apps/platform_fixture_overlay` as the input.
+Pass `--history-manifest apps/platform_fixture_overlay/wamn.k`, and use `apps/platform_fixture_overlay` as the input.
+A package that authors its manifest in `wamn.k` passes that file to `--history-manifest`, and the runner compiles it first.
 The crate `wamn-fixture-package` states these paths, so a test reads them without a literal of its own.
 
 The platform verifier discovers queries and Rust types from generated source maps.

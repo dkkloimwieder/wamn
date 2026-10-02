@@ -923,7 +923,7 @@ mod tests {
                 "--migration-dir".to_owned(),
                 path("apps/platform_fixture_overlay/migrations"),
                 "--history-manifest".to_owned(),
-                path("apps/platform_fixture_overlay/wamn.json"),
+                path("apps/platform_fixture_overlay/generated/wamn.json"),
                 "--url-env".to_owned(),
                 "DATABASE_URL".to_owned(),
                 "--".to_owned(),

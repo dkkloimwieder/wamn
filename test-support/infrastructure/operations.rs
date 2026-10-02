@@ -7,14 +7,15 @@
 
 use std::path::PathBuf;
 
-use wamn_schema_generator::{OperationOwners, resolve_operation_reference};
+use wamn_schema_generator::{OperationOwners, package_manifest_path, resolve_operation_reference};
 
-/// The `wamn.json` of one repository package, by its package id.
+/// The manifest of one repository package, by its package id.
 fn owners(package_id: &str) -> OperationOwners {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../apps")
-        .join(package_id)
-        .join("wamn.json");
+    let path = package_manifest_path(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps")
+            .join(package_id),
+    );
     let bytes =
         std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
     OperationOwners::from_slice(&bytes)

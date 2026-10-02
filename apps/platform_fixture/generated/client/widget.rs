@@ -62,7 +62,7 @@ pub const WIDGET_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `platform-fixture:widget/archive@2.0.0`.
+/// Input for `platform-fixture:widget/archive@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetArchiveRequest {
     /// `int64`
@@ -71,7 +71,7 @@ pub struct WidgetArchiveRequest {
     pub id: uuid::Uuid,
 }
 
-/// Result of `platform-fixture:widget/archive@2.0.0`.
+/// Result of `platform-fixture:widget/archive@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetArchiveResult {
     /// `int64`
@@ -82,7 +82,7 @@ pub struct WidgetArchiveResult {
     pub note: Option<String>,
 }
 
-/// Input descriptors for `platform-fixture:widget/archive@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/archive@2.1.0`.
 pub const WIDGET_ARCHIVE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "expected_edit_version",
@@ -98,7 +98,7 @@ pub const WIDGET_ARCHIVE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget/archive@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/archive@2.1.0`.
 pub const WIDGET_ARCHIVE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "edit_version",
@@ -191,10 +191,10 @@ pub const WIDGET_ARCHIVE_REQUIRES_COMPOSITION: bool = true;
 pub const WIDGET_ARCHIVE_REPLAY: Option<&str> = Some("state");
 pub const WIDGET_ARCHIVE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_ARCHIVE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget/archive@2.0.0`.
-pub const WIDGET_ARCHIVE_GRANT: &str = "platform-fixture:widget/archive@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/archive@2.1.0`.
+pub const WIDGET_ARCHIVE_GRANT: &str = "platform-fixture:widget/archive@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/archive@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/archive@2.1.0` declares.
 pub const WIDGET_ARCHIVE_ERRORS: &[&str] = &[
     "already_archived",
     "concurrency_conflict",
@@ -205,7 +205,7 @@ pub const WIDGET_ARCHIVE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget/archive@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/archive@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -217,7 +217,7 @@ pub fn archive_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/archive@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/archive@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -232,7 +232,7 @@ pub async fn archive(
         .await
 }
 
-/// Input for `platform-fixture:widget/create@2.0.0`.
+/// Input for `platform-fixture:widget/create@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetCreateRequest {
     /// `text`
@@ -247,7 +247,7 @@ pub struct WidgetCreateRequest {
     pub request_id: String,
 }
 
-/// Result of `platform-fixture:widget/create@2.0.0`.
+/// Result of `platform-fixture:widget/create@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetCreateResult {
     /// `text`
@@ -264,7 +264,7 @@ pub struct WidgetCreateResult {
     pub note: Option<String>,
 }
 
-/// Input descriptors for `platform-fixture:widget/create@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/create@2.1.0`.
 pub const WIDGET_CREATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "code",
@@ -298,7 +298,7 @@ pub const WIDGET_CREATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget/create@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/create@2.1.0`.
 pub const WIDGET_CREATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "code",
@@ -481,10 +481,10 @@ pub const WIDGET_CREATE_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_CREATE_REPLAY: Option<&str> = Some("claim");
 pub const WIDGET_CREATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_CREATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget/create@2.0.0`.
-pub const WIDGET_CREATE_GRANT: &str = "platform-fixture:widget/create@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/create@2.1.0`.
+pub const WIDGET_CREATE_GRANT: &str = "platform-fixture:widget/create@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/create@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/create@2.1.0` declares.
 pub const WIDGET_CREATE_ERRORS: &[&str] = &[
     "check_violation",
     "foreign_key_violation",
@@ -497,7 +497,7 @@ pub const WIDGET_CREATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `platform-fixture:widget/create@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/create@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -509,7 +509,7 @@ pub fn create_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/create@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/create@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -524,7 +524,7 @@ pub async fn create(
         .await
 }
 
-/// Input for `platform-fixture:widget/delete@2.0.0`.
+/// Input for `platform-fixture:widget/delete@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetDeleteRequest {
     /// `int64`
@@ -535,14 +535,14 @@ pub struct WidgetDeleteRequest {
     pub request_id: String,
 }
 
-/// Result of `platform-fixture:widget/delete@2.0.0`.
+/// Result of `platform-fixture:widget/delete@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetDeleteResult {
     /// `text`
     pub outcome: Option<String>,
 }
 
-/// Input descriptors for `platform-fixture:widget/delete@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/delete@2.1.0`.
 pub const WIDGET_DELETE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "expected_edit_version",
@@ -564,7 +564,7 @@ pub const WIDGET_DELETE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget/delete@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/delete@2.1.0`.
 pub const WIDGET_DELETE_RESULT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "outcome",
     type_name: "text",
@@ -630,10 +630,10 @@ pub const WIDGET_DELETE_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_DELETE_REPLAY: Option<&str> = None;
 pub const WIDGET_DELETE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_DELETE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget/delete@2.0.0`.
-pub const WIDGET_DELETE_GRANT: &str = "platform-fixture:widget/delete@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/delete@2.1.0`.
+pub const WIDGET_DELETE_GRANT: &str = "platform-fixture:widget/delete@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/delete@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/delete@2.1.0` declares.
 pub const WIDGET_DELETE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "internal_error",
@@ -644,7 +644,7 @@ pub const WIDGET_DELETE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget/delete@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/delete@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -656,7 +656,7 @@ pub fn delete_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/delete@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/delete@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -671,14 +671,14 @@ pub async fn delete(
         .await
 }
 
-/// Input for `platform-fixture:widget/get@2.0.0`.
+/// Input for `platform-fixture:widget/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `platform-fixture:widget/get@2.0.0`.
+/// Result of `platform-fixture:widget/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetGetResult {
     /// `text`
@@ -695,7 +695,7 @@ pub struct WidgetGetResult {
     pub note: Option<String>,
 }
 
-/// Input descriptors for `platform-fixture:widget/get@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/get@2.1.0`.
 pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -703,7 +703,7 @@ pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `platform-fixture:widget/get@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/get@2.1.0`.
 pub const WIDGET_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "code",
@@ -837,10 +837,10 @@ pub const WIDGET_GET_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_GET_REPLAY: Option<&str> = None;
 pub const WIDGET_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget/get@2.0.0`.
-pub const WIDGET_GET_GRANT: &str = "platform-fixture:widget/get@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/get@2.1.0`.
+pub const WIDGET_GET_GRANT: &str = "platform-fixture:widget/get@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/get@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/get@2.1.0` declares.
 pub const WIDGET_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -850,7 +850,7 @@ pub const WIDGET_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget/get@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/get@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -862,7 +862,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/get@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/get@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -877,7 +877,7 @@ pub async fn get(
         .await
 }
 
-/// Input for `platform-fixture:widget/list@2.0.0`.
+/// Input for `platform-fixture:widget/list@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetListRequest {
     /// `uuid`
@@ -886,7 +886,7 @@ pub struct WidgetListRequest {
     pub selector: serde_json::Value,
 }
 
-/// Result of `platform-fixture:widget/list@2.0.0`.
+/// Result of `platform-fixture:widget/list@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetListResult {
     /// `json`
@@ -899,7 +899,7 @@ pub struct WidgetListResult {
     pub id: uuid::Uuid,
 }
 
-/// Input descriptors for `platform-fixture:widget/list@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/list@2.1.0`.
 pub const WIDGET_LIST_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "maker_id",
@@ -915,7 +915,7 @@ pub const WIDGET_LIST_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget/list@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/list@2.1.0`.
 pub const WIDGET_LIST_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "attributes",
@@ -1026,10 +1026,10 @@ pub const WIDGET_LIST_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_LIST_REPLAY: Option<&str> = None;
 pub const WIDGET_LIST_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_LIST_RESULT_OPAQUE: bool = true;
-/// The grant a caller presents to invoke `platform-fixture:widget/list@2.0.0`.
-pub const WIDGET_LIST_GRANT: &str = "platform-fixture:widget/list@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/list@2.1.0`.
+pub const WIDGET_LIST_GRANT: &str = "platform-fixture:widget/list@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/list@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/list@2.1.0` declares.
 pub const WIDGET_LIST_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -1038,7 +1038,7 @@ pub const WIDGET_LIST_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget/list@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/list@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1050,7 +1050,7 @@ pub fn list_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/list@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/list@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -1065,7 +1065,7 @@ pub async fn list(
         .await
 }
 
-/// Input for `platform-fixture:widget/query@2.0.0`.
+/// Input for `platform-fixture:widget/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetQueryRequest {
     /// `text`, omittable
@@ -1096,7 +1096,7 @@ pub struct WidgetQueryRequestSort {
     pub field: String,
 }
 
-/// Result of `platform-fixture:widget/query@2.0.0`.
+/// Result of `platform-fixture:widget/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetQueryResult {
     /// `text`
@@ -1113,7 +1113,7 @@ pub struct WidgetQueryResult {
     pub note: Option<String>,
 }
 
-/// Input descriptors for `platform-fixture:widget/query@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/query@2.1.0`.
 pub const WIDGET_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -1159,7 +1159,7 @@ pub const WIDGET_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget/query@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/query@2.1.0`.
 pub const WIDGET_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "code",
@@ -1414,10 +1414,10 @@ pub const WIDGET_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_QUERY_REPLAY: Option<&str> = None;
 pub const WIDGET_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget/query@2.0.0`.
-pub const WIDGET_QUERY_GRANT: &str = "platform-fixture:widget/query@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/query@2.1.0`.
+pub const WIDGET_QUERY_GRANT: &str = "platform-fixture:widget/query@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/query@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/query@2.1.0` declares.
 pub const WIDGET_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -1426,7 +1426,7 @@ pub const WIDGET_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget/query@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/query@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1438,7 +1438,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/query@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/query@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -1453,7 +1453,7 @@ pub async fn query(
         .await
 }
 
-/// Input for `platform-fixture:widget/record-batch@2.0.0`.
+/// Input for `platform-fixture:widget/record-batch@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetRecordBatchRequest {
     /// `text`
@@ -1488,14 +1488,14 @@ pub struct WidgetRecordBatchRequestValueLine {
     pub widget_id: uuid::Uuid,
 }
 
-/// Result of `platform-fixture:widget/record-batch@2.0.0`.
+/// Result of `platform-fixture:widget/record-batch@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetRecordBatchResult {
     /// `uuid`
     pub widget_id: uuid::Uuid,
 }
 
-/// Input descriptors for `platform-fixture:widget/record-batch@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/record-batch@2.1.0`.
 pub const WIDGET_RECORD_BATCH_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "request_id",
@@ -1553,7 +1553,7 @@ pub const WIDGET_RECORD_BATCH_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget/record-batch@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/record-batch@2.1.0`.
 pub const WIDGET_RECORD_BATCH_RESULT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "widget_id",
     type_name: "uuid",
@@ -1717,10 +1717,10 @@ pub const WIDGET_RECORD_BATCH_REQUIRES_COMPOSITION: bool = true;
 pub const WIDGET_RECORD_BATCH_REPLAY: Option<&str> = Some("claim");
 pub const WIDGET_RECORD_BATCH_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_RECORD_BATCH_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget/record-batch@2.0.0`.
-pub const WIDGET_RECORD_BATCH_GRANT: &str = "platform-fixture:widget/record-batch@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/record-batch@2.1.0`.
+pub const WIDGET_RECORD_BATCH_GRANT: &str = "platform-fixture:widget/record-batch@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/record-batch@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/record-batch@2.1.0` declares.
 pub const WIDGET_RECORD_BATCH_ERRORS: &[&str] = &[
     "idempotency_conflict",
     "internal_error",
@@ -1730,7 +1730,7 @@ pub const WIDGET_RECORD_BATCH_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget/record-batch@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/record-batch@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -1742,7 +1742,7 @@ pub fn record_batch_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/record-batch@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/record-batch@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -1761,7 +1761,7 @@ pub async fn record_batch(
         .await
 }
 
-/// Input for `platform-fixture:widget/update@2.0.0`.
+/// Input for `platform-fixture:widget/update@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetUpdateRequest {
     /// `object`
@@ -1784,7 +1784,7 @@ pub struct WidgetUpdateRequestChange {
     pub note: Option<Option<String>>,
 }
 
-/// Result of `platform-fixture:widget/update@2.0.0`.
+/// Result of `platform-fixture:widget/update@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetUpdateResult {
     /// `text`
@@ -1801,7 +1801,7 @@ pub struct WidgetUpdateResult {
     pub note: Option<String>,
 }
 
-/// Input descriptors for `platform-fixture:widget/update@2.0.0`.
+/// Input descriptors for `platform-fixture:widget/update@2.1.0`.
 pub const WIDGET_UPDATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "change.code",
@@ -1841,7 +1841,7 @@ pub const WIDGET_UPDATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget/update@2.0.0`.
+/// Result descriptors for `platform-fixture:widget/update@2.1.0`.
 pub const WIDGET_UPDATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "code",
@@ -2049,10 +2049,10 @@ pub const WIDGET_UPDATE_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_UPDATE_REPLAY: Option<&str> = None;
 pub const WIDGET_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_UPDATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget/update@2.0.0`.
-pub const WIDGET_UPDATE_GRANT: &str = "platform-fixture:widget/update@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget/update@2.1.0`.
+pub const WIDGET_UPDATE_GRANT: &str = "platform-fixture:widget/update@2.1.0";
 
-/// Typed refusals `platform-fixture:widget/update@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget/update@2.1.0` declares.
 pub const WIDGET_UPDATE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "foreign_key_violation",
@@ -2065,7 +2065,7 @@ pub const WIDGET_UPDATE_ERRORS: &[&str] = &[
     "unique_violation",
 ];
 
-/// Where the release publishes `platform-fixture:widget/update@2.0.0`.
+/// Where the release publishes `platform-fixture:widget/update@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -2077,7 +2077,7 @@ pub fn update_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget/update@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget/update@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

@@ -6,16 +6,16 @@ package platform-fixture:generated;
 world generated {
   import wamn:postgres/types@0.3.0;
   import wamn:postgres/statements@0.3.0;
-  export platform-fixture:widget/archive@2.0.0;
-  export platform-fixture:widget/%list@2.0.0;
-  export platform-fixture:widget/record-batch@2.0.0;
-  export platform-fixture:widget-maker/%list@2.0.0;
-  export platform-fixture:widget/get@2.0.0;
-  export platform-fixture:widget/query@2.0.0;
-  export platform-fixture:widget/create@2.0.0;
-  export platform-fixture:widget/update@2.0.0;
-  export platform-fixture:widget/delete@2.0.0;
-  export platform-fixture:widget-maker/get@2.0.0;
-  export platform-fixture:widget-maker/query@2.0.0;
-  export platform-fixture:widget-tag/update@2.0.0;
+  export platform-fixture:widget/archive@2.1.0;
+  export platform-fixture:widget/%list@2.1.0;
+  export platform-fixture:widget/record-batch@2.1.0;
+  export platform-fixture:widget-maker/%list@2.1.0;
+  export platform-fixture:widget/get@2.1.0;
+  export platform-fixture:widget/query@2.1.0;
+  export platform-fixture:widget/create@2.1.0;
+  export platform-fixture:widget/update@2.1.0;
+  export platform-fixture:widget/delete@2.1.0;
+  export platform-fixture:widget-maker/get@2.1.0;
+  export platform-fixture:widget-maker/query@2.1.0;
+  export platform-fixture:widget-tag/update@2.1.0;
 }

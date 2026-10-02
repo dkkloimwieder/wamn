@@ -44,22 +44,35 @@ pub fn overlay_root() -> PathBuf {
     repository_root().join("apps").join(OVERLAY_PACKAGE_ID)
 }
 
-/// The authored manifest bytes of the fixture application.
+/// The compiled manifest of the fixture application. The fixture authors its
+/// manifest in `wamn.k`, and generation writes this file from it.
+#[must_use]
+pub fn manifest_path() -> PathBuf {
+    package_root().join("generated/wamn.json")
+}
+
+/// The compiled manifest of the overlay application.
+#[must_use]
+pub fn overlay_manifest_path() -> PathBuf {
+    overlay_root().join("generated/wamn.json")
+}
+
+/// The compiled manifest bytes of the fixture application.
 ///
 /// # Panics
 /// Panics when the fixture application is missing from the checkout.
 #[must_use]
 pub fn manifest_bytes() -> Vec<u8> {
-    read(&package_root().join("wamn.json"))
+    read(&manifest_path())
 }
 
-/// The authored manifest bytes of the overlay application.
+/// The compiled manifest bytes of the overlay application.
 ///
 /// # Panics
 /// Panics when the overlay application is missing from the checkout.
 #[must_use]
 pub fn overlay_manifest_bytes() -> Vec<u8> {
-    read(&overlay_root().join("wamn.json"))
+    read(&overlay_manifest_path())
 }
 
 /// The migrations directory, for a runner that takes `--migration-dir`.

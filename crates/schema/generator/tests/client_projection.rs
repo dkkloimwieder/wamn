@@ -762,7 +762,7 @@ fn authored_text_reaches_every_field_the_client_reads() {
 fn a_published_response_takes_its_text_from_the_terminal() {
     let package = fixture::generate_fixture();
     let contracts = fixture::contracts(&package);
-    let identity = "platform-fixture:widget/get@2.0.0";
+    let identity = "platform-fixture:widget/get@2.1.0";
     let served = |path: &str| wamn_schema_generator::client_ir::FieldIr {
         path: path.to_owned(),
         type_name: "text".to_owned(),

@@ -1,14 +1,14 @@
 {
   "package": {
     "id": "platform_fixture_overlay",
-    "version": "2.0.0",
-    "predecessor_version": "1.0.0"
+    "version": "2.1.0",
+    "predecessor_version": "2.0.0"
   },
   "base_dependencies": {
     "base_fixture": {
       "package": "platform_fixture",
-      "version": "2.0.0",
-      "digest": "sha256:a8d0d60c43ea53adc17da0a2b558578c0da12e446f93131cdd9c0c648df55838",
+      "version": "2.1.0",
+      "digest": "sha256:7ed4955d0d23eb8ebd9752347755c77fdd02a48a682fd36f55df9385487fd6cc",
       "operations": [
         "widget.archive"
       ]

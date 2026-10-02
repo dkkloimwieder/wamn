@@ -26,7 +26,7 @@ pub const WIDGET_TAG_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `platform-fixture:widget-tag/update@2.0.0`.
+/// Input for `platform-fixture:widget-tag/update@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetTagUpdateRequest {
     /// `object`
@@ -45,7 +45,7 @@ pub struct WidgetTagUpdateRequestChange {
     pub label: Option<String>,
 }
 
-/// Result of `platform-fixture:widget-tag/update@2.0.0`.
+/// Result of `platform-fixture:widget-tag/update@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetTagUpdateResult {
     /// `int64`
@@ -56,7 +56,7 @@ pub struct WidgetTagUpdateResult {
     pub label: String,
 }
 
-/// Input descriptors for `platform-fixture:widget-tag/update@2.0.0`.
+/// Input descriptors for `platform-fixture:widget-tag/update@2.1.0`.
 pub const WIDGET_TAG_UPDATE_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "change.label",
@@ -84,7 +84,7 @@ pub const WIDGET_TAG_UPDATE_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget-tag/update@2.0.0`.
+/// Result descriptors for `platform-fixture:widget-tag/update@2.1.0`.
 pub const WIDGET_TAG_UPDATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "edit_version",
@@ -212,10 +212,10 @@ pub const WIDGET_TAG_UPDATE_REQUIRES_COMPOSITION: bool = true;
 pub const WIDGET_TAG_UPDATE_REPLAY: Option<&str> = None;
 pub const WIDGET_TAG_UPDATE_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_TAG_UPDATE_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget-tag/update@2.0.0`.
-pub const WIDGET_TAG_UPDATE_GRANT: &str = "platform-fixture:widget-tag/update@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget-tag/update@2.1.0`.
+pub const WIDGET_TAG_UPDATE_GRANT: &str = "platform-fixture:widget-tag/update@2.1.0";
 
-/// Typed refusals `platform-fixture:widget-tag/update@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget-tag/update@2.1.0` declares.
 pub const WIDGET_TAG_UPDATE_ERRORS: &[&str] = &[
     "concurrency_conflict",
     "internal_error",
@@ -226,7 +226,7 @@ pub const WIDGET_TAG_UPDATE_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget-tag/update@2.0.0`.
+/// Where the release publishes `platform-fixture:widget-tag/update@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -238,7 +238,7 @@ pub fn update_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget-tag/update@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget-tag/update@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

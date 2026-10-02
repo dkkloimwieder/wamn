@@ -78,7 +78,7 @@ impl ReleaseFiles {
             .collect();
         std::fs::write(
             root.join("wamn.json"),
-            r#"{"package": {"id": "platform_fixture", "version": "2.0.0"}}"#,
+            r#"{"package": {"id": "platform_fixture", "version": "2.1.0"}}"#,
         )
         .unwrap();
         Self {

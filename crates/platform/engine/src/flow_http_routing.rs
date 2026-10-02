@@ -2140,7 +2140,7 @@ mod tests {
         );
         // A stored reference holds the operation at any served version.
         assert!(caller.permits("platform-fixture:widget/get@1.0.0"));
-        assert!(caller.permits("platform-fixture:widget/get@2.0.0"));
+        assert!(caller.permits("platform-fixture:widget/get@2.1.0"));
         assert!(!caller.permits("platform-fixture:widget/query@1.0.0"));
         assert!(!caller.permits("platform-fixture:widget-maker/get@1.0.0"));
         assert!(!caller.permits("widget.get"));

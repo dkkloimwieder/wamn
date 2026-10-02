@@ -32,14 +32,14 @@ pub const WIDGET_MAKER_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `platform-fixture:widget-maker/get@2.0.0`.
+/// Input for `platform-fixture:widget-maker/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `platform-fixture:widget-maker/get@2.0.0`.
+/// Result of `platform-fixture:widget-maker/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerGetResult {
     /// `timestamptz`
@@ -52,7 +52,7 @@ pub struct WidgetMakerGetResult {
     pub name: String,
 }
 
-/// Input descriptors for `platform-fixture:widget-maker/get@2.0.0`.
+/// Input descriptors for `platform-fixture:widget-maker/get@2.1.0`.
 pub const WIDGET_MAKER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -60,7 +60,7 @@ pub const WIDGET_MAKER_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `platform-fixture:widget-maker/get@2.0.0`.
+/// Result descriptors for `platform-fixture:widget-maker/get@2.1.0`.
 pub const WIDGET_MAKER_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -158,10 +158,10 @@ pub const WIDGET_MAKER_GET_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_MAKER_GET_REPLAY: Option<&str> = None;
 pub const WIDGET_MAKER_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_MAKER_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget-maker/get@2.0.0`.
-pub const WIDGET_MAKER_GET_GRANT: &str = "platform-fixture:widget-maker/get@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget-maker/get@2.1.0`.
+pub const WIDGET_MAKER_GET_GRANT: &str = "platform-fixture:widget-maker/get@2.1.0";
 
-/// Typed refusals `platform-fixture:widget-maker/get@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget-maker/get@2.1.0` declares.
 pub const WIDGET_MAKER_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -171,7 +171,7 @@ pub const WIDGET_MAKER_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget-maker/get@2.0.0`.
+/// Where the release publishes `platform-fixture:widget-maker/get@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -183,7 +183,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget-maker/get@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget-maker/get@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -198,11 +198,11 @@ pub async fn get(
         .await
 }
 
-/// Input for `platform-fixture:widget-maker/list@2.0.0`.
+/// Input for `platform-fixture:widget-maker/list@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerListRequest {}
 
-/// Result of `platform-fixture:widget-maker/list@2.0.0`.
+/// Result of `platform-fixture:widget-maker/list@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerListResult {
     /// `uuid`
@@ -211,10 +211,10 @@ pub struct WidgetMakerListResult {
     pub name: String,
 }
 
-/// Input descriptors for `platform-fixture:widget-maker/list@2.0.0`.
+/// Input descriptors for `platform-fixture:widget-maker/list@2.1.0`.
 pub const WIDGET_MAKER_LIST_INPUT: &[FieldDescriptor] = &[];
 
-/// Result descriptors for `platform-fixture:widget-maker/list@2.0.0`.
+/// Result descriptors for `platform-fixture:widget-maker/list@2.1.0`.
 pub const WIDGET_MAKER_LIST_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "id",
@@ -264,10 +264,10 @@ pub const WIDGET_MAKER_LIST_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_MAKER_LIST_REPLAY: Option<&str> = None;
 pub const WIDGET_MAKER_LIST_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_MAKER_LIST_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget-maker/list@2.0.0`.
-pub const WIDGET_MAKER_LIST_GRANT: &str = "platform-fixture:widget-maker/list@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget-maker/list@2.1.0`.
+pub const WIDGET_MAKER_LIST_GRANT: &str = "platform-fixture:widget-maker/list@2.1.0";
 
-/// Typed refusals `platform-fixture:widget-maker/list@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget-maker/list@2.1.0` declares.
 pub const WIDGET_MAKER_LIST_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -276,7 +276,7 @@ pub const WIDGET_MAKER_LIST_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget-maker/list@2.0.0`.
+/// Where the release publishes `platform-fixture:widget-maker/list@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -288,7 +288,7 @@ pub fn list_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget-maker/list@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget-maker/list@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
@@ -303,7 +303,7 @@ pub async fn list(
         .await
 }
 
-/// Input for `platform-fixture:widget-maker/query@2.0.0`.
+/// Input for `platform-fixture:widget-maker/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerQueryRequest {
     /// `text`, omittable
@@ -342,7 +342,7 @@ pub struct WidgetMakerQueryRequestSort {
     pub field: String,
 }
 
-/// Result of `platform-fixture:widget-maker/query@2.0.0`.
+/// Result of `platform-fixture:widget-maker/query@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetMakerQueryResult {
     /// `timestamptz`
@@ -355,7 +355,7 @@ pub struct WidgetMakerQueryResult {
     pub name: String,
 }
 
-/// Input descriptors for `platform-fixture:widget-maker/query@2.0.0`.
+/// Input descriptors for `platform-fixture:widget-maker/query@2.1.0`.
 pub const WIDGET_MAKER_QUERY_INPUT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "cursor",
@@ -407,7 +407,7 @@ pub const WIDGET_MAKER_QUERY_INPUT: &[FieldDescriptor] = &[
     },
 ];
 
-/// Result descriptors for `platform-fixture:widget-maker/query@2.0.0`.
+/// Result descriptors for `platform-fixture:widget-maker/query@2.1.0`.
 pub const WIDGET_MAKER_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
@@ -640,10 +640,10 @@ pub const WIDGET_MAKER_QUERY_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_MAKER_QUERY_REPLAY: Option<&str> = None;
 pub const WIDGET_MAKER_QUERY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_MAKER_QUERY_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture:widget-maker/query@2.0.0`.
-pub const WIDGET_MAKER_QUERY_GRANT: &str = "platform-fixture:widget-maker/query@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture:widget-maker/query@2.1.0`.
+pub const WIDGET_MAKER_QUERY_GRANT: &str = "platform-fixture:widget-maker/query@2.1.0";
 
-/// Typed refusals `platform-fixture:widget-maker/query@2.0.0` declares.
+/// Typed refusals `platform-fixture:widget-maker/query@2.1.0` declares.
 pub const WIDGET_MAKER_QUERY_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -652,7 +652,7 @@ pub const WIDGET_MAKER_QUERY_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture:widget-maker/query@2.0.0`.
+/// Where the release publishes `platform-fixture:widget-maker/query@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -664,7 +664,7 @@ pub fn query_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture:widget-maker/query@2.0.0` through a bound client.
+/// Invoke `platform-fixture:widget-maker/query@2.1.0` through a bound client.
 ///
 /// # Errors
 ///

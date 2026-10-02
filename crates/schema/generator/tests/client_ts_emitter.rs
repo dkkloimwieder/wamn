@@ -77,7 +77,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
         );
         assert!(
             widget.contains(&format!(
-                "operation: \"platform-fixture:widget/{operation}@2.0.0\","
+                "operation: \"platform-fixture:widget/{operation}@2.1.0\","
             )),
             "{operation} carries its exact canonical identity"
         );
@@ -106,7 +106,7 @@ fn a_collection_result_is_typed_as_the_envelope_the_release_serves() {
     let widget = widget(&files);
     assert!(
         widget.contains(concat!(
-            "/** Result of `platform-fixture:widget/list@2.0.0`. */\n",
+            "/** Result of `platform-fixture:widget/list@2.1.0`. */\n",
             "export interface WidgetListResult {\n",
             "  /** Every row the release served. */\n",
             "  readonly rows: readonly WidgetListRow[];\n",
@@ -116,7 +116,7 @@ fn a_collection_result_is_typed_as_the_envelope_the_release_serves() {
     );
     assert!(
         widget.contains(concat!(
-            "/** Result of `platform-fixture:widget/query@2.0.0`. */\n",
+            "/** Result of `platform-fixture:widget/query@2.1.0`. */\n",
             "export interface WidgetQueryResult {\n",
             "  /** The rows this page carries. */\n",
             "  readonly item: readonly WidgetQueryRow[];\n",
@@ -128,7 +128,7 @@ fn a_collection_result_is_typed_as_the_envelope_the_release_serves() {
     );
     assert!(
         widget.contains(concat!(
-            "/** One row of `platform-fixture:widget/list@2.0.0`. */\n",
+            "/** One row of `platform-fixture:widget/list@2.1.0`. */\n",
             "export interface WidgetListRow {\n",
         )),
         "the row keeps the result leaf fields"
@@ -342,7 +342,7 @@ fn an_event_handler_emits_nothing_and_an_unexposed_operation_gets_no_function() 
     let mut handler = ir.models[0].operations[0].clone();
     handler.name = "widget_archived".to_owned();
     handler.type_ = "event_handler".to_owned();
-    handler.operation = "platform-fixture:widget/widget-archived@2.0.0".to_owned();
+    handler.operation = "platform-fixture:widget/widget-archived@2.1.0".to_owned();
     ir.models[0].operations.push(handler);
     ir.models[0]
         .operations
@@ -363,7 +363,7 @@ fn an_event_handler_emits_nothing_and_an_unexposed_operation_gets_no_function() 
     assert!(!widget.contains("export async function get("));
     assert!(!widget.contains("WIDGET_GET_ROUTE"));
     assert!(widget.contains(
-        "// `platform-fixture:widget/get@2.0.0` is not published over HTTP by this release"
+        "// `platform-fixture:widget/get@2.1.0` is not published over HTTP by this release"
     ));
 }
 
@@ -417,7 +417,7 @@ fn a_contract_name_that_does_not_reverse_refuses_and_names_its_path() {
     assert_eq!(refusal.error_type(), ClientTsErrorType::IrreversibleName);
     let text = refusal.to_string();
     assert!(
-        text.contains("platform-fixture:widget/archive@2.0.0"),
+        text.contains("platform-fixture:widget/archive@2.1.0"),
         "{text}"
     );
     assert!(text.contains("field \"editVersion\""), "{text}");
@@ -618,7 +618,7 @@ fn a_described_member_carries_its_description_and_the_rest_are_unchanged() {
     assert!(
         widget.contains(concat!(
             "/**\n",
-            " * Input for `platform-fixture:widget/record-batch@2.0.0`.\n",
+            " * Input for `platform-fixture:widget/record-batch@2.1.0`.\n",
             " *\n",
             " * One submission that records several lines at once.\n",
             " */\n",
@@ -626,7 +626,7 @@ fn a_described_member_carries_its_description_and_the_rest_are_unchanged() {
         "an operation states its own description above its input type"
     );
     assert!(
-        widget.contains("/** Input for `platform-fixture:widget/get@2.0.0`. */\n"),
+        widget.contains("/** Input for `platform-fixture:widget/get@2.1.0`. */\n"),
         "an operation with no description keeps its single line"
     );
     assert!(

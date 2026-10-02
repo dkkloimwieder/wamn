@@ -487,10 +487,10 @@ mod tests {
         ),
     ];
     const FIXTURE_ATTACHMENTS_DIGEST: &str =
-        "sha256:45af3a3c8e8ff73d14c725f9c4c74078c69096ccf74da82395374b71f7257451";
+        "sha256:3ae599891ccfa5d85d02eb7d704ab0d2b2fe27b89c48daa593d801d58c24bcde";
     /// The rendered fixture declaration, before generation wrote its entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:7f0194ad4794e4415d07301704b7da0547433e29bb8d26423dfbcdd13c194531";
+        "sha256:905917da937f05ba22d92ef14b7dc5ecb7d5ed5b210cf0055895a5630822371a";
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they
@@ -500,7 +500,7 @@ mod tests {
         let root = wamn_fixture_package::package_root();
         let attachments = read_package_attachments(
             &[root.join("publication/attachments.json")],
-            &[root.join("wamn.json")],
+            &[wamn_fixture_package::manifest_path()],
         )
         .expect("read the fixture attachments");
         let routes = attachments

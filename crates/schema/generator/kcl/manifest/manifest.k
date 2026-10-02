@@ -345,6 +345,12 @@ text = lambda name: str -> Value {
 int32 = lambda name: str -> Value {
     Value {name = name, type = "int32"}
 }
+int64 = lambda name: str -> Value {
+    Value {name = name, type = "int64"}
+}
+json = lambda name: str -> Value {
+    Value {name = name, type = "json"}
+}
 numeric = lambda name: str -> Value {
     Value {name = name, type = "numeric"}
 }

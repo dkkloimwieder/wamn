@@ -168,18 +168,18 @@ mod tests {
         assert_eq!(
             operation_grant_tokens(&fixture_manifest()).expect("parse strict fixture manifest"),
             [
-                "platform-fixture:widget-maker/get@2.0.0",
-                "platform-fixture:widget-maker/list@2.0.0",
-                "platform-fixture:widget-maker/query@2.0.0",
-                "platform-fixture:widget-tag/update@2.0.0",
-                "platform-fixture:widget/archive@2.0.0",
-                "platform-fixture:widget/create@2.0.0",
-                "platform-fixture:widget/delete@2.0.0",
-                "platform-fixture:widget/get@2.0.0",
-                "platform-fixture:widget/list@2.0.0",
-                "platform-fixture:widget/query@2.0.0",
-                "platform-fixture:widget/record-batch@2.0.0",
-                "platform-fixture:widget/update@2.0.0",
+                "platform-fixture:widget-maker/get@2.1.0",
+                "platform-fixture:widget-maker/list@2.1.0",
+                "platform-fixture:widget-maker/query@2.1.0",
+                "platform-fixture:widget-tag/update@2.1.0",
+                "platform-fixture:widget/archive@2.1.0",
+                "platform-fixture:widget/create@2.1.0",
+                "platform-fixture:widget/delete@2.1.0",
+                "platform-fixture:widget/get@2.1.0",
+                "platform-fixture:widget/list@2.1.0",
+                "platform-fixture:widget/query@2.1.0",
+                "platform-fixture:widget/record-batch@2.1.0",
+                "platform-fixture:widget/update@2.1.0",
             ]
             .map(str::to_owned)
             .into_iter()
@@ -211,7 +211,7 @@ mod tests {
         assert!(
             !grants
                 .iter()
-                .any(|grant| grant == "platform-fixture:widget/record-batch@2.0.0")
+                .any(|grant| grant == "platform-fixture:widget/record-batch@2.1.0")
         );
         assert_eq!(grants.len(), 11);
     }

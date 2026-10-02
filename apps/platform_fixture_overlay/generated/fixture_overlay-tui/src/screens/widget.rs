@@ -5,7 +5,7 @@ use wamn_client_tui::{screen, submission};
 pub static GET_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "widget",
     name: "get",
-    operation: "platform-fixture-overlay:widget/get@2.0.0",
+    operation: "platform-fixture-overlay:widget/get@2.1.0",
     type_: "get",
     input: crate::widget::WIDGET_GET_INPUT_SCHEMA,
     input_schema: Some(

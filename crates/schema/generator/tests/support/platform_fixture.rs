@@ -103,7 +103,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
     .map(|(model, name)| {
         // A contract identity spells its operation with hyphens, and a route
         // template keeps the operation path.
-        let identity = format!("platform-fixture:{model}/{}@2.0.0", name.replace('_', "-"));
+        let identity = format!("platform-fixture:{model}/{}@2.1.0", name.replace('_', "-"));
         (
             identity.clone(),
             RouteIr {
@@ -446,7 +446,8 @@ pub(crate) fn catalog_with_unread_table() -> CatalogIr {
 
 /// The fixture manifest, as the fixture application authors it.
 ///
-/// `apps/platform_fixture/wamn.json` is the one authority. A test that needs
+/// `apps/platform_fixture/wamn.k` is the one authority, compiled to
+/// `apps/platform_fixture/generated/wamn.json`. A test that needs
 /// a different shape changes this value on its own copy.
 ///
 /// # Panics

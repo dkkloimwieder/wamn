@@ -170,8 +170,8 @@ fn admin_role_has_no_rows_and_authored_rows_follow_their_root_live() {
     let sealed = refusal(
         &url,
         "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ('t1', 'clerk', 'platform-fixture:widget/list@2.0.0', \
-                 'platform-fixture:widget/list@2.0.0')",
+         VALUES ('t1', 'clerk', 'platform-fixture:widget/list@2.1.0', \
+                 'platform-fixture:widget/list@2.1.0')",
     )
     .expect("a sealed operation id was stored as a reference");
     assert!(sealed.contains("permissions_reference_check"), "{sealed}");

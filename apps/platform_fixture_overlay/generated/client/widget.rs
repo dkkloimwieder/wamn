@@ -50,14 +50,14 @@ pub const WIDGET_FIELDS: &[FieldDescriptor] = &[
     },
 ];
 
-/// Input for `platform-fixture-overlay:widget/get@2.0.0`.
+/// Input for `platform-fixture-overlay:widget/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetGetRequest {
     /// `uuid`
     pub id: uuid::Uuid,
 }
 
-/// Result of `platform-fixture-overlay:widget/get@2.0.0`.
+/// Result of `platform-fixture-overlay:widget/get@2.1.0`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WidgetGetResult {
     /// `text`
@@ -76,7 +76,7 @@ pub struct WidgetGetResult {
     pub overlay_note: Option<String>,
 }
 
-/// Input descriptors for `platform-fixture-overlay:widget/get@2.0.0`.
+/// Input descriptors for `platform-fixture-overlay:widget/get@2.1.0`.
 pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     path: "id",
     type_name: "uuid",
@@ -84,7 +84,7 @@ pub const WIDGET_GET_INPUT: &[FieldDescriptor] = &[FieldDescriptor {
     values: &[],
 }];
 
-/// Result descriptors for `platform-fixture-overlay:widget/get@2.0.0`.
+/// Result descriptors for `platform-fixture-overlay:widget/get@2.1.0`.
 pub const WIDGET_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "code",
@@ -236,10 +236,10 @@ pub const WIDGET_GET_REQUIRES_COMPOSITION: bool = false;
 pub const WIDGET_GET_REPLAY: Option<&str> = None;
 pub const WIDGET_GET_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
 pub const WIDGET_GET_RESULT_OPAQUE: bool = false;
-/// The grant a caller presents to invoke `platform-fixture-overlay:widget/get@2.0.0`.
-pub const WIDGET_GET_GRANT: &str = "platform-fixture-overlay:widget/get@2.0.0";
+/// The grant a caller presents to invoke `platform-fixture-overlay:widget/get@2.1.0`.
+pub const WIDGET_GET_GRANT: &str = "platform-fixture-overlay:widget/get@2.1.0";
 
-/// Typed refusals `platform-fixture-overlay:widget/get@2.0.0` declares.
+/// Typed refusals `platform-fixture-overlay:widget/get@2.1.0` declares.
 pub const WIDGET_GET_ERRORS: &[&str] = &[
     "internal_error",
     "invalid_input",
@@ -249,7 +249,7 @@ pub const WIDGET_GET_ERRORS: &[&str] = &[
     "timeout",
 ];
 
-/// Where the release publishes `platform-fixture-overlay:widget/get@2.0.0`.
+/// Where the release publishes `platform-fixture-overlay:widget/get@2.1.0`.
 ///
 /// Method and template only — the host and base URL are the client's
 /// deployment config, not this release's facts.
@@ -261,7 +261,7 @@ pub fn get_route() -> RouteMetadata {
     }
 }
 
-/// Invoke `platform-fixture-overlay:widget/get@2.0.0` through a bound client.
+/// Invoke `platform-fixture-overlay:widget/get@2.1.0` through a bound client.
 ///
 /// # Errors
 ///
