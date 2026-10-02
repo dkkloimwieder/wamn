@@ -100,9 +100,96 @@ pub fn render_project_env_database(
     })
 }
 
+/// Render the CNPG `Publication` CR of a project-env's CDC capture.
+///
+/// The provisioner is not a superuser, and `CREATE PUBLICATION … FOR TABLES IN
+/// SCHEMA` needs one, so the CNPG operator creates the publication
+/// (`docs/plan/platform-ui.md` §4.10). It is the publication that
+/// [`create_publication_sql`](crate::sql::create_publication_sql) declares:
+/// `publication` over every table of `schema`, with
+/// [`CDC_PUBLISH`](crate::sql::CDC_PUBLISH). The resource takes the database
+/// name, a valid Kubernetes name, and shares the namespace of its `Cluster`.
+///
+/// Apply it after the CDC SQL creates the schema, and wait for
+/// `status.applied` before any write to the schema: the slot decodes a change
+/// only under a publication that existed when the change was written.
+pub fn render_project_env_publication(
+    triple: &Triple,
+    instance: &str,
+    cluster: &str,
+    namespace: &str,
+    publication: &str,
+    schema: &str,
+) -> Value {
+    let database =
+        project_env_database_name(&triple.org, &triple.project, triple.env.as_str(), instance);
+    json!({
+        "apiVersion": API_VERSION,
+        "kind": "Publication",
+        "metadata": {
+            "name": database,
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "project-env-publication",
+                "wamn.org": triple.org,
+                "wamn.project": triple.project,
+                "wamn.env": triple.env.as_str(),
+            },
+        },
+        "spec": {
+            "cluster": { "name": cluster },
+            "dbname": database,
+            "name": publication,
+            "target": { "objects": [{ "tablesInSchema": schema }] },
+            "parameters": { "publish": crate::sql::CDC_PUBLISH },
+            "publicationReclaimPolicy": "retain",
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publication_cr_declares_the_cdc_publication() {
+        let t = Triple::new("acme", "billing", "dev");
+        let cr = render_project_env_publication(
+            &t,
+            "k3m9x2p7",
+            "acme-dev",
+            "platform",
+            "wamn_cdc_acme__billing__dev__k3m9x2p7",
+            "billing",
+        );
+        assert_eq!(
+            cr,
+            json!({
+                "apiVersion": "postgresql.cnpg.io/v1",
+                "kind": "Publication",
+                "metadata": {
+                    "name": "wamn-db-acme--billing--dev--k3m9x2p7",
+                    "namespace": "platform",
+                    "labels": {
+                        "app.kubernetes.io/managed-by": "wamn",
+                        "app.kubernetes.io/component": "project-env-publication",
+                        "wamn.org": "acme",
+                        "wamn.project": "billing",
+                        "wamn.env": "dev",
+                    },
+                },
+                "spec": {
+                    "cluster": { "name": "acme-dev" },
+                    "dbname": "wamn-db-acme--billing--dev--k3m9x2p7",
+                    "name": "wamn_cdc_acme__billing__dev__k3m9x2p7",
+                    "target": { "objects": [{ "tablesInSchema": "billing" }] },
+                    "parameters": { "publish": "insert, update, delete" },
+                    "publicationReclaimPolicy": "retain",
+                },
+            })
+        );
+    }
 
     #[test]
     fn database_cr_names_the_db_owner_and_target_cluster() {

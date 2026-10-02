@@ -215,6 +215,7 @@ async fn enable_cdc(
             db_host: target.host_str().map(str::to_owned),
             db_port: target.port_or_known_default().unwrap_or(5432),
             namespace: "wamn-system".to_owned(),
+            cluster_namespace: "wamn-system".to_owned(),
             secret_namespace: None,
             stream: None,
             nats_url: inputs.event_nats_url.clone(),
@@ -225,11 +226,27 @@ async fn enable_cdc(
             consumer_config,
             // The role SQL carries the password, so it stays in memory.
             emit_role_sql: None,
-            emit_cdc_sql: Some(cdc_sql_file.clone()),
+            emit_cdc_sql: None,
+            emit_publication: None,
             emit_secret: None,
         },
     )
     .await?;
+    // No CNPG operator runs here, so the superuser that local dev holds creates
+    // the publication with the statement the fixtures use. It follows the
+    // schema guard of the bundle, and no write precedes it.
+    std::fs::write(
+        &cdc_sql_file,
+        format!(
+            "{}{}\n",
+            outcome.cdc_sql,
+            wamn_control_provision::sql::create_publication_sql(
+                &outcome.cdc_name,
+                &identity.schema
+            )
+        ),
+    )
+    .with_context(|| format!("write {}", cdc_sql_file.display()))?;
     admin
         .batch_execute(&outcome.role_sql)
         .await

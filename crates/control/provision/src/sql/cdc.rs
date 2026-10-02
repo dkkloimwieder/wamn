@@ -76,20 +76,29 @@ pub fn ensure_schema_sql(schema: &str) -> String {
 /// change carries `pubtruncate`, so the reader refuses it, and the remedy is a
 /// fresh environment rather than a repair.
 ///
-/// Run connected to the project-env database.
+/// Run connected to the project-env database. Only a superuser can run it, so
+/// only local dev and the test fixtures do. The provisioner applies the CNPG
+/// `Publication` CR instead (`docs/plan/platform-ui.md` §4.10).
 pub fn create_publication_sql(publication: &str, schema: &str) -> String {
     format!(
         "DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = {pub_lit}) THEN \
              CREATE PUBLICATION {publication} FOR TABLES IN SCHEMA {schema} \
-               WITH (publish = 'insert, update, delete'); \
+               WITH (publish = {publish}); \
            END IF; \
          END $$;",
         publication = quote_ident(publication),
         pub_lit = quote_literal(publication),
         schema = quote_ident(schema),
+        publish = quote_literal(CDC_PUBLISH),
     )
 }
+
+/// The `publish` parameter of every CDC publication: insert, update and
+/// delete, never truncate. [`create_publication_sql`] and the CNPG
+/// `Publication` CR of [`crate::database::render_project_env_publication`]
+/// both take it from here.
+pub const CDC_PUBLISH: &str = "insert, update, delete";
 
 /// Idempotently create the **failover-enabled** logical replication slot via
 /// the SQL-function form: `pg_create_logical_replication_slot(<slot>,

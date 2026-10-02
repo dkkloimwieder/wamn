@@ -520,7 +520,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         .into_iter()
         .map(|row| row.get(0))
         .collect();
-    assert_eq!(recorded, [role_a.clone()]);
+    assert_eq!(recorded, std::slice::from_ref(&role_a));
     assert_eq!(
         direct_acl_set(&target, MANAGEMENT_ADMITTER_ROLE).await,
         expected_stable_acl(),

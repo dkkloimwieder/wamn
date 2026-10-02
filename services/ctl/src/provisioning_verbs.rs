@@ -497,10 +497,19 @@ pub struct EnableCdcProjectEnvArgs {
     #[arg(long)]
     pub emit_role_sql: Option<PathBuf>,
 
-    /// Write the CDC SQL (schema guard + publication + failover slot + grants;
-    /// psql the PROJECT-ENV database) here; `-` = stdout.
+    /// Write the CDC SQL (schema guard + failover slot + grants; psql the
+    /// PROJECT-ENV database) here; `-` = stdout.
     #[arg(long)]
     pub emit_cdc_sql: Option<PathBuf>,
+
+    /// Write the CNPG `Publication` CR (JSON) here; `-` = stdout. Apply it
+    /// after the CDC SQL and wait for `status.applied` before any write.
+    #[arg(long)]
+    pub emit_publication: Option<PathBuf>,
+
+    /// Namespace of the CNPG `Cluster`, which the `Publication` shares.
+    #[arg(long, env = "WAMN_CLUSTER_NAMESPACE", default_value = "wamn-system")]
+    pub cluster_namespace: String,
 
     /// Write the replication-credential `Secret` (JSON) here; `-` = stdout.
     #[arg(long)]
@@ -1025,6 +1034,7 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         db_host: args.db_host,
         db_port: args.db_port,
         namespace: args.namespace,
+        cluster_namespace: args.cluster_namespace,
         secret_namespace: args.secret_namespace,
         stream: args.stream,
         nats_url: args.nats_url,
@@ -1035,6 +1045,7 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         consumer_config: args.consumer_config,
         emit_role_sql: args.emit_role_sql,
         emit_cdc_sql: args.emit_cdc_sql,
+        emit_publication: args.emit_publication,
         emit_secret: args.emit_secret,
     };
     let outcome = enable_cdc_project_env::enable_cdc_project_env(&request).await?;
@@ -1046,6 +1057,7 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         secret_name,
         role_sql,
         cdc_sql,
+        publication,
         secret,
     } = &outcome;
 
@@ -1062,9 +1074,14 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
     );
     emit_text(
         request.emit_cdc_sql.as_deref(),
-        "CDC SQL (psql the PROJECT-ENV database — publication + slot are database-bound)",
+        "CDC SQL (psql the PROJECT-ENV database — the slot is database-bound)",
         cdc_sql,
     );
+    emit_json(
+        request.emit_publication.as_deref(),
+        "Publication CR (kubectl apply after the CDC SQL)",
+        publication,
+    )?;
     emit_json(
         request.emit_secret.as_deref(),
         "replication-credential Secret (kubectl apply)",

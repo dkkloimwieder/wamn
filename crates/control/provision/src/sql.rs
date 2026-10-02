@@ -44,7 +44,7 @@ pub use database_grants::{
 
 #[doc(inline)]
 pub use cdc::{
-    create_failover_slot_sql, create_publication_sql, drop_publication_sql,
+    CDC_PUBLISH, create_failover_slot_sql, create_publication_sql, drop_publication_sql,
     drop_replication_slot_sql, ensure_cdc_exclusion_map_sql, ensure_entity_map_sql,
     ensure_replication_role_sql, ensure_schema_sql, grant_replication_access_sql,
     upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,

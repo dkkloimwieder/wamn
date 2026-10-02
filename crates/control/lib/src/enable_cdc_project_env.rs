@@ -94,6 +94,9 @@ pub struct EnableCdcProjectEnvRequest {
     /// Namespace the rendered `Secret` is applied to.
     pub namespace: String,
 
+    /// Namespace of the CNPG `Cluster`, which the `Publication` CR shares.
+    pub cluster_namespace: String,
+
     /// Secret namespace to RECORD in the registration's replication `SecretRef`.
     /// Absent records `NULL` (the resolving service's own namespace).
     pub secret_namespace: Option<String>,
@@ -125,6 +128,9 @@ pub struct EnableCdcProjectEnvRequest {
     /// Write the CDC SQL here.
     pub emit_cdc_sql: Option<PathBuf>,
 
+    /// Write the CNPG `Publication` CR (JSON) here.
+    pub emit_publication: Option<PathBuf>,
+
     /// Write the replication-credential `Secret` (JSON) here.
     pub emit_secret: Option<PathBuf>,
 }
@@ -140,6 +146,8 @@ pub struct EnableCdcProjectEnvOutcome {
     pub secret_name: String,
     pub role_sql: String,
     pub cdc_sql: String,
+    /// The CNPG `Publication` CR, which the operator turns into the publication.
+    pub publication: Value,
     pub secret: Value,
 }
 
@@ -238,11 +246,23 @@ pub async fn enable_cdc_project_env(
     // Render the artifacts the runbook applies.
     let role_sql = sql::ensure_replication_role_sql(&cdc_name, &args.replication_password);
     let cdc_sql = cdc_sql_bundle(&args.schema, &cdc_name, &db_name);
+    let publication = wamn_control_provision::database::render_project_env_publication(
+        &triple,
+        &instance,
+        &cluster,
+        &args.cluster_namespace,
+        &cdc_name,
+        &args.schema,
+    );
     let secret_doc =
         render_project_env_cdc_secret_manifest(&triple, &instance, &args.namespace, &cdc_url);
 
     write_output(args.emit_role_sql.as_deref(), &role_sql)?;
     write_output(args.emit_cdc_sql.as_deref(), &cdc_sql)?;
+    write_output(
+        args.emit_publication.as_deref(),
+        &serde_json::to_string_pretty(&publication)?,
+    )?;
     write_output(
         args.emit_secret.as_deref(),
         &serde_json::to_string_pretty(&secret_doc)?,
@@ -267,6 +287,7 @@ pub async fn enable_cdc_project_env(
         secret_name,
         role_sql,
         cdc_sql,
+        publication,
         secret: secret_doc,
     })
 }
@@ -274,16 +295,15 @@ pub async fn enable_cdc_project_env(
 /// The CDC SQL the runbook applies connected to the PROJECT-ENV database, in
 /// dependency order: the eager schema guard (F2 — `FOR TABLES IN SCHEMA`
 /// auto-includes tables created later, so the publication may precede package
-/// apply), the publication, the failover slot (WAL pinned from here),
+/// apply), the failover slot (WAL pinned from here),
 /// the decode-time entity and exclusion maps (created BEFORE the grants so the
 /// role's exact SELECT grants cover them; package apply owns their rows),
 /// then the replication role's grants (the role SQL must have been applied to
 /// the cluster first). Every statement is idempotent — re-applying is a no-op.
 fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
     format!(
-        "{schema_guard};\n{publication}\n{slot}\n{entity_map};\n{exclusion_map};\n{grants}\n",
+        "{schema_guard};\n{slot}\n{entity_map};\n{exclusion_map};\n{grants}\n",
         schema_guard = sql::ensure_schema_sql(schema),
-        publication = sql::create_publication_sql(cdc_name, schema),
         slot = sql::create_failover_slot_sql(cdc_name),
         entity_map = sql::ensure_entity_map_sql(schema),
         exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
@@ -348,12 +368,12 @@ mod tests {
     use super::*;
 
     /// The CDC bundle's statements land in dependency order: the schema guard
-    /// before the publication (FOR TABLES IN SCHEMA needs the schema), the
-    /// publication before the slot (nothing decodes before there is something
-    /// published), the entity map before the grants (so `SELECT ON ALL TABLES`
-    /// covers it — the reader's decode-time lookup needs it), the grants last.
+    /// first (the `Publication` CR applied after it needs the schema), the
+    /// entity map before the grants (so `SELECT ON ALL TABLES` covers it — the
+    /// reader's decode-time lookup needs it), the grants last. The bundle
+    /// creates no publication, because only a superuser can.
     #[test]
-    fn cdc_sql_bundle_orders_schema_publication_slot_map_grants() {
+    fn cdc_sql_bundle_orders_schema_slot_map_grants() {
         let bundle = cdc_sql_bundle(
             "app",
             "wamn_cdc_acme__billing__dev",
@@ -362,9 +382,6 @@ mod tests {
         let schema = bundle
             .find("CREATE SCHEMA IF NOT EXISTS \"app\"")
             .expect("schema guard");
-        let publication = bundle
-            .find("CREATE PUBLICATION \"wamn_cdc_acme__billing__dev\" FOR TABLES IN SCHEMA \"app\"")
-            .expect("publication");
         let slot = bundle
             .find("pg_create_logical_replication_slot('wamn_cdc_acme__billing__dev', 'pgoutput', false, false, true)")
             .expect("failover slot");
@@ -377,7 +394,8 @@ mod tests {
         let grants = bundle
             .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\"")
             .expect("grants");
-        assert!(schema < publication && publication < slot && slot < entity_map);
+        assert!(!bundle.contains("PUBLICATION"));
+        assert!(schema < slot && slot < entity_map);
         assert!(entity_map < exclusion_map && exclusion_map < grants);
     }
 

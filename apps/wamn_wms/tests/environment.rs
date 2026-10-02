@@ -882,6 +882,7 @@ pub async fn configure_cdc(
         db_host: Some(host),
         db_port: database_config.get_ports().first().copied().unwrap_or(5432),
         namespace: inputs.host_secret_namespace.clone(),
+        cluster_namespace: "platform".into(),
         secret_namespace: Some(inputs.host_secret_namespace.clone()),
         stream: None,
         nats_url: nats_url.to_owned(),
@@ -895,6 +896,7 @@ pub async fn configure_cdc(
             .collect::<Result<_, _>>()?,
         emit_role_sql: Some(role_path),
         emit_cdc_sql: Some(cdc_path),
+        emit_publication: None,
         emit_secret: Some(secret_path.clone()),
     };
     let (project, task) = connect(&route.database_url).await?;
