@@ -101,7 +101,8 @@
             "maximum": 100
           },
           "label": "Find widgets",
-          "result": "page"
+          "result": "page",
+          "display_field": "code"
         },
         "create": {
           "permission": "widget.create",
@@ -196,7 +197,8 @@
             "minimum": 1,
             "maximum": 100
           },
-          "result": "page"
+          "result": "page",
+          "display_field": "name"
         }
       }
     },

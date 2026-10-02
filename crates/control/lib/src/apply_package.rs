@@ -83,9 +83,42 @@ pub struct ApplyOutcome {
     pub changed: bool,
 }
 
+#[derive(Clone, Copy)]
+enum ApplicationMode<'a> {
+    Production(Option<&'a crate::package_upgrade::AcceptedUpgrade>),
+    Qualification,
+    Local(&'a str),
+}
+
 /// Apply the immutable pending suffix from one package directory.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, None).await
+    apply_request(request, ApplicationMode::Production(None)).await
+}
+
+/// Apply an installed successor using its exact pre-apply qualification evidence.
+pub async fn apply_qualified_package(
+    request: ApplyPackageRequest,
+    evidence_path: &Path,
+) -> anyhow::Result<ApplyOutcome> {
+    let evidence = crate::package_upgrade::read_evidence(evidence_path)?;
+    apply_request(request, ApplicationMode::Production(Some(&evidence))).await
+}
+
+#[cfg(test)]
+pub(crate) async fn apply_qualified_package_observed(
+    request: ApplyPackageRequest,
+    evidence_path: &Path,
+    observed: crate::qualify_upgrade::workload::ServingWorkloads,
+) -> anyhow::Result<ApplyOutcome> {
+    let evidence = crate::package_upgrade::read_evidence_with_observation(evidence_path, observed)?;
+    apply_request(request, ApplicationMode::Production(Some(&evidence))).await
+}
+
+/// Apply only to the owned disposable database of upgrade qualification.
+pub(crate) async fn apply_qualification_package(
+    request: ApplyPackageRequest,
+) -> anyhow::Result<ApplyOutcome> {
+    apply_request(request, ApplicationMode::Qualification).await
 }
 
 /// Apply one package directory to a local target that wamn dev created.
@@ -104,12 +137,12 @@ pub async fn apply_local_package(
         environment,
     )
     .await?;
-    apply_request(request, Some(environment)).await
+    apply_request(request, ApplicationMode::Local(environment)).await
 }
 
 async fn apply_request(
     request: ApplyPackageRequest,
-    local_environment: Option<&str>,
+    mode: ApplicationMode<'_>,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure!(!request.tenant.is_empty(), "tenant must not be empty");
     let directory = read_package_directory(&request.package)?;
@@ -118,13 +151,6 @@ async fn apply_request(
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
     let migration_policy = validate_migration_policy(&request.package, &directory, &presented)?;
-    let coordinate = presented.coordinate.clone();
-    let coordinate_text = format!(
-        "{}@{}",
-        coordinate.package_id(),
-        coordinate.package_version()
-    );
-
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to project environment")?;
@@ -132,11 +158,11 @@ async fn apply_request(
     let result = apply(
         &mut client,
         &request.tenant,
-        &coordinate_text,
+        &request.package,
         &directory,
         &manifest,
         migration_policy,
-        local_environment,
+        mode,
     )
     .await;
     drop(client);
@@ -154,11 +180,11 @@ async fn apply_request(
 async fn apply(
     client: &mut tokio_postgres::Client,
     tenant: &str,
-    coordinate_text: &str,
+    package_root: &Path,
     directory: &PackageDirectory,
     manifest: &PackageManifest,
     migration_policy: MigrationPolicyPlan,
-    local_environment: Option<&str>,
+    mode: ApplicationMode<'_>,
 ) -> anyhow::Result<ApplyOutcome> {
     wamn_schema_generator::validate_operation_vocabulary(manifest)
         .context("validate package manifest for registration projection")?;
@@ -167,17 +193,26 @@ async fn apply(
         plan_package_migrations(directory, None).context("validate package directory")?;
     let package_id = presented.coordinate.package_id().to_owned();
     let package_version = presented.coordinate.package_version().to_owned();
+    let coordinate_label = format!("{package_id}@{package_version}");
+    let coordinate_text = coordinate_label.as_str();
     let tx = client.transaction().await.context("begin package apply")?;
     tx.query_one(CLAIM_TENANT_SQL, &[&tenant])
         .await
         .context("claim package tenant")?;
     bind_apply_package_principal(&tx).await?;
+    // Keep the same lock order as reconciliation and release selection:
+    // data access, package lineage, then the selected release head.
+    tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
+        .await
+        .context("lock data access before package application")?;
     tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
         .await
         .context("lock package family")?;
-    let mut local_comment = match local_environment {
-        Some(environment) => Some(local_target::lift_release_seal(&tx, tenant, environment).await?),
-        None => None,
+    let mut local_comment = match mode {
+        ApplicationMode::Local(environment) => {
+            Some(local_target::lift_release_seal(&tx, tenant, environment).await?)
+        }
+        _ => None,
     };
 
     let applied = load_applied_package(&tx, tenant, &package_id, &package_version).await?;
@@ -262,6 +297,21 @@ async fn apply(
             .with_context(|| format!("validate {} before apply", deferred.relative_path));
     }
 
+    let accepted_upgrade = match mode {
+        ApplicationMode::Production(evidence) => {
+            crate::package_upgrade::require_application(
+                &tx,
+                tenant,
+                package_root,
+                directory,
+                &plan,
+                evidence,
+            )
+            .await?
+        }
+        ApplicationMode::Qualification | ApplicationMode::Local(_) => None,
+    };
+
     // wamn-yk9l. The platform extensions go in FIRST, while this connection is
     // still the administrator: `CREATE EXTENSION` is refused to a package by
     // the migration policy and is not a privilege the package-owner role holds.
@@ -328,6 +378,9 @@ async fn apply(
         }
         None => false,
     };
+    if let Some(evidence) = &accepted_upgrade {
+        crate::package_upgrade::persist(&tx, evidence).await?;
+    }
     tx.commit().await.context("commit whole package suffix")?;
     Ok(ApplyOutcome {
         package_id,

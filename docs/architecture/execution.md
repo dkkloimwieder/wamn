@@ -719,6 +719,7 @@ A table row fills a form input only when that input is the one input of the form
 A table column that names a record shows the record's text, not its key.
 A generated result field states `references` from its column's foreign key, and an authored result field can declare it.
 The plan binds that column to the model's served list, which states the display field, and to the record read that the list's rows open.
+A list uses its explicit `display_field` as the record label. If that declaration is absent, the label uses the record ID from `key_field`. The plan never selects a label from the order or type of other fields. A generated model query declares `display_field` on the query. An authored list declares it in `lists`; both emit the same contract member.
 The table reads each key once, shows nothing while the read runs, and shows the key when no record comes back.
 A column whose model serves no such list and read shows the key, and the emitted index names it.
 A selector that holds a key its list did not return, such as one a row action filled from a later page, reads that record through the same read and shows its text.

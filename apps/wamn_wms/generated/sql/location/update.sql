@@ -18,6 +18,7 @@ updated AS (
       AND target.row_version = $2::int4
     RETURNING
     model.created_at,
+    model.description,
     model.id,
     model.location_code,
     model.row_version
@@ -30,6 +31,7 @@ SELECT
     END AS outcome,
     (SELECT target.row_version FROM target) AS observed_row_version,
     updated.created_at,
+    updated.description,
     updated.id,
     updated.location_code,
     updated.row_version

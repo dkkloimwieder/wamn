@@ -27,6 +27,20 @@ It normalizes identity sequences and indexes that belong to constraints instead 
 It excludes PostgreSQL object identifiers and storage details from semantic identity.
 Its exact supported forms live in [introspection](../../crates/schema/introspection/src/postgres.rs) and [migration policy](../../crates/schema/introspection/src/migration_policy.rs).
 
+An installed successor with new migrations also requires `qualify-upgrade` evidence before production application.
+Its narrower policy permits new ordinary tables and the admitted column additions, but refuses added constraints on existing relations.
+Qualification copies the installed database with its data and object ownership.
+It reads the actual serving workloads and requires each SQL-bearing package to retain one unchanged runtime schema.
+Predecessor SQL must plan against the candidate schema before grants change and again after the complete candidate root set reconciles.
+Candidate SQL must plan under those same final grants. Planning preserves the grants it examines.
+
+`apply-package` records accepted evidence in `catalog.package_upgrade_qualifications` within the transaction that installs the successor.
+Reconciliation requires evidence that matches the complete installed package set, exact presented roots, and derived privileges.
+It selects evidence by those identities, never by timestamp. Earlier qualifications remain immutable history.
+Release rollback retains committed migrations and admits only the exact immediate predecessor whose accepted evidence still matches the live database.
+The [package upgrade procedure](../operations/deployment.md#package-upgrades) defines prerequisites, command order, and recovery.
+Overlay upgrades and migration-specific exceptions remain [deferred work](../plan/upgrades.md).
+
 Package migrations cannot create roles, grants, extensions, routines, triggers, rules, or row policies.
 Managed schemas refuse foreign tables, authored views, materialized views, unsupported types, and unsupported generated properties.
 Nontransactional operations and mutations outside the selected schemas refuse.

@@ -5,6 +5,7 @@ use wamn_postgres_statements::Connection;
 #[derive(Debug)]
 pub struct LocationRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
+    pub description: Option<String>,
     pub id: wamn_postgres_statements::Uuid,
     pub location_code: String,
     pub row_version: i32,
@@ -15,19 +16,20 @@ pub struct LocationUpdateRow {
     pub outcome: Option<String>,
     pub observed_row_version: Option<i32>,
     pub created_at: Option<wamn_postgres_statements::TimestampTz>,
+    pub description: Option<String>,
     pub id: Option<wamn_postgres_statements::Uuid>,
     pub location_code: Option<String>,
     pub row_version: Option<i32>,
 }
 
 pub(crate) const CREATE_DIGEST: &str =
-    "sha256:e8c3d64ccf22069080b74ea76953975d8c8e4e71d6f1eee000967a1bb27aa058";
+    "sha256:8a81bcb9ba0fb30dfed56045f8c87bae44afa854ff3fd28173cb3b483c8d46c6";
 pub(crate) const GET_DIGEST: &str =
-    "sha256:61ac14096e05333a1144902bc75008c04282a56c79f864c6b70c0bdf6d4cfb43";
+    "sha256:a18917ca4ca0baf08491f88207b738b73caeecfd2c128e731268183be0f7d9bf";
 pub(crate) const QUERY_DIGEST: &str =
-    "sha256:ff1b26713e83462dd1f81c48250843c65e88c845b0b8b64042a8eba759229497";
+    "sha256:c42e750623ec91f62f6b20349fd1c4eca253ea7a14224790b72f7c05b6fb44d7";
 pub(crate) const UPDATE_DIGEST: &str =
-    "sha256:44379e3dce960c2cb46c2e7a359305f33bc830a1ae3b91c56a9382f06bcc4b07";
+    "sha256:42389592831297f5056e3d920ac93598fe80e144d5d8c8111c21ae72ab5c7003";
 
 pub(crate) const CREATE_UNIQUE_CONSTRAINTS: &[&str] =
     &["location_id_pkey", "location_location_code_key"];
@@ -52,6 +54,7 @@ pub(crate) async fn get(
     wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
         Ok(LocationRow {
             created_at: row.decode("created_at")?,
+            description: row.decode("description")?,
             id: row.decode("id")?,
             location_code: row.decode("location_code")?,
             row_version: row.decode("row_version")?,
@@ -81,6 +84,7 @@ pub(crate) async fn query_created_at_ascending(
             |row| {
                 Ok(LocationRow {
                     created_at: row.decode("created_at")?,
+                    description: row.decode("description")?,
                     id: row.decode("id")?,
                     location_code: row.decode("location_code")?,
                     row_version: row.decode("row_version")?,
@@ -103,6 +107,7 @@ pub(crate) async fn create(
     wamn_postgres_statements::decode_one(CREATE_DIGEST, rows, |row| {
         Ok(LocationRow {
             created_at: row.decode("created_at")?,
+            description: row.decode("description")?,
             id: row.decode("id")?,
             location_code: row.decode("location_code")?,
             row_version: row.decode("row_version")?,
@@ -133,6 +138,7 @@ pub(crate) async fn update(
             outcome: row.decode("outcome")?,
             observed_row_version: row.decode("observed_row_version")?,
             created_at: row.decode("created_at")?,
+            description: row.decode("description")?,
             id: row.decode("id")?,
             location_code: row.decode("location_code")?,
             row_version: row.decode("row_version")?,

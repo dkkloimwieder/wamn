@@ -98,7 +98,8 @@
             "minimum": 1,
             "maximum": 100
           },
-          "result": "page"
+          "result": "page",
+          "display_field": "location_code"
         },
         "create": {
           "permission": "location.create",
@@ -245,7 +246,8 @@
             "minimum": 1,
             "maximum": 100
           },
-          "result": "page"
+          "result": "page",
+          "display_field": "packaging_code"
         },
         "create": {
           "permission": "packaging.create",
@@ -352,7 +354,8 @@
             "minimum": 1,
             "maximum": 100
           },
-          "result": "page"
+          "result": "page",
+          "display_field": "product_code"
         },
         "create": {
           "permission": "product.create",

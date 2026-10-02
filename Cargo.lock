@@ -6043,6 +6043,7 @@ dependencies = [
 name = "wamn-fixture-package"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tokio-postgres",
 ]
 

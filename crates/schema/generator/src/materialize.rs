@@ -118,7 +118,7 @@ async fn classify_statements(
     schemas: &[String],
     grants: &str,
 ) -> Result<StatementTransactionality> {
-    let mut transaction = client
+    let transaction = client
         .transaction()
         .await
         .context("begin the statement check transaction")?;
@@ -126,6 +126,74 @@ async fn classify_statements(
         .batch_execute(&application_role_sql(schemas, grants))
         .await
         .context("apply the derived grants to the application role before planning")?;
+    classify_statements_in_transaction(
+        transaction,
+        corpus,
+        "the grants that the package declaration derives",
+    )
+    .await
+}
+
+/// Plan statements as `wamn_app` without replacing the database's existing grants.
+///
+/// `schema` is the single application schema supplied to the runtime. Like the
+/// runtime, this check sets that schema alone as its search path. Corpus keys
+/// identify statements in refusals; callers can include package and operation
+/// identity. The transaction rolls back every session setting and executes no
+/// application statement.
+pub async fn classify_statements_with_existing_grants(
+    client: &mut tokio_postgres::Client,
+    corpus: &BTreeMap<String, Vec<u8>>,
+    schema: &str,
+) -> Result<StatementTransactionality> {
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin the statement check transaction")?;
+    classify_with_existing_grants(transaction, corpus, schema).await
+}
+
+/// Plan under current grants while retaining the caller's surrounding transaction.
+///
+/// A savepoint contains the role and search-path changes and is rolled back after
+/// planning, so the caller keeps its locks and its original session authority.
+pub async fn classify_statements_with_existing_grants_in_transaction(
+    transaction: &mut tokio_postgres::Transaction<'_>,
+    corpus: &BTreeMap<String, Vec<u8>>,
+    schema: &str,
+) -> Result<StatementTransactionality> {
+    let savepoint = transaction
+        .savepoint("upgrade_statement_check")
+        .await
+        .context("begin the statement check savepoint")?;
+    classify_with_existing_grants(savepoint, corpus, schema).await
+}
+
+async fn classify_with_existing_grants(
+    transaction: tokio_postgres::Transaction<'_>,
+    corpus: &BTreeMap<String, Vec<u8>>,
+    schema: &str,
+) -> Result<StatementTransactionality> {
+    let search_path = format!("\"{}\"", schema.replace('"', "\"\""));
+    transaction
+        .query_one(
+            "SELECT set_config('search_path', $1, true)",
+            &[&search_path],
+        )
+        .await
+        .context("select the runtime application schema before planning")?;
+    transaction
+        .batch_execute("SET LOCAL ROLE wamn_app")
+        .await
+        .context("select the application role without changing its grants")?;
+    classify_statements_in_transaction(transaction, corpus, "the existing grants").await
+}
+
+async fn classify_statements_in_transaction(
+    mut transaction: tokio_postgres::Transaction<'_>,
+    corpus: &BTreeMap<String, Vec<u8>>,
+    grant_context: &str,
+) -> Result<StatementTransactionality> {
     let mut verdicts = std::collections::BTreeMap::new();
     let mut refusals = Vec::new();
     for (path, bytes) in corpus {
@@ -183,7 +251,7 @@ async fn classify_statements(
         .context("roll back the statement check transaction")?;
     ensure!(
         refusals.is_empty(),
-        "PostgreSQL refused these statements as {DATA_ACCESS_ROLE} under the grants that the package declaration derives:\n{}",
+        "PostgreSQL refused these statements as {DATA_ACCESS_ROLE} under {grant_context}:\n{}",
         refusals.join("\n")
     );
     Ok(StatementTransactionality::from_paths(verdicts))

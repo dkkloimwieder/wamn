@@ -71,6 +71,7 @@ pub(crate) fn encode(output: &[contract::UpdateOutcome]) -> String {
                 "request_id": item.request_id,
                 "value": {
                     "created_at": value.created_at,
+                    "description": value.description,
                     "id": value.id,
                     "location_code": value.location_code,
                     "row_version": value.row_version,
@@ -183,6 +184,7 @@ macro_rules! row {
         let row = $row;
         $target {
             created_at: row.created_at.0,
+            description: row.description,
             id: row.id.0,
             location_code: row.location_code,
             row_version: row.row_version,

@@ -211,6 +211,7 @@ export function LocationGetDetail(props: LocationGetDetailProps) {
       </Show>
       <DetailList loading={outcome.loading}>
         <DetailItem term="created at">{cellText(readMember(record(), ["createdAt"]), "timestamptz")}</DetailItem>
+        <DetailItem term="description">{cellText(readMember(record(), ["description"]), "text")}</DetailItem>
         <DetailItem term="id">{cellText(readMember(record(), ["id"]), "uuid")}</DetailItem>
         <DetailItem term="location code">{cellText(readMember(record(), ["locationCode"]), "text")}</DetailItem>
         <DetailItem term="row version">{cellText(readMember(record(), ["rowVersion"]), "int32")}</DetailItem>
@@ -259,6 +260,7 @@ export const LOCATION_QUERY_TABLE = {
   sortMaxFields: 1,
   columns: [
     { field: "createdAt", label: "created at", type: "timestamptz", role: "value" },
+    { field: "description", label: "description", type: "text", role: "value" },
     { field: "id", label: "id", type: "uuid", role: "key" },
     { field: "locationCode", label: "location code", type: "text", role: "value" },
     { field: "rowVersion", label: "row version", type: "int32", role: "revision" },

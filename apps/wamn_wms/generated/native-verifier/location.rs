@@ -3,6 +3,7 @@
 #[derive(Debug, sqlx::FromRow)]
 pub struct LocationRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub description: Option<String>,
     pub id: uuid::Uuid,
     pub location_code: String,
     pub row_version: i32,
@@ -13,6 +14,7 @@ pub struct LocationUpdateRow {
     pub outcome: Option<String>,
     pub observed_row_version: Option<i32>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub description: Option<String>,
     pub id: Option<uuid::Uuid>,
     pub location_code: Option<String>,
     pub row_version: Option<i32>,

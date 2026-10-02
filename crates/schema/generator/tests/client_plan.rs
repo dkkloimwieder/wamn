@@ -653,15 +653,15 @@ fn the_plan_states_the_list_that_offers_each_referenced_input() {
             .unwrap_or_else(|| panic!("{name} populates {path}"))
     };
 
-    // An authored reference, served by the second model's query. Its display
-    // field is absent, so the plan takes the first text column.
+    // An authored reference, served by the second model's query, which
+    // explicitly declares its display field.
     let maker = populated("record_batch", "value.maker_id");
     assert_eq!(
         maker.list_operation,
         "platform-fixture:widget-maker/query@2.1.0"
     );
     assert_eq!(maker.key_field, "id");
-    assert_eq!(maker.display_field, "name", "the default is the first text");
+    assert_eq!(maker.display_field, "name", "the declared display field");
     assert_eq!(maker.narrowed_by, None);
     assert_eq!(
         maker.search_input,
@@ -740,6 +740,70 @@ fn selectors_whose_list_declares_no_display_filter_are_reported() {
         ],
         "the report names the screen, the input and the list"
     );
+}
+
+#[test]
+fn adding_nullable_text_preserves_explicit_display_or_record_key_fallback() {
+    for declared in [Some("name"), None] {
+        let mut ir = release();
+        let maker = ir
+            .models
+            .iter_mut()
+            .find(|model| model.name == "widget_maker")
+            .expect("the maker model");
+        maker
+            .operations
+            .iter_mut()
+            .find(|operation| operation.name == "query")
+            .expect("the maker query")
+            .lists
+            .as_mut()
+            .expect("the maker list declaration")
+            .display_field = declared.map(str::to_owned);
+
+        for added_text in [false, true] {
+            if added_text {
+                let maker = ir
+                    .models
+                    .iter_mut()
+                    .find(|model| model.name == "widget_maker")
+                    .expect("the maker model");
+                for operation in &mut maker.operations {
+                    if !["get", "query"].contains(&operation.name.as_str()) {
+                        continue;
+                    }
+                    let fields = &mut operation
+                        .route
+                        .as_mut()
+                        .expect("served read")
+                        .response
+                        .fields;
+                    let mut description = fields
+                        .iter()
+                        .find(|field| field.path == "name")
+                        .expect("the existing display field")
+                        .clone();
+                    description.path = "description".to_owned();
+                    description.nullable = true;
+                    fields.insert(0, description);
+                }
+            }
+            let plan = ClientPlan::from_ir(&ir);
+            let selector = screen(&plan, "update")
+                .population
+                .iter()
+                .find(|input| input.input == "change.maker_id")
+                .expect("the maker selector");
+            assert_eq!(selector.display_field, declared.unwrap_or("id"));
+            assert_eq!(selector.search_input, declared.map(|_| "filter.name[]"));
+            let column = screen(&plan, "query")
+                .resolved_columns
+                .iter()
+                .find(|column| column.column == "maker_id")
+                .expect("the maker reference column");
+            assert_eq!(column.display_field, declared.unwrap_or("id"));
+        }
+    }
 }
 
 /// EXIT GATE for `wamn-rm14.3`: a table states the form its row opens and the
@@ -935,8 +999,8 @@ fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
         assert_eq!(lists.model.as_deref(), Some("widget"), "{name}");
         assert_eq!(lists.key_field, ["id"], "{name}");
     }
-    // The generated query authors no display field, so the plan defaults it,
-    // and the authored list states one. Both reach an emitter the same way.
+    // The generated query and authored list both state their display fields.
+    // Both reach an emitter the same way.
     let update = screen(&plan, "update")
         .population
         .iter()

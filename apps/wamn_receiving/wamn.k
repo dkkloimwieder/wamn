@@ -50,6 +50,7 @@ manifest.Package {
             operations: {
                 get: {label = "Purchase order", result = "one"}
                 query: {
+                    display_field = "purchase_order_number"
                     authored_sql = {
                         default = "query/open_purchase_order.sql"
                         variants = [
@@ -131,7 +132,7 @@ manifest.Package {
             audit_log = {columns = ["created_at", "created_by"]}
             operations: {
                 get: {label = "Receipt", result = "one"}
-                query: {label = "Receipts", result = "page"}
+                query: {display_field = "receipt_reference", label = "Receipts", result = "page"}
             }
         }
         receipt_line = manifest.Model("receipt_line", _schema) {
@@ -157,7 +158,7 @@ manifest.Package {
             audit_log = {columns = ["created_at"]}
             operations: {
                 create: {writable_fields = ["name"], label = "Add a supplier", result = "one"}
-                query: {label = "Suppliers", result = "page"}
+                query: {display_field = "name", label = "Suppliers", result = "page"}
             }
         }
     }
@@ -515,7 +516,7 @@ manifest.Package {
         }
         "location.list" = manifest.Projection("location.list") {
             label = "Locations"
-            lists = {model = "location", key_field = "id"}
+            lists = {model = "location", key_field = "id", display_field = "location_code"}
             input = {fields = []}
             result = {
                 class = "bounded_list"

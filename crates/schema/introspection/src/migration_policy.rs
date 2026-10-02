@@ -210,6 +210,44 @@ pub fn validate_migration_bytes_for_schemas(
     Ok(())
 }
 
+/// Validate an additive upgrade while its immediate predecessor can still serve.
+///
+/// The ordinary migration validator owns SQL admission. This narrower policy
+/// permits its new tables and added columns, but refuses added constraints on
+/// existing relations because planning cannot prove their runtime compatibility.
+/// Qualification and production application must use this same predicate.
+pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
+    path: impl AsRef<Path>,
+    bytes: &[u8],
+    configured_schemas: &[&str],
+) -> Result<(), MigrationPolicyError> {
+    let path = path.as_ref();
+    let statements = artifact_statements(path, bytes, configured_schemas)?;
+
+    for (index, tokens) in statements.iter().enumerate() {
+        let statement_index = index + 1;
+        validate_statement(tokens, configured_schemas, path, statement_index)?;
+        let mutation = definition_mutation(tokens, configured_schemas, path, statement_index)?;
+        if !matches!(
+            mutation
+                .as_ref()
+                .map(|mutation| (mutation.action(), mutation.definition_type())),
+            Some(
+                (DefinitionAction::Create, DefinitionType::Relation)
+                    | (DefinitionAction::Add, DefinitionType::Field)
+            )
+        ) {
+            return refuse_statement(
+                MigrationPolicyErrorType::UnsupportedStatement,
+                path,
+                statement_index,
+                "predecessor-compatible upgrades admit only new ordinary tables and added columns; constraints on existing relations require an exceptional migration procedure",
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Extract definition targets from the exact migration artifact bytes.
 ///
 /// This is not a second admission path: callers must still invoke the policy

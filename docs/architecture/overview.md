@@ -120,9 +120,14 @@ A later selection makes a superseded deployment refuse before changing workloads
 The [delivery commands](../operations/delivery.md) reuse the existing release records and package lineage locks.
 
 An additive base can satisfy an unchanged overlay's declared schema and operation requirements.
-This compatibility does not authorize an in-place upgrade or a general migration lifecycle.
-The remaining upgrade design belongs in [upgrade plans](../plan/upgrades.md).
-The [operations pages](../operations/README.md) own publication, deployment, and rollback procedures.
+Installed additive upgrades use a separate `qualify-upgrade` proof before `apply-package` changes production.
+Qualification copies predecessor data and ownership, observes the actual runtime schema, and requires the successor to retain that schema.
+It proves predecessor SQL under both predecessor and candidate grants, then records the exact candidate roots and final privileges.
+Application stores accepted evidence with the successor in one transaction.
+Reconciliation requires evidence for the complete current package set and privileges, without selecting by timestamp.
+Selection and kind deployment share the same rule for rollback to the qualified immediate predecessor while retaining committed migrations.
+The [package upgrade procedure](../operations/deployment.md#package-upgrades) owns command order and recovery.
+Overlay upgrades, migration exceptions, and broader rollback remain in [upgrade plans](../plan/upgrades.md).
 
 ## Runtime owners
 

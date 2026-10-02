@@ -34,6 +34,7 @@ mod generate;
 mod manifest;
 mod materialize;
 pub mod operation_reference;
+mod package_catalog;
 pub mod route_schema;
 mod rustfmt;
 mod sql;
@@ -78,10 +79,12 @@ pub use manifest::{
     resolve_operation_reference, sealed_operation_reference, validate_operation_vocabulary,
 };
 pub use materialize::{
-    MaterializeMode, introspect_package, materialize_host_route_client, materialize_package,
-    materialize_package_from_catalog, materialize_package_verified,
-    materialize_package_verified_with_catalog,
+    MaterializeMode, classify_statements_with_existing_grants,
+    classify_statements_with_existing_grants_in_transaction, introspect_package,
+    materialize_host_route_client, materialize_package, materialize_package_from_catalog,
+    materialize_package_verified, materialize_package_verified_with_catalog,
 };
+pub use package_catalog::project_package_catalog;
 pub use sqlx_metadata::{
     SqlxMetadataMode, SqlxVerifier, package_database_url, stage_sqlx_verifier, verify_sqlx_metadata,
 };

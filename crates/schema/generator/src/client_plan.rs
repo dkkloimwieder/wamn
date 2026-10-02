@@ -19,9 +19,6 @@ use crate::client_ir::{
     leaf_fields, revision_inputs,
 };
 
-/// The contract type a display field falls back to when nobody states one.
-const DISPLAY_TYPE: &str = "text";
-
 /// Contract input paths that carry a platform value instead of operator input.
 const SUPPLIED_PATHS: [(&str, SuppliedType); 5] = [
     ("request_id", SuppliedType::RequestId),
@@ -1056,7 +1053,7 @@ struct Lister<'a> {
     display_field: Option<&'a str>,
     /// Input paths of the list, each with the model it names.
     references: Vec<(&'a str, &'a str)>,
-    /// Result leaves, which the default display field reads.
+    /// Result leaves, including the revision carried by each record.
     columns: Vec<&'a FieldIr>,
     /// Input paths that carry the list's declared filters, in contract order.
     filter_inputs: Vec<&'a str>,
@@ -1116,16 +1113,9 @@ impl<'a> Lister<'a> {
 
     /// The result field a person reads, authored or defaulted.
     ///
-    /// The default is the first text field in contract order. A list whose
-    /// rows carry no text falls back to the key, so a selector always shows
-    /// something an operator can tell apart.
+    /// Without an explicit display field, use the declared record key.
     fn display(&self) -> &'a str {
-        self.display_field.unwrap_or_else(|| {
-            self.columns
-                .iter()
-                .find(|field| field.type_name == DISPLAY_TYPE)
-                .map_or(self.key_field, |field| field.path.as_str())
-        })
+        self.display_field.unwrap_or(self.key_field)
     }
 
     /// The input a selector searches by, which is the declared filter on the

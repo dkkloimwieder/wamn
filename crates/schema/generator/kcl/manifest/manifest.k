@@ -235,6 +235,7 @@ schema Get(Operation):
     """The get operation of a model."""
 
 schema Query(Operation):
+    display_field?: str
     pagination = Pagination {
         default_sort = {field = "created_at", direction = "ascending"}
         tie_breaker = {field = "id"}

@@ -2006,7 +2006,81 @@ On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four 
 
 Then `gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags` turned immutable tags on at 17:12 UTC. The deletes and the update took 6 seconds. `gcloud artifacts repositories describe wamn` shows `immutableTags: true`, and every tag of `components` is a sha256 hex.
 
-## 8. Upgrade an environment
+
+## 8. Package upgrade acceptance prerequisite audit
+
+On 2026-10-01, the owner accepted proceeding after `wamn-ld93.33` closed. Remote `main` was `3e8ff89392d3548a0968374ebb3bc922ededf834`. The final WMS acceptance remains pending under `wamn-xvu5.5`. Finding `wamn-v533` records the zero-node condition.
+
+The read-only audit used the existing GKE kubeconfig:
+
+```bash
+KUBECONFIG=/tmp/claude-1000/-home-kaalin-dev-wamn/8f6326b9-1dc5-4a4f-b106-5a08992a6757/scratchpad/gke.kubeconfig
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get deployments -o json
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get pods -o wide
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s get nodes
+kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get events \
+  --field-selector involvedObject.name=hostgroup-wms-76df684b4-kdmmg -o json
+```
+
+Both host Deployments requested one replica and reported zero ready replicas. Their pods were Pending with no assigned node. `get nodes` returned `No resources found`. The WMS event reported `FailedScheduling` with `no nodes available to schedule pods`.
+
+`hostgroup-wms` still named release 1 digest `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6`. The cutover tasks B0 through B13 remained open. Thus the environment did not establish the required serving WMS 2.0.0 predecessor.
+
+No live upgrade, schema change, release selection, or deployment ran. `wamn-xvu5.5` now depends on `wamn-ld93.24`, the cutover end-to-end check. Epic 1 remains open.
+
+## 9. Package upgrade acceptance preparation
+
+On 2026-10-02, the cutover check `wamn-ld93.24` closed. The cluster had three Ready nodes, and all three host groups reported 1/1 ready replicas. This supersedes the prerequisite failure recorded in section 8. WMS has package `2.0.0` installed and release 2 selected and ready, with manifest digest `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4`.
+
+The acceptance branch incorporates main commit `51208d6f7`. The WMS candidate is `2.1.0`, with predecessor `2.0.0`. Its only application schema change is `apps/wamn_wms/migrations/0003_location_description.sql`:
+
+```sql
+ALTER TABLE wms.location ADD COLUMN description text;
+```
+
+`cargo check --locked --offline -p wamn-ctl --all-targets` passed in 3 minutes 43 seconds. All eight runtime qualification tests passed after 12 minutes 4 seconds of compilation and 55.02 seconds of test execution. WMS generation and its comparison passed through `/tmp/wamn-epic1-live-20261002/generate-wms-candidate.sh`. SQLx metadata preparation and its comparison also passed. The qualification carrier test passed in 1.99 seconds. The missing-proof application test passed in 2.71 seconds, and the retained-schema selection test passed in 1.39 seconds. Read-only live upgrade qualification has not run, and this acceptance preparation has made no production change. The final `2.0.0 → 2.1.0 → 2.0.0 → 2.1.0` cycle remains pending under `wamn-xvu5.5`.
+
+The following generation and SQLx commands passed. The component build remains pending. Each runner invocation creates a disposable PostgreSQL database. It compiles the authored `wamn.k` for history declarations; do not pass generated manifest JSON in its place. Follow [application generation and SQLx](running-tests.md#application-generation-and-sqlx) for prerequisites, including SQLx CLI 0.9.0.
+
+```bash
+(
+set -e
+for mode in write check; do
+  cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
+    --database wamn_wms --schema wms \
+    --migration-dir apps/wamn_wms/migrations \
+    --history-manifest apps/wamn_wms/wamn.k \
+    --url-env DATABASE_URL -- \
+    cargo run --locked --offline -p wamn-schema-generator --example materialize_package -- \
+      "$mode" apps/wamn_wms
+done
+
+for mode in prepare check; do
+  cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
+    --database wamn_wms --schema wms \
+    --migration-dir apps/wamn_wms/migrations \
+    --history-manifest apps/wamn_wms/wamn.k \
+    --url-env DATABASE_URL -- \
+    cargo run --locked --offline -p wamn-schema-generator --example sqlx_metadata -- \
+      "$mode" apps/wamn_wms
+done
+)
+
+# After successful checks and review of generated changes:
+tools/build-components app apps/wamn_wms
+```
+
+Review generated changes and require both generation and SQLx checks to pass before building. Then follow [package upgrades](deployment.md#package-upgrades) for live qualification, evidence-bound application, privilege reconciliation, release qualification, publication, selection, and rollout. Record the actual workload schema and identities, retained-row checks, authenticated WMS operation results, and release digests for each stage. Rollback selects the immediate predecessor on the upgraded database; it does not reverse the migration. None of these final-cycle results is claimed here.
+
+The generated client exposed finding `wamn-xvu5.5.2`. The nullable `description` field replaces `location_code` as the inferred location label and removes selector search. Existing rows then display `"null"`. Generated model queries have no supported display override in the current manifest. The owner requires an explicit label field, with the record ID as the fallback because it always exists. The implementation retains `description`, adds an explicit `location_code` label, and removes first-text-field inference. Regeneration and targeted label tests follow this ruling. No production change occurred.
+
+The explicit-label fix passed 134 generator tests in 71.98 seconds, including compilation. Formatting passed after correcting three changed files. Clippy for the generator and CLI passed in 67.85 seconds. The CLI rebuild passed in 36.05 seconds. All five affected application roots passed regeneration and comparison. The WMS inventory and packaging selector files match their previous labels and search behavior.
+
+Read-only live `qualify-upgrade` ran on 2026-10-02 at 18:28:21 UTC and refused after 0.36 seconds: `upgrade-schema must install the package qualification carrier before qualification`. It wrote no qualification result. A direct `BEGIN READ ONLY` query found platform migrations 1–5, with hashes that match the source. The pending suffix is `0006_administration_release_head.sql` and `0007_package_upgrade_qualifications.sql`. Automatic approval review rejected the `upgrade-schema` plan command as a possible production mutation. The direct read-only query replaced that inspection step. No platform migration, application migration, owner token, release selection, or rollout occurred in this preparation.
+
+`tools/build-components app apps/wamn_wms` passed in 224.11 seconds, from 18:28:24.625954 UTC to 18:32:08.739608 UTC. It built and normalized the three declared components. The candidate is ready for the pending platform migration and live qualification steps.
+
+## 11. Upgrade an environment
 
 `wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
 

@@ -54,6 +54,7 @@ fn invalid(field: &str) -> contract::InvalidInputDetail {
 fn row_json(row: &contract::QueryRow) -> String {
     json!({
                     "created_at": row.created_at,
+                    "description": row.description,
                     "id": row.id,
                     "location_code": row.location_code,
                     "row_version": row.row_version,
@@ -212,6 +213,7 @@ macro_rules! row {
         let row = $row;
         $target {
             created_at: row.created_at.0,
+            description: row.description,
             id: row.id.0,
             location_code: row.location_code,
             row_version: row.row_version,

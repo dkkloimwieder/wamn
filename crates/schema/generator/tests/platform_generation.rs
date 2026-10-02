@@ -1394,6 +1394,11 @@ fn a_contract_carries_the_authored_text_and_nothing_else() {
 #[test]
 fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
     let mut silent = fixture::manifest();
+    for model in silent["models"].as_object_mut().unwrap().values_mut() {
+        if let Some(query) = model["operations"].get_mut("query") {
+            query.as_object_mut().unwrap().remove("display_field");
+        }
+    }
     for pointer in [
         "/custom_operations/widget.archive/input/fields",
         "/custom_operations/widget.record_batch/input/fields",
@@ -1439,8 +1444,8 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
         }
     }
 
-    // One member, one meaning. A generated query states what it lists with
-    // nothing authored, and it states no display field, which is the default.
+    // With no declared display field, a generated query keeps its record ID
+    // as the label fallback. It never selects an unrelated text column.
     let generated = artifact(&quiet, "generated/contracts/widget/query.operation.json");
     assert_eq!(generated["lists"]["model"], "widget");
     assert_eq!(generated["lists"]["key_field"], "id");
@@ -1451,6 +1456,87 @@ fn a_contract_carries_no_reference_and_no_list_when_nobody_states_one() {
     );
     assert_eq!(authored["lists"]["model"], "widget");
     assert_eq!(authored["lists"]["display_field"], "code");
+}
+
+#[test]
+fn generated_and_authored_queries_share_an_explicit_display_field() {
+    let mut manifest = fixture::manifest();
+    manifest["models"]["widget"]["operations"]["query"]["display_field"] = json!("code");
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+    let generated = artifact(&package, "generated/contracts/widget/query.operation.json");
+    let authored = artifact(&package, "generated/contracts/widget/list.operation.json");
+    assert_eq!(generated["lists"]["display_field"], "code");
+    assert_eq!(generated["lists"], authored["lists"]);
+
+    manifest["models"]["widget"]["operations"]["query"]["display_field"] = json!("id");
+    let identity = fixture::generate_with(&fixture::catalog(), &manifest);
+    assert_eq!(
+        artifact(&identity, "generated/contracts/widget/query.operation.json")["lists"]["display_field"],
+        "id"
+    );
+
+    manifest["models"]["widget"]["operations"]["query"]["display_field"] = json!("note");
+    let nullable = fixture::generate_with(&fixture::catalog(), &manifest);
+    assert_eq!(
+        artifact(&nullable, "generated/contracts/widget/query.operation.json")["lists"]["display_field"],
+        "note",
+        "an explicit nullable text field remains a declared label"
+    );
+}
+
+#[test]
+fn generated_query_display_fields_require_a_returned_field() {
+    for field in ["missing", ""] {
+        let mut manifest = fixture::manifest();
+        manifest["models"]["widget"]["operations"]["query"]["display_field"] = json!(field);
+        let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+            .expect_err("a query label must name a returned field");
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+        assert!(error.to_string().contains("display field"), "{error}");
+    }
+    for action in ["get", "create", "update", "delete"] {
+        let mut manifest = fixture::manifest();
+        if manifest["models"]["widget"]["operations"]
+            .get(action)
+            .is_none()
+        {
+            continue;
+        }
+        manifest["models"]["widget"]["operations"][action]["display_field"] = json!("code");
+        let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+            .expect_err("only a query declares a list label");
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+        assert!(error.to_string().contains("outside a query"), "{error}");
+    }
+}
+
+#[test]
+fn authored_query_display_fields_require_a_declared_result_field() {
+    for field in ["missing", ""] {
+        let mut manifest = fixture::manifest();
+        manifest["custom_operations"]["widget.list"]["lists"]["display_field"] = json!(field);
+        let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+            .expect_err("an authored list label must name a returned field");
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+        assert!(error.to_string().contains("display field"), "{error}");
+    }
+    let mut manifest = fixture::manifest();
+    manifest["custom_operations"]["widget.list"]["lists"]["display_field"] = json!("note");
+    let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+        .expect_err("a model field omitted from the authored result cannot label its rows");
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+    assert!(error.to_string().contains("display field"), "{error}");
+
+    let mut manifest = fixture::manifest();
+    manifest["custom_operations"]["widget.archive"]["lists"] =
+        json!({"key_field": "id", "display_field": "note"});
+    let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+        .expect_err("a command cannot declare a query label");
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+    assert!(
+        error.to_string().contains("outside a list query"),
+        "{error}"
+    );
 }
 
 /// EXIT GATE for `wamn-zrrg`: a generated result field states the record its

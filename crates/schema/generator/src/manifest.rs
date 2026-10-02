@@ -387,10 +387,9 @@ pub struct ListDeclaration {
     /// One field is spelled as a string, and several as a list.
     #[serde(with = "row_key")]
     pub key_field: Vec<String>,
-    /// Result field that carries the text a person reads.
+    /// Result field that labels the record for a person.
     ///
-    /// Absent takes the default: the first text field of the model, in the
-    /// contract order the IR states.
+    /// If absent, clients show the declared record key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_field: Option<String>,
 }
@@ -2830,6 +2829,9 @@ pub struct OperationDeclaration {
     /// The text fields a query's server search reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search: Option<SearchDeclaration>,
+    /// Result field that labels each query record. If absent, use its ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_field: Option<String>,
     #[serde(default)]
     pub sort: Option<SortDeclaration>,
     #[serde(default)]

@@ -186,7 +186,8 @@
             "maximum": 100
           },
           "label": "Purchase orders",
-          "result": "page"
+          "result": "page",
+          "display_field": "purchase_order_number"
         },
         "update": {
           "permission": "purchase_order.update",
@@ -287,7 +288,8 @@
             "maximum": 100
           },
           "label": "Receipts",
-          "result": "page"
+          "result": "page",
+          "display_field": "receipt_reference"
         }
       }
     },
@@ -360,7 +362,8 @@
             "maximum": 100
           },
           "label": "Suppliers",
-          "result": "page"
+          "result": "page",
+          "display_field": "name"
         },
         "create": {
           "permission": "supplier.create",
@@ -1320,7 +1323,8 @@
       "label": "Locations",
       "lists": {
         "model": "location",
-        "key_field": "id"
+        "key_field": "id",
+        "display_field": "location_code"
       }
     }
   },

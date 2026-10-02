@@ -3,12 +3,16 @@
 //! The test connects as the superuser of a test database on the test PostgreSQL
 //! server. The database holds a platform-owned widget table with one private column.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
-use wamn_schema_generator::{MaterializeMode, materialize_package_verified};
+use wamn_schema_generator::{
+    MaterializeMode, classify_statements_with_existing_grants,
+    classify_statements_with_existing_grants_in_transaction, materialize_package_verified,
+};
 
 /// The roles and privileges that the statement check must leave unchanged.
 const AUTHORITY_SNAPSHOT_SQL: &str = "SELECT \
@@ -34,7 +38,7 @@ fn generation_database() -> wamn_test_postgres::Database {
     database.execute(&[
         "CREATE SCHEMA inventory; CREATE TABLE inventory.widget (id uuid CONSTRAINT widget_id_pkey PRIMARY KEY, secret text NOT NULL)",
         &format!("ALTER DATABASE {} SET search_path TO inventory, public", database.name()),
-        "CREATE ROLE wamn_app NOLOGIN",
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$",
     ]).expect("prepare the platform generation database");
     database
 }
@@ -189,4 +193,122 @@ async fn generation_refuses_whole_row_references_as_the_application_role() {
         before,
         "the statement check must roll back its role, revocations, and grants"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn existing_grants_planner_refuses_the_intermediate_state_and_preserves_authority() {
+    let _serialized = wamn_test_postgres::lock();
+    let database = generation_database();
+    let url = database.url().to_owned();
+    let (mut client, connection) = tokio_postgres::connect(&url, NoTls)
+        .await
+        .expect("connect to the upgrade planning database");
+    let connection = tokio::spawn(connection);
+    client
+        .batch_execute(
+            "GRANT USAGE ON SCHEMA inventory, public TO wamn_app; \
+             GRANT SELECT (id, secret), UPDATE (secret) ON inventory.widget TO wamn_app; \
+             INSERT INTO inventory.widget (id, secret) \
+               VALUES ('00000000-0000-4000-8000-000000000001', 'retained'); \
+             ALTER TABLE inventory.widget ADD COLUMN note text; \
+             CREATE TABLE public.public_only (id uuid); \
+             GRANT SELECT ON public.public_only TO wamn_app;",
+        )
+        .await
+        .expect("retain predecessor grants while adding a candidate column");
+    let before = authority_snapshot(&url).await;
+    let session = client
+        .query_one(
+            "SELECT current_user::text, current_setting('search_path')",
+            &[],
+        )
+        .await
+        .unwrap();
+    let session: (String, String) = (session.get(0), session.get(1));
+    let mut corpus = BTreeMap::from([
+        (
+            "predecessor/widget.list/whole_row.sql".to_owned(),
+            b"SELECT to_jsonb(widget) FROM widget".to_vec(),
+        ),
+        (
+            "predecessor/widget.update/write.sql".to_owned(),
+            b"UPDATE widget SET secret = $1 WHERE id = $2".to_vec(),
+        ),
+        (
+            "predecessor/public_fallback.sql".to_owned(),
+            b"SELECT id FROM public_only".to_vec(),
+        ),
+    ]);
+    let refusal = classify_statements_with_existing_grants(&mut client, &corpus, "inventory")
+        .await
+        .expect_err("old column grants cannot read the candidate whole row");
+    let refusal = refusal.to_string();
+    assert!(
+        refusal.contains("predecessor/widget.list/whole_row.sql: 42501"),
+        "{refusal}"
+    );
+    assert!(
+        refusal.contains("predecessor/public_fallback.sql: 42P01"),
+        "the runtime search path must not append public: {refusal}"
+    );
+    assert_eq!(authority_snapshot(&url).await, before);
+    let after = client
+        .query_one(
+            "SELECT current_user::text, current_setting('search_path')",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (after.get::<_, String>(0), after.get::<_, String>(1)),
+        session
+    );
+
+    client
+        .batch_execute("GRANT SELECT (note) ON inventory.widget TO wamn_app")
+        .await
+        .expect("supply the candidate grant that repairs whole-row access");
+    corpus.remove("predecessor/public_fallback.sql");
+    let candidate_authority = authority_snapshot(&url).await;
+    let mut transaction = client.transaction().await.unwrap();
+    transaction
+        .batch_execute("UPDATE inventory.widget SET secret = 'caller write'")
+        .await
+        .unwrap();
+    let verdicts = classify_statements_with_existing_grants_in_transaction(
+        &mut transaction,
+        &corpus,
+        "inventory",
+    )
+    .await
+    .expect("the same predecessor statements pass under candidate grants");
+    assert_eq!(
+        transaction
+            .query_one("SELECT secret FROM inventory.widget", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "caller write",
+        "planning keeps the caller's surrounding transaction and changes"
+    );
+    transaction.rollback().await.unwrap();
+    assert!(!verdicts.needs_transaction("predecessor/widget.list/whole_row.sql"));
+    assert!(verdicts.needs_transaction("predecessor/widget.update/write.sql"));
+    assert_eq!(authority_snapshot(&url).await, candidate_authority);
+    let row = client
+        .query_one(
+            "SELECT secret, current_user::text, current_setting('search_path') \
+               FROM inventory.widget",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        row.get::<_, String>(0),
+        "retained",
+        "EXPLAIN never executes writes"
+    );
+    assert_eq!((row.get::<_, String>(1), row.get::<_, String>(2)), session);
+    drop(client);
+    connection.await.unwrap().unwrap();
 }

@@ -25,6 +25,7 @@ manifest.Package {
             operations: {
                 get: {revision_field = "edit_version", result = "one"}
                 query: {
+                    display_field = "code"
                     # Each sort direction has its own authored statement.
                     authored_sql = {
                         default = "query/widget.sql"
@@ -56,6 +57,7 @@ manifest.Package {
             operations: {
                 get: {revision_field = "edit_version", result = "one"}
                 query: {
+                    display_field = "name"
                     revision_field = "edit_version"
                     filters = [
                         {field = "name", match = "contains"}

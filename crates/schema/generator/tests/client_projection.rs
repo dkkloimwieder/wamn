@@ -864,7 +864,7 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
         "a column with no foreign key names no record"
     );
 
-    // What a list serves, authored and defaulted.
+    // Generated and authored lists retain their explicit display fields.
     let widget_list = operation("list").lists.as_ref().expect("the widget list");
     assert_eq!(widget_list.model.as_deref(), Some("widget"));
     assert_eq!(widget_list.key_field, ["id"]);
@@ -887,9 +887,14 @@ fn an_input_states_the_record_it_names_and_a_read_states_what_it_lists() {
         "a generated query states what it lists with no authoring"
     );
     assert_eq!(
-        maker_query.lists.as_ref().expect("a list").display_field,
-        None,
-        "an absent display field takes the plan's default"
+        maker_query
+            .lists
+            .as_ref()
+            .expect("a list")
+            .display_field
+            .as_deref(),
+        Some("name"),
+        "a generated query carries its authored display field"
     );
     let maker_list = maker("list")
         .lists

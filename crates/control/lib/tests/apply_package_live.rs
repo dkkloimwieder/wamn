@@ -441,15 +441,15 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     let beta_task =
         tokio::spawn(async move { apply_for_tenant(&beta_url, &beta, RACE_TENANT).await });
 
-    // The per-database audit retention lock also serializes the two log
-    // trigger reconciliations. So one package waits on the carrier while it
-    // holds that lock, and the other package waits on that lock.
+    // Package application takes the database data-access lock first. One
+    // package holds it while waiting on the grant carrier, and the other
+    // waits on the data-access lock.
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let waiting = observer
                 .query_one(
                     "SELECT count(*) FILTER (WHERE query LIKE '%wamn.operation-grants:%'), \
-                            count(*) FILTER (WHERE query LIKE '%wamn.audit-retention%') \
+                            count(*) FILTER (WHERE query LIKE '%wamn.package.data-access:%') \
                        FROM pg_stat_activity \
                       WHERE datname = current_database() \
                         AND wait_event_type = 'Lock' AND wait_event = 'advisory'",
@@ -464,7 +464,7 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         }
     })
     .await
-    .expect("one package family must wait on the shared carrier lock and one on the audit retention lock");
+    .expect("one package family must wait on the grant carrier and one on the data-access lock");
 
     blocker_tx
         .commit()
@@ -543,6 +543,94 @@ async fn write_identity(client: &Client) -> Vec<String> {
         .into_iter()
         .map(|row| row.get(0))
         .collect()
+}
+
+/// Row values and tuple identities prove that a suffix preserves every old row.
+async fn platform_fixture_rows(client: &Client) -> Vec<String> {
+    client
+        .query(
+            "SELECT identity FROM ( \
+               SELECT 'maker:' || (to_jsonb(maker) - 'note')::text || ':' || maker.xmin::text AS identity \
+                 FROM inventory.widget_maker AS maker \
+               UNION ALL \
+               SELECT 'widget:' || to_jsonb(widget)::text || ':' || widget.xmin::text \
+                 FROM inventory.widget AS widget \
+               UNION ALL \
+               SELECT 'tag:' || to_jsonb(tag)::text || ':' || tag.xmin::text \
+                 FROM inventory.widget_tag AS tag \
+             ) AS observed ORDER BY identity COLLATE \"C\"",
+            &[],
+        )
+        .await
+        .expect("read every predecessor fixture row")
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect()
+}
+
+#[tokio::test]
+async fn platform_successor_without_qualification_preserves_predecessor_state() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    install(&client).await;
+    let package =
+        fixture_root().with_file_name(format!("platform-fixture-upgrade-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&package);
+    wamn_fixture_package::write_upgrade_package(&package);
+    std::fs::write(
+        wamn_schema_generator::package_manifest_path(&package),
+        wamn_schema_generator::compile_manifest(&package).expect("compile authored successor"),
+    )
+    .expect("write compiled successor manifest");
+    let predecessor = wamn_fixture_package::package_root();
+    apply(&url, &predecessor)
+        .await
+        .expect("install platform_fixture 2.1.0");
+    client
+        .batch_execute(&format!(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+                    set_config('app.operation', 'admin:seed-upgrade-fixture', true); \
+             INSERT INTO inventory.widget_maker (id, name) VALUES \
+               ('00000000-0000-4000-8000-00000000b001', 'first'), \
+               ('00000000-0000-4000-8000-00000000b002', 'second'); \
+             INSERT INTO inventory.widget (code, note, maker_id) VALUES \
+               ('priority', 'retain this note', '00000000-0000-4000-8000-00000000b001'), \
+               ('standard', NULL, NULL); \
+             INSERT INTO inventory.widget_tag (label) VALUES ('first tag'), ('second tag'); \
+             COMMIT;"
+        ))
+        .await
+        .expect("seed rows in every predecessor relation");
+    let original_rows = platform_fixture_rows(&client).await;
+    assert_eq!(original_rows.len(), 6);
+    let original_identity = write_identity(&client).await;
+
+    let error = apply(&url, &package)
+        .await
+        .expect_err("an installed successor suffix requires qualification");
+    assert!(
+        error.to_string().contains("--upgrade-qualification"),
+        "{error:#}"
+    );
+    assert_eq!(write_identity(&client).await, original_identity);
+    assert_eq!(platform_fixture_rows(&client).await, original_rows);
+    assert!(
+        client
+            .query_one(
+                "SELECT NOT EXISTS (SELECT FROM catalog.packages \
+                    WHERE tenant_id = $1 AND package_id = 'platform_fixture' \
+                      AND package_version = '2.2.0') \
+                    AND NOT EXISTS (SELECT FROM information_schema.columns \
+                    WHERE table_schema = 'inventory' AND table_name = 'widget_maker' \
+                      AND column_name = 'note')",
+                &[&TENANT],
+            )
+            .await
+            .expect("inspect the unchanged package and column")
+            .get::<_, bool>(0)
+    );
+    std::fs::remove_dir_all(package).expect("remove test-owned successor fixture");
 }
 
 #[tokio::test]
@@ -1378,72 +1466,12 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     );
     std::fs::write(&migration, &original).expect("restore the cumulative predecessor prefix");
 
-    apply(&url, &package)
+    let predecessor_identity = write_identity(&client).await;
+    let unqualified = apply(&url, &package)
         .await
-        .expect("upgrade inherits the verified prefix and executes only the suffix");
-    assert!(
-        client
-            .query_one(
-                "SELECT to_regclass('inventory.after_seal') IS NOT NULL",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0)
-    );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
-                    AND package_version = '1.0.1'",
-                &[&TENANT],
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        2
-    );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT predecessor_version FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
-                    AND package_version = '1.0.1'",
-                &[&TENANT],
-            )
-            .await
-            .unwrap()
-            .get::<_, Option<String>>(0)
-            .as_deref(),
-        Some("1.0.0")
-    );
-    assert!(
-        client
-            .query_one(
-                "SELECT old.sha256 = new.sha256 \
-                   FROM catalog.package_migrations AS old \
-                   JOIN catalog.package_migrations AS new \
-                     ON new.tenant_id = old.tenant_id \
-                    AND new.package_id = old.package_id \
-                    AND new.ordinal = old.ordinal \
-                  WHERE old.tenant_id = $1 \
-                    AND old.package_id = 'wamn_inventory' \
-                    AND old.package_version = '1.0.0' \
-                    AND new.package_version = '1.0.1' \
-                    AND old.ordinal = 1",
-                &[&TENANT],
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0),
-        "upgrade records the predecessor's exact bytes under the new coordinate"
-    );
-    let upgraded_identity = write_identity(&client).await;
-    apply(&url, &package)
-        .await
-        .expect("exact cumulative upgrade replay is a no-op");
-    assert_eq!(write_identity(&client).await, upgraded_identity);
+        .expect_err("an installed suffix requires accepted qualification");
+    assert!(unqualified.to_string().contains("--upgrade-qualification"));
+    assert_eq!(write_identity(&client).await, predecessor_identity);
 
     install(&client).await;
     apply(&url, &package)

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.location_code,\n    model.row_version\nFROM location AS model\nWHERE model.id = $1::uuid;\n",
+  "query": "SELECT\n    model.created_at,\n    model.description,\n    model.id,\n    model.location_code,\n    model.row_version\nFROM location AS model\nWHERE\n    ($1::jsonb IS NULL OR EXISTS (\n        SELECT 1\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n        WHERE strpos(model.location_code, filter.value) > 0\n    ))\n    AND\n    ($2::timestamptz IS NULL OR model.created_at > $2::timestamptz\n        OR (model.created_at = $2::timestamptz AND model.id > $3::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $4::int8;\n",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "location",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "id",
         "type_info": "Uuid",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "location_code",
         "type_info": "Text",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "row_version",
         "type_info": "Int4",
         "origin": {
@@ -50,15 +61,19 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Jsonb",
+        "Timestamptz",
+        "Uuid",
+        "Int8"
       ]
     },
     "nullable": [
       false,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "61ac14096e05333a1144902bc75008c04282a56c79f864c6b70c0bdf6d4cfb43"
+  "hash": "c42e750623ec91f62f6b20349fd1c4eca253ea7a14224790b72f7c05b6fb44d7"
 }

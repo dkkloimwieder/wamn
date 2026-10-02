@@ -117,8 +117,9 @@ async fn select_head(
     let (mut client, connection) = tokio_postgres::connect(&release.database_url, NoTls).await?;
     let connection = tokio::spawn(connection);
     let result = async {
-        let transaction = client.transaction().await?;
+        let mut transaction = client.transaction().await?;
         claim(&transaction, &snapshot.manifest.release).await?;
+        require_compatible_schema(&mut transaction, &snapshot.manifest).await?;
         // Authored roles take the closures of the candidate before it becomes
         // the head, so no activated operation calls one its roles were not
         // granted.
@@ -291,10 +292,10 @@ async fn deploy(
         expected,
         token,
     } = payload;
-    let transaction = client.transaction().await?;
+    let mut transaction = client.transaction().await?;
     claim(&transaction, &snapshot.manifest.release).await?;
+    require_compatible_schema(&mut transaction, &snapshot.manifest).await?;
     require_selected(&transaction, &snapshot.manifest.release).await?;
-    require_compatible_schema(&transaction, &snapshot.manifest).await?;
     qualification.assert_artifacts()?;
     // Keep the selection row locked through workload readiness, authenticated
     // execution, and the catalog activation commit. No task reselects itself.
@@ -507,71 +508,11 @@ async fn require_selected(
     Ok(())
 }
 
-async fn migration_signature(
-    transaction: &Transaction<'_>,
-    tenant: &str,
-    package: &str,
-    version: &str,
-) -> anyhow::Result<Vec<(i32, String, String)>> {
-    let migrations = transaction
-        .query(
-            wamn_schema_control::sql::select_package_migrations_sql(),
-            &[&tenant, &package, &version],
-        )
-        .await?;
-    ensure!(
-        !migrations.is_empty(),
-        "selected package has no applied migration records"
-    );
-    Ok(migrations
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-        .collect())
-}
-
 async fn require_compatible_schema(
-    transaction: &Transaction<'_>,
+    transaction: &mut Transaction<'_>,
     manifest: &ServingManifest,
 ) -> anyhow::Result<()> {
-    let release = &manifest.release;
-    // The package owner records migrations in the transaction that applies
-    // them. Its lineage lock prevents a concurrent application from changing
-    // the installed leaf while this deployment checks or activates it.
-    for package in &release.packages {
-        transaction
-            .query_one(
-                crate::apply_package::LOCK_PACKAGE_SQL,
-                &[&release.tenant_id, &package.package_id()],
-            )
-            .await?;
-        let installed = transaction
-            .query_opt(
-                crate::apply_package::SELECT_CURRENT_PACKAGE_VERSION_SQL,
-                &[&release.tenant_id, &package.package_id()],
-            )
-            .await?
-            .context("the target lacks the selected package")?
-            .get::<_, String>(0);
-        let selected = migration_signature(
-            transaction,
-            &release.tenant_id,
-            package.package_id(),
-            package.package_version(),
-        )
-        .await?;
-        let actual = migration_signature(
-            transaction,
-            &release.tenant_id,
-            package.package_id(),
-            &installed,
-        )
-        .await?;
-        ensure!(
-            actual == selected,
-            "schema-changing deployment requires a fresh target; existing-data upgrades are unsupported"
-        );
-    }
-    Ok(())
+    crate::package_upgrade::require_compatible_schema(transaction, manifest).await
 }
 
 async fn activate(

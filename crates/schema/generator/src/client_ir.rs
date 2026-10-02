@@ -291,7 +291,7 @@ pub struct ListIr {
     #[serde(with = "crate::manifest::row_key")]
     pub key_field: Vec<String>,
     /// Result field that carries the text a person reads, when the author
-    /// states one. The plan applies the default.
+    /// states one. Otherwise the plan displays the declared record key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_field: Option<String>,
 }

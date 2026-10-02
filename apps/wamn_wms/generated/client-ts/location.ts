@@ -26,6 +26,8 @@ export const LOCATION_CREATE_REQUEST_FIELDS: FieldMap = {
 export interface LocationCreateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
+  /** `text` */
+  readonly description: string | null;
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
@@ -37,6 +39,7 @@ export interface LocationCreateResult {
 /** What `wamn-wms:location/create@2.1.0` calls its result members. */
 export const LOCATION_CREATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
+  "description": "description",
   "id": "id",
   "location_code": "locationCode",
   "row_version": "rowVersion",
@@ -103,6 +106,8 @@ export const LOCATION_GET_REQUEST_FIELDS: FieldMap = {
 export interface LocationGetResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
+  /** `text` */
+  readonly description: string | null;
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
@@ -114,6 +119,7 @@ export interface LocationGetResult {
 /** What `wamn-wms:location/get@2.1.0` calls its result members. */
 export const LOCATION_GET_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
+  "description": "description",
   "id": "id",
   "location_code": "locationCode",
   "row_version": "rowVersion",
@@ -195,6 +201,8 @@ export const LOCATION_QUERY_REQUEST_FIELDS: FieldMap = {
 export interface LocationQueryRow {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
+  /** `text` */
+  readonly description: string | null;
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
@@ -217,6 +225,7 @@ export const LOCATION_QUERY_RESULT_FIELDS: FieldMap = {
     member: "item",
     fields: {
       "created_at": "createdAt",
+      "description": "description",
       "id": "id",
       "location_code": "locationCode",
       "row_version": "rowVersion",
@@ -303,6 +312,8 @@ export const LOCATION_UPDATE_REQUEST_FIELDS: FieldMap = {
 export interface LocationUpdateResult {
   /** `timestamptz` */
   readonly createdAt: Timestamptz;
+  /** `text` */
+  readonly description: string | null;
   /** `uuid` */
   readonly id: Uuid;
   /** `text` */
@@ -314,6 +325,7 @@ export interface LocationUpdateResult {
 /** What `wamn-wms:location/update@2.1.0` calls its result members. */
 export const LOCATION_UPDATE_RESULT_FIELDS: FieldMap = {
   "created_at": "createdAt",
+  "description": "description",
   "id": "id",
   "location_code": "locationCode",
   "row_version": "rowVersion",

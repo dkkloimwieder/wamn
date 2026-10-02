@@ -88,6 +88,8 @@ enum Command {
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Push one authored package as a registry artifact and record its digest (wamn-zua8.3)
     PushPackage(package_verbs::PushPackageArgs),
+    /// Prove a package successor on a copy of the serving predecessor database.
+    QualifyUpgrade(package_verbs::QualifyUpgradeArgs),
     /// Reconcile generated package data privileges after apply-package.
     ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Validate/publish component bytes, then exact-project their facts to both planes
@@ -163,6 +165,7 @@ async fn main() -> anyhow::Result<()> {
         Command::UpgradeSchema(args) => provisioning_verbs::upgrade_schema(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::PushPackage(args) => package_verbs::push(args).await,
+        Command::QualifyUpgrade(args) => package_verbs::qualify_upgrade(args).await,
         Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await

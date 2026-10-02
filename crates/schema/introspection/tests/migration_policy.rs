@@ -6,6 +6,7 @@ use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorType,
     inspect_migration_definition_mutations, validate_migration_file,
     validate_migration_file_for_schemas,
+    validate_predecessor_compatible_migration_bytes_for_schemas,
 };
 
 static ARTIFACT_ID: AtomicU64 = AtomicU64::new(0);
@@ -92,6 +93,100 @@ ALTER TABLE inventory.widget_maker
 
     validate_migration_file(artifact.path(), "inventory")
         .expect("the two client fields and named check are the admitted overlay DDL");
+}
+
+#[test]
+fn predecessor_upgrade_admits_new_tables_with_internal_constraints_and_existing_column_forms() {
+    let sql = r"
+CREATE TABLE inventory.upgrade_detail (
+    id uuid CONSTRAINT upgrade_detail_pkey PRIMARY KEY,
+    quantity bigint CONSTRAINT upgrade_detail_quantity_check CHECK (quantity > 0),
+    widget_id uuid CONSTRAINT upgrade_detail_widget_fk REFERENCES inventory.widget (id)
+);
+ALTER TABLE inventory.widget ADD COLUMN inspection_required boolean NOT NULL DEFAULT false;
+ALTER TABLE inventory.widget ADD COLUMN quality_status text NOT NULL DEFAULT 'not_required';
+ALTER TABLE warehouse.area ADD COLUMN description text;
+";
+    validate_predecessor_compatible_migration_bytes_for_schemas(
+        "upgrade.sql",
+        sql.as_bytes(),
+        &["inventory", "warehouse"],
+    )
+    .expect("new-table constraints and admitted columns preserve predecessor write shapes");
+
+    for column_type in [
+        "boolean",
+        "integer",
+        "bigint",
+        "double precision",
+        "text",
+        "bytea",
+        "numeric",
+        "timestamp with time zone",
+        "jsonb",
+        "uuid",
+    ] {
+        let sql = format!("ALTER TABLE inventory.widget ADD COLUMN detail {column_type};");
+        validate_predecessor_compatible_migration_bytes_for_schemas(
+            "upgrade.sql",
+            sql.as_bytes(),
+            &["inventory"],
+        )
+        .unwrap_or_else(|error| panic!("{sql} must be admitted: {error}"));
+    }
+}
+
+#[test]
+fn predecessor_upgrade_refuses_an_existing_relation_check_admitted_by_ordinary_policy() {
+    let sql = r"
+ALTER TABLE inventory.widget ADD COLUMN description text;
+ALTER TABLE inventory.widget ADD CONSTRAINT widget_description_check
+    CHECK (description IS NOT NULL);
+";
+    let artifact = TempArtifact::write("sql", sql);
+    validate_migration_file(artifact.path(), "inventory")
+        .expect("ordinary migrations admit named checks");
+
+    let error = validate_predecessor_compatible_migration_bytes_for_schemas(
+        artifact.path(),
+        sql.as_bytes(),
+        &["inventory"],
+    )
+    .expect_err("a check can reject predecessor writes even when their SQL plans successfully");
+    assert_eq!(error.kind(), MigrationPolicyErrorType::UnsupportedStatement);
+    assert_eq!(error.statement_index(), Some(2));
+    assert_eq!(error.path(), artifact.path());
+    assert!(error.to_string().contains("predecessor-compatible"));
+}
+
+#[test]
+fn predecessor_upgrade_preserves_ordinary_policy_refusals() {
+    for sql in [
+        "ALTER TABLE inventory.widget ADD COLUMN description text NOT NULL;",
+        "ALTER TABLE inventory.widget ADD COLUMN description text DEFAULT 'open';",
+        "ALTER TABLE inventory.widget ADD COLUMN description text CONSTRAINT widget_description_check CHECK (description <> '');",
+        "ALTER TABLE inventory.widget ALTER COLUMN description TYPE bigint;",
+        "ALTER TABLE inventory.widget ALTER COLUMN description SET NOT NULL;",
+        "ALTER TABLE inventory.widget DROP COLUMN description;",
+        "UPDATE inventory.widget SET description = 'backfilled';",
+        "CREATE TABLE public.hidden (id uuid);",
+        "CREATE TABLE inventory.hidden (id uuid PRIMARY KEY);",
+        "GRANT SELECT ON inventory.widget TO attacker;",
+    ] {
+        let ordinary = refusal(sql);
+        let upgrade = validate_predecessor_compatible_migration_bytes_for_schemas(
+            "upgrade.sql",
+            sql.as_bytes(),
+            &["inventory"],
+        )
+        .expect_err("an upgrade must not widen ordinary migration authority");
+        assert_eq!(upgrade.kind(), ordinary.kind(), "{sql}");
+        assert_eq!(
+            upgrade.statement_index(),
+            ordinary.statement_index(),
+            "{sql}"
+        );
+    }
 }
 
 #[test]

@@ -22,6 +22,9 @@ A change result records its source state and cannot substitute for release quali
 
 ## Candidate qualification
 
+For a package successor with application migrations, first follow [package upgrades](deployment.md#package-upgrades).
+`qualify-upgrade` proves the database transition before application. It does not qualify a release or replace the candidate qualification below.
+
 Build the selected application artifacts through the existing [build owners](building.md).
 Build native delivery binaries with `tools/delivery-owned build-native "$DELIVERY_TARGET"` before preparing the candidate.
 The application build owners and qualification use this same command.
@@ -206,7 +209,9 @@ Deployment pulls the published manifest by digest and uses the supplied immutabl
 It holds the existing selection row lock through workload readiness, the authenticated operation, and the activation commit.
 It also holds the package owner's lineage locks while comparing the selected and installed migration sequences.
 Identical applied migrations permit code replacement across package versions.
-A mismatch requires a fresh target and refuses an unsupported change to a database with retained data.
+A different sequence requires persisted upgrade evidence for the exact immediate predecessor release and unchanged relevant installed state.
+Selection and deployment share this compatibility rule. Other mismatches refuse without reversing committed migrations.
+See [retained-schema rollback](deployment.md#rollback-and-maintenance).
 
 The command bounds deployment to 15 minutes and each Kubernetes rollout wait to 5 minutes.
 Failure or interruption leaves the activation transaction uncommitted and reports failure.

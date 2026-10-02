@@ -32,7 +32,7 @@ manifest.Package {
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {result = "one"}
-                query: {filters = [{field = "location_code", match = "contains"}], result = "page"}
+                query: {display_field = "location_code", filters = [{field = "location_code", match = "contains"}], result = "page"}
                 create: {writable_fields = ["location_code"], result = "one"}
                 update: {writable_fields = ["location_code"], revision_field = "row_version", result = "one"}
             }
@@ -50,6 +50,7 @@ manifest.Package {
             operations: {
                 get: {revision_field = "row_version", result = "one"}
                 query: {
+                    display_field = "packaging_code"
                     revision_field = "row_version"
                     authored_sql = {
                         default = "query/open_packaging.sql"
@@ -131,7 +132,7 @@ manifest.Package {
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {result = "one"}
-                query: {filters = [{field = "product_code", match = "contains"}], result = "page"}
+                query: {display_field = "product_code", filters = [{field = "product_code", match = "contains"}], result = "page"}
                 create: {writable_fields = ["product_code"], result = "one"}
                 update: {writable_fields = ["product_code"], revision_field = "row_version", result = "one"}
             }

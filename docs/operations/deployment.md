@@ -97,8 +97,7 @@ wamn-ctl reconcile-run-plane \
 The reconciler requires the registry-derived target and administrative database authority.
 Its `--dry-run` form prints the proposed changes without applying them.
 The same run installs the catalog schema, which `apply-package` writes into, and then `app-schema.sql` and the tenant identity rows, whose triggers call the record-history functions of the catalog schema.
-Existing reconciliation code does not establish support for post-install application schema upgrades.
-That design remains in [upgrades](../plan/upgrades.md).
+For an installed package successor, follow [package upgrades](#package-upgrades) before changing its application schema.
 
 Apply the selected package migrations to a fresh target with `wamn-ctl apply-package`.
 apply-package owns the grants of the `wamn_audit_retention` role on history tables.
@@ -413,12 +412,131 @@ A database installed before its record table existed takes `--baseline <ordinal>
 The verb then records the files up to that ordinal without running them, and applies the rest in the same run.
 If a change breaks a running binary, stop that binary before the run.
 
+## Package upgrades
+
+This path advances one installed package to its direct successor while retaining its rows.
+The successor names the installed version as `predecessor_version` and preserves its migration stream as an exact byte prefix.
+An installed overlay that pins the package excludes this path. Overlay upgrades remain [deferred work](../plan/upgrades.md).
+
+Use a patch version for an internal correction without an application migration suffix.
+Use a minor version for predecessor-compatible additive schema or operation changes.
+Use a major version for an incompatible contract or migration that requires client changes.
+A nonempty application migration suffix requires at least a minor version, such as `2.0.0 → 2.1.0`.
+
+The shared upgrade policy permits new ordinary tables, nullable modeled columns without defaults, and two non-null constant defaults: `boolean DEFAULT false` and `text DEFAULT 'not_required'`.
+It refuses new constraints on existing relations, type changes, backfills, and destructive changes.
+Migration-specific exceptions, including a whole-row query that loses access to an added column, remain in Epic 3 of [package upgrade](../plan/package-upgrade.md).
+
+`qualify-upgrade` proves the database transition before production mutation.
+It copies the installed predecessor database, preserves object ownership, restores predecessor grants, and applies the candidate suffix on that copy.
+It plans predecessor SQL under both predecessor grants and the complete candidate grants after reconciliation.
+A failure before reconciliation refuses the upgrade even if candidate grants restore access.
+It also checks candidate generated artifacts and statements against the upgraded copy.
+
+`qualify-release` remains the single release-qualification path defined by [release qualification](../plan/release-qualification.md).
+It proves the exact published release, source, and deployment artifacts after the package upgrade.
+An upgrade result cannot satisfy `publish-qualified-release` or replace ordinary release qualification.
+
+### Upgrade prerequisites
+
+Use one deployment writer for the environment. Resolve any mismatch between the selected release and serving workloads before qualification.
+The observer compares the selected manifest digest with `--release-manifest-digest` on fully rolled-out, ready host pods.
+It follows each selected `WorkloadDeployment` through its current replica set to the ready, correctly placed `Workload` objects.
+The Kubernetes arguments select those resources. They do not assert application schemas.
+
+Each SQL-bearing package must have one actual serving `wamn.schema`, with the expected tenant and environment.
+The successor keeps that schema. Predecessor and candidate SQL use the same exact `search_path`.
+Absent or ambiguous workloads, multiple schema surfaces, conflicting replica schemas, and schema changes refuse qualification.
+There are no predecessor-schema or candidate-schema flags.
+Packages with no SQL need no application schema or `--package-workload` selector. Host convergence still applies.
+Schema relocation or multiple-schema support requires a future persisted deployment fact outside Epic 1.
+
+Apply pending [platform schema migrations](#platform-schema-upgrades) before application upgrade, including the `catalog.package_upgrade_qualifications` carrier.
+Keep the exact predecessor release available for recovery.
+Prepare the complete candidate root set, including generated artifacts. Ordinary release qualification must support the environment's candidate shape.
+The final WMS proof waits for `wamn-ld93.33` to close and for the owner to schedule the run.
+
+Run qualification on a machine authorized to hold copied production data, with PostgreSQL 18 tools and enough temporary storage.
+The command owns its temporary PostgreSQL server and private dump directory and removes them after use.
+It copies application data, preserves required ownership, and reconstructs effective privileges without copying cluster login-role secrets.
+Keep database credentials outside committed files. Retain the qualification result through application and resolve any reported cleanup failure.
+
+### Upgrade order
+
+Set the paths and scope below for the chosen environment. `UPGRADE_RESULT` must name a new file.
+For WMS, `CANDIDATE_PACKAGE` is the prepared `wamn_wms@2.1.0` root and `WORKLOAD_DEPLOYMENT` identifies its serving HTTP workload.
+Repeat `--presented-package` for every installed lineage and `--package-workload PACKAGE=NAME` for each SQL-bearing package in the proof.
+
+```bash
+wamn-ctl qualify-upgrade \
+  --database-url "$OWNER_URL" --tenant "$TENANT" --environment "$ENVIRONMENT" \
+  --package "$CANDIDATE_PACKAGE" --presented-package "$CANDIDATE_PACKAGE" \
+  --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
+  --host-deployment "$HOST_DEPLOYMENT" \
+  --package-workload "$PACKAGE_ID=$WORKLOAD_DEPLOYMENT" \
+  --result "$UPGRADE_RESULT"
+
+wamn-ctl apply-package \
+  --database-url "$OWNER_URL" --tenant "$TENANT" \
+  --package "$CANDIDATE_PACKAGE" --upgrade-qualification "$UPGRADE_RESULT"
+
+wamn-ctl reconcile-package-data-access \
+  --database-url "$OWNER_URL" --tenant "$TENANT" --package "$CANDIDATE_PACKAGE"
+
+wamn-ctl reconcile-replica-identity \
+  --admin-database-url "$OWNER_URL" --package "$CANDIDATE_PACKAGE"
+```
+
+Repeat reconciliation's `--package` arguments for the same complete root set that qualification used.
+Run replica-identity reconciliation for each package whose registrations require old-row fields.
+Continue through the existing [release commands](delivery.md) in this order:
+
+```text
+push-component → publish-release → prepare-release → qualify-release
+→ publish-qualified-release → select-release
+→ host/workload deployment → readiness and authenticated operation
+→ optional wamn web upload
+```
+
+Before mutation, application rechecks the predecessor head, package bytes, privileges, and observed workload identities, specifications, and schemas.
+It stores accepted canonical evidence and its digest in `catalog.package_upgrade_qualifications` within the package application transaction.
+An exact retry changes nothing. Conflicting evidence for the same coordinate refuses.
+Data-access reconciliation consumes the persisted evidence and refuses a changed root set or derived privilege state.
+Reconciliation requires a qualification that matches the complete current roots, candidate transition, and derived privileges.
+It does not select by timestamp. Earlier qualifications remain immutable history and do not independently constrain later package sets.
+Each subsequent qualification starts from the complete installed set and proves the complete successor set.
+
+Kind delivery uses `deploy-release` after selection.
+wamn-dev/GCP uses generated host values, `helm upgrade`, and `kubectl apply` of the released workloads, as [Google Cloud operations](gcp.md) records.
+Wait for readiness and prove a meaningful authenticated application operation before reporting success.
+Upload web files only after selecting their release.
+
+### Upgrade failures
+
+| Failure point | Installed state and recovery |
+| --- | --- |
+| Qualification | Production is unchanged. Correct the candidate or observed deployment and qualify again. |
+| Package application | The transaction rolls back, including candidate registration and accepted evidence. Correct the cause and retry. |
+| Application committed, data access not reconciled | The candidate schema remains with predecessor grants. Qualification proved predecessor SQL in this state. Repair reconciliation using the qualified roots. |
+| Data access committed, replica identity or later publication/qualification failed | The predecessor serves on candidate schema and grants. Repair and continue, or abandon that release attempt. |
+| Selection or host deployment | The head and serving release can differ. Complete deployment or select the qualified immediate predecessor and restore its workloads. Restore convergence before another upgrade. |
+
+Never reverse a committed package migration for recovery.
+Any replacement package candidate names the installed leaf as its predecessor, including after a later deployment failure.
+
 ## Rollback and maintenance
 
-Revert the workload configuration change and apply the previous release selection to roll back its artifact pointer.
+Select the qualified previous release, then restore its host and workload configuration through the environment's normal deployment procedure.
 A release digest selects exact bytes, but a mutable image tag does not.
-A code rollback does not reverse database changes.
-For schema changes, use a fresh target instead of implying an in-place upgrade path.
+The installed package and its committed migrations remain in place.
+Reverse migration is not rollback.
+
+After an additive package upgrade, rollback supports only the exact immediate predecessor release recorded in accepted upgrade evidence.
+`select-release` and kind `deploy-release` use the same compatibility rule: exact installed migration signatures, or persisted predecessor compatibility with unchanged relevant live state.
+They refuse missing evidence, a changed installed leaf, a non-prefix history, a different predecessor manifest, or changed qualified data privileges.
+Rollback needs no operator-local upgrade result file. Ordinary release qualification and publication requirements still apply.
+On wamn-dev/GCP, select the predecessor, render its host values, run `helm upgrade`, apply its workloads, and prove readiness and authenticated operation success.
+The installed successor schema remains throughout rollback and any later re-forward deployment.
 
 `wamn-ctl-ops` contains copy, run-history pruning, event advisory, and cluster recovery commands.
 For backup and recovery, use CloudNativePG backup and recovery on the cluster.

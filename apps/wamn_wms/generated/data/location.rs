@@ -176,6 +176,7 @@ pub async fn update(
     match row.outcome.as_deref() {
         Some("updated") => Ok(LocationRow {
             created_at: row.created_at.ok_or_else(Error::internal)?,
+            description: row.description,
             id: row.id.ok_or_else(Error::internal)?,
             location_code: row.location_code.ok_or_else(Error::internal)?,
             row_version: row.row_version.ok_or_else(Error::internal)?,

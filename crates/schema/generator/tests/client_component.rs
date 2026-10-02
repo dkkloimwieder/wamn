@@ -944,7 +944,7 @@ fn a_populated_input_renders_a_selector_fed_by_its_list() {
     );
     assert!(
         widget.contains("optionLabel={(row) => String(row.name)}"),
-        "the default display field reaches the option text"
+        "the generated query's explicit display field reaches the option text"
     );
     assert!(
         widget.contains("optionLabel={(row) => String(row.code)}"),
@@ -1191,6 +1191,38 @@ fn a_selector_searches_by_its_display_field_and_reads_the_next_page() {
         )),
         "the generator names the selector, its input and the list it reads"
     );
+}
+
+#[test]
+fn a_selector_without_a_display_field_renders_the_record_id() {
+    let mut ir = release();
+    ir.models
+        .iter_mut()
+        .find(|model| model.name == "widget_maker")
+        .expect("the maker model")
+        .operations
+        .iter_mut()
+        .find(|operation| operation.name == "query")
+        .expect("the maker query")
+        .lists
+        .as_mut()
+        .expect("the maker list declaration")
+        .display_field = None;
+    let files = emit(&ir);
+    let widget = widget(&files);
+    let create = widget
+        .split("export function WidgetCreateForm")
+        .nth(1)
+        .expect("the create form exists")
+        .split("\n/**")
+        .next()
+        .expect("the form ends");
+    assert!(create.contains("optionLabel={(row) => String(row.id)}"));
+    assert!(!create.contains("optionLabel={(row) => String(row.name)}"));
+    assert!(!create.contains("makerIdSearch"));
+    assert!(widget.contains(
+        "field: \"makerId\", label: \"maker id\", type: \"uuid\", role: \"reference\", displayField: \"id\""
+    ));
 }
 
 #[test]

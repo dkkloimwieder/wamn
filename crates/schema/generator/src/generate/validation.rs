@@ -193,6 +193,18 @@ fn validate_lists(
             ));
         }
     }
+    if let Some(display_field) = &lists.display_field {
+        if !table {
+            return refuse(format!(
+                "{operation_name} declares a display field outside a list query"
+            ));
+        }
+        if !fields.iter().any(|field| field.path == *display_field) {
+            return refuse(format!(
+                "{operation_name} display field {display_field} must name a field of its result"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -364,6 +376,24 @@ fn validate_operation(
 ) -> Result<(), GenerateError> {
     let context = format!("{model_name}.{}", action.as_str());
     validate_field(table, model_name, "id")?;
+    if let Some(display_field) = &operation.display_field {
+        if action != CrudAction::Query {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidOperation,
+                format!("{context} declares a display field outside a query"),
+            ));
+        }
+        if !table
+            .columns()
+            .iter()
+            .any(|field| field.name() == display_field)
+        {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidOperation,
+                format!("{context} display field {display_field} must name a field of its result"),
+            ));
+        }
+    }
 
     let server_owned = server_owned_fields(model, table);
     let mut writable = BTreeSet::new();

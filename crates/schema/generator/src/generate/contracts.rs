@@ -801,12 +801,14 @@ fn emit_operation_contracts(
     // generated action carries the same member an authored one declares, so
     // every reader downstream applies one rule with no fallback.
     if matches!(action, CrudAction::Query) {
-        // The display field stays absent, which means the default rule, the
-        // same as an authored read that states none.
-        operation_contract.insert(
-            "lists".to_owned(),
-            json!({"model": model_name, "key_field": "id"}),
-        );
+        let mut lists = serde_json::Map::from_iter([
+            ("model".to_owned(), json!(model_name)),
+            ("key_field".to_owned(), json!("id")),
+        ]);
+        if let Some(display_field) = &operation.display_field {
+            lists.insert("display_field".to_owned(), json!(display_field));
+        }
+        operation_contract.insert("lists".to_owned(), Value::Object(lists));
     }
     // Every operation states the relations it reads and writes, whoever wrote
     // it, in the member an authored operation declares. The host keys a list

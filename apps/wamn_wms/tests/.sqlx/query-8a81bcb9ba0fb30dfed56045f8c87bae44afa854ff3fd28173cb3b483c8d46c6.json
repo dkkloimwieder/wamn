@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO location (location_code)\nVALUES ($1::text)\nRETURNING\n    created_at,\n    id,\n    location_code,\n    row_version;\n",
+  "query": "INSERT INTO location (location_code)\nVALUES ($1::text)\nRETURNING\n    created_at,\n    description,\n    id,\n    location_code,\n    row_version;\n",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "description",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "location",
+            "name": "description"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "id",
         "type_info": "Uuid",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "location_code",
         "type_info": "Text",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "row_version",
         "type_info": "Int4",
         "origin": {
@@ -55,10 +66,11 @@
     },
     "nullable": [
       false,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "e8c3d64ccf22069080b74ea76953975d8c8e4e71d6f1eee000967a1bb27aa058"
+  "hash": "8a81bcb9ba0fb30dfed56045f8c87bae44afa854ff3fd28173cb3b483c8d46c6"
 }

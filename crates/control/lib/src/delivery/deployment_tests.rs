@@ -241,14 +241,14 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
         .execute(SELECT_RELEASE, &[&"delivery", &"test", &100_i32])
         .await
         .unwrap();
-    let transaction = first.transaction().await.unwrap();
+    let mut transaction = first.transaction().await.unwrap();
     claim(&transaction, &previous.release).await.unwrap();
     require_selected(&transaction, &previous.release)
         .await
         .unwrap();
     // Different historical migrations do not matter when the installed leaf
     // and requested package have exactly the same applied migration stream.
-    require_compatible_schema(&transaction, &previous)
+    require_compatible_schema(&mut transaction, &previous)
         .await
         .unwrap();
     let second_pid: i32 = second
@@ -311,17 +311,17 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
         "late selection and exact retry add no activation events"
     );
     seed_package(&first, "3.0.0", Some("2.0.0"), 'e', 'e').await;
-    let transaction = first.transaction().await.unwrap();
+    let mut transaction = first.transaction().await.unwrap();
     claim(&transaction, &selected.release).await.unwrap();
     require_selected(&transaction, &selected.release)
         .await
         .unwrap();
     assert!(
-        require_compatible_schema(&transaction, &selected)
+        require_compatible_schema(&mut transaction, &selected)
             .await
             .unwrap_err()
             .to_string()
-            .contains("existing-data upgrades are unsupported")
+            .contains("requires persisted immediate-predecessor upgrade evidence")
     );
     transaction.rollback().await.unwrap();
     first_connection.abort();

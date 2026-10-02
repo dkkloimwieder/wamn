@@ -13,6 +13,12 @@ pub const LOCATION_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "description",
+        type_name: "text",
+        nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -48,6 +54,8 @@ pub struct LocationCreateRequest {
 pub struct LocationCreateResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// `text`
+    pub description: Option<String>,
     /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
@@ -84,6 +92,12 @@ pub const LOCATION_CREATE_RESULT: &[FieldDescriptor] = &[
         path: "created_at",
         type_name: "timestamptz",
         nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "description",
+        type_name: "text",
+        nullable: true,
         values: &[],
     },
     FieldDescriptor {
@@ -151,6 +165,18 @@ pub const LOCATION_CREATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema]
             path: "created_at",
             type_name: "timestamptz",
             nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "description",
+            type_name: "text",
+            nullable: true,
             values: &[],
         },
         required: true,
@@ -254,6 +280,8 @@ pub struct LocationGetRequest {
 pub struct LocationGetResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// `text`
+    pub description: Option<String>,
     /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
@@ -276,6 +304,12 @@ pub const LOCATION_GET_RESULT: &[FieldDescriptor] = &[
         path: "created_at",
         type_name: "timestamptz",
         nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "description",
+        type_name: "text",
+        nullable: true,
         values: &[],
     },
     FieldDescriptor {
@@ -318,6 +352,18 @@ pub const LOCATION_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = 
             path: "created_at",
             type_name: "timestamptz",
             nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "description",
+            type_name: "text",
+            nullable: true,
             values: &[],
         },
         required: true,
@@ -430,6 +476,8 @@ pub struct LocationQueryRequestFilter {
 pub struct LocationQueryResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// `text`
+    pub description: Option<String>,
     /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
@@ -466,6 +514,12 @@ pub const LOCATION_QUERY_RESULT: &[FieldDescriptor] = &[
         path: "created_at",
         type_name: "timestamptz",
         nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "description",
+        type_name: "text",
+        nullable: true,
         values: &[],
     },
     FieldDescriptor {
@@ -555,6 +609,18 @@ pub const LOCATION_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] 
             path: "created_at",
             type_name: "timestamptz",
             nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "description",
+            type_name: "text",
+            nullable: true,
             values: &[],
         },
         required: true,
@@ -668,6 +734,8 @@ pub struct LocationUpdateRequestChange {
 pub struct LocationUpdateResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// `text`
+    pub description: Option<String>,
     /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
@@ -710,6 +778,12 @@ pub const LOCATION_UPDATE_RESULT: &[FieldDescriptor] = &[
         path: "created_at",
         type_name: "timestamptz",
         nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "description",
+        type_name: "text",
+        nullable: true,
         values: &[],
     },
     FieldDescriptor {
@@ -800,6 +874,18 @@ pub const LOCATION_UPDATE_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema]
             path: "created_at",
             type_name: "timestamptz",
             nullable: false,
+            values: &[],
+        },
+        required: true,
+        minimum: None,
+        maximum: None,
+        children: &[],
+    },
+    wamn_client::descriptor::FieldSchema {
+        field: FieldDescriptor {
+            path: "description",
+            type_name: "text",
+            nullable: true,
             values: &[],
         },
         required: true,

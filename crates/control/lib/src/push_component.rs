@@ -659,6 +659,22 @@ fn load_component_statement_facts(
     manifest: &wamn_schema_generator::PackageManifest,
     component: &AdmittedComponent,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
+    load_package_statements(package_root, manifest, Some(component))
+}
+
+/// Load every manifest operation's exact statement facts without component publication.
+pub(crate) fn load_package_statement_facts(
+    package_root: &Path,
+    manifest: &wamn_schema_generator::PackageManifest,
+) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
+    load_package_statements(package_root, manifest, None)
+}
+
+fn load_package_statements(
+    package_root: &Path,
+    manifest: &wamn_schema_generator::PackageManifest,
+    component: Option<&AdmittedComponent>,
+) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     wamn_schema_generator::validate_operation_vocabulary(manifest).map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementContractInvalid,
@@ -666,8 +682,9 @@ fn load_component_statement_facts(
         )
     })?;
     let expected = expected_operation_contracts(manifest)?;
-    let expected_component_operations =
-        validate_component_operation_assignment(manifest, component, &expected)?;
+    let expected_component_operations = component
+        .map(|component| validate_component_operation_assignment(manifest, component, &expected))
+        .transpose()?;
     let canonical_root = package_root.canonicalize().map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementPathInvalid,
@@ -710,7 +727,8 @@ fn load_component_statement_facts(
                 ),
             ));
         }
-        if let Some(declared) = component.operations.get(operation) {
+        if let Some(declared) = component.and_then(|component| component.operations.get(operation))
+        {
             let expected_participant = contract
                 .dependency
                 .as_ref()
@@ -776,6 +794,9 @@ fn load_component_statement_facts(
         ));
     }
 
+    let Some(expected_component_operations) = expected_component_operations else {
+        return Ok(all_statements);
+    };
     let mut selected = BTreeMap::new();
     for operation in expected_component_operations {
         selected.insert(
@@ -2235,6 +2256,11 @@ mod tests {
 
         let statements = load_component_statement_facts(&package_root, &manifest, &component)
             .expect("generated operation contracts and package metadata agree");
+        assert_eq!(
+            load_package_statement_facts(&package_root, &manifest)
+                .expect("qualification loads the same exact package facts"),
+            statements
+        );
         assert_eq!(statements.len(), component.operations.len());
         assert!(statements.values().all(|operation| !operation.is_empty()));
         bind_component_statement_facts(&mut component, statements)
