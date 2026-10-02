@@ -344,7 +344,16 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         json!({"admin": true, "permissions": [
             "session-test:purchase/read",
             "session-test:purchase/write",
+            "wamn-control:permission/grant",
+            "wamn-control:permission/list",
             "wamn-control:permission/mine",
+            "wamn-control:permission/revoke",
+            "wamn-control:role/create",
+            "wamn-control:role/delete",
+            "wamn-control:role/list",
+            "wamn-control:user-role/grant",
+            "wamn-control:user-role/revoke",
+            "wamn-control:user/list",
         ]})
     );
 

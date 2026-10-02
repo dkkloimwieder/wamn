@@ -53,6 +53,17 @@ pub fn host_route_package() -> &'static str {
     &CONTRACT.package.id
 }
 
+/// Whether a stable operation reference or sealed operation id names a host
+/// route. A host route is fixed to `admin` or to every member, so no authored
+/// role holds one (docs/plan/platform-ui.md §2.5).
+pub fn is_host_route_operation(operation: &str) -> bool {
+    static TOKEN_PACKAGE: LazyLock<String> =
+        LazyLock::new(|| CONTRACT.package.id.replace('_', "-"));
+    operation
+        .split_once(':')
+        .is_some_and(|(package, _)| package == TOKEN_PACKAGE.as_str())
+}
+
 /// The path prefix of every host route, with its closing `/`. Publish
 /// refuses an authored route under it.
 pub fn host_route_path_prefix() -> &'static str {
@@ -78,6 +89,24 @@ pub enum HostRouteSet {
 pub enum HostHandler {
     /// The caller's effective permission set in this application.
     PermissionMine,
+    /// The user rows of the application (docs/plan/platform-ui.md §4.6).
+    ApplicationUserList,
+    /// The roles of the application.
+    RoleList,
+    /// Create one empty authored role.
+    RoleCreate,
+    /// Delete one authored role with its assignments and permissions.
+    RoleDelete,
+    /// The permission rows of one role, with the roots that require each.
+    PermissionList,
+    /// Select an operation for a role and write its released closure.
+    PermissionGrant,
+    /// Remove a role's selection of an operation and its closure rows.
+    PermissionRevoke,
+    /// Give a role to an application user.
+    UserRoleGrant,
+    /// Take a role from an application user.
+    UserRoleRevoke,
     /// The caller's current control authority in the token's org.
     ControlMine,
     /// The members of the org (docs/plan/platform-ui.md §4.4).
@@ -145,6 +174,69 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::PermissionMine,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "user.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::ApplicationUserList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "role.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::RoleList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "role.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::RoleCreate,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "role.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::RoleDelete,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "permission.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::PermissionList,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "permission.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::PermissionGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "permission.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::PermissionRevoke,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "user_role.grant",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::UserRoleGrant,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "user_role.revoke",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Admin,
+        handler: HostHandler::UserRoleRevoke,
     },
     HostRoute {
         set: HostRouteSet::Control,
@@ -271,63 +363,65 @@ impl HostAttachment {
     }
 }
 
-static ATTACHMENTS: LazyLock<BTreeMap<String, HostAttachment>> = LazyLock::new(|| {
-    ROUTES
-        .iter()
-        .map(|route| {
-            let (model, action) = route
-                .operation
-                .split_once('.')
-                .expect("a host route names its model and action");
-            let id = route_attachment_id(&CONTRACT.routes.id_prefix, model, action);
-            let operation = operation_token(
-                &CONTRACT.package.id,
-                &CONTRACT.package.version,
-                model,
-                action,
-            );
-            let method = if route.type_.is_read() { "GET" } else { "POST" };
-            let modes = match route.set {
-                HostRouteSet::Application => {
-                    json!([PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE])
-                }
-                // A control audience is for browser sessions only.
-                HostRouteSet::Control => json!([SESSION_AUTHENTICATION_MODE]),
-            };
-            let attachment = HostAttachment {
-                route,
-                reference: sealed_operation_reference(&operation).to_owned(),
-                operation,
-                definition: json!({
-                    "id": id,
-                    "type": "http",
-                    "route": {
-                        "host": "*",
-                        "method": method,
-                        "path": route_path(&CONTRACT.routes.path_prefix, model, action),
-                    },
-                }),
-                auth_policy: json!({ "modes": modes }),
-            };
-            (id, attachment)
-        })
-        .collect()
-});
+/// Every host route by its set and attachment id. The two sets are served
+/// under different audiences, so a route of each set can derive one id, as
+/// `user.list` does.
+static ATTACHMENTS: LazyLock<BTreeMap<(HostRouteSet, String), HostAttachment>> =
+    LazyLock::new(|| {
+        ROUTES
+            .iter()
+            .map(|route| {
+                let (model, action) = route
+                    .operation
+                    .split_once('.')
+                    .expect("a host route names its model and action");
+                let id = route_attachment_id(&CONTRACT.routes.id_prefix, model, action);
+                let operation = operation_token(
+                    &CONTRACT.package.id,
+                    &CONTRACT.package.version,
+                    model,
+                    action,
+                );
+                let method = if route.type_.is_read() { "GET" } else { "POST" };
+                let modes = match route.set {
+                    HostRouteSet::Application => {
+                        json!([PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE])
+                    }
+                    // A control audience is for browser sessions only.
+                    HostRouteSet::Control => json!([SESSION_AUTHENTICATION_MODE]),
+                };
+                let attachment = HostAttachment {
+                    route,
+                    reference: sealed_operation_reference(&operation).to_owned(),
+                    operation,
+                    definition: json!({
+                        "id": id,
+                        "type": "http",
+                        "route": {
+                            "host": "*",
+                            "method": method,
+                            "path": route_path(&CONTRACT.routes.path_prefix, model, action),
+                        },
+                    }),
+                    auth_policy: json!({ "modes": modes }),
+                };
+                ((route.set, id), attachment)
+            })
+            .collect()
+    });
 
 impl HostRouteSet {
     /// Every route of this set, by attachment id.
     pub fn attachments(self) -> impl Iterator<Item = (&'static str, &'static HostAttachment)> {
         ATTACHMENTS
             .iter()
-            .filter(move |(_, attachment)| attachment.route.set == self)
-            .map(|(id, attachment)| (id.as_str(), attachment))
+            .filter(move |((set, _), _)| *set == self)
+            .map(|((_, id), attachment)| (id.as_str(), attachment))
     }
 
     /// One route of this set by attachment id.
     pub fn attachment(self, id: &str) -> Option<&'static HostAttachment> {
-        ATTACHMENTS
-            .get(id)
-            .filter(|attachment| attachment.route.set == self)
+        ATTACHMENTS.get(&(self, id.to_owned()))
     }
 }
 
@@ -364,6 +458,23 @@ mod tests {
             "an application release never serves a control route"
         );
         assert_eq!(host_route_package(), "wamn_control");
+        assert!(is_host_route_operation("wamn-control:role/create"));
+        assert!(is_host_route_operation("wamn-control:role/create@0.1.0"));
+        assert!(!is_host_route_operation("wamn-receiving:receipt/get"));
+
+        let users = HostRouteSet::Application
+            .attachment("wamn-control-user-list-http")
+            .expect("user.list is an application host route");
+        let members = HostRouteSet::Control
+            .attachment("wamn-control-user-list-http")
+            .expect("user.list is a control host route");
+        assert_eq!(users.route.handler, HostHandler::ApplicationUserList);
+        assert_eq!(members.route.handler, HostHandler::UserList);
+        assert_eq!(users.operation, members.operation);
+        assert_eq!(
+            users.registered_operation(),
+            Some("wamn-control:user/list@0.1.0")
+        );
         assert_eq!(host_route_path_prefix(), "/wamn_control/");
     }
 }

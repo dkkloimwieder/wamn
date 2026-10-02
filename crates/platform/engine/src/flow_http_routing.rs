@@ -465,12 +465,14 @@ impl AuthenticatedCaller {
     /// holds the operation when it holds the token's stable reference, the
     /// token without its `@<version>`. The caller asks only about tokens of
     /// the serving release, so a stored reference the release does not serve
-    /// grants nothing.
+    /// grants nothing. A host route is not grantable, so a stored row that
+    /// names one grants nothing either (docs/plan/platform-ui.md §2.5).
     pub fn permits(&self, operation: &str) -> bool {
         self.admin
-            || self
-                .permissions
-                .contains(wamn_catalog::sealed_operation_reference(operation))
+            || (!wamn_catalog::is_host_route_operation(operation)
+                && self
+                    .permissions
+                    .contains(wamn_catalog::sealed_operation_reference(operation)))
     }
 }
 
@@ -1430,10 +1432,18 @@ mod tests {
         let (manifest, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
             .expect("a manifest with host routes is canonical");
         let served = route_definitions(&manifest, "GET", "any.example.test");
-        assert_eq!(served_ids(&served), ["wamn-control-permission-mine-http"]);
-        assert_eq!(served[0].path, "/wamn_control/permission/mine");
         assert_eq!(
-            served[0].cache_control.as_deref(),
+            served_ids(&served),
+            [
+                "wamn-control-permission-list-http",
+                "wamn-control-permission-mine-http",
+                "wamn-control-role-list-http",
+                "wamn-control-user-list-http",
+            ]
+        );
+        assert_eq!(served[1].path, "/wamn_control/permission/mine");
+        assert_eq!(
+            served[1].cache_control.as_deref(),
             Some("private, no-cache"),
             "a host route read is private"
         );
@@ -2140,6 +2150,13 @@ mod tests {
             ..caller.clone()
         };
         assert!(admin.permits("platform-fixture:widget/query@1.0.0"));
+        assert!(admin.permits("wamn-control:role/create@0.1.0"));
+        // A stored row that names a host route admits no caller but admin.
+        let stored = AuthenticatedCaller {
+            permissions: Arc::new(HashSet::from(["wamn-control:role/create".to_string()])),
+            ..caller.clone()
+        };
+        assert!(!stored.permits("wamn-control:role/create@0.1.0"));
         assert_eq!(
             wamn_catalog::sealed_operation_reference("platform-fixture:widget/get@1.0.0"),
             "platform-fixture:widget/get"

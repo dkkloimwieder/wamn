@@ -42,7 +42,7 @@ pub use connection::{
 };
 pub use host_route::{
     HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteSet, host_route_package,
-    host_route_path_prefix,
+    host_route_path_prefix, is_host_route_operation,
 };
 pub use package::{EffectiveReleaseId, PackageCoordinate};
 pub use route_identity::{
