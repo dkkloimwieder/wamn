@@ -554,6 +554,21 @@ bash tools/http-reuse-run trusted_http_route::tests::real_http_guest_reuses_conn
 Each command creates a fresh registry container, runs its exact test, and removes only owned containers and volumes.
 These cases test connection reuse and authority isolation without measuring throughput.
 
+### Registry image archive in kind
+
+This test runs `tools/journey-image-cache` and `tools/registry-image-archive` against a private registry with a login and TLS.
+It needs the local `registry:2`, `httpd:2-alpine` and kind node images.
+Tell the other sessions on the machine before the run, because it creates a kind cluster.
+
+```bash
+cargo test --locked --offline -p wamn-conformance-tests --test registry_image_archive \
+  -- --ignored --exact kind_nodes_import_the_pinned_digest_and_hold_no_credential --nocapture
+```
+
+The test pushes an image and a guest by digest, and two kind nodes import the image archive.
+It makes sure that CRI reports the tag and only the pinned digest, and that no node holds the login.
+It removes its cluster, registry container, images and private directory.
+
 ## Application generation and SQLx
 
 Follow [test-database isolation](#test-database-isolation) before these database-backed commands.
