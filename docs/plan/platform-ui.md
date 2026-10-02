@@ -1667,7 +1667,7 @@ Measured on main `6eba50b90` on 2026-10-02:
 - Each step of the [§5.2](#52-environment-creation) chain has a library function, except the client UI upload. `wamn web upload` is private to the `wamn_ctl` crate and runs `pnpm`. Role permission closures reconcile inside release selection, and `materialize_admin_grants` runs inside `provision-project-env`.
 - `provision-org`, `provision-project-env` and `enable-cdc-project-env` hold no Kubernetes client. They write SQL and Kubernetes manifests that an operator applies with the cluster superuser and `kubectl`, in a set order. `deploy-release` runs `kubectl`. The release selection reads a qualification file. A new environment also needs its host workload, which the chain of [§5.2](#52-environment-creation) does not name.
 
-[§9](#9-questions-for-the-owner) questions 15 to 25, answered 2026-10-02, set the items. Question 26 is open.
+[§9](#9-questions-for-the-owner) questions 15 to 25, answered 2026-10-02, set the items. Questions 26 and 27 are open.
 
 **9. Environment status (`wamn-zua8.2`).**
 
@@ -1763,3 +1763,4 @@ The epic closes on one kind run after B13 of the cutover.
 24. Issue 10, answered 2026-10-02. The input names a built UI artifact already pushed, and the worker never runs `pnpm`. Without `ui` in the input, the saga has no UI step.
 25. Issue 10, answered 2026-10-02. Issue 10 exits on the local-process test. The epic closes on one kind run after B13.
 26. Issue 9. The application host holds only its project database login and cannot read `registry.project_envs`. How does it read the status: a copy that each status route writes into the project database through the administration login, as grants reach it, or a new system database login for the host?
+27. Issue 9. The four status routes write `registry.project_envs.status` as the control family, which can only read that table today. Does the control family get `UPDATE` on the whole table, which its grant check already supports, or `UPDATE` on the `status` column only, which needs column grants in that check?
