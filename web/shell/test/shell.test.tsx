@@ -384,6 +384,28 @@ describe("the app shell", () => {
     expect(screen.queryByText("update")).toBeNull();
   });
 
+  it("shows the Administration section only to admin, with the role grid and the user grid", async () => {
+    const { fetch } = identity(true);
+    open(`/${AUD}/pallets`, fetch);
+    await screen.findByText("pallets screen");
+    expect(screen.getByText("Administration")).toBeDefined();
+    fireEvent.click(screen.getByText("roles"));
+    expect(await screen.findByText("role")).toBeDefined();
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/administration/roles`));
+    fireEvent.click(screen.getByText("users"));
+    expect(await screen.findByText("user")).toBeDefined();
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/administration/users`));
+    cleanup();
+
+    const member = identity(true, ONE, { admin: false, permissions: ["acme:pallet/query"] });
+    open(`/${AUD}/administration/roles`, member.fetch);
+    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    cleanup();
+    open(`/${AUD}/pallets`, member.fetch);
+    await screen.findByText("pallets screen");
+    expect(screen.queryByText("Administration")).toBeNull();
+  });
+
   it("shows no page for the address of a route the caller does not hold", async () => {
     const { fetch } = identity(true, ONE, { admin: false, permissions: ["acme:pallet/get"] });
     open(`/${AUD}/pallets/abc/update`, fetch);

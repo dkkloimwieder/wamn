@@ -18,6 +18,7 @@
     "paths": {
       "@wamn/web-runtime": ["../../../web/runtime/src/index.ts"],
       "@wamn/ui": ["../../../web/ui/src/index.ts"],
+      "@wamn/ui/admin": ["../../../web/ui/src/admin/index.ts"],
       "@wamn/shell": ["../../../web/shell/src/index.ts"],
       "@wamn/control-client": ["../../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"],
       "@wamn/receiving-client/*": ["../generated/client-ts/*"],

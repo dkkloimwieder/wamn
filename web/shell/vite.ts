@@ -133,6 +133,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
         { find: "@wamn/web-runtime", replacement: `${web}runtime/src/index.ts` },
         { find: "@wamn/ui/styles.css", replacement: `${web}ui/src/styles.css` },
         { find: /^@wamn\/ui$/, replacement: `${web}ui/src/index.ts` },
+        { find: /^@wamn\/ui\/admin$/, replacement: `${web}ui/src/admin/index.ts` },
         { find: /^@wamn\/shell$/, replacement: `${web}shell/src/index.ts` },
         { find: options.client.name, replacement: at(options.client.path) },
         { find: /^@wamn\/control-client$/, replacement: `${control}index.ts` },

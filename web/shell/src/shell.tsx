@@ -12,6 +12,10 @@
  * `permission.mine` once, and shows only the screens, the actions and the
  * routes of the operations the caller holds. This is presentation only: every
  * route repeats its own check (docs/plan/platform-ui.md §4.8).
+ *
+ * Every application also gets the Administration section of §4.7, the role
+ * grid and the user grid. Their operations are fixed to `admin`, so only
+ * `admin` sees the section.
  */
 
 import {
@@ -40,7 +44,7 @@ import {
   type JSX,
 } from "solid-js";
 
-import { permission } from "@wamn/control-client";
+import { permission, user } from "@wamn/control-client";
 import { Button, CardPage, Field, FieldError, FieldGroup, FieldLabel, Input, ScreenActions } from "@wamn/ui";
 import {
   createTransport,
@@ -172,6 +176,28 @@ function reference(operation: string): string {
   return at < 0 ? operation : operation.slice(0, at);
 }
 
+/** The administration screens of the application, which load only when they open. */
+const admin = () => import("@wamn/ui/admin");
+
+/** The section every application gets after its own (docs/plan/platform-ui.md §4.7). */
+const ADMINISTRATION: ShellSection = {
+  label: "Administration",
+  screens: [
+    {
+      path: "administration/roles",
+      operation: permission.PERMISSION_LIST_ROUTE.operation,
+      label: "roles",
+      component: screen(admin, (m) => (props) => <m.RoleGrid transport={props.transport} />),
+    },
+    {
+      path: "administration/users",
+      operation: user.USER_LIST_ROUTE.operation,
+      label: "users",
+      component: screen(admin, (m) => (props) => <m.UserGrid transport={props.transport} />),
+    },
+  ],
+};
+
 /** The sections with only the screens and routes the caller holds. A section with no screen left is dropped. */
 function heldSections(sections: readonly ShellSection[], holds: Holds): ShellSection[] {
   return sections
@@ -271,8 +297,9 @@ export function screen<M>(load: () => Promise<M>, pick: (module: M) => Component
 export function Shell(props: ShellProps): JSX.Element {
   /* eslint-disable solid/reactivity -- the fetch and the route table are fixed for the life of the page, and the router takes its routes once. */
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
-  const screens = props.sections.flatMap((section) => section.screens);
-  const routes = props.sections.flatMap((section) =>
+  const sections = [...props.sections, ADMINISTRATION];
+  const screens = sections.flatMap((section) => section.screens);
+  const routes = sections.flatMap((section) =>
     [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0] })),
   );
   /* eslint-enable solid/reactivity */
@@ -288,7 +315,7 @@ export function Shell(props: ShellProps): JSX.Element {
       <Route
         path="/:aud"
         component={(section: RouteSectionProps) => (
-          <Session title={props.title} scope={props} sections={props.sections} options={options}>
+          <Session title={props.title} scope={props} sections={sections} options={options}>
             {section.children}
           </Session>
         )}
