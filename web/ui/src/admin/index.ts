@@ -7,3 +7,4 @@
  */
 
 export { operationInterface, RoleGrid, type RoleGridProps } from "./role-grid";
+export { UserGrid, type UserGridProps } from "./user-grid";
