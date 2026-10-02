@@ -24,6 +24,7 @@ use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::control::{control_projects, is_org_admin, org_projects};
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
+use crate::application_route::ApplicationRoutes;
 use crate::control_route::{ControlRoutes, Refusal};
 
 /// What the handlers of one host read.
@@ -32,6 +33,10 @@ pub enum HostRouteHandlers {
     Application {
         postgres: Arc<WamnPostgres>,
         project: String,
+        /// The identity reader of `wamn_system` and the org of the host, for
+        /// the covering check of an `admin` revoke. A host without an
+        /// authenticated route has none.
+        identity: Option<(Arc<tokio_postgres::Client>, String)>,
     },
     /// The control routes of one org, through its `control` login.
     Control {
@@ -105,7 +110,12 @@ impl HostRouteDelivery {
             |error: wamn_platform_identity::IdentityError| Refusal::Failed(error.into()),
         )?;
         match (attachment.route.handler, &self.handlers) {
-            (HostHandler::PermissionMine, HostRouteHandlers::Application { postgres, project }) => {
+            (
+                HostHandler::PermissionMine,
+                HostRouteHandlers::Application {
+                    postgres, project, ..
+                },
+            ) => {
                 let manifest = self.release.manifest();
                 let held = postgres
                     .held_operation_grants(
@@ -140,6 +150,25 @@ impl HostRouteDelivery {
             }
             (
                 _,
+                HostRouteHandlers::Application {
+                    postgres,
+                    project,
+                    identity,
+                },
+            ) => {
+                ApplicationRoutes {
+                    postgres,
+                    project,
+                    release: &self.release,
+                    identity: identity
+                        .as_ref()
+                        .map(|(client, org)| (client.as_ref(), org.as_str())),
+                }
+                .handle(attachment, &principal, payload)
+                .await
+            }
+            (
+                _,
                 HostRouteHandlers::Control {
                     control,
                     writer,
@@ -158,9 +187,6 @@ impl HostRouteDelivery {
                 .handle(attachment, &principal, payload)
                 .await
             }
-            (handler, _) => Err(Refusal::Failed(anyhow::anyhow!(
-                "this host does not serve the host handler {handler:?}"
-            ))),
         }
     }
 }

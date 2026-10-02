@@ -165,6 +165,13 @@ pub enum AdministrationRefusal {
     RoleNotFound { role: String, tenant: String },
     /// The current serving release does not serve the operation.
     OperationNotServed { reference: String },
+    /// The operation is fixed to `admin` or to every member (§2.5).
+    NotGrantable { reference: String },
+    /// The tenant has no application user with the id.
+    UserNotFound { user_id: String },
+    /// `admin` stays while the user holds `project-admin` in the project,
+    /// which `org-admin` also writes (§2.8).
+    AdminCovered { user_id: String },
     /// The role holds the operation neither directly nor through a root.
     NotHeld { role: String, reference: String },
     /// The role holds the operation only because these roots require it.
@@ -198,6 +205,18 @@ impl fmt::Display for AdministrationRefusal {
             Self::OperationNotServed { reference } => write!(
                 formatter,
                 "the current serving release does not serve the operation {reference}"
+            ),
+            Self::NotGrantable { reference } => write!(
+                formatter,
+                "{reference} is fixed to admin or to every member, so no role takes it"
+            ),
+            Self::UserNotFound { user_id } => {
+                write!(formatter, "the application has no user {user_id}")
+            }
+            Self::AdminCovered { user_id } => write!(
+                formatter,
+                "user {user_id} holds project-admin in the project, so admin stays. \
+                 Revoke project-admin or org-admin first"
             ),
             Self::NotHeld { role, reference } => {
                 write!(formatter, "role {role} does not hold {reference}")
@@ -450,4 +469,100 @@ pub async fn revoke_user_role(
         .await
         .map_err(|error| database_error(&error))?;
     Ok(removed == 1)
+}
+
+const USER_EXISTS_SQL: &str = "SELECT 1 FROM app_system.users \
+    WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'";
+
+const USERS_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
+    COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
+             FILTER (WHERE r.role_name IS NOT NULL), '{}') \
+    FROM app_system.users u \
+    LEFT JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
+    WHERE u.tenant_id = $1 AND u.type = 'user' \
+    GROUP BY u.id, u.email, u.display_name ORDER BY u.email, u.id";
+
+const ROLES_SQL: &str = "SELECT name FROM app_system.roles WHERE tenant_id = $1 ORDER BY name";
+
+const PERMISSIONS_SQL: &str = "SELECT permission, required_by FROM app_system.permissions \
+    WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission, required_by";
+
+/// One application user with the roles it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplicationUserRow {
+    pub id: String,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub roles: Vec<String>,
+}
+
+/// Refuse unless the tenant has the application user `user_id`.
+pub async fn require_user(
+    client: &(impl GenericClient + Sync),
+    tenant: &str,
+    user_id: &str,
+) -> Result<(), AdministrationError> {
+    let exists = client
+        .query_opt(USER_EXISTS_SQL, &[&tenant, &user_id])
+        .await
+        .map_err(|error| database_error(&error))?
+        .is_some();
+    if exists {
+        Ok(())
+    } else {
+        Err(AdministrationRefusal::UserNotFound {
+            user_id: user_id.to_owned(),
+        }
+        .into())
+    }
+}
+
+/// The application users of the tenant with their roles, by email.
+pub async fn application_users(
+    client: &(impl GenericClient + Sync),
+    tenant: &str,
+) -> Result<Vec<ApplicationUserRow>, AdministrationError> {
+    Ok(client
+        .query(USERS_SQL, &[&tenant])
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| ApplicationUserRow {
+            id: row.get(0),
+            email: row.get(1),
+            display_name: row.get(2),
+            roles: row.get(3),
+        })
+        .collect())
+}
+
+/// The role names of the tenant, `admin` included.
+pub async fn role_names(
+    client: &(impl GenericClient + Sync),
+    tenant: &str,
+) -> Result<Vec<String>, AdministrationError> {
+    Ok(client
+        .query(ROLES_SQL, &[&tenant])
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| row.get(0))
+        .collect())
+}
+
+/// The stored `(permission, required_by)` rows of `role`. A row whose two
+/// values are equal is a selected root.
+pub async fn permission_rows(
+    client: &(impl GenericClient + Sync),
+    tenant: &str,
+    role: &str,
+) -> Result<Vec<(String, String)>, AdministrationError> {
+    require_role(client, tenant, role).await?;
+    Ok(client
+        .query(PERMISSIONS_SQL, &[&tenant, &role])
+        .await
+        .map_err(|error| database_error(&error))?
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
 }

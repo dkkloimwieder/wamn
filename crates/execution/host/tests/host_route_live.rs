@@ -1,5 +1,5 @@
-//! The host-run route `wamn-control:permission/mine@0.1.0` through a
-//! fixture serving release (docs/plan/platform-ui.md §4.2, wamn-a40n.2).
+//! The application host routes through a fixture serving release
+//! (docs/plan/platform-ui.md §4.2 and §4.6, wamn-a40n.2 and wamn-a40n.7).
 //!
 //! The test starts its own PostgreSQL 18 server. A real session token is
 //! verified against local HTTPS keys, the scoped session permission reader
@@ -180,7 +180,7 @@ fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
         "components": [{"package-id": "session_test", "component": "purchase", "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
                 READ: {"registered-operation": READ, "permissions": [READ]},
-                WRITE: {"registered-operation": WRITE, "permissions": [WRITE]}
+                WRITE: {"registered-operation": WRITE, "permissions": [WRITE, READ]}
             }}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
@@ -199,11 +199,16 @@ fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
 }
 
 fn permission_mine() -> String {
+    route_of("wamn-control:permission/mine")
+}
+
+/// The attachment id of the application route with the stable reference.
+fn route_of(reference: &str) -> String {
     HostRouteSet::Application
         .attachments()
-        .find(|(_, attachment)| attachment.reference == "wamn-control:permission/mine")
+        .find(|(_, attachment)| attachment.reference == reference)
         .map(|(id, _)| id.to_owned())
-        .expect("the application set serves permission.mine")
+        .expect("the application set serves the route")
 }
 
 async fn deliver(
@@ -211,12 +216,24 @@ async fn deliver(
     attachment: &str,
     caller: Option<AuthenticatedCaller>,
 ) -> Result<Value, DeliveryError> {
-    let report = delivery
+    match outcome(delivery, attachment, caller, json!({})).await? {
+        DeliveryOutcome::Respond(body) => Ok(serde_json::from_str(&body).expect("JSON answer")),
+        other => panic!("a host route responds: {other:?}"),
+    }
+}
+
+async fn outcome(
+    delivery: &HostRouteDelivery,
+    attachment: &str,
+    caller: Option<AuthenticatedCaller>,
+    payload: Value,
+) -> Result<DeliveryOutcome, DeliveryError> {
+    delivery
         .deliver(
             DeliveryRequest {
                 source: Source::Attachment(attachment.to_owned()),
                 delivery_id: "host-route-test".to_owned(),
-                payload: "{}".to_owned(),
+                payload: payload.to_string(),
                 caller: None,
                 trace: None,
                 parent_causation: None,
@@ -224,11 +241,8 @@ async fn deliver(
             },
             caller,
         )
-        .await;
-    match report.outcome? {
-        DeliveryOutcome::Respond(body) => Ok(serde_json::from_str(&body).expect("JSON answer")),
-        other => panic!("a host route responds: {other:?}"),
-    }
+        .await
+        .outcome
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -323,6 +337,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         HostRouteHandlers::Application {
             postgres: postgres_credentials,
             project: PROJECT.to_owned(),
+            identity: None,
         },
         None,
     );
@@ -408,6 +423,300 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             .expect_err("no PAT authentication is configured")
             .0,
         503
+    );
+    server.stop().await;
+    Ok(())
+}
+
+/// The admin routes of §4.6 under the administration login: each one
+/// refuses a caller without `admin`, a stored row naming a host route
+/// grants nothing, and every write is stamped with the caller and the
+/// route's sealed operation id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("application_route")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+    let (admitter, administration) = install(&admin, &database).await?;
+    let first = claims()["sub"].as_str().unwrap().to_owned();
+    let mut server = Server::start().await;
+    let (verifier, _token_clock, _key_clock) = server.verifier();
+    session_fixture::install_authority(&admin, PROJECT, "dev", AUDIENCE, &[&first, MEMBER]).await?;
+    admin
+        .batch_execute(&sql::grant_identity_reader_surface_sql())
+        .await?;
+    admin
+        .batch_execute(
+            "CREATE ROLE host_route_identity_reader LOGIN; \
+             GRANT wamn_identity_reader TO host_route_identity_reader;",
+        )
+        .await?;
+    let reader = async || -> anyhow::Result<Arc<Client>> {
+        let client = connect(admin_url).await?;
+        client
+            .batch_execute("SET ROLE host_route_identity_reader")
+            .await?;
+        Ok(Arc::new(client))
+    };
+    let postgres_credentials = credentials(
+        &login(admin_url, &admitter)?,
+        &login(admin_url, &administration)?,
+    )?;
+    let release = load_release()?;
+    let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
+        .with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+                SessionRouteAuthentication::new(
+                    verifier,
+                    reader().await?,
+                    Arc::clone(&postgres_credentials),
+                    PROJECT,
+                ),
+            )),
+        ));
+    let delivery = HostRouteDelivery::new(
+        Arc::clone(&release),
+        HostRouteHandlers::Application {
+            postgres: postgres_credentials,
+            project: PROJECT.to_owned(),
+            identity: Some((reader().await?, ORG.to_owned())),
+        },
+        None,
+    );
+    let bearer = |body: &Value| format!("Bearer {}", signed(&header(), body));
+    let mut admin_claims = claims();
+    admin_claims["roles"] = json!(["admin"]);
+    let mut member_claims = claims();
+    member_claims["sub"] = json!(MEMBER);
+    member_claims["authority"] = json!({"login": MEMBER});
+    member_claims["roles"] = json!(["purchase-reader"]);
+    let call = async |claims: &Value, reference: &str, payload: Value| {
+        let route = route_of(reference);
+        let caller = routing
+            .authenticate_authorization_for_test(&route, Some(&bearer(claims)))
+            .await
+            .expect("the session is admitted")
+            .expect("a host-owned caller");
+        outcome(&delivery, &route, Some(caller), payload).await
+    };
+    let answer = async |reference: &str, payload: Value| -> Value {
+        match call(&admin_claims, reference, payload).await {
+            Ok(DeliveryOutcome::Respond(body)) => serde_json::from_str(&body).unwrap(),
+            other => panic!("{reference} answers: {other:?}"),
+        }
+    };
+    let refusal = async |reference: &str, payload: Value| -> String {
+        match call(&admin_claims, reference, payload).await {
+            Ok(DeliveryOutcome::Failed(failure)) => failure.message,
+            other => panic!("{reference} refuses: {other:?}"),
+        }
+    };
+
+    // A caller without admin is refused, even with a stored row that names
+    // the route.
+    admin
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
+             VALUES ($1, 'purchase-reader', 'wamn-control:role/list', 'wamn-control:role/list')",
+            &[&TENANT],
+        )
+        .await?;
+    for reference in [
+        "wamn-control:user/list",
+        "wamn-control:role/list",
+        "wamn-control:role/create",
+        "wamn-control:role/delete",
+        "wamn-control:permission/list",
+        "wamn-control:permission/grant",
+        "wamn-control:permission/revoke",
+        "wamn-control:user-role/grant",
+        "wamn-control:user-role/revoke",
+    ] {
+        assert!(
+            matches!(
+                call(&member_claims, reference, json!({})).await,
+                Err(DeliveryError::PermissionDenied(_))
+            ),
+            "{reference} refuses a member"
+        );
+    }
+
+    assert_eq!(
+        answer("wamn-control:user/list", json!({})).await,
+        json!({"users": [
+            {"id": first, "email": "first@example.test", "display_name": null, "roles": ["admin"]},
+            {"id": MEMBER, "email": "member@example.test", "display_name": null,
+             "roles": ["purchase-reader"]},
+        ]})
+    );
+    assert_eq!(
+        answer("wamn-control:role/list", json!({})).await,
+        json!({"roles": ["admin", "purchase-reader"]})
+    );
+
+    // Roles: admin is fixed.
+    assert_eq!(
+        answer("wamn-control:role/create", json!({"role": "clerk"})).await,
+        json!({"created": true})
+    );
+    assert_eq!(
+        answer("wamn-control:role/create", json!({"role": "clerk"})).await,
+        json!({"created": false})
+    );
+    assert_eq!(
+        refusal("wamn-control:role/create", json!({"role": "admin"})).await,
+        "admin is the built-in role; apply-package creates it"
+    );
+    assert_eq!(
+        refusal("wamn-control:role/delete", json!({"role": "admin"})).await,
+        "admin is the built-in role and cannot be deleted"
+    );
+
+    // Permissions: a grant writes the closure of the loaded release.
+    let read = "session-test:purchase/read";
+    let write = "session-test:purchase/write";
+    assert_eq!(
+        answer(
+            "wamn-control:permission/grant",
+            json!({"role": "clerk", "operation": write})
+        )
+        .await,
+        json!({"rows_added": 2, "closure": [read, write]})
+    );
+    assert_eq!(
+        answer(
+            "wamn-control:permission/grant",
+            json!({"role": "clerk", "operation": read})
+        )
+        .await,
+        json!({"rows_added": 1, "closure": [read]})
+    );
+    assert_eq!(
+        refusal(
+            "wamn-control:permission/grant",
+            json!({"role": "clerk", "operation": "session-test:purchase/archive"})
+        )
+        .await,
+        "the current serving release does not serve the operation session-test:purchase/archive"
+    );
+    assert_eq!(
+        refusal(
+            "wamn-control:permission/grant",
+            json!({"role": "clerk", "operation": "wamn-control:role/list"})
+        )
+        .await,
+        "wamn-control:role/list is fixed to admin or to every member, so no role takes it"
+    );
+    let listed = answer("wamn-control:permission/list", json!({"role": "clerk"})).await;
+    let entry = |operation: &str| {
+        listed["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["operation"] == operation)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(
+        entry(read),
+        json!({"operation": read, "served": true, "grantable": true, "admin_only": false,
+               "selected": true, "required_by": [write]})
+    );
+    assert_eq!(entry(write)["required_by"], json!([]));
+    assert_eq!(
+        entry("wamn-control:role/list"),
+        json!({"operation": "wamn-control:role/list", "served": true, "grantable": false,
+               "admin_only": true, "selected": false, "required_by": []})
+    );
+    assert_eq!(entry("wamn-control:permission/mine")["admin_only"], false);
+
+    // A revoke keeps a row another root requires, and refuses a row that is
+    // not a root.
+    assert_eq!(
+        answer(
+            "wamn-control:permission/revoke",
+            json!({"role": "clerk", "operation": read})
+        )
+        .await,
+        json!({"still_required_by": [write]})
+    );
+    assert_eq!(
+        refusal(
+            "wamn-control:permission/revoke",
+            json!({"role": "clerk", "operation": read})
+        )
+        .await,
+        format!("{read} is not directly granted to role clerk; it is required by {write}")
+    );
+
+    // User roles: a known user only, and admin stays under project-admin.
+    assert_eq!(
+        answer(
+            "wamn-control:user-role/grant",
+            json!({"user_id": MEMBER, "role": "clerk"})
+        )
+        .await,
+        json!({"granted": true})
+    );
+    let stamp = admin
+        .query_one(
+            "SELECT operation, changed_by::text FROM app_system.user_roles_history \
+             WHERE (after ->> 'role_name') = 'clerk'",
+            &[],
+        )
+        .await?;
+    assert_eq!(
+        (stamp.get::<_, String>(0), stamp.get::<_, String>(1)),
+        (
+            "wamn-control:user-role/grant@0.1.0".to_owned(),
+            first.clone()
+        )
+    );
+    let stranger = "9b0c3a5e-6f0e-4c1e-8f33-1d5b2b7a6c11";
+    assert_eq!(
+        refusal(
+            "wamn-control:user-role/grant",
+            json!({"user_id": stranger, "role": "clerk"})
+        )
+        .await,
+        format!("the application has no user {stranger}")
+    );
+    admin
+        .execute(
+            "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
+            &[&first, &ORG, &PROJECT],
+        )
+        .await?;
+    assert_eq!(
+        refusal(
+            "wamn-control:user-role/revoke",
+            json!({"user_id": first, "role": "admin"})
+        )
+        .await,
+        format!(
+            "user {first} holds project-admin in the project, so admin stays. \
+             Revoke project-admin or org-admin first"
+        )
+    );
+    admin
+        .execute("DELETE FROM identity.project_roles", &[])
+        .await?;
+    assert_eq!(
+        answer(
+            "wamn-control:user-role/revoke",
+            json!({"user_id": MEMBER, "role": "clerk"})
+        )
+        .await,
+        json!({"revoked": true})
+    );
+    assert_eq!(
+        answer("wamn-control:role/delete", json!({"role": "clerk"})).await,
+        json!({"deleted": true})
     );
     server.stop().await;
     Ok(())

@@ -6,6 +6,7 @@
 //! layer is `wamn-workflow`, which sits above this crate. This crate links
 //! neither `wamn-workflow` nor `wamn-router`.
 
+mod application_route;
 mod control_route;
 mod host_route;
 mod operation;

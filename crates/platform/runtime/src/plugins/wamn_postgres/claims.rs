@@ -1920,10 +1920,8 @@ impl WamnPostgres {
     }
 
     /// The application roles and stored permissions a caller holds, read by
-    /// a host route (docs/plan/platform-ui.md §4.2) in a host-owned READ
-    /// COMMITTED transaction under the administration credential. The
-    /// transaction binds the caller and the host route's sealed operation id
-    /// as `app.user_id` and `app.operation`, as every host route write does.
+    /// a host route (docs/plan/platform-ui.md §4.2) in an
+    /// [administration transaction](Self::administration_transaction).
     pub async fn held_operation_grants(
         &self,
         project: &str,
@@ -1931,6 +1929,36 @@ impl WamnPostgres {
         principal_id: &wamn_platform_identity::PrincipalId,
         operation: &str,
     ) -> anyhow::Result<HeldOperationGrants> {
+        let rows = self
+            .administration_transaction(project, tenant, principal_id, operation, async |client| {
+                client
+                    .query(
+                        USER_OPERATION_PERMISSIONS_SQL,
+                        &[&tenant, &principal_id.as_str()],
+                    )
+                    .await
+                    .context("read held operation grants")
+            })
+            .await??;
+        HeldOperationGrants::from_rows(&rows).context("decode held operation grant")
+    }
+
+    /// Run `work` in a host-owned READ COMMITTED transaction under the
+    /// administration credential of `project`, for a host route
+    /// (docs/plan/platform-ui.md §4.2). The transaction binds the caller and
+    /// the route's sealed operation id as `app.user_id` and `app.operation`,
+    /// so every row it writes is stamped with them. It commits when `work`
+    /// returns `Ok` and rolls back when `work` returns `Err`, whose value is
+    /// the inner result. The outer error is a failure of the transaction
+    /// itself.
+    pub async fn administration_transaction<T, E>(
+        &self,
+        project: &str,
+        tenant: &str,
+        principal_id: &wamn_platform_identity::PrincipalId,
+        operation: &str,
+        work: impl AsyncFnOnce(&tokio_postgres::Client) -> Result<T, E>,
+    ) -> anyhow::Result<Result<T, E>> {
         anyhow::ensure!(valid_project(project), "invalid host-route project");
         anyhow::ensure!(valid_tenant(tenant), "invalid host-route tenant");
         let (connection, policy) = self
@@ -1955,27 +1983,13 @@ impl WamnPostgres {
             self.destroy(connection);
             return Err(anyhow::anyhow!(error.to_string()));
         }
-        let rows = connection
-            .query(
-                USER_OPERATION_PERMISSIONS_SQL,
-                &[&tenant, &principal_id.as_str()],
-            )
-            .await
-            .context("read held operation grants");
-        let rows = match rows {
-            Ok(rows) => rows,
-            Err(error) => {
-                if connection.batch_execute("ROLLBACK").await.is_err() {
-                    self.destroy(connection);
-                }
-                return Err(error);
-            }
-        };
-        if let Err(error) = connection.batch_execute("COMMIT").await {
+        let result = work(&connection).await;
+        let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
+        if let Err(error) = connection.batch_execute(end).await {
             self.destroy(connection);
-            return Err(error).context("commit held operation grants");
+            return Err(error).context("end the host route transaction");
         }
-        HeldOperationGrants::from_rows(&rows).context("decode held operation grant")
+        Ok(result)
     }
 
     /// Refresh the identity and permissions of an operator-admitted queued service.

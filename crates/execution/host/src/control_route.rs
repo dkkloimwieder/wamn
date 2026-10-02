@@ -621,7 +621,7 @@ async fn write_application(
 
 /// The request of a route, or the delivery refusal of a payload that is not
 /// one.
-fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
+pub(crate) fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, Refusal> {
     serde_json::from_str(payload).map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))
 }
 

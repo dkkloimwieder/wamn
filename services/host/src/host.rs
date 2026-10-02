@@ -1286,6 +1286,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 HostRouteHandlers::Application {
                     postgres: Arc::clone(&postgres),
                     project: args.project.clone(),
+                    identity: route_auth_scope
+                        .as_ref()
+                        .zip(identity_reader.as_ref())
+                        .map(|((org, _), client)| (Arc::clone(client), org.clone())),
                 },
                 Some(Arc::new(bridge)),
             ),
