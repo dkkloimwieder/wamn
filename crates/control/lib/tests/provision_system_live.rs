@@ -41,6 +41,41 @@ async fn provision_system_runs_once_and_records_the_platform_domain() {
         .get(0);
     assert_eq!(domain.as_deref(), Some("wamn.example.test"));
 
+    // The provisioning worker's login holds exactly the measured grants.
+    let role = client
+        .query_one(
+            "SELECT rolcanlogin, rolsuper, rolcreaterole, rolcreatedb, rolinherit, \
+                    rolreplication, rolbypassrls, rolconfig::text[], \
+                    ARRAY(SELECT parent.rolname::text || ':' || m.inherit_option || ':' \
+                                 || m.set_option || ':' || m.admin_option \
+                            FROM pg_auth_members m \
+                            JOIN pg_roles parent ON parent.oid = m.roleid \
+                           WHERE m.member = r.oid ORDER BY 1) \
+               FROM pg_roles r WHERE rolname = 'wamn_provisioner'",
+            &[],
+        )
+        .await
+        .expect("read wamn_provisioner");
+    assert_eq!(
+        (0..7)
+            .map(|column| role.get::<_, bool>(column))
+            .collect::<Vec<_>>(),
+        [true, false, true, true, true, true, true],
+        "LOGIN NOSUPERUSER CREATEROLE CREATEDB INHERIT REPLICATION BYPASSRLS"
+    );
+    assert_eq!(
+        role.get::<_, Vec<String>>(7),
+        ["createrole_self_grant=set, inherit"]
+    );
+    assert_eq!(
+        role.get::<_, Vec<String>>(8),
+        [
+            "pg_signal_backend:true:true:false",
+            "wamn_db_owner:true:true:false",
+            "wamn_system:true:true:false",
+        ]
+    );
+
     let refusal = provision_system(&request)
         .await
         .expect_err("the second run refuses");

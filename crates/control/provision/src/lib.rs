@@ -64,6 +64,7 @@ mod name;
 pub mod operation_grants;
 pub mod org;
 pub mod platform_principals;
+pub mod provisioner;
 #[cfg(feature = "ops")]
 pub mod recovery;
 pub mod saga;

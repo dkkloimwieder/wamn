@@ -4,7 +4,8 @@
 //! The database and its owner role `wamn_system` exist before this runs. On
 //! CloudNativePG, the `initdb` bootstrap of the cluster creates both. The
 //! verb connects as the superuser, installs [`CONTROL_BOOTSTRAP_SQL`] as
-//! `wamn_system`, closes the PUBLIC floors, and writes
+//! `wamn_system`, closes the PUBLIC floors, creates the login
+//! `wamn_provisioner` of the provisioning worker, and writes
 //! `registry.meta.platform_domain`. It refuses a database that already has
 //! the schema `registry`, so a second run changes nothing.
 
@@ -106,5 +107,9 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
         )
         .await
         .context("converge the system database PUBLIC TEMPORARY floor")?;
+    admin
+        .batch_execute(&wamn_control_provision::provisioner::ensure_provisioner_role_sql())
+        .await
+        .context("create the provisioning worker's login")?;
     Ok(())
 }
