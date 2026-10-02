@@ -273,7 +273,7 @@ Every application package takes a major version step, because a serialized field
 | Package | Current coordinate | Declared at | Changes | Why |
 |---|---|---|---|---|
 | `wamn_receiving` | 1.0.0 | `apps/wamn_receiving/wamn.json:4` | yes | A1 (4 keys) and A5 (3) move its manifest hash. P9, W4 and G11 move its `receiving` component |
-| `wamn_wms` | 1.0.0 | `apps/wamn_wms/wamn.json:4` | yes | A1 (5 keys). The palette components that it admits under its coordinate (`label-render`, `blob-put`, `jsonata`) keep their bytes but are admitted again under the new coordinate. The new `catalog.component_library` key allows that (§4.3.6) |
+| `wamn_wms` | 1.0.0 | `apps/wamn_wms/wamn.json:4` | yes | A1 (5 keys). The palette components that it admits under its coordinate (`label-render`, `blob-put`, `jsonata`) are admitted again under the new coordinate. The new `catalog.component_library` key allows that (§4.3.6). A palette component whose bytes did not change keeps its digest. `label-render` changed at `cacde6a8e` (`wamn-ld93.33.5`) |
 | `client_acme_receiving` | 3.0.0, pins `wamn_receiving` 1.0.0 | `apps/client_acme_receiving/wamn.json:4`, `:9` | yes | A1 (5 keys). Its base pin moves to the new `wamn_receiving` version and `receiving` digest |
 | `platform_fixture` | 1.0.0 | `apps/platform_fixture/wamn.json:4` | yes | A1 (4 keys) |
 | `platform_fixture_overlay` | 1.0.0, pins `platform_fixture` 1.0.0 | `apps/platform_fixture_overlay/wamn.json:4`, `:9` | yes | Its `wamn.json` holds no `kind`. Its base pin must move with `platform_fixture` |
@@ -820,7 +820,7 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
    target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$T" --package apps/wamn_wms
    ```
 
-2. Render the three platform declarations for `wamn_wms` 2.0.0, then push the four components under `wamn_wms` 2.0.0 (`gcp.md` §5.3 "for pair"). `label-render` and `blob-put` keep their bytes and are admitted again under the new coordinate (§2.3). `jsonata` has new bytes, because A8 renamed a field of its error struct. So it gets a new digest and a new owner row under `wamn_wms` (`wamn-ld93.21`). Each push writes a new `catalog.component_library` row in the WMS database and in wamn_system. Its key is `(tenant_id, package_id, package_version, component, interface_version)`, with `environment_instance` added in wamn_system (`deploy/sql/catalog-schema.sql`, `deploy/sql/control-portable-store.sql`). The owner rows of the `label-render` and `blob-put` digests already name `wamn_wms`, so those pushes are admitted. This works only with the key of §4.3.6, which B2 and B3 install. Under the old key the push refuses `component-fact-conflict` (`crates/control/lib/src/push_component.rs:1985`):
+2. Render the three platform declarations for `wamn_wms` 2.0.0, then push the four components under `wamn_wms` 2.0.0 (`gcp.md` §5.3 "for pair"). Each component is admitted again under the new coordinate (§2.3). Its bytes are the B0 step 2 build, so its digest is the sha256 that B0 recorded. `label-render` has new bytes since release 1, because `cacde6a8e` renamed its template id `pallet` to `packaging` (`wamn-ld93.33.5`). `jsonata` has new bytes, because A8 renamed a field of its error struct (`wamn-ld93.21`). A component with new bytes gets a new digest and a new owner row under `wamn_wms`. Each push writes a new `catalog.component_library` row in the WMS database and in wamn_system. Its key is `(tenant_id, package_id, package_version, component, interface_version)`, with `environment_instance` added in wamn_system (`deploy/sql/catalog-schema.sql`, `deploy/sql/control-portable-store.sql`). The owner row of a digest that did not change already names `wamn_wms`, so that push is admitted. This works only with the key of §4.3.6, which B2 and B3 install. Under the old key the push refuses `component-fact-conflict` (`crates/control/lib/src/push_component.rs:1985`):
 
    ```bash
    for pair in label-render:apps/platform/no-std/label-render/declaration.json.in \
@@ -846,7 +846,7 @@ It prints release 1 with format 3 and release 2 with format 4. The table name ho
    sha256sum $V/wms.wasm "$DELIVERY_TARGET"/wasm32-wasip2/release/label_render.wasm $V/blob_put.wasm $V/jsonata_expression.wasm
    ```
 
-   Proof: the component listing of `gcp.md` §5.3 shows the `label-render` and `blob-put` digests under both 1.0.0 and 2.0.0, and the new `jsonata` digest under 2.0.0 only. `SELECT component_digest, package_id FROM catalog.component_digest_owners` shows one row per digest.
+   Proof: each `sha256sum` line equals the sha256 of that file that B0 step 2 recorded. The component listing of `gcp.md` §5.3 shows the four B0 digests under 2.0.0 and the digests of `gcp.md` §5.3 under 1.0.0. A B0 digest that equals its 1.0.0 digest shows under both coordinates. `SELECT component_digest, package_id FROM catalog.component_digest_owners` shows one row per digest.
 
 3. Gate the wiring (`gcp.md` §5.3 "cargo build -p wamn-scenario-worker"). The gate service takes the `identity-reader` Secret of WMS and the `control-author` and `management-admitter` generation files. It also takes the WMS management-author PAT. B0 step 7 chose one of two branches:
 
