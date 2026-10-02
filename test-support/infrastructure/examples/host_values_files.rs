@@ -45,7 +45,7 @@ const ENVIRONMENT: &str = "dev";
 /// The org that the checked-in Receiving overlay names.
 const OVERLAY_ORG: &str = "acme";
 const NAMESPACE: &str = "hosts";
-const HOST_IMAGE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-91f318b6c6fe387c@sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76";
+const HOST_IMAGE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-bba6fe15a456083e@sha256:d6abaac5b196afe72a576619efa4194f15287835d3994757ae41c923fb54dbfa";
 /// The Google service account of the label store (docs/operations/gcp.md 5.1).
 const BLOB_ACCOUNT: &str = "wamn-blob@wamn-dev.iam.gserviceaccount.com";
 const COMPONENT_BASE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/components";

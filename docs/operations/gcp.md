@@ -50,6 +50,8 @@ To change a cap, run `gcloud beta quotas preferences update` with the same prefe
 
 ### 1.3 The guard
 
+The guard sets pool `main` to 0 nodes every day. The daytime count is 3 nodes since 2026-10-02. On that day the control host group of `7b6e00cd3` did not fit on 2 nodes, so pool `main` was resized from 2 to 3 nodes in 284 seconds. Scale the pool back to 3 nodes after the guard (sections 3.17 and 6.1).
+
 The source is in [deploy/gcp/guard](../../deploy/gcp/guard). Its `config.json` names the project, the zone and the cluster. Run its test first:
 
 ```bash
@@ -693,7 +695,9 @@ If the repository binding fails with "Service account ... does not exist", the n
 
 ### 3.12 Registry token CronJob
 
-[registry-token.yaml](../../deploy/gcp/registry-token.yaml) holds the service account, the empty Secret `wamn-registry-pull`, the Role that allows only `get` and `patch` on that Secret, and the CronJob. Apply it, run the job once by hand, and make sure that the Secret holds a token:
+The CronJob stopped at the cutover on 2026-10-02 (B10), and B12 deleted `deploy/gcp/registry-token.yaml`. The hosts now pull with the metadata token of section 3.13. This section records the earlier setup.
+
+`registry-token.yaml` held the service account, the empty Secret `wamn-registry-pull`, the Role that allows only `get` and `patch` on that Secret, and the CronJob. Apply it, run the job once by hand, and make sure that the Secret holds a token:
 
 ```bash
 kubectl apply -f deploy/gcp/registry-token.yaml
@@ -719,12 +723,16 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 
 | Image | Digest | Use |
 | --- | --- | --- |
-| `wamn-host:src-91f318b6c6fe387c` | `sha256:a403fef9f1e7bca336c3640851cd3a99eee2202885e6b59f5261490b39647d76` | host |
-| `wamn-identity:src-c2cfa0047530e945` | `sha256:896a386eaf97c365f23c7d992d3e66768336ccb2121d867e26e1e92489adc465` | identity |
+| `wamn-host:src-bba6fe15a456083e` | `sha256:d6abaac5b196afe72a576619efa4194f15287835d3994757ae41c923fb54dbfa` | host |
+| `wamn-identity:src-bba6fe15a456083e` | `sha256:1899c98fecc0b5bd0533929902646b6ef1f0189c786a1bdbd44f84418d4cdf0d` | identity |
+| `wamn-gates:src-38f6225813d8b634` | `sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4` | gates of `qualify-release` |
+| `wamn-ctl:src-bba6fe15a456083e` | `sha256:84fdb08b609781d995b49a49d67de528451763368a05ea19ae91410c986e766a` | `mint-pat` and `invite` Jobs |
 | `wamn-cdc-reader:src-596c8e6604d119a0` | `sha256:9b1ed15e87122ce208114582b27ce23af7cc06c80653c798fcac5b79172e1c52` | CDC reader |
-| `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | registry token CronJob |
+| `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | identity TLS check |
 
-`deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`, which names the `wamn` credential helper for the registry. It is not applied yet. B10 of `docs/plan/kind-to-type.md` section 3.2 applies it with `kubectl` before the `helm upgrade` of the hosts.
+The four `wamn` images come from the cutover commit `351f71337` of branch `cutover` (`docs/plan/kind-to-type.md` section 3.2, 2026-10-02). They carry the label `wamn.dev/source-head`, because `qualify-release` compares each pin with the labeled build of `tools/journey-image-cache`.
+
+`deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`, which names the `wamn` credential helper for the registry. B10 of `docs/plan/kind-to-type.md` section 3.2 applied it on 2026-10-02, before the `helm upgrade` of the hosts. The hosts pull components with a token from the GKE metadata server, as `wamn-blob`. The token CronJob, its Secret `wamn-registry-pull` and the Google service account `wamn-registry-reader` were removed after the serve check of B10.
 
 The kind cases of `qualify-release` do not pull these images from the private registry. `tools/registry-image-archive` fetches each pinned manifest and its blobs by digest with the login of this machine, and each kind node imports that archive with `ctr`, so the node holds the pinned digest. No credential reaches a node.
 
@@ -820,10 +828,10 @@ The first mint ran from this machine, through a temporary `/etc/hosts` line and 
 
 ### 3.17 Pool after the daily guard
 
-The guard job of section 1.3 sets pool `main` to 0 nodes every day at 03:00 New York time. On 2026-09-27 it removed both nodes, and every pod waited in `Pending`. Scale the pool back to 2 nodes for the work:
+The guard job of section 1.3 sets pool `main` to 0 nodes every day at 03:00 New York time. On 2026-09-27 it removed both nodes, and every pod waited in `Pending`. Scale the pool back to 3 nodes for the work:
 
 ```bash
-gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-central1-a --project wamn-dev --quiet
+gcloud container clusters resize wamn --node-pool main --num-nodes 3 --zone us-central1-a --project wamn-dev --quiet
 ```
 
 The event NATS starts again without `WAMN_TAP`, so run the tap-stream Job and the check of section 3.5 again. On 2026-09-27 the resize took 69 seconds, the pods were running 34 seconds later, the Job took 35 seconds and the check 6 seconds.
@@ -935,8 +943,10 @@ The HTTP claims are catalog `default`, environment `hosts`, and project and sche
 
 | Component | File SHA-256 | Pushed digest |
 | --- | --- | --- |
-| `flow-http` (`http_route.wasm`) | `ad1124555cfaeb7f342d4596b5848c0675edefa1725c770c35fb94699d8130f4` | `sha256:f3d8d1bea0e3d9dd69dc2e30c004663a95ef234ed36a80faf4e8bcc35dc42fb4` |
-| `materializer` | `7d78a4ad93a2484a3964e5d631e857f439316663f8227f4c08676659bf8f8153` | `sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0` |
+| `flow-http` (`http_route.wasm`) | `2b56f55d0e39e69eb2e715ea416d99fef80d295c03794f8d97dfd55fa472891c` | `sha256:7ac3316eb660a630efe7fae991bc7931013c0bcadbb3e3b1a1234c1f7f621105` |
+| `materializer` | `3e862a372407a1582f499fbd38fedad0cfd473f8a819952f4c620003311bdf3f` | `sha256:f98dbc816d281b815f4e5d57f1ac92548b478802c1e62198dac92607fb0b296c` |
+
+These are the guests of the cutover commit `351f71337`, pushed on 2026-10-02 with the file SHA-256 as tag. Receiving and WMS run the same two digests. Until then the workloads ran `flow-http` `sha256:f3d8d1bea0e3d9dd69dc2e30c004663a95ef234ed36a80faf4e8bcc35dc42fb4` (file `ad1124555cfaeb7f342d4596b5848c0675edefa1725c770c35fb94699d8130f4`) and `materializer` `sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0` (file `7d78a4ad93a2484a3964e5d631e857f439316663f8227f4c08676659bf8f8153`).
 
 On 2026-09-27 the build took 353 seconds, the push 5 seconds, and the two workloads were Ready 8 seconds after the apply.
 
@@ -1400,12 +1410,14 @@ done
 Push each component with the credential file of section 3.9, `--package apps/wamn_wms --tenant wms --declaration $P/<name>.declaration.json`, and these admitted packages.
 Push `wms` with `--declaration-template apps/wamn_wms/publication/components/wms.json.in` in place of `--declaration`, because the render adds the entries of the generated operations from `generated/publication/component-operations.json`:
 
-| Component | Bytes | `--admit-platform-package` | Digest on 2026-09-27 |
-| --- | --- | --- | --- |
-| `wms` | `wms.wasm` | `wamn:node`, `wamn:postgres` | `sha256:db401f0d89c1059e3d396b0643f26277c611f2dc65279b7f2ace64f18df91c87` |
-| `label-render` | `label_render.wasm` | `wamn:node` | `sha256:57852602eddef0be442587ba7cc14eddfc4c73b049d3e9c8d85bf3ebc321b4c1` |
-| `blob-put` | `blob_put.wasm` | `wamn:node`, `wasmcloud:blobstore` | `sha256:d93e0c6662ac885d1793b29dfe7a390e79cc494ca7653d58b990a74d6dcd2f8c` |
-| `jsonata` | `jsonata_expression.wasm` | `wamn:node` | `sha256:4da6d8c78df00e81ea29a02b931ab553abc31ae86556749359294f7fbfa4b64c` |
+| Component | Bytes | `--admit-platform-package` | Digest on 2026-09-27 | Digest of 2.0.0 on 2026-10-02 |
+| --- | --- | --- | --- | --- |
+| `wms` | `wms.wasm` | `wamn:node`, `wamn:postgres` | `sha256:db401f0d89c1059e3d396b0643f26277c611f2dc65279b7f2ace64f18df91c87` | `sha256:e2b6aaf7c7f63c4553f0157af2e769b2e53cd5fa82053b8895a779bf34411884` |
+| `label-render` | `label_render.wasm` | `wamn:node` | `sha256:57852602eddef0be442587ba7cc14eddfc4c73b049d3e9c8d85bf3ebc321b4c1` | `sha256:587434540bb0173ae447be16d89876ae0b70047b6c9241bf375c87f8c08efc91` |
+| `blob-put` | `blob_put.wasm` | `wamn:node`, `wasmcloud:blobstore` | `sha256:d93e0c6662ac885d1793b29dfe7a390e79cc494ca7653d58b990a74d6dcd2f8c` | `sha256:d93e0c6662ac885d1793b29dfe7a390e79cc494ca7653d58b990a74d6dcd2f8c` |
+| `jsonata` | `jsonata_expression.wasm` | `wamn:node` | `sha256:4da6d8c78df00e81ea29a02b931ab553abc31ae86556749359294f7fbfa4b64c` | `sha256:f3f6f01cb49ee10a52adbabd86388597d875d7225d9393e11c4a1e0c3d3674bb` |
+
+The 2.0.0 column comes from `catalog.component_library` of the WMS database after B8 of the cutover. Each 2.0.0 digest equals the SHA-256 of its file. `wms` changed at `71fc165f8`, and `jsonata` changed because A8 renamed a field of its error struct.
 
 Each printed digest equals the `sha256sum` of the local file.
 
@@ -1631,7 +1643,7 @@ On 2026-09-30 the first attempt landed inside the window, so no second run was n
 If the guard scaled `main` to 0 overnight, resize it and run the tap Job again (section 3.5):
 
 ```bash
-gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-central1-a --project wamn-dev --quiet
+gcloud container clusters resize wamn --node-pool main --num-nodes 3 --zone us-central1-a --project wamn-dev --quiet
 ```
 
 On 2026-09-28 the resize took 73 seconds and the tap Job 25 seconds. About 40 minutes later Google replaced both Spot nodes. Every pod started again in 549 seconds, and the tap Job ran again in 19 seconds.
@@ -1666,7 +1678,7 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "select 
 
 On 2026-09-29 the apply took 1 second, and the server showed `4GB` with no restart. The WMS slot's `safe_wal_size` rose from 738097816 to 3942627736 bytes.
 
-Restart identity and the CDC readers after an outage of Postgres. Do not restart the host groups while they run: two host pods do not fit on the two nodes, and the new pods wait in `Pending`. If that happens, run `kubectl -n hosts rollout undo deploy/<name>`.
+Restart identity and the CDC readers after an outage of Postgres. Do not restart the host groups while they run. Since 2026-10-02 the three host groups need three nodes, and a fourth host pod does not fit, so the new pods wait in `Pending`. If that happens, run `kubectl -n hosts rollout undo deploy/<name>`.
 
 ### 6.3 CDC slot lost
 
@@ -1901,6 +1913,20 @@ The new provision needed generation `b` in one place. `provision-identity-issuer
 
 The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. On 2026-09-30 the PAT of prefix `5b0649d6dc4dd3bf`, which expires on 2026-10-30, replaced it (section 3.16). The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
 
+On 2026-10-02 the `kind` → `type` cutover (`docs/plan/kind-to-type.md` section 3.2) published and selected these releases at the cutover commit `351f71337`:
+
+| Application | Release | Manifest digest | Source commit of the attestation | Component digests |
+| --- | --- | --- | --- | --- |
+| Receiving | 2 | `sha256:d2b6c3063066c7fdc4a575b029fa10987db9f44c4d3e8acae5faba584f38531d` | `ebc75d513` | `receiving` `sha256:0855fd4cfc5bd6202321134a6bf8331b5266b521f6814bc7c88c3689029fba81` |
+| Receiving | 3 | `sha256:28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7` | `351f71337` | the same bytes as release 2 |
+| WMS | 2 | `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4` | `351f71337` | the 2.0.0 column of section 5.3 |
+
+All three are format 4. Receiving release 2 is attested and never selected. Its attestation names `ebc75d513`, and an attestation does not change, so the qualified publish of the same bytes at `351f71337` refused `deployment-attestation-content-conflict`. The owner ruled release 3 with the same bytes (`wamn-ld93.21`). Release numbers are not a contract, and the attestation is. The heads are Receiving release 3 and WMS release 2.
+
+The web clients are at `gs://wamn-dev-web/clients/wamn_receiving/28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7/` (22 files, 8 seconds) and `gs://wamn-dev-web/clients/wamn_wms/8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4/` (24 files, 9 seconds). `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name both paths. The host upgrade timed out once at 605 seconds, because the new control host group did not fit on 2 nodes (section 1.3). After the resize to 3 nodes it took 5 seconds, and the Helm release reads `deployed` at revision 9.
+
+The PAT of prefix `0403da0ed832b723`, which expires on 2026-11-01, replaced `5b0649d6dc4dd3bf` for `wamn-operator-dkk--receiving--dev`. The WMS management-author PAT is `fdae8133ac59ae6d`, which expires on 2026-11-01. The older WMS PATs `035c1540a0cedefc` and `8c047af277dd545a` are revoked, so each environment holds one current PAT. Generation `a` of the WMS `control-author` and `management-admitter` families is retired, and generation `b` is active.
+
 ## 7. Schema changes applied by hand
 
 `wamn-ctl upgrade-schema` applies a platform schema change to an installed database ([deployment](deployment.md#platform-schema-upgrades), `wamn-o8b9`). This section records the statements that ran by hand on wamn-dev before the verb existed, with their date and their finding. Its last entry is the first run of the verb on each database, with `--baseline`, at the `kind` → `type` cutover (`docs/plan/kind-to-type.md` §4.8). After that entry, no schema change runs by hand.
@@ -1931,3 +1957,39 @@ rm $P/invite.yaml
 ```
 
 Then make the Secret `wamn-system-admin`, wait for the Job and save its log as in section 4.5.
+
+On 2026-10-02 (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit `71fc165f8` ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/plan/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered false, so the migration did not rename P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
+
+```bash
+target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --baseline 1 --confirm
+for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr; do
+  target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
+    --admin-database-url "postgresql://postgres:${PW}@127.0.0.1:15432/$db" --baseline 0 --confirm
+done
+```
+
+B0 step 8 answered that `registry.capture_gap` exists and `registry.event_readers.schema` does not, so the baseline was 1. The wamn_system run printed `baseline` for `0001_capture_gap.sql`, then `applied` for `0002_event_reader_schema.sql`, `0003_kind_to_type.sql`, `0004_env_policy_durability.sql`, `0005_admin_role.sql`, `0006_control_audience_reads.sql` and `0007_org_administration.sql`. Each project-env run printed `applied` for `0001_kind_to_type.sql`, `0002_authored_roles.sql`, `0003_administration_grants.sql` and `0004_user_type.sql`. The runs took 3, 2 and 1 seconds. The history notices named `app_system.api_keys_history`, `configurations_history`, `permissions_history`, `roles_history`, `user_roles_history` and `users_history` in both project-env databases, `receiving.purchase_order_history` and `receiving.purchase_order_line_history` in Receiving, and `wms.packaging_history` in WMS. The owner table took <not recorded> rows in wamn_system, <not recorded> in Receiving and <not recorded> in WMS. The snapshot notices named the eleven `release_manifest_v3_snapshots_*` constraints in each project-env database (`canonical_bytes_check`, `canonical_bytes_not_null`, `effective_release_id_check`, `effective_release_id_not_null`, `exact_hash`, `manifest_digest_check`, `manifest_digest_not_null`, `pkey`, `release_fkey`, `tenant_id_check` and `tenant_id_not_null`). The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 to 7, and `app_system.schema_migrations` held rows 1 to 4 in each project-env database.
+
+`reconcile-run-plane` of commit `71fc165f8` then applied P8 and P10 to P12 by its `TypeColumnCutover` action. Run it for each project-env as in sections 3.8 and 5.2:
+
+```bash
+target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
+  --org dkk --project <project> --tenant <tenant> --env dev --schema wamn_run
+```
+
+It reported `applied TypeColumnCutover: type-columns` for Receiving and for WMS, and a second run reported no action (7 tables at target). The check query of §4.3 returned no row in any of the three databases afterwards.
+
+The listing of PAT Secrets with the label `app.kubernetes.io/component=project-env-pat` returned 0 Secrets, so no annotation ran.
+
+Later in the cutover, project migration `0005_wiring_definition_key.sql` of commit `ebac92ef4` (`wamn-ld93.21`) added `package_version` to `wirings_definition_key`. `upgrade-schema` ran on both project-env databases without `--baseline`, because the verb refuses `--baseline` after its first run. Each run took 1 second and printed `applied` for `0005_wiring_definition_key.sql`. `app_system.schema_migrations` holds rows 1 to 5 in each project-env database, and wamn_system had no pending file.
+
+On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four fixed guest tags of the `components` repository were deleted, one command per tag. They named no running digest after B10:
+
+| Tag | Digest |
+|---|---|
+| `flow-http` | `sha256:f3d8d1bea0e3d9dd69dc2e30c004663a95ef234ed36a80faf4e8bcc35dc42fb4` |
+| `materializer` | `sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0` |
+| `wms-flow-http` | `sha256:923f270bb7425cad48e46a12fa3bb5843f9b1bd174851298ee68485cc8deea7e` |
+| `wms-materializer` | `sha256:581fd2ed52bf349d2adc6cfbad22d0b2c33b157c99f3ef1b3a61aa92bac6ca7a` |
+
+Then `gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags` turned immutable tags on at 17:12 UTC. The deletes and the update took 6 seconds. `gcloud artifacts repositories describe wamn` shows `immutableTags: true`, and every tag of `components` is a sha256 hex.

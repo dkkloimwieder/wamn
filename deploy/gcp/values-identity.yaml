@@ -4,7 +4,7 @@
 # from source identity src-bb57cc3a679703c1.
 image:
   repository: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity@sha256
-  tag: d76a0c85404f56b513f950f6a019ddfc35ccb90c178c2353fd4e86d2a90456d7
+  tag: 1899c98fecc0b5bd0533929902646b6ef1f0189c786a1bdbd44f84418d4cdf0d
   pullPolicy: IfNotPresent
 issuer: https://identity.identity.svc.cluster.local
 databaseSecret: wamn-identity-db

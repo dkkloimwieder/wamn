@@ -18,8 +18,6 @@ runtime:
       value: /tmp/wamn-wasmtime-cache
     - name: DOCKER_CONFIG
       value: /etc/wamn/registry
-    - name: WAMN_REGISTRY_AUTH_FILE
-      value: /etc/wamn/registry/config.json
     - name: WAMN_COMPONENT_ARTIFACT_BASE
       value: us-central1-docker.pkg.dev/wamn-dev/wamn/components
     - name: WAMN_EVT_NATS_URL
@@ -80,6 +78,8 @@ runtime:
           name: wamn-administration-dkk--receiving--dev
           key: url
           optional: false
+    - name: WAMN_REGISTRY_TOKEN_METADATA
+      value: 'true'
     - name: WAMN_SESSION_ISSUER
       value: https://identity.identity.svc.cluster.local
     - name: WAMN_SESSION_INSTANCE_SUFFIX
@@ -102,18 +102,14 @@ runtime:
         - key: binding.json
           path: binding.json
     - name: registry-pull
-      secret:
-        secretName: wamn-registry-pull
-        optional: false
-        items:
-        - key: .dockerconfigjson
-          path: config.json
+      configMap:
+        name: wamn-registry-helper
     - name: identity-ca
       configMap:
         name: identity-ca
     extraArgs:
     - --release-artifact-base=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
-    - --release-manifest-digest=sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc
+    - --release-manifest-digest=sha256:28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7
     http:
       enabled: true
       port: 80
@@ -164,8 +160,6 @@ runtime:
       value: /tmp/wamn-wasmtime-cache
     - name: DOCKER_CONFIG
       value: /etc/wamn/registry
-    - name: WAMN_REGISTRY_AUTH_FILE
-      value: /etc/wamn/registry/config.json
     - name: WAMN_COMPONENT_ARTIFACT_BASE
       value: us-central1-docker.pkg.dev/wamn-dev/wamn/components
     - name: WAMN_EVT_NATS_URL
@@ -226,6 +220,8 @@ runtime:
           name: wamn-administration-dkk--wms--dev
           key: url
           optional: false
+    - name: WAMN_REGISTRY_TOKEN_METADATA
+      value: 'true'
     - name: WAMN_SESSION_ISSUER
       value: https://identity.identity.svc.cluster.local
     - name: WAMN_SESSION_INSTANCE_SUFFIX
@@ -248,18 +244,14 @@ runtime:
         - key: binding.json
           path: binding.json
     - name: registry-pull
-      secret:
-        secretName: wamn-registry-pull
-        optional: false
-        items:
-        - key: .dockerconfigjson
-          path: config.json
+      configMap:
+        name: wamn-registry-helper
     - name: identity-ca
       configMap:
         name: identity-ca
     extraArgs:
     - --release-artifact-base=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
-    - --release-manifest-digest=sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6
+    - --release-manifest-digest=sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4
     http:
       enabled: true
       port: 80
