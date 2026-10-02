@@ -1105,6 +1105,8 @@ It is an authenticated-member utility, not an authored grant.
 
 ## 4.7 Administration screens
 
+Issue 6 (`wamn-a40n.10`) built this section; [execution](../architecture/execution.md#host-run-routes) holds the current behavior.
+
 Generated operation screens remain available individually and remain the TUI baseline.
 
 The web UI additionally has two composite screens in `web/ui`, built only from the operations above.

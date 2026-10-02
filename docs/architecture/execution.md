@@ -100,6 +100,8 @@ The writes are the functions of [`wamn_platform_identity::application`](../../cr
 If the head names another release, the grant refuses with `release_not_current`, because release reconciliation already wrote the closures of the head.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `release_not_current`, `permission_not_held`, `permission_not_selected` (with `required_by`), `user_not_found` or `admin_covered`.
 The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `host_route/generated/client-ts`.
+The web screens `RoleGrid` and `UserGrid` of [`@wamn/ui/admin`](../../web/ui/README.md#the-platform-exports) call these routes through that client and write no database directly.
+`RoleGrid` shows one role's operations from `permission.list`, and `UserGrid` shows one user's roles from `user.list` and their permissions from `permission.list`.
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
 Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.

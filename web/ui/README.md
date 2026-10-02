@@ -69,6 +69,17 @@ Add an item only when an emitter target, or a page that places the generated com
 | `CardPage` | One card in the middle of an empty page, for signing in and for an address with no page |
 | `ScreenActions` | The row of buttons above a screen |
 
+The subpath `@wamn/ui/admin` holds the administration screens of one application, over the generated client `@wamn/control-client`.
+It is a subpath, so a page that places no administration screen does not resolve the client.
+
+| Export | Purpose |
+| --- | --- |
+| `RoleGrid` | One role's operations, grouped by interface: the direct selection, the effective state and the roots that require each one. A served, grantable operation has a toggle that grants or revokes it. An operation that is effective only through other roots, an operation fixed to `admin` or to every member, and every row of `admin` have no toggle |
+| `UserGrid` | One user's roles, with a toggle for each, and the effective permissions of the held roles. An `admin` that `project-admin` or `org-admin` covers is hierarchy-controlled, with no toggle |
+| `operationInterface` | The interface of one operation reference, the part between `:` and the last `/`, which `RoleGrid` groups by |
+
+Each grid announces each write with `announceOutcome`, shows a refusal with the text of its contract, and reads again after each write.
+
 `RecordSelect` filters nothing itself, so its options are exactly the rows the release sent.
 A search matches a value in full, because a declared filter compares with `IN`.
 
@@ -82,6 +93,7 @@ import "@wamn/ui/styles.css";
 
 Wrap the page in `ColorModeProvider` and mount one `Toaster`.
 Resolve `@wamn/ui` by path, the same way as `@wamn/web-runtime`.
+If the page places an administration screen, also resolve `@wamn/ui/admin` and `@wamn/control-client` by path.
 Map `solid-js` and `@tanstack/solid-table` to one copy, because two copies of `solid-js` break context and reactivity.
 
 The color mode is stored in the cookie `zaidan-color-mode`.
