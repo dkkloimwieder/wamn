@@ -118,7 +118,7 @@ Epic 1, one branch, each issue with its tests. No issue runs against wamn-dev un
 6. Stages 1 to 5: source, build, images, guests, preflight.
 7. Stages 6 to 9: schema, packages, qualify, publish and select, with the next free release id.
 8. Stages 10 to 12: deploy, serve check, retirement, record, with the waits of §4.3.
-9. A kind run of the whole verb against a disposable stack and a private registry. Then one live run on wamn-dev for Receiving and WMS at one commit. The live run records its times beside §3.1.
+9. A kind run of stages 1 to 9 against a disposable stack and a private registry, with no switches, no MinIO and no second edge. Stages 10 to 12 have no kind test. The first live run on wamn-dev, for Receiving and WMS at one commit, is their test (owner ruling, 2026-10-02). The live run records its times beside §3.1.
 
 ## 6. Out of scope
 

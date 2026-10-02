@@ -314,6 +314,7 @@ Owner rulings of 2026-09-27:
 - Release composition (2026-10-02, `wamn-m511.5`): the derivation of the dev loop becomes one library function, and the dev loop and stage 7 both call it. No second file lists the components.
 - Bindings (2026-10-02, `wamn-m511.5`): stage 7 copies each binding of the current release to the new release id and records the copy. A binding is environment state, not an upgrade input.
 - Gate credentials (2026-10-02, `wamn-m511.5`): each run prepares the next control-author and management-admitter generation and issues a new management-author PAT through the PAT Job. Stage 11 retires the old generation and revokes only the older management-author PATs of the environment.
+- Upgrade kind run (2026-10-02, `wamn-m511.7`): the kind run covers stages 1 to 9, with no switches, no MinIO and no second edge. Stages 10 to 12 are tested once, in the first live run on `wamn-dev`. The kind result is reported before the live run, and the live run waits for the word of the owner.
 
 ## 6. Benchmark
 
