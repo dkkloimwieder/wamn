@@ -15,11 +15,11 @@ use crate::git_source::{GitSourceState, discover_repository_root, read_status};
 const RECEIVING_CASES: &[&str] = &[
     "route_authentication_live::cluster::route_cases::command_histories",
     "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress",
-    "route_authentication_live::cluster::queue_recovery::interrupted_durable_queue_item_completes_after_host_restart",
 ];
 // The Receiving cases that touch no overlay, for a release without Acme.
-// queue_recovery starts its item only from a wiring, and Receiving alone has
-// none (wamn-ld93.33.11).
+// queue_recovery is in neither set: it starts its item from the wiring
+// wamn_receiving/receiving_record_receipt, which no release carries
+// (wamn-ld93.33.11).
 const RECEIVING_BASE_CASES: &[&str] =
     &["route_authentication_live::cluster::route_cases::command_histories"];
 const WMS_CASES: &[&str] = &[

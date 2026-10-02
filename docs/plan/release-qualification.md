@@ -29,20 +29,19 @@ All of this is measured at `9f5331e25`. Nothing was built or run.
 
 wamn-dev Receiving release 2 has `wamn_receiving@2.0.0` only (`kind-to-type.md` §3.2 B7 step 4). So `qualify-release` refuses it before any case runs.
 
-The six cases are listed at `qualification.rs:15-24`. Each one runs as `<exe> <case> --exact --ignored` with `WAMN_DELIVERY_CANDIDATE` and `WAMN_DELIVERY_RESULT` (`qualification.rs:303-327`).
+The five cases are listed at `qualification.rs:15-29`. Each one runs as `<exe> <case> --exact --ignored` with `WAMN_DELIVERY_CANDIDATE` and `WAMN_DELIVERY_RESULT` (`qualification.rs:303-327`).
 
 | Application | Case | Defined at |
 | --- | --- | --- |
 | Receiving | `route_authentication_live::cluster::route_cases::command_histories` | `apps/wamn_receiving/tests/route_authentication_live/cluster/route_cases.rs:16` |
 | Receiving | `…::postcommit_case::baseline_overlay_and_materializer_progress` | `…/cluster/postcommit_case.rs:19` |
-| Receiving | `…::queue_recovery::interrupted_durable_queue_item_completes_after_host_restart` | `…/cluster/queue_recovery.rs:17` |
 | WMS | `cluster::released_wms_routes` | `apps/wamn_wms/tests/cluster.rs:36` |
 | WMS | `cluster::released_wms_routes_retain_committed_work_after_label_failure` | `apps/wamn_wms/tests/cluster.rs:50` |
 | WMS | `cluster::restarted_wms_host_retains_compiled_code_and_serves_requests` | `apps/wamn_wms/tests/cluster.rs:66` |
 
 ### 3.2 The constants each case pins
 
-Receiving. The three cases share one publish path:
+Receiving. The two cases share one publish path:
 
 - Org `acme`, project `receiving`, environment `dev`, tenant `receiving-route-auth` and release id 1 (`crates/control/lib/src/dev/environment.rs:237-245`). The publish uses them at `apps/wamn_receiving/tests/route_authentication_live/environment.rs:595-599`.
 - The packages are `JOURNEY_PACKAGES` (`apps/wamn_receiving/tests/route_authentication_live.rs:375-389`). These are `wamn_receiving` and `client_acme_receiving`, with versions read from each `wamn.json`.
@@ -120,7 +119,7 @@ The route host comes from the candidate. The cases send it as the `Host` header,
 | Package set | Cases |
 | --- | --- |
 | `{wamn_receiving}` | The Receiving cases that touch no overlay, listed below. |
-| `{wamn_receiving, client_acme_receiving}` | All three Receiving cases of §3.1. |
+| `{wamn_receiving, client_acme_receiving}` | Both Receiving cases of §3.1. |
 | `{wamn_wms}` | The three WMS cases of §3.1. |
 
 Any other set fails as it does today. The Receiving-alone publish is part of this change: with the set `{wamn_receiving}`, the Receiving fixture publishes `wamn_receiving` alone and no Acme wiring. No release is qualified by a case that needs a package that the release does not carry.
@@ -131,7 +130,7 @@ These Receiving cases touch no overlay, measured at `01ca2425d`:
 | --- | --- | --- |
 | `route_cases::command_histories` | `apps/wamn_receiving/tests/route_authentication_live/cluster/route_cases.rs:16` | The base routes `/receiving/record_receipt` and `/purchase_order/update` (`apps/wamn_receiving/tests/receiving_command_histories_live.rs:27`, `:356`). |
 
-`queue_recovery::interrupted_durable_queue_item_completes_after_host_restart` is not in the Receiving-alone set. Its durable queue item starts only from the wiring `receiving_record_receipt` of `BASE_PACKAGE_ID` (`queue_recovery.rs`). Receiving alone carries no wiring since `0fae1369d`, and a test-only wiring would break the byte contract of the qualification. The case stays in the Acme arm. Owner ruling of 2026-10-01 on `wamn-ld93.33.11`.
+`queue_recovery::interrupted_durable_queue_item_completes_after_host_restart` is not in the Receiving-alone set. Its durable queue item starts only from the wiring `receiving_record_receipt` of `BASE_PACKAGE_ID` (`queue_recovery.rs`). Receiving alone carries no wiring since `0fae1369d`, and a test-only wiring would break the byte contract of the qualification. Owner ruling of 2026-10-01 on `wamn-ld93.33.11`. The case is also not in the Acme arm. A run on the default Acme fixture at `57cf5913f` failed with "wiring wamn_receiving/receiving_record_receipt version 1 is absent from the release", because no release carries that wiring. A case that no release can pass is not a case (owner ruling of 2026-10-01).
 
 Acme takes part in `record_receipt` only through its own route `/acme/receiving/record_receipt` (`apps/client_acme_receiving/publication/attachments.json:11`). `postcommit_case::baseline_overlay_and_materializer_progress` exercises the overlay (`postcommit_case.rs:44-54`), so it runs only in the Acme arm.
 
