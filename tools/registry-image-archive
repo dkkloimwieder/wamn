@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Write one digest-pinned registry image into an OCI archive for kind load
+# image-archive. The manifest and every blob come by digest with the login of
+# DOCKER_CONFIG on this machine, so the nodes get the pinned digest and no
+# credential (docs/operations/gcp.md §3.13).
+set -euo pipefail
+umask 077
+image=${1:?registry image reference with a digest}
+archive=${2:?archive path}
+digest=${image##*@}
+named=${image%@*}
+[[ $image == *@sha256:* && $named == */* ]] ||
+  { printf 'The image %s is not a registry reference with a digest.\n' "$image" >&2; exit 64; }
+host=${named%%/*}
+repository=${named#*/}
+if [[ ${repository##*/} == *:* ]]; then repository=${repository%:*}; else named="$named@$digest"; fi
+config=${DOCKER_CONFIG:-$HOME/.docker}/config.json
+login=$(jq -r --arg host "$host" '.auths[$host].auth // empty' "$config" 2>/dev/null | base64 -d)
+[[ -n $login ]] || { printf 'No login for %s in %s.\n' "$host" "$config" >&2; exit 1; }
+layout=$(mktemp -d)
+trap 'rm -rf -- "$layout"' EXIT
+mkdir -p "$layout/blobs/sha256"
+fetch() { # kind digest
+  local file="$layout/blobs/sha256/${2#sha256:}"
+  curl -sSfL --retry 3 -K <(printf 'user = "%s"\n' "$login") \
+    -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+    -o "$file" "https://$host/v2/$repository/$1/$2"
+  [[ sha256:$(sha256sum "$file" | cut -d' ' -f1) == "$2" ]] ||
+    { printf 'The %s %s does not match its digest.\n' "${1%s}" "$2" >&2; exit 1; }
+}
+manifest() { # digest
+  local file="$layout/blobs/sha256/${1#sha256:}"
+  fetch manifests "$1"
+  for child in $(jq -r '.manifests[]?.digest' "$file"); do manifest "$child"; done
+  for blob in $(jq -r '.config.digest // empty, .layers[]?.digest' "$file"); do fetch blobs "$blob"; done
+}
+manifest "$digest"
+top="$layout/blobs/sha256/${digest#sha256:}"
+printf '{"imageLayoutVersion":"1.0.0"}\n' > "$layout/oci-layout"
+jq -n --arg type "$(jq -r .mediaType "$top")" --arg digest "$digest" \
+  --argjson size "$(stat -c %s "$top")" --arg name "$named" \
+  '{schemaVersion:2,manifests:[{mediaType:$type,digest:$digest,size:$size,
+    annotations:{"io.containerd.image.name":$name}}]}' > "$layout/index.json"
+tar -C "$layout" -cf "$archive" oci-layout index.json blobs

@@ -726,6 +726,8 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 
 `deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`, which names the `wamn` credential helper for the registry. It is not applied yet. B10 of `docs/plan/kind-to-type.md` section 3.2 applies it with `kubectl` before the `helm upgrade` of the hosts.
 
+The kind cases of `qualify-release` do not pull these images from the private registry. `tools/registry-image-archive` fetches each pinned manifest and its blobs by digest with the login of this machine, and `kind load image-archive` puts the same digest on the kind nodes. No credential reaches a node.
+
 ### 3.14 Host values
 
 Run the host values program after `publish-release`, with the release artifact base and the manifest digest that `print-release-env` prints. The program calls `render_host_values`, the derivation of the kind cases, and writes both files:

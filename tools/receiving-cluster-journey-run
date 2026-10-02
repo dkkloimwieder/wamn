@@ -28,6 +28,14 @@ case "$action" in
     work=${3:?work directory}; repository=${4:?repository}; shift 4
     kind create cluster --name "$cluster" --config "$work/kind.yaml" --kubeconfig "$work/kubeconfig"
     if [[ -n ${WAMN_DELIVERY_CANDIDATE:-} ]]; then
+      # The registry stays private: this machine fetches each pinned image by
+      # digest with its own login, and the nodes import the same bytes.
+      for image in "$@"; do
+        archive="$work/node-image.tar"
+        "$(dirname -- "${BASH_SOURCE[0]}")/registry-image-archive" "$image" "$archive"
+        kind load image-archive "$archive" --name "$cluster"
+        rm -f -- "$archive"
+      done
       for node in $(kind get nodes --name "$cluster"); do
         if [[ -f $work/native-registry-authority ]]; then
           authority=$(cat "$work/native-registry-authority")
@@ -35,16 +43,7 @@ case "$action" in
           docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
         fi
         for image in "$@"; do
-          # CRI removes a tag when resolving a digest-pinned image.
-          pull_image=${image%@*}
-          if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
-          pull_image="$pull_image@${image##*@}"
-          timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
-            --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image" || {
-            printf 'Cannot pull supplied image %s into owned node %s; its registry must permit access without additional credentials.\n' "$image" "$node" >&2
-            exit 1
-          }
-          # CRI records an image that ctr pulled from an event, after ctr returns.
+          # CRI records an imported image from an event, after the import returns.
           for wait in 1 2 3 4 5 6 7 8 9 10; do
             docker exec "$node" crictl inspecti -o json "$image" >/dev/null 2>&1 && break
             if [[ $wait == 10 ]]; then
