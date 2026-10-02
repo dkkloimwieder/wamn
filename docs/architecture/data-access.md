@@ -597,6 +597,7 @@ A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles` and `permissions`.
 It holds `INSERT` on the entry columns of their four history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
+One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
 The log copies full rows, including `api_keys.key_hash`.
@@ -689,13 +690,15 @@ On those paths, the triggers exist and every writer binds its executing principa
 `reconcile-run-plane` applies `app-schema.sql` to the project database and writes its platform rows.
 It writes a service row for each service principal of the project.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
-It writes a user row for each user with a membership in that project environment.
+It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
+It writes the `admin` row of each member who holds `project-admin` in the project.
 `wamn-ctl-ops create-user` creates that user in `identity.principals`, and it is the only path that creates one.
 The verb ships in the operational binary, and only a platform operator runs it.
 One email address names one principal for the whole platform.
 A user who works in two organizations holds one principal and two memberships.
 A user row carries the email of that user from `identity.principals`.
-A new member gains the row at the next reconcile, because the membership grant holds no tenant connection.
+The control host writes the user row and the `admin` row when its route grants them, and removes them when its route revokes them, with the administration login, bound to the caller and the route's sealed operation id.
+A member that `wamn-ctl grant-project-env-membership` or `wamn-ctl invite` adds gains the row at the next reconcile, because those verbs hold no tenant connection.
 A principal with no users row cannot write in the tenant.
 The invocation bind refuses it.
 `WamnPostgres::bind_session_claims` reads `app_system.users` in the tenant and refuses a principal that owns no row.

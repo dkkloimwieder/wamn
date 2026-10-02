@@ -51,6 +51,12 @@ The verb installs the record history, the system schema and the portable store a
 It refuses a database that already has the schema `registry`.
 Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-component`.
 
+The control host of an org holds the administration login of each environment of the org ([host-run routes](../architecture/execution.md#host-run-routes)).
+`provision-org --emit-control-administration-secret PATH` writes the empty Secret `wamn-control-administration-<org>`. Apply it before the control host starts, because the host mounts it.
+Each administration prepare of `provision-project-env` needs `--emit-control-administration-patch PATH`, and each rotation writes the patch again.
+Apply the patch to that Secret with `kubectl patch secret wamn-control-administration-<org> --type merge --patch-file PATH`.
+`delete-project-env --emit-control-administration-patch PATH` writes the patch that removes the key. Apply it before the run.
+
 If a package declares a registration condition that reads the old row, run `reconcile-replica-identity` after `apply-package`.
 The verb sets REPLICA IDENTITY FULL on each table that such a registration names. WMS needs it for `wms.packaging`:
 
@@ -70,12 +76,12 @@ It does not grant runtime credentials permission to reconfigure streams.
 
 Every tenant database needs its platform principal rows before any stamped write.
 `wamn-ctl reconcile-run-plane` writes them, together with `app-schema.sql` and a service row for each service principal of the project.
+It also writes a user row for each member of the environment, removes the user row of a user whose membership is gone, and writes the `admin` row of each member who holds `project-admin` in the project.
 It takes the email domain of those rows from `registry.meta.platform_domain` in the system database.
 `provision-system` sets that value once per deployment.
 
 If the value is unset, `reconcile-run-plane` refuses with `platform-domain-unset`.
 `wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints the same SQL for an operator who applies it by hand.
-User rows are not written yet, as the [record history limits](../architecture/data-access.md#limits) state.
 
 After `provision-project-env` and `provision-identity-issuer`, and before any package step, reconcile the target run schema and its environment policy:
 
