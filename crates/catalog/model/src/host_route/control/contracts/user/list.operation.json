@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:user/list@0.1.0",
+  "type": "get",
+  "label": "Org users",
+  "grant": "wamn-control:user/list@0.1.0",
+  "permission_token": "user.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

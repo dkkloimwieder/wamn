@@ -27,6 +27,7 @@ use crate::{AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTH
 struct ControlContract {
     package: ControlPackage,
     client_package: ControlClientPackage,
+    control_client_package: ControlClientPackage,
     routes: ControlRoutes,
 }
 
@@ -63,12 +64,6 @@ pub fn host_route_package() -> &'static str {
 /// The authored version of the host route contract.
 pub fn host_route_version() -> &'static str {
     &CONTRACT.package.version
-}
-
-/// The package name of the generated TypeScript client of the application
-/// routes, as an application's `client_package` names its client.
-pub fn host_route_client_package() -> &'static str {
-    &CONTRACT.client_package.name
 }
 
 /// Whether a stable operation reference or sealed operation id names a host
@@ -440,6 +435,16 @@ impl HostRouteSet {
     /// One route of this set by attachment id.
     pub fn attachment(self, id: &str) -> Option<&'static HostAttachment> {
         ATTACHMENTS.get(&(self, id.to_owned()))
+    }
+
+    /// The package name of the generated TypeScript client of this set, as
+    /// an application's `client_package` names its client. Each set has its
+    /// own client, because the two sets share operation ids.
+    pub fn client_package(self) -> &'static str {
+        match self {
+            Self::Application => &CONTRACT.client_package.name,
+            Self::Control => &CONTRACT.control_client_package.name,
+        }
     }
 }
 

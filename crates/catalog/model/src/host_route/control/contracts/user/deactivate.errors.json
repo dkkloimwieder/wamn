@@ -1,0 +1,48 @@
+{
+  "cases": [
+    {
+      "literal": "invalid_input",
+      "from": [
+        "malformed_input"
+      ],
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "user_not_found",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "The org has no such user."
+    },
+    {
+      "literal": "application_write_incomplete",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "environment"
+        ],
+        "optional": [
+          "completed"
+        ]
+      },
+      "text": "The application rows stopped at this environment. The completed environments are done."
+    },
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    }
+  ],
+  "closed": true
+}

@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "environments[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

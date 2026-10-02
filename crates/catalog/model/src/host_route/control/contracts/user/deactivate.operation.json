@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:user/deactivate@0.1.0",
+  "type": "command",
+  "label": "Deactivate a user",
+  "grant": "wamn-control:user/deactivate@0.1.0",
+  "permission_token": "user.deactivate",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

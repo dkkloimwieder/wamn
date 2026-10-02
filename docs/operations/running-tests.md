@@ -121,8 +121,8 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
-The generated client of the application host routes runs against the same HTTP shell.
-`control_client_live` serves the routes and runs `web/components/test/control-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
+The generated clients of the host routes run against the same HTTP shell.
+`control_client_live` serves each set and runs `web/components/test/control-client.live.test.ts` and `control-org-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
 
 ```bash
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
@@ -676,15 +676,15 @@ The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and
 It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
 The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
 
-The client of the application host routes is committed in `crates/catalog/model/src/host_route/generated/client-ts`.
+The client of the application host routes is committed in `crates/catalog/model/src/host_route/generated/client-ts`, and the client of the control routes in `host_route/control/generated/client-ts`.
 `the_host_route_client_is_current` refuses a committed client that its contracts do not generate.
-After you change a contract in `host_route/contracts`, write the client again:
+After you change a contract in `host_route/contracts` or `host_route/control/contracts`, write the clients again:
 
 ```bash
 cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client -- write
 ```
 
-`pnpm run check` in `web/components` type-checks it, because that package maps `@wamn/control-client` to it.
+`pnpm run check` in `web/components` type-checks them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
 
 ### Web packages
 

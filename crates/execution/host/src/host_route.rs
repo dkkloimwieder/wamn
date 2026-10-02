@@ -16,8 +16,8 @@ use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
-    DeliveryError, DeliveryFailure, DeliveryOutcome, DeliveryReport, DeliveryRequest, FailureType,
-    RouteDelivery, Source, SourceRef, StreamedDelivery, resolve_authorized_host_route,
+    DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest, RouteDelivery, Source,
+    SourceRef, StreamedDelivery, resolve_authorized_host_route,
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::PrincipalId;
@@ -296,20 +296,6 @@ impl RouteDelivery for HostRouteDelivery {
                 outcome("error", Value::Object(error))
             }
             Err(Refusal::Delivery(error)) => report(Err(error)),
-            Err(Refusal::Invalid(message)) => {
-                report(Ok(DeliveryOutcome::Failed(DeliveryFailure {
-                    failure_type: FailureType::InvalidInput,
-                    code: None,
-                    message,
-                })))
-            }
-            Err(Refusal::Incomplete(message)) => {
-                report(Ok(DeliveryOutcome::Failed(DeliveryFailure {
-                    failure_type: FailureType::Terminal,
-                    code: None,
-                    message,
-                })))
-            }
             Err(Refusal::Failed(error)) => {
                 tracing::warn!(
                     error = %error,

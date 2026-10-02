@@ -616,17 +616,33 @@ fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<PathBuf, &[u8]>
         .collect()
 }
 
-/// Write or check the generated TypeScript client of the application host
-/// routes (docs/plan/platform-ui.md §4.6).
+/// Write or check the generated TypeScript clients of the host routes
+/// (docs/plan/platform-ui.md §4.4 to §4.6).
 ///
-/// `contract_root` is the directory of the control contract: its authored
-/// `contracts/` hold one operation, input, result and errors file per route,
-/// and its `generated/` is the one owned output set, as a package's is. The
-/// routes come from the catalog's application set, so each operation reaches
-/// the path the host serves it at.
+/// `contract_root` is the directory of the control contract. The application
+/// set's authored `contracts/` hold one operation, input, result and errors
+/// file per route, and its `generated/` is the one owned output set, as a
+/// package's is. The control set has the same layout under `control/`. The
+/// routes come from the catalog's set, so each operation reaches the path
+/// the host serves it at.
 pub fn materialize_host_route_client(mode: MaterializeMode, contract_root: &Path) -> Result<()> {
+    materialize_host_route_set(mode, contract_root, wamn_catalog::HostRouteSet::Application)?;
+    materialize_host_route_set(
+        mode,
+        &contract_root.join("control"),
+        wamn_catalog::HostRouteSet::Control,
+    )
+}
+
+/// One set's client. The two sets share operation ids, such as `user.list`,
+/// so each set has its own contracts, output and package.
+fn materialize_host_route_set(
+    mode: MaterializeMode,
+    contract_root: &Path,
+    set: wamn_catalog::HostRouteSet,
+) -> Result<()> {
     let contracts = read_contract_files(&contract_root.join("contracts"))?;
-    let routes = wamn_catalog::HostRouteSet::Application
+    let routes = set
         .attachments()
         .map(|(_, attachment)| {
             let template = attachment.definition["route"]["path"]
@@ -664,7 +680,7 @@ pub fn materialize_host_route_client(mode: MaterializeMode, contract_root: &Path
     }
     let mut files = emit_ts_client(&ir).context("emit the TypeScript client bindings")?;
     files.push(emit_ts_package_json(
-        wamn_catalog::host_route_client_package(),
+        set.client_package(),
         wamn_catalog::host_route_version(),
     ));
     let mut expected = BTreeMap::new();

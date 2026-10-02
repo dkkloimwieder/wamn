@@ -1,0 +1,23 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "principal_id",
+      "type": "uuid",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "enrolled",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "invited",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

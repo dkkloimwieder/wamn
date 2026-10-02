@@ -105,14 +105,17 @@ A project route needs that row, or a current `project-admin` row of the caller i
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it checks the role again.
 The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --owner-email` also call.
-A refusal, for example a principal that is not an active member, answers 400 `invalid-input` with its reason.
+A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
 The control host reads that login from the mounted Secret `wamn-control-administration-<org>`, one file per `<project>--<env>`, at each write (`--control-administration-dir`, `WAMN_CONTROL_ADMINISTRATION_DIR`).
 A grant commits its system rows first, and then writes the `users` row, with `admin` for `org-admin` and `project-admin`.
 A revoke or a deactivation removes the application rows first, and commits its system rows only when every environment is done.
-If an environment fails, the route answers `terminal` with the environments that completed, and the system rows of a revoke stay as they were.
+If an environment fails, the route answers `application_write_incomplete` with that `environment` and the environments that completed, and the system rows of a revoke stay as they were.
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
+The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
+The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `host_route/control/generated/client-ts`.
+The control set has its own client because both sets serve `user.list`.
 
 The control serving root has no package, component, route, database or guest connection.
 `wamn-host --control` serves it for one org.

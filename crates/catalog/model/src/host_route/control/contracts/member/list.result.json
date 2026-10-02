@@ -1,0 +1,41 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "members[].principal_id",
+      "type": "uuid",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "members[].email",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "members[].display_name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "members[].org_admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "members[].project_admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "members[].environments[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

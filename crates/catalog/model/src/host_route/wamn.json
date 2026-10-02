@@ -6,6 +6,9 @@
   "client_package": {
     "name": "@wamn/control-client"
   },
+  "control_client_package": {
+    "name": "@wamn/control-org-client"
+  },
   "routes": {
     "path_prefix": "/wamn_control",
     "id_prefix": "wamn-control"

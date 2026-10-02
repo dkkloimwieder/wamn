@@ -1,0 +1,52 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.email",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Email"
+    },
+    {
+      "path": "value.display_name",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Display name"
+    },
+    {
+      "path": "value.org_admin",
+      "type": "boolean",
+      "nullable": true,
+      "values": [],
+      "label": "Org admin"
+    },
+    {
+      "path": "value.project_admins[]",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Project admin of"
+    },
+    {
+      "path": "value.memberships[].project",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Project"
+    },
+    {
+      "path": "value.memberships[].env",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Environment"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "fields": [
+    {
+      "path": "project",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Project"
+    }
+  ]
+}

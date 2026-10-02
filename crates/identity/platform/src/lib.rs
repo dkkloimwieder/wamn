@@ -249,8 +249,9 @@ impl std::str::FromStr for PrincipalId {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let value = value.to_ascii_lowercase();
         if !wamn_session::token::is_principal_id(&value) {
-            return Err(IdentityError::new(
+            return Err(IdentityError::refused(
                 IdentityErrorType::InvalidInput,
+                IdentityRefusal::Invalid("principal_id"),
                 "principal ID must be a hyphenated UUID",
             ));
         }
@@ -458,11 +459,30 @@ pub enum IdentityErrorType {
     Entropy,
 }
 
+/// Why a write refused the caller's input, for a caller that answers each
+/// refusal with its own code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityRefusal {
+    /// The input member of this name is not valid.
+    Invalid(&'static str),
+    /// The project is not a project of the org.
+    ProjectNotFound,
+    /// The environment is not an environment of the org.
+    EnvironmentNotFound,
+    /// The principal is not an active member of the org.
+    UserNotActive,
+    /// The principal is not a member of the org, or not a user.
+    UserNotFound,
+    /// `org-admin` or `project-admin` covers the grant, so it stays.
+    AdminCovered,
+}
+
 /// Canonical identity-core error with a stable kind and diagnostic message.
 #[derive(Debug)]
 pub struct IdentityError {
     type_: IdentityErrorType,
     message: Box<str>,
+    refusal: Option<IdentityRefusal>,
 }
 
 impl IdentityError {
@@ -470,12 +490,29 @@ impl IdentityError {
         Self {
             type_: kind,
             message: message.into(),
+            refusal: None,
+        }
+    }
+
+    fn refused(
+        kind: IdentityErrorType,
+        refusal: IdentityRefusal,
+        message: impl Into<Box<str>>,
+    ) -> Self {
+        Self {
+            refusal: Some(refusal),
+            ..Self::new(kind, message)
         }
     }
 
     /// Return the stable failure class.
     pub const fn error_type(&self) -> IdentityErrorType {
         self.type_
+    }
+
+    /// Why the input was refused, when a write names it.
+    pub const fn refusal(&self) -> Option<IdentityRefusal> {
+        self.refusal
     }
 }
 
@@ -1114,8 +1151,9 @@ fn checked_email(value: &str) -> Result<String, IdentityError> {
 }
 
 fn invalid_email() -> IdentityError {
-    IdentityError::new(
+    IdentityError::refused(
         IdentityErrorType::InvalidInput,
+        IdentityRefusal::Invalid("email"),
         "email must be a local part, an @, and a dotted domain, in at most 254 bytes",
     )
 }
@@ -1123,19 +1161,29 @@ fn invalid_email() -> IdentityError {
 fn checked_display_name(value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > MAX_DISPLAY_NAME_LEN {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::InvalidInput,
+            IdentityRefusal::Invalid("display_name"),
             "display name must contain 1 to 200 bytes",
         ));
     }
     Ok(value.to_owned())
 }
 
-fn checked_scope_segment(name: &str, value: &str) -> Result<String, IdentityError> {
+/// Refuse the email and display name of a user that the identity rules
+/// refuse, before a caller asks identity to create the user.
+pub fn check_user_contact(email: &str, display_name: &str) -> Result<(), IdentityError> {
+    checked_email(email)?;
+    checked_display_name(display_name)?;
+    Ok(())
+}
+
+fn checked_scope_segment(name: &'static str, value: &str) -> Result<String, IdentityError> {
     let value = value.trim();
     if value.is_empty() || value.len() > 40 {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::InvalidInput,
+            IdentityRefusal::Invalid(name),
             format!("{name} must contain 1 to 40 bytes"),
         ));
     }

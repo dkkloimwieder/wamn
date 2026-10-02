@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "projects[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

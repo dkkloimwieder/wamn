@@ -1,0 +1,29 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "users[].principal_id",
+      "type": "uuid",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "users[].email",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "users[].display_name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "users[].status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.principal_id",
+      "type": "uuid",
+      "nullable": false,
+      "values": [],
+      "label": "User"
+    }
+  ]
+}

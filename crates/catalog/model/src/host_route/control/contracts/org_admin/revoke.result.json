@@ -1,0 +1,17 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "principal_id",
+      "type": "uuid",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "org_admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -40,23 +40,20 @@ use wamn_platform_identity::org::{
     invite_member, org_environments, org_users, project_envs, project_members,
     reactivate_org_membership, revoke_member, revoke_org_admin, revoke_project_admin, user_contact,
 };
-use wamn_platform_identity::{IdentityError, IdentityErrorType, PrincipalId};
+use wamn_platform_identity::{
+    IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
+};
 
 /// Why an org route did not answer.
 #[derive(Debug)]
 pub(crate) enum Refusal {
     /// A delivery refusal, such as a caller without `org-admin`.
     Delivery(DeliveryError),
-    /// Invalid input, with a reason the caller can act on.
-    Invalid(String),
     /// A refusal that the route's contract declares: its code and its
     /// detail, answered as the error of the request item.
     Declared { code: &'static str, detail: Value },
     /// A failure of the host or of a service it calls.
     Failed(anyhow::Error),
-    /// An environment failed before every environment was done, with the
-    /// environments that completed named.
-    Incomplete(String),
 }
 
 impl From<anyhow::Error> for Refusal {
@@ -71,13 +68,22 @@ impl From<tokio_postgres::Error> for Refusal {
     }
 }
 
+/// A refusal of the identity writes is the declared error of the route, with
+/// the input member it names in `field`. Any other error is a failure.
 impl From<IdentityError> for Refusal {
     fn from(error: IdentityError) -> Self {
-        match error.error_type() {
-            IdentityErrorType::InvalidInput
-            | IdentityErrorType::NotFound
-            | IdentityErrorType::Conflict => Self::Invalid(error.to_string()),
-            _ => Self::Failed(error.into()),
+        let (code, field) = match error.refusal() {
+            Some(IdentityRefusal::Invalid(field)) => ("invalid_input", field),
+            Some(IdentityRefusal::ProjectNotFound) => ("project_not_found", "project"),
+            Some(IdentityRefusal::EnvironmentNotFound) => ("environment_not_found", "env"),
+            Some(IdentityRefusal::UserNotActive) => ("user_not_active", "principal_id"),
+            Some(IdentityRefusal::UserNotFound) => ("user_not_found", "principal_id"),
+            Some(IdentityRefusal::AdminCovered) => ("admin_covered", "principal_id"),
+            None => return Self::Failed(error.into()),
+        };
+        Self::Declared {
+            code,
+            detail: json!({ "field": field }),
         }
     }
 }
@@ -360,6 +366,7 @@ impl ControlRoutes<'_> {
     ) -> Result<Value, Refusal> {
         let request: InviteRequest = serde_json::from_str(payload)
             .map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))?;
+        check_user_contact(&request.email, &request.display_name)?;
         let identity = self.identity.ok_or_else(|| {
             Refusal::Failed(anyhow::anyhow!(
                 "the control host has no identity operator client"
@@ -368,7 +375,13 @@ impl ControlRoutes<'_> {
         let user = create_user(identity, &request.email, &request.display_name)
             .await
             .map_err(|error| match error.downcast::<UserRefused>() {
-                Ok(refused) => Refusal::Invalid(refused.0),
+                // The input passed the identity rules above, so identity
+                // refuses the user that holds the email, such as a disabled
+                // one.
+                Ok(_) => Refusal::Declared {
+                    code: "user_refused",
+                    detail: json!({ "field": "email" }),
+                },
                 Err(error) => Refusal::Failed(error),
             })?;
         let grants = MemberGrants {
@@ -473,10 +486,7 @@ impl ControlRoutes<'_> {
                 Ok(url) => logins.push(url.trim().to_owned()),
                 Err(error) => {
                     tracing::warn!(%error, path = %path.display(), "no administration login");
-                    return Err(Refusal::Incomplete(format!(
-                        "environment {project}/{env} has no administration login. \
-                         Completed: none"
-                    )));
+                    return Err(incomplete(project, env, &[]));
                 }
             }
         }
@@ -499,14 +509,7 @@ impl ControlRoutes<'_> {
                     reference = attachment.reference,
                     "an application write failed"
                 );
-                let done = if completed.is_empty() {
-                    "none".to_owned()
-                } else {
-                    completed.join(", ")
-                };
-                return Err(Refusal::Incomplete(format!(
-                    "environment {project}/{env} failed. Completed: {done}"
-                )));
+                return Err(incomplete(project, env, &completed));
             }
             completed.push(format!("{project}/{env}"));
         }
@@ -633,6 +636,18 @@ fn principal(payload: &str) -> Result<PrincipalId, Refusal> {
     let request: PrincipalRequest = serde_json::from_str(payload)
         .map_err(|_| Refusal::Delivery(DeliveryError::InvalidPayload))?;
     Ok(request.principal_id.parse()?)
+}
+
+/// The refusal of a write whose application rows stopped at `project/env`,
+/// with the environments that completed.
+fn incomplete(project: &str, env: &str, completed: &[String]) -> Refusal {
+    Refusal::Declared {
+        code: "application_write_incomplete",
+        detail: json!({
+            "environment": format!("{project}/{env}"),
+            "completed": completed,
+        }),
+    }
 }
 
 fn denied(attachment: &HostAttachment) -> Refusal {

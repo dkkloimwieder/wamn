@@ -21,89 +21,23 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::Client;
 use tokio_rustls::TlsAcceptor;
 use wamn_catalog::HostRouteSet;
-use wamn_control_provision::{
-    CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleScope, sql,
-    workload_generation_role,
-};
+use wamn_control_provision::{CredentialGeneration, PlatformComponent, WorkloadRoleFamily};
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
-    DeliveryError, DeliveryOutcome, DeliveryRequest, FailureType, RouteDelivery, Source,
+    DeliveryError, DeliveryOutcome, DeliveryRequest, RouteDelivery, Source,
 };
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::org::{MemberGrants, invite_member};
 use wamn_platform_identity::{PrincipalId, create_or_reuse_user};
 
-const ORG: &str = "org-a";
-const PASSWORD: &str = "control-route-test-only";
-
-async fn connect(url: &str) -> anyhow::Result<Client> {
-    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
-    tokio::spawn(async move { connection.await.expect("fixture database connection") });
-    Ok(client)
-}
-
-/// The system schema as `wamn_system`, one org with two projects and one
-/// environment each, and the org's `control` login.
-async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<String> {
-    admin
-        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-        .await?;
-    let database: String = admin
-        .query_one("SELECT current_database()::text", &[])
-        .await?
-        .get(0);
-    admin
-        .batch_execute(&format!(
-            "CREATE ROLE wamn_system NOLOGIN; GRANT CREATE ON DATABASE \"{database}\" TO wamn_system; \
-             SET ROLE wamn_system"
-        ))
-        .await?;
-    admin
-        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-        .await?;
-    admin
-        .batch_execute(
-            "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
-               VALUES ('org-a', 'pooled', 'wamn-pg'); \
-             INSERT INTO registry.env_policies \
-               (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
-               VALUES ('org-a', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
-             INSERT INTO registry.projects (org, id) VALUES ('org-a', 'billing'), ('org-a', 'shop'); \
-             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix) \
-               VALUES ('org-a', 'billing', 'dev', 's1', 'aaaaaaa1'), \
-                      ('org-a', 'shop', 'dev', 's2', 'aaaaaaa2'); \
-             RESET ROLE",
-        )
-        .await?;
-    let role = workload_generation_role(
-        WorkloadRoleFamily::Control,
-        WorkloadRoleScope::Org {
-            org: ORG,
-            database: &database,
-        },
-        CredentialGeneration::A,
-    )?;
-    admin
-        .batch_execute(&sql::prepare_workload_generation_sql(
-            WorkloadRoleFamily::Control,
-            &database,
-            &role,
-            PASSWORD,
-            "2099-01-01T00:00:00Z",
-        ))
-        .await?;
-    let mut url = url::Url::parse(admin_url)?;
-    url.set_username(&role)
-        .map_err(|()| anyhow::anyhow!("set fixture login"))?;
-    url.set_password(Some(PASSWORD))
-        .map_err(|()| anyhow::anyhow!("set fixture password"))?;
-    Ok(url.into())
-}
+#[path = "support/control_fixture.rs"]
+mod control_fixture;
+use control_fixture::{ORG, connect, install};
 
 /// A fake identity service that requires the operator certificate. `/users`
 /// answers from `users` by email, or refuses an unknown email as identity
@@ -250,7 +184,8 @@ async fn fake_identity(users: Vec<(&'static str, String, bool)>) -> FakeIdentity
     }
 }
 
-/// One org route call: the answer, or the refusal.
+/// One org route call: the answer, or the refusal. A declared refusal reads
+/// as its code and its detail.
 async fn call(
     delivery: &HostRouteDelivery,
     operation: &str,
@@ -291,18 +226,24 @@ async fn call(
     match report.outcome {
         Ok(DeliveryOutcome::Respond(body)) => {
             let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
-            Ok(item["value"].clone())
+            match item.get("error") {
+                Some(error) => Err(refused(
+                    error["code"].as_str().expect("a refusal has a code"),
+                    &error["detail"],
+                )),
+                None => Ok(item["value"].clone()),
+            }
         }
-        Ok(DeliveryOutcome::Failed(failure)) => match failure.failure_type {
-            FailureType::InvalidInput => Err(failure.message),
-            FailureType::Terminal => Err(format!("terminal {}", failure.message)),
-            other => panic!("an org route refuses with invalid-input or terminal: {other:?}"),
-        },
         Err(DeliveryError::PermissionDenied(denial)) => {
             Err(format!("permission denied {}", denial.operation))
         }
         other => panic!("an org route answers or refuses: {other:?}"),
     }
+}
+
+/// How [`call`] reads a declared refusal.
+fn refused(code: &str, detail: &Value) -> String {
+    format!("{code} {detail}")
 }
 
 /// The org roles, project roles and memberships of one principal.
@@ -406,7 +347,8 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     );
 
     // A new user gets the membership and the mail; an enrolled user gets no
-    // mail; identity's refusal reaches the caller.
+    // mail. The host refuses an email that the identity rules refuse, and
+    // identity refuses a user it does not create.
     assert_eq!(
         call(
             &delivery,
@@ -456,11 +398,19 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             json!({"email": "not-an-email", "display_name": "Nobody"})
         )
         .await,
-        Err(
-            "email must be a local part, an @, and a dotted domain, in at most 254 bytes"
-                .to_owned()
-        )
+        Err(refused("invalid_input", &json!({"field": "email"})))
     );
+    assert_eq!(
+        call(
+            &delivery,
+            "user/invite",
+            boss,
+            json!({"email": "dan@example.test", "display_name": "Dan"})
+        )
+        .await,
+        Err(refused("user_refused", &json!({"field": "email"})))
+    );
+    assert_eq!(identity.requests.recv().await.unwrap().0, "/identity/users");
     assert_eq!(
         call(&delivery, "user/list", boss, json!({})).await,
         Ok(json!({"users": [
@@ -513,9 +463,9 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     );
     assert_eq!(
         call(&delivery, "org-admin/grant", boss, ann_payload.clone()).await,
-        Err(format!(
-            "principal {} is not an active member of org {ORG}",
-            ann.as_str()
+        Err(refused(
+            "user_not_active",
+            &json!({"field": "principal_id"})
         ))
     );
     assert_eq!(
@@ -656,9 +606,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     );
     assert_eq!(
         call(&delivery, "member/grant", cat, member(ann, "prod")).await,
-        Err(format!(
-            "environment billing/prod is not an environment of org {ORG}"
-        ))
+        Err(refused("environment_not_found", &json!({"field": "env"})))
     );
     assert_eq!(
         call(&delivery, "member/list", cat, json!({"project": "billing"})).await,
@@ -675,21 +623,15 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     // A covering grant refuses the revoke below it.
     assert_eq!(
         call(&delivery, "member/revoke", boss, member(cat, "dev")).await,
-        Err(format!(
-            "principal {cat} holds project-admin in project billing. Revoke project-admin first"
-        ))
+        Err(refused("admin_covered", &json!({"field": "principal_id"})))
     );
     assert_eq!(
         call(&delivery, "member/revoke", cat, member(boss, "dev")).await,
-        Err(format!(
-            "principal {boss} holds org-admin in org {ORG}. Revoke org-admin first"
-        ))
+        Err(refused("admin_covered", &json!({"field": "principal_id"})))
     );
     assert_eq!(
         call(&delivery, "project-admin/revoke", cat, project_admin(boss)).await,
-        Err(format!(
-            "principal {boss} holds org-admin in org {ORG}. Revoke org-admin first"
-        ))
+        Err(refused("admin_covered", &json!({"field": "principal_id"})))
     );
 
     // project-admin covers every environment of the project, and its revoke
@@ -954,9 +896,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
             billing_admin.clone()
         )
         .await,
-        Err(format!(
-            "principal {ann} holds org-admin in org {ORG}. Revoke org-admin first"
-        ))
+        Err(refused("admin_covered", &json!({"field": "principal_id"})))
     );
     assert_eq!(
         application_rows(&billing, ann).await,
@@ -1011,7 +951,10 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
     assert_eq!(
         call(&delivery, "user/deactivate", boss, ann_payload.clone()).await,
-        Err("terminal environment shop/dev failed. Completed: billing/dev".to_owned())
+        Err(refused(
+            "application_write_incomplete",
+            &json!({"environment": "shop/dev", "completed": ["billing/dev"]})
+        ))
     );
     assert!(application_rows(&billing, ann).await.is_empty());
     assert_eq!(application_rows(&shop, ann).await, ["user t-shop"]);

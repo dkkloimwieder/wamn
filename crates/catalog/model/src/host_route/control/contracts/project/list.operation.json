@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:project/list@0.1.0",
+  "type": "get",
+  "label": "Projects",
+  "grant": "wamn-control:project/list@0.1.0",
+  "permission_token": "project.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

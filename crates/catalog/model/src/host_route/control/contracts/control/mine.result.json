@@ -1,0 +1,23 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "org_admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "projects[].project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "projects[].project_admin",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -10,7 +10,8 @@
 use tokio_postgres::GenericClient;
 
 use crate::{
-    IdentityError, IdentityErrorType, PrincipalId, checked_scope_segment, control, database_error,
+    IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, checked_scope_segment, control,
+    database_error,
 };
 
 /// The org role that holds every project and environment of its org.
@@ -108,8 +109,9 @@ pub async fn grant_project_admin(
         .map_err(|error| database_error(&error))?
         .get(0);
     if !in_org {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
+            IdentityRefusal::ProjectNotFound,
             format!("project {project} is not a project of org {org}"),
         ));
     }
@@ -150,8 +152,9 @@ pub async fn grant_member(
         .map_err(|error| database_error(&error))?
         .get(0);
     if !found {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
+            IdentityRefusal::EnvironmentNotFound,
             format!("environment {project}/{env} is not an environment of org {org}"),
         ));
     }
@@ -191,8 +194,9 @@ pub async fn revoke_member(
         .map_err(|error| database_error(&error))?
         .get(0);
     if covered {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::Conflict,
+            IdentityRefusal::AdminCovered,
             format!(
                 "principal {principal_id} holds project-admin in project {project}. \
                  Revoke project-admin first"
@@ -247,8 +251,9 @@ async fn refuse_under_org_admin(
         .map_err(|error| database_error(&error))?
         .get(0);
     if covered {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::Conflict,
+            IdentityRefusal::AdminCovered,
             format!(
                 "principal {principal_id} holds org-admin in org {org}. Revoke org-admin first"
             ),
@@ -322,8 +327,9 @@ async fn active_member(
         .map_err(|error| database_error(&error))?
         .get(0);
     if !active {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
+            IdentityRefusal::UserNotActive,
             format!("principal {principal_id} is not an active member of org {org}"),
         ));
     }
@@ -382,7 +388,7 @@ pub async fn invite_member(
         grant_project_admin(client, principal_id, org, project).await?;
     }
     for (project, env) in &grants.memberships {
-        crate::grant_project_env_membership(client, principal_id, org, project, env).await?;
+        grant_member(client, principal_id, org, project, env).await?;
     }
     Ok(())
 }
@@ -530,15 +536,17 @@ pub async fn user_contact(
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| {
-            IdentityError::new(
+            IdentityError::refused(
                 IdentityErrorType::NotFound,
+                IdentityRefusal::UserNotFound,
                 format!("principal {principal_id} is not a user"),
             )
         })?;
     let email: Option<String> = row.get(0);
     let email = email.ok_or_else(|| {
-        IdentityError::new(
+        IdentityError::refused(
             IdentityErrorType::NotFound,
+            IdentityRefusal::UserNotFound,
             format!("user principal {principal_id} has no email"),
         )
     })?;
@@ -645,8 +653,9 @@ async fn member(
         .map_err(|error| database_error(&error))?
         .get(0);
     if !found {
-        return Err(IdentityError::new(
+        return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
+            IdentityRefusal::UserNotFound,
             format!("principal {principal_id} is not a member of org {org}"),
         ));
     }

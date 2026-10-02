@@ -1,0 +1,29 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "principal_id",
+      "type": "uuid",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "member",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

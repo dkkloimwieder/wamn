@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:project-admin/revoke@0.1.0",
+  "type": "command",
+  "label": "Revoke project-admin",
+  "grant": "wamn-control:project-admin/revoke@0.1.0",
+  "permission_token": "project_admin.revoke",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

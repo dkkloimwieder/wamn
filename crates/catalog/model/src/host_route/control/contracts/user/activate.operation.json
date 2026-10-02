@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:user/activate@0.1.0",
+  "type": "command",
+  "label": "Activate a user",
+  "grant": "wamn-control:user/activate@0.1.0",
+  "permission_token": "user.activate",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}
