@@ -1496,12 +1496,39 @@ Exit includes:
 
 **5. Application administration contract.**
 
-- fixed contract in every application release;
-- non-grantable admin operations;
-- `permission.mine`;
-- role/user/permission operations;
-- closure provenance in permission reads;
-- fixture proof through generated clients/components.
+Issue 5 (`wamn-a40n.7`) builds §4.6: the application host routes of every application audience, which write through the `wamn_administration` login of the environment.
+
+Measured on main `99e5b24d8` on 2026-10-01:
+
+- The application set has one route, `permission.mine`, which needs a member only (`crates/catalog/model/src/host_route.rs`). Publish adds the set to every serving release. The local development release serves no host route.
+- The route table keys every host route by its attachment id. An application `user.list` derives the id, path and sealed operation id of the control `user.list`, so the two collide in that table.
+- An `Admin` host route requires its own sealed operation, and `AuthenticatedCaller::permits` admits `admin` or a caller that holds the stable reference. The schema refuses a permission row for `admin` only, so a stored `wamn-control:*` row would admit a caller without `admin`.
+- The role and permission writes of `wamn-ctl` are in `crates/control/lib/src/role_permissions.rs` and `user_roles.rs`. They connect with the admin URL, turn row security off and bind `wamn:provisioning`. `ReleaseClosures` reads a serving manifest and needs only `wamn-catalog`.
+- The application host holds the `wamn_administration` login for `permission.mine`. Its row policy gives that login every row of the four administration relations, and the login holds SELECT, INSERT, UPDATE and DELETE on them. `WamnPostgres` exposes no write on that login.
+- The application host also holds the identity reader login of `wamn_system`, which reads `identity.project_roles`. Every `org-admin` holds `project-admin` in each project of the org (§2.8), so that row answers the covering check of an `admin` revoke.
+- No generated client or component covers a host route. The generator projects package contracts only, and the control contract has no contract files.
+- A host command route already requires the CSRF header.
+
+Commits, each one green:
+
+1. The routes. The application set gains `user.list`, `role.list`, `role.create`, `role.delete`, `permission.list`, `permission.grant`, `permission.revoke`, `user_role.grant` and `user_role.revoke`, all `Admin`. The route table keys a route by its set and its attachment id, so the two `user.list` routes keep the ids, paths and operation ids that §4.4 and §4.6 name. `permits` refuses a `wamn-control` reference to a caller without `admin` (§2.5), and `permission.grant` refuses it.
+2. The shared writes. `ReleaseClosures` moves to `wamn-catalog`. The role, permission and user role writes move to `wamn_platform_identity::application` and take a prepared transaction. `wamn-ctl` keeps its own preparation and calls them, so the command line and the host write the same rows.
+3. The handlers. A write takes the tenant lock that release reconciliation takes, binds the caller and the route's sealed operation id, and uses the closures of the loaded release. `permission.list` reports the roots, the effective rows, the roots that require each row, and whether each served operation is grantable or fixed to `admin`. `user_role.grant` refuses a user without an application user row. `user_role.revoke` of `admin` refuses while the user holds `project-admin` in the project, read through the identity reader.
+4. Documentation: execution and data access.
+
+Exit includes:
+
+- each route refusing a caller without `admin`, and `permission.mine` admitting any member
+- a stored `wamn-control` permission row that admits no caller without `admin`
+- `role.create` and `role.delete`, with the refusals for `admin`
+- `permission.grant` writing the closure of the loaded release, and refusing an unserved or a fixed operation
+- `permission.revoke` keeping a row that another root requires and naming that root, and refusing a row that is not a root
+- `permission.list` showing the roots, the required rows and their roots
+- `user_role.grant` and `user_role.revoke`, including the refusal under a covering `project-admin`
+- each write stamped with the caller and the route's sealed operation id
+- the same rows from `wamn-ctl` and from the routes
+
+The route tests run over HTTP in `host_route_live`. [§9](#9-questions-for-the-owner) question 4 asks where the generated client goes.
 
 **6. Web administration grids.**
 
@@ -1588,3 +1615,4 @@ New-project grant materialization and deterministic empty-environment copy from 
 1. Issue 4, answered 2026-10-01 with option A. The control host of an org holds the `wamn_administration` login of every environment in that org, the login the application host holds, in the Secret `wamn-control-administration-<org>` ([application writes](#application-writes)). A write reaches each project database in its own transaction, leaves first on a revoke, and reports success only when every environment is done.
 2. Issue 3, answered 2026-10-01. `wamn-ctl invite` writes as its sibling does: `--system-database-url`, as `wamn_system`, stamped `wamn:provisioning`.
 3. Issue 3, answered 2026-10-01. The shell text "No access has been granted." lands in issue 6. The exit of issue 3 stays an invitation with no access, whose login lists no environment.
+4. Issue 5, open. No generated client or component covers a host route, and the control contract has no contract files. Option A: issue 5 adds the contract files of the application routes and a generated TypeScript client, and tests the routes through that client. Option B: issue 5 tests the routes over HTTP, and issue 6 adds the contract files and the generated client, because its grids are their first reader.
