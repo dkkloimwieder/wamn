@@ -24,8 +24,10 @@ use crate::{ConfiguredTarget, IO_TIMEOUT, Inner, connect_database, response, una
 // The request contains one bounded provisioned audience, never user documents.
 const MAX_REQUEST_BYTES: usize = 1024;
 const REGISTERED_ORG_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)";
+// An inactive environment offers and mints no audience (docs/plan/platform-ui.md §5.4).
 const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
-    WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4)";
+    WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
+    AND status = 'active')";
 const ENVIRONMENT_ROLES_SQL: &str = "SELECT r.role_name FROM app_system.users u \
     JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     WHERE u.tenant_id = $1 AND u.id = $2::text::uuid AND u.status = 'active' \

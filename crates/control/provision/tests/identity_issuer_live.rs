@@ -272,6 +272,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "column|registry|project_envs.instance_suffix|SELECT|f",
                 "column|registry|project_envs.org|SELECT|f",
                 "column|registry|project_envs.project|SELECT|f",
+                "column|registry|project_envs.status|SELECT|f",
                 "relation|identity|password_attempts|DELETE|f",
                 "relation|identity|password_attempts|INSERT|f",
                 "relation|identity|password_attempts|SELECT|f",

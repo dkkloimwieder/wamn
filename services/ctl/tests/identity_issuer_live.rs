@@ -269,6 +269,7 @@ fn approved_identity_issuer_acl() -> Vec<String> {
         "column|registry|project_envs.instance_suffix|SELECT|false",
         "column|registry|project_envs.org|SELECT|false",
         "column|registry|project_envs.project|SELECT|false",
+        "column|registry|project_envs.status|SELECT|false",
         "relation|identity|password_attempts|DELETE|false",
         "relation|identity|password_attempts|INSERT|false",
         "relation|identity|password_attempts|SELECT|false",
@@ -327,6 +328,7 @@ fn approved_pat_issuance_acl() -> Vec<String> {
         "column|registry|project_envs.instance_suffix|SELECT|false",
         "column|registry|project_envs.org|SELECT|false",
         "column|registry|project_envs.project|SELECT|false",
+        "column|registry|project_envs.status|SELECT|false",
         "relation|identity|session_keys|DELETE|false",
         "relation|identity|session_keys|INSERT|false",
         "relation|identity|session_keys|SELECT|false",
@@ -394,7 +396,7 @@ async fn upgrade_foundation_surface(
          REVOKE SELECT (id,principal_id,token_prefix,token_hash,label,created_at,revoked_at,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE INSERT (principal_id,principal_type,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,env) ON identity.project_env_memberships FROM wamn_identity_issuer; \
-         REVOKE SELECT (org,project,env,instance_suffix) ON registry.project_envs FROM wamn_identity_issuer; \
+         REVOKE SELECT (org,project,env,instance_suffix,status) ON registry.project_envs FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,role) ON identity.project_roles FROM wamn_identity_issuer; \
          REVOKE SELECT (id) ON registry.orgs FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,role) ON identity.org_roles FROM wamn_identity_issuer; \
@@ -474,8 +476,8 @@ async fn upgrade_read_only_pat_surface(
     ).await?;
     let previous = stable_acl(admin).await?;
     anyhow::ensure!(
-        previous.len() == 36,
-        "exchange fixture must retain its 36 grants"
+        previous.len() == 37,
+        "exchange fixture must retain its 37 grants"
     );
     for (grant, revoke) in [
         (

@@ -58,7 +58,7 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 7] = [
     (
         "registry",
         "project_envs",
-        &["org", "project", "env", "instance_suffix"],
+        &["org", "project", "env", "instance_suffix", "status"],
     ),
     // The control audience of an org (docs/plan/platform-ui.md §4.3): the
     // org must be registered and the user must hold a control role there.
@@ -484,7 +484,7 @@ mod tests {
              ON TABLE \"identity\".\"pats\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"principal_id\", \"org\", \"project\", \"env\") \
              ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_issuer\"; \
-             GRANT SELECT (\"org\", \"project\", \"env\", \"instance_suffix\") \
+             GRANT SELECT (\"org\", \"project\", \"env\", \"instance_suffix\", \"status\") \
              ON TABLE \"registry\".\"project_envs\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"principal_id\", \"org\", \"project\", \"role\") \
              ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_issuer\"; \

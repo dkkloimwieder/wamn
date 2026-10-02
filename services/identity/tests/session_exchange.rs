@@ -404,6 +404,13 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     system.execute("UPDATE registry.project_envs SET instance_suffix=$1 WHERE org='demo' AND project='widgets' AND env='dev'", &[&SUFFIX])
         .await.expect_redacted("restore current fixture incarnation");
 
+    // An inactive environment mints no audience, and activation is reversible.
+    system.batch_execute("UPDATE registry.project_envs SET status='inactive' WHERE org='demo' AND project='widgets' AND env='dev'")
+        .await.expect_redacted("inactivate the environment");
+    refuse(https, alice_pat.token(), aud).await;
+    system.batch_execute("UPDATE registry.project_envs SET status='active' WHERE org='demo' AND project='widgets' AND env='dev'")
+        .await.expect_redacted("activate the environment");
+
     malformed_requests(https, alice_pat.token(), aud).await;
     original_validation_time_and_timeout(fixture, https, alice_pat.token(), &alice, &jwks).await;
     failed_role_queries_discard_reader(fixture, https, alice_pat.token(), &alice, &jwks).await;
@@ -1770,6 +1777,26 @@ async fn password_environment_discovery_requires_current_authority() {
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='replaced' WHERE org='demo' AND env='dev'").await.unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[])).await;
     fixture.system.client.batch_execute("UPDATE registry.project_envs SET instance_suffix='s3ss10n2' WHERE org='demo' AND env='dev'").await.unwrap();
+    assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
+    // An inactive environment is not offered.
+    discovery_window(&fixture).await;
+    fixture
+        .system
+        .client
+        .batch_execute(
+            "UPDATE registry.project_envs SET status='inactive' WHERE org='demo' AND env='dev'",
+        )
+        .await
+        .unwrap();
+    assert_environments(discover().send().await.unwrap(), expected(&[])).await;
+    fixture
+        .system
+        .client
+        .batch_execute(
+            "UPDATE registry.project_envs SET status='active' WHERE org='demo' AND env='dev'",
+        )
+        .await
+        .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
     // A prior discovery cannot authorize issuance after membership changes.
     revoke_project_env_membership(&fixture.system.client, alice.id(), "demo", "widgets", "dev")
