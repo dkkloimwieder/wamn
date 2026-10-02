@@ -14,7 +14,7 @@ use super::super::identity;
 use super::{ReceivingCluster, apply, checked, deployment, kubectl, resources};
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, cargo-sqlx"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, cargo-sqlx, openssl, pnpm"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
     use tokio::signal::unix::{SignalKind, signal};
 
@@ -26,6 +26,8 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         "jq",
         "curl",
         "cargo-sqlx",
+        "openssl",
+        "pnpm",
     ]);
     ensure!(
         Candidate::from_env()?.is_none(),
@@ -374,6 +376,15 @@ async fn exercise(
             );
         }
     }
+    // The edge serves the client of the release that select-release made the
+    // head, so the upload follows the selection.
+    super::edge_case::through_the_edge(
+        cluster,
+        &route.database_url,
+        carrier.manifest_digest.as_str(),
+        &instance,
+    )
+    .await?;
     super::assert_source_unchanged(resources).await
 }
 

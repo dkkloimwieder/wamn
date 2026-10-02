@@ -96,16 +96,17 @@ It retains duplicate-delivery, blocked-handler, broker-advisory, and later-valid
 The adjacent `route_cases`, `session_cases`, and `measurement_cases` modules own the other named Receiving cases.
 Pass their full test names to `--name`.
 
-The `edge_case` module runs Receiving through the [kind edge](../plan/web-deployment.md) in `deploy/platform/edge`.
+The Receiving delivery case also runs Receiving through the [kind edge](../plan/web-deployment.md) in `deploy/platform/edge`.
+It does so after `select-release` and `deploy-release`, so the edge serves the selected release.
 The edge is one HTTPS host. It sends `/password` to identity and `/api` to the route ingress, and serves the web files from a MinIO bucket.
 The case writes those files with [`wamn web upload`](deployment.md#web-client-files), so it needs `pnpm` and an installed workspace:
 
 ```bash
 cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
-  route_authentication_live::cluster::edge_case::receiving_through_the_edge -- --exact --ignored --nocapture
+  route_authentication_live::cluster::delivery_case::owned_release_delivery -- --exact --ignored --nocapture
 ```
 
-The case signs in by cookie through the edge, reads a purchase order list twice for a 304, and changes a supplier.
+Through the edge, the case signs in by cookie through the edge, reads a purchase order list twice for a 304, and changes a supplier.
 It writes the headers it measured to `edge-results.json` in its results directory.
 To use the edge in a browser, also set `WAMN_EDGE_BY_HAND=1`.
 The case then prints the edge address and writes `edge.json` with the host, the address, the certificate authority and the account.

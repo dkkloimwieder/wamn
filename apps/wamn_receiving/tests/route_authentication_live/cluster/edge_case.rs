@@ -1,5 +1,8 @@
 //! Receiving through the kind edge: one HTTPS host serves the built web files
 //! and forwards `/password` and `/api` (docs/plan/web-deployment.md).
+//!
+//! The delivery case runs these checks after `select-release` and
+//! `deploy-release`, so the edge serves the selected release.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -11,15 +14,11 @@ use reqwest::StatusCode;
 use reqwest::header::{CACHE_CONTROL, CONTENT_TYPE, COOKIE, ETAG, IF_NONE_MATCH, SET_COOKIE};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_control::print_release_env::lookup_release_carrier;
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
-use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
-use wamn_test_infrastructure::workload;
 
 use super::super::{ADMIN_ROLE, identity};
 use super::resources::{self, checked, write_private};
-use super::{ReceivingCluster, apply, deployment, install_host, kubectl, provision, route_cases};
-use super::{session_cluster, start};
+use super::{ReceivingCluster, kubectl};
 
 const EDGE: &str = "wamn-edge";
 const IDENTITY: &str = "host-session-identity";
@@ -29,147 +28,28 @@ const PASSWORD: &str = "edge-disposable-fixture-password";
 /// appears in its results directory.
 const BY_HAND: &str = "WAMN_EDGE_BY_HAND";
 
-#[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl, pnpm"]
-async fn receiving_through_the_edge() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl", "pnpm",
-    ]);
-    let evidence = super::evidence_directory()?;
-    Box::pin(super::with_signals(&evidence, run(&evidence))).await
-}
-
-async fn run(evidence: &Path) -> anyhow::Result<()> {
-    let mut cluster = start(evidence, true).await?;
-    let result = async {
-        // The session case setup: the session release, identity and two
-        // session hosts, then the route ingress on them.
-        let (route, _) = provision(&cluster.inputs, &cluster.artifacts).await?;
-        let fixture = cluster.resources.work.join("session-host-fixture.json");
-        super::super::sessions::prepare_session_host_fixture(&cluster.inputs, &fixture).await?;
-        let carrier = lookup_release_carrier(
-            &route.database_url,
-            identity().tenant.as_str(),
-            identity().effective_release_id + 1,
-            &cluster.inputs.release_artifact_base,
-        )
-        .await?;
-        let issuer = session_cluster::prepare(&cluster, &carrier, &fixture).await?;
-        let document: Value = serde_json::from_slice(&fs::read(&fixture)?)?;
-        let suffix = document["instance_suffix"]
-            .as_str()
-            .context("the session fixture has its instance suffix")?;
-        let audience = document["audience"]
-            .as_str()
-            .context("the session fixture has its audience")?
-            .to_owned();
-        let secrets = deployment::native_secrets(&cluster)?;
-        install_host(
-            &cluster.resources,
-            &cluster.inputs,
-            &carrier,
-            &super::HostBinding {
-                replicas: 2,
-                nats_url: &cluster.nats_url,
-                native_nats_secrets: &secrets,
-                source: &cluster.source,
-                session: Some((&issuer, suffix)),
-            },
-        )
-        .await?;
-        let resources = &cluster.resources;
-        let digest = workload::image_ready(
-            &resources.lifecycle,
-            &resources.name,
-            &resources.work,
-            &resources.host_image,
-            &resources.source,
-            "release",
-            evidence,
-        )
-        .await?;
-        workload::hosts_ready(&workload::HostsReadyInput {
-            lifecycle: &resources.lifecycle,
-            cluster: &resources.name,
-            work: &resources.work,
-            namespace: &resources.name,
-            image: &resources.host_image,
-            runtime_digest: &digest,
-            replicas: 2,
-            evidence,
-        })
-        .await?;
-        let http = deployment::publish_http(&cluster).await?;
-        route_ingress(&cluster, &http).await?;
-        activate_session_key(&cluster, &issuer).await?;
-        serve_passwords(&cluster).await?;
-        let account = account(&cluster, &route.database_url).await?;
-        let edge = install_edge(&cluster, &carrier.manifest_digest.to_string()).await?;
-        check_edge(&cluster, &edge, &account, &audience).await?;
-        if std::env::var_os(BY_HAND).is_some() {
-            hold(&cluster, &edge, &audience, &route.database_url).await?;
-        }
-        super::assert_source_unchanged(&cluster.resources).await
+/// The selected and deployed `release` through the edge. The hosts and the
+/// route ingress `flow-http` are the delivery case's, and `instance` is the
+/// environment instance of their session issuer.
+pub(super) async fn through_the_edge(
+    cluster: &ReceivingCluster,
+    project_url: &str,
+    release: &str,
+    instance: &str,
+) -> anyhow::Result<()> {
+    let triple = wamn_control_registry::Triple::new(
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+    );
+    let audience = wamn_control_provision::session_target::session_audience(&triple, instance)?;
+    serve_passwords(cluster).await?;
+    let account = account(cluster, project_url).await?;
+    let edge = install_edge(cluster, project_url, release).await?;
+    check_edge(cluster, &edge, &account, &audience).await?;
+    if std::env::var_os(BY_HAND).is_some() {
+        hold(cluster, &edge, &audience, project_url).await?;
     }
-    .await;
-    route_cases::finish(&mut cluster, result).await
-}
-
-/// The route ingress on the session hosts, from the deployment example.
-async fn route_ingress(cluster: &ReceivingCluster, http_image: &str) -> anyhow::Result<()> {
-    let resources = &cluster.resources;
-    let source = render_http_workload(
-        &fs::read_to_string(
-            resources
-                .repository
-                .join("deploy/platform/http-route-workload.example.yaml"),
-        )?,
-        &HttpWorkloadInput {
-            namespace: resources.name.clone(),
-            image: http_image.to_owned(),
-            route_host: cluster.inputs.route_host.clone(),
-            claims: HttpClaims {
-                tenant: identity().tenant.clone(),
-                catalog: "default".to_owned(),
-                environment: resources.name.clone(),
-                project: identity().project.clone(),
-                schema: "receiving".to_owned(),
-            },
-        },
-    )?;
-    let path = resources.evidence.join("edge-route-workload.yaml");
-    fs::write(&path, source)?;
-    apply(resources, &path).await?;
-    checked(kubectl(resources).args([
-        "-n",
-        &resources.name,
-        "wait",
-        "--for=condition=Ready",
-        "workloaddeployment/flow-http",
-        "--timeout=240s",
-    ]))
-    .await?;
-    Ok(())
-}
-
-/// The hosts verify a session against the issuer's active key.
-async fn activate_session_key(cluster: &ReceivingCluster, issuer: &str) -> anyhow::Result<()> {
-    let database = wamn_control::provision_project_env::secret_value(
-        &cluster.resources.work.join("session-identity-db.json"),
-        "url",
-    )?;
-    let (mut client, connection) =
-        tokio_postgres::connect(&database, tokio_postgres::NoTls).await?;
-    let driver = tokio::spawn(connection);
-    let result = async {
-        let key =
-            wamn_platform_identity::session_keys::publish_session_key(&mut client, issuer).await?;
-        wamn_platform_identity::session_keys::activate_session_key(&mut client, issuer, &key.kid)
-            .await
-    }
-    .await;
-    driver.abort();
-    result?;
     Ok(())
 }
 
@@ -288,7 +168,11 @@ struct Edge {
 
 /// The release's web client in a bucket, written by `wamn web upload`, and
 /// the edge chart in front of it.
-async fn install_edge(cluster: &ReceivingCluster, release: &str) -> anyhow::Result<Edge> {
+async fn install_edge(
+    cluster: &ReceivingCluster,
+    project_url: &str,
+    release: &str,
+) -> anyhow::Result<Edge> {
     let resources = &cluster.resources;
     let secret = uuid::Uuid::new_v4().simple().to_string();
     write_private(
@@ -308,6 +192,8 @@ async fn install_edge(cluster: &ReceivingCluster, release: &str) -> anyhow::Resu
             .current_dir(&resources.repository)
             .args(["web", "upload", "apps/wamn_receiving", "--release", release])
             .args(["--bucket", "s3://web/clients"])
+            .args(["--org", identity().org.as_str()])
+            .args(["--database-url", project_url])
             .env("AWS_ENDPOINT", format!("http://{minio}:9000"))
             .env("AWS_ALLOW_HTTP", "true")
             .env("AWS_REGION", "us-east-1")
