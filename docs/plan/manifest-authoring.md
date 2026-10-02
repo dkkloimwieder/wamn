@@ -1,6 +1,6 @@
 # Manifest authoring
 
-Updated through: 2026-10-02, `main` at `ebac92ef4` with epic 1 issues 1 to 4 on top. Accepted by the owner on 2026-10-02, with the rulings recorded in §7.
+Updated through: 2026-10-02, `main` at `fe3aff2a2` with the three remaining conversions on top. Accepted by the owner on 2026-10-02, with the rulings recorded in §7.
 
 **Scoping rule.** This document names two epics. Only epic 1 is scoped to issues. Epic 2 is named with its goal and boundary and nothing more, and is scoped only after epic 1 is closed and reviewed by the owner. An agent that finishes epic 1 stops.
 
@@ -69,7 +69,7 @@ One branch, the routes agent, after the kind→type cutover lands. Each issue wi
 3. Convert `edge_samples` and `edge_device`, each as its next version. Same acceptance. Record the line counts before and after on the bead. Closed, `942d0d6fe`.
 4. Documentation: `data-access.md` gains the sentence that `wamn.json` is generated from `wamn.k` and that the Retain/Derive table is unchanged; `docs/operations/building.md` names the compile step; `development-loop.md` names `wamn.k` as the watched file. Closes the epic. Closed, `2e0897520`.
 
-`wamn_wms`, `wamn_receiving` and `client_acme_receiving` convert when their next version is authored, each in the issue that authors that version. Test fixtures that feed the JSON reader stay JSON. Only packages under `apps/` convert. The last of these conversions adds the refusal of a root `wamn.json` with no `wamn.k` (§4.3).
+`wamn_wms`, `wamn_receiving` and `client_acme_receiving` convert when their next version is authored, each in the issue that authors that version. Test fixtures that feed the JSON reader stay JSON. Only packages under `apps/` convert. The last of these conversions adds the refusal of a root `wamn.json` with no `wamn.k` (§4.3). Closed, `b2a47db39` (`wamn_wms` 2.1.0) and `38d73e9f8` (`wamn_receiving` 2.1.0, `client_acme_receiving` 4.1.0). The refusal is a repository policy lint over `apps/`, because test fixtures outside `apps/` keep `wamn.json`.
 
 ## 6. Out of scope
 
