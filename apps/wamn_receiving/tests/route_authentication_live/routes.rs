@@ -1174,7 +1174,7 @@ async fn assert_route_history_read(
         );
         fields.push((
             i64::try_from(fields.len())? + 1,
-            text(row, "kind")?,
+            text(row, "type")?,
             text(row, "before")?,
             text(row, "current")?,
         ));
