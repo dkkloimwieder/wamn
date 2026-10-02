@@ -734,7 +734,7 @@ The four `wamn` images come from the cutover commit `351f71337` of branch `cutov
 
 `deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`, which names the `wamn` credential helper for the registry. B10 of `docs/plan/kind-to-type.md` section 3.2 applied it on 2026-10-02, before the `helm upgrade` of the hosts. The hosts pull components with a token from the GKE metadata server, as `wamn-blob`. The token CronJob, its Secret `wamn-registry-pull` and the Google service account `wamn-registry-reader` were removed after the serve check of B10.
 
-The kind cases of `qualify-release` do not pull these images from the private registry. `tools/registry-image-archive` fetches each pinned manifest and its blobs by digest with the login of this machine, and each kind node imports that archive with `ctr`, so the node holds the pinned digest. No credential reaches a node.
+The kind cases of `qualify-release` do not pull these images from the private registry. `tools/registry-image-archive` fetches each pinned manifest and its blobs by digest with the login of this machine, and each kind node imports that archive with `ctr`, so the node holds the pinned digest. No credential reaches a node. The owned registry of a kind delivery case is plain HTTP with no login, and its candidate sets `native_registry_insecure`. The kind nodes pull from that registry through the containerd hosts directory instead.
 
 ### 3.14 Host values
 
