@@ -39,6 +39,10 @@ use application_fixture::{ApplicationHost, MEMBER, PROJECT, application_host};
 #[path = "../../../crates/execution/host/tests/support/control_fixture.rs"]
 mod control_fixture;
 
+// The shell browser test uses the same fixtures, and a fixture file loads once.
+#[path = "shell_browser_live.rs"]
+mod shell_browser_live;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
 async fn application_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
