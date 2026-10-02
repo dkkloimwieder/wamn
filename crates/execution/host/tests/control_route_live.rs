@@ -257,16 +257,23 @@ async fn call(
     caller: &str,
     payload: Value,
 ) -> Result<Value, String> {
-    let (id, _) = HostRouteSet::Control
+    let (id, attachment) = HostRouteSet::Control
         .attachments()
         .find(|(_, attachment)| attachment.reference == format!("wamn-control:{operation}"))
         .expect("the control set serves the route");
+    // One request item, as a generated client sends it: a read carries its
+    // input, and a write carries a request id and its input under `value`.
+    let item = if attachment.route.type_.is_read() {
+        payload
+    } else {
+        json!({"request_id": "control-route-test", "value": payload})
+    };
     let report = delivery
         .deliver(
             DeliveryRequest {
                 source: Source::Attachment(id.to_owned()),
                 delivery_id: "control-route-test".to_owned(),
-                payload: payload.to_string(),
+                payload: json!([item]).to_string(),
                 caller: None,
                 trace: None,
                 parent_causation: None,
@@ -282,7 +289,10 @@ async fn call(
         )
         .await;
     match report.outcome {
-        Ok(DeliveryOutcome::Respond(body)) => Ok(serde_json::from_str(&body).expect("JSON")),
+        Ok(DeliveryOutcome::Respond(body)) => {
+            let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+            Ok(item["value"].clone())
+        }
         Ok(DeliveryOutcome::Failed(failure)) => match failure.failure_type {
             FailureType::InvalidInput => Err(failure.message),
             FailureType::Terminal => Err(format!("terminal {}", failure.message)),

@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use serde_json::json;
+use serde_json::{Value, json};
 use wamn_catalog::{HostAttachment, HostHandler};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -209,6 +209,30 @@ fn served_references(release: &LoadedRelease) -> BTreeSet<String> {
     registered.chain(host).collect()
 }
 
+/// The one item of a host route request: its request id and its input. A
+/// read carries its input as the item, and a write carries a request id and
+/// its input under `value`, as every generated route takes them. Any other
+/// payload is `None`.
+fn request_item(payload: &str, read: bool) -> Option<(Option<String>, Value)> {
+    let Ok(Value::Array(items)) = serde_json::from_str::<Value>(payload) else {
+        return None;
+    };
+    let [Value::Object(mut item)] = <[Value; 1]>::try_from(items).ok()? else {
+        return None;
+    };
+    if read {
+        return Some((None, Value::Object(item)));
+    }
+    let Some(Value::String(request_id)) = item.remove("request_id") else {
+        return None;
+    };
+    let value = item
+        .remove("value")
+        .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
+    (item.is_empty() && !request_id.is_empty() && value.is_object())
+        .then_some((Some(request_id), value))
+}
+
 fn report(outcome: Result<DeliveryOutcome, DeliveryError>) -> DeliveryReport {
     DeliveryReport {
         outcome,
@@ -247,8 +271,30 @@ impl RouteDelivery for HostRouteDelivery {
             return report(Err(DeliveryError::InvalidRequest));
         }
         let caller = caller.expect("a resolved host route has its caller");
-        match self.handle(attachment, &caller, &request.payload).await {
-            Ok(result) => report(Ok(DeliveryOutcome::Respond(result.to_string()))),
+        let read = attachment.route.type_.is_read();
+        let Some((request_id, input)) = request_item(&request.payload, read) else {
+            return report(Err(DeliveryError::InvalidPayload));
+        };
+        // The answer is the one outcome of the one item, as a generated
+        // route answers. A read carries no request id and echoes none.
+        let outcome = |member: &str, value: Value| {
+            let mut item = serde_json::Map::new();
+            if let Some(request_id) = &request_id {
+                item.insert("request_id".to_owned(), json!(request_id));
+            }
+            item.insert(member.to_owned(), value);
+            report(Ok(DeliveryOutcome::Respond(
+                Value::Array(vec![Value::Object(item)]).to_string(),
+            )))
+        };
+        match self.handle(attachment, &caller, &input.to_string()).await {
+            Ok(result) => outcome("value", result),
+            Err(Refusal::Declared { code, detail }) => {
+                let mut error = serde_json::Map::new();
+                error.insert("code".to_owned(), json!(code));
+                error.insert("detail".to_owned(), detail);
+                outcome("error", Value::Object(error))
+            }
             Err(Refusal::Delivery(error)) => report(Err(error)),
             Err(Refusal::Invalid(message)) => {
                 report(Ok(DeliveryOutcome::Failed(DeliveryFailure {

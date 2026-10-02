@@ -49,6 +49,9 @@ pub(crate) enum Refusal {
     Delivery(DeliveryError),
     /// Invalid input, with a reason the caller can act on.
     Invalid(String),
+    /// A refusal that the route's contract declares: its code and its
+    /// detail, answered as the error of the request item.
+    Declared { code: &'static str, detail: Value },
     /// A failure of the host or of a service it calls.
     Failed(anyhow::Error),
     /// An environment failed before every environment was done, with the

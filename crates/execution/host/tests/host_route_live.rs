@@ -217,23 +217,40 @@ async fn deliver(
     caller: Option<AuthenticatedCaller>,
 ) -> Result<Value, DeliveryError> {
     match outcome(delivery, attachment, caller, json!({})).await? {
-        DeliveryOutcome::Respond(body) => Ok(serde_json::from_str(&body).expect("JSON answer")),
+        DeliveryOutcome::Respond(body) => {
+            let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+            Ok(item["value"].clone())
+        }
         other => panic!("a host route responds: {other:?}"),
     }
 }
 
+/// Deliver one request item, as a generated client sends it: a read carries
+/// its input, and a write carries a request id and its input under `value`.
 async fn outcome(
     delivery: &HostRouteDelivery,
     attachment: &str,
     caller: Option<AuthenticatedCaller>,
-    payload: Value,
+    input: Value,
 ) -> Result<DeliveryOutcome, DeliveryError> {
+    let read = HostRouteSet::Application
+        .attachment(attachment)
+        .or_else(|| HostRouteSet::Control.attachment(attachment))
+        .expect("a host route")
+        .route
+        .type_
+        .is_read();
+    let item = if read {
+        input
+    } else {
+        json!({"request_id": "host-route-test", "value": input})
+    };
     delivery
         .deliver(
             DeliveryRequest {
                 source: Source::Attachment(attachment.to_owned()),
                 delivery_id: "host-route-test".to_owned(),
-                payload: payload.to_string(),
+                payload: json!([item]).to_string(),
                 caller: None,
                 trace: None,
                 parent_causation: None,
@@ -504,17 +521,25 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             .expect("a host-owned caller");
         outcome(&delivery, &route, Some(caller), payload).await
     };
-    let answer = async |reference: &str, payload: Value| -> Value {
+    // The one outcome of the one item: its value, or its declared error.
+    let item = async |reference: &str, payload: Value| -> Value {
         match call(&admin_claims, reference, payload).await {
-            Ok(DeliveryOutcome::Respond(body)) => serde_json::from_str(&body).unwrap(),
+            Ok(DeliveryOutcome::Respond(body)) => {
+                let [item]: [Value; 1] = serde_json::from_str(&body).unwrap();
+                item
+            }
             other => panic!("{reference} answers: {other:?}"),
         }
     };
-    let refusal = async |reference: &str, payload: Value| -> String {
-        match call(&admin_claims, reference, payload).await {
-            Ok(DeliveryOutcome::Failed(failure)) => failure.message,
-            other => panic!("{reference} refuses: {other:?}"),
-        }
+    let answer = async |reference: &str, payload: Value| -> Value {
+        let item = item(reference, payload).await;
+        assert!(item.get("error").is_none(), "{reference} answers: {item}");
+        item["value"].clone()
+    };
+    let refusal = async |reference: &str, payload: Value| -> Value {
+        let item = item(reference, payload).await;
+        assert!(item.get("value").is_none(), "{reference} refuses: {item}");
+        item["error"].clone()
     };
 
     // A caller without admin is refused, even with a stored row that names
@@ -570,11 +595,15 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     );
     assert_eq!(
         refusal("wamn-control:role/create", json!({"role": "admin"})).await,
-        "admin is the built-in role; apply-package creates it"
+        json!({"code": "admin_fixed", "detail": {"field": "role"}})
     );
     assert_eq!(
         refusal("wamn-control:role/delete", json!({"role": "admin"})).await,
-        "admin is the built-in role and cannot be deleted"
+        json!({"code": "admin_fixed", "detail": {"field": "role"}})
+    );
+    assert_eq!(
+        refusal("wamn-control:role/create", json!({"role": "Clerk"})).await,
+        json!({"code": "invalid_input", "detail": {"field": "role"}})
     );
 
     // Permissions: a grant writes the closure of the loaded release.
@@ -602,7 +631,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": "session-test:purchase/archive"})
         )
         .await,
-        "the current serving release does not serve the operation session-test:purchase/archive"
+        json!({"code": "operation_not_served", "detail": {"field": "operation"}})
     );
     assert_eq!(
         refusal(
@@ -610,7 +639,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": "wamn-control:role/list"})
         )
         .await,
-        "wamn-control:role/list is fixed to admin or to every member, so no role takes it"
+        json!({"code": "operation_not_grantable", "detail": {"field": "operation"}})
     );
     let listed = answer("wamn-control:permission/list", json!({"role": "clerk"})).await;
     let entry = |operation: &str| {
@@ -651,7 +680,8 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": read})
         )
         .await,
-        format!("{read} is not directly granted to role clerk; it is required by {write}")
+        json!({"code": "permission_not_selected",
+               "detail": {"field": "operation", "required_by": [write]}})
     );
 
     // User roles: a known user only, and admin stays under project-admin.
@@ -684,7 +714,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"user_id": stranger, "role": "clerk"})
         )
         .await,
-        format!("the application has no user {stranger}")
+        json!({"code": "user_not_found", "detail": {"field": "user_id"}})
     );
     admin
         .execute(
@@ -698,10 +728,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"user_id": first, "role": "admin"})
         )
         .await,
-        format!(
-            "user {first} holds project-admin in the project, so admin stays. \
-             Revoke project-admin or org-admin first"
-        )
+        json!({"code": "admin_covered", "detail": {"field": "user_id"}})
     );
     admin
         .execute("DELETE FROM identity.project_roles", &[])

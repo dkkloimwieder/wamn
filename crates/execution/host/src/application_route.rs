@@ -69,10 +69,33 @@ struct UserRoleRequest {
 impl From<AdministrationError> for Refusal {
     fn from(error: AdministrationError) -> Self {
         match error {
-            AdministrationError::Refused(refusal) => Self::Invalid(refusal.to_string()),
+            AdministrationError::Refused(refusal) => declared(refusal),
             AdministrationError::Failed(error) => Self::Failed(error.into()),
         }
     }
+}
+
+/// The code and detail that the contract of the route declares for one
+/// refusal. `field` names the input member the refusal is about.
+fn declared(refusal: AdministrationRefusal) -> Refusal {
+    let (code, field) = match &refusal {
+        AdministrationRefusal::AdminTakesNoPermission
+        | AdministrationRefusal::AdminCreated
+        | AdministrationRefusal::AdminDeleted => ("admin_fixed", "role"),
+        AdministrationRefusal::NotRoleName { .. } => ("invalid_input", "role"),
+        AdministrationRefusal::RoleNotFound { .. } => ("role_not_found", "role"),
+        AdministrationRefusal::OperationNotServed { .. } => ("operation_not_served", "operation"),
+        AdministrationRefusal::NotGrantable { .. } => ("operation_not_grantable", "operation"),
+        AdministrationRefusal::NotHeld { .. } => ("permission_not_held", "operation"),
+        AdministrationRefusal::NotSelected { .. } => ("permission_not_selected", "operation"),
+        AdministrationRefusal::UserNotFound { .. } => ("user_not_found", "user_id"),
+        AdministrationRefusal::AdminCovered { .. } => ("admin_covered", "user_id"),
+    };
+    let mut detail = json!({ "field": field });
+    if let AdministrationRefusal::NotSelected { required_by, .. } = refusal {
+        detail["required_by"] = json!(required_by);
+    }
+    Refusal::Declared { code, detail }
 }
 
 impl ApplicationRoutes<'_> {
