@@ -90,12 +90,12 @@ try {
     const page = await signIn("boss@example.test");
     await visible(page, "members");
     await page.getByText("billing", { exact: true }).click();
-    await visible(page, "Project administration of billing.");
+    await visible(page, "members of billing");
   });
 
   await step("a project-admin sees only the project it administers", async () => {
     const page = await signIn("cat@example.test");
-    await visible(page, "Project administration of billing.");
+    await visible(page, "members of billing");
     await absent(page, "org");
   });
 } finally {

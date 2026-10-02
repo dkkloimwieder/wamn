@@ -446,7 +446,7 @@ describe("the app shell", () => {
     expect(screen.queryByText("Pallets")).toBeNull();
     expect(screen.queryByText("Administration")).toBeNull();
     fireEvent.click(screen.getByText("widgets"));
-    expect(await screen.findByText("Project administration of widgets.")).toBeDefined();
+    expect(await screen.findByText("members of widgets")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets`));
     expect(screen.getByText("gadgets")).toBeDefined();
   });
@@ -455,7 +455,7 @@ describe("the app shell", () => {
     const mine = { org_admin: false, projects: [{ project: "widgets", project_admin: true }] };
     const { fetch } = identity(true, ONE, ADMIN, mine);
     open(`/${CONTROL}`, fetch);
-    expect(await screen.findByText("Project administration of widgets.")).toBeDefined();
+    expect(await screen.findByText("members of widgets")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets`));
     expect(screen.queryByText("org")).toBeNull();
     cleanup();

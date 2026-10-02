@@ -6,7 +6,7 @@
 
 import type { JSX } from "solid-js";
 
-import { OrgScreen, RoleGrid, UserGrid } from "@wamn/ui/admin";
+import { OrgScreen, ProjectScreen, RoleGrid, UserGrid } from "@wamn/ui/admin";
 
 import { BOSS, adminStub } from "../stubs/admin.js";
 import { controlStub } from "../stubs/control.js";
@@ -28,6 +28,11 @@ export function AdminSections(): JSX.Element {
       <Section title="Org screen" name="OrgScreen">
         <State name="an org-admin, a project-admin and a member">
           <OrgScreen transport={controlStub().transport} />
+        </State>
+      </Section>
+      <Section title="Project screen" name="ProjectScreen">
+        <State name="billing, with a covered org-admin and project-admin">
+          <ProjectScreen transport={controlStub().transport} project="billing" />
         </State>
       </Section>
     </>

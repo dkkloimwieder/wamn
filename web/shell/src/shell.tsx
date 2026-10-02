@@ -223,15 +223,14 @@ const ADMINISTRATION: ShellSection = {
 };
 
 /** One project destination of a control session, only for a project the caller administers. */
-function ProjectDestination(): JSX.Element {
+const ProjectDestination = screen(admin, (m) => (props) => {
   const view = useContext(ViewContext);
-  const params = useParams<{ project: string }>();
   return (
-    <Show when={view?.projects.includes(params.project ?? "")} fallback={<NotFound />}>
-      <p>Project administration of {params.project}.</p>
+    <Show when={view?.projects.includes(props.params["project"] ?? "")} fallback={<NotFound />}>
+      <m.ProjectScreen transport={props.transport} project={props.params["project"] ?? ""} />
     </Show>
   );
-}
+});
 
 /** The org destination, which `org-admin` holds, with the org screen of `@wamn/ui/admin`. */
 const ORG_SCREEN: ShellScreen = {
