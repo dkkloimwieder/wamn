@@ -1,5 +1,7 @@
 //! Converge the generated GuestSql authority union for the installed package set.
 
+pub(crate) mod upgrade;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -14,7 +16,7 @@ use wamn_schema_generator::{
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
-const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
+pub(crate) const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.data-access:' || current_database(), 0))";
 const SELECT_INSTALLED_SQL: &str = "\
 SELECT package_id, package_version, manifest_sha256 FROM catalog.packages \
@@ -108,15 +110,11 @@ struct DirectAcl {
 /// when the privilege is a column privilege, and the privilege name.
 type UndeclaredResidue = BTreeSet<(String, String, String, Option<String>, String)>;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct EffectiveAcl {
-    schema: BTreeSet<(String, String)>,
-    table: BTreeSet<(String, String, String)>,
-    column: BTreeSet<(String, String, String, String)>,
-}
+type EffectiveAcl = upgrade::UpgradePrivileges;
 
 #[derive(Debug)]
 struct PresentedPackage {
+    root: PathBuf,
     coordinate: String,
     package_id: String,
     package_version: String,
@@ -130,6 +128,13 @@ struct PresentedPackage {
 #[derive(Debug)]
 pub struct PreparedLocalDataAccess(Vec<PresentedPackage>);
 
+#[derive(Clone, Copy)]
+enum ReconcileMode<'a> {
+    Production,
+    Qualification,
+    Local(&'a str),
+}
+
 /// Reconcile the installed package set and return its observable effect state.
 pub async fn reconcile_package_data_access(
     request: ReconcilePackageDataAccessRequest,
@@ -140,7 +145,7 @@ pub async fn reconcile_package_data_access(
         &request.database_url,
         &request.tenant,
         &packages,
-        None,
+        ReconcileMode::Production,
         true,
     )
     .await
@@ -160,7 +165,14 @@ pub async fn reconcile_local(
 ) -> anyhow::Result<DataAccessReconcileResult> {
     wamn_runtime::local_application::require_local_target(database_url, tenant, environment)
         .await?;
-    execute_prepared(database_url, tenant, &prepared.0, Some(environment), apply).await
+    execute_prepared(
+        database_url,
+        tenant,
+        &prepared.0,
+        ReconcileMode::Local(environment),
+        apply,
+    )
+    .await
 }
 
 fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPackage>> {
@@ -207,6 +219,7 @@ fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPac
             plan.coordinate.package_id()
         );
         packages.push(PresentedPackage {
+            root: package_root.clone(),
             coordinate,
             package_id: plan.coordinate.package_id().to_owned(),
             package_version: plan.coordinate.package_version().to_owned(),
@@ -224,7 +237,7 @@ async fn execute_prepared(
     database_url: &str,
     tenant: &str,
     packages: &[PresentedPackage],
-    local: Option<&str>,
+    mode: ReconcileMode<'_>,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     ensure!(!tenant.is_empty(), "tenant must not be empty");
@@ -232,7 +245,7 @@ async fn execute_prepared(
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = reconcile_mode(&mut client, tenant, packages, local, apply).await;
+    let result = reconcile_mode(&mut client, tenant, packages, mode, apply).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -249,9 +262,13 @@ async fn reconcile_mode(
     client: &mut Client,
     tenant: &str,
     packages: &[PresentedPackage],
-    local: Option<&str>,
+    mode: ReconcileMode<'_>,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
+    let local = match mode {
+        ReconcileMode::Local(environment) => Some(environment),
+        _ => None,
+    };
     let tx = client
         .transaction()
         .await
@@ -273,6 +290,16 @@ async fn reconcile_mode(
         }
     }
     validate_installed_set(&tx, tenant, packages, local.is_some()).await?;
+    let accepted_upgrade = match mode {
+        ReconcileMode::Production => {
+            let roots = packages
+                .iter()
+                .map(|package| package.root.clone())
+                .collect::<Vec<_>>();
+            crate::package_upgrade::reconciliation_evidence(&tx, tenant, &roots).await?
+        }
+        ReconcileMode::Qualification | ReconcileMode::Local(_) => None,
+    };
     let schemas = packages
         .iter()
         .flat_map(|package| package.schemas.iter().cloned())
@@ -341,6 +368,9 @@ async fn reconcile_mode(
         "package-data-access-undeclared-relation-refused: role={DATA_ACCESS_ROLE}; relations=[{}]; cause=the App role reaches authority no package declares, and an owner never loses a privilege on its own relation; remedy=declare the relation in a package, or drop the relation",
         residue_targets(&after_residue)
     );
+    if let Some(evidence) = &accepted_upgrade {
+        crate::package_upgrade::require_reconciled_privileges(&tx, evidence).await?;
+    }
     if apply {
         if let Some(environment) = local {
             record_local_manifests(&tx, tenant, environment, packages).await?;
@@ -664,100 +694,17 @@ async fn effective_acl(
     tx: &Transaction<'_>,
     effective: &EffectiveDataAccess,
 ) -> anyhow::Result<EffectiveAcl> {
-    let schema_privileges = vec!["CREATE", "USAGE"];
-    let table_privileges = vec![
-        "DELETE",
-        "INSERT",
-        "MAINTAIN",
-        "REFERENCES",
-        "SELECT",
-        "TRIGGER",
-        "TRUNCATE",
-        "UPDATE",
-    ];
-    let column_privileges = vec!["INSERT", "REFERENCES", "SELECT", "UPDATE"];
-    let mut acl = EffectiveAcl::default();
-    for schema in effective.schemas() {
-        for row in tx
-            .query(
-                "SELECT privilege \
-                   FROM pg_catalog.pg_namespace AS namespace \
-                   CROSS JOIN unnest($3::text[]) AS privilege \
-                  WHERE namespace.nspname = $2 \
-                    AND pg_catalog.has_schema_privilege($1, namespace.oid, privilege)",
-                &[&effective.role(), &schema, &schema_privileges],
-            )
-            .await
-            .with_context(|| format!("read effective schema ACL for {schema}"))?
-        {
-            acl.schema.insert((schema.clone(), row.get(0)));
-        }
-    }
-    for relation in effective.relations() {
-        for row in tx
-            .query(
-                "SELECT privilege \
-                   FROM pg_catalog.pg_class AS relation \
-                   JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-                   CROSS JOIN unnest($4::text[]) AS privilege \
-                  WHERE namespace.nspname = $2 AND relation.relname = $3 \
-                    AND pg_catalog.has_table_privilege($1, relation.oid, privilege)",
-                &[
-                    &effective.role(),
-                    &relation.schema(),
-                    &relation.table(),
-                    &table_privileges,
-                ],
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "read effective table ACL for {}.{}",
-                    relation.schema(),
-                    relation.table()
-                )
-            })?
-        {
-            acl.table.insert((
-                relation.schema().to_owned(),
-                relation.table().to_owned(),
-                row.get(0),
-            ));
-        }
-        for row in tx
-            .query(
-                "SELECT attribute.attname::text, privilege \
-                   FROM pg_catalog.pg_class AS relation \
-                   JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-                   JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
-                   CROSS JOIN unnest($4::text[]) AS privilege \
-                  WHERE namespace.nspname = $2 AND relation.relname = $3 \
-                    AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-                    AND pg_catalog.has_column_privilege($1, relation.oid, attribute.attnum, privilege)",
-                &[
-                    &effective.role(),
-                    &relation.schema(),
-                    &relation.table(),
-                    &column_privileges,
-                ],
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "read effective column ACL for {}.{}",
-                    relation.schema(),
-                    relation.table()
-                )
-            })?
-        {
-            acl.column.insert((
-                relation.schema().to_owned(),
-                relation.table().to_owned(),
-                row.get(0),
-                row.get(1),
-            ));
-        }
-    }
+    let mut acl =
+        upgrade::read_effective_privileges(tx, effective.role(), effective.schemas()).await?;
+    let declared = effective
+        .relations()
+        .iter()
+        .map(|relation| (relation.schema(), relation.table()))
+        .collect::<BTreeSet<_>>();
+    acl.table
+        .retain(|(schema, table, _)| declared.contains(&(schema.as_str(), table.as_str())));
+    acl.column
+        .retain(|(schema, table, _, _)| declared.contains(&(schema.as_str(), table.as_str())));
     Ok(acl)
 }
 

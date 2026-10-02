@@ -1,55 +1,28 @@
-# Schema changes after installation
+# Remaining package-upgrade design
 
-This is a deferred design for changing a schema while retaining installed application data.
-Current provisioning supports fresh installations only, including the control database.
-The [current data rules](../architecture/data-access.md) remain authoritative until this design receives its own implementation scope.
+[Package upgrade](package-upgrade.md) defines the accepted scope and governance.
+[Deployment](../operations/deployment.md#package-upgrades) describes the single-package additive path and retained-schema rollback.
+Only Epic 1 is scoped for implementation. The owner opens each later epic after reviewing its predecessor.
 
-## Candidate and predecessor
+## Epic 2: a base package under an overlay
 
-A candidate must name the exact currently installed package version as its predecessor.
-Its cumulative migration paths and checksums must contain the predecessor as a byte-identical prefix.
-Preparation applies only the new suffix to a representative copy of the prior database.
-It must inspect both the migration history and resulting effective schema.
+An overlay pins an exact base package version and component digest.
+The design must define successor coordinates, revised pins, compatibility proof, and application order for both packages.
+Base and overlay migration streams retain their independent definition ownership and immutable prefixes.
 
-Base and client packages retain independent migration streams and definition ownership.
-A base change cannot alter, remove, conflict with, or invalidate a client-owned definition.
-This includes a client column stored on a base-owned table.
-Dependent constraints and consumed operation contracts must remain valid too.
+Qualification must preserve overlay-owned columns, constraints, and consumed operation contracts on shared relations.
+It must prove the complete presented root set and resulting effective privileges against copied installed data.
+Existing fresh overlay comparisons do not prove this transition.
 
-The proposed first changes are additive and compatible with the active predecessor.
-A version label alone does not establish compatibility.
-Exact schema and consumed-contract comparisons determine whether unchanged client artifacts remain usable.
-A changed client implementation requires a new client package version.
-Existing package coordinates and artifact digests never acquire different contents.
+## Epic 3: migrations outside the additive policy
 
-## Preparation and refusal
+The design must cover constraint strengthening, type changes, column removal, and data backfills.
+It must define required serving pauses, value-dependent validation, recovery steps, and any online or resumable backfill procedure.
+Committed package migrations remain in place after a release rollback.
 
-The candidate's migration must run under the same restricted authority expected during installation.
-Its fixture must include data relevant to the change.
-Null values, duplicate candidates, foreign-key references, constraint boundaries, and backfilled rows are examples of relevant predecessor states.
+Migration-specific exceptions require explicit preconditions, validation, and recovery evidence.
+One recorded case adds a nullable column that predecessor whole-row SQL cannot read under predecessor grants.
+Epic 1 refuses that transition even when candidate grants restore access. Epic 3 owns any exception procedure.
 
-Preparation must preserve client-owned definitions and resolve declared dependencies to exact candidate implementations.
-It must inspect the complete application SQL corpus against the resulting schema.
-Relevant base and client tests must exercise the changed behavior.
-Successful preparation leaves the candidate inactive until an explicit deployment selection.
-
-A conflicting definition or incompatible consumed contract must refuse the candidate.
-The currently selected application remains active when its database remains compatible and intact.
-A preparation result does not grant permission to mutate a production database.
-Existing [fresh overlay comparisons](../../apps/client_acme_receiving/overlay-scenario.md) do not establish this upgrade path.
-
-## Installation and activation
-
-The proposed first implementation assumes one deployment writer.
-That writer must compare the current predecessor again before applying the tested suffix.
-It must establish the resulting schema identity, permissions, and exact bindings before activating the candidate.
-Migration or validation failure must prevent activation.
-
-The design still needs an explicit failure rule when database changes complete but later activation fails.
-A previous code release is a usable rollback target only while the new schema satisfies its required contracts.
-Selecting old code does not reverse committed data changes.
-The current fresh-install implementation supplies no existing-data rollback promise.
-
-Drain-required changes, destructive migrations, online backfills, and resumable backfills remain outside the proposed initial scope.
-Concurrent deployment coordination and a general deployment recovery process need separate requirements.
-No unsupported existing-data upgrade starts from this document alone.
+Schema relocation or multiple serving schemas require a persisted deployment fact before they can be qualified.
+Their behavior and exception procedures remain outside Epic 1 and have no scoped implementation here.

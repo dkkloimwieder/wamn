@@ -457,6 +457,28 @@ CREATE TABLE catalog.release_manifest_snapshots (
         CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
 
+CREATE TABLE catalog.package_upgrade_qualifications (
+    tenant_id                   text        NOT NULL CHECK (tenant_id <> ''),
+    package_id                  text        NOT NULL CHECK (package_id <> ''),
+    candidate_package_version   text        NOT NULL CHECK (candidate_package_version <> ''),
+    canonical_bytes             bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
+    result_sha256               text        NOT NULL CHECK (result_sha256 ~ '^sha256:[0-9a-f]{64}$'),
+    predecessor_release_id      int         NOT NULL CHECK (predecessor_release_id > 0),
+    predecessor_manifest_digest text        NOT NULL
+        CHECK (predecessor_manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    recorded_at                 timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT package_upgrade_qualifications_pkey
+        PRIMARY KEY (tenant_id, package_id, candidate_package_version),
+    CONSTRAINT package_upgrade_qualifications_package_fkey
+        FOREIGN KEY (tenant_id, package_id, candidate_package_version)
+        REFERENCES catalog.packages (tenant_id, package_id, package_version),
+    CONSTRAINT package_upgrade_qualifications_predecessor_fkey
+        FOREIGN KEY (tenant_id, predecessor_release_id)
+        REFERENCES catalog.release_manifest_snapshots (tenant_id, effective_release_id),
+    CONSTRAINT package_upgrade_qualifications_exact_hash
+        CHECK (result_sha256 = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
+);
+
 CREATE FUNCTION catalog.guard_release_component_insert()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -507,7 +529,7 @@ BEGIN
         'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
         'wiring_tombstones', 'wiring_activation', 'wiring_activation_events',
-        'release_components', 'release_manifest_snapshots',
+        'release_components', 'release_manifest_snapshots', 'package_upgrade_qualifications',
         'event_registrations'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
@@ -541,7 +563,7 @@ BEGIN
         'connection_requirements', 'connection_generations',
         'connection_bindings', 'wirings', 'wiring_tombstones',
         'wiring_activation_events', 'release_components',
-        'release_manifest_snapshots'
+        'release_manifest_snapshots', 'package_upgrade_qualifications'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
