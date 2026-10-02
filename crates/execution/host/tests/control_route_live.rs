@@ -24,7 +24,7 @@ use tokio::sync::mpsc;
 use tokio_postgres::Client;
 use tokio_rustls::TlsAcceptor;
 use wamn_catalog::HostRouteSet;
-use wamn_control_provision::{CredentialGeneration, PlatformComponent, WorkloadRoleFamily};
+use wamn_control_provision::PlatformComponent;
 use wamn_engine::flow_http_routing::{AuthenticatedCaller, CredentialType};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
@@ -37,7 +37,7 @@ use wamn_platform_identity::{PrincipalId, create_or_reuse_user};
 
 #[path = "support/control_fixture.rs"]
 mod control_fixture;
-use control_fixture::{ORG, connect, install};
+use control_fixture::{ORG, connect, environments, install};
 
 /// A fake identity service that requires the operator certificate. `/users`
 /// answers from `users` by email, or refuses an unknown email as identity
@@ -691,135 +691,6 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
-}
-
-/// One environment's project database on the test server, with the catalog,
-/// the application schema and one platform row of `tenant`, and its
-/// administration login minted by the production prepare. The login goes
-/// into `logins` under the key its control patch names, as the mounted
-/// Secret shows it.
-async fn project_database(
-    admin: &Client,
-    admin_url: &str,
-    system_url: &str,
-    project: &str,
-    instance: &str,
-    tenant: &str,
-    logins: &std::path::Path,
-) -> anyhow::Result<Client> {
-    use wamn_control::provision_project_env::{
-        self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
-    };
-    let database = wamn_control_provision::project_env_database_name(ORG, project, "dev", instance);
-    admin
-        .batch_execute(&provision_project_env::role_posture_sql())
-        .await?;
-    admin
-        .batch_execute(&format!("CREATE DATABASE \"{database}\""))
-        .await?;
-    admin
-        .batch_execute(&provision_project_env::privilege_sql(&database))
-        .await?;
-    let mut target_url = url::Url::parse(admin_url)?;
-    target_url.set_path(&format!("/{database}"));
-    let target = connect(target_url.as_str()).await?;
-    target
-        .batch_execute(
-            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles \
-                                        WHERE rolname = 'wamn_scenario_author') THEN \
-               CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 NOBYPASSRLS; \
-             END IF; END $$; \
-             CREATE SCHEMA wamn_run;",
-        )
-        .await?;
-    target
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await?;
-    target
-        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
-        .await?;
-    target
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:control-route-fixture', false)",
-            &[&PlatformComponent::Provisioning.principal_id().to_string()],
-        )
-        .await?;
-    target
-        .execute(
-            "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
-             VALUES ($1, $2::text::uuid, 'platform', 'provisioning@example.test', $3)",
-            &[
-                &tenant,
-                &PlatformComponent::Provisioning.principal_id().to_string(),
-                &PlatformComponent::Provisioning.principal_name(),
-            ],
-        )
-        .await?;
-
-    let secret = logins.join(format!("{project}.secret.json"));
-    let patch = logins.join(format!("{project}.patch.json"));
-    provision_project_env::run_workload_action(&WorkloadActionRequest {
-        org: ORG.to_owned(),
-        project: project.to_owned(),
-        env: "dev".to_owned(),
-        tenant: Some(tenant.to_owned()),
-        system_database_url: Some(system_url.to_owned()),
-        target_admin_database_url: Some(target_url.to_string()),
-        cluster: None,
-        db_host: target_url.host_str().map(str::to_owned),
-        db_port: target_url.port_or_known_default().unwrap_or(5432),
-        namespace: "hosts".to_owned(),
-        action: WorkloadGenerationAction {
-            family: WorkloadRoleFamily::Administration,
-            verb: WorkloadActionVerb::Prepare,
-            generation: CredentialGeneration::A,
-        },
-        secret: Some(secret.clone()),
-        emit_role_sql: None,
-        control_administration_patch: Some(patch.clone()),
-    })
-    .await?;
-    let patch: Value = serde_json::from_str(&std::fs::read_to_string(&patch)?)?;
-    for (key, url) in patch["stringData"]
-        .as_object()
-        .expect("the patch sets one key")
-    {
-        std::fs::write(logins.join(key), url.as_str().expect("the key holds a URL"))?;
-    }
-    std::fs::remove_file(secret)?;
-    Ok(target)
-}
-
-/// The project databases of `billing/dev` and `shop/dev`, with their logins
-/// in a fresh directory named for `test`.
-async fn environments(
-    admin: &Client,
-    admin_url: &str,
-    test: &str,
-) -> anyhow::Result<(PathBuf, Client, Client)> {
-    let logins = std::env::temp_dir().join(format!(
-        "wamn-control-administration-{test}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&logins);
-    std::fs::create_dir_all(&logins)?;
-    let billing = project_database(
-        admin,
-        admin_url,
-        admin_url,
-        "billing",
-        "aaaaaaa1",
-        "t-billing",
-        &logins,
-    )
-    .await?;
-    let shop = project_database(
-        admin, admin_url, admin_url, "shop", "aaaaaaa2", "t-shop", &logins,
-    )
-    .await?;
-    Ok((logins, billing, shop))
 }
 
 /// The application rows of one principal in one project database.

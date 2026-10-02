@@ -49,6 +49,25 @@ async function absent(page, text) {
   }
 }
 
+/** Waits until the switch whose label is `label` is on. */
+async function on(page, label) {
+  const control = page.getByLabel(label, { exact: true });
+  await control.waitFor({ ...WAIT, state: "attached" });
+  for (let tries = 0; tries < 60; tries += 1) {
+    if (await control.isChecked()) {
+      return;
+    }
+    await page.waitForTimeout(250);
+  }
+  throw new Error(`the switch "${label}" is not on`);
+}
+
+/** Chooses `option` in the select whose label is `label`. */
+async function choose(page, label, option) {
+  await page.getByRole("button", { name: label }).click();
+  await page.getByRole("option", { name: option }).click();
+}
+
 async function step(name, run) {
   try {
     await run();
@@ -86,11 +105,19 @@ try {
     await page.getByRole("option", { name: "purchase-reader" }).waitFor(WAIT);
   });
 
-  await step("an org-admin enters Control and sees the org and its projects", async () => {
+  await step("an org-admin adds a member to a project and grants org-admin", async () => {
     const page = await signIn("boss@example.test");
     await visible(page, "members");
     await page.getByText("billing", { exact: true }).click();
     await visible(page, "members of billing");
+    await choose(page, "user", "ann@example.test");
+    await choose(page, "environment", "dev");
+    await page.getByRole("button", { name: "add" }).click();
+    await on(page, "dev ann@example.test");
+    await page.getByText("Org", { exact: true }).click();
+    await visible(page, "members");
+    await page.getByLabel("org-admin ann@example.test", { exact: true }).click({ force: true });
+    await on(page, "org-admin ann@example.test");
   });
 
   await step("a project-admin sees only the project it administers", async () => {

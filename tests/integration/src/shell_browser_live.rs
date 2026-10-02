@@ -240,12 +240,17 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
     )
     .await?;
 
-    // The control host: Boss holds org-admin, and Cat project-admin of billing.
+    // The control host: Boss holds org-admin, Cat project-admin of billing,
+    // and Ann only the org membership. The project databases of billing and
+    // shop take the application rows of a grant, through the administration
+    // logins in `logins`, as `control_route_live` gives them.
     let mut postgres = wamn_test_postgres::start(&[])?;
     let control_database = postgres.create_database("shell_browser_control")?;
     let admin_url = control_database.url();
     let admin = control_fixture::connect(admin_url).await?;
     let control_url = control_fixture::install(&admin, admin_url).await?;
+    let (logins, _billing, _shop) =
+        control_fixture::environments(&admin, admin_url, "shell-browser").await?;
     let control_audience = wamn_platform_identity::control::control_audience(ORG)?;
     admin
         .execute(
@@ -267,8 +272,12 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
         project_admins: vec!["billing".to_owned()],
         ..MemberGrants::default()
     };
+    let ann = create_or_reuse_user(&admin, "ann@example.test", "Ann")
+        .await?
+        .principal_id;
     invite_member(&admin, &boss, ORG, &boss_grants).await?;
     invite_member(&admin, &cat, ORG, &cat_grants).await?;
+    invite_member(&admin, &ann, ORG, &MemberGrants::default()).await?;
     for principal in [&boss, &cat] {
         admin
             .execute(
@@ -303,7 +312,7 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
     let control_delivery = Arc::new(HostRouteDelivery::new(
         release,
         HostRouteHandlers::Control {
-            administration: None,
+            administration: Some(logins.clone()),
             control: control_client,
             writer,
             identity: None,
@@ -410,5 +419,6 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
     application_task.abort();
     keys_server.stop().await;
     host.server.stop().await;
+    let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
