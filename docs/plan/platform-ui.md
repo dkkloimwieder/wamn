@@ -1616,6 +1616,36 @@ Exit includes:
 - an `org-admin` who sees the org screens and every project, and a `project-admin` who sees only its projects
 - a browser test through a control surface and an application surface
 
+**8. Org and project screens.**
+
+Issue 8 (`wamn-a40n.12`) builds the screens behind the Control destinations of issue 7, from the operations of [§4.4](#44-org-level) and [§4.5](#45-project-level). The owner filed it on 2026-10-02 ([§9](#9-questions-for-the-owner) question 7).
+
+Measured on `worktree-table` `27054619a` on 2026-10-02:
+
+- `@wamn/control-org-client` has TypeScript bindings for all 14 org and project operations, and no generated components. `RoleGrid` and `UserGrid` in `@wamn/ui/admin` are hand-written over `@wamn/control-client` in the same way.
+- Org `user.list` answers `principalId`, `email`, `displayName` and `status` for each member. It does not say who holds `org-admin`, so a screen cannot choose between grant and revoke before a click.
+- `member.list` takes a project and answers each member with `environments`, `orgAdmin` and `projectAdmin`. `environment.list` takes a project and answers its environment names. `project.list` answers the project names of the org.
+- Every org operation requires `org-admin`. A `project-admin` therefore cannot call org `user.list`, and `member.list` names only users who already have a membership or a role in the project. A `project-admin` has no list from which to choose a new member, and `member.grant` takes a `principalId`.
+- `user.invite` takes `email`, `displayName`, `memberships` (project and environment pairs), `orgAdmin` and `projectAdmins`. It calls identity to create or reuse the user and to mail the invitation.
+- A grant that reaches application rows reads the administration logins from a mounted directory. `control_route_live` gives the control host such a directory over its fixture project database. `shell_browser_live` and `control_client_live` give it none, so a write that reaches an environment refuses there, and the browser test cannot complete one.
+- `ORG_SCREEN` and `PROJECT_ROUTE` in `web/shell/src/shell.tsx` render only "Org administration." and "Project administration of {project}.".
+
+The commits, each green:
+
+1. Org screen. Under `org`, a members table from org `user.list` with activate, deactivate, `org-admin` grant and revoke, and an invite form with its memberships, `org-admin` and `project-admin` choices from `project.list` and `environment.list`.
+2. Project screen. Under `projects/:project`, a members table from `member.list` with one membership toggle for each environment from `environment.list`, `member.grant` and `member.revoke`, and `project-admin` grant and revoke.
+3. Browser test. `shell_browser_live` grants and revokes through both screens.
+4. Documentation: the shell README, execution and `web-operator-client.md`.
+
+Each write reads its list again after it completes. A refusal shows its contract text, and a partial write names the environments that completed.
+
+Exit includes:
+
+- an `org-admin` who invites a user, activates and deactivates a member, and grants and revokes `org-admin`
+- an administrator of a project who grants and revokes an environment membership and `project-admin` in that project
+- a covered row, such as `project-admin` under `org-admin`, shown as covered with no revoke control
+- each refusal shown with its contract text
+
 ### Lifecycle epic
 
 Starts after the administration epic and the supported teardown verb.
@@ -1691,3 +1721,7 @@ New-project grant materialization and deterministic empty-environment copy from 
 8. Issue 7, answered 2026-10-02 with option A. The route table names the operation of each screen from the generated route constants, with no generator change.
 9. Issue 7, answered 2026-10-02. `RoleGrid` and `UserGrid` are an Administration section in each application, which only `admin` sees.
 10. Issue 7, answered 2026-10-02. The browser test runs local processes and a headless Chrome, as `control_client_live` does.
+11. Issue 8, open. Org `user.list` does not say who holds `org-admin`. Option A: it answers `org_admin` for each member, as application `user.list` answers `admin_covered`, and the control contract stays at 0.2.0, because 0.2.0 is not on main. Option B: the screen shows both controls and lets the server refuse. A is recommended.
+12. Issue 8, open. A `project-admin` has no list from which to choose a new member. Option A: `member.list` also answers the active org members with no membership in the project. Option B: a `project-admin` may call org `user.list`. Option C: only an `org-admin` adds a new member to a project, and a `project-admin` manages the members that the project already has.
+13. Issue 8, open. Where the screens live. Option A: hand-written `OrgScreen` and `ProjectScreen` in `@wamn/ui/admin` over `@wamn/control-org-client`, with gallery entries and component tests, as issue 6 built the grids. Option B: the generator emits components for the control route set. A is recommended.
+14. Issue 8, open. The browser test. Option A: `shell_browser_live` gives the control host an administration login directory over its fixture project database, as `control_route_live` does, and completes a membership grant and an `org-admin` grant. `user.invite` needs the identity service, so its form is tested in the component tests with a stub. Option B: the browser test covers only the reads and the refusals.
