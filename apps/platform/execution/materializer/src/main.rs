@@ -76,6 +76,21 @@ fn required(name: &str) -> Result<String, String> {
     std::env::var(name).map_err(|_| format!("missing required env {name}"))
 }
 
+/// The declared `max_batch` of `materializer_consumer_config`
+/// (crates/control/provision/src/events.rs). A larger fetch is refused by the
+/// server, so the only runtime cause of `limit-exceeded` stays the waiting pull.
+const MAX_BATCH: u32 = 64;
+
+fn batch(value: &str) -> Result<u32, String> {
+    let batch = value
+        .parse::<u32>()
+        .map_err(|error| format!("WAMN_MAT_BATCH: {error}"))?;
+    if batch > MAX_BATCH {
+        return Err(format!("WAMN_MAT_BATCH must not exceed {MAX_BATCH}"));
+    }
+    Ok(batch)
+}
+
 impl Config {
     fn from_env() -> Result<Self, String> {
         let max_deliver = env_or("WAMN_MAT_MAX_DELIVER", "5")
@@ -90,9 +105,7 @@ impl Config {
             project: required("WAMN_MAT_PROJECT")?,
             env: required("WAMN_MAT_ENV")?,
             tenant: required("WAMN_MAT_TENANT")?,
-            batch: env_or("WAMN_MAT_BATCH", "64")
-                .parse()
-                .map_err(|error| format!("WAMN_MAT_BATCH: {error}"))?,
+            batch: batch(&env_or("WAMN_MAT_BATCH", "64"))?,
             fetch_ms: env_or("WAMN_MAT_FETCH_MS", "5000")
                 .parse()
                 .map_err(|error| format!("WAMN_MAT_FETCH_MS: {error}"))?,
@@ -735,7 +748,13 @@ async fn serve(
     };
     let messages = match consumer.fetch(config.batch, config.fetch_ms).await {
         Ok(batch) => batch.messages,
-        Err(bindings::wasmcloud::nats::types::NatsError::NoMessages) => return,
+        // `limit-exceeded`: another replica holds the consumer's one waiting pull
+        // (`max_waiting: 1`, crates/control/provision/src/events.rs). Every
+        // replica but one is in this state.
+        Err(
+            bindings::wasmcloud::nats::types::NatsError::NoMessages
+            | bindings::wasmcloud::nats::types::NatsError::LimitExceeded(_),
+        ) => return,
         Err(error) => {
             eprintln!(
                 "wamn::materializer native fetch failed for {}: {error:?}",
@@ -874,6 +893,15 @@ mod tests {
     use super::*;
     use bindings::wamn::router_delivery::delivery::{DeliveryFailure, FailureType};
     use wamn_event_wire::{Causation, Op};
+
+    #[test]
+    fn a_batch_above_the_declared_max_batch_is_refused() {
+        assert_eq!(batch("64"), Ok(64));
+        assert_eq!(
+            batch("65"),
+            Err("WAMN_MAT_BATCH must not exceed 64".to_string())
+        );
+    }
 
     fn serving() -> Serving {
         Serving {
