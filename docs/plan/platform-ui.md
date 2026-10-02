@@ -1698,6 +1698,19 @@ Measured on main `6eba50b90` on 2026-10-02:
 - Resume, abandon and the status UI.
 - Exit: a local-process test with no Kubernetes.
 
+Measured on `worktree-table` `1d6c0dc83` on 2026-10-02:
+
+- Generation prepare reads `pg_authid` only to learn whether a password is set (`password_set` in `crates/control/provision/src/sql/credentials.rs` `workload_generation_state_sql`). It compares no password value. Every prepare mints a new password. `pg_roles.rolpassword` always reads `********`, so it cannot answer that question.
+- The rendered `Database` CR already sets `spec.owner: wamn_db_owner` (`crates/control/provision/src/database.rs`). `privilege_sql` runs `ALTER DATABASE ... OWNER TO` first. The vendored CNPG 1.29.2 CRDs in `deploy/infra/cnpg-operator.yaml` include `publications.postgresql.cnpg.io`, with `target.objects[].tablesInSchema`. No code renders a `Publication` CR.
+- Every chain step takes local files. `apply-package` and `reconcile-package-data-access` take a package directory, `push-component` takes the `.wasm` file and its declaration, and `publish-release` takes attachment and package manifest files. No store keeps package content by `(package_id, version)`. The control store keeps a manifest digest per tenant only. `promote` is the one path without local files, and it copies from a source environment.
+- `select` activates a release only with a `qualify-release` file. `qualify-release` needs a clean git tree and a kind run, and it knows only the Receiving and WMS package sets. `promote` writes the head with no qualification.
+- `wamn web upload` runs `pnpm run build` and writes `web/dist` to the bucket under `<package_id>/<release digest>/`. It needs the release to be the head, and it takes no built artifact.
+- Provisioning writes Secrets in three namespaces: the host families and the administration logins in `hosts`, the session target and the identity issuer login in `identity`, and the CDC and registry reader logins in `platform`.
+- The workspace has no Kubernetes client crate. `deploy-release` runs `kubectl`.
+- The grant surfaces name schemas that the applier owns, so a login that neither owns them nor inherits their owner cannot grant on them. `reconcile-run-plane` requires a `SUPERUSER` or `BYPASSRLS` admin login.
+
+[§9](#9-questions-for-the-owner) questions 34 to 40 set the commits of issue 10.
+
 **11. Project creation and environment copy (`wamn-zua8.4`).**
 
 New-project grant materialization and deterministic empty-environment copy from reusable release inputs.
@@ -1782,3 +1795,10 @@ The epic closes on one kind run after B13 of the cutover.
 31. Issue 9, answered 2026-10-02. No row means `active`. The first status route writes the row.
 32. Issue 10, answered 2026-10-02. Four statements of the role SQL need a superuser, measured on PostgreSQL 18 as a `CREATEROLE CREATEDB` login (notes of `wamn-zua8.3`). The superuser stays in the CNPG operator, and the worker never has it. [§4.10](#410-provisioning-credentials) records how each statement changes.
 33. Issue 9, answered 2026-10-02. The control contract moves to `0.3.0`, because `0.2.0` is on main and a reader moves with its writer.
+34. Issue 10. No store keeps package content by `(package_id, version)`, and every chain step reads local files. Where does the worker get a package's migrations, wasm files, declarations, attachments and manifests: a package artifact in OCI that a new publish step pushes, files built into the worker image, or another source?
+35. Issue 10. `select` needs a `qualify-release` file, which only a kind run of Receiving or WMS makes. How does the worker activate the release of a new environment: with a qualification of the same release made elsewhere, by writing the head as `promote` does with no qualification, or another way?
+36. Issue 10. A built UI is not stored anywhere today, and `wamn web upload` writes under the release digest of each environment. What does `ui` name, and where is it pushed: an OCI artifact, a bucket path that the worker copies, or another place?
+37. Issue 10. Provisioning writes Secrets in `identity` and `platform` too, but ruling 20 allows Secrets in `hosts` only. Does the RBAC also cover Secrets in `identity` and `platform`, or do those Secrets join the `awaiting operator` step?
+38. Issue 10. The workspace has no Kubernetes client. Does the worker use the `kube` crate, or does it run `kubectl` as `deploy-release` does?
+39. Issue 10. The password fingerprint of ruling 32 replaces the `password_set` check. Is it a new system table, for example `registry.generation_passwords (role, sha256, recorded_at)` from system migration `0009`, with the SHA-256 of the password?
+40. Issue 10. Which one-time grants does `wamn_provisioner` hold, and who creates it? The measurement needs `REPLICATION`, `pg_signal_backend`, membership of `wamn_system`, `createrole_self_grant = 'set, inherit'`, and membership of the owner of the project schemas. `reconcile-run-plane` also needs `BYPASSRLS`.
