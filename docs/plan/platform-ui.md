@@ -1651,12 +1651,13 @@ Exit includes:
 
 Starts after the administration epic and the supported teardown verb.
 
-The epic is `wamn-zua8`. Its first issue, `wamn-zua8.1`, closed on 2026-10-02 on evidence that `wamn-psss` closed at `fa04f19e1`. The items below keep their plan numbers 8 to 10, which repeat the numbers of the administration issues ([§9](#9-questions-for-the-owner) question 15).
+The epic is `wamn-zua8`. Its first issue, `wamn-zua8.1`, closed on 2026-10-02 on evidence that `wamn-psss` closed at `fa04f19e1`. The items are numbered 9 to 11 after the administration issues, with the bead id after each ([§9](#9-questions-for-the-owner) question 15).
 
 Measured on main `6eba50b90` on 2026-10-02:
 
 - No table holds an environment status. `registry.project_envs` has `org`, `project`, `env`, `secret_name`, `secret_namespace`, `instance_suffix` and `disposable`. `catalog.tenant_environments` in the control store has no status either.
-- `wamn-o8b9` closed. A system schema change is now a file in `deploy/sql/migrations/system/` (0001 to 0007), applied by `wamn-ctl upgrade-schema`. Item 8 therefore needs no hand-applied statement ([§9](#9-questions-for-the-owner) question 16).
+- `wamn-o8b9` closed. A system schema change is now a file in `deploy/sql/migrations/system/` (0001 to 0007), applied by `wamn-ctl upgrade-schema`.
+- The application host holds only its project database login. It has no connection to the system database, where `registry.project_envs` lives.
 - Identity offers an application audience for each `--session-target` file it reads at start. Helm builds those files from `sessionTargetSecrets`. A new environment therefore needs a new Secret and an identity upgrade, as `docs/operations/gcp.md` section 3.10 does by hand.
 - A host serves the one release that its pod arguments pin. Nothing turns off the routes of one environment.
 - `control.mine` answers projects only. `environment.list` reads `registry.project_envs`.
@@ -1666,24 +1667,30 @@ Measured on main `6eba50b90` on 2026-10-02:
 - Each step of the [§5.2](#52-environment-creation) chain has a library function, except the client UI upload. `wamn web upload` is private to the `wamn_ctl` crate and runs `pnpm`. Role permission closures reconcile inside release selection, and `materialize_admin_grants` runs inside `provision-project-env`.
 - `provision-org`, `provision-project-env` and `enable-cdc-project-env` hold no Kubernetes client. They write SQL and Kubernetes manifests that an operator applies with the cluster superuser and `kubectl`, in a set order. `deploy-release` runs `kubectl`. The release selection reads a qualification file. A new environment also needs its host workload, which the chain of [§5.2](#52-environment-creation) does not name.
 
-[§9](#9-questions-for-the-owner) questions 15 to 25 set the commits of each item. No code starts before they are answered.
+[§9](#9-questions-for-the-owner) questions 15 to 25, answered 2026-10-02, set the items. Question 26 is open.
 
-**8. Environment status.**
+**9. Environment status (`wamn-zua8.2`).**
 
-- active/inactive schema and behavior across identity, router, shell and CDC;
-- project-level inactivation.
+- System migration `0008` adds `registry.project_envs.status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive'))`. `upgrade-schema` applies it on wamn-dev. No statement is applied by hand.
+- Identity offers and mints no audience of an inactive environment, so the shell does not list it.
+- The application host refuses every route of an inactive environment after it reads the status ([§9](#9-questions-for-the-owner) question 26). The host workload keeps running.
+- Control routes `environment.activate`, `environment.inactivate`, `project.activate` and `project.inactivate`, for `org-admin` only. The project routes change every environment of the project.
+- CDC, data, memberships and role rows stay as they are.
 
-Issue 8 owns the hand-applied wamn-dev `wamn_system` statement adding the environment status column and any accompanying constraint/default required by the accepted DDL.
+**10. Provisioning worker and environment creation (`wamn-zua8.3`).**
 
-The statement is recorded in `docs/operations/gcp.md` §7 against `wamn-o8b9`.
+- `environment.create` takes `{project, env, tenant, packages: [{package_id, version}], ui}`, with package coordinates already in the registry. Without `ui`, the saga has no UI step. A `ui` names a built UI artifact already pushed, and the worker never runs `pnpm`.
+- `provisioning.sagas` gets the new saga type, and its own migration adds `provisioning.saga_steps`.
+- `wamn-ctl serve` runs the [§5.2](#52-environment-creation) chain to the run plane and the UI. It holds an in-cluster ServiceAccount with RBAC on `Database` CRs in `platform` and Secrets in `hosts`, and nothing else. It runs the role and privilege SQL as the Postgres login `wamn_provisioner`, which has `CREATEROLE` and `CREATEDB` and is not a superuser. No key file exists. If a statement of the role SQL needs a superuser, the work stops and names it.
+- The last step is `awaiting operator`, with the exact commands for the host workload and the identity restart, shown in `environment.list`. The worker never pauses for an operator before that step.
+- Resume, abandon and the status UI.
+- Exit: a local-process test with no Kubernetes.
 
-**9. Provisioning worker and environment creation.**
-
-Dedicated worker identity, saga execution, resume/abandon, status UI, live proof.
-
-**10. Project creation and environment copy.**
+**11. Project creation and environment copy (`wamn-zua8.4`).**
 
 New-project grant materialization and deterministic empty-environment copy from reusable release inputs.
+
+The epic closes on one kind run after B13 of the cutover.
 
 ---
 
@@ -1744,14 +1751,15 @@ New-project grant materialization and deterministic empty-environment copy from 
 13. Issue 8, answered 2026-10-02 with option A. `OrgScreen` and `ProjectScreen` are hand-written in `@wamn/ui/admin`, built like the grids.
 14. Issue 8, answered 2026-10-02 with option A. The browser test completes a membership grant and an `org-admin` grant through the control host's test database, as `control_route_live` does. The invite form is a stub in the component tests.
 
-15. Lifecycle numbering. The lifecycle items are numbered 8 to 10, and administration issue 8 now exists. Renumber them 9 to 11, or keep 8 to 10 and name them by bead id?
-16. Item 8. The plan says a hand-applied `wamn_system` statement adds the status column on wamn-dev. Use system migration `0008` and `upgrade-schema` instead, and drop the hand statement?
-17. Item 8. Where does the status live: a `status` column on `registry.project_envs` with `active` and `inactive`, default `active`?
-18. Item 8. How does the router serve none of the routes of an inactive environment: the host refuses each request after it reads the status, or the host workload is stopped?
-19. Item 8. Which routes change the status, and who may call them: `project.inactivate` only, or also `project.activate`, `environment.inactivate` and `environment.activate`, all `org-admin`?
-20. Item 9. The worker must apply role SQL as the cluster superuser, and apply `Database` CRs and Secrets with Kubernetes. Does the worker hold those credentials, limited to the org namespace and cluster, or does it stop at a step for an operator to apply?
-21. Item 9. Extend `provisioning.sagas` with a new type and add a steps table by system migration, or make a new saga table?
-22. Item 9. What does `environment.create` name as its input: a release of another environment of the project, package coordinates already in the registry, or something else?
-23. Item 9. The chain has no host workload step, and identity reads its session targets at start. Does the saga deploy the host and add the identity session target, or does an operator do both by hand?
-24. Item 9. The client UI upload runs `pnpm` today. Does the saga upload a built UI artifact named by the input, or leave the UI out?
-25. Items 9 and 10. The live test of the worker needs a kind cluster. Does it wait for wamn-93 to report the cutover done, or does a local process test with no Kubernetes count as the exit?
+15. Lifecycle numbering, answered 2026-10-02. The lifecycle items are numbered 9 to 11, with the bead id in parentheses after each.
+16. Issue 9, answered 2026-10-02. The status column comes in system migration `0008` through `upgrade-schema`. The plan names no hand-applied statement, and `docs/operations/gcp.md` §7 drops one if it records one, once `0008` runs on wamn-dev.
+17. Issue 9, answered 2026-10-02. `registry.project_envs.status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive'))`.
+18. Issue 9, answered 2026-10-02. Identity offers no audience, and the router serves no routes, after each reads the status. The host workload keeps running in this epic. Stopping it is a Kubernetes action of the worker, filed as its own bead and not in scope.
+19. Issue 9, answered 2026-10-02. Four routes: `environment.activate`, `environment.inactivate`, `project.activate` and `project.inactivate`. The project routes apply to every environment of the project. `org-admin` only.
+20. Issue 10, answered 2026-10-02. The worker holds its credentials, narrowly, and never pauses for an operator. An in-cluster Kubernetes ServiceAccount has RBAC on `Database` CRs in `platform` and Secrets in `hosts`, and nothing else. A Postgres login `wamn_provisioner` with `CREATEROLE` and `CREATEDB`, not a superuser, runs the role and privilege SQL. If a statement in the role SQL needs a superuser, the work stops and names it. No key file exists anywhere.
+21. Issue 10, answered 2026-10-02. `provisioning.sagas` gets the new type. `provisioning.saga_steps` comes in its own migration in issue 10.
+22. Issue 10, answered 2026-10-02. The input is package coordinates already in the registry: `{project, env, tenant, packages: [{package_id, version}], ui}`. A release of another environment is `environment.copy`, issue 11.
+23. Issue 10, answered 2026-10-02. The saga ends where [§5.2](#52-environment-creation) ends, at the run plane and the UI. For the host workload and the identity restart it records a last step `awaiting operator` with the exact commands, shown in `environment.list`. The deploy epic's `create-environment` automates those two, not this epic.
+24. Issue 10, answered 2026-10-02. The input names a built UI artifact already pushed, and the worker never runs `pnpm`. Without `ui` in the input, the saga has no UI step.
+25. Issue 10, answered 2026-10-02. Issue 10 exits on the local-process test. The epic closes on one kind run after B13.
+26. Issue 9. The application host holds only its project database login and cannot read `registry.project_envs`. How does it read the status: a copy that each status route writes into the project database through the administration login, as grants reach it, or a new system database login for the host?
