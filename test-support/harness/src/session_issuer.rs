@@ -159,6 +159,7 @@ pub async fn prepare(
         },
         secret: Some(target_file.clone()),
         emit_role_sql: None,
+        control_administration_patch: None,
     })
     .await?;
     for (path, name, key) in [

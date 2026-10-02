@@ -296,6 +296,7 @@ fn request(
         nats_username: "provisioning".into(),
         nats_password_file: password.into(),
         confirm,
+        control_administration_patch: None,
     }
 }
 
