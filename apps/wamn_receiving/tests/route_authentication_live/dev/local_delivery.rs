@@ -22,10 +22,10 @@ const CODE: &str = "apps/wamn_receiving/component/src/reads.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
 const MANIFEST: &str = "apps/wamn_receiving/wamn.k";
 const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
-const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
+const APPENDED: &str = "apps/wamn_receiving/migrations/0003_location_note.sql";
 const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
 const CODE_BEFORE: &str = "read::location_list(connection)";
-const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, wamn_receiving_data_access::error::AccessError>(rows) }";
+const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, wamn_receiving_data_access::AccessError>(rows) }";
 const MANIFEST_BEFORE: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"id\"]";
 const MANIFEST_AFTER: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"id\", \"note\"]";
 const OWNER_BEFORE: &str = "server_owned_fields = [\"id\", \"note\"]";
@@ -187,7 +187,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 
         original.replace(MANIFEST, OWNER_BEFORE, OWNER_AFTER)?;
         let reset = watch.served().await?;
-        ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a declared definition owner must create a new target instance");
+        ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a declared definition owner must create a new target instance: instance {} after {}, skipped {:?}", reset.instance, first.instance, reset.skipped);
         reset.locations(token, &[]).await?;
         ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
