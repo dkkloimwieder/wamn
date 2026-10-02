@@ -1982,3 +1982,14 @@ It reported `applied TypeColumnCutover: type-columns` for Receiving and for WMS,
 The listing of PAT Secrets with the label `app.kubernetes.io/component=project-env-pat` returned 0 Secrets, so no annotation ran.
 
 Later in the cutover, project migration `0005_wiring_definition_key.sql` of commit `ebac92ef4` (`wamn-ld93.21`) added `package_version` to `wirings_definition_key`. `upgrade-schema` ran on both project-env databases without `--baseline`, because the verb refuses `--baseline` after its first run. Each run took 1 second and printed `applied` for `0005_wiring_definition_key.sql`. `app_system.schema_migrations` holds rows 1 to 5 in each project-env database, and wamn_system had no pending file.
+
+On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four fixed guest tags of the `components` repository were deleted, one command per tag. They named no running digest after B10:
+
+| Tag | Digest |
+|---|---|
+| `flow-http` | `sha256:f3d8d1bea0e3d9dd69dc2e30c004663a95ef234ed36a80faf4e8bcc35dc42fb4` |
+| `materializer` | `sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0` |
+| `wms-flow-http` | `sha256:923f270bb7425cad48e46a12fa3bb5843f9b1bd174851298ee68485cc8deea7e` |
+| `wms-materializer` | `sha256:581fd2ed52bf349d2adc6cfbad22d0b2c33b157c99f3ef1b3a61aa92bac6ca7a` |
+
+Then `gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags` turned immutable tags on at 17:12 UTC. The deletes and the update took 6 seconds. `gcloud artifacts repositories describe wamn` shows `immutableTags: true`, and every tag of `components` is a sha256 hex.
