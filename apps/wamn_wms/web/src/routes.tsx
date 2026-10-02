@@ -32,6 +32,31 @@ import {
   ProductQueryTableLabel,
   ProductUpdateFormLabel,
 } from "@wamn/wms-client/components/labels.js";
+import {
+  INVENTORY_ADJUST_ROUTE,
+  INVENTORY_AGGREGATE_ROUTE,
+  INVENTORY_MERGE_ROUTE,
+  INVENTORY_MOVE_ROUTE,
+  INVENTORY_SPLIT_ROUTE,
+} from "@wamn/wms-client/inventory.js";
+import {
+  INVENTORY_TRANSACTION_GET_ROUTE,
+  INVENTORY_TRANSACTION_QUERY_ROUTE,
+} from "@wamn/wms-client/inventory_transaction.js";
+import {
+  LOCATION_CREATE_ROUTE,
+  LOCATION_GET_ROUTE,
+  LOCATION_QUERY_ROUTE,
+  LOCATION_UPDATE_ROUTE,
+} from "@wamn/wms-client/location.js";
+import { PACKAGING_CREATE_ROUTE, PACKAGING_GET_ROUTE, PACKAGING_QUERY_ROUTE } from "@wamn/wms-client/packaging.js";
+import { PACKAGING_QUANTITY_GET_ROUTE, PACKAGING_QUANTITY_QUERY_ROUTE } from "@wamn/wms-client/packaging_quantity.js";
+import {
+  PRODUCT_CREATE_ROUTE,
+  PRODUCT_GET_ROUTE,
+  PRODUCT_QUERY_ROUTE,
+  PRODUCT_UPDATE_ROUTE,
+} from "@wamn/wms-client/product.js";
 
 /** The generated module of each model. A route loads its module when it opens. */
 const inventory = () => import("@wamn/wms-client/components/inventory.js");
@@ -61,8 +86,11 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "packagings",
+        operation: PACKAGING_QUERY_ROUTE.operation,
         label: PackagingQueryTableLabel,
-        actions: [{ label: PackagingCreateFormLabel, path: "packagings/new" }],
+        actions: [
+          { label: PackagingCreateFormLabel, path: "packagings/new", operation: PACKAGING_CREATE_ROUTE.operation },
+        ],
         component: screen(packaging, (m) => (props) => (
           <m.PackagingQueryTable
             transport={props.transport}
@@ -79,6 +107,7 @@ export const SECTIONS: readonly ShellSection[] = [
     routes: [
       {
         path: "packagings/new",
+        operation: PACKAGING_CREATE_ROUTE.operation,
         component: screen(packaging, (m) => (props) => (
           <m.PackagingCreateForm
             transport={props.transport}
@@ -89,6 +118,7 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "packagings/:id",
+        operation: PACKAGING_GET_ROUTE.operation,
         component: screen(packaging, (m) => (props) => (
           <m.PackagingGetDetail transport={props.transport} input={key(props)} />
         )),
@@ -100,6 +130,7 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "packaging-quantities",
+        operation: PACKAGING_QUANTITY_QUERY_ROUTE.operation,
         label: PackagingQuantityQueryTableLabel,
         component: screen(packagingQuantity, (m) => (props) => (
           <m.PackagingQuantityQueryTable
@@ -114,6 +145,7 @@ export const SECTIONS: readonly ShellSection[] = [
     routes: [
       {
         path: "packaging-quantities/:id",
+        operation: PACKAGING_QUANTITY_GET_ROUTE.operation,
         component: screen(packagingQuantity, (m) => (props) => (
           <m.PackagingQuantityGetDetail transport={props.transport} input={key(props)} />
         )),
@@ -125,14 +157,18 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "inventory",
+        operation: INVENTORY_AGGREGATE_ROUTE.operation,
         label: InventoryAggregateTableLabel,
-        actions: [{ label: InventoryMergeFormLabel, path: "inventory/merge" }],
+        actions: [
+          { label: InventoryMergeFormLabel, path: "inventory/merge", operation: INVENTORY_MERGE_ROUTE.operation },
+        ],
         component: screen(inventory, (m) => (props) => <m.InventoryAggregateTable transport={props.transport} />),
       },
     ],
     routes: [
       {
         path: "inventory/move",
+        operation: INVENTORY_MOVE_ROUTE.operation,
         component: screen(inventory, (m) => (props) => (
           <m.InventoryMoveForm
             transport={props.transport}
@@ -143,6 +179,7 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "inventory/adjust",
+        operation: INVENTORY_ADJUST_ROUTE.operation,
         component: screen(inventory, (m) => (props) => (
           <m.InventoryAdjustForm
             transport={props.transport}
@@ -153,6 +190,7 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "inventory/split",
+        operation: INVENTORY_SPLIT_ROUTE.operation,
         component: screen(inventory, (m) => (props) => (
           <m.InventorySplitForm
             transport={props.transport}
@@ -163,6 +201,7 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "inventory/merge",
+        operation: INVENTORY_MERGE_ROUTE.operation,
         component: screen(inventory, (m) => (props) => (
           <m.InventoryMergeForm transport={props.transport} onSubmitted={done(props)} />
         )),
@@ -174,6 +213,7 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "inventory-transactions",
+        operation: INVENTORY_TRANSACTION_QUERY_ROUTE.operation,
         label: InventoryTransactionQueryTableLabel,
         component: screen(inventoryTransaction, (m) => (props) => (
           <m.InventoryTransactionQueryTable
@@ -188,6 +228,7 @@ export const SECTIONS: readonly ShellSection[] = [
     routes: [
       {
         path: "inventory-transactions/:id",
+        operation: INVENTORY_TRANSACTION_GET_ROUTE.operation,
         component: screen(inventoryTransaction, (m) => (props) => (
           <m.InventoryTransactionGetDetail transport={props.transport} input={key(props)} />
         )),
@@ -199,8 +240,11 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "locations",
+        operation: LOCATION_QUERY_ROUTE.operation,
         label: LocationQueryTableLabel,
-        actions: [{ label: LocationCreateFormLabel, path: "locations/new" }],
+        actions: [
+          { label: LocationCreateFormLabel, path: "locations/new", operation: LOCATION_CREATE_ROUTE.operation },
+        ],
         component: screen(location, (m) => (props) => (
           <m.LocationQueryTable
             transport={props.transport}
@@ -213,6 +257,7 @@ export const SECTIONS: readonly ShellSection[] = [
     routes: [
       {
         path: "locations/new",
+        operation: LOCATION_CREATE_ROUTE.operation,
         component: screen(location, (m) => (props) => (
           <m.LocationCreateForm
             transport={props.transport}
@@ -223,13 +268,17 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "locations/:id",
-        actions: [{ label: LocationUpdateFormLabel, path: "locations/:id/update" }],
+        operation: LOCATION_GET_ROUTE.operation,
+        actions: [
+          { label: LocationUpdateFormLabel, path: "locations/:id/update", operation: LOCATION_UPDATE_ROUTE.operation },
+        ],
         component: screen(location, (m) => (props) => (
           <m.LocationGetDetail transport={props.transport} input={key(props)} />
         )),
       },
       {
         path: "locations/:id/update",
+        operation: LOCATION_UPDATE_ROUTE.operation,
         component: screen(location, (m) => (props) => (
           <m.LocationUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
         )),
@@ -241,8 +290,9 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "products",
+        operation: PRODUCT_QUERY_ROUTE.operation,
         label: ProductQueryTableLabel,
-        actions: [{ label: ProductCreateFormLabel, path: "products/new" }],
+        actions: [{ label: ProductCreateFormLabel, path: "products/new", operation: PRODUCT_CREATE_ROUTE.operation }],
         component: screen(product, (m) => (props) => (
           <m.ProductQueryTable
             transport={props.transport}
@@ -254,6 +304,7 @@ export const SECTIONS: readonly ShellSection[] = [
     routes: [
       {
         path: "products/new",
+        operation: PRODUCT_CREATE_ROUTE.operation,
         component: screen(product, (m) => (props) => (
           <m.ProductCreateForm
             transport={props.transport}
@@ -264,13 +315,17 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "products/:id",
-        actions: [{ label: ProductUpdateFormLabel, path: "products/:id/update" }],
+        operation: PRODUCT_GET_ROUTE.operation,
+        actions: [
+          { label: ProductUpdateFormLabel, path: "products/:id/update", operation: PRODUCT_UPDATE_ROUTE.operation },
+        ],
         component: screen(product, (m) => (props) => (
           <m.ProductGetDetail transport={props.transport} input={key(props)} />
         )),
       },
       {
         path: "products/:id/update",
+        operation: PRODUCT_UPDATE_ROUTE.operation,
         component: screen(product, (m) => (props) => (
           <m.ProductUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
         )),

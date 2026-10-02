@@ -19,6 +19,9 @@ export default defineConfig({
     alias: {
       "@wamn/web-runtime": fileURLToPath(new URL("../runtime/src/index.ts", import.meta.url)),
       "@wamn/ui": fileURLToPath(new URL("../ui/src/index.ts", import.meta.url)),
+      "@wamn/control-client": fileURLToPath(
+        new URL("../../crates/catalog/model/src/host_route/generated/client-ts/index.ts", import.meta.url),
+      ),
     },
     dedupe: ["solid-js", "@solidjs/router", "@tanstack/solid-table"],
   },

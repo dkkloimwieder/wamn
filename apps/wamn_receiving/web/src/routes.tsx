@@ -29,6 +29,19 @@ import {
   SupplierCreateFormLabel,
   SupplierQueryTableLabel,
 } from "@wamn/receiving-client/components/labels.js";
+import { LOCATION_LIST_ROUTE } from "@wamn/receiving-client/location.js";
+import {
+  PURCHASE_ORDER_GET_ROUTE,
+  PURCHASE_ORDER_QUERY_ROUTE,
+  PURCHASE_ORDER_UPDATE_ROUTE,
+} from "@wamn/receiving-client/purchase_order.js";
+import { RECEIPT_GET_ROUTE, RECEIPT_QUERY_ROUTE } from "@wamn/receiving-client/receipt.js";
+import {
+  RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE,
+  RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE,
+  RECEIVING_RECORD_RECEIPT_ROUTE,
+} from "@wamn/receiving-client/receiving.js";
+import { SUPPLIER_CREATE_ROUTE, SUPPLIER_QUERY_ROUTE } from "@wamn/receiving-client/supplier.js";
 
 /** The generated module of each model. A route loads its module when it opens. */
 const location = () => import("@wamn/receiving-client/components/location.js");
@@ -60,6 +73,7 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "purchase-orders",
+        operation: PURCHASE_ORDER_QUERY_ROUTE.operation,
         label: PurchaseOrderQueryTableLabel,
         component: screen(purchaseOrder, (m) => (props) => (
           <m.PurchaseOrderQueryTable
@@ -75,11 +89,28 @@ export const SECTIONS: readonly ShellSection[] = [
     routes: [
       {
         path: "purchase-orders/:id",
+        operation: PURCHASE_ORDER_GET_ROUTE.operation,
         actions: [
-          { label: ReceivingRecordReceiptFormLabel, path: "receipts/new?value.purchaseOrderId=:id" },
-          { label: ReceivingLoadReceiptScreenTableLabel, path: "purchase-orders/:id/receiving" },
-          { label: ReceivingLoadPurchaseOrderHistoryTableLabel, path: "purchase-orders/:id/history" },
-          { label: PurchaseOrderUpdateFormLabel, path: "purchase-orders/:id/update" },
+          {
+            label: ReceivingRecordReceiptFormLabel,
+            path: "receipts/new?value.purchaseOrderId=:id",
+            operation: RECEIVING_RECORD_RECEIPT_ROUTE.operation,
+          },
+          {
+            label: ReceivingLoadReceiptScreenTableLabel,
+            path: "purchase-orders/:id/receiving",
+            operation: RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE.operation,
+          },
+          {
+            label: ReceivingLoadPurchaseOrderHistoryTableLabel,
+            path: "purchase-orders/:id/history",
+            operation: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE.operation,
+          },
+          {
+            label: PurchaseOrderUpdateFormLabel,
+            path: "purchase-orders/:id/update",
+            operation: PURCHASE_ORDER_UPDATE_ROUTE.operation,
+          },
         ],
         component: screen(purchaseOrder, (m) => (props) => (
           <m.PurchaseOrderGetDetail transport={props.transport} input={key(props)} />
@@ -87,12 +118,14 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "purchase-orders/:id/update",
+        operation: PURCHASE_ORDER_UPDATE_ROUTE.operation,
         component: screen(purchaseOrder, (m) => (props) => (
           <m.PurchaseOrderUpdateForm transport={props.transport} key={key(props)} onSubmitted={done(props)} />
         )),
       },
       {
         path: "purchase-orders/:id/receiving",
+        operation: RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE.operation,
         // A table reads its fixed input once, so a new order in the address
         // mounts a new table (wamn-erwv.6).
         component: screen(receiving, (m) => (props) => (
@@ -112,6 +145,7 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "purchase-orders/:id/history",
+        operation: RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE.operation,
         // A new order in the address mounts a new table, as above (wamn-erwv.6).
         component: screen(receiving, (m) => (props) => (
           <Show when={key(props).id} keyed>
@@ -131,8 +165,15 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "receipts",
+        operation: RECEIPT_QUERY_ROUTE.operation,
         label: ReceiptQueryTableLabel,
-        actions: [{ label: ReceivingRecordReceiptFormLabel, path: "receipts/new" }],
+        actions: [
+          {
+            label: ReceivingRecordReceiptFormLabel,
+            path: "receipts/new",
+            operation: RECEIVING_RECORD_RECEIPT_ROUTE.operation,
+          },
+        ],
         component: screen(receipt, (m) => (props) => (
           <m.ReceiptQueryTable
             transport={props.transport}
@@ -144,6 +185,7 @@ export const SECTIONS: readonly ShellSection[] = [
     routes: [
       {
         path: "receipts/new",
+        operation: RECEIVING_RECORD_RECEIPT_ROUTE.operation,
         component: screen(receiving, (m) => (props) => (
           <m.ReceivingRecordReceiptForm
             transport={props.transport}
@@ -154,6 +196,7 @@ export const SECTIONS: readonly ShellSection[] = [
       },
       {
         path: "receipts/:id",
+        operation: RECEIPT_GET_ROUTE.operation,
         component: screen(receipt, (m) => (props) => (
           <m.ReceiptGetDetail transport={props.transport} input={key(props)} />
         )),
@@ -165,14 +208,18 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "suppliers",
+        operation: SUPPLIER_QUERY_ROUTE.operation,
         label: SupplierQueryTableLabel,
-        actions: [{ label: SupplierCreateFormLabel, path: "suppliers/new" }],
+        actions: [
+          { label: SupplierCreateFormLabel, path: "suppliers/new", operation: SUPPLIER_CREATE_ROUTE.operation },
+        ],
         component: screen(supplier, (m) => (props) => <m.SupplierQueryTable transport={props.transport} />),
       },
     ],
     routes: [
       {
         path: "suppliers/new",
+        operation: SUPPLIER_CREATE_ROUTE.operation,
         component: screen(supplier, (m) => (props) => (
           <m.SupplierCreateForm
             transport={props.transport}
@@ -188,6 +235,7 @@ export const SECTIONS: readonly ShellSection[] = [
     screens: [
       {
         path: "locations",
+        operation: LOCATION_LIST_ROUTE.operation,
         label: LocationListTableLabel,
         component: screen(location, (m) => (props) => (
           <m.LocationListTable

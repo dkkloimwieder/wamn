@@ -3,7 +3,8 @@
  *
  * Each test sets the address, renders the shell with three stub screens, and
  * reads what an operator sees. The stub answers the four password paths the
- * way the identity service does for a cookie session.
+ * way the identity service does for a cookie session, and `permission.mine`
+ * the way the application host does.
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
@@ -69,29 +70,43 @@ function stubRecord(props: ScreenProps) {
 const SECTIONS: readonly ShellSection[] = [
   {
     label: "Pallets",
-    screens: [{ path: "pallets", label: "query", component: stubScreen("pallets") }],
+    screens: [
+      { path: "pallets", operation: "acme:pallet/query@1.0.0", label: "query", component: stubScreen("pallets") },
+    ],
     routes: [
       {
         path: "pallets/:id",
+        operation: "acme:pallet/get@1.0.0",
         component: stubRecord,
-        actions: [{ label: "update", path: "pallets/:id/update?note=hi" }],
+        actions: [{ label: "update", path: "pallets/:id/update?note=hi", operation: "acme:pallet/update@1.0.0" }],
       },
-      { path: "pallets/:id/update", component: stubForm },
+      { path: "pallets/:id/update", operation: "acme:pallet/update@1.0.0", component: stubForm },
     ],
   },
   {
     label: "Products",
     screens: [
-      { path: "products", label: "query", component: stubScreen("products") },
-      { path: "product-totals", label: "aggregate", component: stubScreen("product totals") },
+      { path: "products", operation: "acme:product/query@1.0.0", label: "query", component: stubScreen("products") },
+      {
+        path: "product-totals",
+        operation: "acme:product/aggregate@1.0.0",
+        label: "aggregate",
+        component: stubScreen("product totals"),
+      },
     ],
   },
 ];
 
 const ONE = [{ aud: AUD, org: "acme", project: "widgets", env: "dev" }];
 
-/** The identity service, holding one session cookie or none, with the environments it lists. */
-function identity(signedIn: boolean, listed: readonly unknown[] = ONE) {
+/** What `permission.mine` answers an admin. */
+const ADMIN = { admin: true, permissions: [] };
+
+/**
+ * The identity service, holding one session cookie or none, with the
+ * environments it lists, and the application host's `permission.mine`.
+ */
+function identity(signedIn: boolean, listed: readonly unknown[] = ONE, mine: unknown = ADMIN) {
   const state = { signedIn, calls: [] as string[], bodies: [] as unknown[] };
   const times = () =>
     new Response(
@@ -102,6 +117,9 @@ function identity(signedIn: boolean, listed: readonly unknown[] = ONE) {
     const path = String(url);
     state.calls.push(path);
     state.bodies.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)));
+    if (path.startsWith("/api/wamn_control/permission/mine")) {
+      return Promise.resolve(new Response(JSON.stringify([{ value: mine }]), { status: 200 }));
+    }
     switch (path) {
       case "/password/environments":
         return Promise.resolve(new Response(JSON.stringify({ environments: listed }), { status: 200 }));
@@ -279,7 +297,7 @@ describe("the app shell", () => {
     open(`/${AUD}/products`, fetch);
     expect(await screen.findByText("products screen")).toBeDefined();
     expect(screen.queryByLabelText("password")).toBeNull();
-    expect(state.calls).toEqual(["/password/renew"]);
+    expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
   });
 
   it("signs out, and asks for the password on the same address", async () => {
@@ -327,7 +345,7 @@ describe("the app shell", () => {
     const { state, fetch } = identity(true);
     open(`/${AUD}/pallets/abc`, fetch);
     expect(await screen.findByText("pallet abc record")).toBeDefined();
-    expect(state.calls).toEqual(["/password/renew"]);
+    expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
   });
 
   it("opens a form from an action, and the form returns to the page that opened it", async () => {
@@ -348,6 +366,29 @@ describe("the app shell", () => {
     fireEvent.click(screen.getByText("done"));
     expect(await screen.findByText("pallets screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets`));
+  });
+
+  it("shows only the screens, actions and routes of the operations the caller holds", async () => {
+    const mine = { admin: false, permissions: ["acme:product/aggregate", "acme:pallet/get"] };
+    const { fetch } = identity(false, ONE, mine);
+    open("/", fetch);
+    await signIn();
+    expect(await screen.findByText("product totals screen")).toBeDefined();
+    await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/product-totals`));
+    // One held screen of Products, so the model names it, and Pallets has none.
+    expect(screen.getByText("Products").closest("a")).not.toBeNull();
+    expect(screen.queryByText("Pallets")).toBeNull();
+    expect(screen.queryByText("query")).toBeNull();
+    fireEvent.click(screen.getByText("open pallet abc"));
+    expect(await screen.findByText("pallet abc record")).toBeDefined();
+    expect(screen.queryByText("update")).toBeNull();
+  });
+
+  it("shows no page for the address of a route the caller does not hold", async () => {
+    const { fetch } = identity(true, ONE, { admin: false, permissions: ["acme:pallet/get"] });
+    open(`/${AUD}/pallets/abc/update`, fetch);
+    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    expect(screen.queryByText(/update abc/)).toBeNull();
   });
 
   it("shows no page for an address that names none", async () => {

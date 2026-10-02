@@ -19,6 +19,7 @@
       "@wamn/web-runtime": ["../../../web/runtime/src/index.ts"],
       "@wamn/ui": ["../../../web/ui/src/index.ts"],
       "@wamn/shell": ["../../../web/shell/src/index.ts"],
+      "@wamn/control-client": ["../../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"],
       "@wamn/wms-client/*": ["../generated/client-ts/*"],
       "solid-js": ["./node_modules/solid-js"],
       "solid-js/*": ["./node_modules/solid-js/*"],

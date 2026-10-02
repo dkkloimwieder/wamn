@@ -7,6 +7,11 @@
  * no screen: the application writes each one from its generated components.
  * The shell owns the router, so a screen gets its address values and a way to
  * open another address as props, and never imports the router.
+ *
+ * Each route names the operation it runs. After sign in the shell reads
+ * `permission.mine` once, and shows only the screens, the actions and the
+ * routes of the operations the caller holds. This is presentation only: every
+ * route repeats its own check (docs/plan/platform-ui.md §4.8).
  */
 
 import {
@@ -21,6 +26,7 @@ import {
 } from "@solidjs/router";
 import {
   createContext,
+  createResource,
   createSignal,
   For,
   lazy,
@@ -34,6 +40,7 @@ import {
   type JSX,
 } from "solid-js";
 
+import { permission } from "@wamn/control-client";
 import { Button, CardPage, Field, FieldError, FieldGroup, FieldLabel, Input, ScreenActions } from "@wamn/ui";
 import {
   createTransport,
@@ -72,7 +79,8 @@ export interface ScreenProps {
   /**
    * Returns to the page that opened this one. When no page of the application
    * opened it, for example a pasted address, it goes to the first screen of
-   * the section.
+   * the section, or to the first screen the caller holds when it does not
+   * hold that one.
    */
   readonly close: () => void;
 }
@@ -86,12 +94,19 @@ export interface ShellAction {
    * as `:id` in `locations/:id/update`, takes its value from the address.
    */
   readonly path: string;
+  /** The operation of the route it opens, from its generated route constant. The button shows only to a caller who holds it. */
+  readonly operation: string;
 }
 
 /** One route of the application, with no navigation entry, such as a record page or a form. */
 export interface ShellRoute {
   /** The path below the environment, with no leading slash, such as `pallets/:id`. */
   readonly path: string;
+  /**
+   * The operation the route runs, from its generated route constant, such as
+   * `PALLET_GET_ROUTE.operation`. The route shows only to a caller who holds it.
+   */
+  readonly operation: string;
   readonly component: Component<ScreenProps>;
   /** The buttons above the route, such as the create form of a table. */
   readonly actions?: readonly ShellAction[];
@@ -129,6 +144,45 @@ export interface ShellProps {
 
 const TransportContext = createContext<Transport>();
 
+/** Whether the caller holds one operation, from `permission.mine`. */
+type Holds = (operation: string) => boolean;
+
+const HoldsContext = createContext<Holds>();
+
+/**
+ * What `permission.mine` grants: `admin` holds every operation, and any other
+ * caller the references it lists. A reference is an operation without its
+ * version. A refused or uncertain read holds nothing.
+ */
+async function readHolds(transport: Transport): Promise<Holds> {
+  const outcome = await permission.mine(transport, [{}]);
+  if (outcome.status !== "completed") {
+    return () => false;
+  }
+  if (outcome.value.admin) {
+    return () => true;
+  }
+  const held = new Set(outcome.value.permissions);
+  return (operation) => held.has(reference(operation));
+}
+
+/** An operation without its version: `wamn-wms:pallet/get@0.1.0` is `wamn-wms:pallet/get`. */
+function reference(operation: string): string {
+  const at = operation.lastIndexOf("@");
+  return at < 0 ? operation : operation.slice(0, at);
+}
+
+/** The sections with only the screens and routes the caller holds. A section with no screen left is dropped. */
+function heldSections(sections: readonly ShellSection[], holds: Holds): ShellSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      screens: section.screens.filter((screen) => holds(screen.operation)),
+      routes: (section.routes ?? []).filter((route) => holds(route.operation)),
+    }))
+    .filter((section) => section.screens.length > 0);
+}
+
 /** The page of a signed-in session. It loads after sign in, so the sign in page stays small. */
 const Layout = lazy(() => import("./layout"));
 
@@ -137,16 +191,28 @@ interface Opened {
   readonly opened: true;
 }
 
+/** The first screen the caller holds, or the no page text. */
+function FirstScreen(props: { readonly screens: readonly ShellScreen[] }): JSX.Element {
+  const holds = useContext(HoldsContext);
+  const first = () => props.screens.find((screen) => holds?.(screen.operation) === true);
+  return (
+    <Show when={first()} fallback={<NotFound />}>
+      {(screen) => <Navigate href={screen().path} />}
+    </Show>
+  );
+}
+
 /**
  * One route with the transport of the session it renders in, its address
  * values, a way to open another path and a way back. Each one is read here,
  * while the route renders. A component uses its props later, in an event
  * handler, where no context is in reach.
  */
-function screenRoute(route: ShellRoute, home: string): Component {
+function screenRoute(route: ShellRoute, home: ShellScreen | undefined): Component {
   return () => {
     const transport = useContext(TransportContext);
-    if (transport === undefined) {
+    const holds = useContext(HoldsContext);
+    if (transport === undefined || holds === undefined) {
       throw new Error("a screen renders outside a signed-in session");
     }
     const params = useParams();
@@ -154,11 +220,14 @@ function screenRoute(route: ShellRoute, home: string): Component {
     const navigate = useNavigate();
     const open = (path: string) => navigate(`/${params.aud}/${path}`, { state: { opened: true } });
     const close = () =>
-      location.state?.opened === true ? navigate(-1) : navigate(`/${params.aud}/${home}`, { replace: true });
+      location.state?.opened === true
+        ? navigate(-1)
+        : navigate(`/${params.aud}/${home !== undefined && holds(home.operation) ? home.path : ""}`, { replace: true });
     const fill = (path: string) => path.replace(/:(\w+)/g, (_, name: string) => encodeURIComponent(params[name] ?? ""));
+    const actions = (route.actions ?? []).filter((action) => holds(action.operation));
     return (
-      <>
-        <Show when={route.actions}>
+      <Show when={holds(route.operation)} fallback={<NotFound />}>
+        <Show when={actions.length > 0 ? actions : undefined}>
           {(actions) => (
             <ScreenActions>
               <For each={actions()}>
@@ -178,7 +247,7 @@ function screenRoute(route: ShellRoute, home: string): Component {
           open={open}
           close={close}
         />
-      </>
+      </Show>
     );
   };
 }
@@ -204,21 +273,15 @@ export function Shell(props: ShellProps): JSX.Element {
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const screens = props.sections.flatMap((section) => section.screens);
   const routes = props.sections.flatMap((section) =>
-    [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0]?.path ?? "" })),
+    [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0] })),
   );
   /* eslint-enable solid/reactivity */
-  const first = screens[0];
   return (
     // The boundary holds every lazy module of a page: the layout and its
     // screen paint together, and a navigation keeps the old screen until the
     // new one loads, so no page paints half built (wamn-28n8).
     <Router root={(root) => <Suspense>{root.children}</Suspense>}>
-      <Route
-        path="/"
-        component={() => (
-          <ChooseEnvironment title={props.title} scope={props} options={options} home={first?.path ?? ""} />
-        )}
-      />
+      <Route path="/" component={() => <ChooseEnvironment title={props.title} scope={props} options={options} />} />
       <Route path="/invite" component={() => <AcceptInvitation title={props.title} options={options} />} />
       <Route path="/recover" component={() => <RecoverPassword title={props.title} options={options} />} />
       <Route path="/reset" component={() => <ResetPassword title={props.title} options={options} />} />
@@ -230,7 +293,7 @@ export function Shell(props: ShellProps): JSX.Element {
           </Session>
         )}
       >
-        <Route path="/" component={() => (first === undefined ? <NotFound /> : <Navigate href={first.path} />)} />
+        <Route path="/" component={() => <FirstScreen screens={screens} />} />
         <For each={routes}>
           {({ route, home }) => <Route path={`/${route.path}`} component={screenRoute(route, home)} />}
         </For>
@@ -477,8 +540,6 @@ function ChooseEnvironment(props: {
   readonly title: string;
   readonly scope: Scope;
   readonly options: SessionOptions;
-  /** The path of the first screen, or "" when there is none. */
-  readonly home: string;
 }): JSX.Element {
   const navigate = useNavigate();
   const [credentials, setCredentials] = createSignal<{ email: string; password: string } | null>(null);
@@ -486,11 +547,10 @@ function ChooseEnvironment(props: {
   const [trouble, setTrouble] = createSignal<string | null>(null);
   const enter = (email: string, password: string, aud: string) => {
     setTrouble(null);
-    // Straight to the first screen: the redirect of the environment's own
-    // address would paint the layout with no screen for one step (wamn-28n8).
+    // The environment's own address opens the first screen the caller
+    // holds, which only `permission.mine` names.
     signIn(email, password, aud, props.options)
-      // eslint-disable-next-line solid/reactivity -- it runs from the submit handler and a button click, never in a tracked scope.
-      .then(() => navigate(props.home === "" ? `/${aud}` : `/${aud}/${props.home}`))
+      .then(() => navigate(`/${aud}`))
       .catch((error: unknown) => setTrouble(signInFailed(error)));
   };
   const noAccess = () => credentials() !== null && reachable().length === 0;
@@ -563,18 +623,33 @@ function Session(props: {
         onCleanup(() => keeper.stop());
         const transport = createTransport({ ...props.options, baseUrl: API_BASE, cookie: true });
         const current = () => state();
+        // Read once for the session. The page paints when it answers, because
+        // the router root waits for it.
+        const [holds] = createResource(
+          () => current()?.status === "signedIn" || undefined,
+          () => readHolds(transport),
+        );
         // The layout module loads while the session renews (wamn-28n8).
         void Layout.preload();
         return (
           <Switch>
-            <Match when={current()?.status === "signedIn"}>
-              <TransportContext.Provider value={transport}>
-                <Layout title={props.title} sections={props.sections} aud={aud} signOut={() => keeper.signOut()}>
-                  {props.children}
-                </Layout>
-              </TransportContext.Provider>
+            <Match when={current()?.status === "signedIn" && holds()}>
+              {(held) => (
+                <TransportContext.Provider value={transport}>
+                  <HoldsContext.Provider value={held()}>
+                    <Layout
+                      title={props.title}
+                      sections={heldSections(props.sections, held())}
+                      aud={aud}
+                      signOut={() => keeper.signOut()}
+                    >
+                      {props.children}
+                    </Layout>
+                  </HoldsContext.Provider>
+                </TransportContext.Provider>
+              )}
             </Match>
-            <Match when={current() !== null}>
+            <Match when={current() !== null && current()?.status !== "signedIn"}>
               <CardPage title={props.title}>
                 <SignInForm trouble={failure(current())} submit={(email, password) => keeper.signIn(email, password)} />
               </CardPage>
