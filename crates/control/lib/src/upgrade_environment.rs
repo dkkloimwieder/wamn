@@ -2774,8 +2774,9 @@ impl Databases {
             &arguments.environment,
             &suffix,
         );
-        let project = forward.connect(&database, &password).await?;
-        let tenant: String = project
+        // The control store copy of the tenant lives in the system database
+        // (deploy/sql/control-portable-store.sql), not in the project database.
+        let tenant: String = client
             .query_one(
                 "SELECT tenant_id FROM catalog.tenant_environments
                   WHERE org = $1 AND project = $2 AND env = $3",
@@ -2895,8 +2896,11 @@ async fn next_release(
     databases: &Databases,
     arguments: &RunArguments,
 ) -> anyhow::Result<NextRelease> {
-    let client = databases.project().await?;
-    let attested = client
+    // The attestations live in the control store of the system database
+    // (deploy/sql/control-portable-store.sql), the releases in the project database.
+    let attested = databases
+        .system()
+        .await?
         .query(
             "SELECT effective_release_id, coalesce(source_commit, '') FROM catalog.deployment_attestations
               WHERE tenant_id = $1 AND org_id = $2 AND project_id = $3 AND environment = $4
@@ -2907,7 +2911,9 @@ async fn next_release(
         .iter()
         .map(|row| (row.get(0), row.get(1)))
         .collect();
-    let highest: i32 = client
+    let highest: i32 = databases
+        .project()
+        .await?
         .query_one(
             "SELECT coalesce(max(effective_release_id), 0) FROM catalog.effective_releases
               WHERE tenant_id = $1",
