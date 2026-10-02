@@ -428,6 +428,57 @@ pub fn classify(
     }
 }
 
+/// Classify one reply to a call that carries many outer inputs, one outcome
+/// per submitted identity, in submission order.
+///
+/// `classifyEach` in `web/runtime/src/transport.ts` states the same rule.
+#[must_use]
+pub fn classify_each(
+    contract: &ResponseContract,
+    request_ids: &[Option<&str>],
+    response: Result<HttpResponse, ClientError>,
+) -> Vec<Evidence> {
+    let every = |evidence: Evidence| vec![evidence; request_ids.len()];
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => return every(classify(contract, None, Err(error))),
+    };
+    let document = serde_json::from_str::<Value>(&response.body).ok();
+    if document.as_ref().is_some_and(|document| {
+        document.get("committed_result").is_some() || document.get("failed_outcome").is_some()
+    }) {
+        return every(unknown(
+            "a partial completion does not name the item it belongs to",
+        ));
+    }
+    let Some(document) = document.filter(|_| response.status == 200) else {
+        return every(classify(contract, None, Ok(response)));
+    };
+    let Some(items) = document
+        .as_array()
+        .filter(|items| items.len() == request_ids.len())
+    else {
+        return every(unknown(
+            "the response must contain one outcome for each submitted item",
+        ));
+    };
+    items
+        .iter()
+        .zip(request_ids)
+        .map(|(item, request_id)| {
+            classify(
+                contract,
+                *request_id,
+                Ok(HttpResponse {
+                    actor_labels: response.actor_labels.clone(),
+                    status: 200,
+                    body: Value::Array(vec![item.clone()]).to_string(),
+                }),
+            )
+        })
+        .collect()
+}
+
 /// Whether an outcome echoes the submitted identity, or carries none for a
 /// read, which is `None`.
 fn matches_request(request_id: Option<&str>, item: &Value) -> bool {
