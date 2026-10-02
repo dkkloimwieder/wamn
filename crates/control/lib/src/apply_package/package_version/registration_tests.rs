@@ -39,7 +39,7 @@ async fn register(
 
 fn refusal(error: &anyhow::Error, kind: PackageMigrationErrorType) {
     let error = error.downcast_ref::<PackageMigrationError>().unwrap();
-    assert_eq!(error.kind(), kind);
+    assert_eq!(error.error_type(), kind);
     assert!(error.context().starts_with(kind.as_str()));
 }
 

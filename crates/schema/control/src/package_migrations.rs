@@ -150,7 +150,7 @@ pub struct PackageMigrationError {
 }
 
 impl PackageMigrationError {
-    pub const fn kind(&self) -> PackageMigrationErrorType {
+    pub const fn error_type(&self) -> PackageMigrationErrorType {
         self.type_
     }
 
@@ -884,7 +884,7 @@ mod tests {
             let error =
                 plan_package_registration(&coordinate, hash, predecessor, recorded, current)
                     .unwrap_err();
-            assert_eq!(error.kind(), kind);
+            assert_eq!(error.error_type(), kind);
             assert!(error.context().starts_with(literal));
         }
     }
@@ -942,7 +942,10 @@ mod tests {
 
         let error = plan_package_migrations(&directory, None)
             .expect_err("package application admitted a private permission");
-        assert_eq!(error.kind(), PackageMigrationErrorType::InvalidManifest);
+        assert_eq!(
+            error.error_type(),
+            PackageMigrationErrorType::InvalidManifest
+        );
         assert!(
             error
                 .to_string()
@@ -1027,7 +1030,7 @@ mod tests {
         let error = plan_package_migrations(&short, Some(&predecessor))
             .expect_err("a short cumulative prefix refuses");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             PackageMigrationErrorType::PredecessorPrefixMismatch
         );
         assert_eq!(error.path(), Some("migrations/0002_add_tag.sql"));
@@ -1042,7 +1045,7 @@ mod tests {
         let error = plan_package_migrations(&cumulative, Some(&predecessor))
             .expect_err("a divergent cumulative prefix refuses");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             PackageMigrationErrorType::PredecessorPrefixMismatch
         );
         assert_eq!(error.path(), Some("migrations/0001_initial.sql"));
@@ -1058,7 +1061,7 @@ mod tests {
             migrations: Vec::new(),
         };
         let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
-        assert_eq!(error.kind(), PackageMigrationErrorType::ManifestDrift);
+        assert_eq!(error.error_type(), PackageMigrationErrorType::ManifestDrift);
         assert_eq!(error.coordinate(), Some("orders@1.0.0"));
         assert_eq!(error.path(), Some(PACKAGE_MANIFEST_PATH));
         assert_eq!(error.recorded_hash(), Some("sha256:recorded"));
@@ -1071,7 +1074,9 @@ mod tests {
         gap.migrations
             .retain(|migration| migration.relative_path == "migrations/0002_add_tag.sql");
         assert_eq!(
-            plan_package_migrations(&gap, None).unwrap_err().kind(),
+            plan_package_migrations(&gap, None)
+                .unwrap_err()
+                .error_type(),
             PackageMigrationErrorType::Gap
         );
 
@@ -1082,7 +1087,7 @@ mod tests {
         assert_eq!(
             plan_package_migrations(&duplicate, None)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             PackageMigrationErrorType::Duplicate
         );
 
@@ -1098,7 +1103,10 @@ mod tests {
             }],
         };
         let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
-        assert_eq!(error.kind(), PackageMigrationErrorType::MigrationDrift);
+        assert_eq!(
+            error.error_type(),
+            PackageMigrationErrorType::MigrationDrift
+        );
         assert_eq!(error.path(), Some("migrations/0001_initial.sql"));
         assert_eq!(error.recorded_hash(), Some("sha256:changed"));
         assert!(error.actual_hash().unwrap().starts_with("sha256:"));
@@ -1138,7 +1146,7 @@ mod tests {
             assert_eq!(
                 plan_package_migrations(&directory(), Some(&applied))
                     .unwrap_err()
-                    .kind(),
+                    .error_type(),
                 expected
             );
         }
@@ -1179,7 +1187,10 @@ mod tests {
 
             let error = plan_package_migrations(&refused, None)
                 .expect_err("noncanonical model relation identity refuses");
-            assert_eq!(error.kind(), PackageMigrationErrorType::InvalidManifest);
+            assert_eq!(
+                error.error_type(),
+                PackageMigrationErrorType::InvalidManifest
+            );
             assert_eq!(error.path(), Some(PACKAGE_MANIFEST_PATH));
         }
     }

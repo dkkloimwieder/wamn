@@ -205,7 +205,7 @@ async fn event_run(
         "an event run has no service principal"
     );
     assert_eq!(
-        workflows.park(&run).await.unwrap_err().kind(),
+        workflows.park(&run).await.unwrap_err().error_type(),
         WorkflowErrorType::NotParkable
     );
     Ok(())

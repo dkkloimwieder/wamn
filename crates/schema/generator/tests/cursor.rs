@@ -82,7 +82,7 @@ fn malformed_or_mismatched_cursor_is_typed_invalid_input() {
     ];
     for (encoded, field, direction) in cases {
         let error = decode_cursor(&encoded, field, direction, ColumnType::Timestamptz).unwrap_err();
-        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
+        assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
     }
 }
 
@@ -102,7 +102,7 @@ fn noncanonical_json_and_unknown_version_never_reset_to_first_page() {
             ColumnType::Timestamptz,
         )
         .unwrap_err();
-        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
+        assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
     }
 }
 
@@ -120,7 +120,7 @@ fn noncanonical_timestamps_and_numeric_spellings_refuse() {
             ID,
         ))
         .unwrap_err();
-        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
+        assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
     }
     // Input normalization accepts values such as 01.0 and 1. before serialization.
     // Cursor validation refuses them so the opaque v1 value is never rewritten.
@@ -132,6 +132,6 @@ fn noncanonical_timestamps_and_numeric_spellings_refuse() {
             ID,
         ))
         .unwrap_err();
-        assert_eq!(error.kind(), CursorErrorType::InvalidInput);
+        assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
     }
 }

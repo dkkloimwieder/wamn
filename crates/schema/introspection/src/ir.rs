@@ -403,7 +403,7 @@ impl Constraint {
     }
 
     /// Semantic constraint shape.
-    pub const fn kind(&self) -> &ConstraintType {
+    pub const fn constraint_type(&self) -> &ConstraintType {
         &self.kind
     }
 
@@ -654,7 +654,7 @@ pub struct IrError {
 
 impl IrError {
     /// Stable refusal class.
-    pub const fn kind(&self) -> IrErrorType {
+    pub const fn error_type(&self) -> IrErrorType {
         self.type_
     }
 

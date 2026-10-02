@@ -176,7 +176,7 @@ impl FilesystemInvalidationError {
     }
 
     /// Stable error category.
-    pub const fn kind(&self) -> FilesystemInvalidationErrorType {
+    pub const fn error_type(&self) -> FilesystemInvalidationErrorType {
         self.type_
     }
 }

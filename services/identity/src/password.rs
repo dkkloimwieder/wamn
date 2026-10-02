@@ -880,7 +880,7 @@ async fn enrollment_refusal(
 }
 
 fn password_failure(error: &PasswordError) -> Response<Full<Bytes>> {
-    match error.kind() {
+    match error.error_type() {
         PasswordErrorType::Busy => throttled(),
         PasswordErrorType::Infrastructure => unavailable(),
         PasswordErrorType::Policy | PasswordErrorType::Refused => invalid(),
@@ -903,7 +903,7 @@ async fn create_user(client: &mut Client, request: &UserRequest) -> Response<Ful
     let account = match create_or_reuse_user(&tx, &request.email, &request.display_name).await {
         Ok(account) => account,
         Err(error) => {
-            let status = match error.kind() {
+            let status = match error.error_type() {
                 IdentityErrorType::InvalidInput => StatusCode::BAD_REQUEST,
                 IdentityErrorType::Conflict => StatusCode::CONFLICT,
                 _ => return unavailable(),

@@ -133,7 +133,7 @@ pub struct ScreenError {
 
 impl ScreenError {
     #[must_use]
-    pub const fn kind(&self) -> ScreenErrorType {
+    pub const fn error_type(&self) -> ScreenErrorType {
         self.type_
     }
 

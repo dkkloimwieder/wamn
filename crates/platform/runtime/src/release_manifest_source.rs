@@ -65,7 +65,7 @@ pub struct ReleaseManifestFetchError {
 
 impl ReleaseManifestFetchError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ReleaseManifestFetchErrorType {
+    pub fn error_type(&self) -> ReleaseManifestFetchErrorType {
         self.type_
     }
 
@@ -462,7 +462,10 @@ mod tests {
         )
         .expect_err("a descriptor declaring more bytes than were served refuses");
 
-        assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Mismatched);
+        assert_eq!(
+            error.error_type(),
+            ReleaseManifestFetchErrorType::Mismatched
+        );
         assert_eq!(
             error.refusal(),
             "release-manifest-artifact-body-size-mismatch"
@@ -483,7 +486,10 @@ mod tests {
         let error = verify_transferred_body(served, exact, &component_digest(canonical), REFERENCE)
             .expect_err("a body the named digest does not address refuses");
 
-        assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Mismatched);
+        assert_eq!(
+            error.error_type(),
+            ReleaseManifestFetchErrorType::Mismatched
+        );
         assert_eq!(
             error.refusal(),
             "release-manifest-artifact-body-digest-mismatch"

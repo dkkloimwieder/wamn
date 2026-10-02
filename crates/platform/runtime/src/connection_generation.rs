@@ -160,7 +160,7 @@ impl GenerationValidationError {
         }
     }
 
-    pub fn kind(&self) -> GenerationValidationErrorType {
+    pub fn error_type(&self) -> GenerationValidationErrorType {
         self.type_
     }
 
@@ -607,7 +607,7 @@ where
     .await
     .map(|_| ())
     .map_err(|error| {
-        let kind = match error.kind() {
+        let kind = match error.error_type() {
             AuthorityErrorType::PlatformHostDenied => {
                 GenerationValidationErrorType::PlatformHostPolicyDenied
             }

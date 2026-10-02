@@ -31,7 +31,7 @@ pub struct GenerateError {
 
 impl GenerateError {
     /// Stable refusal class for callers that must not match display text.
-    pub const fn kind(&self) -> GenerateErrorType {
+    pub const fn error_type(&self) -> GenerateErrorType {
         self.type_
     }
 

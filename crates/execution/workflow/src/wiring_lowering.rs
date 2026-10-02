@@ -147,7 +147,7 @@ impl WiringLoweringError {
     }
 
     /// The stable classification of this refusal.
-    pub fn kind(&self) -> WiringLoweringErrorType {
+    pub fn error_type(&self) -> WiringLoweringErrorType {
         self.type_
     }
 }

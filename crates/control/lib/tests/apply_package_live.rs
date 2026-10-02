@@ -817,7 +817,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .downcast_ref::<apply_package::ApplyPackageError>()
         .expect("base field alteration is a typed ownership refusal");
     assert_eq!(
-        alter_error.kind(),
+        alter_error.error_type(),
         apply_package::ApplyPackageErrorType::BaseDefinitionMutation
     );
     assert_eq!(alter_error.schema(), Some("inventory"));
@@ -858,7 +858,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .downcast_ref::<apply_package::ApplyPackageError>()
         .expect("base field removal is a typed ownership refusal");
     assert_eq!(
-        drop_error.kind(),
+        drop_error.error_type(),
         apply_package::ApplyPackageErrorType::BaseDefinitionMutation
     );
     assert_eq!(drop_error.definition(), Some("status"));
@@ -896,7 +896,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .downcast_ref::<apply_package::ApplyPackageError>()
         .expect("missing extensibility is a typed ownership refusal");
     assert_eq!(
-        nonextensible_error.kind(),
+        nonextensible_error.error_type(),
         apply_package::ApplyPackageErrorType::RelationNotClientExtensible
     );
     assert_eq!(write_identity(&client).await, first_identity);
@@ -1261,7 +1261,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .downcast_ref::<apply_package::ApplyPackageError>()
         .expect("the server seal is translated at the apply-package boundary");
     assert_eq!(
-        sealed.kind(),
+        sealed.error_type(),
         apply_package::ApplyPackageErrorType::PackageVersionSealed
     );
     assert_eq!(sealed.coordinate(), "wamn_inventory@1.0.0");
@@ -1312,7 +1312,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .downcast_ref::<apply_package::ApplyPackageError>()
         .expect("an undeclared predecessor is a typed apply-package refusal");
     assert_eq!(
-        undeclared.kind(),
+        undeclared.error_type(),
         apply_package::ApplyPackageErrorType::PredecessorNotCurrent
     );
     assert_eq!(undeclared.coordinate(), "wamn_inventory@1.0.1");
@@ -1328,7 +1328,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .downcast_ref::<apply_package::ApplyPackageError>()
         .expect("an absent predecessor is a typed apply-package refusal");
     assert_eq!(
-        absent.kind(),
+        absent.error_type(),
         apply_package::ApplyPackageErrorType::PredecessorNotCurrent
     );
     assert_eq!(absent.coordinate(), "wamn_inventory@1.0.1");
@@ -1347,7 +1347,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .downcast_ref::<apply_package::ApplyPackageError>()
         .expect("a divergent predecessor is a typed apply-package refusal");
     assert_eq!(
-        mismatch.kind(),
+        mismatch.error_type(),
         apply_package::ApplyPackageErrorType::PredecessorPrefixMismatch
     );
     assert_eq!(mismatch.predecessor_version(), Some("1.0.0"));
@@ -1585,7 +1585,7 @@ async fn record_history_triggers_follow_the_declaration() {
     assert_eq!(
         refused
             .downcast_ref::<MigrationPolicyError>()
-            .map(MigrationPolicyError::kind),
+            .map(MigrationPolicyError::error_type),
         Some(MigrationPolicyErrorType::RuledOperation),
         "unexpected migration refusal: {refused:#}"
     );
@@ -1977,7 +1977,7 @@ fn package_migration_error(
     error
         .downcast_ref::<wamn_schema_control::PackageMigrationError>()
         .unwrap_or_else(|| panic!("not a package migration refusal: {error:#}"))
-        .kind()
+        .error_type()
 }
 
 async fn inventory_column_present(client: &Client, table: &str, column: &str) -> bool {
@@ -2192,7 +2192,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         sealed
             .downcast_ref::<apply_package::ApplyPackageError>()
             .expect("the seal is translated at the apply-package boundary")
-            .kind(),
+            .error_type(),
         apply_package::ApplyPackageErrorType::PackageVersionSealed
     );
     std::fs::remove_dir_all(&first_bytes_package).expect("remove first-bytes fixture");

@@ -27,7 +27,7 @@ mod list {
                     .collect(),
             })
             .map_err(|error| {
-                codec::map_error(error.kind().literal(), |key| {
+                codec::map_error(error.error_type().literal(), |key| {
                     detail(&error, "widget_maker.list", key)
                 })
             })

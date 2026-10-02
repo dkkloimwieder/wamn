@@ -71,7 +71,7 @@ mod record {
         )
         .await
         .map(|sample_id| contract::RecordResult { sample_id })
-        .map_err(|error| codec::map_error(error.kind().literal(), |key| detail(&error, key)))
+        .map_err(|error| codec::map_error(error.error_type().literal(), |key| detail(&error, key)))
     }
     codec::export_operation!(
         crate::Component,

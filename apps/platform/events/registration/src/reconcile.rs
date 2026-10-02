@@ -55,7 +55,7 @@ pub struct RegistrationProjectionError {
 }
 
 impl RegistrationProjectionError {
-    pub fn kind(&self) -> RegistrationProjectionErrorType {
+    pub fn error_type(&self) -> RegistrationProjectionErrorType {
         self.type_
     }
 }
@@ -175,14 +175,14 @@ mod tests {
         assert_eq!(
             project_catalog_registrations("client_acme_receiving", &wrong_key)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             RegistrationProjectionErrorType::RegistrationKeyMismatch
         );
         let declarations = BTreeMap::from([(declaration.registration_id.clone(), declaration)]);
         assert_eq!(
             project_catalog_registrations("other", &declarations)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             RegistrationProjectionErrorType::RegistrationOwnerMismatch
         );
     }

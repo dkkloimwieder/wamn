@@ -47,7 +47,7 @@ fn emission(payload: String) -> Emission {
 }
 
 fn private_node_error(error: &AccessError) -> NodeError {
-    let kind = error.kind();
+    let kind = error.error_type();
     let code = match kind {
         AccessErrorType::InvalidInput => "invalid_input",
         AccessErrorType::Retry => "retry",
@@ -74,7 +74,7 @@ fn private_node_error(error: &AccessError) -> NodeError {
 }
 
 fn participant_node_error(error: &AccessError) -> NodeError {
-    match error.kind() {
+    match error.error_type() {
         AccessErrorType::Timeout => NodeError::Cancelled,
         AccessErrorType::PermissionDenied => NodeError::Terminal(ErrorDetail {
             message: error.context().to_owned(),

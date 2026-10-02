@@ -74,7 +74,7 @@ impl ComponentDeclarationError {
     }
 
     /// Stable failure category.
-    pub const fn kind(&self) -> ComponentDeclarationErrorType {
+    pub const fn error_type(&self) -> ComponentDeclarationErrorType {
         self.type_
     }
 

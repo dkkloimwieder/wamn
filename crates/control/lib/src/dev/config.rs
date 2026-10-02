@@ -251,7 +251,7 @@ impl DevConfigError {
     }
 
     /// Stable refusal category.
-    pub const fn kind(&self) -> DevConfigErrorType {
+    pub const fn error_type(&self) -> DevConfigErrorType {
         self.type_
     }
 
@@ -354,7 +354,7 @@ impl DevPackageError {
     }
 
     /// Stable refusal category.
-    pub const fn kind(&self) -> DevPackageErrorType {
+    pub const fn error_type(&self) -> DevPackageErrorType {
         self.type_
     }
 
@@ -1853,7 +1853,7 @@ pub(crate) mod tests {
         for invalid in [Value::Null, Value::Bool(true), Value::String(String::new())] {
             document[OPERATOR_BEARER_TOKEN] = invalid;
             assert_eq!(
-                parse(&document).unwrap_err().kind(),
+                parse(&document).unwrap_err().error_type(),
                 DevConfigErrorType::InvalidValue
             );
         }
@@ -1883,7 +1883,7 @@ pub(crate) mod tests {
             invalid[key] = value;
             let error = parse_config(&serde_json::to_vec(&invalid).unwrap()).unwrap_err();
             assert_eq!(error.key(), key);
-            assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+            assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         }
         for key in [
             EVENT_NATS_USERNAME,
@@ -1895,7 +1895,7 @@ pub(crate) mod tests {
             missing.as_object_mut().unwrap().remove(key);
             let error = parse_config(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
             assert_eq!(error.key(), key);
-            assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
+            assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
         }
     }
 
@@ -1971,7 +1971,7 @@ pub(crate) mod tests {
             .remove(PACKAGE_SOURCES);
         let error = parse_config(&serde_json::to_vec(&missing).expect("serialize missing key"))
             .expect_err("package_sources is required");
-        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
+        assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), PACKAGE_SOURCES);
 
         let mut malformed = complete_document(&addresses);
@@ -1980,7 +1980,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&malformed).expect("serialize malformed package sources"),
         )
         .expect_err("package source entries must be paths");
-        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+        assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), PACKAGE_SOURCES);
 
         let config = parse_config(
@@ -2011,7 +2011,7 @@ pub(crate) mod tests {
                 &serde_json::to_vec(&missing).expect("serialize missing required input"),
             )
             .expect_err("every identity and local-host input is required");
-            assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
+            assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
             assert_eq!(error.key(), key);
         }
 
@@ -2021,7 +2021,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&invalid_domain).expect("serialize invalid platform domain"),
         )
         .expect_err("the platform domain must be a domain name");
-        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+        assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), PLATFORM_DOMAIN);
 
         let mut zero_release = complete_document(&addresses);
@@ -2030,7 +2030,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&zero_release).expect("serialize zero release identity"),
         )
         .expect_err("effective release identity must be positive");
-        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+        assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), EFFECTIVE_RELEASE_ID);
     }
 
@@ -2127,7 +2127,10 @@ pub(crate) mod tests {
         .expect("missing source is a resolution concern");
         let error = resolve_dev_packages(&missing_config, &overlay_root)
             .expect_err("zero coordinate matches must refuse");
-        assert_eq!(error.kind(), DevPackageErrorType::BaseDependencyMissing);
+        assert_eq!(
+            error.error_type(),
+            DevPackageErrorType::BaseDependencyMissing
+        );
         assert_eq!(error.coordinate(), Some("platform_fixture@2.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(error.searched_roots(), std::slice::from_ref(&overlay_root));
@@ -2144,7 +2147,10 @@ pub(crate) mod tests {
             &repository_package(wamn_fixture_package::OVERLAY_PACKAGE_ID),
         )
         .expect_err("multiple coordinate matches must refuse");
-        assert_eq!(error.kind(), DevPackageErrorType::BaseDependencyAmbiguous);
+        assert_eq!(
+            error.error_type(),
+            DevPackageErrorType::BaseDependencyAmbiguous
+        );
         assert_eq!(error.coordinate(), Some("platform_fixture@2.0.0"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(
@@ -2174,7 +2180,7 @@ pub(crate) mod tests {
         let error = resolve_dev_packages(&config, overlay.root())
             .expect_err("unknown package fields must refuse");
 
-        assert_eq!(error.kind(), DevPackageErrorType::ManifestInvalid);
+        assert_eq!(error.error_type(), DevPackageErrorType::ManifestInvalid);
         assert_eq!(
             error.manifest_path(),
             Some(overlay.root().join(PACKAGE_MANIFEST_FILE).as_path())
@@ -2235,7 +2241,7 @@ pub(crate) mod tests {
             .expect("local refusal stays within the startup bound")
             .expect_err("closed endpoint must refuse");
 
-        assert_eq!(error.kind(), DevConfigErrorType::EndpointUnreachable);
+        assert_eq!(error.error_type(), DevConfigErrorType::EndpointUnreachable);
         assert_eq!(error.key(), TARGET_DATABASE_URL);
         assert_eq!(
             error.sanitized_endpoint(),
@@ -2253,7 +2259,7 @@ pub(crate) mod tests {
         malformed[TARGET_DATABASE_URL] = json!("postgresql://user:secret@[");
         let error = parse_config(&serde_json::to_vec(&malformed).expect("serialize malformed"))
             .expect_err("malformed endpoint must refuse");
-        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+        assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), TARGET_DATABASE_URL);
         assert_eq!(error.sanitized_endpoint(), Some("<malformed>"));
         assert!(!error.to_string().contains("secret"));
@@ -2262,7 +2268,7 @@ pub(crate) mod tests {
         unknown["project_database_url"] = json!("postgresql://ignored:secret@invalid/db");
         let error = parse_config(&serde_json::to_vec(&unknown).expect("serialize unknown"))
             .expect_err("unknown key must refuse");
-        assert_eq!(error.kind(), DevConfigErrorType::UnknownKey);
+        assert_eq!(error.error_type(), DevConfigErrorType::UnknownKey);
         assert_eq!(error.key(), "project_database_url");
         assert!(!error.to_string().contains("ignored"));
 
@@ -2275,7 +2281,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&missing_endpoint).expect("serialize missing endpoint"),
         )
         .expect_err("missing endpoint must refuse");
-        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
+        assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
 
         for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
@@ -2289,7 +2295,7 @@ pub(crate) mod tests {
                     .expect("serialize missing observability endpoint"),
             )
             .expect_err("observability endpoints are required");
-            assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
+            assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
             assert_eq!(error.key(), key);
         }
 
@@ -2302,7 +2308,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&missing_local_artifacts).expect("serialize missing local input"),
         )
         .expect_err("missing local artifacts must refuse");
-        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
+        assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), LOCAL_ARTIFACTS);
 
         let mut missing_runtime_role = complete_document(&addresses);
@@ -2314,7 +2320,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&missing_runtime_role).expect("serialize missing runtime role"),
         )
         .expect_err("missing role-exact credential must refuse");
-        assert_eq!(error.kind(), DevConfigErrorType::MissingKey);
+        assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
 
         let mut tls_scheduler = complete_document(&addresses);
@@ -2323,7 +2329,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&tls_scheduler).expect("serialize unsupported TLS endpoint"),
         )
         .expect_err("TLS without trust configuration must refuse");
-        assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+        assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
 
         for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
@@ -2334,7 +2340,7 @@ pub(crate) mod tests {
                     .expect("serialize unsupported observability endpoint"),
             )
             .expect_err("observability endpoints require HTTP or HTTPS");
-            assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+            assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
             assert_eq!(error.key(), key);
         }
     }
@@ -2352,7 +2358,7 @@ pub(crate) mod tests {
                 parse_config(&serde_json::to_vec(&document).expect("serialize routing override"))
                     .expect_err("routing query override must refuse");
 
-            assert_eq!(error.kind(), DevConfigErrorType::InvalidValue);
+            assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
             assert_eq!(error.key(), TARGET_DATABASE_URL);
             assert!(error.to_string().contains("remove host, hostaddr, port"));
             assert!(!error.to_string().contains("override-secret"));
@@ -2371,7 +2377,7 @@ pub(crate) mod tests {
             &serde_json::to_vec(&privileged_reuse).expect("serialize privileged reuse"),
         )
         .expect_err("a runtime role must not reuse the target credential");
-        assert_eq!(error.kind(), DevConfigErrorType::DatabaseCollision);
+        assert_eq!(error.error_type(), DevConfigErrorType::DatabaseCollision);
         assert_eq!(error.key(), GUEST_DATABASE_URL);
         assert!(!error.to_string().contains("target-secret"));
 
@@ -2381,7 +2387,7 @@ pub(crate) mod tests {
         let error =
             parse_config(&serde_json::to_vec(&sibling_reuse).expect("serialize sibling reuse"))
                 .expect_err("runtime roles must not share one credential");
-        assert_eq!(error.kind(), DevConfigErrorType::DatabaseCollision);
+        assert_eq!(error.error_type(), DevConfigErrorType::DatabaseCollision);
         assert_eq!(error.key(), EVENT_MATERIALIZER_DATABASE_URL);
         assert!(!error.to_string().contains("platform-secret"));
     }
@@ -2390,7 +2396,7 @@ pub(crate) mod tests {
     fn malformed_json_refuses_without_inspecting_partial_credentials() {
         let error = parse_config(br#"{"gate_bearer_token":"secret""#)
             .expect_err("malformed JSON must refuse");
-        assert_eq!(error.kind(), DevConfigErrorType::MalformedDocument);
+        assert_eq!(error.error_type(), DevConfigErrorType::MalformedDocument);
         assert_eq!(error.key(), DOCUMENT_KEY);
         assert!(!error.to_string().contains("secret"));
     }

@@ -87,7 +87,7 @@ impl DefinitionMutation {
     }
 
     /// Definition grain addressed by the statement.
-    pub const fn kind(&self) -> DefinitionType {
+    pub const fn definition_type(&self) -> DefinitionType {
         self.kind
     }
 
@@ -124,7 +124,7 @@ pub struct MigrationPolicyError {
 
 impl MigrationPolicyError {
     /// Stable class for callers that must not match display text.
-    pub const fn kind(&self) -> MigrationPolicyErrorType {
+    pub const fn error_type(&self) -> MigrationPolicyErrorType {
         self.type_
     }
 

@@ -93,7 +93,7 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
     let refused = grant_org_admin(&client, &ann, "acme")
         .await
         .expect_err("org-admin needs an active membership");
-    assert_eq!(refused.kind(), IdentityErrorType::NotFound);
+    assert_eq!(refused.error_type(), IdentityErrorType::NotFound);
     assert_eq!(
         refused.to_string(),
         format!("principal {ann} is not an active member of org acme")

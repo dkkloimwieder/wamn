@@ -11,7 +11,7 @@ pub(super) fn error_detail(
     expected: Option<i32>,
 ) -> Option<String> {
     match key {
-        "field" if error.kind() == AccessErrorType::NotFound => {
+        "field" if error.error_type() == AccessErrorType::NotFound => {
             id.map(|(field, _)| field.to_owned())
         }
         "field" => error.field().map(str::to_owned),
@@ -45,7 +45,7 @@ pub(super) mod location_list {
                     .collect(),
             })
             .map_err(|error| {
-                map_error(error.kind().literal(), |key| {
+                map_error(error.error_type().literal(), |key| {
                     error_detail(&error, key, "location.list", None, None)
                 })
             })
@@ -70,7 +70,7 @@ pub(super) mod receiving_load_receipt_screen {
                     .collect(),
             })
             .map_err(|error| {
-                map_error(error.kind().literal(), |key| {
+                map_error(error.error_type().literal(), |key| {
                     error_detail(
                         &error,
                         key,
@@ -107,7 +107,7 @@ pub(super) mod receiving_load_purchase_order_history {
                 .collect(),
         })
         .map_err(|error| {
-            map_error(error.kind().literal(), |key| {
+            map_error(error.error_type().literal(), |key| {
                 error_detail(
                     &error,
                     key,

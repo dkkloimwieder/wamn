@@ -213,7 +213,7 @@ pub struct AttestationError {
 }
 
 impl AttestationError {
-    pub const fn kind(&self) -> AttestationErrorType {
+    pub const fn error_type(&self) -> AttestationErrorType {
         self.type_
     }
 
@@ -299,7 +299,7 @@ mod tests {
     fn a_conflicting_re_attestation_translates_to_the_routines_own_refusal() {
         let error = check_attestation(&attestation(), "different hash", Some("0123456789abcdef"))
             .unwrap_err();
-        assert_eq!(error.kind(), AttestationErrorType::ContentConflict);
+        assert_eq!(error.error_type(), AttestationErrorType::ContentConflict);
         assert_eq!(
             error.coordinate(),
             "tenant-a/instance-a/7 -> acme/billing/prod"
@@ -319,7 +319,7 @@ mod tests {
             &attestation(),
             "db error: ERROR: insert or update violates foreign key constraint",
         );
-        assert_eq!(error.kind(), AttestationErrorType::Storage);
+        assert_eq!(error.error_type(), AttestationErrorType::Storage);
         assert!(!error.to_string().contains(CONTENT_CONFLICT));
         assert!(error.driver().contains("foreign key"));
     }
@@ -331,13 +331,13 @@ mod tests {
             &attestation(),
             "db error: ERROR: duplicate key value violates unique constraint \"packages_pkey\"",
         );
-        assert_eq!(error.kind(), AttestationErrorType::Storage);
+        assert_eq!(error.error_type(), AttestationErrorType::Storage);
     }
 
     #[test]
     fn a_failure_that_never_reached_the_server_is_storage() {
         let error = translate_failure(&attestation(), "connection closed");
-        assert_eq!(error.kind(), AttestationErrorType::Storage);
+        assert_eq!(error.error_type(), AttestationErrorType::Storage);
     }
 
     /// Every part distinct, so a swapped pair cannot hide behind an equal value.
@@ -370,7 +370,7 @@ mod tests {
     fn a_conflicting_re_projection_translates_to_the_routines_own_refusal() {
         let error = check_projected_identity(&identity(), "dev").unwrap_err();
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             AttestationErrorType::IdentityProjectionConflict
         );
         assert_eq!(error.coordinate(), "tenant-a/7 in \"prod\"");
@@ -387,13 +387,13 @@ mod tests {
             &identity(),
             "db error: ERROR: deployment-attestation-content-conflict",
         );
-        assert_eq!(error.kind(), AttestationErrorType::Storage);
+        assert_eq!(error.error_type(), AttestationErrorType::Storage);
     }
 
     #[test]
     fn a_projection_failure_that_never_reached_the_server_is_storage() {
         let error = translate_projection_failure(&identity(), "connection closed");
-        assert_eq!(error.kind(), AttestationErrorType::Storage);
+        assert_eq!(error.error_type(), AttestationErrorType::Storage);
     }
     #[test]
     fn exact_retries_preserve_optional_source_provenance() {

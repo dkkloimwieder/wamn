@@ -64,7 +64,7 @@ pub struct DraftError {
 
 impl DraftError {
     #[must_use]
-    pub const fn kind(&self) -> DraftErrorType {
+    pub const fn error_type(&self) -> DraftErrorType {
         self.type_
     }
 
@@ -192,7 +192,7 @@ impl Draft {
     /// Refuses protected or unsupported fields and incompatible parent shapes.
     pub fn edit(&mut self, pointer: &str, state: FieldState) -> Result<(), DraftError> {
         let (path, schema) = self.resolve(pointer)?;
-        if schema.kind() == InputKind::Unsupported {
+        if schema.input_type() == InputKind::Unsupported {
             return Err(refusal(DraftErrorType::UnsupportedField, pointer));
         }
         if self
@@ -321,7 +321,7 @@ enum Schema {
 }
 
 impl Schema {
-    fn kind(self) -> InputKind {
+    fn input_type(self) -> InputKind {
         match self {
             Self::Field(field) => input_kind(field),
             Self::ObjectRow => InputKind::Object,
@@ -411,7 +411,7 @@ fn write(
                     if state == FieldState::Absent {
                         return Ok(());
                     }
-                    let initial = match schema_at(fields, &path[..=depth]).map(Schema::kind) {
+                    let initial = match schema_at(fields, &path[..=depth]).map(Schema::input_type) {
                         Some(InputKind::Object) => Value::Object(Map::new()),
                         Some(InputKind::Repeated) => Value::Array(Vec::new()),
                         _ => return Err(refusal(DraftErrorType::InvalidShape, pointer)),

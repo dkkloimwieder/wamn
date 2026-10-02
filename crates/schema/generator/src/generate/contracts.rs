@@ -185,7 +185,7 @@ pub(super) fn emit_custom_operation(
         }
         CustomOperationType::Projection | CustomOperationType::EventHandler => {
             source_map.insert("operation".to_owned(), json!(operation_name));
-            source_map.insert("type".to_owned(), json!(operation.kind()));
+            source_map.insert("type".to_owned(), json!(operation.operation_type()));
             if let Some(registration) = &operation.registration {
                 source_map.insert("registration".to_owned(), json!(registration));
             }
@@ -236,7 +236,7 @@ fn emit_custom_operation_contracts(
     let key = operation.idempotency_key_field();
     let mut operation_contract = serde_json::Map::from_iter([
         ("operation".to_owned(), json!(operation_id)),
-        ("type".to_owned(), json!(operation.kind())),
+        ("type".to_owned(), json!(operation.operation_type())),
         ("visibility".to_owned(), json!(operation.visibility)),
         ("permission_token".to_owned(), json!(operation.permission)),
         ("grant".to_owned(), json!(grant)),
@@ -913,7 +913,7 @@ fn column_reference(
             referenced_schema,
             referenced_table,
             ..
-        } = constraint.kind()
+        } = constraint.constraint_type()
         else {
             return None;
         };
@@ -1218,12 +1218,12 @@ fn error_contract(
     }
     let mut guarded = BTreeSet::new();
     for constraint in operation_constraints(catalog, table, action, operation, model) {
-        let code = constraint_error_code(constraint.kind());
+        let code = constraint_error_code(constraint.constraint_type());
         cases.push((
             code,
             json!({
-                "literal": constraint_error(constraint.kind()),
-                "from": constraint_error(constraint.kind()),
+                "literal": constraint_error(constraint.constraint_type()),
+                "from": constraint_error(constraint.constraint_type()),
                 "constraint": constraint.name(),
             }),
         ));
@@ -1358,7 +1358,7 @@ pub(super) fn required_schema_contract(
                     .filter(|constraint| constraints.contains(constraint.name()))
                     .map(|constraint| RequiredConstraint {
                         name: constraint.name().into(),
-                        definition: serde_json::to_value(constraint.kind())
+                        definition: serde_json::to_value(constraint.constraint_type())
                             .expect("constraint IR always serializes"),
                     })
                     .collect::<Vec<_>>()

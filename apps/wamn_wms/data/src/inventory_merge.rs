@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn a_packaging_merged_into_itself_is_invalid_input() {
         let error = parse(&command(SOURCE, SOURCE)).unwrap_err();
-        assert_eq!(error.kind(), AccessErrorType::InvalidInput);
+        assert_eq!(error.error_type(), AccessErrorType::InvalidInput);
         assert_eq!(error.detail()["field"], "value.target_packaging_id");
         assert!(parse(&command(SOURCE, TARGET)).is_ok());
     }
@@ -255,7 +255,7 @@ mod tests {
 
         let parsed = parse(&command(SOURCE, TARGET)).unwrap();
         let missing = locked_target(vec![row(SOURCE, "available")], &parsed).unwrap_err();
-        assert_eq!(missing.kind(), AccessErrorType::PackagingNotFound);
+        assert_eq!(missing.error_type(), AccessErrorType::PackagingNotFound);
         assert_eq!(missing.detail()["field"], "value.target_packaging_id");
         assert_eq!(missing.detail()["id"], TARGET);
 
@@ -264,7 +264,7 @@ mod tests {
             &parsed,
         )
         .unwrap_err();
-        assert_eq!(consumed.kind(), AccessErrorType::PackagingNotFound);
+        assert_eq!(consumed.error_type(), AccessErrorType::PackagingNotFound);
         assert_eq!(consumed.detail()["field"], "value.source_packaging_id");
     }
 }

@@ -153,7 +153,7 @@ async fn platform_pat_round_trip_on_postgres() {
         revoke_pat(&client, issued.record().prefix())
             .await
             .expect_err("the library revocation also needs a bound actor")
-            .kind(),
+            .error_type(),
         IdentityErrorType::Database
     );
 
@@ -240,7 +240,7 @@ async fn platform_pat_round_trip_on_postgres() {
         revoke_pat(&client, &"0".repeat(16))
             .await
             .expect_err("unknown prefix must not revoke")
-            .kind(),
+            .error_type(),
         IdentityErrorType::NotFound
     );
 
@@ -256,7 +256,7 @@ async fn platform_pat_round_trip_on_postgres() {
         .expect("authenticate service token")
         .expect("a valid service token must authenticate");
     assert_eq!(
-        service_authenticated.principal().kind(),
+        service_authenticated.principal().principal_type(),
         PrincipalType::Service
     );
 
@@ -288,7 +288,7 @@ async fn platform_pat_round_trip_on_postgres() {
         issue_pat(&client, user.id(), "after-disable", TTL)
             .await
             .expect_err("disabled principals must not gain tokens")
-            .kind(),
+            .error_type(),
         IdentityErrorType::NotFound
     );
 
@@ -360,7 +360,7 @@ async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &
         issue_pat(client, &principal, "platform", TTL)
             .await
             .expect_err("a platform principal must not gain a token")
-            .kind(),
+            .error_type(),
         IdentityErrorType::Database
     );
     for (kind, code) in [

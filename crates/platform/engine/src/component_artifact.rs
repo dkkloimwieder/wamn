@@ -107,7 +107,7 @@ pub struct ComponentArtifactReferenceError {
 
 impl ComponentArtifactReferenceError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentArtifactReferenceErrorType {
+    pub fn error_type(&self) -> ComponentArtifactReferenceErrorType {
         self.type_
     }
 
@@ -399,7 +399,7 @@ mod tests {
             assert_eq!(
                 component_artifact_reference(base, &digest)
                     .expect_err("invalid base refuses")
-                    .kind(),
+                    .error_type(),
                 ComponentArtifactReferenceErrorType::InvalidBase,
                 "accepted {base:?}"
             );

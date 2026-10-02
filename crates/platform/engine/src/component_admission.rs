@@ -66,7 +66,7 @@ pub struct ComponentAdmissionError {
 
 impl ComponentAdmissionError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentAdmissionErrorType {
+    pub fn error_type(&self) -> ComponentAdmissionErrorType {
         self.type_
     }
 
@@ -886,7 +886,7 @@ mod tests {
         let error = validate_component_admission(&engine, &missing, request())
             .expect_err("missing declared handler export refuses");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::OperationExportMismatch
         );
         assert!(error.to_string().contains("missing="));
@@ -903,7 +903,7 @@ mod tests {
         let error = validate_component_admission(&engine, &extra, request())
             .expect_err("undeclared handler export refuses");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::OperationExportMismatch
         );
         assert!(error.to_string().contains("extra="));
@@ -922,7 +922,7 @@ mod tests {
         let error = validate_component_admission(&engine, &wrong, request())
             .expect_err("an export without the live handler signature refuses");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::OperationSignatureMismatch
         );
         assert!(error.to_string().contains(OPERATION));
@@ -935,7 +935,7 @@ mod tests {
         let error = validate_component_admission(&engine, b"not-wasm", request())
             .expect_err("malformed bytes must refuse");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::InvalidComponentBytes
         );
     }
@@ -1060,7 +1060,7 @@ mod tests {
                 result.expect("owned typed values are admitted");
             } else {
                 assert_eq!(
-                    result.unwrap_err().kind(),
+                    result.unwrap_err().error_type(),
                     ComponentAdmissionErrorType::OperationSignatureMismatch
                 );
             }
@@ -1145,7 +1145,7 @@ mod tests {
         let error = validate_component_admission(&engine, &bytes, request())
             .expect_err("socket import must refuse");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::ImportPolicyRefused
         );
         // Guard the guard. The refusal must NAME the socket import, or the
@@ -1190,7 +1190,7 @@ mod tests {
         let error = validate_component_admission(&engine, &reexporting, request)
             .expect_err("an export of no embedded member refuses");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::OperationExportMismatch
         );
     }
@@ -1246,7 +1246,7 @@ mod tests {
         let missing = validate_component_admission(&engine, &component_bytes(""), missing_request)
             .expect_err("a declared dependency whose base is not embedded refuses");
         assert_eq!(
-            missing.kind(),
+            missing.error_type(),
             ComponentAdmissionErrorType::OperationDependencyMismatch
         );
         assert!(missing.to_string().contains("not composed"));
@@ -1265,7 +1265,7 @@ mod tests {
         )
         .expect_err("a base embedded under another digest refuses");
         assert_eq!(
-            other.kind(),
+            other.error_type(),
             ComponentAdmissionErrorType::OperationDependencyMismatch
         );
 
@@ -1286,7 +1286,7 @@ mod tests {
         )
         .expect_err("a dependency left as an import refuses");
         assert_eq!(
-            imported.kind(),
+            imported.error_type(),
             ComponentAdmissionErrorType::OperationDependencyMismatch
         );
         assert!(imported.to_string().contains("extra="));
@@ -1311,7 +1311,7 @@ mod tests {
         .expect_err("a pre-commit import with the wrong run type refuses");
 
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::OperationSignatureMismatch
         );
         assert!(error.to_string().contains(WRONG_DEPENDENCY_OPERATION));
@@ -1448,7 +1448,7 @@ mod tests {
         let error = validate_component_admission(&engine, &bytes, request)
             .expect_err("undeclared connection authority must refuse");
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             ComponentAdmissionErrorType::InvalidComponentFacts
         );
     }

@@ -71,7 +71,7 @@ pub struct ReleaseManifestPushError {
 
 impl ReleaseManifestPushError {
     /// Stable refusal class for callers that must not match display text.
-    pub const fn kind(&self) -> ReleaseManifestPushErrorType {
+    pub const fn error_type(&self) -> ReleaseManifestPushErrorType {
         self.type_
     }
 
@@ -653,7 +653,7 @@ mod tests {
             &fixture_reference(),
         )
         .expect_err("foreign layer layout refuses");
-        assert_eq!(error.kind(), ReleaseManifestPushErrorType::Conflict);
+        assert_eq!(error.error_type(), ReleaseManifestPushErrorType::Conflict);
         assert_eq!(error.refusal(), "release-manifest-artifact-layer-mismatch");
 
         let duplicate = manifest.layers[0].clone();

@@ -68,7 +68,7 @@ pub struct ApplyPackageError {
 }
 
 impl ApplyPackageError {
-    pub const fn kind(&self) -> ApplyPackageErrorType {
+    pub const fn error_type(&self) -> ApplyPackageErrorType {
         self.type_
     }
 

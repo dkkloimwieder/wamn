@@ -276,7 +276,7 @@ mod tests {
             assert_eq!(completion.status(), RunStatus::Completed);
             assert_eq!(completion.result(), &payload);
             let caller = completion.caller().expect("durable caller is released");
-            assert_eq!(caller.kind(), "responded");
+            assert_eq!(caller.outcome_type(), "responded");
             assert_eq!(caller.body(), &payload);
             assert_eq!(caller.http_status(), 200);
             assert_eq!(caller.release_node_id(), Some("wiring-terminal"));
@@ -298,7 +298,7 @@ mod tests {
 
         let error = production_router_action(&outcome, false)
             .expect_err("detached delivery cannot own a response");
-        assert_eq!(error.kind(), ProductionClaimErrorType::Contract);
+        assert_eq!(error.error_type(), ProductionClaimErrorType::Contract);
         assert!(
             error
                 .to_string()
@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(completion.result()["error"]["code"], "bad-order");
         assert_eq!(completion.result()["error"]["node"], "validate");
         let caller = completion.caller().expect("attached caller gets failure");
-        assert_eq!(caller.kind(), "failed");
+        assert_eq!(caller.outcome_type(), "failed");
         assert_eq!(caller.release_node_id(), Some("validate"));
     }
 
@@ -426,7 +426,7 @@ mod tests {
 
         let error = production_router_action(&outcome, false)
             .expect_err("an in-progress router result is not a queue terminal");
-        assert_eq!(error.kind(), ProductionClaimErrorType::Contract);
+        assert_eq!(error.error_type(), ProductionClaimErrorType::Contract);
         assert!(
             error
                 .to_string()

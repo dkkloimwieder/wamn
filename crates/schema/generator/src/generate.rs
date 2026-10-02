@@ -502,7 +502,7 @@ fn custom_operation_constraint_origin(
             .iter()
             .find(|constraint| constraint.name() == name)
         {
-            return Some(constraint_error(constraint.kind()));
+            return Some(constraint_error(constraint.constraint_type()));
         }
         if table
             .exclusions()
@@ -576,7 +576,7 @@ fn constraint_field(
     action: CrudAction,
     operation: &OperationDeclaration,
 ) -> Option<String> {
-    let column = match constraint.kind() {
+    let column = match constraint.constraint_type() {
         ConstraintType::PrimaryKey { columns } | ConstraintType::Unique { columns } => {
             match &**columns {
                 [column] => &**column,
@@ -627,7 +627,7 @@ fn operation_error_details(
     codes.extend(
         operation_constraints(catalog, table, action, operation, model)
             .into_iter()
-            .map(|constraint| constraint_error_code(constraint.kind())),
+            .map(|constraint| constraint_error_code(constraint.constraint_type())),
     );
     if !operation_exclusions(table, action, operation).is_empty() {
         codes.insert(Code::ExclusionViolation);
@@ -675,7 +675,7 @@ fn operation_constraints<'a>(
                 table
                     .constraints()
                     .iter()
-                    .filter(|constraint| update_can_violate(constraint.kind(), &marker))
+                    .filter(|constraint| update_can_violate(constraint.constraint_type(), &marker))
                     .collect()
             }
             None => Vec::new(),
@@ -689,7 +689,7 @@ fn operation_constraints<'a>(
         .iter()
         .filter(|constraint| {
             action != CrudAction::Update
-                || update_can_violate(constraint.kind(), &operation.writable_fields)
+                || update_can_violate(constraint.constraint_type(), &operation.writable_fields)
         })
         // The codec refuses a value shorter than its minimum first, so the
         // CHECK that guards it is never the answer.
@@ -704,7 +704,7 @@ fn min_length_check(field: &str, minimum: u32) -> String {
 
 /// Whether a constraint is the CHECK of a minimum length the model declares.
 fn guards_min_length(constraint: &Constraint, model: &ModelDeclaration) -> bool {
-    matches!(constraint.kind(), ConstraintType::Check { expression }
+    matches!(constraint.constraint_type(), ConstraintType::Check { expression }
     if model.min_lengths.iter().any(|(field, minimum)| {
         **expression == *min_length_check(field, *minimum)
     }))
@@ -720,7 +720,7 @@ fn inbound_foreign_keys<'a>(catalog: &'a CatalogIr, table: &'a Table) -> Vec<&'a
         .tables()
         .iter()
         .flat_map(Table::constraints)
-        .filter(|constraint| match constraint.kind() {
+        .filter(|constraint| match constraint.constraint_type() {
             ConstraintType::ForeignKey {
                 referenced_schema,
                 referenced_table,

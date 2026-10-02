@@ -39,7 +39,7 @@ pub struct WiringCompatibilityError {
 
 impl WiringCompatibilityError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> WiringCompatibilityErrorType {
+    pub fn error_type(&self) -> WiringCompatibilityErrorType {
         self.type_
     }
 
@@ -596,7 +596,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &scope(), &source_digest)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::SchemaDigestMismatch
         );
 
@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &scope(), &target_digest)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::SchemaDigestMismatch
         );
 
@@ -615,7 +615,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&wrong_port, &scope(), &components())
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::UnknownInputPort
         );
     }
@@ -627,7 +627,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &scope(), &stale)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::FactScopeMismatch
         );
 
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&invalid, &scope(), &components())
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::InvalidParameter
         );
 
@@ -646,7 +646,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&missing, &scope(), &components())
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::MissingRequiredParameter
         );
     }
@@ -662,7 +662,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&wiring(), &scope(), &structurally_wider)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::SchemaDigestMismatch
         );
     }
@@ -678,7 +678,7 @@ mod tests {
         assert_eq!(
             validate_wiring_compatibility(&error, &scope(), &components())
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             WiringCompatibilityErrorType::UnknownInputPort
         );
     }

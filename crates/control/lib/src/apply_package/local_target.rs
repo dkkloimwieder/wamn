@@ -76,7 +76,7 @@ pub fn applied_migration_drift(
     };
     match plan_package_migrations(directory, Some(&accepted)) {
         Ok(_) => Ok(None),
-        Err(error) if error.kind() == PackageMigrationErrorType::MigrationDrift => {
+        Err(error) if error.error_type() == PackageMigrationErrorType::MigrationDrift => {
             Ok(Some(error.to_string()))
         }
         Err(error) => Err(error.into()),

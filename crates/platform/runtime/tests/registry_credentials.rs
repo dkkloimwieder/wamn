@@ -65,7 +65,7 @@ fn missing_or_partial_registry_entry_refuses_without_fallback() {
     );
     let missing = read_registry_credentials(missing_fixture.path(), REGISTRY)
         .expect_err("scheme-bearing alias must not satisfy exact authority");
-    assert_eq!(missing.kind(), RegistryCredentialsErrorType::Rejected);
+    assert_eq!(missing.error_type(), RegistryCredentialsErrorType::Rejected);
     assert_eq!(missing.refusal(), "registry-credentials-not-found");
 
     let partial_fixture =

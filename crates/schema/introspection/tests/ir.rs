@@ -188,14 +188,14 @@ fn canonical_bytes_ignore_input_collection_order() {
 #[test]
 fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     let constraint_name_error = Constraint::primary_key("", ["id"]).unwrap_err();
-    assert_eq!(constraint_name_error.kind(), IrErrorType::EmptyName);
+    assert_eq!(constraint_name_error.error_type(), IrErrorType::EmptyName);
     assert_eq!(constraint_name_error.input(), "constraint");
     assert_eq!(
         constraint_name_error.to_string(),
         "constraint name must not be empty"
     );
     let index_name_error = Index::new("", Vec::new()).unwrap_err();
-    assert_eq!(index_name_error.kind(), IrErrorType::EmptyName);
+    assert_eq!(index_name_error.error_type(), IrErrorType::EmptyName);
     assert_eq!(index_name_error.to_string(), "index name must not be empty");
 
     assert_eq!(postgres_type("boolean").unwrap(), ColumnType::Boolean);
@@ -216,7 +216,7 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
     assert_eq!(postgres_type("uuid").unwrap(), ColumnType::Uuid);
 
     let type_error = postgres_type("character varying").unwrap_err();
-    assert_eq!(type_error.kind(), IrErrorType::UnsupportedType);
+    assert_eq!(type_error.error_type(), IrErrorType::UnsupportedType);
     assert_eq!(type_error.input(), "character varying");
     assert_eq!(
         type_error.to_string(),
@@ -319,7 +319,7 @@ fn frozen_types_and_closed_defaults_refuse_unsupported_input() {
             "{expression} is not a default for {column_type:?}"
         ));
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             IrErrorType::UnsupportedDefault,
             "{expression}"
         );
@@ -403,7 +403,7 @@ fn canonical_bytes_freeze_an_exclusion_constraint() {
 
     let name_error =
         Exclusion::new("", ExclusionAccessMethod::Gist, Vec::new(), [""; 0]).unwrap_err();
-    assert_eq!(name_error.kind(), IrErrorType::EmptyName);
+    assert_eq!(name_error.error_type(), IrErrorType::EmptyName);
     assert_eq!(
         name_error.to_string(),
         "exclusion constraint name must not be empty"

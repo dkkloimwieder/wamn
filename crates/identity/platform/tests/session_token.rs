@@ -202,7 +202,7 @@ fn authenticated_header_and_claim_variants_refuse_indistinguishably() {
         let error = verify_session_token(&signed(&pair, &malformed, &claims), &key, scope(), 1000)
             .unwrap_err();
         assert_eq!(error.to_string(), "session token refused");
-        assert_eq!(error.kind(), SessionErrorType::Refused);
+        assert_eq!(error.error_type(), SessionErrorType::Refused);
     }
     for field in ["jku", "jwk", "b64", "crit"] {
         let mut malformed = header.clone();

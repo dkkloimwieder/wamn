@@ -198,7 +198,7 @@ async fn error_for(fixture: &Fixture, definition: &Value) -> GenerationValidatio
     )
     .await
     .expect_err("mutated generation must be refused")
-    .kind()
+    .error_type()
 }
 
 /// `definition_hash` is persisted in `catalog.connection_generations`, so its
@@ -300,7 +300,7 @@ async fn exact_type_contract_hash_and_field_ownership_fail_precisely() {
         )
         .await
         .expect_err("wrong type or contract must fail");
-        assert_eq!(error.kind(), expected);
+        assert_eq!(error.error_type(), expected);
     }
 
     let error = validate_staged_connection_generation(
@@ -316,7 +316,7 @@ async fn exact_type_contract_hash_and_field_ownership_fail_precisely() {
     .await
     .expect_err("definition hash mismatch must fail");
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         GenerationValidationErrorType::DefinitionHashMismatch
     );
 
@@ -396,7 +396,7 @@ async fn credential_validation_uses_kind_metadata_only() {
     .await
     .expect_err("missing credential metadata must fail");
     assert_eq!(
-        missing.kind(),
+        missing.error_type(),
         GenerationValidationErrorType::CredentialMissing
     );
 
@@ -413,7 +413,7 @@ async fn credential_validation_uses_kind_metadata_only() {
     .await
     .expect_err("contract-forbidden credential kind must fail");
     assert_eq!(
-        mismatch.kind(),
+        mismatch.error_type(),
         GenerationValidationErrorType::CredentialTypeMismatch
     );
 }
@@ -431,7 +431,7 @@ async fn both_snapshotted_outer_policy_ceiling_denials_are_typed() {
     .await
     .expect_err("platform host ceiling must deny");
     assert_eq!(
-        host_error.kind(),
+        host_error.error_type(),
         GenerationValidationErrorType::PlatformHostPolicyDenied
     );
 
@@ -444,7 +444,7 @@ async fn both_snapshotted_outer_policy_ceiling_denials_are_typed() {
     .await
     .expect_err("cluster network ceiling must deny");
     assert_eq!(
-        network_error.kind(),
+        network_error.error_type(),
         GenerationValidationErrorType::ClusterNetworkPolicyDenied
     );
 }

@@ -278,7 +278,7 @@ async fn invitation_expiry_kind_purpose_and_transaction_rollback_refuse() {
         )
         .await
         .unwrap_err()
-        .kind(),
+        .error_type(),
         PasswordErrorType::Infrastructure
     );
     assert_eq!(
@@ -330,7 +330,7 @@ async fn concurrent_enrollment_creates_exactly_one_password() {
     );
     assert_ne!(a.is_ok(), b.is_ok());
     assert_eq!(
-        a.err().or(b.err()).unwrap().kind(),
+        a.err().or(b.err()).unwrap().error_type(),
         PasswordErrorType::Refused
     );
     assert_eq!(

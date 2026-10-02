@@ -122,7 +122,7 @@ pub struct ManagementAdmissionUrlError {
 
 impl ManagementAdmissionUrlError {
     /// Which predicate refused the input.
-    pub const fn kind(&self) -> ManagementAdmissionUrlErrorType {
+    pub const fn error_type(&self) -> ManagementAdmissionUrlErrorType {
         self.type_
     }
 
@@ -384,7 +384,7 @@ mod tests {
         ] {
             let error = parse_management_admission_url(input, ORG, PROJECT, ENVIRONMENT)
                 .expect_err("out-of-scope input must refuse");
-            assert_eq!(error.kind(), expected, "{input:?}");
+            assert_eq!(error.error_type(), expected, "{input:?}");
         }
 
         // A path that names no database, or more than one.
@@ -393,7 +393,7 @@ mod tests {
                 parse_management_admission_url(&url(&admitted, path), ORG, PROJECT, ENVIRONMENT)
                     .expect_err("a non-database path must refuse");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 ManagementAdmissionUrlErrorType::Database,
                 "{path:?}"
             );
@@ -409,7 +409,7 @@ mod tests {
             )
             .expect_err("a decorated connection input must refuse");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 ManagementAdmissionUrlErrorType::Extra,
                 "{suffix:?}"
             );
@@ -443,7 +443,7 @@ mod tests {
                 parse_management_admission_url(&url(user, DATABASE), ORG, PROJECT, ENVIRONMENT)
                     .expect_err("an out-of-scope identity must refuse");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 ManagementAdmissionUrlErrorType::Role,
                 "{user}"
             );
@@ -458,7 +458,7 @@ mod tests {
             ENVIRONMENT,
         )
         .expect_err("a control-database URL must refuse");
-        assert_eq!(error.kind(), ManagementAdmissionUrlErrorType::Role);
+        assert_eq!(error.error_type(), ManagementAdmissionUrlErrorType::Role);
     }
 
     #[test]

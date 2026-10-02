@@ -76,7 +76,7 @@ pub(super) fn validate_migration_policy(
         match validation {
             Ok(()) => {}
             Err(source)
-                if source.kind() == MigrationPolicyErrorType::UnsupportedStatement
+                if source.error_type() == MigrationPolicyErrorType::UnsupportedStatement
                     && inspected.iter().any(|mutation| {
                         matches!(
                             mutation.action(),
@@ -373,7 +373,7 @@ async fn preflight_add_definition(
             .into());
         };
         if model.owner != relation_owner.package_id
-            || explicit_definition_owner(model, mutation.kind(), mutation.definition())
+            || explicit_definition_owner(model, mutation.definition_type(), mutation.definition())
                 != Some(package_id)
         {
             return Err(definition_error(
@@ -386,14 +386,14 @@ async fn preflight_add_definition(
             .into());
         }
     } else if let Some(model) = model_for_relation(manifest, mutation.schema(), mutation.relation())
-        && explicit_definition_owner(model, mutation.kind(), mutation.definition())
+        && explicit_definition_owner(model, mutation.definition_type(), mutation.definition())
             .is_some_and(|owner| owner != package_id)
     {
         return Err(definition_error(
             ApplyPackageErrorType::DefinitionOwnerDeclarationMissing,
             coordinate,
             planned,
-            explicit_definition_owner(model, mutation.kind(), mutation.definition()),
+            explicit_definition_owner(model, mutation.definition_type(), mutation.definition()),
             "a package cannot add a definition declared as another package's property",
         )
         .into());
@@ -404,7 +404,7 @@ async fn preflight_add_definition(
         tenant,
         mutation.schema(),
         mutation.relation(),
-        mutation.kind(),
+        mutation.definition_type(),
         mutation.definition(),
     )
     .await?
@@ -427,7 +427,7 @@ async fn preflight_add_definition(
         tx,
         mutation.schema(),
         mutation.relation(),
-        mutation.kind(),
+        mutation.definition_type(),
         mutation.definition(),
     )
     .await?
@@ -457,7 +457,7 @@ async fn preflight_existing_definition_mutation(
         tenant,
         mutation.schema(),
         mutation.relation(),
-        mutation.kind(),
+        mutation.definition_type(),
         mutation.definition(),
     )
     .await?
@@ -476,7 +476,7 @@ async fn preflight_existing_definition_mutation(
         tx,
         mutation.schema(),
         mutation.relation(),
-        mutation.kind(),
+        mutation.definition_type(),
         mutation.definition(),
     )
     .await?

@@ -37,7 +37,7 @@ pub struct ClientTuiError {
 
 impl ClientTuiError {
     #[must_use]
-    pub const fn kind(&self) -> ClientTuiErrorType {
+    pub const fn error_type(&self) -> ClientTuiErrorType {
         self.type_
     }
 

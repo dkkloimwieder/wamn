@@ -272,20 +272,20 @@ mod tests {
             assert_eq!(
                 decode_cursor::<Box<str>>(&encoded, "status", CursorDirection::Ascending)
                     .unwrap_err()
-                    .kind(),
+                    .error_type(),
                 AccessErrorType::InvalidInput
             );
         }
         assert_eq!(
             decode_cursor::<Box<str>>(&valid, "created_at", CursorDirection::Ascending)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             AccessErrorType::InvalidInput
         );
         assert_eq!(
             decode_cursor::<Box<str>>(&valid, "status", CursorDirection::Descending)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             AccessErrorType::InvalidInput
         );
     }
@@ -302,7 +302,7 @@ mod tests {
                 CursorDirection::Ascending,
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             AccessErrorType::InvalidInput
         );
     }

@@ -282,7 +282,7 @@ async fn an_unusable_answer_refuses_by_name_without_the_token(script: &Script) {
         let error = read_metadata_registry_credentials(REGISTRY)
             .await
             .expect_err("an unusable answer refuses");
-        assert_eq!((error.kind(), error.refusal()), (kind, refusal));
+        assert_eq!((error.error_type(), error.refusal()), (kind, refusal));
         let rendered = format!("{error:?} {error}");
         assert!(rendered.contains(REGISTRY));
         assert!(!rendered.contains("private-value"));
@@ -338,7 +338,10 @@ async fn a_failed_token_request_refuses_before_any_registry_request(script: &Scr
     .pull_verified(&layer.sha256_digest())
     .await
     .expect_err("a pull without a token refuses");
-    assert_eq!(error.kind(), ReleaseManifestFetchErrorType::Credential);
+    assert_eq!(
+        error.error_type(),
+        ReleaseManifestFetchErrorType::Credential
+    );
     assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
     assert!(registry.heads().is_empty());
 }
@@ -369,7 +372,10 @@ async fn each_component_pull_asks_again(script: &Script) {
         .pull_verified(&component)
         .await
         .expect_err("a pull without a token refuses");
-    assert_eq!(error.kind(), ComponentArtifactFetchErrorType::Unavailable);
+    assert_eq!(
+        error.error_type(),
+        ComponentArtifactFetchErrorType::Unavailable
+    );
     assert_eq!(error.refusal(), "registry-token-metadata-unavailable");
 }
 

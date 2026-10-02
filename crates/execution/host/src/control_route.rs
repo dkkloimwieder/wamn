@@ -70,7 +70,7 @@ impl From<tokio_postgres::Error> for Refusal {
 
 impl From<IdentityError> for Refusal {
     fn from(error: IdentityError) -> Self {
-        match error.kind() {
+        match error.error_type() {
             IdentityErrorType::InvalidInput
             | IdentityErrorType::NotFound
             | IdentityErrorType::Conflict => Self::Invalid(error.to_string()),
@@ -588,7 +588,7 @@ async fn write_application(
             Ok(tenant) => tenant,
             // A database without platform rows holds no user row to remove.
             Err(error)
-                if error.kind() == IdentityErrorType::NotFound
+                if error.error_type() == IdentityErrorType::NotFound
                     && write >= ApplicationWrite::RemoveAdmin =>
             {
                 return Ok(());

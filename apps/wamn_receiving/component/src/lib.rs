@@ -87,7 +87,7 @@ fn record_receipt_command(request: contract::RecordReceiptRequest) -> receipt::R
 }
 
 fn map_record_receipt_error(error: &receipt::RecordReceiptError) -> contract::RecordReceiptError {
-    receipt_codec::map_error(error.kind().literal(), |key| match key {
+    receipt_codec::map_error(error.error_type().literal(), |key| match key {
         "field" => error.field().map(str::to_owned),
         "id" => error.id().map(str::to_owned),
         "minimum" => error.minimum().map(|value| value.to_string()),

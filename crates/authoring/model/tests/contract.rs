@@ -137,7 +137,7 @@ fn the_collapsed_draft_operations_no_longer_decode() {
         assert_eq!(
             decode_document(&encoded)
                 .expect_err("a collapsed operation must not decode")
-                .kind(),
+                .error_type(),
             ContractDecodeErrorType::Json,
             "{document}"
         );
@@ -188,7 +188,7 @@ fn query_id_enforces_exact_utf8_byte_boundary() {
         assert_eq!(
             decode_document(&encoded)
                 .expect_err("query-id must be refused")
-                .kind(),
+                .error_type(),
             ContractDecodeErrorType::Json
         );
     }
@@ -310,7 +310,7 @@ fn the_effect_free_clause_has_a_typed_refusal_on_the_wire() {
     assert_eq!(
         decode_document(&serde_json::to_string(&incomplete).expect("serializes"))
             .expect_err("the refusal must name the components it refused on")
-            .kind(),
+            .error_type(),
         ContractDecodeErrorType::Json
     );
 }
@@ -335,7 +335,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
     assert_eq!(
         decode_document(&serde_json::to_string(&invalid).expect("serializes"))
             .expect_err("a publish-only refusal cannot answer the gate")
-            .kind(),
+            .error_type(),
         ContractDecodeErrorType::Json
     );
     // And the converse: the gate's effect-posture refusal is not publish's.
@@ -359,7 +359,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
     assert_eq!(
         decode_document(&serde_json::to_string(&inverted).expect("serializes"))
             .expect_err("a gate-only refusal cannot answer publish")
-            .kind(),
+            .error_type(),
         ContractDecodeErrorType::Json
     );
 }
@@ -472,7 +472,7 @@ fn unsupported_version_is_classified_without_dispatch() {
     let error = decode_document(&serde_json::to_string(&request).expect("serializes"))
         .expect_err("unsupported version must fail");
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         ContractDecodeErrorType::UnsupportedContractVersion
     );
     assert_eq!(error.requested(), Some("0.1"));
@@ -492,7 +492,7 @@ fn an_old_contract_version_is_refused_before_decode() {
     });
     let error = decode_document(&body.to_string()).expect_err("0.1 is refused");
     assert_eq!(
-        error.kind(),
+        error.error_type(),
         ContractDecodeErrorType::UnsupportedContractVersion
     );
     assert_eq!(error.requested(), Some("0.1"));
@@ -555,7 +555,7 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
         let encoded =
             serde_json::to_string(&command("publish", &omitted)).expect("command serializes");
         assert_eq!(
-            decode_document(&encoded).unwrap_err().kind(),
+            decode_document(&encoded).unwrap_err().error_type(),
             ContractDecodeErrorType::Json,
             "publish without {field} decoded"
         );
@@ -578,7 +578,7 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
         let encoded =
             serde_json::to_string(&command("publish", &extra)).expect("command serializes");
         assert_eq!(
-            decode_document(&encoded).unwrap_err().kind(),
+            decode_document(&encoded).unwrap_err().error_type(),
             ContractDecodeErrorType::Json,
             "publish admitted the retired {field} field"
         );

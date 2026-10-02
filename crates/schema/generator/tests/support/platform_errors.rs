@@ -43,7 +43,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
         assert_eq!(
             validate_operation_vocabulary(&parsed(&manifest))
                 .expect_err(path)
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidOperation
         );
     }
@@ -53,7 +53,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&repeated))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
     let mut missing_permission = baseline;
@@ -64,7 +64,7 @@ fn custom_error_details_preserve_business_and_constraint_meanings() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&missing_permission))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 }
@@ -112,7 +112,7 @@ fn custom_constraints_follow_catalog_identity_and_kind() {
         let result = fixture::try_generate_with(&changed_catalog, &manifest);
         if replacement.is_none() {
             assert_eq!(
-                result.unwrap_err().kind(),
+                result.unwrap_err().error_type(),
                 GenerateErrorType::InvalidOperation
             );
         } else {
@@ -135,7 +135,7 @@ fn custom_constraints_follow_catalog_identity_and_kind() {
     assert_eq!(
         fixture::try_generate_with(&catalog, &missing_field)
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::UnknownColumn
     );
 }
@@ -165,7 +165,7 @@ fn custom_visibility_permissions_and_components_remain_closed() {
         assert_eq!(
             validate_operation_vocabulary(&parsed(&manifest))
                 .expect_err(field)
-                .kind(),
+                .error_type(),
             kind
         );
     }
@@ -188,7 +188,7 @@ fn custom_visibility_permissions_and_components_remain_closed() {
     assert_eq!(
         validate_operation_vocabulary(&parsed(&projection))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 }
@@ -234,7 +234,7 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
     assert_eq!(
         DataAccessOverlay::from_slice(&noncanonical)
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
     let mut read_only = fixture::manifest();
@@ -335,5 +335,5 @@ fn an_optional_pre_commit_slot_generates_its_no_op_participant() {
         .unwrap(),
     )
     .expect_err("a required slot without a pre_commit was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
 }

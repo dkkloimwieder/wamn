@@ -55,7 +55,7 @@ pub struct RenderError {
 impl RenderError {
     /// Stable refusal class for callers that must not match display text.
     #[must_use]
-    pub const fn kind(&self) -> RenderErrorType {
+    pub const fn error_type(&self) -> RenderErrorType {
         self.type_
     }
 

@@ -89,7 +89,7 @@ impl RouteSchemaError {
     }
 
     /// Stable failure category.
-    pub const fn kind(&self) -> RouteSchemaErrorType {
+    pub const fn error_type(&self) -> RouteSchemaErrorType {
         self.type_
     }
 }
@@ -448,14 +448,14 @@ mod tests {
             BTreeMap::from([("m-get-http".to_owned(), attachment)]),
         )
         .expect_err("a repeated attachment id refuses");
-        assert_eq!(error.kind(), RouteSchemaErrorType::Duplicate);
+        assert_eq!(error.error_type(), RouteSchemaErrorType::Duplicate);
         assert!(error.to_string().contains("m-get-http"), "{error}");
 
         let mut declaration = json!({"component": "c", "operations": {"p:m/get@1.0.0": {}}});
         let generated = json!({"c": {"p:m/get@1.0.0": {}}});
         let error = merge_operations(&mut declaration, Some(&generated))
             .expect_err("a repeated operation refuses");
-        assert_eq!(error.kind(), RouteSchemaErrorType::Duplicate);
+        assert_eq!(error.error_type(), RouteSchemaErrorType::Duplicate);
         assert!(error.to_string().contains("p:m/get@1.0.0"), "{error}");
     }
 
@@ -474,7 +474,7 @@ mod tests {
             "generated/routes/pallet/create.sql",
         ] {
             assert_eq!(
-                checked(escaping).expect_err(escaping).kind(),
+                checked(escaping).expect_err(escaping).error_type(),
                 RouteSchemaErrorType::Reference
             );
         }

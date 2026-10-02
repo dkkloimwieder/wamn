@@ -110,7 +110,7 @@ async fn refuses_unreleased_absent_and_foreign_definitions(
             .downcast_ref::<WiringActivationError>()
             .expect("Rust activation error");
         assert_eq!(
-            refusal.kind(),
+            refusal.error_type(),
             WiringActivationErrorType::DefinitionNotInRelease
         );
         assert!(
@@ -132,7 +132,7 @@ async fn refuses_unreleased_absent_and_foreign_definitions(
         error
             .downcast_ref::<WiringActivationError>()
             .expect("Rust refusal")
-            .kind(),
+            .error_type(),
         WiringActivationErrorType::DefinitionNotInRelease
     );
     tx.rollback().await.expect("rollback foreign claim");
@@ -201,7 +201,7 @@ async fn retirement_refuses_change_but_keeps_exact_retry(
         error
             .downcast_ref::<WiringActivationError>()
             .expect("Rust refusal")
-            .kind(),
+            .error_type(),
         WiringActivationErrorType::Tombstoned
     );
     tx.rollback().await.expect("rollback retirement refusal");

@@ -135,7 +135,7 @@ impl AuthorWiringError {
     }
 
     /// Stable refusal class for callers that must not match display text.
-    pub const fn kind(&self) -> AuthorWiringErrorType {
+    pub const fn error_type(&self) -> AuthorWiringErrorType {
         self.type_
     }
 }
@@ -525,7 +525,7 @@ mod tests {
     fn an_unreadable_document_refuses_before_any_connection() {
         let missing = read_wiring_document(Path::new("no-such-wiring-document.json"))
             .expect_err("an absent document refuses");
-        assert_eq!(missing.kind(), AuthorWiringErrorType::Document);
+        assert_eq!(missing.error_type(), AuthorWiringErrorType::Document);
         assert!(
             format!("{missing}").starts_with(WIRING_AUTHORSHIP_REFUSAL),
             "refusal is unlabelled: {missing}"
@@ -560,7 +560,7 @@ mod tests {
             read_wiring_document(&path).expect_err("a graph the router cannot enter refuses");
         std::fs::remove_dir_all(&package).expect("remove the wiring package");
 
-        assert_eq!(refusal.kind(), AuthorWiringErrorType::Document);
+        assert_eq!(refusal.error_type(), AuthorWiringErrorType::Document);
         let validator = refusal
             .source()
             .expect("the document refusal is carried verbatim")
@@ -582,7 +582,7 @@ mod tests {
         // component the gate scope has no admitted fact for.
         let refusal = gate_wiring_document(&document, &scope(), &[admitted("transform")])
             .expect_err("a wiring over absent component facts refuses");
-        assert_eq!(refusal.kind(), AuthorWiringErrorType::Gate);
+        assert_eq!(refusal.error_type(), AuthorWiringErrorType::Gate);
         let gate = refusal
             .source()
             .expect("the gate refusal is carried verbatim")
@@ -610,7 +610,7 @@ mod tests {
 
         let red = require_green_report(Some(false), &document, &hash)
             .expect_err("a report whose gate refused the document refuses authorship");
-        assert_eq!(red.kind(), AuthorWiringErrorType::Report);
+        assert_eq!(red.error_type(), AuthorWiringErrorType::Report);
         assert!(
             format!("{red}").starts_with(WIRING_AUTHORSHIP_REFUSAL),
             "refusal is unlabelled: {red}"
@@ -618,7 +618,7 @@ mod tests {
 
         let absent = require_green_report(None, &document, &hash)
             .expect_err("an ungated document refuses authorship");
-        assert_eq!(absent.kind(), AuthorWiringErrorType::Report);
+        assert_eq!(absent.error_type(), AuthorWiringErrorType::Report);
         assert_ne!(
             format!("{absent}"),
             format!("{red}"),

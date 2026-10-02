@@ -357,7 +357,7 @@ fn assert_typed_metadata_refusal(input: &PackageInput) {
     let refusal = validate_package_metadata(&manifest, &metadata)
         .expect_err("unsatisfied package metadata must refuse release publish");
     assert_eq!(
-        refusal.kind(),
+        refusal.error_type(),
         PublishManifestErrorType::PolicyContractUnsatisfied
     );
 }
@@ -514,7 +514,10 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     )
     .await
     .expect_err("manifest bytes other than apply-package's exact input must refuse");
-    assert_eq!(refusal.kind(), PublishManifestErrorType::PackageManifest);
+    assert_eq!(
+        refusal.error_type(),
+        PublishManifestErrorType::PackageManifest
+    );
     assert!(refusal.detail().contains(&format!(
         "{}@{PACKAGE_VERSION}",
         wamn_fixture_package::OVERLAY_PACKAGE_ID
@@ -542,7 +545,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     )
     .await
     .expect_err("a one-node wiring must refuse");
-    assert_eq!(refusal.kind(), PublishManifestErrorType::Wiring);
+    assert_eq!(refusal.error_type(), PublishManifestErrorType::Wiring);
     assert!(refusal.detail().contains("has no edges"), "{refusal}");
     transaction
         .rollback()

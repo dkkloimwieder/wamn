@@ -42,7 +42,7 @@ pub struct ExpectError {
 
 impl ExpectError {
     #[cfg(test)]
-    pub(crate) const fn kind(&self) -> ExpectErrorType {
+    pub(crate) const fn error_type(&self) -> ExpectErrorType {
         self.type_
     }
 }
@@ -166,7 +166,7 @@ mod tests {
             }
             .validate()
             .unwrap_err();
-            assert_eq!(error.kind(), ExpectErrorType::ResponseStatus);
+            assert_eq!(error.error_type(), ExpectErrorType::ResponseStatus);
         }
         assert_eq!(
             Expect {
@@ -177,7 +177,7 @@ mod tests {
             }
             .validate()
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ExpectErrorType::RespondedFailureCode
         );
         for (status, body_subset) in [(Some(200), None), (None, Some(json!({})))] {
@@ -190,7 +190,7 @@ mod tests {
                 }
                 .validate()
                 .unwrap_err()
-                .kind(),
+                .error_type(),
                 ExpectErrorType::FailedResponseFields
             );
         }

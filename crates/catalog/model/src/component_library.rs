@@ -384,7 +384,7 @@ pub struct ComponentFactError {
 
 impl ComponentFactError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> ComponentFactErrorType {
+    pub fn error_type(&self) -> ComponentFactErrorType {
         self.type_
     }
 
@@ -1401,7 +1401,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::OperationDependencyMismatch
         );
 
@@ -1417,7 +1417,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::InvalidOperationDependency
         );
 
@@ -1433,7 +1433,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::InvalidOperationDependency
         );
 
@@ -1447,7 +1447,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::DuplicateOperationDependency
         );
 
@@ -1465,7 +1465,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::ConflictingOperationDependency
         );
     }
@@ -1483,7 +1483,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::RegisteredOperationMismatch,
         );
 
@@ -1521,7 +1521,7 @@ mod tests {
         assert_eq!(
             verify_stored_effect_projection(&corrupted)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             ComponentFactErrorType::InvalidSchema
         );
 
@@ -1548,7 +1548,7 @@ mod tests {
                     Vec::new(),
                 )
                 .unwrap_err()
-                .kind(),
+                .error_type(),
                 kind
             );
         }
@@ -1592,13 +1592,15 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::RegisteredOperationMismatch
         );
         let mut stored = migration_defaulted_fact(&[]);
         stored.operations.get_mut("map").unwrap().fresh_only = true;
         assert_eq!(
-            verify_stored_effect_projection(&stored).unwrap_err().kind(),
+            verify_stored_effect_projection(&stored)
+                .unwrap_err()
+                .error_type(),
             ComponentFactErrorType::RegisteredOperationMismatch
         );
     }
@@ -1652,7 +1654,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::NonCanonicalIdentity
         );
 
@@ -1667,7 +1669,7 @@ mod tests {
                     Vec::new(),
                 )
                 .unwrap_err()
-                .kind(),
+                .error_type(),
                 ComponentFactErrorType::NonCanonicalIdentity
             );
         }
@@ -1683,7 +1685,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::RegisteredOperationMismatch
         );
 
@@ -1694,7 +1696,9 @@ mod tests {
             .expect("map operation")
             .registered_operation = Some("other:widget/get@1.2.0".into());
         assert_eq!(
-            verify_stored_effect_projection(&stored).unwrap_err().kind(),
+            verify_stored_effect_projection(&stored)
+                .unwrap_err()
+                .error_type(),
             ComponentFactErrorType::NonCanonicalIdentity
         );
     }
@@ -1744,7 +1748,10 @@ mod tests {
         let error = verify_stored_effect_projection(&stored)
             .expect_err("an underived purity claim is refused");
 
-        assert_eq!(error.kind(), ComponentFactErrorType::UnprojectedEffect);
+        assert_eq!(
+            error.error_type(),
+            ComponentFactErrorType::UnprojectedEffect
+        );
     }
 
     /// The other half of the same guard: a row whose `'[]'` happens to be the
@@ -1769,7 +1776,10 @@ mod tests {
         )
         .expect_err("an under-claimed projection is refused at admission");
 
-        assert_eq!(error.kind(), ComponentFactErrorType::UnprojectedEffect);
+        assert_eq!(
+            error.error_type(),
+            ComponentFactErrorType::UnprojectedEffect
+        );
     }
 
     #[test]
@@ -1807,7 +1817,7 @@ mod tests {
                 vec![http_effect],
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::UndeclaredConnection
         );
 
@@ -1820,7 +1830,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::UnimportedConnection
         );
 
@@ -1838,7 +1848,7 @@ mod tests {
                 }],
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::DuplicateConnection
         );
     }
@@ -1857,7 +1867,7 @@ mod tests {
                 vec![postgres_effect()],
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::UnimportedEffect
         );
     }
@@ -1908,7 +1918,7 @@ mod tests {
                 vec![widened],
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::InheritedEffectInterfaces
         );
     }
@@ -2007,7 +2017,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::EmptyOperationSet
         );
 
@@ -2024,7 +2034,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::DuplicateInputPort
         );
 
@@ -2039,7 +2049,7 @@ mod tests {
                 Vec::new(),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::RemoteSchemaReference
         );
     }
@@ -2126,7 +2136,7 @@ mod tests {
                 BTreeMap::from([("unknown".to_owned(), BTreeMap::new())]),
             )
             .unwrap_err()
-            .kind(),
+            .error_type(),
             ComponentFactErrorType::UnexpectedOperationStatements
         );
 
@@ -2137,7 +2147,7 @@ mod tests {
         assert_eq!(
             verify_stored_effect_projection(&component)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             ComponentFactErrorType::RegisteredOperationMismatch
         );
 
@@ -2148,7 +2158,7 @@ mod tests {
         assert_eq!(
             verify_stored_effect_projection(&component)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             ComponentFactErrorType::InvalidStatementFact
         );
 
@@ -2162,7 +2172,7 @@ mod tests {
         assert_eq!(
             verify_stored_effect_projection(&component)
                 .unwrap_err()
-                .kind(),
+                .error_type(),
             ComponentFactErrorType::DuplicateStatementField
         );
     }

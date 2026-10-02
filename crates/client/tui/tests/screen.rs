@@ -222,7 +222,7 @@ fn selected_record_supplies_only_the_declared_key_and_waits_for_extra_read_input
     assert_eq!(
         read.begin(&intent(), false)
             .expect_err("locale still required")
-            .kind(),
+            .error_type(),
         ScreenErrorType::Request
     );
     assert!(read.submission().captured().is_none());
@@ -255,7 +255,7 @@ fn revision_transfer_requires_the_exact_successful_read_and_reserves_envelope_pa
             command
                 .edit(path, FieldState::Value(json!("typed")))
                 .expect_err("reserved")
-                .kind(),
+                .error_type(),
             ScreenErrorType::Draft
         );
     }
@@ -492,7 +492,7 @@ fn delete_needs_confirmation_and_pending_prevents_exit_or_draft_discard() {
         command
             .begin(&intent(), false)
             .expect_err("confirmation")
-            .kind(),
+            .error_type(),
         ScreenErrorType::ConfirmationRequired
     );
     assert!(command.submission().captured().is_none());
@@ -518,7 +518,7 @@ fn delete_needs_confirmation_and_pending_prevents_exit_or_draft_discard() {
         command
             .begin(&intent(), false)
             .expect_err("each delete needs confirmation")
-            .kind(),
+            .error_type(),
         ScreenErrorType::ConfirmationRequired
     );
 }

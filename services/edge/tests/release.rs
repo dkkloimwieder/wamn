@@ -148,7 +148,7 @@ async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
     EdgeRelease::load(directory, digest)
         .await
         .expect_err("the bundle is refused")
-        .kind()
+        .error_type()
 }
 
 #[tokio::test]

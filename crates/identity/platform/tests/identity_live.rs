@@ -70,7 +70,7 @@ async fn platform_identity_round_trip_on_postgres() {
     )
     .await
     .expect("create user principal");
-    assert_eq!(user.kind(), PrincipalType::User);
+    assert_eq!(user.principal_type(), PrincipalType::User);
     assert_eq!(user.subject(), "author@example.com");
     assert_eq!(user.status(), PrincipalStatus::Active);
 
@@ -82,18 +82,18 @@ async fn platform_identity_round_trip_on_postgres() {
     )
     .await
     .expect_err("duplicate user identity must fail");
-    assert_eq!(duplicate.kind(), IdentityErrorType::Conflict);
+    assert_eq!(duplicate.error_type(), IdentityErrorType::Conflict);
 
     one_address_admits_one_user(&client).await;
 
     let service = create_service(&client, "agent-ci", "CI Agent")
         .await
         .expect("create service principal");
-    assert_eq!(service.kind(), PrincipalType::Service);
+    assert_eq!(service.principal_type(), PrincipalType::Service);
     let duplicate_service = create_service(&client, "agent-ci", "Second CI Agent")
         .await
         .expect_err("one subject admits one service");
-    assert_eq!(duplicate_service.kind(), IdentityErrorType::Conflict);
+    assert_eq!(duplicate_service.error_type(), IdentityErrorType::Conflict);
     assert!(
         resolve_subject(&client, PrincipalType::Service, "agent-ci")
             .await
@@ -197,7 +197,7 @@ async fn one_address_admits_one_user(client: &tokio_postgres::Client) {
     )
     .await
     .expect_err("one address admits one user");
-    assert_eq!(second.kind(), IdentityErrorType::Conflict);
+    assert_eq!(second.error_type(), IdentityErrorType::Conflict);
 }
 
 /// A project delete takes the project's roles and environment memberships with
@@ -381,7 +381,7 @@ async fn project_environment_membership_round_trip(
         grant_project_env_membership(client, service.id(), "demo", "widgets", "dev")
             .await
             .expect_err("service cannot hold a user membership")
-            .kind(),
+            .error_type(),
         IdentityErrorType::NotFound
     );
     let service_insert = client
@@ -401,7 +401,7 @@ async fn project_environment_membership_round_trip(
         grant_project_env_membership(client, user.id(), "demo", "widgets", "missing")
             .await
             .expect_err("unregistered environment cannot receive a membership")
-            .kind(),
+            .error_type(),
         IdentityErrorType::NotFound
     );
 
@@ -585,7 +585,7 @@ async fn provisioning_principal_is_seeded(client: &tokio_postgres::Client) -> Pr
         .await
         .expect("resolve the platform principal")
         .expect("the platform principal is stored");
-    assert_eq!(principal.kind(), PrincipalType::Platform);
+    assert_eq!(principal.principal_type(), PrincipalType::Platform);
     id
 }
 

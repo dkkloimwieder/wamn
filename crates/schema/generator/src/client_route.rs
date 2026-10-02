@@ -546,7 +546,7 @@ mod tests {
         attachment.definition["input-schema"] = json!([]);
         let error = evidence(&fixture.attachments(), &attachment, None)
             .expect_err("refuse malformed schema");
-        assert_eq!(error.kind(), ClientIrErrorType::MalformedContract);
+        assert_eq!(error.error_type(), ClientIrErrorType::MalformedContract);
         assert!(error.to_string().contains("attachments.json"));
         attachment.definition["input-schema"] = json!(true);
         let mut wiring = direct_wiring(&attachment);
@@ -554,7 +554,7 @@ mod tests {
         fixture.write("wirings/invalid.json", &wiring);
         let error = evidence(&fixture.attachments(), &attachment, None)
             .expect_err("refuse malformed wiring");
-        assert_eq!(error.kind(), ClientIrErrorType::MalformedContract);
+        assert_eq!(error.error_type(), ClientIrErrorType::MalformedContract);
         assert!(error.to_string().contains("invalid.json"));
     }
 

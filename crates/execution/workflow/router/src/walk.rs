@@ -246,7 +246,7 @@ pub enum ApplyErrorType {
 
 impl ApplyError {
     /// Which boundary the transition broke.
-    pub fn kind(&self) -> &ApplyErrorType {
+    pub fn error_type(&self) -> &ApplyErrorType {
         &self.type_
     }
 

@@ -306,7 +306,7 @@ fn validate_model(
         // nothing outside `generated/`.
         let expression = super::min_length_check(field, *minimum);
         let guarded = table.constraints().iter().any(|constraint| {
-            matches!(constraint.kind(), ConstraintType::Check { expression: found } if **found == *expression)
+            matches!(constraint.constraint_type(), ConstraintType::Check { expression: found } if **found == *expression)
         });
         if !guarded {
             return Err(GenerateError::for_object(
@@ -592,10 +592,12 @@ fn validate_audit_log_columns(
         }
     }
     if model.log_retention().is_some()
-        && !table
-            .constraints()
-            .iter()
-            .any(|constraint| matches!(constraint.kind(), ConstraintType::PrimaryKey { .. }))
+        && !table.constraints().iter().any(|constraint| {
+            matches!(
+                constraint.constraint_type(),
+                ConstraintType::PrimaryKey { .. }
+            )
+        })
     {
         return Err(GenerateError::for_object(
             GenerateErrorType::InvalidModel,

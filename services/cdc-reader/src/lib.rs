@@ -2256,7 +2256,7 @@ mod tests {
             .downcast_ref::<wamn_control_provision::SystemReaderUrlError>()
             .expect("the refusal is the pure scope check, not a connection failure");
         assert_eq!(
-            refusal.kind(),
+            refusal.error_type(),
             wamn_control_provision::SystemReaderUrlErrorType::Role
         );
         assert_eq!(refusal.reader(), SystemReader::Registry);

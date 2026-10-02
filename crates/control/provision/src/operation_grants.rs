@@ -78,7 +78,7 @@ impl OperationGrantError {
     }
 
     /// Return the stable refusal class.
-    pub const fn kind(&self) -> OperationGrantErrorType {
+    pub const fn error_type(&self) -> OperationGrantErrorType {
         self.type_
     }
 
@@ -223,7 +223,7 @@ mod tests {
         manifest["invented_grant_grammar"] = serde_json::Value::Bool(true);
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown field was accepted");
-        assert_eq!(error.kind(), OperationGrantErrorType::InvalidManifest);
+        assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
         assert!(
             error.source().is_some(),
             "strict parser refusal lost source"
@@ -238,12 +238,12 @@ mod tests {
             serde_json::json!("missing");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("unknown operation was granted");
-        assert_eq!(error.kind(), OperationGrantErrorType::InvalidManifest);
+        assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
         assert_eq!(
             error
                 .source()
                 .and_then(|source| source.downcast_ref::<wamn_schema_generator::GenerateError>())
-                .map(wamn_schema_generator::GenerateError::kind),
+                .map(wamn_schema_generator::GenerateError::error_type),
             Some(wamn_schema_generator::GenerateErrorType::InvalidComponent)
         );
     }
@@ -255,12 +255,12 @@ mod tests {
         manifest["package"]["id"] = serde_json::json!("platform-Fixture");
         let bytes = serde_json::to_vec(&manifest).expect("serialize mutated fixture");
         let error = operation_grant_tokens(&bytes).expect_err("invalid package id was granted");
-        assert_eq!(error.kind(), OperationGrantErrorType::InvalidManifest);
+        assert_eq!(error.error_type(), OperationGrantErrorType::InvalidManifest);
         assert_eq!(
             error
                 .source()
                 .and_then(|source| source.downcast_ref::<wamn_schema_generator::GenerateError>())
-                .map(wamn_schema_generator::GenerateError::kind),
+                .map(wamn_schema_generator::GenerateError::error_type),
             Some(wamn_schema_generator::GenerateErrorType::InvalidIdentity)
         );
     }

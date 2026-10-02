@@ -183,7 +183,7 @@ mod tests {
         }
         for row in [None, Some(locked("consumed"))] {
             let error = live_packaging(row, PACKAGING).unwrap_err();
-            assert_eq!(error.kind(), AccessErrorType::PackagingNotFound);
+            assert_eq!(error.error_type(), AccessErrorType::PackagingNotFound);
             assert_eq!(error.detail()["field"], "value.packaging_id");
             assert_eq!(error.detail()["id"], PACKAGING);
         }

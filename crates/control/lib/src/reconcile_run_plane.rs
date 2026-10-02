@@ -220,7 +220,7 @@ impl ReconcileTargetError {
     }
 
     /// Return the stable refusal class.
-    pub const fn kind(&self) -> ReconcileTargetErrorType {
+    pub const fn error_type(&self) -> ReconcileTargetErrorType {
         self.type_
     }
 

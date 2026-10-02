@@ -61,16 +61,16 @@ impl ClientComponentErrorType {
 }
 
 impl ClientComponentError {
-    fn new(kind: ClientComponentErrorType, detail: impl Into<String>) -> Self {
+    fn new(error_type: ClientComponentErrorType, detail: impl Into<String>) -> Self {
         Self {
-            type_: kind,
+            type_: error_type,
             detail: detail.into(),
         }
     }
 
     /// What went wrong.
     #[must_use]
-    pub const fn kind(&self) -> ClientComponentErrorType {
+    pub const fn error_type(&self) -> ClientComponentErrorType {
         self.type_
     }
 }
@@ -898,7 +898,7 @@ fn write_table_definition(
             .map_or(&[][..], |candidate| &candidate.supplied[..])
             .iter()
             .map(|field| {
-                let kind = match field.type_ {
+                let supplied_type = match field.type_ {
                     SuppliedType::RequestId => "requestId",
                     SuppliedType::IdempotencyKey => "idempotencyKey",
                     SuppliedType::OccurredAt => "occurredAt",
@@ -906,7 +906,7 @@ fn write_table_definition(
                 format!(
                     "{{ input: {}, type: {} }}",
                     member_literal(field.path),
-                    quote(kind)
+                    quote(supplied_type)
                 )
             })
             .collect::<Vec<_>>();
@@ -1661,10 +1661,10 @@ fn emit_form(
             Some(_) => continue,
         };
         let (state, state_upper) = selector_state(path);
-        let kind = if list { "JsonValue[]" } else { "JsonValue" };
+        let value_type = if list { "JsonValue[]" } else { "JsonValue" };
         writeln!(
             source,
-            "  const [{state}Value, set{state_upper}Value] = createSignal<{kind} | undefined>(\n    readMember(props.initial, {}) as {kind} | undefined,\n  );",
+            "  const [{state}Value, set{state_upper}Value] = createSignal<{value_type} | undefined>(\n    readMember(props.initial, {}) as {value_type} | undefined,\n  );",
             member_literal(path)
         )
         .expect("write");
@@ -2444,7 +2444,7 @@ fn emit_input_control(
         .expect("write");
         return;
     }
-    let kind = if matches!(input.type_name.as_str(), "int32" | "float64") {
+    let input_type = if matches!(input.type_name.as_str(), "int32" | "float64") {
         "number"
     } else {
         "text"
@@ -2452,7 +2452,7 @@ fn emit_input_control(
     ui.insert("TextField");
     writeln!(
         source,
-        "{pad}<TextField\n{pad}  label={text:?}\n{pad}  type=\"{kind}\"\n{pad}  value={{String({get} ?? \"\")}}\n{pad}  onInput={{(value) => {set}value)}}\n{pad}  {error}\n{pad}/>"
+        "{pad}<TextField\n{pad}  label={text:?}\n{pad}  type=\"{input_type}\"\n{pad}  value={{String({get} ?? \"\")}}\n{pad}  onInput={{(value) => {set}value)}}\n{pad}  {error}\n{pad}/>"
     )
     .expect("write");
 }

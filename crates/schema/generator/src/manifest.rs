@@ -124,7 +124,7 @@ pub enum CustomOperationType {
 
 impl CustomOperationDeclaration {
     /// Closed authored operation kind.
-    pub const fn kind(&self) -> &'static str {
+    pub const fn operation_type(&self) -> &'static str {
         match self.type_ {
             CustomOperationType::Projection => "projection",
             CustomOperationType::Command => "command",
@@ -1123,7 +1123,7 @@ fn validate_custom_operation(
                 GenerateErrorType::InvalidOperation,
                 format!(
                     "{} {operation_name} must not declare result class page; page belongs to the generated query",
-                    operation.kind()
+                    operation.operation_type()
                 ),
             ));
         }

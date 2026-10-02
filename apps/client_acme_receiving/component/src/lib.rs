@@ -80,7 +80,7 @@ fn emission(payload: String) -> Emission {
 }
 
 fn private_node_error(error: &AccessError) -> NodeError {
-    let kind = error.kind();
+    let kind = error.error_type();
     let code = match kind {
         AccessErrorType::InvalidInput => "invalid_input",
         AccessErrorType::Retry => "retry",
@@ -116,11 +116,11 @@ fn access_detail(
     match key {
         "field" => error.field().map(str::to_owned).or_else(|| {
             not_found
-                .filter(|_| error.kind() == AccessErrorType::NotFound)
+                .filter(|_| error.error_type() == AccessErrorType::NotFound)
                 .map(|(field, _)| field.to_owned())
         }),
         "id" => not_found
-            .filter(|_| error.kind() == AccessErrorType::NotFound)
+            .filter(|_| error.error_type() == AccessErrorType::NotFound)
             .map(|(_, id)| id.to_owned()),
         "expected_row_version" => expected_row_version.map(|value| value.to_string()),
         "observed_row_version" => error.observed_row_version().map(|value| value.to_string()),

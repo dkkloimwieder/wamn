@@ -123,7 +123,7 @@ pub struct PromotionError {
 }
 
 impl PromotionError {
-    pub const fn kind(&self) -> PromotionErrorType {
+    pub const fn error_type(&self) -> PromotionErrorType {
         self.type_
     }
 
@@ -1046,7 +1046,7 @@ mod tests {
         let package = package();
         let error = compare_target_package(&package, None)
             .expect_err("promotion cannot create an absent package");
-        assert_eq!(error.kind(), PromotionErrorType::PackageNotApplied);
+        assert_eq!(error.error_type(), PromotionErrorType::PackageNotApplied);
         let rendered = error.to_string();
         assert!(rendered.contains("platform_fixture@1.1.0"));
         assert!(rendered.contains("run wamn-ctl apply-package"));
@@ -1065,7 +1065,7 @@ mod tests {
         )
         .expect_err("a different raw manifest identity must refuse");
         assert_eq!(
-            manifest_error.kind(),
+            manifest_error.error_type(),
             PromotionErrorType::PackageManifestMismatch
         );
 
@@ -1078,7 +1078,7 @@ mod tests {
         )
         .expect_err("a different predecessor identity must refuse");
         assert_eq!(
-            predecessor_error.kind(),
+            predecessor_error.error_type(),
             PromotionErrorType::PackageManifestMismatch
         );
     }
@@ -1103,7 +1103,7 @@ mod tests {
             )
             .expect_err("the complete target records must be byte-exact");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 PromotionErrorType::PackageMigrationRecordMismatch
             );
         }

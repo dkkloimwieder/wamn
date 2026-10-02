@@ -245,7 +245,7 @@ pub struct TenantImportError {
 
 impl TenantImportError {
     /// Stable refusal class for callers that must not match display text.
-    pub fn kind(&self) -> TenantImportErrorType {
+    pub fn error_type(&self) -> TenantImportErrorType {
         self.type_
     }
 
@@ -514,7 +514,7 @@ mod tests {
         let drifted = ComponentImports::new(["wasi:io/streams@0.2.9".to_string()]);
         let error = analyze_tenant(&drifted, &admitted, "tenant-node")
             .expect_err("a drifted WASI version must refuse");
-        assert_eq!(error.kind(), TenantImportErrorType::UnadmittedImport);
+        assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
     }
 
     #[test]
@@ -530,7 +530,7 @@ mod tests {
 
         let error = analyze_tenant(&imports, &BTreeSet::new(), "tenant-node")
             .expect_err("unlisted packages must refuse");
-        assert_eq!(error.kind(), TenantImportErrorType::UnadmittedImport);
+        assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
         assert_eq!(error.imports().len(), 6);
     }
 
@@ -629,7 +629,7 @@ mod tests {
         let effect = ComponentImports::new(["wamn:postgres/client@0.1.0".to_string()]);
         let error = analyze_tenant(&effect, &BTreeSet::new(), "tenant-node")
             .expect_err("an ungranted effect must refuse");
-        assert_eq!(error.kind(), TenantImportErrorType::UnadmittedImport);
+        assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
 
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
         assert!(analyze_tenant(&effect, &granted, "tenant-node").is_ok());
@@ -649,7 +649,7 @@ mod tests {
                 analyze_tenant(&ComponentImports::new(Vec::new()), &admitted, "tenant-node")
                     .expect_err("the platform registry must contain exact package names");
             assert_eq!(
-                error.kind(),
+                error.error_type(),
                 TenantImportErrorType::InvalidPlatformCapability
             );
         }

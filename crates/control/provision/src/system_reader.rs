@@ -155,7 +155,7 @@ impl SystemReaderUrlError {
     }
 
     /// Which predicate refused the input.
-    pub const fn kind(&self) -> SystemReaderUrlErrorType {
+    pub const fn error_type(&self) -> SystemReaderUrlErrorType {
         self.type_
     }
 
@@ -361,7 +361,7 @@ mod tests {
         for reader in SystemReader::ALL {
             let error = parse(reader, &url("wamn_system", DATABASE))
                 .expect_err("the unconfined owner credential was accepted");
-            assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
+            assert_eq!(error.error_type(), SystemReaderUrlErrorType::Role);
             assert_eq!(error.reader(), reader);
             // The refusal must not echo the input: it carries a password.
             assert!(!format!("{error}").contains("secret"));
@@ -400,7 +400,7 @@ mod tests {
                 &url(&role(other, CredentialGeneration::A), DATABASE),
             )
             .expect_err("a reader accepted the other reader's credential");
-            assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
+            assert_eq!(error.error_type(), SystemReaderUrlErrorType::Role);
         }
     }
 
@@ -418,7 +418,7 @@ mod tests {
         );
         let error = parse(SystemReader::Identity, &url(&foreign, DATABASE))
             .expect_err("another environment's credential was accepted");
-        assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
+        assert_eq!(error.error_type(), SystemReaderUrlErrorType::Role);
     }
 
     /// The database name is inside the digest, so a URL that names a different
@@ -433,7 +433,7 @@ mod tests {
             ),
         )
         .expect_err("a project-database URL was accepted");
-        assert_eq!(error.kind(), SystemReaderUrlErrorType::Role);
+        assert_eq!(error.error_type(), SystemReaderUrlErrorType::Role);
     }
 
     #[test]
@@ -461,7 +461,7 @@ mod tests {
         ] {
             let error = parse(SystemReader::Registry, &input)
                 .expect_err("an out-of-shape connection input was accepted");
-            assert_eq!(error.kind(), kind, "{input:?}");
+            assert_eq!(error.error_type(), kind, "{input:?}");
         }
     }
 

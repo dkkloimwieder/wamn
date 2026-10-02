@@ -577,7 +577,7 @@ fn cancelled_is_terminal_without_failure_verdict_or_successor() {
 fn compile_rejects_an_unresolved_entry() {
     // entry points at a node that does not exist -> compile error.
     let err = Wiring::compile("missing", vec![node("a", "echo")], vec![]).unwrap_err();
-    assert!(matches!(err.kind(), WiringErrorType::UnresolvedEntry(id) if id == "missing"));
+    assert!(matches!(err.error_type(), WiringErrorType::UnresolvedEntry(id) if id == "missing"));
 }
 
 // ---- retry policy (unit) --------------------------------------------------

@@ -44,21 +44,21 @@ fn strict_manifest_and_ir_references_fail_loudly() {
     assert_eq!(
         run(&ir, &predecessor, &QUERY_SOURCES)
             .expect_err("a package version cannot name itself as predecessor")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
 
     let mut unknown = manifest();
     unknown["future"] = json!(true);
     assert_eq!(
-        run(&ir, &unknown, &QUERY_SOURCES).unwrap_err().kind(),
+        run(&ir, &unknown, &QUERY_SOURCES).unwrap_err().error_type(),
         GenerateErrorType::InvalidManifest
     );
 
     let mut mismatch = manifest();
     mismatch["models"]["gadget"]["table"] = json!("missing");
     let error = run(&ir, &mismatch, &QUERY_SOURCES).unwrap_err();
-    assert_eq!(error.kind(), GenerateErrorType::UnknownRelation);
+    assert_eq!(error.error_type(), GenerateErrorType::UnknownRelation);
     assert_eq!(error.object(), Some("inventory.missing"));
 
     let mut unknown_action = manifest();
@@ -67,7 +67,7 @@ fn strict_manifest_and_ir_references_fail_loudly() {
     assert_eq!(
         run(&ir, &unknown_action, &QUERY_SOURCES)
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
 }
@@ -90,7 +90,7 @@ fn custom_sql_generated_rust_symbols_are_unique_before_emission() {
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&row_collision))
             .expect_err("two statements collapsed to one Rust row symbol")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -114,7 +114,7 @@ fn custom_sql_generated_rust_symbols_are_unique_before_emission() {
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&fixture_collision))
             .expect_err("two statement parameters collapsed to one Rust fixture symbol")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 }
@@ -141,7 +141,7 @@ fn a_custom_operation_refuses_the_page_result_class() {
         let refusal = run(&catalog(false), &paged, &QUERY_SOURCES)
             .expect_err("a custom operation declaring page generated");
         assert_eq!(
-            refusal.kind(),
+            refusal.error_type(),
             GenerateErrorType::InvalidOperation,
             "{kind}"
         );
@@ -176,7 +176,7 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     empty["models"]["gadget"]["operations"]["get"]["component"] = json!("");
     let error = validate_operation_vocabulary(&parsed_manifest(&empty))
         .expect_err("an empty component name was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidComponent);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidComponent);
     assert_eq!(
         error.context(),
         "operation gadget.get component must not be empty"
@@ -186,7 +186,7 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     unknown["models"]["gadget"]["operations"]["get"]["component"] = json!("missing");
     let error = validate_operation_vocabulary(&parsed_manifest(&unknown))
         .expect_err("an unknown component was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidComponent);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidComponent);
     assert_eq!(
         error.context(),
         "operation gadget.get references unknown component missing"
@@ -204,7 +204,7 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     }
     let error = validate_operation_vocabulary(&parsed_manifest(&identical))
         .expect_err("an identical-requirement split was accepted");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidComponent);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidComponent);
     assert_eq!(
         error.context(),
         "components duplicate and inventory have identical requirement sets"
@@ -216,7 +216,7 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     distinct["models"]["gadget"]["operations"]["query"]["component"] = json!("reporting");
     let error = validate_operation_vocabulary(&parsed_manifest(&distinct))
         .expect_err("a multi-component manifest omitted explicit operation grouping");
-    assert_eq!(error.kind(), GenerateErrorType::InvalidComponent);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidComponent);
     assert_eq!(
         error.context(),
         "operation gadget.get must name a component when the manifest declares multiple components"
@@ -240,13 +240,13 @@ fn shared_operation_vocabulary_refuses_permission_identity_drift() {
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&mismatch))
             .expect_err("permission identity drift was accepted")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
     assert_eq!(
         run(&catalog(false), &mismatch, &QUERY_SOURCES)
             .expect_err("generation accepted permission identity drift")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 }
@@ -258,7 +258,7 @@ fn shared_operation_vocabulary_refuses_noncanonical_coordinates() {
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&package))
             .expect_err("noncanonical package id was accepted")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidIdentity
     );
 
@@ -268,7 +268,7 @@ fn shared_operation_vocabulary_refuses_noncanonical_coordinates() {
         assert_eq!(
             validate_operation_vocabulary(&parsed_manifest(&version))
                 .expect_err("ambiguous package version was accepted")
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidIdentity
         );
     }
@@ -280,7 +280,9 @@ fn mutation_contract_refuses_server_owned_and_nonnullable_null() {
     let mut server_owned = manifest();
     server_owned["models"]["gadget"]["operations"]["update"]["writable_fields"] = json!(["status"]);
     assert_eq!(
-        run(&ir, &server_owned, &QUERY_SOURCES).unwrap_err().kind(),
+        run(&ir, &server_owned, &QUERY_SOURCES)
+            .unwrap_err()
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -418,7 +420,7 @@ fn a_revision_carries_the_width_its_column_declares() {
         rebuilt_table(gadget, columns, gadget.constraints().to_vec()),
     );
     let refusal = run(&wrong, &manifest(), &QUERY_SOURCES).expect_err("a text revision generated");
-    assert_eq!(refusal.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
     assert!(
         refusal
             .context()
@@ -894,7 +896,7 @@ fn generated_metadata_has_one_strict_canonical_reader() {
     );
 
     let wrong_type = GeneratedPackageMetadata::from_slice(b"null").unwrap_err();
-    assert_eq!(wrong_type.kind(), GenerateErrorType::InvalidManifest);
+    assert_eq!(wrong_type.error_type(), GenerateErrorType::InvalidManifest);
     assert_eq!(
         std::error::Error::source(&wrong_type).unwrap().to_string(),
         "invalid type: null, expected struct PackageWeld at line 1 column 4"
@@ -905,7 +907,7 @@ fn generated_metadata_has_one_strict_canonical_reader() {
     assert_eq!(
         GeneratedPackageMetadata::from_slice(&alternate)
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
 
@@ -914,7 +916,7 @@ fn generated_metadata_has_one_strict_canonical_reader() {
     assert_eq!(
         GeneratedPackageMetadata::from_slice(&canonical_json_bytes(&unknown))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
 
@@ -923,7 +925,7 @@ fn generated_metadata_has_one_strict_canonical_reader() {
     assert_eq!(
         GeneratedPackageMetadata::from_slice(&canonical_json_bytes(&contradictory))
             .unwrap_err()
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
 }
@@ -1037,7 +1039,11 @@ fn a_contains_filter_matches_a_part_of_a_text_field() {
         refused["models"]["gadget"]["operations"]["query"]["filters"] =
             json!([{"field": field, "match": "contains"}]);
         let error = run(&ir, &refused, &[]).unwrap_err();
-        assert_eq!(error.kind(), GenerateErrorType::InvalidOperation, "{field}");
+        assert_eq!(
+            error.error_type(),
+            GenerateErrorType::InvalidOperation,
+            "{field}"
+        );
         assert!(
             error.to_string().contains(&format!(
                 "gadget.query filter {field} matches by contains, which only a text field with no declared values takes it"
@@ -1174,7 +1180,11 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
         refused["models"]["gadget"]["operations"]["query"]["filters"] =
             json!([{"field": field, "match": mode}]);
         let error = run(&ir, &refused, &[]).unwrap_err();
-        assert_eq!(error.kind(), GenerateErrorType::InvalidOperation, "{field}");
+        assert_eq!(
+            error.error_type(),
+            GenerateErrorType::InvalidOperation,
+            "{field}"
+        );
         assert!(
             error.to_string().contains(&format!(
                 "gadget.query filter {field} matches by {mode}, which {which}"
@@ -1248,7 +1258,7 @@ fn a_query_searches_its_declared_text_fields() {
         refused["models"]["gadget"]["operations"]["query"]["search"] = json!({"fields": fields});
         let error = run(&ir, &refused, &[]).unwrap_err();
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             GenerateErrorType::InvalidOperation,
             "{fields}"
         );
@@ -1258,7 +1268,7 @@ fn a_query_searches_its_declared_text_fields() {
     let mut get = search.clone();
     get["models"]["gadget"]["operations"]["get"]["search"] = json!({"fields": ["part_code"]});
     assert_eq!(
-        run(&ir, &get, &[]).unwrap_err().kind(),
+        run(&ir, &get, &[]).unwrap_err().error_type(),
         GenerateErrorType::InvalidOperation
     );
 }
@@ -1345,7 +1355,7 @@ fn a_required_band_reads_its_default_and_states_its_minimum() {
         refused["models"]["gadget"]["operations"]["query"]["filters"] = json!([filter]);
         let error = run(&ir, &refused, &[]).unwrap_err();
         assert_eq!(
-            error.kind(),
+            error.error_type(),
             GenerateErrorType::InvalidOperation,
             "{filter}"
         );
@@ -1365,7 +1375,9 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
         {"field": "status"}
     ]);
     assert_eq!(
-        run(&ir, &duplicate, &QUERY_SOURCES).unwrap_err().kind(),
+        run(&ir, &duplicate, &QUERY_SOURCES)
+            .unwrap_err()
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 
@@ -1377,7 +1389,7 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
         }
     });
     let error = run(&ir, &manifest(), &qualified).unwrap_err();
-    assert_eq!(error.kind(), GenerateErrorType::SchemaQualifiedSql);
+    assert_eq!(error.error_type(), GenerateErrorType::SchemaQualifiedSql);
     assert_eq!(error.path(), Some("query/open_gadget.sql"));
 
     let quoted = QUERY_SOURCES.map(|source| {
@@ -1388,7 +1400,7 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
         }
     });
     assert_eq!(
-        run(&ir, &manifest(), &quoted).unwrap_err().kind(),
+        run(&ir, &manifest(), &quoted).unwrap_err().error_type(),
         GenerateErrorType::SchemaQualifiedSql
     );
 
@@ -1414,7 +1426,7 @@ fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
     contains["models"]["gadget"]["operations"]["query"]["filters"][1] =
         json!({"field": "part_code", "match": "contains"});
     let error = run(&ir, &contains, &QUERY_SOURCES).unwrap_err();
-    assert_eq!(error.kind(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
     assert_eq!(
         error.context(),
         "query/open_gadget_by_part_code_ascending.sql:3: gadget.query filter `part_code` declares match contains, \
@@ -1914,7 +1926,7 @@ fn a_create_that_declares_a_claim_refuses() {
         json!({"table": "gadget_command", "identities": {"id": "gadget_id"}});
     let refusal =
         run(&catalog(false), &manifest, &QUERY_SOURCES).expect_err("a claim object refuses");
-    assert_eq!(refusal.kind(), GenerateErrorType::InvalidManifest);
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidManifest);
 }
 
 /// wamn-10yt.54. An exclusion violation is SQLSTATE 23P01. The generated
@@ -2063,7 +2075,7 @@ fn an_operation_reference_takes_its_version_from_the_manifest() {
         ),
     ] {
         let error = resolve_operation_reference(&manifest, reference).unwrap_err();
-        assert_eq!(error.kind(), GenerateErrorType::InvalidIdentity);
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidIdentity);
         assert!(error.to_string().contains(reason), "{reference}: {error}");
     }
 }
@@ -2272,7 +2284,7 @@ fn a_delete_mode_travels_with_its_owner_and_its_marker_columns() {
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&overlay))
             .expect_err("an overlay that declares a delete_mode")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidModel,
     );
 
@@ -2378,14 +2390,14 @@ fn audit_log_shape_refuses_without_a_catalog() {
         assert_eq!(
             validate_operation_vocabulary(&parsed_manifest(&manifest))
                 .expect_err(label)
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidModel,
             "{label}"
         );
         assert_eq!(
             run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
                 .expect_err(label)
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidModel,
             "{label}"
         );
@@ -2395,7 +2407,7 @@ fn audit_log_shape_refuses_without_a_catalog() {
     assert_eq!(
         run(&all_stamps_catalog(), &outside, &QUERY_SOURCES)
             .expect_err("a name outside the four refuses")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidManifest
     );
 }
@@ -2454,7 +2466,11 @@ fn audit_log_columns_refuse_against_the_catalog() {
         validate_operation_vocabulary(&parsed_manifest(&manifest))
             .unwrap_or_else(|error| panic!("{label} is a catalog defect: {error:?}"));
         let refusal = run(&catalog, &manifest, &QUERY_SOURCES).expect_err(label);
-        assert_eq!(refusal.kind(), GenerateErrorType::InvalidModel, "{label}");
+        assert_eq!(
+            refusal.error_type(),
+            GenerateErrorType::InvalidModel,
+            "{label}"
+        );
         let object = format!("inventory.gadget.{column}");
         assert_eq!(refusal.object(), Some(object.as_str()), "{label}");
     }
@@ -2465,7 +2481,7 @@ fn audit_log_columns_refuse_against_the_catalog() {
     assert_eq!(
         run(&all_stamps_catalog(), &writable, &QUERY_SOURCES)
             .expect_err("a selected column declared writable refuses")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidOperation
     );
 }
@@ -2511,14 +2527,14 @@ fn audit_log_retention_is_none_unlimited_or_whole_days() {
         assert_eq!(
             validate_operation_vocabulary(&parsed_manifest(&manifest))
                 .expect_err(retention)
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidModel,
             "{retention}"
         );
         assert_eq!(
             run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
                 .expect_err(retention)
-                .kind(),
+                .error_type(),
             GenerateErrorType::InvalidModel,
             "{retention}"
         );
@@ -2624,7 +2640,7 @@ fn a_custom_operation_reads_a_history_table() {
     assert_eq!(
         run(&all_stamps_catalog(), &reads_unlogged, &sources)
             .expect_err("a relation that keeps no log has no history table to read")
-            .kind(),
+            .error_type(),
         GenerateErrorType::UnknownRelation
     );
 }
@@ -2730,12 +2746,12 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
     ));
     for (label, manifest, kind, object) in cases {
         let refusal = validate_operation_vocabulary(&parsed_manifest(&manifest)).expect_err(label);
-        assert_eq!(refusal.kind(), kind, "{label}");
+        assert_eq!(refusal.error_type(), kind, "{label}");
         assert_eq!(refusal.object(), Some(object), "{label}");
         assert_eq!(
             run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
                 .expect_err(label)
-                .kind(),
+                .error_type(),
             kind,
             "{label}"
         );
@@ -2771,7 +2787,7 @@ fn a_logged_relation_needs_a_primary_key() {
         ),
     );
     let refusal = run(&keyless, &logged, &QUERY_SOURCES).expect_err("a keyless logged relation");
-    assert_eq!(refusal.kind(), GenerateErrorType::InvalidModel);
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
     assert_eq!(refusal.object(), Some("inventory.gadget"));
 }
 
@@ -2782,13 +2798,13 @@ fn package_id_wamn_is_reserved_for_the_platform() {
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&reserved))
             .expect_err("package id wamn was accepted")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidIdentity
     );
     assert_eq!(
         run(&catalog(false), &reserved, &QUERY_SOURCES)
             .expect_err("generation accepted package id wamn")
-            .kind(),
+            .error_type(),
         GenerateErrorType::InvalidIdentity
     );
 }
