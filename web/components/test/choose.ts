@@ -51,3 +51,21 @@ export async function choose(label: string, name: string): Promise<void> {
     }
   });
 }
+
+/** Chooses one option of the select whose label is `label`, as a pointer does. */
+export async function pick(label: string, option: string): Promise<void> {
+  // The options arrive after the first render, and an empty select does not
+  // open, so the trigger is pressed again until the list shows.
+  await waitFor(() => {
+    const trigger = screen.getByRole("button", { name: label });
+    if (trigger.getAttribute("aria-expanded") !== "true") {
+      fireEvent.pointerDown(trigger, { pointerType: "mouse", button: 0 });
+      fireEvent.pointerUp(trigger, { pointerType: "mouse", button: 0 });
+      throw new Error(`the select ${label} did not open`);
+    }
+  });
+  const item = await screen.findByRole("option", { name: option });
+  fireEvent.pointerDown(item, { pointerType: "mouse", button: 0 });
+  fireEvent.pointerUp(item, { pointerType: "mouse", button: 0 });
+  fireEvent.click(item);
+}

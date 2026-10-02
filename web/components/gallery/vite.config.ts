@@ -35,6 +35,11 @@ export default defineConfig({
       { find: "@wamn/web-runtime", replacement: local("../../runtime/src/index.ts") },
       { find: "@wamn/ui/styles.css", replacement: local("../../ui/src/styles.css") },
       { find: /^@wamn\/ui$/, replacement: local("../../ui/src/index.ts") },
+      { find: "@wamn/ui/admin", replacement: local("../../ui/src/admin/index.ts") },
+      {
+        find: "@wamn/control-client",
+        replacement: local("../../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"),
+      },
     ],
     // A folder alias for solid-js would select its server build, so the
     // package name resolves through dedupe instead.
@@ -43,6 +48,6 @@ export default defineConfig({
   server: {
     // The UI stylesheet names its font files by path, and a path outside this
     // directory is refused unless it is allowed here.
-    fs: { allow: [local("../..")] },
+    fs: { allow: [local("../.."), local("../../../crates/catalog/model/src/host_route/generated/client-ts")] },
   },
 });

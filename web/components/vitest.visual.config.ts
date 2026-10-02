@@ -27,12 +27,17 @@ export default defineConfig({
       { find: "@wamn/web-runtime", replacement: local("../runtime/src/index.ts") },
       { find: "@wamn/ui/styles.css", replacement: local("../ui/src/styles.css") },
       { find: /^@wamn\/ui$/, replacement: local("../ui/src/index.ts") },
+      { find: "@wamn/ui/admin", replacement: local("../ui/src/admin/index.ts") },
+      {
+        find: "@wamn/control-client",
+        replacement: local("../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"),
+      },
     ],
     dedupe: ["solid-js", "@tanstack/solid-table"],
   },
   server: {
     // The UI stylesheet names its font files by path outside this directory.
-    fs: { allow: [local("..")] },
+    fs: { allow: [local(".."), local("../../crates/catalog/model/src/host_route/generated/client-ts")] },
   },
   test: {
     include: ["gallery/*.visual.tsx"],

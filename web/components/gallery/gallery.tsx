@@ -7,6 +7,7 @@ import type { JSX } from "solid-js";
 
 import { Button, useColorMode } from "@wamn/ui";
 
+import { AdminSections } from "./admin.js";
 import { ScreenSections } from "./screens.js";
 import { TableSections } from "./table.js";
 import { UiSections } from "./ui.js";
@@ -29,6 +30,8 @@ export function Gallery(): JSX.Element {
         <TableSections />
         <p class="text-sm font-semibold uppercase">Generated screens of the platform fixture</p>
         <ScreenSections />
+        <p class="text-sm font-semibold uppercase">Administration screens of web/ui</p>
+        <AdminSections />
       </main>
     </div>
   );

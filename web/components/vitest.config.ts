@@ -23,6 +23,8 @@ export default defineConfig({
     conditions: ["development", "browser"],
     alias: {
       "@wamn/web-runtime": fileURLToPath(new URL("../runtime/src/index.ts", import.meta.url)),
+      // The subpath comes first, because the package alias also matches it.
+      "@wamn/ui/admin": fileURLToPath(new URL("../ui/src/admin/index.ts", import.meta.url)),
       "@wamn/ui": fileURLToPath(new URL("../ui/src/index.ts", import.meta.url)),
       "@wamn/control-client": fileURLToPath(
         new URL("../../crates/catalog/model/src/host_route/generated/client-ts/index.ts", import.meta.url),
