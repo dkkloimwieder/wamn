@@ -370,9 +370,10 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     assert_eq!(
         answer("wamn-control:user/list", json!({})).await,
         json!({"users": [
-            {"id": first, "email": "first@example.test", "display_name": null, "roles": ["admin"]},
+            {"id": first, "email": "first@example.test", "display_name": null, "roles": ["admin"],
+             "admin_covered": false},
             {"id": MEMBER, "email": "member@example.test", "display_name": null,
-             "roles": ["purchase-reader"]},
+             "roles": ["purchase-reader"], "admin_covered": false},
         ]})
     );
     assert_eq!(
@@ -541,6 +542,16 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             &[&first, &ORG, &PROJECT],
         )
         .await?;
+    // user.list answers the covering grant before any revoke.
+    assert_eq!(
+        answer("wamn-control:user/list", json!({})).await["users"]
+            .as_array()
+            .expect("users")
+            .iter()
+            .map(|user| (user["id"].clone(), user["admin_covered"].clone()))
+            .collect::<Vec<_>>(),
+        [(json!(first), json!(true)), (json!(MEMBER), json!(false))]
+    );
     assert_eq!(
         refusal(
             "wamn-control:user-role/revoke",

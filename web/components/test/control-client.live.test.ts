@@ -44,8 +44,14 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
       status: "completed",
       value: {
         users: [
-          { id: adminId, email: "first@example.test", displayName: null, roles: ["admin"] },
-          { id: memberId, email: "member@example.test", displayName: null, roles: ["purchase-reader"] },
+          { id: adminId, email: "first@example.test", displayName: null, roles: ["admin"], adminCovered: true },
+          {
+            id: memberId,
+            email: "member@example.test",
+            displayName: null,
+            roles: ["purchase-reader"],
+            adminCovered: false,
+          },
         ],
       },
     });

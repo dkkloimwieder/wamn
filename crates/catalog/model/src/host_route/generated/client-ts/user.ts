@@ -19,6 +19,8 @@ export interface UserListResult {
 }
 
 export interface UserListResultUsers {
+  /** `boolean` */
+  readonly adminCovered: boolean;
   /** `text` */
   readonly displayName: string | null;
   /** `text` */
@@ -34,6 +36,7 @@ export const USER_LIST_RESULT_FIELDS: FieldMap = {
   "users": {
     member: "users",
     fields: {
+      "admin_covered": "adminCovered",
       "display_name": "displayName",
       "email": "email",
       "id": "id",

@@ -45,7 +45,7 @@ pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) project: &'a str,
     pub(crate) release: &'a LoadedRelease,
     /// The identity reader of `wamn_system` and the org, for the covering
-    /// check of an `admin` revoke.
+    /// fact of `user.list` and the covering check of an `admin` revoke.
     pub(crate) identity: Option<(&'a Client, &'a str)>,
 }
 
@@ -116,14 +116,21 @@ impl ApplicationRoutes<'_> {
         match attachment.route.handler {
             HostHandler::ApplicationUserList => {
                 let Empty {} = parse(payload)?;
+                let (identity, org) = self.identity_reader()?;
                 self.run(attachment, principal, false, async |client| {
-                    let users = application_users(client, tenant).await?;
-                    Ok(json!({ "users": users.iter().map(|user| json!({
-                        "id": user.id,
-                        "email": user.email,
-                        "display_name": user.display_name,
-                        "roles": user.roles,
-                    })).collect::<Vec<_>>() }))
+                    let mut listed = Vec::new();
+                    for user in application_users(client, tenant).await? {
+                        let id: PrincipalId = user.id.parse()?;
+                        let covered = is_project_admin(identity, &id, org, self.project).await?;
+                        listed.push(json!({
+                            "id": user.id,
+                            "email": user.email,
+                            "display_name": user.display_name,
+                            "roles": user.roles,
+                            "admin_covered": covered,
+                        }));
+                    }
+                    Ok(json!({ "users": listed }))
                 })
                 .await
             }
@@ -215,11 +222,7 @@ impl ApplicationRoutes<'_> {
                 let request: UserRoleRequest = parse(payload)?;
                 let user: PrincipalId = request.user_id.parse()?;
                 if request.role == ADMIN_ROLE {
-                    let (identity, org) = self.identity.ok_or_else(|| {
-                        Refusal::Failed(anyhow::anyhow!(
-                            "an admin revoke needs the identity reader of the host"
-                        ))
-                    })?;
+                    let (identity, org) = self.identity_reader()?;
                     if is_project_admin(identity, &user, org, self.project).await? {
                         return Err(AdministrationError::from(
                             AdministrationRefusal::AdminCovered {
@@ -241,6 +244,16 @@ impl ApplicationRoutes<'_> {
                 "the application routes do not serve the host handler {handler:?}"
             ))),
         }
+    }
+
+    /// The identity reader of the host. `project-admin`, which `org-admin`
+    /// writes in every project of the org, covers a user's `admin`.
+    fn identity_reader(&self) -> Result<(&Client, &str), Refusal> {
+        self.identity.ok_or_else(|| {
+            Refusal::Failed(anyhow::anyhow!(
+                "the covering check of admin needs the identity reader of the host"
+            ))
+        })
     }
 
     /// Run `work` in one administration transaction of the route. A role or
