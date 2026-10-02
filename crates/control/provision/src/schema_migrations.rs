@@ -142,6 +142,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0011_release_selections.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0011_release_selections.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0012_saga_steps.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0012_saga_steps.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -276,11 +280,11 @@ mod tests {
     }
 
     #[test]
-    fn system_migration_0008_carries_the_rendered_control_surface() {
+    fn system_migration_0012_carries_the_rendered_control_surface() {
         let migration = SYSTEM_MIGRATIONS
             .iter()
-            .find(|migration| migration.ordinal() == 8)
-            .expect("system migration 0008 exists");
+            .find(|migration| migration.ordinal() == 12)
+            .expect("system migration 0012 exists");
         let grants = format!(
             "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control') THEN\n    {}\n  END IF;",
             crate::sql::control_surface_grants_sql()

@@ -350,7 +350,8 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
     // session's password login is live. It writes the org memberships and the
     // org, project and environment grants of the org operations, and reads
     // the projects and environments those grants cover, and it writes the
-    // status of an environment and no other column of it.
+    // status of an environment and no other column of it. It writes a
+    // provisioning saga and its steps, reads them, and updates neither.
     FamilyReach {
         family: WorkloadRoleFamily::Control,
         relations: &[
@@ -372,6 +373,10 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
             "identity.project_roles|INSERT|table",
             "identity.project_roles|SELECT|table",
             "identity.project_roles|UPDATE|table",
+            "provisioning.saga_steps|INSERT|table",
+            "provisioning.saga_steps|SELECT|table",
+            "provisioning.sagas|INSERT|table",
+            "provisioning.sagas|SELECT|table",
             "registry.project_envs|SELECT|table",
             "registry.project_envs|UPDATE|column",
             "registry.projects|SELECT|table",

@@ -806,12 +806,36 @@ CREATE TABLE provisioning.sagas (
     last_error  text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
+    org         text,
+    input       jsonb,
     CONSTRAINT sagas_type_check
-        CHECK (type IN ('provision-org', 'provision-project-env')),
+        CHECK (type IN ('provision-org', 'provision-project-env', 'create-environment')),
     CONSTRAINT sagas_status_check
         CHECK (status IN ('pending', 'running', 'completed', 'failed',
-                          'compensating', 'compensated')),
-    CONSTRAINT sagas_step_nonneg CHECK (step >= 0)
+                          'compensating', 'compensated', 'abandoned',
+                          'awaiting-operator')),
+    CONSTRAINT sagas_step_nonneg CHECK (step >= 0),
+    CONSTRAINT sagas_create_environment_input
+        CHECK (type <> 'create-environment'
+               OR (org IS NOT NULL AND jsonb_typeof(input) = 'object'))
+);
+
+-- The steps of a saga (system migration 0012, wamn-zua8.3). The
+-- environment.create route writes every step of a create-environment saga
+-- when it writes the saga, so environment.list shows the whole chain from the
+-- start. Only wamn-ctl serve updates a step. `detail` holds the commands of
+-- the last step, `awaiting operator`.
+CREATE TABLE provisioning.saga_steps (
+    saga_id     text NOT NULL REFERENCES provisioning.sagas (saga_id),
+    step        int  NOT NULL CHECK (step > 0),
+    name        text NOT NULL CHECK (name <> ''),
+    status      text NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    error       text,
+    detail      jsonb,
+    started_at  timestamptz,
+    finished_at timestamptz,
+    PRIMARY KEY (saga_id, step)
 );
 
 -- The issuer can lock a principal without gaining principal mutation rights.
