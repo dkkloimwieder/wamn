@@ -336,6 +336,20 @@ async fn qualify_candidate(
         .await?;
     // Compiling check harnesses cannot replace deployment artifacts.
     result.assert_artifacts()?;
+    // A case the executable lacks refuses here, before any case starts a cluster (wamn-pgub).
+    let listed = run(
+        root,
+        &[
+            executable.display().to_string(),
+            "--list".to_owned(),
+            "--format=terse".to_owned(),
+            "--ignored".to_owned(),
+        ],
+        &target_env,
+        &mut result.checks,
+    )
+    .await?;
+    require_listed_cases(&String::from_utf8_lossy(&listed.stdout), app.cases)?;
     let temporary = TemporaryResults::create()?;
     for (index, case) in app.cases.iter().enumerate() {
         let checked: anyhow::Result<()> = async {
@@ -795,6 +809,21 @@ fn artifact_executable(output: &Output, name: &str) -> anyhow::Result<PathBuf> {
     Ok(executables[0].clone())
 }
 
+/// Refuse a case name that the test executable does not list as an ignored test.
+fn require_listed_cases(listing: &str, cases: &[&str]) -> anyhow::Result<()> {
+    let missing: Vec<&str> = cases
+        .iter()
+        .copied()
+        .filter(|case| !listing.lines().any(|line| line == format!("{case}: test")))
+        .collect();
+    ensure!(
+        missing.is_empty(),
+        "the test executable does not contain the qualification cases {}",
+        missing.join(", ")
+    );
+    Ok(())
+}
+
 fn require_one_case(output: &Output) -> anyhow::Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -944,6 +973,21 @@ mod tests {
         assert!(
             !test_build_command("wamn-wms-tests", None, None).contains(&"--features".to_owned())
         );
+    }
+
+    #[test]
+    fn qualification_refuses_a_case_that_the_executable_does_not_list() {
+        let listing = "cluster::released_wms_routes: test\nfixture::helper: test\n";
+        require_listed_cases(listing, &["cluster::released_wms_routes"]).unwrap();
+        let error =
+            require_listed_cases(listing, &["cluster::released_wms_routes", "cluster::gone"])
+                .unwrap_err()
+                .to_string();
+        assert_eq!(
+            error,
+            "the test executable does not contain the qualification cases cluster::gone"
+        );
+        assert!(require_listed_cases("", WMS_CASES).is_err());
     }
 
     #[test]
