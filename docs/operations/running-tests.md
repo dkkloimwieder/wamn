@@ -126,7 +126,7 @@ The generated clients of the host routes run against the same HTTP shell.
 
 ```bash
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
-  cargo test --locked --offline -p wamn-integration-tests --lib control_client_live -- --ignored
+  cargo test --locked --offline -p wamn-integration-tests --lib control_client_live -- --ignored --skip shell_browser_live
 ```
 
 The edge route, device and forward tests run in the workspace run.
@@ -662,7 +662,7 @@ The test requires SQLx CLI 0.9.0 and the PostgreSQL 18 binaries.
 ### Generated TypeScript bindings
 
 The generated TypeScript is type-checked by hand, not by a test and not by a build.
-Nothing in `cargo build` needs Node, and only the ignored `control_client_live` test runs it.
+Nothing in `cargo build` needs Node, and only the ignored `control_client_live` and `shell_browser_live` tests run it.
 To type-check the bindings for the platform fixture, run:
 
 ```bash
@@ -774,6 +774,15 @@ cd web/shell && pnpm run check && pnpm test
 ```
 
 The tests render the shell with stub screens and a stub identity service, and read the document.
+
+The browser test serves an identity stand-in, an application host and a control host from local processes, and a Vite dev server for the page in `web/shell/test/browser`.
+It drives a headless Chrome through sign in for five accounts, so the machine needs Chrome.
+Build the flow HTTP component, and run `pnpm install` at the repository root. Then run:
+
+```bash
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+  cargo test --locked --offline -p wamn-integration-tests --lib shell_browser_live -- --ignored
+```
 They need no browser and no server.
 
 An application web page, such as `apps/wamn_wms/web` or `apps/wamn_receiving/web`, is a package of the same workspace.

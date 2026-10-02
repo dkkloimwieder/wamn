@@ -719,12 +719,18 @@ An application web page in `apps/<app>/web/` gives the shell a hand-written rout
 The navigation names a model with one screen by the model alone, and it lists the screen labels only below a model with more than one screen.
 A record page carries its key in the address, for example `packagings/<id>`, and a table row opens it through the row callback.
 The shell owns the router. A screen gets the address values, the query values, `open(path)` and `close()` as props, beside the transport.
+Each screen, route and action names its operation from the generated route constant. The shell reads `permission.mine` once after sign in and shows only what the caller holds, and everything to `admin`.
+An address of a screen that the caller does not hold shows the no page text. This is presentation only, because every route repeats its own check.
+Every application shell has an Administration section with the role grid and the user grid, and only `admin` sees it.
+An account that reaches no audience sees only "No access has been granted.", and the shell mints no session for it.
+The shell offers the [control session](#control-sessions) of its org as Control. Under it, the shell reads `control.mine` once and shows the org destination to `org-admin` and one destination for each project that it names.
 Each command form has its own route. A create or merge form opens from a button above its table, and an update form from a button above its record page.
 A row that fills a form opens it with the filled values in the query, so a reload keeps them. A completed submission returns to the page that opened the form, and a refusal stays on the form.
 A packaging form, such as `inventory.move`, sends the revision of the packaging row that its packaging selector holds, so no route reads the packaging for it.
 The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
 A screen address with no session asks for the password on that address, and it shows the screen after sign in.
 The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.
+A Control page calls the control host at `/wamn_control` with no prefix. No edge routes that path yet, and `wamn-oeki` holds that change.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
