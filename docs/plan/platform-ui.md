@@ -1001,6 +1001,8 @@ Ordinary environment membership and authored application roles remain.
 
 ## 4.6 Application level
 
+Issue 5 (`wamn-a40n.7`) built this section; [execution](../architecture/execution.md#host-run-routes) holds the current behavior.
+
 One fixed platform contract is served under every application audience:
 
 ```text

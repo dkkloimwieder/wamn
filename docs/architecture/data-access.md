@@ -698,6 +698,7 @@ One email address names one principal for the whole platform.
 A user who works in two organizations holds one principal and two memberships.
 A user row carries the email of that user from `identity.principals`.
 The control host writes the user row and the `admin` row when its route grants them, and removes them when its route revokes them, with the administration login, bound to the caller and the route's sealed operation id.
+The application host writes roles, permissions and user roles through its [host routes](execution.md#host-run-routes) with the same login and the same binding.
 A member that `wamn-ctl grant-project-env-membership` or `wamn-ctl invite` adds gains the row at the next reconcile, because those verbs hold no tenant connection.
 A principal with no users row cannot write in the tenant.
 The invocation bind refuses it.

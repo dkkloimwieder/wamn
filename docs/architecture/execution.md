@@ -58,10 +58,24 @@ Publish refuses an authored attachment under `/wamn_control/`.
 [`HostRouteDelivery`](../../crates/execution/host/src/host_route.rs) serves the host routes of the loaded release.
 It passes every other delivery to the router delivery bridge.
 The caller must match the attachment, and an `admin`-authority route checks its operation grant as any route does.
+No stored permission row grants a host route, so only `admin` passes the grant of an `admin`-authority route.
+A host route takes one request item and answers its one outcome, as a generated route does.
+A read carries its input as the item, and a write carries `request_id` and its input under `value`.
+The answer is `[{"request_id", "value"}]`, or `[{"request_id", "error": {"code", "detail"}}]` for a declared refusal, with no `request_id` for a read.
+Any other payload answers 400 `delivery-invalid-payload`.
 
 | Route | Answer |
 | --- | --- |
 | `wamn-control:permission/mine@0.1.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
+| `wamn-control:user/list@0.1.0` (application) | `users`: each application user with `id`, `email`, `display_name` and `roles`. |
+| `wamn-control:role/list@0.1.0` | `roles`: every role of the tenant, `admin` included. |
+| `wamn-control:role/create@0.1.0` | Takes `role` and creates the empty authored role. Answers `created`. |
+| `wamn-control:role/delete@0.1.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
+| `wamn-control:permission/list@0.1.0` | Takes `role`. Answers `operations`: each operation the release serves and each stored row of the role, with `served`, `grantable`, `admin_only`, `selected` and `required_by`. |
+| `wamn-control:permission/grant@0.1.0` | Takes `role` and `operation`, selects the operation and writes its closure in the loaded release. Answers `rows_added` and `closure`. |
+| `wamn-control:permission/revoke@0.1.0` | Takes `role` and `operation`, and removes the selection and the rows it requires. Answers `still_required_by`. |
+| `wamn-control:user-role/grant@0.1.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
+| `wamn-control:user-role/revoke@0.1.0` | Takes `user_id` and `role`, and takes the role. An `admin` revoke refuses while the user holds `project-admin` in the project. Answers `revoked`. |
 | `wamn-control:control/mine@0.1.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
 | `wamn-control:user/list@0.1.0` | `users`: each member of the org with `principal_id`, `email`, `display_name` and the org-local `status`. |
 | `wamn-control:user/invite@0.1.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
@@ -77,8 +91,13 @@ The caller must match the attachment, and an `admin`-authority route checks its 
 | `wamn-control:project-admin/grant@0.1.0` | Takes `project` and `principal_id` of an active member, and writes `project-admin` and a membership in every environment of the project. |
 | `wamn-control:project-admin/revoke@0.1.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
 
-`permission.mine` reads under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
+An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
+A role or permission write first takes the tenant lock that `wamn-ctl` and release reconciliation take.
+The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/platform/src/application.rs), which the role verbs of `wamn-ctl` also call.
+`user_role.revoke` reads `project-admin` through the identity reader of the host, because `org-admin` writes `project-admin` in every project of the org.
+An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `permission_not_selected` (with `required_by`), `user_not_found` or `admin_covered`.
+The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `host_route/generated/client-ts`.
 `control.mine` reads `wamn_system` through the `control` login of the org.
 
 Every other org route needs a current `org-admin` row of the caller in the token's org, and answers 403 `permission-denied` without it.
@@ -94,7 +113,6 @@ A revoke or a deactivation removes the application rows first, and commits its s
 If an environment fails, the route answers `terminal` with the environments that completed, and the system rows of a revoke stay as they were.
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
-Application rows of these routes follow in issue 4 of the administration epic.
 
 The control serving root has no package, component, route, database or guest connection.
 `wamn-host --control` serves it for one org.

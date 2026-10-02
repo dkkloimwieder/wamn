@@ -121,6 +121,14 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
     --lib local_business:: -- --ignored --test-threads=1
 ```
 
+The generated client of the application host routes runs against the same HTTP shell.
+`control_client_live` serves the routes and runs `web/components/test/control-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
+
+```bash
+WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+  cargo test --locked --offline -p wamn-integration-tests --lib control_client_live -- --ignored
+```
+
 The edge route, device and forward tests run in the workspace run.
 Each test binary builds the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once, when its first test starts.
 `tools/build-components` builds the component, and Cargo builds the `http-route` guest as the Dockerfile does. The guest must match its pin.
@@ -653,7 +661,7 @@ The test requires SQLx CLI 0.9.0 and the PostgreSQL 18 binaries.
 ### Generated TypeScript bindings
 
 The generated TypeScript is type-checked by hand, not by a test and not by a build.
-Nothing in `cargo build` or `cargo test` needs Node.
+Nothing in `cargo build` needs Node, and only the ignored `control_client_live` test runs it.
 To type-check the bindings for the platform fixture, run:
 
 ```bash
@@ -666,6 +674,16 @@ Pass a directory as the one argument to keep the emitted source for reading.
 The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and names it.
 It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
 The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
+
+The client of the application host routes is committed in `crates/catalog/model/src/host_route/generated/client-ts`.
+`the_host_route_client_is_current` refuses a committed client that its contracts do not generate.
+After you change a contract in `host_route/contracts`, write the client again:
+
+```bash
+cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client -- write
+```
+
+`pnpm run check` in `web/components` type-checks it, because that package maps `@wamn/control-client` to it.
 
 ### Web packages
 
