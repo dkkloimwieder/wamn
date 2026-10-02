@@ -102,11 +102,27 @@ const ONE = [{ aud: AUD, org: "acme", project: "widgets", env: "dev" }];
 /** What `permission.mine` answers an admin. */
 const ADMIN = { admin: true, permissions: [] };
 
+const CONTROL = "urn:wamn:control:acme";
+
+/** What `control.mine` answers an org-admin of two projects. */
+const ORG_ADMIN = {
+  org_admin: true,
+  projects: [
+    { project: "gadgets", project_admin: true },
+    { project: "widgets", project_admin: true },
+  ],
+};
+
 /**
  * The identity service, holding one session cookie or none, with the
  * environments it lists, and the application host's `permission.mine`.
  */
-function identity(signedIn: boolean, listed: readonly unknown[] = ONE, mine: unknown = ADMIN) {
+function identity(
+  signedIn: boolean,
+  listed: readonly unknown[] = ONE,
+  mine: unknown = ADMIN,
+  control: unknown = ORG_ADMIN,
+) {
   const state = { signedIn, calls: [] as string[], bodies: [] as unknown[] };
   const times = () =>
     new Response(
@@ -119,6 +135,10 @@ function identity(signedIn: boolean, listed: readonly unknown[] = ONE, mine: unk
     state.bodies.push(init?.body === undefined ? undefined : JSON.parse(String(init.body)));
     if (path.startsWith("/api/wamn_control/permission/mine")) {
       return Promise.resolve(new Response(JSON.stringify([{ value: mine }]), { status: 200 }));
+    }
+    // A control session calls its host with no prefix.
+    if (path.startsWith("/wamn_control/control/mine")) {
+      return Promise.resolve(new Response(JSON.stringify([{ value: control }]), { status: 200 }));
     }
     switch (path) {
       case "/password/environments":
@@ -411,6 +431,49 @@ describe("the app shell", () => {
     open(`/${AUD}/pallets/abc/update`, fetch);
     expect(await screen.findByText("This address names no page.")).toBeDefined();
     expect(screen.queryByText(/update abc/)).toBeNull();
+  });
+
+  it("offers the control audience of the org as Control, and shows an org-admin the org and every project", async () => {
+    const { state, fetch } = identity(false, [...ONE, { aud: CONTROL, org: "acme" }]);
+    open("/", fetch);
+    await signIn();
+    fireEvent.click(await screen.findByText("Control"));
+    expect(await screen.findByText("Org administration.")).toBeDefined();
+    await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/org`));
+    expect(state.calls).toContain("/wamn_control/control/mine");
+    expect(state.calls.some((call) => call.includes("permission/mine"))).toBe(false);
+    // No application screen and no Administration section in a control session.
+    expect(screen.queryByText("Pallets")).toBeNull();
+    expect(screen.queryByText("Administration")).toBeNull();
+    fireEvent.click(screen.getByText("widgets"));
+    expect(await screen.findByText("Project administration of widgets.")).toBeDefined();
+    await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets`));
+    expect(screen.getByText("gadgets")).toBeDefined();
+  });
+
+  it("shows a project-admin only the projects it administers, and no org destination", async () => {
+    const mine = { org_admin: false, projects: [{ project: "widgets", project_admin: true }] };
+    const { fetch } = identity(true, ONE, ADMIN, mine);
+    open(`/${CONTROL}`, fetch);
+    expect(await screen.findByText("Project administration of widgets.")).toBeDefined();
+    await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/projects/widgets`));
+    expect(screen.queryByText("org")).toBeNull();
+    cleanup();
+    open(`/${CONTROL}/org`, fetch);
+    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    cleanup();
+    open(`/${CONTROL}/projects/gadgets`, fetch);
+    expect(await screen.findByText("This address names no page.")).toBeDefined();
+    cleanup();
+    open(`/${CONTROL}/pallets`, fetch);
+    expect(await screen.findByText("This address names no page.")).toBeDefined();
+  });
+
+  it("refuses the control audience of another org", async () => {
+    const { state, fetch } = identity(false);
+    open("/urn:wamn:control:other/org", fetch);
+    expect(await screen.findByText("This address names an environment of another application.")).toBeDefined();
+    expect(state.calls).toEqual([]);
   });
 
   it("shows no page for an address that names none", async () => {

@@ -20,6 +20,7 @@
       "@wamn/ui": ["../ui/src/index.ts"],
       "@wamn/ui/admin": ["../ui/src/admin/index.ts"],
       "@wamn/control-client": ["../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"],
+      "@wamn/control-org-client": ["../../crates/catalog/model/src/host_route/control/generated/client-ts/index.ts"],
       "solid-js": ["./node_modules/solid-js"],
       "solid-js/*": ["./node_modules/solid-js/*"]
     }

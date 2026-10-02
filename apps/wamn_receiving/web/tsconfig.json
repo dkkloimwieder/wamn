@@ -21,6 +21,7 @@
       "@wamn/ui/admin": ["../../../web/ui/src/admin/index.ts"],
       "@wamn/shell": ["../../../web/shell/src/index.ts"],
       "@wamn/control-client": ["../../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"],
+      "@wamn/control-org-client": ["../../../crates/catalog/model/src/host_route/control/generated/client-ts/index.ts"],
       "@wamn/receiving-client/*": ["../generated/client-ts/*"],
       "solid-js": ["./node_modules/solid-js"],
       "solid-js/*": ["./node_modules/solid-js/*"],

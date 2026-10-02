@@ -24,6 +24,9 @@ export default defineConfig({
       "@wamn/control-client": fileURLToPath(
         new URL("../../crates/catalog/model/src/host_route/generated/client-ts/index.ts", import.meta.url),
       ),
+      "@wamn/control-org-client": fileURLToPath(
+        new URL("../../crates/catalog/model/src/host_route/control/generated/client-ts/index.ts", import.meta.url),
+      ),
     },
     dedupe: ["solid-js", "@solidjs/router", "@tanstack/solid-table"],
   },

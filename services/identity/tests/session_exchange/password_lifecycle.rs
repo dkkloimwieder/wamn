@@ -434,6 +434,34 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         audiences(&discover(&https).await).contains(&json!({"aud": CONTROL, "org": "demo"})),
         "a project-admin is offered the control audience of the org"
     );
+    // An application shell names its org and project, and is offered the
+    // control audience of its org beside the environments (wamn-a40n.11).
+    let scoped = async |org: &str| {
+        discovery_window(&fixture).await;
+        let response = post(
+            &https,
+            "/password/environments",
+            &json!({"email": EMAIL, "password": PASSWORD, "org": org, "project": "widgets"}),
+        )
+        .send()
+        .await
+        .expect_redacted("scoped discovery");
+        assert_eq!(response.status(), 200);
+        response
+            .json::<Value>()
+            .await
+            .expect_redacted("scoped discovery JSON")
+    };
+    assert!(
+        audiences(&scoped("demo").await).contains(&json!({"aud": CONTROL, "org": "demo"})),
+        "a request that names a project is offered the control audience of its org"
+    );
+    assert!(
+        !audiences(&scoped("other").await)
+            .iter()
+            .any(|entry| entry["aud"] == CONTROL),
+        "a request for another org is not offered this org's control audience"
+    );
     let session = body(control_login(&https).await).await;
     let jwks = wamn_platform_identity::session_keys::session_jwks(&fixture.system.client, ISSUER)
         .await

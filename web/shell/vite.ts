@@ -112,9 +112,13 @@ function scope(dev: DevConfiguration | undefined): { org: string; project: strin
 export function applicationConfig(options: ApplicationOptions): ApplicationConfig {
   const at = (path: string) => fileURLToPath(new URL(path, options.root));
   const web = fileURLToPath(new URL("..", import.meta.url));
-  // The client of the host-run routes, which the shell reads `permission.mine` through.
+  // The clients of the host-run routes: the shell reads `permission.mine`
+  // through the first and `control.mine` through the second.
   const control = fileURLToPath(
     new URL("../../crates/catalog/model/src/host_route/generated/client-ts/", import.meta.url),
+  );
+  const controlOrg = fileURLToPath(
+    new URL("../../crates/catalog/model/src/host_route/control/generated/client-ts/", import.meta.url),
   );
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const installed = (name: string) => at(`node_modules/${name}`);
@@ -137,6 +141,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
         { find: /^@wamn\/shell$/, replacement: `${web}shell/src/index.ts` },
         { find: options.client.name, replacement: at(options.client.path) },
         { find: /^@wamn\/control-client$/, replacement: `${control}index.ts` },
+        { find: /^@wamn\/control-org-client$/, replacement: `${controlOrg}index.ts` },
         { find: /^solid-js$/, replacement: installed("solid-js") },
         { find: /^@solidjs\/router$/, replacement: installed("@solidjs/router") },
         { find: /^@tanstack\/solid-table$/, replacement: installed("@tanstack/solid-table") },
@@ -152,7 +157,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
       // The web/ui stylesheet names its font files by path, and a path outside
       // the application is refused unless it is allowed here. pnpm keeps each
       // installed package once, under the repository root's node_modules.
-      fs: { allow: [at("."), web, at(options.client.path), control, store] },
+      fs: { allow: [at("."), web, at(options.client.path), control, controlOrg, store] },
     },
   };
 }

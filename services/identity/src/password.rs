@@ -95,7 +95,8 @@ struct EnvironmentsRequest {
 }
 
 /// The org and project that `/password/environments` lists. A missing value
-/// matches every org or project.
+/// matches every org or project. The control audience of an org has no
+/// project, so the org alone selects it.
 #[derive(Default)]
 struct Scope {
     org: Option<String>,
@@ -440,10 +441,10 @@ async fn handle(
                 let Ok(orgs) = control_orgs(&tx, principal.principal().id()).await else {
                     return unavailable();
                 };
-                for org in orgs.iter().filter(|org| {
-                    scope.project.is_none()
-                        && scope.org.as_deref().is_none_or(|wanted| wanted == *org)
-                }) {
+                for org in orgs
+                    .iter()
+                    .filter(|org| scope.org.as_deref().is_none_or(|wanted| wanted == *org))
+                {
                     let Ok(aud) = control_audience(org) else {
                         return unavailable();
                     };

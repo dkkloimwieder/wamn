@@ -11,12 +11,15 @@
 
 import * as z from "zod/mini";
 
-/** One project environment the account can reach. */
+/**
+ * One audience the account can reach: a project environment, or the control
+ * audience of an org, which has no project and no environment.
+ */
 export interface Environment {
   readonly aud: string;
   readonly org: string;
-  readonly project: string;
-  readonly env: string;
+  readonly project?: string;
+  readonly env?: string;
 }
 
 /** When the session token and the login behind it expire, in Unix seconds. */

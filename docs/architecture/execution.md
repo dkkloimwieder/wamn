@@ -421,7 +421,7 @@ External federation and unbuilt identity design remain in the [identity plan](..
 ### Control sessions
 
 Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.
-Discovery offers it to a user who holds `org-admin` in that org or `project-admin` in a project of that org.
+Discovery offers it to a user who holds `org-admin` in that org or `project-admin` in a project of that org, also when the request names a project, so an application shell offers it beside the environments.
 A control session comes from a password login only, because the PAT exchange refuses a control audience.
 It carries no roles.
 For each request, the control host reads the password login of the session, the active principal and its `org-admin` and `project-admin` roles in the org.

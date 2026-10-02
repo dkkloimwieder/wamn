@@ -16,6 +16,11 @@
  * Every application also gets the Administration section of §4.7, the role
  * grid and the user grid. Their operations are fixed to `admin`, so only
  * `admin` sees the section.
+ *
+ * Identity also offers the control audience of the org, `urn:wamn:control:<org>`,
+ * to a caller who holds `org-admin` or `project-admin` there. Under it the shell
+ * reads `control.mine` once and shows the org destination only to `org-admin`,
+ * and a project destination for each project the caller administers.
  */
 
 import {
@@ -45,6 +50,7 @@ import {
 } from "solid-js";
 
 import { permission, user } from "@wamn/control-client";
+import { control, member, user as orgUser } from "@wamn/control-org-client";
 import { Button, CardPage, Field, FieldError, FieldGroup, FieldLabel, Input, ScreenActions } from "@wamn/ui";
 import {
   createTransport,
@@ -65,6 +71,13 @@ import {
  * it before the release sees the call, so no page path meets a route template.
  */
 export const API_BASE = "/api";
+
+/**
+ * The path every call of a control session goes under: none. The proxy in
+ * front of the page sends `/wamn_control/*` with no prefix to the control
+ * host of the org, and `/api/wamn_control/*` still reaches the application.
+ */
+export const CONTROL_BASE = "";
 
 /** What the shell hands every screen. */
 export interface ScreenProps {
@@ -148,10 +161,21 @@ export interface ShellProps {
 
 const TransportContext = createContext<Transport>();
 
-/** Whether the caller holds one operation, from `permission.mine`. */
+/** Whether the caller holds one operation, from `permission.mine` or `control.mine`. */
 type Holds = (operation: string) => boolean;
 
-const HoldsContext = createContext<Holds>();
+/** An application audience, or the control audience of the org. */
+type Kind = "application" | "control";
+
+/** What one signed-in session shows: its routes, the sections of its navigation, and the projects it administers. */
+interface View {
+  readonly kind: Kind;
+  readonly holds: Holds;
+  readonly sections: readonly ShellSection[];
+  readonly projects: readonly string[];
+}
+
+const ViewContext = createContext<View>();
 
 /**
  * What `permission.mine` grants: `admin` holds every operation, and any other
@@ -198,6 +222,76 @@ const ADMINISTRATION: ShellSection = {
   ],
 };
 
+/** The org destination of a control session. Its screens are issue 8 (docs/plan/platform-ui.md §6). */
+function OrgDestination(): JSX.Element {
+  return <p>Org administration.</p>;
+}
+
+/** One project destination of a control session, only for a project the caller administers. */
+function ProjectDestination(): JSX.Element {
+  const view = useContext(ViewContext);
+  const params = useParams<{ project: string }>();
+  return (
+    <Show when={view?.projects.includes(params.project ?? "")} fallback={<NotFound />}>
+      <p>Project administration of {params.project}.</p>
+    </Show>
+  );
+}
+
+/** The org destination, which `org-admin` holds through the org operation `user.list`. */
+const ORG_SCREEN: ShellScreen = {
+  path: "org",
+  operation: orgUser.USER_LIST_ROUTE.operation,
+  label: "org",
+  component: OrgDestination,
+};
+
+/** The project destination, which `project-admin` holds through `member.list`. */
+const PROJECT_ROUTE: ShellRoute = {
+  path: "projects/:project",
+  operation: member.MEMBER_LIST_ROUTE.operation,
+  component: ProjectDestination,
+};
+
+/** The routes of a control session. */
+const CONTROL_SECTIONS: readonly ShellSection[] = [{ label: "Org", screens: [ORG_SCREEN], routes: [PROJECT_ROUTE] }];
+
+/** What an application session shows, from `permission.mine`. */
+async function applicationView(transport: Transport, sections: readonly ShellSection[]): Promise<View> {
+  const holds = await readHolds(transport);
+  return { kind: "application", holds, sections: heldSections(sections, holds), projects: [] };
+}
+
+/**
+ * What a control session shows, from `control.mine`: the org destination for
+ * `org-admin`, and one project destination for each project the caller
+ * administers. A refused or uncertain read shows nothing.
+ */
+async function controlView(transport: Transport): Promise<View> {
+  const outcome = await control.mine(transport, [{}]);
+  if (outcome.status !== "completed") {
+    return { kind: "control", holds: () => false, sections: [], projects: [] };
+  }
+  const { orgAdmin } = outcome.value;
+  const projects = outcome.value.projects.filter((entry) => entry.projectAdmin).map((entry) => entry.project);
+  const holds = (operation: string) =>
+    (operation === ORG_SCREEN.operation && orgAdmin) || (operation === PROJECT_ROUTE.operation && projects.length > 0);
+  const destinations = projects.map((project) => ({
+    ...PROJECT_ROUTE,
+    path: `projects/${encodeURIComponent(project)}`,
+    label: project,
+  }));
+  return {
+    kind: "control",
+    holds,
+    sections: [
+      ...(orgAdmin ? [{ label: "Org", screens: [ORG_SCREEN] }] : []),
+      ...(destinations.length > 0 ? [{ label: "Projects", screens: destinations }] : []),
+    ],
+    projects,
+  };
+}
+
 /** The sections with only the screens and routes the caller holds. A section with no screen left is dropped. */
 function heldSections(sections: readonly ShellSection[], holds: Holds): ShellSection[] {
   return sections
@@ -217,10 +311,10 @@ interface Opened {
   readonly opened: true;
 }
 
-/** The first screen the caller holds, or the no page text. */
-function FirstScreen(props: { readonly screens: readonly ShellScreen[] }): JSX.Element {
-  const holds = useContext(HoldsContext);
-  const first = () => props.screens.find((screen) => holds?.(screen.operation) === true);
+/** The first screen the session shows, or the no page text. */
+function FirstScreen(): JSX.Element {
+  const view = useContext(ViewContext);
+  const first = () => view?.sections[0]?.screens[0];
   return (
     <Show when={first()} fallback={<NotFound />}>
       {(screen) => <Navigate href={screen().path} />}
@@ -234,13 +328,15 @@ function FirstScreen(props: { readonly screens: readonly ShellScreen[] }): JSX.E
  * while the route renders. A component uses its props later, in an event
  * handler, where no context is in reach.
  */
-function screenRoute(route: ShellRoute, home: ShellScreen | undefined): Component {
+function screenRoute(route: ShellRoute, home: ShellScreen | undefined, kind: Kind): Component {
   return () => {
     const transport = useContext(TransportContext);
-    const holds = useContext(HoldsContext);
-    if (transport === undefined || holds === undefined) {
+    const view = useContext(ViewContext);
+    if (transport === undefined || view === undefined) {
       throw new Error("a screen renders outside a signed-in session");
     }
+    // A route of the other kind of audience is not a page of this session.
+    const holds = (operation: string) => view.kind === kind && view.holds(operation);
     const params = useParams();
     const location = useLocation<Opened>();
     const navigate = useNavigate();
@@ -298,10 +394,11 @@ export function Shell(props: ShellProps): JSX.Element {
   /* eslint-disable solid/reactivity -- the fetch and the route table are fixed for the life of the page, and the router takes its routes once. */
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const sections = [...props.sections, ADMINISTRATION];
-  const screens = sections.flatMap((section) => section.screens);
-  const routes = sections.flatMap((section) =>
-    [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0] })),
-  );
+  const routesOf = (kind: Kind, of: readonly ShellSection[]) =>
+    of.flatMap((section) =>
+      [...section.screens, ...(section.routes ?? [])].map((route) => ({ route, home: section.screens[0], kind })),
+    );
+  const routes = [...routesOf("application", sections), ...routesOf("control", CONTROL_SECTIONS)];
   /* eslint-enable solid/reactivity */
   return (
     // The boundary holds every lazy module of a page: the layout and its
@@ -320,9 +417,9 @@ export function Shell(props: ShellProps): JSX.Element {
           </Session>
         )}
       >
-        <Route path="/" component={() => <FirstScreen screens={screens} />} />
+        <Route path="/" component={FirstScreen} />
         <For each={routes}>
-          {({ route, home }) => <Route path={`/${route.path}`} component={screenRoute(route, home)} />}
+          {({ route, home, kind }) => <Route path={`/${route.path}`} component={screenRoute(route, home, kind)} />}
         </For>
         <Route path="*" component={NotFound} />
       </Route>
@@ -551,9 +648,23 @@ interface Scope {
   readonly project: string;
 }
 
-/** Whether an audience, `urn:wamn:project-env:<org>:<project>:<env>:<instance>`, is one of the project. */
-function ofProject(aud: string, scope: Scope): boolean {
-  return aud.startsWith(`urn:wamn:project-env:${scope.org}:${scope.project}:`);
+/**
+ * The kind of an audience of this application: an environment of its
+ * project, `urn:wamn:project-env:<org>:<project>:<env>:<instance>`, or the
+ * control audience of its org. Any other audience is not one of it.
+ */
+function audienceKind(aud: string, scope: Scope): Kind | undefined {
+  if (aud.startsWith(`urn:wamn:project-env:${scope.org}:${scope.project}:`)) {
+    return "application";
+  }
+  return aud === `urn:wamn:control:${scope.org}` ? "control" : undefined;
+}
+
+/** The text of one audience on the sign in page. */
+function audienceText(environment: Environment): string {
+  return environment.project === undefined
+    ? "Control"
+    : `${environment.org}/${environment.project}/${environment.env ?? ""}`;
 }
 
 /**
@@ -603,7 +714,7 @@ function ChooseEnvironment(props: {
               <For each={reachable().length > 1 ? reachable() : []}>
                 {(environment) => (
                   <Button variant="outline" onClick={() => enter(held().email, held().password, environment.aud)}>
-                    {environment.org}/{environment.project}/{environment.env}
+                    {audienceText(environment)}
                   </Button>
                 )}
               </For>
@@ -635,7 +746,7 @@ function Session(props: {
   const params = useParams<{ aud: string }>();
   return (
     <Show
-      when={ofProject(params.aud ?? "", props.scope) ? params.aud : undefined}
+      when={audienceKind(params.aud ?? "", props.scope) === undefined ? undefined : params.aud}
       keyed
       fallback={
         <CardPage title={props.title}>
@@ -648,31 +759,36 @@ function Session(props: {
         const [state, setState] = createSignal<SessionState | null>(null);
         const keeper = keepSession({ ...props.options, aud, onState: setState });
         onCleanup(() => keeper.stop());
-        const transport = createTransport({ ...props.options, baseUrl: API_BASE, cookie: true });
+        const kind = audienceKind(aud, props.scope) ?? "application";
+        const transport = createTransport({
+          ...props.options,
+          baseUrl: kind === "control" ? CONTROL_BASE : API_BASE,
+          cookie: true,
+        });
         const current = () => state();
         // Read once for the session. The page paints when it answers, because
         // the router root waits for it.
-        const [holds] = createResource(
+        const [view] = createResource(
           () => current()?.status === "signedIn" || undefined,
-          () => readHolds(transport),
+          () => (kind === "control" ? controlView(transport) : applicationView(transport, props.sections)),
         );
         // The layout module loads while the session renews (wamn-28n8).
         void Layout.preload();
         return (
           <Switch>
-            <Match when={current()?.status === "signedIn" && holds()}>
-              {(held) => (
+            <Match when={current()?.status === "signedIn" && view()}>
+              {(shown) => (
                 <TransportContext.Provider value={transport}>
-                  <HoldsContext.Provider value={held()}>
+                  <ViewContext.Provider value={shown()}>
                     <Layout
-                      title={props.title}
-                      sections={heldSections(props.sections, held())}
+                      title={kind === "control" ? "Control" : props.title}
+                      sections={shown().sections}
                       aud={aud}
                       signOut={() => keeper.signOut()}
                     >
                       {props.children}
                     </Layout>
-                  </HoldsContext.Provider>
+                  </ViewContext.Provider>
                 </TransportContext.Provider>
               )}
             </Match>
