@@ -1995,3 +1995,13 @@ On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four 
 | `wms-materializer` | `sha256:581fd2ed52bf349d2adc6cfbad22d0b2c33b157c99f3ef1b3a61aa92bac6ca7a` |
 
 Then `gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags` turned immutable tags on at 17:12 UTC. The deletes and the update took 6 seconds. `gcloud artifacts repositories describe wamn` shows `immutableTags: true`, and every tag of `components` is a sha256 hex.
+
+## 8. Upgrade an environment
+
+`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
+
+```bash
+target/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>
+```
+
+The verb keeps its work under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-upgrade/<commit>`. That directory holds the checkout, the targets, the command logs and one run record per environment in `runs/`. A second run with the same arguments resumes at the first stage without a finished step. The qualify stage starts kind clusters, so tell the other sessions on the machine before a run.

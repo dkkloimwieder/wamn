@@ -8,8 +8,9 @@
 //! environments at one commit share the checkout, the builds and the pushed
 //! images.
 //!
-//! Stages 1 to 5 are built (`wamn-m511.4`). The verb stops before the first
-//! stage that is not built yet, and records nothing for it.
+//! A failure that is not a stop condition of §2 waits for Ready nodes and
+//! platform pods, and its stage runs once more (§4.3). A second failure stops
+//! the run, and the record names the step.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -72,53 +73,77 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
         arguments: arguments.clone(),
     };
     while let Some(stage) = record.next_stage() {
-        if !built(stage) {
-            bail!(
-                "the stage {stage:?} is not built yet, and the run record is {}",
-                path.display()
-            );
-        }
         record.start(&path, stage, run.inputs(stage))?;
-        let outcome = match stage {
-            Stage::Source => run.source().await,
-            Stage::Build => run.build().await,
-            Stage::Images => run.images().await,
-            Stage::Guests => run.guests(&record).await,
-            Stage::Preflight => run.preflight().await,
-            Stage::Schema => run.schema().await,
-            Stage::Packages => run.packages(&record).await,
-            Stage::Qualify => run.qualify(&record).await,
-            Stage::PublishAndSelect => run.publish_and_select(&record).await,
-            _ => unreachable!("only built stages start"),
-        };
-        match outcome {
+        match run.stage(stage, &record).await {
             Ok((result, outputs)) => record.finish(&path, result, outputs)?,
             Err(error) => {
                 let cause = redact(&format!("{error:#}"));
                 record.finish(&path, StepResult::Failed { cause }, BTreeMap::new())?;
-                return Err(error.context(format!(
-                    "the stage {stage:?} failed, and the run record is {}",
-                    path.display()
-                )));
+                // §4.3: a failure that is not a stop condition waits for
+                // Ready nodes and platform pods, and the stage runs once
+                // more. A second failure stops the run.
+                if error.downcast_ref::<StopRun>().is_some()
+                    || !retried(stage)
+                    || attempts(&record, stage) > 1
+                {
+                    return Err(error.context(format!(
+                        "the stage {stage:?} failed, and the run record is {}",
+                        path.display()
+                    )));
+                }
+                run.wait_ready().await?;
             }
         }
     }
     Ok(record)
 }
 
-fn built(stage: Stage) -> bool {
-    matches!(
+impl Run {
+    async fn stage(&self, stage: Stage, record: &RunRecord) -> Outcome {
+        match stage {
+            Stage::Source => self.source().await,
+            Stage::Build => self.build().await,
+            Stage::Images => self.images().await,
+            Stage::Guests => self.guests(record).await,
+            Stage::Preflight => self.preflight().await,
+            Stage::Schema => self.schema().await,
+            Stage::Packages => self.packages(record).await,
+            Stage::Qualify => self.qualify(record).await,
+            Stage::PublishAndSelect => self.publish_and_select(record).await,
+            Stage::Deploy => self.deploy(record).await,
+            Stage::CheckAndRetire => self.check_and_retire(record).await,
+            Stage::Record => self.finish_record(record),
+        }
+    }
+}
+
+/// A refusal that changes what runs: the run stops at once and is not
+/// retried (docs/plan/upgrade-environment.md §2).
+#[derive(Debug)]
+struct StopRun(&'static str);
+
+impl std::fmt::Display for StopRun {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}, so the run stops", self.0)
+    }
+}
+
+/// The stages that touch the environment, which the retry of §4.3 covers.
+fn retried(stage: Stage) -> bool {
+    !matches!(
         stage,
-        Stage::Source
-            | Stage::Build
-            | Stage::Images
-            | Stage::Guests
-            | Stage::Preflight
-            | Stage::Schema
-            | Stage::Packages
-            | Stage::Qualify
-            | Stage::PublishAndSelect
+        Stage::Source | Stage::Build | Stage::Images | Stage::Guests | Stage::Record
     )
+}
+
+/// The failed steps of `stage` since the last step of another stage.
+fn attempts(record: &RunRecord, stage: Stage) -> usize {
+    record
+        .steps
+        .iter()
+        .rev()
+        .take_while(|step| step.stage == stage)
+        .count()
 }
 
 type Outcome = anyhow::Result<(StepResult, BTreeMap<String, String>)>;
@@ -426,20 +451,7 @@ impl Run {
                 .join(", "),
         );
 
-        let broker = kubectl
-            .json(&["-n", "platform", "get", "pod", BROKER_POD])
-            .await?;
-        ensure!(ready(&broker), "the broker pod {BROKER_POD} is not Ready");
-        let tap = if self.tap_exists(&kubectl).await? {
-            "present"
-        } else {
-            self.run_tap_job(&kubectl).await?;
-            ensure!(
-                self.tap_exists(&kubectl).await?,
-                "WAMN_TAP is still missing after the tap Job"
-            );
-            "made by the tap Job"
-        };
+        let tap = self.broker(&kubectl).await?;
         outputs.insert("WAMN_TAP".to_owned(), tap.to_owned());
 
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
@@ -494,7 +506,8 @@ impl Run {
                 baseline: None,
                 confirm: true,
             })
-            .await?;
+            .await
+            .context(StopRun("a migration refused"))?;
         }
         let outputs = BTreeMap::from([
             (
@@ -686,7 +699,13 @@ impl Run {
         );
         let mut targets = Vec::new();
         if !wirings.is_empty() {
-            let service = GateService::start(self, &gate, &databases).await?;
+            let service = GateService::start(
+                self,
+                &gate.control_author_url,
+                &gate.management_admitter_url,
+                &databases,
+            )
+            .await?;
             for input in &wirings {
                 let package = packages
                     .iter()
@@ -777,6 +796,7 @@ impl Run {
     async fn qualify(&self, record: &RunRecord) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
+        self.broker(&kubectl).await?;
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
         let release_id = Self::release_id(record)?;
         let files = self.release_files();
@@ -824,9 +844,7 @@ impl Run {
             .arg(&qualification);
         self.command(&format!("qualify-{}", self.arguments.project), &mut qualify)
             .await
-            .context(
-                "the qualification failed, so the run stops (docs/plan/upgrade-environment.md §2)",
-            )?;
+            .context(StopRun("the qualification failed"))?;
         let outputs = BTreeMap::from([
             ("candidate".to_owned(), candidate.display().to_string()),
             (
@@ -859,7 +877,7 @@ impl Run {
         };
         let pushed = crate::delivery::publication::publish(&qualification, &request)
             .await
-            .context("the qualified publication refused, so the run stops")?;
+            .context(StopRun("the qualified publication refused the bytes"))?;
         let selected = crate::delivery::deployment::select(&qualification, &request).await?;
         let outputs = BTreeMap::from([
             ("published".to_owned(), format!("{pushed:?}")),
@@ -871,6 +889,497 @@ impl Run {
                 "manifest digest".to_owned(),
                 selected.manifest_digest.clone(),
             ),
+        ]);
+        Ok((StepResult::Done, outputs))
+    }
+
+    /// The broker check of stage 5, which runs again before stages 8 and 10
+    /// (§4.3): the broker is Ready, and the tap Job runs when `WAMN_TAP` is
+    /// missing.
+    async fn broker(&self, kubectl: &Kubectl) -> anyhow::Result<&'static str> {
+        let broker = kubectl
+            .json(&["-n", "platform", "get", "pod", BROKER_POD])
+            .await?;
+        ensure!(ready(&broker), "the broker pod {BROKER_POD} is not Ready");
+        if self.tap_exists(kubectl).await? {
+            return Ok("present");
+        }
+        self.run_tap_job(kubectl).await?;
+        ensure!(
+            self.tap_exists(kubectl).await?,
+            "WAMN_TAP is still missing after the tap Job"
+        );
+        Ok("made by the tap Job")
+    }
+
+    /// The wait of §4.3 before a retry: Ready nodes and Ready platform pods.
+    async fn wait_ready(&self) -> anyhow::Result<()> {
+        let kubectl = Kubectl(self.environment()?.context);
+        kubectl
+            .run(&[
+                "wait",
+                "--for=condition=Ready",
+                "nodes",
+                "--all",
+                "--timeout=15m",
+            ])
+            .await?;
+        kubectl
+            .run(&[
+                "-n",
+                "platform",
+                "wait",
+                "--for=condition=Ready",
+                "pods",
+                "--all",
+                "--field-selector=status.phase!=Succeeded",
+                "--timeout=15m",
+            ])
+            .await?;
+        Ok(())
+    }
+
+    fn rendered(&self) -> PathBuf {
+        self.release_files().join("rendered")
+    }
+
+    /// Stage 10: the web client, the edge, the URL map, the hosts and the
+    /// workloads, with every host group and workload Ready.
+    async fn deploy(&self, record: &RunRecord) -> Outcome {
+        let environment = self.environment()?;
+        let kubectl = Kubectl(environment.context.clone());
+        self.broker(&kubectl).await?;
+        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
+        let digest = record
+            .output(Stage::PublishAndSelect, "manifest digest")?
+            .to_owned();
+        let hex = digest
+            .strip_prefix("sha256:")
+            .context("the selected manifest digest has no sha256 prefix")?
+            .to_owned();
+        let rendered = self.rendered();
+        private_directory(&rendered)?;
+        let mut outputs = BTreeMap::new();
+        let project = gcp_project(&environment.registry)?;
+
+        // The web client of each package that has one, create-only.
+        let mut client_package = None;
+        for root in &environment.packages {
+            let root = self.checkout.join(root);
+            let manifest: Value = serde_json::from_slice(&fs::read(
+                wamn_schema_generator::package_manifest_path(&root),
+            )?)?;
+            if manifest.pointer("/client_package/name").is_none() {
+                continue;
+            }
+            let package = manifest
+                .pointer("/package/id")
+                .and_then(Value::as_str)
+                .context("a package manifest names no package id")?
+                .to_owned();
+            let index = format!(
+                "gs://{}/{}/{package}/{hex}/index.html",
+                environment.web_client.bucket, environment.web_client.prefix
+            );
+            let present = Command::new("gcloud")
+                .args(["storage", "ls", &index, "--project", &project])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await?
+                .success();
+            if present {
+                outputs.insert(format!("web client {package}"), format!("{index} present"));
+            } else {
+                self.command(
+                    "pnpm-install",
+                    Command::new("pnpm").args(["install", "--frozen-lockfile"]),
+                )
+                .await?;
+                let mut upload = Command::new(self.programs().join("debug/wamn"));
+                upload
+                    .args(["web", "upload"])
+                    .arg(&root)
+                    .args(["--release", &digest, "--org", &self.arguments.org])
+                    .arg("--bucket")
+                    .arg(format!(
+                        "gs://{}/{}",
+                        environment.web_client.bucket, environment.web_client.prefix
+                    ))
+                    .env("WAMN_WEB_DATABASE_URL", databases.project_url());
+                self.command(&format!("web-upload-{package}"), &mut upload)
+                    .await?;
+                outputs.insert(format!("web client {package}"), format!("{index} uploaded"));
+            }
+            client_package.get_or_insert(package);
+        }
+
+        // The edge and the URL map, from their live state, for this route
+        // host only, so another environment keeps what it serves.
+        if let Some(package) = &client_package {
+            let bucket_path = format!(
+                "{}/{}/{package}/{hex}",
+                environment.web_client.bucket, environment.web_client.prefix
+            );
+            let live = helm(
+                &environment.context,
+                &[
+                    "get",
+                    "values",
+                    &environment.edge.release,
+                    "-n",
+                    &environment.edge.namespace,
+                    "-o",
+                    "json",
+                ],
+            )
+            .await?;
+            let mut values: Value = serde_json::from_str(&live)?;
+            if set_bucket_path(&mut values, &environment.route_host, &bucket_path)? {
+                let file = rendered.join("values-edge.yaml");
+                fs::write(&file, serde_yaml::to_string(&values)?)?;
+                let chart = self.checkout.join("deploy/platform/edge");
+                helm(
+                    &environment.context,
+                    &[
+                        "upgrade",
+                        &environment.edge.release,
+                        &chart.display().to_string(),
+                        "-n",
+                        &environment.edge.namespace,
+                        "-f",
+                        &file.display().to_string(),
+                        "--wait",
+                        "--timeout",
+                        "3m",
+                    ],
+                )
+                .await?;
+                outputs.insert(
+                    "edge".to_owned(),
+                    format!("{} serves {bucket_path}", environment.route_host),
+                );
+            } else {
+                outputs.insert("edge".to_owned(), "already serves the release".to_owned());
+            }
+            let exported = rendered.join("url-map-live.yaml");
+            self.command(
+                "url-map-export",
+                Command::new("gcloud")
+                    .args(["compute", "url-maps", "export", &environment.url_map.name])
+                    .args(["--global", "--project", &project, "--destination"])
+                    .arg(&exported),
+            )
+            .await?;
+            let mut map: serde_yaml::Value = serde_yaml::from_str(&fs::read_to_string(&exported)?)?;
+            let prefix = format!("/{}/{package}/", environment.web_client.prefix);
+            if rewrite_url_map(&mut map, &environment.route_host, &prefix, &hex)? {
+                let file = rendered.join("url-map.yaml");
+                fs::write(&file, serde_yaml::to_string(&map)?)?;
+                self.command(
+                    "url-map-import",
+                    Command::new("gcloud")
+                        .args(["compute", "url-maps", "import", &environment.url_map.name])
+                        .args(["--global", "--project", &project, "--quiet", "--source"])
+                        .arg(&file),
+                )
+                .await?;
+                outputs.insert(
+                    "url map".to_owned(),
+                    format!("{} rewrites to {hex}", environment.route_host),
+                );
+            } else {
+                outputs.insert(
+                    "url map".to_owned(),
+                    "already rewrites to the release".to_owned(),
+                );
+            }
+        }
+
+        // The host values from the stage 3 host image, with this group's new
+        // release and the current release of every other group.
+        ensure!(
+            HOST_VALUES_GROUPS.contains(&environment.host_group.as_str()),
+            "the host values program renders no host group {}",
+            environment.host_group
+        );
+        let live = helm(
+            &environment.context,
+            &[
+                "get",
+                "values",
+                HOST_RELEASE,
+                "-n",
+                HOST_NAMESPACE,
+                "-o",
+                "json",
+            ],
+        )
+        .await?;
+        let live: Value = serde_json::from_str(&live)?;
+        let mut digests = Vec::new();
+        for group in HOST_VALUES_GROUPS {
+            digests.push(if group == environment.host_group {
+                digest.clone()
+            } else {
+                release_digest(&live, group)?
+            });
+        }
+        let host_image = record.output(Stage::Images, "host")?.to_owned();
+        let mut values = Command::new("cargo");
+        values
+            .args(["run", "--locked", "-p", "wamn-test-infrastructure"])
+            .args(["--example", "host_values_files", "--"])
+            .arg(&rendered)
+            .arg(&host_image)
+            .arg(format!("{}/releases", environment.registry))
+            .args(&digests)
+            .env("CARGO_TARGET_DIR", self.programs());
+        self.command("host-values", &mut values).await?;
+        let flow = record.output(Stage::Guests, "flow-http")?.to_owned();
+        let materializer = record.output(Stage::Guests, "materializer")?.to_owned();
+        let mut workloads = Command::new("cargo");
+        workloads
+            .args(["run", "--locked", "-p", "wamn-test-infrastructure"])
+            .args(["--example", "workload_files", "--"])
+            .arg(&rendered)
+            .args([&flow, &materializer, &flow, &materializer])
+            .env("CARGO_TARGET_DIR", self.programs());
+        self.command("workload-files", &mut workloads).await?;
+        helm(
+            &environment.context,
+            &[
+                "upgrade",
+                HOST_RELEASE,
+                HOST_CHART,
+                "--version",
+                HOST_CHART_VERSION,
+                "-n",
+                HOST_NAMESPACE,
+                "-f",
+                &rendered.join("values-host-base.yaml").display().to_string(),
+                "-f",
+                &rendered.join("values-host.yaml").display().to_string(),
+                "--wait",
+                "--timeout",
+                "10m",
+            ],
+        )
+        .await?;
+        outputs.insert("host image".to_owned(), host_image);
+        let mut names = Vec::new();
+        for workload in &environment.workloads {
+            let file = rendered.join(
+                workload
+                    .file_name()
+                    .context("a workload file has no name")?,
+            );
+            kubectl
+                .run(&["apply", "-f", &file.display().to_string()])
+                .await?;
+            names.extend(workload_names(&fs::read_to_string(&file)?)?);
+        }
+        for name in &names {
+            kubectl
+                .run(&[
+                    "-n",
+                    HOST_NAMESPACE,
+                    "wait",
+                    "--for=condition=Ready",
+                    &format!("workloaddeployment/{name}"),
+                    "--timeout=240s",
+                ])
+                .await?;
+        }
+        outputs.insert("workloads".to_owned(), names.join(", "));
+        Ok((StepResult::Done, outputs))
+    }
+
+    /// Stage 11: the serve check, then the retirement of the old gate
+    /// generation and the revocation of every older management-author PAT of
+    /// the environment.
+    async fn check_and_retire(&self, record: &RunRecord) -> Outcome {
+        use crate::provision_project_env::{
+            WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
+            run_workload_action,
+        };
+        use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
+        let environment = self.environment()?;
+        let kubectl = Kubectl(environment.context.clone());
+        let mut outputs = BTreeMap::new();
+
+        let manifest_file = self.release_files().join("manifest.json");
+        let manifest =
+            wamn_catalog::ServingManifest::from_canonical_bytes(&fs::read(&manifest_file)?)
+                .context("admit the release manifest")?;
+        let routes = serve_routes(&manifest.0)?;
+        let forward = ServiceForward::open(
+            &kubectl,
+            HOST_NAMESPACE,
+            &format!("hostgroup-{}", environment.host_group),
+        )
+        .await?;
+        let checked = serve_check(forward.port, &environment.route_host, &routes)
+            .await
+            .context(StopRun("the serve check failed after the hosts changed"))?;
+        drop(forward);
+        outputs.insert("serve check".to_owned(), checked);
+
+        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
+        let current = |name: &str| -> anyhow::Result<CredentialGeneration> {
+            match record.output(Stage::Packages, name)? {
+                "a" => Ok(CredentialGeneration::A),
+                "b" => Ok(CredentialGeneration::B),
+                other => bail!("the packages stage recorded the generation {other}"),
+            }
+        };
+        let control_author = current("control-author generation")?;
+        let management_admitter = current("management-admitter generation")?;
+        let secrets = self.secrets();
+        let control_url = databases.local(&secret_url(&secrets.join("control-author.json"))?)?;
+        let admitter_url =
+            databases.local(&secret_url(&secrets.join("management-admitter.json"))?)?;
+        redact_later(&control_url);
+        redact_later(&admitter_url);
+        let system = databases.system().await?;
+        let mut retire = Vec::new();
+        for (family, generation, database, target) in [
+            (
+                WorkloadRoleFamily::ControlAuthor,
+                control_author,
+                databases.system_database.clone(),
+                None,
+            ),
+            (
+                WorkloadRoleFamily::ManagementAdmitter,
+                management_admitter,
+                databases.database.clone(),
+                Some(databases.project_url()),
+            ),
+        ] {
+            let old = generation.other();
+            let role = match family {
+                WorkloadRoleFamily::ControlAuthor => {
+                    wamn_control_provision::control_author_generation_role(
+                        &self.arguments.org,
+                        &self.arguments.project,
+                        &self.arguments.environment,
+                        &database,
+                        old,
+                    )
+                }
+                _ => wamn_control_provision::management_admitter_generation_role(
+                    &self.arguments.org,
+                    &self.arguments.project,
+                    &self.arguments.environment,
+                    &database,
+                    old,
+                ),
+            };
+            let active: Option<bool> = system
+                .query_opt(
+                    "SELECT rolcanlogin FROM pg_roles WHERE rolname = $1",
+                    &[&role],
+                )
+                .await?
+                .map(|row| row.get(0));
+            if active == Some(true) {
+                retire.push((family, old, target));
+            } else {
+                outputs.insert(
+                    format!("retire {}", family_file(family)),
+                    format!("generation {} is not active", old.as_str()),
+                );
+            }
+        }
+        if !retire.is_empty() {
+            // A retire needs a live session of the replacement generation
+            // (owner ruling on wamn-ld93.25), so the gate service holds one.
+            let service = GateService::start(self, &control_url, &admitter_url, &databases).await?;
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            for (family, old, target) in retire {
+                run_workload_action(&WorkloadActionRequest {
+                    org: self.arguments.org.clone(),
+                    project: self.arguments.project.clone(),
+                    env: self.arguments.environment.clone(),
+                    tenant: Some(databases.tenant.clone()),
+                    system_database_url: Some(databases.system_url()),
+                    target_admin_database_url: target,
+                    cluster: None,
+                    db_host: Some(databases.cluster_host.clone()),
+                    db_port: 5432,
+                    namespace: databases.secret_namespace.clone(),
+                    action: WorkloadGenerationAction {
+                        family,
+                        verb: WorkloadActionVerb::Retire,
+                        generation: old,
+                    },
+                    secret: None,
+                    emit_role_sql: None,
+                    control_administration_patch: None,
+                })
+                .await?;
+                outputs.insert(
+                    format!("retire {}", family_file(family)),
+                    format!("generation {} retired", old.as_str()),
+                );
+            }
+            drop(service);
+        }
+
+        // Only the management-author PATs of the environment, which upgrades
+        // issue (owner ruling of 2026-10-02 on stage 11).
+        let pat = record
+            .output(Stage::Packages, "management-author PAT prefix")?
+            .to_owned();
+        let subject = format!(
+            "wamn-management-author-{}--{}--{}",
+            self.arguments.org, self.arguments.project, self.arguments.environment
+        );
+        let older: Vec<String> = system
+            .query(
+                "SELECT p.token_prefix FROM identity.pats AS p
+                   JOIN identity.principals AS r ON r.id = p.principal_id
+                  WHERE r.subject = $1 AND p.revoked_at IS NULL AND p.token_prefix <> $2
+                  ORDER BY p.token_prefix",
+                &[&subject, &pat],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get(0))
+            .collect();
+        for prefix in &older {
+            crate::provision_project_env::revoke_provisioning_pat(&databases.system_url(), prefix)
+                .await?;
+        }
+        outputs.insert("revoked PATs".to_owned(), older.join(", "));
+        outputs.insert("current PAT".to_owned(), pat);
+        if secrets.exists() {
+            fs::remove_dir_all(&secrets)?;
+        }
+        Ok((StepResult::Done, outputs))
+    }
+
+    /// Stage 12: the run record is complete. It names its own file and the
+    /// start of its first step.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "every stage has the same result type"
+    )]
+    fn finish_record(&self, record: &RunRecord) -> Outcome {
+        let first = record
+            .steps
+            .first()
+            .map(|step| step.started_at.clone())
+            .unwrap_or_default();
+        let file = self.work.join("runs").join(format!(
+            "{}--{}--{}.json",
+            self.arguments.org, self.arguments.project, self.arguments.environment
+        ));
+        let outputs = BTreeMap::from([
+            ("first step started".to_owned(), first),
+            ("run record".to_owned(), file.display().to_string()),
         ]);
         Ok((StepResult::Done, outputs))
     }
@@ -1349,7 +1858,8 @@ struct GateService {
 impl GateService {
     async fn start(
         run: &Run,
-        gate: &GateCredentials,
+        control_author_url: &str,
+        management_admitter_url: &str,
         databases: &Databases,
     ) -> anyhow::Result<Self> {
         let arguments = &run.arguments;
@@ -1383,11 +1893,8 @@ impl GateService {
         let child = Command::new(run.programs().join("debug/wamn-scenario-worker"))
             .args(["serve", "--bind", &format!("127.0.0.1:{port}")])
             .env("WAMN_SYSTEM_URL", databases.local(&reader_url)?)
-            .env("WAMN_CONTROL_AUTHORING_PG_URL", &gate.control_author_url)
-            .env(
-                "WAMN_MANAGEMENT_ADMISSION_PG_URL",
-                &gate.management_admitter_url,
-            )
+            .env("WAMN_CONTROL_AUTHORING_PG_URL", control_author_url)
+            .env("WAMN_MANAGEMENT_ADMISSION_PG_URL", management_admitter_url)
             .env("WAMN_MANAGEMENT_ORG", &arguments.org)
             .env("WAMN_MANAGEMENT_PROJECT", &arguments.project)
             .env("WAMN_MANAGEMENT_ENVIRONMENT", &arguments.environment)
@@ -1543,6 +2050,252 @@ async fn copy_bindings(
         ));
     }
     Ok(copied)
+}
+
+/// The Helm release of the hosts (docs/operations/gcp.md §3.14).
+const HOST_RELEASE: &str = "wamn-host";
+const HOST_NAMESPACE: &str = "hosts";
+const HOST_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
+const HOST_CHART_VERSION: &str = "2.10.0";
+/// The host groups that `host_values_files` renders, in the order of its
+/// release digest arguments.
+const HOST_VALUES_GROUPS: [&str; 2] = ["default", "wms"];
+
+async fn helm(context: &str, arguments: &[&str]) -> anyhow::Result<String> {
+    let output = Command::new("helm")
+        .args(["--kube-context", context])
+        .args(arguments)
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("start helm")?;
+    ensure!(
+        output.status.success(),
+        "helm {} exited {}: {}",
+        arguments.join(" "),
+        output.status,
+        redact(&String::from_utf8_lossy(&output.stderr))
+    );
+    Ok(String::from_utf8(output.stdout)?)
+}
+
+/// The Google Cloud project of an Artifact Registry path.
+fn gcp_project(registry: &str) -> anyhow::Result<String> {
+    registry
+        .split('/')
+        .nth(1)
+        .map(str::to_owned)
+        .with_context(|| format!("the registry {registry} names no project"))
+}
+
+/// Sets the bucket path of the edge application of `host`. It reports
+/// whether the values changed.
+fn set_bucket_path(values: &mut Value, host: &str, bucket_path: &str) -> anyhow::Result<bool> {
+    let application = values["applications"]
+        .as_array_mut()
+        .context("the edge values have no applications")?
+        .iter_mut()
+        .find(|application| application["host"] == host)
+        .with_context(|| format!("the edge serves no host {host}"))?;
+    if application["bucketPath"] == bucket_path {
+        return Ok(false);
+    }
+    application["bucketPath"] = Value::from(bucket_path);
+    Ok(true)
+}
+
+/// Points every rewrite of the path matcher of `host` that names a release
+/// under `prefix` at the release `hex`. It reports whether the map changed.
+fn rewrite_url_map(
+    map: &mut serde_yaml::Value,
+    host: &str,
+    prefix: &str,
+    hex: &str,
+) -> anyhow::Result<bool> {
+    let matcher = map["hostRules"]
+        .as_sequence()
+        .context("the URL map has no hostRules")?
+        .iter()
+        .find(|rule| {
+            rule["hosts"]
+                .as_sequence()
+                .is_some_and(|hosts| hosts.iter().any(|name| name.as_str() == Some(host)))
+        })
+        .and_then(|rule| rule["pathMatcher"].as_str())
+        .with_context(|| format!("the URL map has no host rule for {host}"))?
+        .to_owned();
+    let matcher = map["pathMatchers"]
+        .as_sequence_mut()
+        .context("the URL map has no pathMatchers")?
+        .iter_mut()
+        .find(|candidate| candidate["name"].as_str() == Some(matcher.as_str()))
+        .with_context(|| format!("the URL map has no path matcher {matcher}"))?;
+    let mut changed = false;
+    let mut found = 0;
+    for rule in matcher["routeRules"]
+        .as_sequence_mut()
+        .into_iter()
+        .flatten()
+    {
+        for key in ["pathPrefixRewrite", "pathTemplateRewrite"] {
+            let rewrite = &mut rule["routeAction"]["urlRewrite"][key];
+            let Some(path) = rewrite.as_str() else {
+                continue;
+            };
+            let Some(rest) = path.strip_prefix(prefix) else {
+                continue;
+            };
+            let (old, tail) = rest
+                .split_at_checked(64)
+                .context("a rewrite names a short release")?;
+            ensure!(
+                old.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "the rewrite {path} names no release digest"
+            );
+            found += 1;
+            if old != hex {
+                *rewrite = serde_yaml::Value::from(format!("{prefix}{hex}{tail}"));
+                changed = true;
+            }
+        }
+    }
+    ensure!(
+        found > 0,
+        "the path matcher of {host} rewrites to no release under {prefix}"
+    );
+    Ok(changed)
+}
+
+/// The release manifest digest in the live host values of one host group.
+fn release_digest(values: &Value, group: &str) -> anyhow::Result<String> {
+    values["runtime"]["hostGroups"]
+        .as_array()
+        .context("the live host values have no runtime.hostGroups")?
+        .iter()
+        .find(|candidate| candidate["name"] == group)
+        .with_context(|| format!("the live host values have no host group {group}"))?["extraArgs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find_map(|argument| {
+            argument
+                .as_str()?
+                .strip_prefix("--release-manifest-digest=")
+        })
+        .map(str::to_owned)
+        .with_context(|| format!("the host group {group} names no release manifest digest"))
+}
+
+/// The names of the WorkloadDeployment documents of a workload file.
+fn workload_names(file: &str) -> anyhow::Result<Vec<String>> {
+    let mut names = Vec::new();
+    for document in serde_yaml::Deserializer::from_str(file) {
+        let value = <serde_yaml::Value as serde::Deserialize>::deserialize(document)?;
+        if value["kind"] == "WorkloadDeployment" {
+            names.push(
+                value["metadata"]["name"]
+                    .as_str()
+                    .context("a WorkloadDeployment has no name")?
+                    .to_owned(),
+            );
+        }
+    }
+    ensure!(
+        !names.is_empty(),
+        "a workload file holds no WorkloadDeployment"
+    );
+    Ok(names)
+}
+
+/// Each HTTP route of the release with its method and path.
+fn serve_routes(manifest: &wamn_catalog::ServingManifest) -> anyhow::Result<Vec<(String, String)>> {
+    let mut routes = Vec::new();
+    for (name, attachment) in &manifest.attachments {
+        let Some(path) = attachment.definition["route"]["path"].as_str() else {
+            continue;
+        };
+        let method = match attachment.definition["route"]["method"].as_str() {
+            Some(method) => method.to_owned(),
+            None => manifest
+                .routes
+                .iter()
+                .find(|route| route.operation == attachment.operation)
+                .map(|route| route.type_.http_method().to_owned())
+                .with_context(|| format!("the attachment {name} calls no route of the release"))?,
+        };
+        routes.push((method, path.to_owned()));
+    }
+    ensure!(!routes.is_empty(), "the release has no HTTP route");
+    Ok(routes)
+}
+
+/// The path of the serve check that no release serves.
+const UNKNOWN_PATH: &str = "/wamn-upgrade-unknown-path";
+
+/// Each released route answers 401 without a credential, and an unknown
+/// path answers 404.
+async fn serve_check(port: u16, host: &str, routes: &[(String, String)]) -> anyhow::Result<String> {
+    let http = reqwest::Client::new();
+    let mut answers = Vec::new();
+    let unknown = ("GET".to_owned(), UNKNOWN_PATH.to_owned());
+    for (method, path) in routes.iter().chain([&unknown]) {
+        let expected = if path == UNKNOWN_PATH { 404 } else { 401 };
+        let status = http
+            .request(method.parse()?, format!("http://127.0.0.1:{port}{path}"))
+            .header(reqwest::header::HOST, host)
+            .send()
+            .await
+            .with_context(|| format!("{method} {path}"))?
+            .status()
+            .as_u16();
+        ensure!(
+            status == expected,
+            "{method} {path} on {host} answered {status}, not {expected}"
+        );
+        answers.push(format!("{method} {path} {status}"));
+    }
+    Ok(answers.join(", "))
+}
+
+/// A port-forward to port 80 of a Service, on a free local port.
+struct ServiceForward {
+    port: u16,
+    _child: Child,
+}
+
+impl ServiceForward {
+    async fn open(kubectl: &Kubectl, namespace: &str, service: &str) -> anyhow::Result<Self> {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")?
+            .local_addr()?
+            .port();
+        let mut child = kubectl
+            .command(&[
+                "-n",
+                namespace,
+                "port-forward",
+                &format!("svc/{service}"),
+                &format!("{port}:80"),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("start kubectl port-forward")?;
+        let stdout = child.stdout.take().context("port-forward output")?;
+        let mut lines = tokio::io::BufReader::new(stdout).lines();
+        let first = tokio::time::timeout(Duration::from_secs(30), lines.next_line())
+            .await
+            .context("the port-forward did not start within 30 s")??;
+        ensure!(
+            first.is_some_and(|line| line.starts_with("Forwarding from")),
+            "the port-forward to {service} did not start"
+        );
+        tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+        Ok(Self {
+            port,
+            _child: child,
+        })
+    }
 }
 
 fn done(already: bool) -> StepResult {
@@ -2441,6 +3194,116 @@ mod tests {
         )
         .unwrap();
         assert_eq!(secret_url(&encoded).unwrap(), "postgresql://u@h:5432/d");
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    fn repository() -> &'static Path {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_edge_and_the_url_map_change_only_the_route_host_of_the_run() {
+        let edge: serde_yaml::Value = serde_yaml::from_str(
+            &fs::read_to_string(repository().join("deploy/gcp/values-edge.yaml")).unwrap(),
+        )
+        .unwrap();
+        let mut edge: Value = serde_json::to_value(edge).unwrap();
+        let before = edge.clone();
+        let path = format!("wamn-dev-web/clients/wamn_wms/{}", "c".repeat(64));
+        assert!(set_bucket_path(&mut edge, "wms.wamn.dev", &path).unwrap());
+        assert!(!set_bucket_path(&mut edge, "wms.wamn.dev", &path).unwrap());
+        assert_eq!(edge["applications"][0], before["applications"][0]);
+        assert_eq!(edge["applications"][1]["bucketPath"], path.as_str());
+        assert!(set_bucket_path(&mut edge, "absent.wamn.dev", &path).is_err());
+
+        let mut map: serde_yaml::Value = serde_yaml::from_str(
+            &fs::read_to_string(repository().join("deploy/gcp/url-map.yaml")).unwrap(),
+        )
+        .unwrap();
+        let receiving = serde_yaml::to_string(&map["pathMatchers"][0]).unwrap();
+        let hex = "c".repeat(64);
+        assert!(rewrite_url_map(&mut map, "wms.wamn.dev", "/clients/wamn_wms/", &hex).unwrap());
+        assert!(!rewrite_url_map(&mut map, "wms.wamn.dev", "/clients/wamn_wms/", &hex).unwrap());
+        assert_eq!(
+            serde_yaml::to_string(&map["pathMatchers"][0]).unwrap(),
+            receiving
+        );
+        let wms = serde_yaml::to_string(&map["pathMatchers"][1]).unwrap();
+        assert_eq!(wms.matches(&hex).count(), 3, "{wms}");
+    }
+
+    #[test]
+    fn the_live_host_values_name_each_group_release() {
+        let values: serde_yaml::Value = serde_yaml::from_str(
+            &fs::read_to_string(repository().join("deploy/gcp/values-host.yaml")).unwrap(),
+        )
+        .unwrap();
+        let values = serde_json::to_value(values).unwrap();
+        for group in HOST_VALUES_GROUPS {
+            let digest = release_digest(&values, group).unwrap();
+            assert!(
+                digest.starts_with("sha256:") && digest.len() == 71,
+                "{digest}"
+            );
+        }
+        assert!(release_digest(&values, "control").is_err());
+    }
+
+    #[test]
+    fn a_workload_file_names_its_workload_deployments() {
+        let file = fs::read_to_string(repository().join("deploy/gcp/flow-http.yaml")).unwrap();
+        assert_eq!(workload_names(&file).unwrap(), ["flow-http"]);
+        assert!(workload_names("kind: Service\n").is_err());
+    }
+
+    #[test]
+    fn a_stage_retries_once_and_never_a_stop_condition() {
+        let directory = std::env::temp_dir().join(format!(
+            "wamn-upgrade-retry-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("run.json");
+        let mut record = RunRecord::open(
+            &path,
+            RunArguments::new("dkk", "wms", "dev", &"a".repeat(40)).unwrap(),
+        )
+        .unwrap();
+        for stage in [Stage::Source, Stage::Build, Stage::Images, Stage::Guests] {
+            record.start(&path, stage, BTreeMap::new()).unwrap();
+            record
+                .finish(&path, StepResult::Done, BTreeMap::new())
+                .unwrap();
+        }
+        record
+            .start(&path, Stage::Preflight, BTreeMap::new())
+            .unwrap();
+        assert_eq!(attempts(&record, Stage::Preflight), 1);
+        record
+            .finish(
+                &path,
+                StepResult::Failed {
+                    cause: "reset".to_owned(),
+                },
+                BTreeMap::new(),
+            )
+            .unwrap();
+        record
+            .start(&path, Stage::Preflight, BTreeMap::new())
+            .unwrap();
+        assert_eq!(attempts(&record, Stage::Preflight), 2);
+        assert!(retried(Stage::Preflight) && retried(Stage::CheckAndRetire));
+        assert!(!retried(Stage::Build) && !retried(Stage::Record));
+        let stop = anyhow::anyhow!("refused").context(StopRun("the qualification failed"));
+        assert!(stop.downcast_ref::<StopRun>().is_some());
+        assert_eq!(
+            format!("{stop:#}"),
+            "the qualification failed, so the run stops: refused"
+        );
         fs::remove_dir_all(&directory).unwrap();
     }
 

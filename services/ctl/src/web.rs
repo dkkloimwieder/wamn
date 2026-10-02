@@ -53,7 +53,8 @@ pub struct UploadArgs {
     pub org: String,
     /// The project-environment database that holds the release head. The
     /// upload refuses a release that is not the head, before the build.
-    #[arg(long)]
+    /// `WAMN_WEB_DATABASE_URL` keeps the password off the command line.
+    #[arg(long, env = "WAMN_WEB_DATABASE_URL", hide_env_values = true)]
     pub database_url: String,
 }
 
