@@ -478,6 +478,73 @@ impl Run {
         ))
     }
 
+    async fn package_workload_target(
+        &self,
+        environment: &EnvironmentFile,
+    ) -> anyhow::Result<crate::qualify_upgrade::workload::WorkloadTarget> {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        let output = Kubectl(environment.context.clone())
+            .command(&["config", "view", "--minify", "--flatten", "--raw"])
+            .stderr(Stdio::null())
+            .output()
+            .await
+            .context("capture the Kubernetes configuration for package qualification")?;
+        ensure!(
+            output.status.success(),
+            "capture the Kubernetes configuration for package qualification exited {}",
+            output.status
+        );
+        ensure!(
+            !output.stdout.is_empty(),
+            "the Kubernetes configuration for package qualification is empty"
+        );
+        private_directory(&self.release_files())?;
+        let kubeconfig = self.release_files().join("package-workload.kubeconfig");
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&kubeconfig)
+        {
+            Ok(mut file) => {
+                file.write_all(&output.stdout).context(
+                    "write the private Kubernetes configuration for package qualification",
+                )?;
+                file.sync_all().context(
+                    "save the private Kubernetes configuration for package qualification",
+                )?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(&kubeconfig)
+                    .context("read the private Kubernetes configuration metadata")?;
+                ensure!(
+                    metadata.file_type().is_file()
+                        && metadata.permissions().mode() & 0o777 == 0o600,
+                    "the retained Kubernetes configuration must be a private regular file"
+                );
+                ensure!(
+                    fs::read(&kubeconfig).context("read the retained Kubernetes configuration")?
+                        == output.stdout,
+                    "the Kubernetes context differs from the retained package qualification configuration"
+                );
+            }
+            Err(error) => {
+                return Err(error).context(
+                    "create the private Kubernetes configuration for package qualification",
+                );
+            }
+        }
+        Ok(crate::qualify_upgrade::workload::WorkloadTarget {
+            kubeconfig,
+            context: environment.context.clone(),
+            namespace: HOST_NAMESPACE.to_owned(),
+            host_deployment: format!("hostgroup-{}", environment.host_group),
+            package_workloads: environment.package_workloads.clone(),
+        })
+    }
+
     /// The credentials of the gate, kept until stage 11 retires the old
     /// generation, then deleted.
     fn secrets(&self) -> PathBuf {
@@ -517,6 +584,159 @@ impl Run {
             ("project database".to_owned(), databases.database.clone()),
         ]);
         Ok((StepResult::Done, outputs))
+    }
+
+    async fn apply_environment_packages(
+        &self,
+        environment: &EnvironmentFile,
+        databases: &Databases,
+        packages: &[crate::release_composition::PackageInput],
+        artifacts: &[crate::release_composition::SelectedComponentArtifact],
+        registry: &Registry,
+    ) -> anyhow::Result<Vec<crate::apply_package::ApplyOutcome>> {
+        use crate::apply_package::{ApplyPackageRequest, apply_package};
+        use crate::qualify_upgrade::{presented_root_identity, read_current_packages};
+
+        let roots = packages
+            .iter()
+            .map(|package| package.root.clone())
+            .collect::<Vec<_>>();
+        let request = |root: &Path| ApplyPackageRequest {
+            package: root.to_owned(),
+            database_url: databases.project_url(),
+            tenant: databases.tenant.clone(),
+        };
+        let package_registry = crate::package_artifact::PackageRegistry {
+            artifact_base: format!("{}/packages", environment.registry),
+            registry_auth_file: registry.auth_file(),
+            insecure_registry: false,
+            oci_ca_paths: Vec::new(),
+            control_database_url: databases.system_url(),
+        };
+        let evidence_path = self.release_files().join("package-upgrade.json");
+        let mut presented = roots
+            .iter()
+            .map(|root| presented_root_identity(root))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+        let mut client = databases.project().await?;
+        let tx = client.build_transaction().read_only(true).start().await?;
+        let installed = read_current_packages(&tx, &databases.tenant).await?;
+        tx.commit().await?;
+
+        if !evidence_path.exists() {
+            // Every newly installed version must have its frozen artifact first.
+            for package in packages.iter().filter(|package| {
+                !installed.iter().any(|old| {
+                    old.package_id == package.manifest.package.id
+                        && old.package_version == package.manifest.package.version
+                })
+            }) {
+                let index = package.root.join(crate::package_artifact::COMPONENT_INDEX);
+                fs::create_dir_all(
+                    index
+                        .parent()
+                        .context("the package build index has no parent")?,
+                )?;
+                fs::copy(self.delivery().join("components.json"), &index)
+                    .context("present the stage build index to push-package")?;
+                crate::package_artifact::push_package(
+                    &crate::package_artifact::PushPackageRequest {
+                        package: package.root.clone(),
+                        registry: package_registry.clone(),
+                        source_commit: Some(self.arguments.commit.clone()),
+                    },
+                )
+                .await?;
+            }
+            let changed = packages
+                .iter()
+                .filter(|package| {
+                    installed.iter().any(|old| {
+                        old.package_id == package.manifest.package.id
+                            && old.package_version != package.manifest.package.version
+                    })
+                })
+                .collect::<Vec<_>>();
+            if changed.is_empty() {
+                let mut outcomes = Vec::new();
+                for root in &roots {
+                    outcomes.push(apply_package(request(root)).await?);
+                }
+                return Ok(outcomes);
+            }
+            ensure!(
+                installed.len() == presented.len()
+                    && installed.iter().all(|old| presented
+                        .iter()
+                        .any(|root| root.package.package_id == old.package_id)),
+                "an installed package upgrade requires the complete current root set; adding or removing packages is outside this transition"
+            );
+            let bases = changed
+                .iter()
+                .filter(|package| {
+                    !package.manifest.base_dependencies.values().any(|pin| {
+                        changed
+                            .iter()
+                            .any(|base| base.manifest.package.id == pin.package)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let [candidate] = bases.as_slice() else {
+                bail!(
+                    "upgrade-environment requires one base transition and its affected overlay successors; found {} independent transitions",
+                    bases.len()
+                );
+            };
+            let artifact = artifacts
+                .iter()
+                .find(|artifact| artifact.package_id.as_ref() == candidate.manifest.package.id)
+                .context("the upgraded package has no selected component artifact")?;
+            let mut predecessors = Vec::new();
+            for old in &installed {
+                predecessors.push(
+                    crate::package_artifact::open_package_source(
+                        crate::package_artifact::PackageSource::Artifact {
+                            tag: format!("{}-{}", old.package_id, old.package_version),
+                            registry: package_registry.clone(),
+                        },
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "fetch the installed package artifact {}@{} by its recorded digest",
+                            old.package_id, old.package_version
+                        )
+                    })?,
+                );
+            }
+            crate::qualify_upgrade::qualify_upgrade(
+                crate::qualify_upgrade::QualifyUpgradeRequest {
+                    database_url: databases.project_url(),
+                    tenant: databases.tenant.clone(),
+                    environment: self.arguments.environment.clone(),
+                    package: candidate.root.clone(),
+                    presented_packages: roots.clone(),
+                    predecessor_packages: predecessors
+                        .iter()
+                        .map(|package| package.root().to_owned())
+                        .collect(),
+                    base_component: (changed.len() > 1).then(|| artifact.path.clone()),
+                    workload: self.package_workload_target(environment).await?,
+                    result: evidence_path.clone(),
+                },
+            )
+            .await?;
+        }
+
+        apply_environment_package_qualification(
+            request(&self.checkout),
+            &self.arguments.environment,
+            packages,
+            artifacts,
+            &evidence_path,
+        )
+        .await
     }
 
     /// Stage 7: packages, components, gated wirings, the release under the
@@ -565,14 +785,12 @@ impl Run {
         let palette = select_palette_artifacts(&packages, &plan.palette)?;
         let wirings = load_wirings(&packages)?;
 
-        for root in &roots {
-            let applied =
-                crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
-                    package: root.clone(),
-                    database_url: project_url.clone(),
-                    tenant: tenant.clone(),
-                })
-                .await?;
+        let registry = Registry::login(&environment.registry, &self.work).await?;
+        for applied in self
+            .apply_environment_packages(&environment, &databases, &packages, &artifacts, &registry)
+            .await
+            .context(StopRun("package qualification or application refused"))?
+        {
             outputs.insert(
                 format!("package {}", applied.package_id),
                 format!(
@@ -600,7 +818,6 @@ impl Run {
             .await?;
         }
 
-        let registry = Registry::login(&environment.registry, &self.work).await?;
         let publish = || crate::push_component::PublishAdmittedComponentRequest {
             artifact_base: format!("{}/components", environment.registry),
             registry_auth_file: registry.auth_file(),
@@ -1362,6 +1579,10 @@ impl Run {
         if secrets.exists() {
             fs::remove_dir_all(&secrets)?;
         }
+        let kubeconfig = self.release_files().join("package-workload.kubeconfig");
+        if kubeconfig.exists() {
+            fs::remove_file(kubeconfig)?;
+        }
         Ok((StepResult::Done, outputs))
     }
 
@@ -2056,6 +2277,54 @@ async fn copy_bindings(
     Ok(copied)
 }
 
+/// Apply or retry the exact complete package world saved by the environment run.
+pub(crate) async fn apply_environment_package_qualification(
+    mut request: crate::apply_package::ApplyPackageRequest,
+    environment: &str,
+    packages: &[crate::release_composition::PackageInput],
+    artifacts: &[crate::release_composition::SelectedComponentArtifact],
+    evidence_path: &Path,
+) -> anyhow::Result<Vec<crate::apply_package::ApplyOutcome>> {
+    let roots = packages
+        .iter()
+        .map(|package| package.root.clone())
+        .collect::<Vec<_>>();
+    let mut presented = roots
+        .iter()
+        .map(|root| crate::qualify_upgrade::presented_root_identity(root))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+    let (evidence, _, _) = crate::qualify_upgrade::read_qualification(evidence_path)?;
+    ensure!(
+        evidence.tenant == request.tenant
+            && evidence.environment == environment
+            && evidence.presented_roots == presented,
+        "retained package qualification differs from this exact environment and complete successor root set"
+    );
+    let candidate = packages
+        .iter()
+        .find(|package| package.manifest.package.id == evidence.candidate_package.package_id)
+        .context("retained package qualification names an absent candidate")?;
+    request.package = candidate.root.clone();
+    if let Some(overlay) = &evidence.overlay {
+        let artifact = artifacts
+            .iter()
+            .find(|artifact| artifact.package_id.as_ref() == candidate.manifest.package.id)
+            .context("the qualified base has no selected component artifact")?;
+        ensure!(
+            artifact.digest.as_ref() == overlay.component_digest
+                && wamn_engine::component_admission::component_digest(&fs::read(&artifact.path)?)
+                    == overlay.component_digest,
+            "the selected base component differs from the qualified overlay pin"
+        );
+        crate::apply_package::apply_qualified_package_set(request, &roots, evidence_path).await
+    } else {
+        Ok(vec![
+            crate::apply_package::apply_qualified_package(request, evidence_path).await?,
+        ])
+    }
+}
+
 /// The Helm release of the hosts (docs/operations/gcp.md §3.14).
 const HOST_RELEASE: &str = "wamn-host";
 const HOST_NAMESPACE: &str = "hosts";
@@ -2522,7 +2791,10 @@ fn docker_config(host: &str, token: &str) -> String {
     let auth =
         base64::engine::general_purpose::STANDARD.encode(format!("oauth2accesstoken:{token}"));
     let mut auths = serde_json::Map::new();
-    auths.insert(host.to_owned(), serde_json::json!({ "auth": auth }));
+    auths.insert(
+        host.to_owned(),
+        serde_json::json!({ "auth": auth, "username": "oauth2accesstoken", "password": token }),
+    );
     serde_json::json!({ "auths": auths }).to_string()
 }
 
@@ -3122,12 +3394,27 @@ mod tests {
 
     #[test]
     fn the_docker_configuration_holds_only_the_registry_login() {
-        let config: Value =
-            serde_json::from_str(&docker_config("us-central1-docker.pkg.dev", "token")).unwrap();
+        let configuration = docker_config("us-central1-docker.pkg.dev", "token");
+        let config: Value = serde_json::from_str(&configuration).unwrap();
         assert_eq!(
             config,
-            json!({"auths": {"us-central1-docker.pkg.dev": {"auth": "b2F1dGgyYWNjZXNzdG9rZW46dG9rZW4="}}})
+            json!({"auths": {"us-central1-docker.pkg.dev": {
+                "auth": "b2F1dGgyYWNjZXNzdG9rZW46dG9rZW4=",
+                "username": "oauth2accesstoken",
+                "password": "token"
+            }}})
         );
+        let file =
+            std::env::temp_dir().join(format!("wamn-upgrade-registry-{}.json", std::process::id()));
+        fs::write(&file, configuration).unwrap();
+        let credentials = wamn_runtime::registry_credentials::read_registry_push_credentials(
+            &file,
+            "us-central1-docker.pkg.dev",
+        );
+        fs::remove_file(&file).unwrap();
+        let credentials = credentials.unwrap().unwrap();
+        assert_eq!(credentials.username(), "oauth2accesstoken");
+        assert_eq!(credentials.password(), "token");
     }
 
     #[test]

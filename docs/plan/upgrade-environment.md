@@ -136,6 +136,12 @@ The upgrade fetches that artifact by digest and refuses a manifest or migration 
 The refusal names the mismatch. An attested Git checkout is not a fallback.
 The operator pushes artifacts once for the two existing `wamn-dev` versions from their attested commits.
 Later installed versions require their pushed artifacts.
+Package artifacts use the environment's `registry` value plus the fixed `/packages` path.
+They share the registry login and immutable tags with images and releases. The environment file needs no additional field.
+Before application, the package stage qualifies one base transition and all affected overlay successors against the complete installed package set.
+It fetches predecessor artifacts by recorded digest and uses the selected base component bytes for overlay pins.
+It applies the qualified base and affected overlays in one transaction. Independent base transitions in one run refuse with their count.
+A retry requires the saved qualification to match the environment, complete successor roots, and exact base component.
 
 The verb runs these stages in order. Each stage is a function over the run record. Each one reads the state first and skips work that is done.
 

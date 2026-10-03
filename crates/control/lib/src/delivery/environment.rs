@@ -22,7 +22,7 @@ pub struct EnvironmentFile {
     pub cluster: String,
     /// The kubeconfig context of the cluster.
     pub context: String,
-    /// The `<registry>/<repository>` of the images and the release artifacts.
+    /// The `<registry>/<repository>` of images, releases, and package artifacts.
     pub registry: String,
     pub system_database: SystemDatabase,
     /// The package roots that the environment publishes, relative to the

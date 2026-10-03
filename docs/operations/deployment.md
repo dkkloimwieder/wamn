@@ -456,6 +456,18 @@ Schema relocation or multiple-schema support requires a future persisted deploym
 
 Apply pending [platform schema migrations](#platform-schema-upgrades) before application upgrade, including the `catalog.package_upgrade_qualifications` carrier.
 Keep the exact predecessor release available for recovery.
+`upgrade-environment` reads installed package artifacts from the environment's `registry` value plus `/packages`.
+It uses the same login as component publication. Immutable package tags identify each package ID and version.
+The operator pushes the artifacts of older installed versions once from their attested commits before an upgrade.
+The package stage calls `push-package` for each newly installed version before application, with the run's commit and component index.
+An existing package tag with different bytes refuses before application.
+The verb fetches each predecessor by its recorded digest and compares its frozen manifest, migrations, and SQL with installed and serving facts.
+It does not rebuild predecessor SQL with the current generator.
+
+The package stage qualifies the complete successor set before application.
+An additive base upgrade and all affected overlay successors apply in one transaction, with the base first.
+A retry requires the saved qualification to match the exact environment, complete package roots, and selected base component bytes.
+The verb refuses multiple independent base transitions in one run.
 Prepare the complete candidate root set, including generated artifacts. Ordinary release qualification must support the environment's candidate shape.
 The completed Epic 1 WMS proof is recorded in [Google Cloud operations](gcp.md).
 
