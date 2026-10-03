@@ -161,6 +161,7 @@ wamn-ctl select-release \
 
 Give each image as `repository@sha256:<digest>`. The select refuses a tag without a digest.
 The package set is the `(package_id, version, component_digest)` triples of the release. The tenant, the environment and the release ID do not count.
+The select does not compare the commit of the qualification with the commit of the publication record. The record stays, and the gate is the package set and the image digests.
 Every select writes one row of `catalog.release_selections` with the qualification it used, and prints its `qualification_sha256`.
 
 Selection updates the existing `catalog.effective_release_heads` row for the release tenant and environment.

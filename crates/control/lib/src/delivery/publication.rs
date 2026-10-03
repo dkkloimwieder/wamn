@@ -57,10 +57,23 @@ fn require_same_manifest(
     Ok(())
 }
 
+/// Whether a publication record matches the release that a select or a
+/// deployment names. The manifest digest always counts. A deployment also
+/// requires the source commit of its qualification. A select passes `None`,
+/// because its gate is the qualification's package set and image digests, and
+/// the attestation's commit stays a record (owner ruling of 2026-10-03 on
+/// `wamn-1wou`).
+fn publication_matches(
+    record_manifest_digest: &str,
+    record_source_commit: Option<&str>,
+    manifest_digest: &str,
+    source_commit: Option<&str>,
+) -> bool {
+    record_manifest_digest == manifest_digest
+        && source_commit.is_none_or(|source_commit| record_source_commit == Some(source_commit))
+}
+
 /// Require the existing upload fact before selecting or deploying its artifacts.
-///
-/// A deployment also requires the source commit of its qualification. A select
-/// does not, because a qualification it reuses proves bytes, not names.
 pub(super) async fn require_published(
     source_commit: Option<&str>,
     snapshot: &ReleaseSnapshot,
@@ -99,12 +112,12 @@ pub(super) async fn require_published(
             .await?
             .context("the selected release has no publication record")?;
         ensure!(
-            record.get::<_, String>("deployed_manifest_hash")
-                == snapshot.carrier.manifest_digest.as_str()
-                && source_commit.is_none_or(|source_commit| {
-                    record.get::<_, Option<String>>("source_commit").as_deref()
-                        == Some(source_commit)
-                }),
+            publication_matches(
+                &record.get::<_, String>("deployed_manifest_hash"),
+                record.get::<_, Option<String>>("source_commit").as_deref(),
+                snapshot.carrier.manifest_digest.as_str(),
+                source_commit,
+            ),
             "the publication record differs from the qualified release or source"
         );
         transaction.commit().await?;
@@ -117,7 +130,7 @@ pub(super) async fn require_published(
 
 #[cfg(test)]
 mod tests {
-    use super::require_same_manifest;
+    use super::{publication_matches, require_same_manifest};
     use wamn_catalog::ServingManifest;
 
     mod vector {
@@ -139,5 +152,31 @@ mod tests {
         changed = expected.clone();
         changed.release.effective_release_id = wamn_catalog::EffectiveReleaseId::new(4).unwrap();
         assert!(require_same_manifest(&expected, &changed).is_err());
+    }
+
+    #[test]
+    fn a_select_passes_when_the_attestation_names_another_commit() {
+        let digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+        let attested = "a".repeat(40);
+        let qualified = "b".repeat(40);
+        // select-release: the attestation's commit is a record, not a gate.
+        assert!(publication_matches(digest, Some(&attested), digest, None));
+        assert!(publication_matches(digest, None, digest, None));
+        // deploy-release keeps its source check.
+        assert!(!publication_matches(
+            digest,
+            Some(&attested),
+            digest,
+            Some(&qualified)
+        ));
+        assert!(publication_matches(
+            digest,
+            Some(&attested),
+            digest,
+            Some(&attested)
+        ));
+        // The manifest digest counts for both.
+        let other = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        assert!(!publication_matches(other, Some(&attested), digest, None));
     }
 }
