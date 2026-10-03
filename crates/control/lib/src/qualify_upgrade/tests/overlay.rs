@@ -280,6 +280,64 @@ async fn apply_set(
 }
 
 #[tokio::test]
+async fn nontransactional_candidate_statements_are_named_before_mutation() {
+    let mut fixture = overlay_fixture("overlay-nontransactional").await;
+    let original = state(&mut fixture.base.source).await;
+    for (name, statement) in [
+        (
+            "CREATE INDEX CONCURRENTLY",
+            "CREATE INDEX CONCURRENTLY upgrade_widget_code ON inventory.widget(code);",
+        ),
+        (
+            "DROP INDEX CONCURRENTLY",
+            "DROP INDEX CONCURRENTLY inventory.upgrade_widget_code;",
+        ),
+        (
+            "REINDEX CONCURRENTLY",
+            "REINDEX INDEX CONCURRENTLY inventory.upgrade_widget_code;",
+        ),
+        ("VACUUM", "VACUUM inventory.widget;"),
+        ("CREATE DATABASE", "CREATE DATABASE upgrade_forbidden;"),
+        ("ALTER SYSTEM", "ALTER SYSTEM SET work_mem = '4MB';"),
+    ] {
+        fs::write(
+            &fixture.base.suffix,
+            format!("ALTER TABLE inventory.widget_maker ADD COLUMN note text;\n{statement}\n"),
+        )
+        .unwrap();
+        let qualification = overlay_request(&fixture, "nontransactional.json");
+        let result = qualification.result.clone();
+        let refused = qualify_upgrade_with_observer(
+            qualification,
+            WorkloadObserver::Captured(fixture.base.serving.clone()),
+        )
+        .await
+        .unwrap_err();
+        let unapplied = crate::apply_package::apply_package(apply_request(
+            fixture.base.source_database.url(),
+            &fixture.base.root.join("candidate"),
+        ))
+        .await
+        .unwrap_err();
+        for error in [refused, unapplied] {
+            let policy = error.chain().find_map(|source| {
+                source.downcast_ref::<wamn_schema_introspection::migration_policy::MigrationPolicyError>()
+            }).unwrap_or_else(|| panic!("{name}: {error:#}"));
+            assert_eq!(policy.error_type(), wamn_schema_introspection::migration_policy::MigrationPolicyErrorType::NontransactionalOperation, "{name}: {error:#}");
+            assert_eq!(policy.statement_index(), Some(2), "{name}: {error:#}");
+            assert_eq!(policy.path(), fixture.base.suffix);
+            assert!(format!("{error:#}").contains(name), "{name}: {error:#}");
+        }
+        assert!(!result.exists(), "{name} emitted qualification evidence");
+        assert_eq!(state(&mut fixture.base.source).await, original, "{name}");
+        let added: bool = fixture.base.source.query_one(
+            "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'inventory' AND table_name = 'widget_maker' AND column_name = 'note')", &[],
+        ).await.unwrap().get(0);
+        assert!(!added, "{name} applied the preceding additive statement");
+    }
+}
+
+#[tokio::test]
 async fn unqualified_overlay_repin_preserves_installed_state() {
     let mut fixture = overlay_fixture("overlay-unqualified-repin").await;
     let original = state(&mut fixture.base.source).await;

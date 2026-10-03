@@ -502,15 +502,19 @@ fn validate_statement(
     };
     if let Some((kind, detail)) = refusal {
         if kind == MigrationPolicyErrorType::NontransactionalOperation {
-            let operation = tokens
-                .iter()
-                .take(4)
-                .filter_map(|token| match token {
-                    Token::Word(word) => Some(word.to_ascii_uppercase()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
+            let operation = if word(tokens, 0, "reindex") && contains_word(tokens, "concurrently") {
+                "REINDEX CONCURRENTLY".to_owned()
+            } else {
+                tokens
+                    .iter()
+                    .take(4)
+                    .filter_map(|token| match token {
+                        Token::Word(word) => Some(word.to_ascii_uppercase()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
             return Err(policy_error(
                 kind,
                 path,
