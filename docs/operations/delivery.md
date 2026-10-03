@@ -67,9 +67,8 @@ The checkout must match the selected revision and stay clean through all checks.
 A release tag or explicit revision can replace `main`.
 Qualification reconstructs fresh application schemas, compares generated output, and uses SQLx CLI 0.9.0 through the shared platform verifier.
 It refuses committed SQLx metadata that is missing, changed, or holds query files that no query uses.
-It rebuilds through Cargo and the existing Docker targets, then refuses artifacts that differ from the candidate.
-Native comparison builds use `tools/journey-image-cache`, as the owned delivery fixtures do.
-Qualification requires the exact image ID, including the source and release profile labels.
+It rebuilds through Cargo, then refuses artifacts that differ from the candidate.
+It pulls each image by the digest that the candidate names and records its image ID. It builds no image.
 The application cases consume the supplied artifacts without replacement builds.
 
 The package set of the candidate selects the cases exactly. Any other set fails.

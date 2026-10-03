@@ -306,22 +306,8 @@ async fn qualify_candidate(
     )
     .await?;
     result.assert_artifacts()?;
-    for (target, image, proof) in image_proofs(&result.candidate) {
-        match proof {
-            ImageProof::SourceBuild => {
-                compare_built_image(
-                    root,
-                    target,
-                    &image,
-                    &result.source_commit,
-                    &mut result.checks,
-                )
-                .await?;
-            }
-            ImageProof::Pinned => {
-                pull_pinned_image(root, &image, &mut result.checks).await?;
-            }
-        }
+    for command in image_commands(&result.candidate) {
+        run(root, &command, &[], &mut result.checks).await?;
     }
     let executable =
         // The kind cases compile only with the `cluster` feature (wamn-ld93.33.6).
@@ -627,129 +613,21 @@ fn member_workspace(package: &str, metadata: &[(PathBuf, Vec<u8>)]) -> anyhow::R
     Ok(workspaces[0].clone())
 }
 
-/// How qualification proves one pinned image of the candidate.
-#[derive(Debug, PartialEq, Eq)]
-enum ImageProof {
-    /// The image ships, so a build from the selected commit must equal it.
-    SourceBuild,
-    /// The gates image is test equipment and never ships. It is pulled and
-    /// recorded by its pinned digest, not built (`wamn-1s38`).
-    Pinned,
-}
-
-fn image_proofs(candidate: &Candidate) -> Vec<(&'static str, String, ImageProof)> {
-    let mut images = vec![(
-        "host",
-        candidate.host_image.clone(),
-        ImageProof::SourceBuild,
-    )];
-    if let Some(image) = &candidate.identity_image {
-        images.push(("identity", image.clone(), ImageProof::SourceBuild));
-    }
-    if let Some(image) = &candidate.gates_image {
-        images.push(("gates", image.clone(), ImageProof::Pinned));
-    }
-    images
-}
-
-/// Pull one pinned image and record its image id.
-async fn pull_pinned_image(
-    root: &Path,
-    image: &str,
-    checks: &mut Vec<CheckResult>,
-) -> anyhow::Result<Output> {
-    run(
-        root,
-        &strings(&["docker", "pull", "--quiet", image]),
-        &[],
-        checks,
-    )
-    .await?;
-    run(
-        root,
-        &strings(&["docker", "image", "inspect", "--format", "{{.Id}}", image]),
-        &[],
-        checks,
-    )
-    .await
-}
-
-async fn compare_built_image(
-    root: &Path,
-    target: &str,
-    image: &str,
-    source_commit: &str,
-    checks: &mut Vec<CheckResult>,
-) -> anyhow::Result<()> {
-    let expected = pull_pinned_image(root, image, checks).await?;
-    let lease = format!("qualification-{}", nonce()?);
-    let tag = format!("wamn-{target}:{lease}");
-    let built = async {
-        run(
-            root,
-            &strings(&[
-                "bash",
-                "tools/journey-image-cache",
-                "ensure",
-                &root.display().to_string(),
-                target,
-                target,
-                source_commit,
-                &lease,
-                &lease,
-            ]),
-            &[],
-            checks,
-        )
-        .await?;
-        let actual = run(
-            root,
-            &strings(&["docker", "image", "inspect", "--format", "{{.Id}}", &tag]),
-            &[],
-            checks,
-        )
-        .await?;
-        ensure!(
-            actual.stdout == expected.stdout,
-            "the pinned {target} image differs from the selected source build"
-        );
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    // Remove only this invocation's tag and lease, including after comparison failure.
-    let cleanup = async {
-        let removed = Command::new("docker")
-            .args(["image", "rm", &tag])
-            .output()
-            .await;
-        let released = Command::new(root.join("tools/journey-image-cache"))
-            .args(["release", &lease])
-            .output()
-            .await;
-        ensure!(
-            removed
-                .context("remove the owned image comparison tag")?
-                .status
-                .success(),
-            "the owned image comparison tag could not be removed"
-        );
-        ensure!(
-            released
-                .context("release the owned image comparison lease")?
-                .status
-                .success(),
-            "the owned image comparison lease could not be released"
-        );
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    match (built, cleanup) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(error), Err(cleanup)) => {
-            Err(error.context(format!("image cleanup also failed: {cleanup:#}")))
-        }
-    }
+/// The commands that record each image of the candidate. The candidate names
+/// every image by its pushed digest, so qualification pulls each one and
+/// records its image id, and builds none (owner ruling of 2026-10-03 on
+/// `wamn-t3ox`).
+fn image_commands(candidate: &Candidate) -> Vec<Vec<String>> {
+    std::iter::once(&candidate.host_image)
+        .chain(candidate.identity_image.iter())
+        .chain(candidate.gates_image.iter())
+        .flat_map(|image| {
+            [
+                strings(&["docker", "pull", "--quiet", image]),
+                strings(&["docker", "image", "inspect", "--format", "{{.Id}}", image]),
+            ]
+        })
+        .collect()
 }
 
 async fn compile_tests(
@@ -932,9 +810,9 @@ mod tests {
     }
 
     #[test]
-    fn only_shipped_images_are_compared_with_a_source_build() {
+    fn a_candidate_with_pinned_digests_qualifies_by_pulling_them() {
         let pinned = |name: &str| format!("registry.example/{name}@sha256:{}", "a".repeat(64));
-        let mut candidate = Candidate {
+        let candidate = Candidate {
             org: "acme".into(),
             project: "billing".into(),
             manifest_path: "unused".into(),
@@ -946,20 +824,17 @@ mod tests {
             native_registry_endpoint: None,
             native_registry_insecure: false,
         };
-        assert_eq!(
-            image_proofs(&candidate),
-            [
-                ("host", pinned("host"), ImageProof::SourceBuild),
-                ("identity", pinned("identity"), ImageProof::SourceBuild),
-                ("gates", pinned("gates"), ImageProof::Pinned),
-            ]
-        );
-        candidate.gates_image = None;
-        candidate.identity_image = None;
-        assert_eq!(
-            image_proofs(&candidate),
-            [("host", pinned("host"), ImageProof::SourceBuild)]
-        );
+        let expected: Vec<Vec<String>> = ["host", "identity", "gates"]
+            .into_iter()
+            .flat_map(|name| {
+                let image = pinned(name);
+                [
+                    strings(&["docker", "pull", "--quiet", &image]),
+                    strings(&["docker", "image", "inspect", "--format", "{{.Id}}", &image]),
+                ]
+            })
+            .collect();
+        assert_eq!(image_commands(&candidate), expected);
     }
 
     #[test]

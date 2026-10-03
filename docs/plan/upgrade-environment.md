@@ -12,7 +12,7 @@ The cutover took most of two days of wall time for one environment pair (§3.1).
 
 - One verb, one environment, one commit. `--commit` is a full 40-hex commit. The verb refuses a branch name, a tag and a short hash. No step reads `origin/main`, `HEAD` of another checkout, or the newest of anything.
 - The verb builds in its own clean checkout of `--commit` and its own target directory. It does not use the operator's working tree.
-- The gates image is a pinned digest, recorded and pulled, not built (`wamn-1s38`). Host, identity and ctl images are built from `--commit` by source identity and compared by `qualify-release` as today.
+- The gates image is a pinned digest, recorded and pulled, not built (`wamn-1s38`). Host, identity and ctl images are built from `--commit` by source identity and pushed. `qualify-release` pulls every image by the digest that the candidate names and builds none (owner ruling of 2026-10-03 on `wamn-t3ox`).
 - The verb calls four test tools: `tools/registry-image-archive`, `tools/journey-image-cache`, `tools/delivery-owned` and `tools/build-components`. Each has a test in kind against a private registry with a login before a live run uses it. The verb calls no tool without such a test.
 - The registry stays private. No credential reaches a kind node. No service account key and no HMAC key. Tokens live only in mode 0600 files in private directories and are deleted after use. Passwords are read into variables and never printed (owner rules of the cutover).
 - The attestation is the contract, not the release number (owner ruling on `wamn-ld93.21`, 2026-10-02). The verb takes the next free release id of the environment. It never publishes again under an id that holds an attestation of another commit.
@@ -170,7 +170,7 @@ Before any live run, a kind test starts a private registry that requires a login
 
 Epic 1, one branch, each issue with its tests. No issue runs against wamn-dev until issue 9.
 
-1. Gates image pinned (`wamn-1s38`): `compare_built_image` for host and identity only, the gates digest from the environment file.
+1. Gates image pinned (`wamn-1s38`): `compare_built_image` for host and identity only, the gates digest from the environment file. Since `wamn-t3ox`, `compare_built_image` is gone and qualification builds no image.
 2. Test tools in kind against a private registry (§4.4).
 3. Failed case results kept (`wamn-e6iw`).
 4. The environment file and its two `wamn-dev` instances (§4.1). `host_values_files.rs` takes the host image as an argument.
