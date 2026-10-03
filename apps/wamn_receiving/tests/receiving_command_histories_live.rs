@@ -956,7 +956,7 @@ pub(crate) fn assert_histories_with_cancellation(
         "Receiving test source identity differs from the current checkout"
     );
     let metadata: Value = serde_json::from_slice(&std::fs::read(
-        repository.join("apps/wamn_receiving/generated/package-weld.json"),
+        repository.join("apps/wamn_receiving/generated/package-identity.json"),
     )?)?;
     ensure!(
         metadata["application_sql_corpus_identity"] == inputs.corpus_sha256,
@@ -965,8 +965,9 @@ pub(crate) fn assert_histories_with_cancellation(
     let mut schema_state_ids = serde_json::Map::new();
     let mut generation_provenance = serde_json::Map::new();
     for (component, root) in &inputs.packages {
-        let package: Value =
-            serde_json::from_slice(&std::fs::read(root.join("generated/package-weld.json"))?)?;
+        let package: Value = serde_json::from_slice(&std::fs::read(
+            root.join("generated/package-identity.json"),
+        )?)?;
         let schema_state_id = package["verified_schema_state_id"]
             .as_str()
             .with_context(|| {

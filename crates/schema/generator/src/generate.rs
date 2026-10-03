@@ -190,7 +190,7 @@ impl GeneratedFile {
     }
 }
 
-/// Canonical immutable package metadata emitted as `generated/package-weld.json`.
+/// Canonical immutable package metadata emitted as `generated/package-identity.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     rename = "PackageWeld",
@@ -212,7 +212,7 @@ impl GeneratedPackageMetadata {
         let metadata: Self = serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
                 GenerateErrorType::InvalidManifest,
-                "package-weld.json does not match the package contract",
+                "package-identity.json does not match the package contract",
                 source,
             )
         })?;
@@ -222,7 +222,7 @@ impl GeneratedPackageMetadata {
         if canonical != bytes {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidManifest,
-                "package-weld.json is not canonical compact JSON",
+                "package-identity.json is not canonical compact JSON",
             ));
         }
         for (field, value) in [
@@ -238,7 +238,7 @@ impl GeneratedPackageMetadata {
             if !valid_sha256(value) {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidManifest,
-                    format!("package-weld.json {field} is not sha256:<64 lowercase hex>"),
+                    format!("package-identity.json {field} is not sha256:<64 lowercase hex>"),
                 ));
             }
         }
@@ -249,7 +249,7 @@ impl GeneratedPackageMetadata {
         if metadata.promotion_state != expected_promotion_state {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidManifest,
-                "package-weld.json promotion_state disagrees with required_platform_policy_contract.state",
+                "package-identity.json promotion_state disagrees with required_platform_policy_contract.state",
             ));
         }
         Ok(metadata)
@@ -429,7 +429,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             PolicyContractState::Satisfied => PromotionState::Eligible,
         },
     };
-    insert_canonical_json(&mut files, "generated/package-weld.json", &metadata)?;
+    insert_canonical_json(&mut files, "generated/package-identity.json", &metadata)?;
 
     let files = files
         .into_iter()

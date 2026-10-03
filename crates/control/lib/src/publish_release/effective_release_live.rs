@@ -360,7 +360,7 @@ fn assert_typed_metadata_refusal(input: &PackageInput) {
         wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
             .unwrap();
     let mut metadata: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(input.root.join("generated/package-weld.json")).unwrap(),
+        &std::fs::read(input.root.join("generated/package-identity.json")).unwrap(),
     )
     .unwrap();
     metadata["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");

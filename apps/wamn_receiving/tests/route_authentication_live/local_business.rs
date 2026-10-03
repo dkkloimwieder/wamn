@@ -494,7 +494,7 @@ async fn histories(
         "read the Receiving source revision"
     );
     let package: Value = serde_json::from_slice(&fs::read(
-        repository.join("apps/wamn_receiving/generated/package-weld.json"),
+        repository.join("apps/wamn_receiving/generated/package-identity.json"),
     )?)?;
     let path = evidence.join("receiving-correctness.jsonl");
     let inputs = serde_json::from_value(json!({

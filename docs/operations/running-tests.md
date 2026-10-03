@@ -634,7 +634,7 @@ A query that has no matching metadata fails to compile until the metadata is pre
 The development loop prepares metadata for every package with SQL declarations in its Generate stage.
 It prepares an application only when one of these inputs changed:
 
-- the emitted SQL, `application_sql_corpus_identity` in `generated/package-weld.json`
+- the emitted SQL, `application_sql_corpus_identity` in `generated/package-identity.json`
 - the verified schema, `verified_schema_state_id` in the same file, which for Acme also changes with a Receiving migration
 - `deploy/sql/record-history.sql`
 - the locked SQLx crates in `Cargo.lock`

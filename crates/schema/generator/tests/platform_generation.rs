@@ -395,8 +395,8 @@ fn an_unused_column_changes_verified_state_without_widening_the_contract() {
         command.indexes().to_vec(),
     );
     let additive = fixture::generate_with(&CatalogIr::new(tables), &manifest);
-    let baseline = artifact(&baseline, "generated/package-weld.json");
-    let additive = artifact(&additive, "generated/package-weld.json");
+    let baseline = artifact(&baseline, "generated/package-identity.json");
+    let additive = artifact(&additive, "generated/package-identity.json");
     assert_ne!(
         baseline["verified_schema_state_id"],
         additive["verified_schema_state_id"]
@@ -498,7 +498,7 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
             .file("generated/native-verifier/command_state.rs")
             .is_none()
     );
-    let metadata = artifact(&package, "generated/package-weld.json");
+    let metadata = artifact(&package, "generated/package-identity.json");
     assert!(
         metadata["required_schema_contract"]["tables"]
             .as_array()

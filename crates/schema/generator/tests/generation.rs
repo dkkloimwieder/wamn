@@ -831,8 +831,8 @@ fn metadata_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
     let additive_ir = catalog(true);
     let base = run(&base_ir, &manifest(), &QUERY_SOURCES).unwrap();
     let additive = run(&additive_ir, &manifest(), &QUERY_SOURCES).unwrap();
-    let base_metadata = artifact_json(&base, "generated/package-weld.json");
-    let additive_metadata = artifact_json(&additive, "generated/package-weld.json");
+    let base_metadata = artifact_json(&base, "generated/package-identity.json");
+    let additive_metadata = artifact_json(&additive, "generated/package-identity.json");
 
     let expected_schema = format!(
         "sha256:{}",
@@ -871,7 +871,7 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
         }
     });
     let package = run(&catalog(true), &package_manifest, &QUERY_SOURCES).unwrap();
-    let metadata = artifact_json(&package, "generated/package-weld.json");
+    let metadata = artifact_json(&package, "generated/package-identity.json");
     let required = metadata["required_schema_contract"]["tables"]
         .as_array()
         .unwrap()
@@ -887,7 +887,7 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
 fn generated_metadata_has_one_strict_canonical_reader() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
     let bytes = package
-        .file("generated/package-weld.json")
+        .file("generated/package-identity.json")
         .expect("the generated package carries its metadata")
         .bytes();
     assert_eq!(
@@ -2557,8 +2557,8 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
     )
     .unwrap();
     assert_eq!(
-        artifact_json(&logged, "generated/package-weld.json"),
-        artifact_json(&unlogged, "generated/package-weld.json"),
+        artifact_json(&logged, "generated/package-identity.json"),
+        artifact_json(&unlogged, "generated/package-identity.json"),
         "the verified schema state id and the required schema contract stay"
     );
     let other_files = |package: &GeneratedPackage| {

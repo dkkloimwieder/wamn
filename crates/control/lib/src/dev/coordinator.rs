@@ -50,7 +50,7 @@ use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
 use crate::print_release_env::ReleaseCarrier;
 
 const BUILD_TOOL: &str = "tools/build-components";
-const PACKAGE_WELD: &str = "generated/package-weld.json";
+const PACKAGE_IDENTITY: &str = "generated/package-identity.json";
 const RECORD_HISTORY_SQL: &str = "deploy/sql/record-history.sql";
 const RUN_SCHEMA: &str = "wamn_run";
 
@@ -1822,7 +1822,7 @@ fn sqlx_metadata_inputs_on_disk(
 ) -> anyhow::Result<SqlxMetadataInputs> {
     let read = |path: PathBuf| fs::read(&path).with_context(|| format!("read {}", path.display()));
     sqlx_metadata_inputs(
-        &read(package.join(PACKAGE_WELD))?,
+        &read(package.join(PACKAGE_IDENTITY))?,
         read(repository.join(RECORD_HISTORY_SQL))?,
         &read(repository.join("Cargo.lock"))?,
     )
@@ -1843,7 +1843,7 @@ async fn sqlx_metadata_is_current(
         return Ok(prepared.as_ref() == Some(current));
     }
     let (Some(weld), Some(record_history), Some(cargo_lock)) = (
-        committed_file(package, PACKAGE_WELD).await?,
+        committed_file(package, PACKAGE_IDENTITY).await?,
         committed_file(repository, RECORD_HISTORY_SQL).await?,
         committed_file(repository, "Cargo.lock").await?,
     ) else {
@@ -3006,10 +3006,10 @@ mod tests {
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         let package = root.join("apps/demo");
-        let weld = include_bytes!("../../tests/support/dev_package/package-weld.json");
+        let weld = include_bytes!("../../tests/support/dev_package/package-identity.json");
         let weld = weld.strip_suffix(b"\n").unwrap_or(weld);
         for (path, bytes) in [
-            (package.join(PACKAGE_WELD), weld),
+            (package.join(PACKAGE_IDENTITY), weld),
             (package.join("component/src/lib.rs"), b"pub fn value() {}"),
             (
                 root.join(RECORD_HISTORY_SQL),
@@ -3067,7 +3067,7 @@ mod tests {
         let emitted = String::from_utf8(weld.to_vec())
             .unwrap()
             .replace(&corpus, &format!("sha256:{}", "0".repeat(64)));
-        fs::write(package.join(PACKAGE_WELD), emitted).unwrap();
+        fs::write(package.join(PACKAGE_IDENTITY), emitted).unwrap();
         let sql = sqlx_metadata_inputs_on_disk(&root, &package).unwrap();
         assert!(
             !sqlx_metadata_is_current(None, &root, &package, &sql)

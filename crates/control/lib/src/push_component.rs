@@ -743,7 +743,7 @@ fn load_component_statement_facts(
         all_statements.insert(operation.clone(), operation_statements);
     }
 
-    let metadata_path = "generated/package-weld.json";
+    let metadata_path = "generated/package-identity.json";
     let metadata_bytes = read_package_owned_file(
         package_root,
         &canonical_root,

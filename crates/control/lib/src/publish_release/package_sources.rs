@@ -55,12 +55,12 @@ pub(super) fn read_package_manifests(
                 ),
             )
         })?;
-        let metadata_path = root.join("generated/package-weld.json");
+        let metadata_path = root.join("generated/package-identity.json");
         let metadata_bytes = std::fs::read(&metadata_path).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::GeneratedPackageMetadata,
                 format!(
-                    "package {}@{} requires generated/package-weld.json at {}; regenerate the package evidence",
+                    "package {}@{} requires generated/package-identity.json at {}; regenerate the package evidence",
                     manifest.package.id,
                     manifest.package.version,
                     metadata_path.display()
@@ -72,7 +72,7 @@ pub(super) fn read_package_manifests(
             PublishManifestError::with_source(
                 PublishManifestErrorType::GeneratedPackageMetadata,
                 format!(
-                    "package {}@{} carries an invalid generated/package-weld.json; regenerate the package evidence",
+                    "package {}@{} carries an invalid generated/package-identity.json; regenerate the package evidence",
                     manifest.package.id, manifest.package.version
                 ),
                 error,

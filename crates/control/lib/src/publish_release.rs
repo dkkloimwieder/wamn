@@ -2896,7 +2896,7 @@ mod tests {
         let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
             .expect("the fixture manifest is valid");
         let metadata_bytes =
-            include_bytes!("../tests/fixtures/component_package/generated/package-weld.json");
+            include_bytes!("../tests/fixtures/component_package/generated/package-identity.json");
         let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(metadata_bytes)
             .expect("the fixture metadata is canonical");
         validate_package_metadata(&manifest, &metadata)
