@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wamn_runtime::registry_credentials::{RegistryCredentialsErrorType, read_registry_credentials};
+use wamn_runtime::registry_credentials::{
+    RegistryCredentialsErrorType, read_registry_credentials, read_registry_push_credentials,
+};
 
 const REGISTRY: &str = "registry.example:5000";
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -73,6 +75,37 @@ fn missing_or_partial_registry_entry_refuses_without_fallback() {
     let partial = read_registry_credentials(partial_fixture.path(), REGISTRY)
         .expect_err("half credential must refuse");
     assert_eq!(partial.refusal(), "registry-credentials-incomplete");
+}
+
+#[test]
+fn only_an_explicit_empty_entry_states_an_anonymous_push() {
+    let empty = ScratchFile::write(br#"{"auths":{"registry.example:5000":{}}}"#);
+    assert!(
+        read_registry_push_credentials(empty.path(), REGISTRY)
+            .expect("an empty entry is an anonymous push")
+            .is_none()
+    );
+    let pull = read_registry_credentials(empty.path(), REGISTRY)
+        .expect_err("a pull never reads an empty entry as anonymous");
+    assert_eq!(pull.refusal(), "registry-credentials-incomplete");
+
+    let missing = ScratchFile::write(br#"{"auths":{}}"#);
+    let refused = read_registry_push_credentials(missing.path(), REGISTRY)
+        .expect_err("a missing entry is not an anonymous push");
+    assert_eq!(refused.refusal(), "registry-credentials-not-found");
+
+    let other_field = ScratchFile::write(br#"{"auths":{"registry.example:5000":{"auth":"x"}}}"#);
+    let refused = read_registry_push_credentials(other_field.path(), REGISTRY)
+        .expect_err("an entry with a field is not empty");
+    assert_eq!(refused.refusal(), "registry-credentials-incomplete");
+
+    let complete = ScratchFile::write(
+        br#"{"auths":{"registry.example:5000":{"username":"push-user","password":"push-secret"}}}"#,
+    );
+    let credentials = read_registry_push_credentials(complete.path(), REGISTRY)
+        .expect("a complete entry parses")
+        .expect("a complete entry is a credential");
+    assert_eq!(credentials.username(), "push-user");
 }
 
 #[test]

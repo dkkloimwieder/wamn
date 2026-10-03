@@ -175,6 +175,15 @@ struct DockerConfig {
 struct DockerCredential {
     username: Option<String>,
     password: Option<String>,
+    #[serde(flatten)]
+    other: serde_json::Map<String, serde_json::Value>,
+}
+
+impl DockerCredential {
+    /// `{}`: the entry names the registry and carries no field at all.
+    fn is_empty(&self) -> bool {
+        self.username.is_none() && self.password.is_none() && self.other.is_empty()
+    }
 }
 
 /// Read one exact registry entry from a projected `.dockerconfigjson` file.
@@ -186,21 +195,44 @@ pub fn read_registry_credentials(
     path: &Path,
     registry: &str,
 ) -> Result<RegistryCredentials, RegistryCredentialsError> {
-    let bytes = std::fs::read(path)
-        .map_err(|source| RegistryCredentialsError::unreadable(path, registry, source))?;
-    parse_registry_credentials(&bytes, path, registry)
+    let credential = read_registry_entry(path, registry)?;
+    complete_credentials(&credential, path, registry)
 }
 
-fn parse_registry_credentials(
-    bytes: &[u8],
+/// Read the push credential for one exact registry, or `None` for an anonymous push.
+///
+/// Only an explicit empty entry, `{"auths":{"<registry>":{}}}`, states an
+/// anonymous push. A missing entry or a partial one refuses as in
+/// [`read_registry_credentials`]. Pulls never read an empty entry as anonymous.
+pub fn read_registry_push_credentials(
+    path: &Path,
+    registry: &str,
+) -> Result<Option<RegistryCredentials>, RegistryCredentialsError> {
+    let credential = read_registry_entry(path, registry)?;
+    if credential.is_empty() {
+        return Ok(None);
+    }
+    complete_credentials(&credential, path, registry).map(Some)
+}
+
+fn read_registry_entry(
+    path: &Path,
+    registry: &str,
+) -> Result<DockerCredential, RegistryCredentialsError> {
+    let bytes = std::fs::read(path)
+        .map_err(|source| RegistryCredentialsError::unreadable(path, registry, source))?;
+    let mut config: DockerConfig = serde_json::from_slice(&bytes)
+        .map_err(|source| RegistryCredentialsError::malformed(path, registry, source))?;
+    config.auths.remove(registry).ok_or_else(|| {
+        RegistryCredentialsError::rejected(path, registry, "registry-credentials-not-found")
+    })
+}
+
+fn complete_credentials(
+    credential: &DockerCredential,
     path: &Path,
     registry: &str,
 ) -> Result<RegistryCredentials, RegistryCredentialsError> {
-    let config: DockerConfig = serde_json::from_slice(bytes)
-        .map_err(|source| RegistryCredentialsError::malformed(path, registry, source))?;
-    let credential = config.auths.get(registry).ok_or_else(|| {
-        RegistryCredentialsError::rejected(path, registry, "registry-credentials-not-found")
-    })?;
     let username = credential
         .username
         .as_deref()

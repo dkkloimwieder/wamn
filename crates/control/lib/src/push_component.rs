@@ -32,7 +32,7 @@ use wamn_engine::component_artifact::{
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig, read_ca_bundles,
 };
-use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
+use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_push_credentials};
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_schema_control::{PackageDirectory, PackageMigrationErrorType, plan_package_migrations};
 
@@ -543,7 +543,7 @@ pub async fn publish_admitted_component(
         artifact.tag().to_owned(),
     );
     let registry_credentials =
-        read_registry_credentials(&args.registry_auth_file, artifact.registry())
+        read_registry_push_credentials(&args.registry_auth_file, artifact.registry())
             .context("load component registry push credential")?;
     let config_bytes = component_artifact_config_bytes(admitted);
 
@@ -555,7 +555,7 @@ pub async fn publish_admitted_component(
         &admission.component_bytes,
         &config_bytes,
         admitted,
-        &registry_credentials,
+        registry_credentials.as_ref(),
     )
     .await?;
 
@@ -1184,7 +1184,7 @@ async fn publish_and_verify(
     component_bytes: &[u8],
     config_bytes: &[u8],
     component: &AdmittedComponent,
-    credentials: &RegistryCredentials,
+    credentials: Option<&RegistryCredentials>,
 ) -> anyhow::Result<()> {
     let protocol = if insecure {
         ClientProtocol::HttpsExcept(vec![reference.resolve_registry().to_owned()])
@@ -1218,10 +1218,13 @@ async fn publish_and_verify(
         ..ClientConfig::default()
     })
     .context("configure component registry push client")?;
-    let auth = RegistryAuth::Basic(
-        credentials.username().to_owned(),
-        credentials.password().to_owned(),
-    );
+    // No credential: the auth file states an anonymous push for this registry.
+    let auth = credentials.map_or(RegistryAuth::Anonymous, |credentials| {
+        RegistryAuth::Basic(
+            credentials.username().to_owned(),
+            credentials.password().to_owned(),
+        )
+    });
     let (layer, config, manifest) = artifact_layout(component_bytes, config_bytes);
 
     client
@@ -1238,12 +1241,14 @@ async fn publish_and_verify(
     // Publication is not a successful catalog admission until the immutable
     // reference can be read back by the production puller and independently
     // shows the descriptor, config facts, and exact component body.
-    let source_config =
+    let mut source_config =
         ComponentArtifactSourceConfig::new(artifact_base, insecure, REGISTRY_IO_TIMEOUT)
             .context("configure published component verification source")?
             .with_ca_paths(oci_ca_paths)
-            .context("read component registry CA bundles")?
-            .with_credentials(credentials.clone());
+            .context("read component registry CA bundles")?;
+    if let Some(credentials) = credentials {
+        source_config = source_config.with_credentials(credentials.clone());
+    }
     ComponentArtifactSource::new(source_config)
         .context("configure published component verification client")?
         .pull_verified(component)
@@ -3443,7 +3448,7 @@ mod tests {
             artifact.tag().to_owned(),
         );
         let config_bytes = component_artifact_config_bytes(&component);
-        let credentials = read_registry_credentials(
+        let credentials = read_registry_push_credentials(
             PathBuf::from(registry_auth_file).as_path(),
             artifact.registry(),
         )
@@ -3457,7 +3462,7 @@ mod tests {
             &component_bytes,
             &config_bytes,
             &component,
-            &credentials,
+            credentials.as_ref(),
         )
         .await
         .expect("production publisher and puller agree");

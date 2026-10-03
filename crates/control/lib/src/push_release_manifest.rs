@@ -24,7 +24,7 @@ use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
 use wamn_runtime::component_artifact_source::read_ca_bundles;
-use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
+use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_push_credentials};
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
     release_manifest_artifact_reference, verify_release_manifest_artifact_layout,
@@ -349,8 +349,8 @@ pub async fn push_manifest_bytes(
                 source,
             )
         })?;
-    let credentials =
-        read_registry_credentials(registry_auth_file, artifact.registry()).map_err(|source| {
+    let credentials = read_registry_push_credentials(registry_auth_file, artifact.registry())
+        .map_err(|source| {
             ReleaseManifestPushError::with_source(
                 ReleaseManifestPushErrorType::Credential,
                 "release-manifest-registry-credential-refused",
@@ -372,7 +372,7 @@ pub async fn push_manifest_bytes(
         )
     })?;
     let client = registry_client(artifact.registry(), insecure_registry, ca_bundles)?;
-    let auth = registry_auth(&credentials);
+    let auth = registry_auth(credentials.as_ref());
 
     if probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
         return Ok(PushedReleaseManifest {
@@ -464,11 +464,14 @@ fn registry_client(
     })
 }
 
-fn registry_auth(credentials: &RegistryCredentials) -> RegistryAuth {
-    RegistryAuth::Basic(
-        credentials.username().to_owned(),
-        credentials.password().to_owned(),
-    )
+/// No credential: the auth file states an anonymous push for this registry.
+fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth {
+    credentials.map_or(RegistryAuth::Anonymous, |credentials| {
+        RegistryAuth::Basic(
+            credentials.username().to_owned(),
+            credentials.password().to_owned(),
+        )
+    })
 }
 
 async fn probe_exact_artifact(

@@ -111,6 +111,8 @@ Every required check must pass, and every recorded artifact must retain its dige
 
 Use the existing project and control database credentials for an authorized operator.
 Keep registry credentials in the private file accepted by `--registry-auth-file`.
+For a registry without authentication, write an explicit empty entry, `{"auths":{"<registry>":{}}}`, and the push is anonymous.
+A missing entry still refuses with `registry-credentials-not-found`.
 Keep credentials outside the candidate files and qualification output.
 The command uses the existing OCI publisher and records the qualification source commit with its upload record.
 An upload record establishes publication, while the deployment command separately requires readiness and an authenticated application result.
