@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::{Value, json};
 use wamn_schema_generator::{
     COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, package_manifest_path,
+    write_compiled_manifest,
 };
 
 struct Package(PathBuf);
@@ -300,4 +301,32 @@ fn the_compiled_bytes_are_two_space_json_in_schema_order() {
     assert!(position("type") < position("visibility"));
     assert!(position("visibility") < position("permission"));
     assert!(position("permission") < position("input"));
+}
+
+#[test]
+fn an_edited_wamn_k_reaches_the_compiled_file_before_a_reader_reads_it() {
+    let package = Package::new(&source("", ""));
+    let compiled = package.root().join(COMPILED_MANIFEST);
+    write_compiled_manifest(package.root()).expect("write generated/wamn.json");
+    assert_eq!(
+        std::fs::read(&compiled).expect("read generated/wamn.json"),
+        compile_manifest(package.root()).expect("compile wamn.k")
+    );
+
+    std::fs::write(
+        package.root().join("wamn.k"),
+        source("            field_owners = {note = \"fixture\"}", ""),
+    )
+    .expect("edit wamn.k");
+    write_compiled_manifest(package.root()).expect("write the edited manifest");
+    let read: Value =
+        serde_json::from_slice(&std::fs::read(&compiled).expect("read")).expect("JSON");
+    assert_eq!(
+        read["models"]["widget"]["field_owners"],
+        json!({"note": "fixture"})
+    );
+
+    let unauthored = package.root().join("generated");
+    write_compiled_manifest(&unauthored).expect("a package without wamn.k is unchanged");
+    assert!(!unauthored.join(COMPILED_MANIFEST).exists());
 }

@@ -326,7 +326,7 @@ impl DevPackageError {
     fn manifest(
         type_: DevPackageErrorType,
         manifest_path: PathBuf,
-        source: impl Error + Send + Sync + 'static,
+        source: impl Into<Box<dyn Error + Send + Sync>>,
     ) -> Self {
         Self {
             type_,
@@ -334,7 +334,7 @@ impl DevPackageError {
             coordinate: None,
             dependency_digest: None,
             searched_roots: Box::new([]),
-            source: Some(Box::new(source)),
+            source: Some(source.into()),
         }
     }
 
@@ -1353,6 +1353,14 @@ pub fn resolve_dev_packages(
 }
 
 pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
+    // An edited wamn.k reaches generated/wamn.json before any reader reads it.
+    wamn_schema_generator::write_compiled_manifest(root).map_err(|source| {
+        DevPackageError::manifest(
+            DevPackageErrorType::ManifestInvalid,
+            root.join(wamn_schema_generator::AUTHORED_MANIFEST),
+            source,
+        )
+    })?;
     let path = wamn_schema_generator::package_manifest_path(root);
     let bytes = fs::read(&path).map_err(|source| {
         DevPackageError::manifest(DevPackageErrorType::ManifestRead, path.clone(), source)

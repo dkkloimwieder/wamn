@@ -119,6 +119,30 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Compile `wamn.k` and write `generated/wamn.json` when the bytes differ.
+///
+/// A package without `wamn.k` is left unchanged. A reader that runs before
+/// generation calls this first, so it reads the manifest of the current
+/// `wamn.k` from the file (wamn-vgsl).
+///
+/// # Errors
+///
+/// When [`compile_manifest`] refuses, or the file cannot be written.
+pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
+    if !is_authored(package_root) {
+        return Ok(());
+    }
+    let bytes = compile_manifest(package_root)?;
+    let path = package_root.join(COMPILED_MANIFEST);
+    if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+        let directory = package_root.join("generated");
+        fs::create_dir_all(&directory)
+            .with_context(|| format!("create generated directory {}", directory.display()))?;
+        fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
+    }
+    Ok(())
+}
+
 /// Refuse a committed `generated/wamn.json` that differs from the compiled bytes.
 ///
 /// # Errors
