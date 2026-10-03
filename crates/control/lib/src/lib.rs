@@ -54,6 +54,7 @@ pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 pub mod release_composition;
 pub mod role_permissions;
+pub mod serve;
 pub mod sql_params;
 pub mod terminalize_effect_uncertain;
 pub mod upgrade_environment;

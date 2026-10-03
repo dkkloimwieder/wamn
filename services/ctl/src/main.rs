@@ -115,6 +115,8 @@ enum Command {
     ReconcileRunPlane(release_verbs::ReconcileRunPlaneArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
+    /// Run create-environment sagas, one per org at a time (wamn-zua8.3)
+    Serve(saga_verbs::ServeArgs),
     /// Return a failed create-environment saga to pending (wamn-zua8.3)
     SagaResume(saga_verbs::SagaArgs),
     /// End a failed or pending create-environment saga as abandoned (wamn-zua8.3)
@@ -185,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
+        Command::Serve(args) => saga_verbs::serve(args).await,
         Command::SagaResume(args) => saga_verbs::resume(args).await,
         Command::SagaAbandon(args) => saga_verbs::abandon(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,

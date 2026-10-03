@@ -170,6 +170,8 @@ FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-ctl /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 COPY --from=build-ctl /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
+# `wamn-ctl serve` gates each wiring with this program (wamn-zua8.3).
+COPY --from=build-scenario-worker /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 
