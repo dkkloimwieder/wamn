@@ -271,7 +271,7 @@ impl PublishManifestErrorType {
             Self::Storage => "storage",
             Self::Release => "release",
             Self::PackageManifest => "package-manifest",
-            Self::GeneratedPackageMetadata => "package-weld",
+            Self::GeneratedPackageMetadata => "package-identity",
             Self::PolicyContractUnsatisfied => "policy-contract-unsatisfied",
             Self::Wiring => "wiring",
             Self::Component => "component",
