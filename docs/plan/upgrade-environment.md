@@ -20,6 +20,10 @@ The cutover took most of two days of wall time for one environment pair (§3.1).
 - The verb stops only on a refusal that changes what runs: a `publish-qualified-release` bytes refusal, a migration refusal, a failed qualification, or a failed serve check after the hosts change (the stop rule of the cutover). Every other failure is either retried by a defined rule or is a defect of the verb.
 - Each step is idempotent. It reads the state that it changes. When the state is already the target, it does nothing and records that. A second run of the verb with the same arguments after a stop resumes at the first unfinished step.
 - The run record is the only output that a person reads. It names every step, its start and end in UTC, its inputs and its result, with no credential.
+- No verb touches `wamn-dev` until it completed end to end on a kind stack with the same parts as GCP (owner ruling of 2026-10-02 after run 1, `wamn-m511.7`). Those parts are the CloudNativePG operator and a `Cluster`, NATS pods with `WAMN_TAP`, identity with its operator certificate, the control store, and a private registry with a login.
+- Preflight is stage 1. Every read-only live check runs before any build (same ruling).
+- Every stage has a test against a real Postgres and a real registry. Unit tests of helpers do not count (same ruling).
+- A retry covers only a connection reset after a node change (same ruling).
 
 ## 3. Current state
 
@@ -74,6 +78,40 @@ Eleven stops came from code or tools on their first live run. They are rows 3, 6
 | Capacity | No step compares host requests with node capacity. The new control host group did not fit on 2 nodes (B10). |
 | Gate credentials | Retiring a generation needs a live session of the replacement (`crates/control/lib/src/provision_project_env/workload.rs:942`). The gate service runs only for one request at B8, so B12 started it again by hand. |
 | Record | `gcp.md` §7 and `kind-to-type.md` §3.2 were written by hand from 17 drifts and the logs, at B12. |
+
+### 3.3 Post-mortem of run 1
+
+Run 1 of the verb on `wamn-dev` ran on 2026-10-02 at `abaac6ce8` and `c180d88bd`. It failed three times for Receiving and never reached WMS. Before the third failure, it changed one project database. Pool `main` went to 0 nodes at 22:13 UTC by owner order. The owner then parked the deploy work. Failings 4 and 5 are `wamn-m511.8` and `wamn-m511.9`.
+
+| UTC | Step | Result |
+| --- | --- | --- |
+| 20:42 to 20:47 | Full check at `abaac6ce8` | fmt, workspace clippy and the tests of the two changed crates passed. `main` went to `abaac6ce8`. |
+| 20:48:57 to 21:31:45 | Attempt 1, 2568 s | Stages 1 to 4 passed: build 1021 s, images 1538 s, guests 6 s. Stage 5 stopped because no node had 500m CPU for the surge pod of a host group. Nothing on `wamn-dev` changed. |
+| 21:54 to 21:56 | Resize | Pool `main` went to 4 nodes by owner ruling. |
+| 22:03:08 to 22:04:20 | Attempt 2, 72 s | Stage 5 stopped on "relation catalog.tenant_environments does not exist". Nothing on `wamn-dev` changed. |
+| 22:04 to 22:06 | Fix | `b1ea822a4`, then `main` went to `c180d88bd`. |
+| 22:06:41 to 22:07:27 | Attempt 3, 46 s | Stage 5 passed with release id 4. Stage 6 applied project migration 0006. Stage 7 applied the package, then failed twice on "registry-credentials-incomplete". |
+| 22:07:47 to 22:13:19 | Resize, 332 s | Pool `main` went to 0 nodes. |
+
+The deployment agent recorded eight failings.
+
+1. The verb reached the live environment before stages 5 to 12 ran once. The kind run was to test stages 1 to 9. Three rounds of owner questions ended with a fixture that does not have what stage 5 needs. The agent found that by reading the source after the owner chose the fixture. The agent did not map the needs of each stage against the fixture before the first question.
+2. The verb reads the environment file and the deploy inputs from the checkout of `--commit`. So no commit before the verb can be its target, and the ordered no-op run at `351f71337` was impossible. The agent found this when the run was ordered, not when it wrote the stage.
+3. The capacity stop of attempt 1 was correct, but it came after 43 minutes of build. The pool size was known from the cutover, and the agent did not compare it with the surge need before the run. The verb also runs the cheap live checks after the expensive build.
+4. The verb read `catalog.tenant_environments` and `catalog.deployment_attestations` from the project database. Both live only in the control store of `wamn_system`. No unit test touched a database, so only the live run found it.
+5. `Registry::login` writes a Docker configuration with only an "auth" field. The component push of stage 7 reads that file through `registry_credentials.rs`, which requires "username" and "password". Stages 3 and 4 passed because docker and wash accept "auth". No test covered the second reader. This is not fixed.
+6. The retry rule of §4.3 retried each deterministic failure once. That cost only seconds, but the rule cannot tell a defect from a preemption.
+7. The agent merged the verb into `main` with only unit tests of its helpers. The full check was green, but it tests nothing of stages 5 to 12.
+8. The pool went from 4 nodes straight to 0. The ruling said back to 3 before the spin-down. The node count to resume is 3.
+
+The run left this state.
+
+- On `wamn-dev`, project migration `migrations/project/0006_administration_release_head.sql` is applied to `wamn-db-dkk--receiving--dev--4pqjfmli`. The Receiving package was applied again, with only "already exists" notices. No release 4 was published or selected. No gate generation, PAT, Job, host or workload changed. WMS was not touched.
+- In the Artifact Registry repository `wamn`, attempt 1 pushed `wamn-host`, `wamn-identity` and `wamn-ctl` under `src-405087ccabc0e606`, and the flow-http and materializer guests under their sha256 tags. Tags are immutable.
+- Pool `main` has 0 nodes. The pending pods are the standing workloads that wait for nodes. No Job of the run is pending.
+- `main` at `c180d88bd` holds the verb with failing 5 open.
+
+The root cause is the test method. The agent wrote the verb stage by stage with unit tests of pure helpers. The only test of the stages against real state was the live run. Each failure was in the code between the verb and a real system: the pool, the control store and the registry credential reader.
 
 ## 4. Design
 
