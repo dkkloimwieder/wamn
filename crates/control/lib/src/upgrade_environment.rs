@@ -3238,7 +3238,8 @@ mod tests {
             receiving
         );
         let wms = serde_yaml::to_string(&map["pathMatchers"][1]).unwrap();
-        assert_eq!(wms.matches(&hex).count(), 3, "{wms}");
+        // /assets/, /config.json (wamn-l2fi), / and every other page.
+        assert_eq!(wms.matches(&hex).count(), 4, "{wms}");
     }
 
     #[test]
