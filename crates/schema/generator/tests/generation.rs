@@ -899,7 +899,7 @@ fn generated_metadata_has_one_strict_canonical_reader() {
     assert_eq!(wrong_type.error_type(), GenerateErrorType::InvalidManifest);
     assert_eq!(
         std::error::Error::source(&wrong_type).unwrap().to_string(),
-        "invalid type: null, expected struct PackageWeld at line 1 column 4"
+        "invalid type: null, expected struct PackageIdentity at line 1 column 4"
     );
 
     let mut alternate = bytes.to_vec();

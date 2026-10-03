@@ -193,8 +193,8 @@ impl GeneratedFile {
 /// Canonical immutable package metadata emitted as `generated/package-identity.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
-    rename = "PackageWeld",
-    expecting = "struct PackageWeld",
+    rename = "PackageIdentity",
+    expecting = "struct PackageIdentity",
     deny_unknown_fields
 )]
 pub struct GeneratedPackageMetadata {
