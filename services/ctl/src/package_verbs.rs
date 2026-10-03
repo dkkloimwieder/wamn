@@ -74,7 +74,9 @@ pub struct OptionalRegistryArgs {
 /// Push one authored package as a registry artifact.
 #[derive(Debug, Args)]
 pub struct PushPackageArgs {
-    /// Root of the authored package (it holds `wamn.k`).
+    /// Root of the authored package (it holds `wamn.k`). Its built components
+    /// are read from `../target/virtualized/std-empty-environment`, where
+    /// `tools/build-components` writes them.
     #[arg(long)]
     pub package: PathBuf,
 

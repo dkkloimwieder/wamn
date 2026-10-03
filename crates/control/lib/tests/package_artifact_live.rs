@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use tokio_postgres::NoTls;
 use wamn_control::package_artifact::{
-    PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
-    open_package_source, push_package,
+    COMPONENT_BUILD_DIRECTORY, COMPONENT_LIST, ListedComponent, PackagePushDisposition,
+    PackageRegistry, PackageSource, PushPackageRequest, open_package_source, push_package,
 };
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_test_infrastructure::locked_database;
@@ -165,6 +165,23 @@ async fn push_repeat_fetch_and_a_refused_fetch() {
     assert_eq!(
         std::fs::read(opened.root().join("generated/wamn.json")).unwrap(),
         std::fs::read(receiving_package().join("generated/wamn.json")).unwrap()
+    );
+    let listed: Vec<ListedComponent> = serde_json::from_slice(
+        &std::fs::read(opened.root().join(COMPONENT_LIST)).expect("read the component list"),
+    )
+    .expect("decode the component list");
+    let built = std::fs::read(
+        receiving_package()
+            .join(COMPONENT_BUILD_DIRECTORY)
+            .join("receiving.wasm"),
+    )
+    .expect("read the built receiving component");
+    assert_eq!(
+        listed,
+        [ListedComponent {
+            name: "receiving".to_owned(),
+            sha256: hex::encode(ring::digest::digest(&ring::digest::SHA256, &built)),
+        }]
     );
     let unpacked = opened.root().to_path_buf();
     drop(opened);

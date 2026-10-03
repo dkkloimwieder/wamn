@@ -3,7 +3,10 @@
 //!
 //! A package artifact is one OCI artifact with one tar layer. The layer holds
 //! the authored package as pushed: `wamn.k`, `generated/wamn.json`,
-//! `migrations/`, `publication/` and `web/dist/`. Its tag is
+//! `migrations/`, `publication/`, `web/dist/` and
+//! `generated/platform-policy/data-access.json`. `push-package` adds
+//! `publication/components.json`, the name and SHA-256 of every component the
+//! package owns, from the files that `tools/build-components` built. Its tag is
 //! `<package_id>-<version>` under an explicit `<registry>/<repository>` base.
 //! The tar has sorted paths, a zero mtime and a fixed owner and mode, so one
 //! tree packs to one digest. `catalog.package_artifacts` in the control
@@ -35,13 +38,32 @@ pub const PACKAGE_ARTIFACT_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.t
 
 /// The package paths the layer carries. `wamn.k` and `generated/wamn.json`
 /// are required. A directory that a package does not have is left out.
-pub const PACKAGE_ARTIFACT_PATHS: [&str; 5] = [
+pub const PACKAGE_ARTIFACT_PATHS: [&str; 7] = [
     AUTHORED_MANIFEST,
     COMPILED_MANIFEST,
     "migrations",
     "publication",
     "web/dist",
+    "generated/platform-policy/data-access.json",
+    COMPONENT_LIST,
 ];
+
+/// The components the package owns, as `[{"name", "sha256"}]` sorted by name.
+/// `push-package` writes it into the layer, never into the package tree.
+pub const COMPONENT_LIST: &str = "publication/components.json";
+
+/// Where `tools/build-components` writes the components of the packages
+/// under `apps/`, relative to a package root.
+pub const COMPONENT_BUILD_DIRECTORY: &str = "../target/virtualized/std-empty-environment";
+
+/// One entry of [`COMPONENT_LIST`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListedComponent {
+    /// The component name of `generated/wamn.json`.
+    pub name: String,
+    /// Lowercase hex SHA-256 of the built `.wasm` file.
+    pub sha256: String,
+}
 
 /// One package tree packed into its layer.
 #[derive(Debug)]
@@ -64,7 +86,12 @@ impl PackedPackage {
 }
 
 /// Pack the package at `root` into its deterministic tar layer.
-pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
+///
+/// With `components`, the directory of the built `.wasm` files, the layer
+/// gains [`COMPONENT_LIST`] for every component that `generated/wamn.json`
+/// names, and a named component without its file refuses. Without it, the
+/// tree packs as it is, which is how an unpacked artifact is checked.
+pub fn pack_package(root: &Path, components: Option<&Path>) -> anyhow::Result<PackedPackage> {
     ensure!(
         root.join(AUTHORED_MANIFEST).is_file(),
         "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
@@ -80,9 +107,39 @@ pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
     for path in PACKAGE_ARTIFACT_PATHS {
         collect_files(root, path, &mut files)?;
     }
+    let mut entries = files
+        .iter()
+        .map(|(name, path)| {
+            let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+            Ok((name.clone(), data))
+        })
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    if let Some(directory) = components {
+        ensure!(
+            !entries.contains_key(COMPONENT_LIST),
+            "{} has {COMPONENT_LIST}; push-package writes it",
+            root.display()
+        );
+        let listed = manifest
+            .components
+            .keys()
+            .map(|name| {
+                let path = directory.join(format!("{name}.wasm"));
+                let bytes = std::fs::read(&path).with_context(|| {
+                    format!("component {name} has no built file {}", path.display())
+                })?;
+                Ok(ListedComponent {
+                    name: name.clone(),
+                    sha256: hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes)),
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let mut list = serde_json::to_vec_pretty(&listed).context("encode the component list")?;
+        list.push(b'\n');
+        entries.insert(COMPONENT_LIST.to_owned(), list);
+    }
     let mut builder = tar::Builder::new(Vec::new());
-    for (name, path) in &files {
-        let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    for (name, data) in &entries {
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Regular);
         header.set_size(data.len() as u64);
@@ -334,7 +391,10 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
             "source commit must be one nonempty value"
         );
     }
-    let packed = pack_package(&request.package)?;
+    let packed = pack_package(
+        &request.package,
+        Some(&request.package.join(COMPONENT_BUILD_DIRECTORY)),
+    )?;
     let tag = packed.tag();
     let repository = Repository::open(&request.registry, &tag)?;
     crate::publish_release::on_control_plane(
@@ -506,7 +566,7 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
     tar::Archive::new(bytes.as_slice())
         .unpack(opened.root())
         .with_context(|| format!("unpack package artifact {tag}"))?;
-    let unpacked = pack_package(opened.root())?;
+    let unpacked = pack_package(opened.root(), None)?;
     ensure!(
         unpacked.tag() == tag,
         "package artifact {tag} holds package {}",
@@ -525,12 +585,20 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
+    /// A package root under `apps`, whose built component `receiving.wasm`
+    /// lies where `tools/build-components` writes it.
     fn package_tree(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
+        let apps = std::env::temp_dir().join(format!(
             "wamn-package-artifact-test-{name}-{}",
             std::process::id()
         ));
-        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&apps);
+        write(
+            &apps,
+            "target/virtualized/std-empty-environment/receiving.wasm",
+            b"\0asm component",
+        );
+        let root = apps.join("wamn_receiving");
         let manifest = std::fs::read(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../../apps/wamn_receiving/generated/wamn.json"),
@@ -538,6 +606,7 @@ mod tests {
         .unwrap();
         write(&root, "wamn.k", b"# authored\n");
         write(&root, "generated/wamn.json", &manifest);
+        write(&root, "generated/platform-policy/data-access.json", b"{}\n");
         write(&root, "migrations/0001_initial.sql", b"SELECT 1;\n");
         write(&root, "publication/attachments.json", b"{}\n");
         write(&root, "web/dist/index.html", b"<html></html>\n");
@@ -546,25 +615,38 @@ mod tests {
         root
     }
 
+    fn pack(root: &Path) -> anyhow::Result<PackedPackage> {
+        pack_package(root, Some(&root.join(COMPONENT_BUILD_DIRECTORY)))
+    }
+
+    fn remove(root: &Path) {
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
     #[test]
     fn two_packs_of_the_same_tree_give_one_digest() {
         let root = package_tree("same");
-        let first = pack_package(&root).unwrap();
+        let first = pack(&root).unwrap();
         // A newer mtime does not change the layer.
         std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
-        let second = pack_package(&root).unwrap();
+        let second = pack(&root).unwrap();
         assert_eq!(first.digest, second.digest);
         assert_eq!(first.tag(), "wamn_receiving-2.1.0");
 
         let mut archive = tar::Archive::new(first.bytes.as_slice());
+        let mut list = Vec::new();
         let entries: Vec<(String, u32, u64, u64)> = archive
             .entries()
             .unwrap()
             .map(|entry| {
-                let entry = entry.unwrap();
+                let mut entry = entry.unwrap();
+                let path = entry.path().unwrap().to_string_lossy().into_owned();
+                if path == COMPONENT_LIST {
+                    std::io::Read::read_to_end(&mut entry, &mut list).unwrap();
+                }
                 let header = entry.header();
                 (
-                    entry.path().unwrap().to_string_lossy().into_owned(),
+                    path,
                     header.mode().unwrap(),
                     header.uid().unwrap(),
                     header.mtime().unwrap(),
@@ -574,22 +656,65 @@ mod tests {
         assert_eq!(
             entries,
             [
+                (
+                    "generated/platform-policy/data-access.json".to_owned(),
+                    0o644,
+                    0,
+                    0
+                ),
                 ("generated/wamn.json".to_owned(), 0o644, 0, 0),
                 ("migrations/0001_initial.sql".to_owned(), 0o644, 0, 0),
                 ("publication/attachments.json".to_owned(), 0o644, 0, 0),
+                ("publication/components.json".to_owned(), 0o644, 0, 0),
                 ("wamn.k".to_owned(), 0o644, 0, 0),
                 ("web/dist/index.html".to_owned(), 0o644, 0, 0),
             ]
         );
-        std::fs::remove_dir_all(&root).unwrap();
+        let digest = hex::encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            b"\0asm component",
+        ));
+        assert_eq!(
+            String::from_utf8(list).unwrap(),
+            format!(
+                "[\n  {{\n    \"name\": \"receiving\",\n    \"sha256\": \"{digest}\"\n  }}\n]\n"
+            )
+        );
+        remove(&root);
     }
 
     #[test]
     fn a_changed_file_changes_the_digest() {
         let root = package_tree("changed");
-        let first = pack_package(&root).unwrap();
+        let first = pack(&root).unwrap();
         std::fs::write(root.join("web/dist/index.html"), b"<html>2</html>\n").unwrap();
-        assert_ne!(first.digest, pack_package(&root).unwrap().digest);
-        std::fs::remove_dir_all(&root).unwrap();
+        assert_ne!(first.digest, pack(&root).unwrap().digest);
+        remove(&root);
+    }
+
+    #[test]
+    fn a_named_component_without_its_file_refuses() {
+        let root = package_tree("absent");
+        std::fs::remove_file(root.join(COMPONENT_BUILD_DIRECTORY).join("receiving.wasm")).unwrap();
+        let error = format!("{:#}", pack(&root).unwrap_err());
+        assert!(
+            error.contains("component receiving has no built file"),
+            "{error}"
+        );
+        remove(&root);
+    }
+
+    #[test]
+    fn an_unpacked_artifact_packs_to_its_own_digest() {
+        let root = package_tree("unpacked");
+        let packed = pack(&root).unwrap();
+        let unpacked = root.parent().unwrap().join("unpacked");
+        tar::Archive::new(packed.bytes.as_slice())
+            .unpack(&unpacked)
+            .unwrap();
+        assert_eq!(pack_package(&unpacked, None).unwrap().digest, packed.digest);
+        let error = format!("{:#}", pack(&unpacked).unwrap_err());
+        assert!(error.contains("push-package writes it"), "{error}");
+        remove(&root);
     }
 }
