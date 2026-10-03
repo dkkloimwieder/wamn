@@ -19,3 +19,4 @@ export {
   type ShellSection,
 } from "./shell";
 export { fillPath, filledValues } from "./fill";
+export { SCOPE_PATH, readScope, type Scope } from "./scope";

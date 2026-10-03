@@ -313,6 +313,17 @@ async fn check_edge(
             && header(&script, CACHE_CONTROL) == "public, max-age=31536000, immutable",
         "a built file is immutable"
     );
+    // The built files carry no org or project; the upload writes them here.
+    let scope = http.get(format!("{base}/config.json")).send().await?;
+    ensure!(
+        scope.status() == StatusCode::OK && header(&scope, CACHE_CONTROL) == "no-cache",
+        "the edge serves config.json with no-cache"
+    );
+    ensure!(
+        scope.json::<Value>().await?
+            == json!({"org": identity().org.as_str(), "project": "receiving"}),
+        "config.json names the org and the project of the upload"
+    );
     results.insert("page".into(), json!({"cache_control": "no-cache"}));
     results.insert(
         "asset".into(),

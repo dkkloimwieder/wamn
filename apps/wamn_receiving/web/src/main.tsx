@@ -2,7 +2,7 @@ import "@wamn/ui/styles.css";
 
 import { render } from "solid-js/web";
 
-import { Shell } from "@wamn/shell";
+import { Shell, readScope } from "@wamn/shell";
 import { ColorModeProvider, getClientColorMode } from "@wamn/ui";
 
 import { SECTIONS } from "./routes.js";
@@ -15,16 +15,18 @@ if (root === null) {
 // the first one.
 const mode = getClientColorMode();
 document.documentElement.classList.add(mode);
-render(
-  () => (
-    <ColorModeProvider initialColorMode={mode}>
-      <Shell
-        title="Receiving"
-        org={import.meta.env.WAMN_ORG}
-        project={import.meta.env.WAMN_PROJECT}
-        sections={SECTIONS}
-      />
-    </ColorModeProvider>
-  ),
-  root,
+// The org and the project come from config.json, so one build serves every deployment.
+readScope().then(
+  (scope) =>
+    render(
+      () => (
+        <ColorModeProvider initialColorMode={mode}>
+          <Shell title="Receiving" org={scope.org} project={scope.project} sections={SECTIONS} />
+        </ColorModeProvider>
+      ),
+      root,
+    ),
+  (error: unknown) => {
+    root.textContent = String(error);
+  },
 );

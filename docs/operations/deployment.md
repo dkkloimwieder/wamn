@@ -216,7 +216,10 @@ wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket 
 ```
 
 The files go to `<prefix>/<package id>/<digest hex>/`, so each release keeps its own path.
-Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` is `no-cache`.
+The build carries no org or project, so the built files are the same bytes for every deployment.
+The command writes `config.json` beside `index.html`, with the `--org` value and the project of the client package: `{"org":"<org>","project":"<project>"}`.
+The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
+Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` and `config.json` are `no-cache`.
 The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
 The command writes each object create-only. An object that already exists refuses the upload, and the command never replaces it.
 The bucket must allow reads without credentials.

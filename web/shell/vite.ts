@@ -11,6 +11,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import type { ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 
 /** One proxied path. Vite reads the same shape. */
@@ -22,13 +23,23 @@ interface Proxy {
   readonly rewrite?: (path: string) => string;
 }
 
+/** A dev server plugin. Vite reads the same shape. */
+interface DevPlugin {
+  readonly name: string;
+  readonly configureServer: (server: {
+    readonly middlewares: {
+      use(path: string, handle: (request: unknown, response: ServerResponse) => void): unknown;
+    };
+  }) => void;
+}
+
 /**
  * The part of a Vite configuration this module writes. It states the shape
  * itself, because the shell and each application install their own Vite.
  */
 export interface ApplicationConfig {
-  /** The org and the project the shell signs in to, as `import.meta.env` values. */
-  readonly define: Record<string, string>;
+  /** The dev server answers `/config.json` from `dev.json`. A build has none. */
+  readonly plugins: DevPlugin[];
   readonly resolve: {
     readonly alias: { find: string | RegExp; replacement: string }[];
     readonly dedupe: string[];
@@ -48,7 +59,7 @@ export interface ApplicationOptions {
   readonly client: { readonly name: string; readonly path: string };
   /** The port of the dev server. */
   readonly port: number;
-  /** `serve` for the dev server, `build` for static files. Only `serve` reads `dev.json`, and `build` reads `WAMN_ORG` and `WAMN_PROJECT`. */
+  /** `serve` for the dev server, `build` for static files. Only `serve` reads `dev.json`. A build reads nothing about the deployment. */
   readonly command: "serve" | "build";
 }
 
@@ -86,23 +97,20 @@ function proxy(parsed: DevConfiguration): Record<string, Proxy> {
   };
 }
 
-/** A variable the build needs. */
-function required(name: string): string {
-  const value = process.env[name];
-  if (value === undefined || value === "") {
-    throw new Error(`set ${name}; wamn web upload sets it from --org and the client package`);
-  }
-  return value;
-}
-
 /**
- * The org and the project the shell signs in to. The dev server reads them
- * from `dev.json`. A build reads the variables `wamn web upload` sets.
+ * The dev server answers `/config.json` with the org and the project of
+ * `dev.json`, as `wamn web upload` writes the file beside `index.html`.
  */
-function scope(dev: DevConfiguration | undefined): { org: string; project: string } {
-  return dev === undefined
-    ? { org: required("WAMN_ORG"), project: required("WAMN_PROJECT") }
-    : { org: dev.org, project: dev.project };
+function scopePlugin(dev: DevConfiguration): DevPlugin {
+  return {
+    name: "wamn-scope",
+    configureServer(server) {
+      server.middlewares.use("/config.json", (_request, response) => {
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ org: dev.org, project: dev.project }));
+      });
+    },
+  };
 }
 
 /**
@@ -123,12 +131,8 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const installed = (name: string) => at(`node_modules/${name}`);
   const dev = options.command === "serve" ? devConfiguration() : undefined;
-  const { org, project } = scope(dev);
   return {
-    define: {
-      "import.meta.env.WAMN_ORG": JSON.stringify(org),
-      "import.meta.env.WAMN_PROJECT": JSON.stringify(project),
-    },
+    plugins: dev === undefined ? [] : [scopePlugin(dev)],
     // The shell, the runtime, the UI and the generated clients live outside the
     // application, so the names they import resolve here. A bare import from
     // one of them would otherwise walk up a directory tree that installs nothing.

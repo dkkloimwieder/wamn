@@ -10,7 +10,7 @@ import { render } from "solid-js/web";
 
 import { ColorModeProvider } from "@wamn/ui";
 
-import { Shell, type ShellSection } from "../../src/index.js";
+import { Shell, readScope, type ShellSection } from "../../src/index.js";
 
 const SECTIONS: readonly ShellSection[] = [
   {
@@ -36,16 +36,17 @@ const root = document.getElementById("root");
 if (root === null) {
   throw new Error("the page has no root element");
 }
-render(
-  () => (
-    <ColorModeProvider initialColorMode="light">
-      <Shell
-        title="Browser test"
-        org={import.meta.env.WAMN_ORG}
-        project={import.meta.env.WAMN_PROJECT}
-        sections={SECTIONS}
-      />
-    </ColorModeProvider>
-  ),
-  root,
+readScope().then(
+  (scope) =>
+    render(
+      () => (
+        <ColorModeProvider initialColorMode="light">
+          <Shell title="Browser test" org={scope.org} project={scope.project} sections={SECTIONS} />
+        </ColorModeProvider>
+      ),
+      root,
+    ),
+  (error: unknown) => {
+    root.textContent = String(error);
+  },
 );

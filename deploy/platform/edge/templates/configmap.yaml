@@ -72,6 +72,14 @@ data:
           proxy_pass {{ trimSuffix "/" $endpoint }};
         }
 
+        # The org and the project the client signs in to, which the upload
+        # writes beside index.html.
+        location = /config.json {
+          limit_except GET { deny all; }
+          rewrite ^ /{{ $bucket }}/config.json? break;
+          proxy_pass {{ trimSuffix "/" $endpoint }};
+        }
+
         # Every other path is a page of the application, which the client
         # routes, so the edge answers with the one index.
         location / {

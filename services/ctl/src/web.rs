@@ -9,6 +9,7 @@ use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, PutMode, PutOptions};
 use tokio::process::Command;
 use tokio_postgres::NoTls;
+use wamn_control::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE, scope_file_bytes};
 
 /// A built file name carries its content hash, so a browser keeps it.
 const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
@@ -48,7 +49,8 @@ pub struct UploadArgs {
     #[arg(long)]
     pub bucket: String,
     /// The org the client signs in to. The project comes from the client
-    /// package name, `@wamn/<project>-client`.
+    /// package name, `@wamn/<project>-client`. Both go to `config.json`
+    /// beside `index.html`, not into the build.
     #[arg(long)]
     pub org: String,
     /// The project-environment database that holds the release head. The
@@ -100,8 +102,6 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         .arg("--dir")
         .arg(&web)
         .args(["run", "build"])
-        .env("WAMN_ORG", &args.org)
-        .env("WAMN_PROJECT", project)
         .status()
         .await
         .context("run pnpm; the web client builds with Vite through pnpm")?;
@@ -121,9 +121,10 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         files.iter().any(|file| file == &dist.join("index.html")),
         "the build wrote no index.html"
     );
-    write_files(store.as_ref(), &root, &dist, &mut files).await?;
+    let scope = scope_file_bytes(&args.org, project);
+    write_files(store.as_ref(), &root, &dist, &mut files, &scope).await?;
     println!(
-        "{}{bucket}/{root}/ {} files",
+        "{}{bucket}/{root}/ {} files and {SCOPE_FILE}",
         sink.scheme.prefix(),
         files.len()
     );
@@ -154,16 +155,29 @@ async fn require_head(database_url: &str, release: &str) -> anyhow::Result<()> {
     }
 }
 
-/// Write every built file create-only, the index last, so no reader meets an
-/// index whose files are absent. An existing object refuses the upload.
+/// Write every built file create-only, then `config.json`, and the index
+/// last, so no reader meets an index whose files are absent. An existing
+/// object refuses the upload.
 async fn write_files(
     store: &dyn ObjectStore,
     root: &str,
     dist: &Path,
     files: &mut [PathBuf],
+    scope: &[u8],
 ) -> anyhow::Result<()> {
     files.sort_by_key(|file| file == &dist.join("index.html"));
     for file in files.iter() {
+        if file == &dist.join("index.html") {
+            put(
+                store,
+                root,
+                SCOPE_FILE,
+                scope.to_vec(),
+                SCOPE_CACHE,
+                SCOPE_CONTENT_TYPE,
+            )
+            .await?;
+        }
         let relative = file
             .strip_prefix(dist)?
             .to_str()
@@ -175,23 +189,44 @@ async fn write_files(
         } else {
             bail!("the build wrote {relative}, which has no declared cache rule")
         };
-        let mut attributes = Attributes::new();
-        attributes.insert(Attribute::CacheControl, cache.into());
-        attributes.insert(Attribute::ContentType, content_type(relative)?.into());
-        let key = object_store::path::Path::from(format!("{root}/{relative}"));
-        store
-            .put_opts(
-                &key,
-                std::fs::read(file)?.into(),
-                PutOptions {
-                    mode: PutMode::Create,
-                    attributes,
-                    ..PutOptions::default()
-                },
-            )
-            .await
-            .with_context(|| format!("write {key}; an existing object is never replaced"))?;
+        put(
+            store,
+            root,
+            relative,
+            std::fs::read(file)?,
+            cache,
+            content_type(relative)?,
+        )
+        .await?;
     }
+    Ok(())
+}
+
+/// Write one object create-only with its Cache-Control and content type.
+async fn put(
+    store: &dyn ObjectStore,
+    root: &str,
+    relative: &str,
+    bytes: Vec<u8>,
+    cache: &'static str,
+    content_type: &'static str,
+) -> anyhow::Result<()> {
+    let mut attributes = Attributes::new();
+    attributes.insert(Attribute::CacheControl, cache.into());
+    attributes.insert(Attribute::ContentType, content_type.into());
+    let key = object_store::path::Path::from(format!("{root}/{relative}"));
+    store
+        .put_opts(
+            &key,
+            bytes.into(),
+            PutOptions {
+                mode: PutMode::Create,
+                attributes,
+                ..PutOptions::default()
+            },
+        )
+        .await
+        .with_context(|| format!("write {key}; an existing object is never replaced"))?;
     Ok(())
 }
 
@@ -311,6 +346,7 @@ mod tests {
 
     const HEAD: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const OTHER: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const SCOPE: &[u8] = br#"{"org":"acme","project":"receiving"}"#;
 
     #[tokio::test]
     async fn a_stale_release_is_refused_before_the_build() {
@@ -358,13 +394,13 @@ mod tests {
         let store = InMemory::new();
         let mut files = Vec::new();
         collect(&dist, &mut files).unwrap();
-        write_files(&store, HEAD, &dist, &mut files)
+        write_files(&store, HEAD, &dist, &mut files, SCOPE)
             .await
             .expect("the first upload writes");
 
         std::fs::write(dist.join("index.html"), "second").unwrap();
         std::fs::write(dist.join("assets/app.js"), "second").unwrap();
-        let error = write_files(&store, HEAD, &dist, &mut files)
+        let error = write_files(&store, HEAD, &dist, &mut files, SCOPE)
             .await
             .expect_err("the second upload refuses");
         assert!(
@@ -373,7 +409,11 @@ mod tests {
                 .starts_with(&format!("write {HEAD}/assets/app.js")),
             "{error}"
         );
-        for name in ["index.html", "assets/app.js"] {
+        for (name, bytes) in [
+            ("index.html", &b"first"[..]),
+            ("assets/app.js", b"first"),
+            ("config.json", SCOPE),
+        ] {
             let stored = store
                 .get(&object_store::path::Path::from(format!("{HEAD}/{name}")))
                 .await
@@ -381,7 +421,7 @@ mod tests {
                 .bytes()
                 .await
                 .unwrap();
-            assert_eq!(&stored[..], b"first", "{name}");
+            assert_eq!(&stored[..], bytes, "{name}");
         }
         std::fs::remove_dir_all(&dist).unwrap();
     }

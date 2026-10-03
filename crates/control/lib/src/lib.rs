@@ -56,3 +56,4 @@ pub mod upgrade_environment;
 pub mod upgrade_schema;
 pub mod user_roles;
 pub mod verification_policy;
+pub mod web_scope;

@@ -7,7 +7,8 @@
  * `tests/integration/src/shell_browser_live.rs` starts it with the addresses
  * in `WAMN_BROWSER_IDENTITY_URL`, `WAMN_BROWSER_APPLICATION_URL` and
  * `WAMN_BROWSER_CONTROL_URL`, and the org and the project in
- * `WAMN_BROWSER_ORG` and `WAMN_BROWSER_PROJECT`.
+ * `WAMN_BROWSER_ORG` and `WAMN_BROWSER_PROJECT`. The server answers them at
+ * `/config.json`, as the upload writes the file beside `index.html`.
  */
 
 import { fileURLToPath } from "node:url";
@@ -32,11 +33,19 @@ const CLIENTS = "../../../../crates/catalog/model/src/host_route";
 
 export default defineConfig({
   root: local("."),
-  plugins: [solid()],
-  define: {
-    "import.meta.env.WAMN_ORG": JSON.stringify(required("WAMN_BROWSER_ORG")),
-    "import.meta.env.WAMN_PROJECT": JSON.stringify(required("WAMN_BROWSER_PROJECT")),
-  },
+  plugins: [
+    solid(),
+    {
+      name: "wamn-scope",
+      configureServer(server) {
+        const scope = JSON.stringify({ org: required("WAMN_BROWSER_ORG"), project: required("WAMN_BROWSER_PROJECT") });
+        server.middlewares.use("/config.json", (_request, response) => {
+          response.setHeader("content-type", "application/json");
+          response.end(scope);
+        });
+      },
+    },
+  ],
   resolve: {
     alias: [
       { find: "@wamn/web-runtime", replacement: local("../../../runtime/src/index.ts") },
