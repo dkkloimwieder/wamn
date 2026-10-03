@@ -30,9 +30,20 @@ pub fn public_connect_databases_sql() -> &'static str {
 /// `template0` is `datallowconn = false` and stays untouched, as it must:
 /// `CREATE DATABASE … TEMPLATE template1` does not require the creator to hold
 /// `CONNECT`, so closing the route costs no provisioning capability.
+///
+/// The loop revokes only where `pg_database.datacl` still grants PUBLIC
+/// `CONNECT`, so the provisioner, which is not a superuser, skips a database
+/// that it cannot alter and that already has the floor. A role that is not
+/// the owner only gets a warning from `REVOKE`, so a database that still
+/// grants PUBLIC `CONNECT` stays in [`public_connect_databases_sql`], and the
+/// check that follows the revoke fails with its name (owner ruling of
+/// 2026-10-03 on `wamn-zua8.3`).
 pub fn revoke_public_connect_floor_sql() -> &'static str {
     "DO $$ DECLARE database_name text; BEGIN \
-       FOR database_name IN SELECT datname FROM pg_database WHERE datallowconn LOOP \
+       FOR database_name IN SELECT d.datname FROM pg_database d \
+          WHERE d.datallowconn AND EXISTS ( \
+            SELECT FROM aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
+             WHERE acl.grantee = 0 AND acl.privilege_type = 'CONNECT') LOOP \
          EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', database_name); \
        END LOOP; \
      END $$;"
@@ -58,8 +69,14 @@ pub fn public_temporary_on_current_database_sql() -> &'static str {
 /// `template1` makes concurrent `CREATE DATABASE … TEMPLATE template1` fail.
 /// The floor builders only read and revoke catalog ACLs, so they can and must
 /// cover `template1`; this one cannot.
+///
+/// The second column says whether the current login can connect. The
+/// provisioner, which is not a superuser, reads only the databases it can
+/// connect to and reports the others as skipped (owner ruling of 2026-10-03
+/// on `wamn-zua8.3`).
 pub fn non_template_databases_sql() -> &'static str {
-    "SELECT datname::text FROM pg_database WHERE NOT datistemplate ORDER BY datname::text"
+    "SELECT datname::text, has_database_privilege(datname, 'CONNECT') \
+       FROM pg_database WHERE NOT datistemplate ORDER BY datname::text"
 }
 
 /// Read-only direct grants for one role in the connected database.

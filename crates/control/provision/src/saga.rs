@@ -49,9 +49,10 @@ pub const CREATE_ENVIRONMENT: &str = "create-environment";
 
 /// The steps of a create-environment saga, in the order the worker runs them
 /// (owner rulings of 2026-10-03 on `wamn-zua8.3`). Step `n` is `STEPS[n - 1]`.
-pub const STEPS: [&str; 14] = [
+pub const STEPS: [&str; 15] = [
     "provision-project-env",
     "reconcile-run-plane",
+    "prepare-credentials",
     "apply-packages",
     "reconcile-package-data-access",
     "enable-cdc",
@@ -201,9 +202,10 @@ pub fn start_step_sql() -> &'static str {
       WHERE saga_id = $1 AND step = $2"
 }
 
-/// Mark a step `completed`. Parameters: saga id, step.
+/// Mark a step `completed`. Parameters: saga id, step, detail (null when the
+/// step reports none).
 pub fn complete_step_sql() -> &'static str {
-    "UPDATE provisioning.saga_steps SET status = 'completed', finished_at = now() \
+    "UPDATE provisioning.saga_steps SET status = 'completed', detail = $3, finished_at = now() \
       WHERE saga_id = $1 AND step = $2"
 }
 

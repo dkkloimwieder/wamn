@@ -155,7 +155,7 @@ async fn the_saga_records_its_steps_resumes_and_abandons() {
     environment_saga::start_step(&client, &first, 1)
         .await
         .expect("start step 1");
-    environment_saga::complete_step(&client, &first, 1)
+    environment_saga::complete_step(&client, &first, 1, None)
         .await
         .expect("complete step 1");
     environment_saga::start_step(&client, &first, 2)
@@ -213,14 +213,14 @@ async fn the_saga_records_its_steps_resumes_and_abandons() {
         .expect("abandon the pending saga");
     assert_eq!(statuses(&client, &second).await.0, "abandoned");
 
-    let last = 14;
+    let last = 15;
     let detail = json!({"commands": ["kubectl -n identity rollout restart deploy/identity"]});
     environment_saga::await_operator(&client, &other, last, &detail)
         .await
         .expect("record the operator commands");
     let (status, steps) = statuses(&client, &other).await;
     assert_eq!(status, "awaiting-operator");
-    assert_eq!(steps[13], "14 awaiting-operator completed -");
+    assert_eq!(steps[14], "15 awaiting-operator completed -");
     let refused = environment_saga::saga_abandon(&mut client, "missing")
         .await
         .expect_err("an unknown saga is refused");

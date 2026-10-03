@@ -960,7 +960,15 @@ async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result
     client
         .batch_execute(
             "SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
-             REVOKE wamn_scenario_author FROM wamn_app",
+             DO $separate$ BEGIN \
+               IF EXISTS (SELECT FROM pg_auth_members m \
+                            JOIN pg_roles g ON g.oid = m.roleid \
+                            JOIN pg_roles r ON r.oid = m.member \
+                           WHERE g.rolname = 'wamn_scenario_author' \
+                             AND r.rolname = 'wamn_app') THEN \
+                 REVOKE wamn_scenario_author FROM wamn_app; \
+               END IF; \
+             END $separate$;",
         )
         .await
         .context("separate guest and scenario-author roles")

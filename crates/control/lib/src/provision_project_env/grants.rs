@@ -158,11 +158,14 @@ pub(super) async fn verify_role_grants(
     expectation: RoleAclExpectation<'_>,
 ) -> anyhow::Result<()> {
     let (catalog, catalog_task) = connect_config(admin_config, "role grants").await?;
+    // Only the databases this login can connect to. The provisioning worker
+    // records the others in its step detail.
     let databases: Vec<String> = catalog
         .query(sql::non_template_databases_sql(), &[])
         .await
         .context("list databases for role grants")?
         .into_iter()
+        .filter(|row| row.get::<_, bool>(1))
         .map(|row| row.get(0))
         .collect();
     drop(catalog);

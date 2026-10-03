@@ -135,6 +135,11 @@ pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
 }
 
 /// Read one generation or stable ACL role without family-wide cardinality assumptions.
+///
+/// An edge whose member is `wamn_provisioner` is not a member of the role: the
+/// provisioner holds ADMIN OPTION on a stable role that a superuser made, and
+/// `createrole_self_grant` makes it a member of each role it creates (owner
+/// rulings 40 and of 2026-10-03 on `wamn-zua8.3`).
 pub fn workload_generation_state_sql() -> &'static str {
     "SELECT r.rolcanlogin, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, \
             r.rolreplication, r.rolbypassrls, \
@@ -153,14 +158,17 @@ pub fn workload_generation_state_sql() -> &'static str {
               AS membership_options_migratable, \
             COALESCE((SELECT array_agg(member.rolname::text ORDER BY member.rolname::text) \
                         FROM pg_auth_members m JOIN pg_roles member ON member.oid = m.member \
-                       WHERE m.roleid = r.oid), ARRAY[]::text[]) AS member_roles, \
+                       WHERE m.roleid = r.oid AND member.rolname <> 'wamn_provisioner'), \
+                     ARRAY[]::text[]) AS member_roles, \
             COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND NOT m.set_option) \
-                        FROM pg_auth_members m WHERE m.roleid = r.oid), true) \
+                        FROM pg_auth_members m \
+                       WHERE m.roleid = r.oid \
+                         AND pg_get_userbyid(m.member) <> 'wamn_provisioner'), true) \
               AS member_options_exact, \
             NOT EXISTS ( \
               SELECT 1 FROM pg_auth_members child_edge \
               JOIN pg_roles generation ON generation.oid = child_edge.member \
-              WHERE child_edge.roleid = r.oid AND ( \
+              WHERE child_edge.roleid = r.oid AND generation.rolname <> 'wamn_provisioner' AND ( \
                 child_edge.admin_option OR NOT child_edge.inherit_option OR child_edge.set_option \
                 OR NOT generation.rolcanlogin OR generation.rolsuper \
                 OR generation.rolcreatedb OR generation.rolcreaterole \
@@ -175,7 +183,9 @@ pub fn workload_generation_state_sql() -> &'static str {
                                    OR NOT parent_edge.inherit_option \
                                    OR parent_edge.set_option)) \
                 OR EXISTS (SELECT 1 FROM pg_auth_members grandchild_edge \
-                            WHERE grandchild_edge.roleid = generation.oid) \
+                            WHERE grandchild_edge.roleid = generation.oid \
+                              AND pg_get_userbyid(grandchild_edge.member) \
+                                  <> 'wamn_provisioner') \
                 OR EXISTS (SELECT 1 FROM pg_shdepend dependency \
                             WHERE dependency.refclassid = 'pg_authid'::regclass \
                               AND dependency.refobjid = generation.oid \

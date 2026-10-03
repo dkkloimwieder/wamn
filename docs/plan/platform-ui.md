@@ -1254,22 +1254,24 @@ Existing org admins receive actual `project-admin` grants for the new project.
 
 `environment.create` writes one provisioning saga.
 
-The worker performs the existing supported chain, conceptually:
+The worker runs these 15 steps in order. The order follows what each step needs from the steps before it (owner rulings of 2026-10-03 on `wamn-zua8.3`):
 
 ```text
-provision-project-env
-enable-cdc-project-env
-
-apply selected packages
-reconcile package data access
-push required components
-publish candidate release
-reconcile authored role permission closures
-activate release
-reconcile run plane
-upload selected client UI
-
-materialize current org/project admin grants
+1  provision-project-env
+2  reconcile-run-plane
+3  prepare-credentials
+4  apply-packages
+5  reconcile-package-data-access
+6  enable-cdc
+7  wait-publication
+8  admit-components
+9  publish-release
+10 bind-connection
+11 push-release-manifest
+12 select-release
+13 upload-ui
+14 materialize-admin-grants
+15 awaiting-operator
 ```
 
 The request names package/release inputs, not arbitrary executable provisioning commands.

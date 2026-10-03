@@ -116,14 +116,15 @@ pub async fn start_step(
     Ok(())
 }
 
-/// Mark step `step` `completed`.
+/// Mark step `step` `completed`, with the detail the step reports.
 pub async fn complete_step(
     client: &impl GenericClient,
     saga_id: &str,
     step: i32,
+    detail: Option<&Value>,
 ) -> anyhow::Result<()> {
     client
-        .execute(complete_step_sql(), &[&saga_id, &step])
+        .execute(complete_step_sql(), &[&saga_id, &step, &detail])
         .await
         .context("record the step completion")?;
     Ok(())

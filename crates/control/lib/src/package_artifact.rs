@@ -42,16 +42,20 @@ pub const PACKAGE_ARTIFACT_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.t
 
 /// The package paths the layer carries. `wamn.k` and `generated/wamn.json`
 /// are required. A directory that a package does not have is left out.
-pub const PACKAGE_ARTIFACT_PATHS: [&str; 10] = [
+pub const PACKAGE_ARTIFACT_PATHS: [&str; 14] = [
     AUTHORED_MANIFEST,
     COMPILED_MANIFEST,
     "migrations",
+    "command",
+    "query",
     "publication",
     "web/dist",
     "generated/platform-policy/data-access.json",
     "generated/contracts",
     "generated/sql",
     "generated/package-identity.json",
+    "generated/publication",
+    "generated/routes",
     COMPONENT_LIST,
 ];
 

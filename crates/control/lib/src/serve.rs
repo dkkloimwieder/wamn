@@ -139,7 +139,10 @@ pub async fn run_saga(config: &ServeConfig, client: &Client, open: OpenSaga) -> 
             return Ok(());
         }
         match run.step(name).await {
-            Ok(()) => environment_saga::complete_step(client, &open.saga_id, step).await?,
+            Ok(detail) => {
+                environment_saga::complete_step(client, &open.saga_id, step, detail.as_ref())
+                    .await?;
+            }
             Err(error) => {
                 let error = step_error(&error);
                 tracing::warn!(saga = %open.saga_id, step, name, %error, "step failed");
@@ -231,7 +234,11 @@ struct SagaRun<'a> {
 }
 
 impl SagaRun<'_> {
-    async fn step(&mut self, name: &str) -> anyhow::Result<()> {
+    /// Run one step, and return the detail it records, if any.
+    async fn step(&mut self, name: &str) -> anyhow::Result<Option<Value>> {
+        if name == "prepare-credentials" {
+            return self.prepare_credentials().await.map(Some);
+        }
         match name {
             "provision-project-env" => self.provision_project_env().await,
             "reconcile-run-plane" => self.reconcile_run_plane().await,
@@ -248,6 +255,7 @@ impl SagaRun<'_> {
             "materialize-admin-grants" => self.materialize_admin_grants().await,
             other => bail!("the worker has no step {other}"),
         }
+        .map(|()| None)
     }
 
     fn triple(&self) -> Triple {
@@ -351,8 +359,7 @@ impl SagaRun<'_> {
     }
 
     /// Step 1: the registry rows, the roles, the `Database` CR, the database
-    /// Secret, the management-author PAT, and generation `a` of every
-    /// credential of the environment.
+    /// Secret and the management-author PAT.
     async fn provision_project_env(&mut self) -> anyhow::Result<()> {
         let private = PrivateDirectory::create()?;
         let database_secret = private.path("database.json");
@@ -392,7 +399,35 @@ impl SagaRun<'_> {
             .context("run the privilege SQL")?;
         private.apply_and_shred(&database_secret).await?;
         private.apply_and_shred(&pat_secret).await?;
+        Ok(())
+    }
 
+    /// Step 2: the run plane. It reads the registry row and the database of
+    /// step 1, and creates the run schema that the credentials of step 3 are
+    /// granted on.
+    async fn reconcile_run_plane(&mut self) -> anyhow::Result<()> {
+        crate::reconcile_run_plane::reconcile_run_plane(
+            crate::reconcile_run_plane::ReconcileRunPlaneRequest {
+                system_database_url: self.config.system_database_url.clone(),
+                admin_database_url: self.project_url().await?,
+                org: self.org.clone(),
+                project: self.request.project.clone(),
+                tenant: self.request.tenant.clone(),
+                env: self.request.env.clone(),
+                schema: RUN_SCHEMA.to_owned(),
+                dry_run: false,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Step 3: generation `a` of every credential of the environment. Its
+    /// detail names the databases that the grant checks skipped, because
+    /// `wamn_provisioner` cannot connect to them (owner ruling of 2026-10-03).
+    async fn prepare_credentials(&mut self) -> anyhow::Result<Value> {
+        let private = PrivateDirectory::create()?;
+        let system = connect(self.system_url()).await?;
         let project_url = self.project_url().await?;
         let families = [
             (WorkloadRoleFamily::App, HOSTS_NAMESPACE, true),
@@ -439,28 +474,21 @@ impl SagaRun<'_> {
                     .await?;
             }
         }
-        Ok(())
+        let skipped: Vec<String> = system
+            .query(
+                wamn_control_provision::sql::non_template_databases_sql(),
+                &[],
+            )
+            .await
+            .context("list the databases that the grant checks skipped")?
+            .iter()
+            .filter(|row| !row.get::<_, bool>(1))
+            .map(|row| row.get(0))
+            .collect();
+        Ok(json!({ "skipped_databases": skipped }))
     }
 
-    /// Step 2: the run plane, before the packages that write into its schema.
-    async fn reconcile_run_plane(&mut self) -> anyhow::Result<()> {
-        crate::reconcile_run_plane::reconcile_run_plane(
-            crate::reconcile_run_plane::ReconcileRunPlaneRequest {
-                system_database_url: self.config.system_database_url.clone(),
-                admin_database_url: self.project_url().await?,
-                org: self.org.clone(),
-                project: self.request.project.clone(),
-                tenant: self.request.tenant.clone(),
-                env: self.request.env.clone(),
-                schema: RUN_SCHEMA.to_owned(),
-                dry_run: false,
-            },
-        )
-        .await?;
-        Ok(())
-    }
-
-    /// Step 3: every package artifact of the request.
+    /// Step 4: every package artifact of the request.
     async fn apply_packages(&mut self) -> anyhow::Result<()> {
         let project_url = self.project_url().await?;
         for root in self.roots().await? {
@@ -474,7 +502,7 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    /// Step 4: the generated data access of the installed packages.
+    /// Step 5: the generated data access of the installed packages.
     async fn reconcile_package_data_access(&mut self) -> anyhow::Result<()> {
         crate::reconcile_package_data_access::reconcile_package_data_access(
             crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
@@ -487,7 +515,7 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    /// Step 5: the source stream, the replication role, the slot, the
+    /// Step 6: the source stream, the replication role, the slot, the
     /// `Publication` CR and the replication Secret.
     async fn enable_cdc(&mut self) -> anyhow::Result<()> {
         let triple = self.triple();
@@ -558,14 +586,14 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    /// Step 6: the `Database` and `Publication` CRs report `status.applied`.
+    /// Step 7: the `Database` and `Publication` CRs report `status.applied`.
     async fn wait_publication(&mut self) -> anyhow::Result<()> {
         let database = self.database().await?;
         wait_applied("database", &database).await?;
         wait_applied("publication", &database).await
     }
 
-    /// Step 7: every component that a package lists, fetched by its digest
+    /// Step 8: every component that a package lists, fetched by its digest
     /// and admitted into the environment.
     async fn admit_components(&mut self) -> anyhow::Result<()> {
         use crate::component_declaration::{
@@ -649,7 +677,7 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    /// Step 8: each wiring gated and authored, then release 1 published.
+    /// Step 9: each wiring gated and authored, then release 1 published.
     async fn publish_release(&mut self) -> anyhow::Result<()> {
         let project_url = self.project_url().await?;
         let pat = read_secret_key(HOSTS_NAMESPACE, &self.pat_secret_name(), "token").await?;
@@ -772,7 +800,7 @@ impl SagaRun<'_> {
         read_secret_key(HOSTS_NAMESPACE, &name, "url").await
     }
 
-    /// Step 9: each connection of the request bound to release 1, at the
+    /// Step 10: each connection of the request bound to release 1, at the
     /// component that the wiring node with its store alias names.
     async fn bind_connections(&mut self) -> anyhow::Result<()> {
         let project_url = self.project_url().await?;
@@ -838,14 +866,14 @@ impl SagaRun<'_> {
         }
     }
 
-    /// Step 10: the release manifest pushed and attested.
+    /// Step 11: the release manifest pushed and attested.
     async fn push_release_manifest(&mut self) -> anyhow::Result<()> {
         let request = self.release_request(self.project_url().await?);
         crate::push_release_manifest::push_release_manifest(&request, None).await?;
         Ok(())
     }
 
-    /// Step 11: release 1 selected with no qualification, because the new
+    /// Step 12: release 1 selected with no qualification, because the new
     /// environment has no head. A head that the environment already has
     /// satisfies the step when its package set and component digests equal
     /// those of release 1, and the later steps use that head. A head with
@@ -879,7 +907,7 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    /// Step 12: the built web client of each package with a client package,
+    /// Step 13: the built web client of each package with a client package,
     /// under the digest of the head release.
     async fn upload_ui(&mut self) -> anyhow::Result<()> {
         use crate::web_upload::{
@@ -931,7 +959,7 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    /// Step 13: the rows of the current org and project administrators,
+    /// Step 14: the rows of the current org and project administrators,
     /// again, for a grant made while the saga ran.
     async fn materialize_admin_grants(&mut self) -> anyhow::Result<()> {
         let mut client = connect(self.system_url()).await?;
@@ -955,7 +983,7 @@ impl SagaRun<'_> {
             .context("commit the administrator rows")
     }
 
-    /// Step 14: the commands that the operator runs. The saga never restarts
+    /// Step 15: the commands that the operator runs. The saga never restarts
     /// the broker, identity or a host.
     fn operator_commands(&self) -> Value {
         let (org, project, env, tenant) = (

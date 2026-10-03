@@ -366,12 +366,23 @@ async fn converge_stable_workload_memberships(
     else {
         return Ok(());
     };
+    // Only the generations of this scope: the stable role is cluster-wide, and
+    // the members of another environment can belong to a role that made them
+    // and that the provisioner cannot change (owner ruling of 2026-10-03 on
+    // wamn-zua8.3).
+    let own = [
+        lifecycle.role(CredentialGeneration::A),
+        lifecycle.role(CredentialGeneration::B),
+    ];
     for role in stable.member_roles {
         anyhow::ensure!(
             is_workload_generation_role(lifecycle.family, &role),
             "stable {} ACL role has a member outside its generation family",
             lifecycle.label()
         );
+        if !own.contains(&role) {
+            continue;
+        }
         client
             .batch_execute(&sql::normalize_workload_generation_membership_sql(
                 lifecycle.family,

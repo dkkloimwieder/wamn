@@ -569,6 +569,44 @@ The test pushes an image and a guest by digest, and two kind nodes import the im
 It makes sure that CRI reports the tag and only the pinned digest, and that no node holds the login.
 It removes its cluster, registry container, images and private directory.
 
+### Provisioning worker saga
+
+`crates/control/lib/tests/serve_live.rs` runs one create-environment saga of `wamn-ctl serve` through all 15 steps for the WMS package.
+It needs no kind cluster.
+A fake `kubectl` on `PATH` records each applied document, and the test compares them with `crates/control/lib/tests/fixtures/serve_live/manifests.json`.
+It starts its own PostgreSQL server with `wal_level=logical`, and Docker containers of `registry:2` and `minio/minio:RELEASE.2025-09-07T16-13-09Z`.
+
+Build the WMS components, the WMS web client and the two binaries:
+
+```bash
+tools/build-components app apps/wamn_wms
+pnpm -C apps/wamn_wms/web run build
+cargo build --locked --offline -p wamn-identity -p wamn-scenario-worker
+```
+
+Copy `nats-server` 2.10 out of the `nats:2.10` image, because the platform runs that version:
+
+```bash
+docker create --name wamn-serve-live-nats nats:2.10
+docker cp wamn-serve-live-nats:/nats-server "$WAMN_RESULTS/nats-server"
+docker rm wamn-serve-live-nats
+```
+
+Run the test:
+
+```bash
+WAMN_NATIVE_C_NATS_BIN="$WAMN_RESULTS/nats-server" \
+  WAMN_IDENTITY_BINARY="$CARGO_TARGET_DIR/debug/wamn-identity" \
+  WAMN_SCENARIO_WORKER_BIN="$CARGO_TARGET_DIR/debug/wamn-scenario-worker" \
+  cargo test --locked --offline -p wamn-control --test serve_live \
+  -- --ignored --exact a_create_environment_saga_runs_all_fifteen_steps
+```
+
+If the documents differ from the fixture, the test writes the recorded documents to a temporary file and names it.
+The fixture replaces each Secret value with `<secret>` and the instance suffix with `<instance>`.
+The test makes sure that the `wamn.tenant-key` label equals the key of the tenant in its database, then replaces it with `<tenant-key>`.
+It replaces the three PAT annotations that each run mints anew with `<run>`.
+
 ## Application generation and SQLx
 
 Follow [test-database isolation](#test-database-isolation) before these database-backed commands.

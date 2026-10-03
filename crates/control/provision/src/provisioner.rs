@@ -11,8 +11,9 @@
 //! and `createrole_self_grant = 'set, inherit'`, so that it is a member of
 //! every role it creates.
 
-use wamn_pg_core::quote_literal;
+use wamn_pg_core::{quote_ident, quote_literal};
 
+use crate::WorkloadRoleFamily;
 use crate::name::DB_OWNER_ROLE;
 
 /// The login of the provisioning worker.
@@ -46,10 +47,42 @@ pub fn ensure_provisioner_role_sql() -> String {
 /// [`ensure_provisioner_role_sql`], then the password as its SCRAM-SHA-256
 /// verifier. The plain password is only in the Secret `wamn-provisioner`
 /// (owner ruling of 2026-10-02 on `wamn-zua8.3`).
+///
+/// The statement also gives `wamn_provisioner` `ADMIN OPTION`, and nothing
+/// else, on each stable ACL role that exists, so that it can make the
+/// generations of a new environment members of a stable role that a
+/// superuser made. A stable role that the worker creates later is its own
+/// (owner ruling of 2026-10-03 on `wamn-zua8.3`).
 pub fn provisioner_statement_sql(scram_verifier: &str) -> String {
     format!(
-        "{}ALTER ROLE {PROVISIONER_ROLE} PASSWORD {};\n",
+        "{}{}ALTER ROLE {PROVISIONER_ROLE} PASSWORD {};\n",
         ensure_provisioner_role_sql(),
+        stable_role_admin_sql(),
         quote_literal(scram_verifier)
     )
+}
+
+/// `GRANT <stable role> TO wamn_provisioner WITH ADMIN TRUE, INHERIT FALSE,
+/// SET FALSE` for each stable ACL role, by name, when the role exists.
+fn stable_role_admin_sql() -> String {
+    let mut roles: Vec<&str> = WorkloadRoleFamily::ALL
+        .iter()
+        .map(|family| family.acl_role())
+        .collect();
+    roles.sort_unstable();
+    roles.dedup();
+    let grants = roles
+        .iter()
+        .map(|role| {
+            format!(
+                "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = {}) THEN \
+                   GRANT {} TO {PROVISIONER_ROLE} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE; \
+                 END IF; ",
+                quote_literal(role),
+                quote_ident(role)
+            )
+        })
+        .collect::<Vec<_>>()
+        .concat();
+    format!("DO $stable_admin$ BEGIN {grants}END $stable_admin$;\n")
 }

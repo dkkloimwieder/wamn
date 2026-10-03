@@ -112,7 +112,7 @@ describe("the project screen", () => {
         status: "awaiting-operator",
         last_error: null,
         steps: [
-          step(14, "awaiting-operator", "completed", null, {
+          step(15, "awaiting-operator", "completed", null, {
             commands: [
               {
                 purpose: "the identity restart",

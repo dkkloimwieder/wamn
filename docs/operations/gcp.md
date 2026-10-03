@@ -2006,6 +2006,36 @@ On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four 
 
 Then `gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags` turned immutable tags on at 17:12 UTC. The deletes and the update took 6 seconds. `gcloud artifacts repositories describe wamn` shows `immutableTags: true`, and every tag of `components` is a sha256 hex.
 
+### Provisioning worker
+
+The provisioning worker `wamn-ctl serve` runs its SQL as the login `wamn_provisioner`, which is not a superuser (`wamn-zua8.3`, `docs/plan/platform-ui.md` §5.5). Three superuser statements prepare an installed deployment for it. Apply each one once, as the superuser, connected to `wamn_system`. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Make a private work directory, mode 0700:
+
+```bash
+D=$(mktemp -d)
+```
+
+The fingerprint statement is not yet applied on wamn-dev. It records a password fingerprint for every generation that was prepared before system migration `0009_generation_passwords.sql`. It reads `pg_authid`, so it runs only after `upgrade-schema` applied `0009`:
+
+```bash
+target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm \
+  --emit-fingerprint-sql $D/fingerprint.sql
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $D/fingerprint.sql
+rm $D/fingerprint.sql
+```
+
+The `wamn_provisioner` role statement is not yet applied on wamn-dev. One run of `provision-system` writes the Secret `wamn-provisioner` with a new password and the role statement with only the SCRAM-SHA-256 verifier of that password. The statement creates the login, or brings an existing one to its attributes, and grants its memberships:
+
+```bash
+(umask 077; target/debug/wamn-ctl provision-system --system-url "$WAMN_SYSTEM_ADMIN_URL" \
+  --emit-secret $D/provisioner-secret.json --emit-provisioner-sql $D/provisioner.sql \
+  --db-host wamn-pg-rw.platform.svc.cluster.local)
+kubectl apply -f $D/provisioner-secret.json
+kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $D/provisioner.sql
+rm $D/provisioner-secret.json
+rm $D/provisioner.sql
+```
+
+The `ADMIN OPTION` statement is not yet applied on wamn-dev. It is the second block of `$D/provisioner.sql` above, so the same `psql` run applies it. It grants `wamn_provisioner` `ADMIN OPTION`, with `INHERIT FALSE` and `SET FALSE`, on each stable ACL role of `WorkloadRoleFamily::ALL` that exists, and nothing else. A superuser made those roles on wamn-dev, so without this grant the worker cannot make a new environment's generations their members.
 
 ## 8. Package upgrade acceptance prerequisite audit
 

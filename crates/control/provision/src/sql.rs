@@ -369,15 +369,32 @@ pub fn platform_group_membership_sql(family: WorkloadRoleFamily) -> String {
     let acl_role = quote_ident(family.acl_role());
     let acl_role_lit = quote_literal(family.acl_role());
     let group = quote_ident(PLATFORM_GROUP_ROLE);
-    let grant = if family.is_platform_grain() {
-        format!(" GRANT {group} TO {acl_role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;")
+    let group_lit = quote_literal(PLATFORM_GROUP_ROLE);
+    let edges = format!(
+        "SELECT FROM pg_auth_members m \
+           JOIN pg_roles g ON g.oid = m.roleid JOIN pg_roles r ON r.oid = m.member \
+          WHERE g.rolname = {group_lit} AND r.rolname = {acl_role_lit}"
+    );
+    // The edge changes only when it differs from the wanted one, so a converged
+    // cluster-wide role is not altered, which the provisioner could not do to a
+    // role that a superuser made (owner ruling of 2026-10-03 on wamn-zua8.3).
+    let (drift, grant) = if family.is_platform_grain() {
+        (
+            format!(
+                "NOT EXISTS ({edges} AND m.inherit_option AND NOT m.set_option \
+                                     AND NOT m.admin_option) \
+                 OR EXISTS ({edges} AND NOT (m.inherit_option AND NOT m.set_option \
+                                             AND NOT m.admin_option))"
+            ),
+            format!(" GRANT {group} TO {acl_role} WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;"),
+        )
     } else {
-        String::new()
+        (format!("EXISTS ({edges})"), String::new())
     };
     format!(
         "{ensure_group} \
          DO $platform_edge$ BEGIN \
-           IF EXISTS (SELECT FROM pg_roles WHERE rolname = {acl_role_lit}) THEN \
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname = {acl_role_lit}) AND ({drift}) THEN \
              REVOKE {group} FROM {acl_role};{grant} \
            END IF; \
          END $platform_edge$;",
@@ -1710,7 +1727,7 @@ mod tests {
         // `template1` is a template AND connectable, and a template filter left
         // PostgreSQL's default PUBLIC CONNECT on it. `template0`
         // (`datallowconn = false`) stays out of scope either way.
-        assert!(revoke_public_connect_floor_sql().contains("WHERE datallowconn"));
+        assert!(revoke_public_connect_floor_sql().contains("WHERE d.datallowconn"));
         assert!(!revoke_public_connect_floor_sql().contains("datistemplate"));
         assert!(public_connect_databases_sql().contains("WHERE d.datallowconn"));
         assert!(!public_connect_databases_sql().contains("datistemplate"));
