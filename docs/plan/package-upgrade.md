@@ -532,7 +532,8 @@ Ordinary component admission and release qualification remain required.
 
 PostgreSQL tests with retained predecessor data are the Epic 2 exit.
 They prove preserved overlay rows, fields, constraints, and ownership, exact retries, and complete rollback on failure.
-After Epic 2 lands, the single live forward upgrade uses `upgrade-environment` on `wamn-dev` and is recorded on `wamn-orb5`.
+The later live forward upgrade uses `upgrade-environment` on `wamn-dev`.
+Its acceptance stays open on `wamn-nwd6` while deployment is parked.
 No live rollback or re-forward is scheduled.
 TUI work remains deferred.
 

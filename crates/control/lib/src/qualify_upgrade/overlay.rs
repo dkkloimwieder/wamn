@@ -300,12 +300,14 @@ fn consumed_contract(
         "consumed operation {operation} is removed; this incompatible transition belongs to Epic 3"
     );
     let mut contract = serde_json::Map::new();
-    for kind in ["operation", "input", "result", "errors"] {
-        let path = root.join(format!("generated/contracts/{module}/{name}.{kind}.json"));
+    for section in ["operation", "input", "result", "errors"] {
+        let path = root.join(format!(
+            "generated/contracts/{module}/{name}.{section}.json"
+        ));
         // An operation without a result declaration has no result contract.
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
-            Err(error) if kind == "result" && error.kind() == std::io::ErrorKind::NotFound => {
+            Err(error) if section == "result" && error.kind() == std::io::ErrorKind::NotFound => {
                 continue;
             }
             Err(error) => {
@@ -319,10 +321,10 @@ fn consumed_contract(
         };
         let mut value: Value = serde_json::from_slice(&bytes)
             .with_context(|| format!("parse consumed contract {}", path.display()))?;
-        if kind == "operation" {
+        if section == "operation" {
             normalize_operation_contract(&mut value, &manifest.package, operation)?;
         }
-        contract.insert(kind.to_owned(), value);
+        contract.insert(section.to_owned(), value);
     }
     // The typed callback input belongs to the authored base declaration rather
     // than the generated operation contract. It must remain unchanged too.
