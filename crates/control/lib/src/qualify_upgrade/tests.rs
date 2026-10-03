@@ -7,6 +7,7 @@ use wamn_catalog::{
 use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
 mod overlay;
+mod stage;
 
 const TENANT: &str = "upgrade-proof";
 const ENVIRONMENT: &str = "dev";

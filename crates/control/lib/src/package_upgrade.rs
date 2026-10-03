@@ -386,6 +386,12 @@ fn require_candidate_root(root: &Path, evidence: &UpgradeQualification) -> anyho
         observed == *qualified,
         "qualified candidate statements or generated artifacts changed"
     );
+    let directory = crate::apply_package::read_package_directory(root)?;
+    let manifest = wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)?;
+    ensure!(
+        manifest.upgrade_stage == evidence.upgrade_stage,
+        "qualified stage SQL, conditions, batch declaration, or exceptions changed"
+    );
     Ok(())
 }
 

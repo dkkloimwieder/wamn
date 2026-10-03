@@ -2,6 +2,7 @@
 
 pub(crate) mod overlay;
 mod scratch;
+pub(crate) mod stage;
 #[cfg(test)]
 mod tests;
 pub mod workload;
@@ -104,6 +105,8 @@ pub(crate) struct UpgradeQualification {
     pub(crate) serving_workloads: workload::ServingWorkloads,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) overlay: Option<overlay::OverlayEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) upgrade_stage: Option<wamn_schema_generator::UpgradeStage>,
 }
 
 struct PresentedPackage {
@@ -162,6 +165,9 @@ async fn qualify_upgrade_with_observer(
         .iter()
         .find(|package| package.root == candidate_root)
         .context("candidate package must occur in the complete presented root set")?;
+    for package in &packages {
+        stage::require_executor(&package.manifest)?;
+    }
     let schemas = package_schemas(&packages)?;
     let sql_packages = packages
         .iter()
@@ -504,6 +510,7 @@ async fn copy_predecessor(
     let scratch = scratch::copy_database(&request.database_url, &snapshot).await?;
     let evidence = UpgradeQualification {
         format_version: if overlay.is_some() { 2 } else { 1 },
+        upgrade_stage: None,
         tenant: request.tenant.clone(),
         environment: request.environment.clone(),
         predecessor_release_id: i32::try_from(manifest.release.effective_release_id.get())?,
@@ -1068,10 +1075,24 @@ pub(crate) fn decode_qualification(bytes: &[u8]) -> anyhow::Result<UpgradeQualif
     let evidence: UpgradeQualification =
         serde_json::from_slice(bytes).context("parse upgrade qualification")?;
     ensure!(
-        (evidence.format_version == 1 && evidence.overlay.is_none())
-            || (evidence.format_version == 2 && evidence.overlay.is_some()),
+        (evidence.format_version == 1
+            && evidence.overlay.is_none()
+            && evidence.upgrade_stage.is_none())
+            || (evidence.format_version == 2
+                && evidence.overlay.is_some()
+                && evidence.upgrade_stage.is_none())
+            || (evidence.format_version == 3 && evidence.upgrade_stage.is_some()),
         "unsupported upgrade qualification format"
     );
+    if let Some(stage) = &evidence.upgrade_stage {
+        wamn_schema_generator::validate_upgrade_stage(stage)?;
+        ensure!(
+            evidence.candidate_package.predecessor_version.as_deref()
+                == Some(evidence.predecessor_package.package_version.as_str())
+                && evidence.candidate_package.package_id == evidence.predecessor_package.package_id,
+            "upgrade stage does not name the exact predecessor package"
+        );
+    }
     let value = serde_json::to_value(&evidence)?;
     ensure!(
         wamn_execution_contract::canonical_json_bytes(&value) == bytes,

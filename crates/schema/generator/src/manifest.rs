@@ -16,6 +16,9 @@ pub(crate) const CONTROL_OWNED_RELATION_TABLES: [&str; 2] =
 #[serde(deny_unknown_fields)]
 pub struct PackageManifest {
     pub package: PackageIdentity,
+    /// One complete upgrade stage carried by this package version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upgrade_stage: Option<crate::UpgradeStage>,
     /// The package name the generated TypeScript client carries.
     ///
     /// A package that omits it generates no TypeScript at all. Nothing is
@@ -640,6 +643,7 @@ impl PackageManifest {
                 "package predecessor version must differ from the package version",
             ));
         }
+        crate::upgrade_stage::validate_package_upgrade_stage(&manifest)?;
         Ok(manifest)
     }
 
@@ -671,6 +675,7 @@ pub fn validate_operation_vocabulary(
     manifest: &PackageManifest,
 ) -> Result<BTreeSet<String>, GenerateError> {
     validate_package_identity(&manifest.package)?;
+    crate::upgrade_stage::validate_package_upgrade_stage(manifest)?;
     validate_base_dependencies(manifest)?;
     validate_internal_relation_vocabulary(manifest)?;
     validate_workflows(manifest)?;

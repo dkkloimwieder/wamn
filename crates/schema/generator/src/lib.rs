@@ -40,6 +40,8 @@ mod rustfmt;
 mod sql;
 mod sql_lex;
 mod sqlx_metadata;
+mod upgrade_stage;
+
 pub use authoring::{
     AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, check_compiled_manifest, compile_manifest,
     is_authored, is_package_root, manifest_package_root, package_manifest_path,
@@ -88,5 +90,9 @@ pub use materialize::{
 pub use package_catalog::project_package_catalog;
 pub use sqlx_metadata::{
     SqlxMetadataMode, SqlxVerifier, package_database_url, stage_sqlx_verifier, verify_sqlx_metadata,
+};
+#[doc(inline)]
+pub use upgrade_stage::{
+    BackfillStage, UpgradeStage, UpgradeStageException, UpgradeStagePhase, validate_upgrade_stage,
 };
 pub use wamn_schema_introspection::ir::CatalogIr;

@@ -166,6 +166,7 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
     tx.rollback().await.unwrap();
     let evidence = UpgradeQualification {
         overlay: None,
+        upgrade_stage: None,
         format_version: 1,
         tenant: "upgrade-test".to_owned(),
         environment: "test".to_owned(),

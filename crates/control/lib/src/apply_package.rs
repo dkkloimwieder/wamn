@@ -99,6 +99,7 @@ pub(crate) fn prepare_package(root: &Path) -> anyhow::Result<PreparedPackage> {
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
+    crate::qualify_upgrade::stage::require_executor(&manifest)?;
     wamn_schema_generator::validate_operation_vocabulary(&manifest)
         .context("validate package manifest for registration projection")?;
     let migration_policy = validate_migration_policy(root, &directory, &presented)?;

@@ -27,6 +27,22 @@ schema PackageIdentity:
     version: str
     predecessor_version?: str
 
+schema BackfillStage:
+    """SQL takes $1 jsonb cursor and $2 int4 size, returning next_cursor jsonb and complete bool."""
+    sql: str
+    batch_size: int
+    initial_cursor: any
+
+    check:
+        batch_size > 0 and batch_size <= 2147483647
+
+schema UpgradeStage:
+    phase: "expand" | "backfill" | "contract"
+    preconditions: {str:str}
+    postconditions: {str:str}
+    backfill?: BackfillStage
+    exceptions?: ["whole_row_grants"]
+
 schema ClientPackage:
     name: str
 
@@ -316,6 +332,7 @@ schema Workflow:
 schema Package:
     """The whole manifest. A package's wamn.k is one Package instance."""
     package: PackageIdentity
+    upgrade_stage?: UpgradeStage
     client_package?: ClientPackage
     base_dependencies?: {str:BaseDependency}
     required_platform_policy_contract: PolicyContract

@@ -71,6 +71,21 @@ The native runtime refuses absent membership at the existing guest error boundar
 
 ## Application declarations
 
+An optional `upgrade_stage` in the package manifest declares one online migration stage for that package version.
+Its `phase` is `expand`, `backfill`, or `contract`.
+Named `preconditions` and `postconditions` carry SQL directly, so the manifest identity covers their exact bytes.
+A backfill also declares `sql`, a positive `batch_size`, and an explicit `initial_cursor` under `backfill`.
+Batch SQL takes `$1::jsonb` for the cursor and `$2::int4` for the batch size.
+It returns one row with `next_cursor jsonb` and `complete bool`.
+KCL authors use a non-null cursor because the manifest compiler omits `None` values.
+The explicit `whole_row_grants` exception belongs only to an expand stage.
+Stage declarations require a predecessor and a package that declares SQL.
+
+Qualification format 3 carries the stage declaration alongside the existing package, root, workload, and privilege identities.
+Formats 1 and 2 retain their existing serialized form and remain readable.
+The stage executor is not available yet, so qualification and application refuse stage declarations before database mutation.
+The [Epic 3 scope](../plan/package-upgrade.md#73-epic-3-changes-outside-the-predecessor-compatible-additive-subset) defines the remaining execution work.
+
 `wamn.json` declares application choices that another source cannot determine exactly.
 The generator supplies fixed protocol rules. It rejects their former authored fields.
 Receiving, Acme, and WMS use the same declaration format.
