@@ -38,7 +38,7 @@ pub struct QualifyUpgradeRequest {
     pub environment: String,
     pub package: PathBuf,
     pub presented_packages: Vec<PathBuf>,
-    /// Complete original roots for a coordinated base and overlay upgrade.
+    /// Complete frozen original roots for an installed package upgrade.
     pub predecessor_packages: Vec<PathBuf>,
     /// Exact successor base artifact to which affected overlays re-pin.
     pub base_component: Option<PathBuf>,
@@ -228,6 +228,7 @@ async fn qualify_upgrade_with_observer(
             package.identity.package_id
         );
     }
+    require_predecessor_statement_facts(&predecessors, &predecessor_manifest)?;
     if let Some(qualified) = &evidence.overlay {
         let predecessor_base = predecessors
             .iter()
@@ -335,25 +336,7 @@ async fn copy_predecessor(
         .find(|package| package.package_id == candidate.identity.package_id)
         .context("installed predecessor disappeared from the snapshot")?;
     *upgraded = candidate.identity.clone();
-    let overlay = if request.predecessor_packages.is_empty() && request.base_component.is_none() {
-        for package in packages {
-            ensure!(
-                !package
-                    .manifest
-                    .base_dependencies
-                    .values()
-                    .any(|pin| pin.package == candidate.identity.package_id),
-                "base-only upgrade of {} is refused: installed overlay {} requires a coordinated successor qualification",
-                candidate.identity.package_id,
-                package.identity.package_id
-            );
-        }
-        ensure!(
-            candidate.manifest.base_dependencies.is_empty(),
-            "overlay successors require coordinated base upgrade qualification"
-        );
-        None
-    } else {
+    if !predecessors.is_empty() || request.base_component.is_some() {
         ensure!(
             predecessors.len() == predecessor_packages.len(),
             "predecessor package count mismatch: supplied {}, installed {}",
@@ -414,6 +397,27 @@ async fn copy_predecessor(
                 original.package_version
             );
         }
+    }
+    require_predecessor_statement_facts(predecessors, &manifest)?;
+    let overlay = if request.base_component.is_none() {
+        for package in packages {
+            ensure!(
+                !package
+                    .manifest
+                    .base_dependencies
+                    .values()
+                    .any(|pin| pin.package == candidate.identity.package_id),
+                "base-only upgrade of {} is refused: installed overlay {} requires a coordinated successor qualification",
+                candidate.identity.package_id,
+                package.identity.package_id
+            );
+        }
+        ensure!(
+            candidate.manifest.base_dependencies.is_empty(),
+            "overlay successors require coordinated base upgrade qualification"
+        );
+        None
+    } else {
         let predecessor_base = predecessors
             .iter()
             .find(|package| package.identity.package_id == candidate.identity.package_id)
@@ -587,40 +591,7 @@ async fn prove_connected_copy(
     tx.commit()
         .await
         .context("commit exact predecessor scratch privileges")?;
-    if evidence.overlay.is_some() {
-        let installed = predecessors
-            .iter()
-            .map(|package| package.manifest.clone())
-            .collect::<Vec<_>>();
-        for package in predecessors {
-            let catalog =
-                wamn_schema_generator::introspect_package(database_url, &package.root).await?;
-            let projected = wamn_schema_generator::project_package_catalog(
-                &catalog,
-                &package.manifest,
-                &installed,
-            )?;
-            let schema = evidence
-                .serving_workloads
-                .packages
-                .get(&package.identity.package_id)
-                .map_or("public", |workload| workload.schema.as_str());
-            wamn_schema_generator::materialize_package_verified_with_existing_grants(
-                MaterializeMode::Check,
-                &projected,
-                database_url,
-                &package.root,
-                schema,
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "verify predecessor generated contracts for {} on the installed copy",
-                    package.identity.package_id
-                )
-            })?;
-        }
-    }
+    require_predecessor_statement_facts(predecessors, manifest)?;
     if let Some(proof) = &evidence.overlay {
         let mut roots = vec![candidate.root.clone()];
         for transition in &proof.overlays {
@@ -740,6 +711,74 @@ async fn prove_connected_copy(
         "candidate privileges changed during qualification checks"
     );
     tx.rollback().await?;
+    Ok(())
+}
+
+fn require_predecessor_statement_facts(
+    predecessors: &[PresentedPackage],
+    manifest: &ServingManifest,
+) -> anyhow::Result<()> {
+    if predecessors.is_empty() {
+        return Ok(());
+    }
+    let mut corpus = BTreeMap::<String, Vec<wamn_catalog::ComponentSqlStatement>>::new();
+    for package in predecessors {
+        let frozen =
+            crate::push_component::load_package_statement_facts(&package.root, &package.manifest)
+                .with_context(|| {
+                format!(
+                    "load frozen predecessor statement facts for {}",
+                    package.identity.package_id
+                )
+            })?;
+        for statements in frozen.values() {
+            for (digest, statement) in statements {
+                corpus
+                    .entry(digest.clone())
+                    .or_default()
+                    .push(statement.clone());
+            }
+        }
+        for component in manifest
+            .components
+            .iter()
+            .filter(|component| component.package_id == package.identity.package_id)
+        {
+            for admitted in component.operations.values() {
+                let Some(operation) = admitted.registered_operation.as_deref() else {
+                    continue;
+                };
+                let statements = frozen.get(operation).with_context(|| {
+                    format!(
+                        "serving predecessor operation {operation} has no frozen artifact contract"
+                    )
+                })?;
+                // Serving statements include the dependency call graph. Compare
+                // this operation's own frozen facts without rejecting that union.
+                for (digest, statement) in statements {
+                    ensure!(
+                        admitted.statements.get(digest) == Some(statement),
+                        "frozen predecessor statement differs from serving manifest for {operation}: {} {digest}",
+                        statement.path
+                    );
+                }
+            }
+        }
+    }
+    for component in &manifest.components {
+        for (operation, admitted) in &component.operations {
+            for (digest, statement) in &admitted.statements {
+                ensure!(
+                    corpus
+                        .get(digest)
+                        .is_some_and(|facts| facts.contains(statement)),
+                    "serving predecessor statement is absent from frozen artifact corpus for {}/{operation}: {} {digest}",
+                    component.package_id,
+                    statement.path
+                );
+            }
+        }
+    }
     Ok(())
 }
 

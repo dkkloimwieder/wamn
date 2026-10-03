@@ -126,6 +126,12 @@ Receiving maps `wamn_receiving` to `flow-http`. WMS maps `wamn_wms` to `wms-flow
 ### 4.2 The stages
 
 The owner requires original package inputs from the pushed artifact of each installed version in `catalog.package_artifacts`.
+Table owns `push-package` and the artifact payload.
+The payload includes `generated/contracts/`, `generated/sql/`, and `generated/package-identity.json`.
+Routes first renames the current `package-weld.json` file through `wamn-o7ay`.
+Packaging compares installed identities and serving SQL with the frozen bytes in the artifact.
+Packaging does not run the current generator to prove predecessor inputs.
+Table lands its artifact commits on main. Packaging rebases from main without cross-branch pulls.
 The upgrade fetches that artifact by digest and refuses a manifest or migration mismatch with the installed database.
 The refusal names the mismatch. An attested Git checkout is not a fallback.
 The operator pushes artifacts once for the two existing `wamn-dev` versions from their attested commits.

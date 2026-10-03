@@ -553,6 +553,18 @@ impl Run {
                 manifest,
             });
         }
+        // The release composition of the dev loop, over the stage 2 build.
+        let mut plan = Command::new(self.checkout.join("tools/build-components"));
+        plan.args(["build-only", "app"])
+            .args(&roots)
+            .env("CARGO_TARGET_DIR", self.delivery());
+        let plan: ComponentBuildPlan =
+            serde_json::from_str(&self.command("build-plan", &mut plan).await?)
+                .context("decode the build plan")?;
+        let artifacts = select_component_artifacts(&packages, &plan.virtualization.artifacts)?;
+        let palette = select_palette_artifacts(&packages, &plan.palette)?;
+        let wirings = load_wirings(&packages)?;
+
         for root in &roots {
             let applied =
                 crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
@@ -587,18 +599,6 @@ impl Run {
             )
             .await?;
         }
-
-        // The release composition of the dev loop, over the stage 2 build.
-        let mut plan = Command::new(self.checkout.join("tools/build-components"));
-        plan.args(["build-only", "app"])
-            .args(&roots)
-            .env("CARGO_TARGET_DIR", self.delivery());
-        let plan: ComponentBuildPlan =
-            serde_json::from_str(&self.command("build-plan", &mut plan).await?)
-                .context("decode the build plan")?;
-        let artifacts = select_component_artifacts(&packages, &plan.virtualization.artifacts)?;
-        let palette = select_palette_artifacts(&packages, &plan.palette)?;
-        let wirings = load_wirings(&packages)?;
 
         let registry = Registry::login(&environment.registry, &self.work).await?;
         let publish = || crate::push_component::PublishAdmittedComponentRequest {

@@ -34,6 +34,39 @@ fn compile(root: &Path) {
     .unwrap();
 }
 
+fn frozen_predecessor(source: &Path, target: &Path) {
+    for directory in [
+        "migrations",
+        "generated/contracts",
+        "generated/platform-policy",
+    ] {
+        copy_tree(&source.join(directory), &target.join(directory));
+    }
+    for relative in [
+        "wamn.k",
+        "generated/wamn.json",
+        "generated/package-weld.json",
+    ] {
+        fs::copy(source.join(relative), target.join(relative)).unwrap();
+    }
+    let manifest = PackageManifest::from_slice(
+        &fs::read(wamn_schema_generator::package_manifest_path(source)).unwrap(),
+    )
+    .unwrap();
+    for statements in crate::push_component::load_package_statement_facts(source, &manifest)
+        .unwrap()
+        .values()
+    {
+        for statement in statements.values() {
+            let path = target.join(&statement.path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::copy(source.join(&statement.path), path).unwrap();
+        }
+    }
+    assert!(!target.join("generated/fixture-tui").exists());
+    assert!(!target.join("generated/fixture_overlay-tui").exists());
+}
+
 async fn overlay_fixture(name: &str) -> OverlayFixture {
     let mut base = fixture(name, false).await;
     let predecessor = base.root.join("overlay-predecessor");
@@ -251,8 +284,14 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     let mut fixture = overlay_fixture("overlay-retained").await;
     let original = state(&mut fixture.base.source).await;
     let rows = retained_rows(&fixture.base.source).await;
+    let base_predecessor = fixture.base.root.join("frozen-base-predecessor");
+    let overlay_predecessor = fixture.base.root.join("frozen-overlay-predecessor");
+    frozen_predecessor(&wamn_fixture_package::package_root(), &base_predecessor);
+    frozen_predecessor(&fixture.predecessor, &overlay_predecessor);
+    let mut qualification = overlay_request(&fixture, "accepted.json");
+    qualification.predecessor_packages = vec![base_predecessor, overlay_predecessor];
     let result = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "accepted.json"),
+        qualification,
         WorkloadObserver::Captured(fixture.base.serving.clone()),
     )
     .await
@@ -335,6 +374,23 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
 }
 
 #[tokio::test]
+async fn single_package_accepts_frozen_predecessor_artifacts() {
+    let mut fixture = fixture("single-frozen-predecessor", false).await;
+    let predecessor = fixture.root.join("frozen-predecessor");
+    frozen_predecessor(&wamn_fixture_package::package_root(), &predecessor);
+    let original = state(&mut fixture.source).await;
+    let mut qualification = request(&fixture, "accepted.json");
+    qualification.predecessor_packages = vec![predecessor];
+    qualify_upgrade_with_observer(
+        qualification,
+        WorkloadObserver::Captured(fixture.serving.clone()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(state(&mut fixture.source).await, original);
+}
+
+#[tokio::test]
 async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut fixture = overlay_fixture("overlay-refusals").await;
     let original = state(&mut fixture.base.source).await;
@@ -390,6 +446,67 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
             .base
             .root
             .join("original-migration-mismatch.json")
+            .exists()
+    );
+    assert_eq!(state(&mut fixture.base.source).await, original);
+    let sql_path = fixture.predecessor.join("generated/sql/widget/get.sql");
+    let contract_path = fixture
+        .predecessor
+        .join("generated/contracts/widget/get.operation.json");
+    let identity_path = fixture.predecessor.join("generated/package-weld.json");
+    let sql = fs::read(&sql_path).unwrap();
+    let contract = fs::read(&contract_path).unwrap();
+    let identity_bytes = fs::read(&identity_path).unwrap();
+    let mut changed_sql = sql.clone();
+    changed_sql.extend_from_slice(b"\n-- different carried predecessor statement\n");
+    let mut changed_contract: serde_json::Value = serde_json::from_slice(&contract).unwrap();
+    changed_contract["statements"][0]["digest"] = serde_json::json!(
+        wamn_engine::component_admission::component_digest(&changed_sql)
+    );
+    let mut changed_identity: serde_json::Value = serde_json::from_slice(&identity_bytes).unwrap();
+    changed_identity["application_sql_corpus_identity"] =
+        serde_json::json!(wamn_schema_generator::corpus_sha256([(
+            "generated/sql/widget/get.sql",
+            changed_sql.as_slice()
+        )]));
+    fs::write(&sql_path, changed_sql).unwrap();
+    fs::write(
+        &contract_path,
+        serde_json::to_vec(&changed_contract).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        &identity_path,
+        serde_json::to_vec(&changed_identity).unwrap(),
+    )
+    .unwrap();
+    let manifest = PackageManifest::from_slice(
+        &fs::read(wamn_schema_generator::package_manifest_path(
+            &fixture.predecessor,
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    crate::push_component::load_package_statement_facts(&fixture.predecessor, &manifest).unwrap();
+    let error = qualify_upgrade_with_observer(
+        overlay_request(&fixture, "original-serving-sql-mismatch.json"),
+        WorkloadObserver::Captured(fixture.base.serving.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("frozen predecessor statement differs from serving manifest")
+            && format!("{error:#}").contains("platform-fixture-overlay:widget/get@2.1.0"),
+        "{error:#}"
+    );
+    fs::write(sql_path, sql).unwrap();
+    fs::write(contract_path, contract).unwrap();
+    fs::write(identity_path, identity_bytes).unwrap();
+    assert!(
+        !fixture
+            .base
+            .root
+            .join("original-serving-sql-mismatch.json")
             .exists()
     );
     assert_eq!(state(&mut fixture.base.source).await, original);
