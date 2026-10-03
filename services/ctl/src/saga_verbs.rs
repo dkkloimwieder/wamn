@@ -29,18 +29,6 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = 5432)]
     pub db_port: u16,
 
-    /// The platform host image, `repository@sha256:<digest>`.
-    #[arg(long)]
-    pub host_image: String,
-
-    /// The platform gates image, `repository@sha256:<digest>`.
-    #[arg(long)]
-    pub gates_image: String,
-
-    /// The platform identity image, `repository@sha256:<digest>`.
-    #[arg(long)]
-    pub identity_image: String,
-
     /// The event broker.
     #[arg(long)]
     pub nats_url: String,
@@ -118,9 +106,6 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
         system_database_url: args.system_database_url,
         db_host: args.db_host,
         db_port: args.db_port,
-        host_image: args.host_image,
-        gates_image: args.gates_image,
-        identity_image: args.identity_image,
         nats_url: args.nats_url,
         nats_username: args.nats_username,
         nats_password_file: args.nats_password_file,

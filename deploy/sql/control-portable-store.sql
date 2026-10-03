@@ -389,8 +389,12 @@ CREATE TABLE catalog.release_selections (
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
     environment          text        NOT NULL CHECK (environment <> ''),
     effective_release_id int         NOT NULL CHECK (effective_release_id > 0),
-    qualification_sha256 text        NOT NULL,
+    qualification_sha256 text,
+    reason               text        NOT NULL
+        CHECK (reason IN ('qualification', 'environment-creation')),
     selected_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT release_selections_qualification_check
+        CHECK ((qualification_sha256 IS NULL) = (reason = 'environment-creation')),
     CONSTRAINT release_selections_pkey
         PRIMARY KEY (tenant_id, environment, selected_at),
     CONSTRAINT release_selections_release_fkey

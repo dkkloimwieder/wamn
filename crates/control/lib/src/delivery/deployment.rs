@@ -49,8 +49,8 @@ pub struct DeployRequest {
 pub struct SelectedRelease {
     pub release: ServingRelease,
     pub manifest_digest: String,
-    /// The qualification the select used.
-    pub qualification_sha256: String,
+    /// The qualification the select used, absent for a new environment.
+    pub qualification_sha256: Option<String>,
 }
 
 /// Release one environment now serves, with the source that qualified it.
@@ -71,6 +71,23 @@ pub async fn select(
     qualification: &QualificationSource,
     release: &PushReleaseManifestRequest,
 ) -> anyhow::Result<SelectedRelease> {
+    record_selection(Some(qualification), release).await
+}
+
+/// Select the release that the create-environment saga published, with no
+/// qualification. A new environment has no head, no users and no data, so the
+/// selection records the reason `environment-creation` and no hash (owner
+/// ruling of 2026-10-03 on wamn-zua8.3).
+pub async fn select_new_environment(
+    release: &PushReleaseManifestRequest,
+) -> anyhow::Result<SelectedRelease> {
+    record_selection(None, release).await
+}
+
+async fn record_selection(
+    qualification: Option<&QualificationSource>,
+    release: &PushReleaseManifestRequest,
+) -> anyhow::Result<SelectedRelease> {
     let snapshot = lookup_release_snapshot(
         &release.database_url,
         &release.tenant,
@@ -81,19 +98,25 @@ pub async fn select(
     publication::require_published(None, &snapshot, release).await?;
     crate::publish_release::on_control_plane(&release.control_database_url, async |control| {
         let control = control.transaction().await?;
-        let qualification_sha256 =
-            selection::resolve(&control, qualification, &snapshot.manifest).await?;
+        let (qualification_sha256, reason) = match qualification {
+            Some(qualification) => (
+                Some(selection::resolve(&control, qualification, &snapshot.manifest).await?),
+                "qualification",
+            ),
+            None => (None, "environment-creation"),
+        };
         claim(&control, &snapshot.manifest.release).await?;
         control
             .execute(
                 "INSERT INTO catalog.release_selections \
-                   (tenant_id, environment, effective_release_id, qualification_sha256) \
-                 VALUES ($1, $2, $3, $4)",
+                   (tenant_id, environment, effective_release_id, qualification_sha256, reason) \
+                 VALUES ($1, $2, $3, $4, $5)",
                 &[
                     &release.tenant,
                     &snapshot.manifest.release.environment,
                     &i32::try_from(release.effective_release_id)?,
                     &qualification_sha256,
+                    &reason,
                 ],
             )
             .await
@@ -112,7 +135,7 @@ pub async fn select(
 async fn select_head(
     release: &PushReleaseManifestRequest,
     snapshot: &ReleaseSnapshot,
-    qualification_sha256: String,
+    qualification_sha256: Option<String>,
 ) -> anyhow::Result<SelectedRelease> {
     let (mut client, connection) = tokio_postgres::connect(&release.database_url, NoTls).await?;
     let connection = tokio::spawn(connection);

@@ -73,11 +73,6 @@ pub struct ServeConfig {
     pub db_host: String,
     /// Port that every emitted credential URL names.
     pub db_port: u16,
-    /// The platform images, `repository@sha256:<digest>`, for the reuse of a
-    /// qualification.
-    pub host_image: String,
-    pub gates_image: String,
-    pub identity_image: String,
     /// The event broker and the worker's own provisioning credential.
     pub nats_url: String,
     pub nats_username: String,
@@ -850,11 +845,11 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    /// Step 11: release 1 selected, with a recorded qualification of the same
-    /// package set and platform images. A head that the environment already
-    /// has satisfies the step when its package set and component digests
-    /// equal those of release 1, and the later steps use that head (owner
-    /// ruling of 2026-10-03). A head with another set fails the step.
+    /// Step 11: release 1 selected with no qualification, because the new
+    /// environment has no head. A head that the environment already has
+    /// satisfies the step when its package set and component digests equal
+    /// those of release 1, and the later steps use that head. A head with
+    /// another set fails the step (owner rulings of 2026-10-03).
     async fn select_release(&mut self) -> anyhow::Result<()> {
         use crate::delivery::selection::package_set;
         use crate::print_release_env::lookup_release_snapshot;
@@ -880,15 +875,7 @@ impl SagaRun<'_> {
             );
             return Ok(());
         }
-        crate::delivery::deployment::select(
-            &crate::delivery::selection::QualificationSource::Images {
-                host: self.config.host_image.clone(),
-                gates: Some(self.config.gates_image.clone()),
-                identity: Some(self.config.identity_image.clone()),
-            },
-            &request,
-        )
-        .await?;
+        crate::delivery::deployment::select_new_environment(&request).await?;
         Ok(())
     }
 

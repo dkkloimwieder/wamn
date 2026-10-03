@@ -90,6 +90,13 @@ async fn the_migration_creates_the_selection_tables_as_a_fresh_install_has_them(
                 REFERENCES catalog.qualifications(qualification_sha256)"),
         "a fresh install has the tables: {fresh:?}"
     );
+    // Only a selection by the create-environment saga names no qualification.
+    assert!(
+        fresh.iter().any(|entry| entry
+            == "catalog.release_selections constraint release_selections_qualification_check \
+                CHECK (((qualification_sha256 IS NULL) = (reason = 'environment-creation'::text)))"),
+        "a fresh install ties a null qualification to environment creation: {fresh:?}"
+    );
 
     client
         .batch_execute("DROP TABLE catalog.release_selections, catalog.qualifications")

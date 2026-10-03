@@ -5,7 +5,9 @@
 -- release, and the image digests are those of the host, gates and identity
 -- images. It belongs to no tenant, so its policy admits every row.
 -- catalog.release_selections records every select, with the qualification it
--- used. Both are immutable facts.
+-- used. The select-release step of the create-environment saga selects with no
+-- qualification: its row has reason environment-creation and a null hash.
+-- Both tables are immutable facts.
 CREATE TABLE catalog.qualifications (
     qualification_sha256 text        NOT NULL
         CHECK (qualification_sha256 ~ '^sha256:[0-9a-f]{64}$'),
@@ -27,8 +29,12 @@ CREATE TABLE catalog.release_selections (
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
     environment          text        NOT NULL CHECK (environment <> ''),
     effective_release_id int         NOT NULL CHECK (effective_release_id > 0),
-    qualification_sha256 text        NOT NULL,
+    qualification_sha256 text,
+    reason               text        NOT NULL
+        CHECK (reason IN ('qualification', 'environment-creation')),
     selected_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT release_selections_qualification_check
+        CHECK ((qualification_sha256 IS NULL) = (reason = 'environment-creation')),
     CONSTRAINT release_selections_pkey
         PRIMARY KEY (tenant_id, environment, selected_at),
     CONSTRAINT release_selections_release_fkey
