@@ -338,6 +338,61 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
 async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut fixture = overlay_fixture("overlay-refusals").await;
     let original = state(&mut fixture.base.source).await;
+    let manifest_path = wamn_schema_generator::package_manifest_path(&fixture.predecessor);
+    let manifest_bytes = fs::read(&manifest_path).unwrap();
+    let mut changed: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    changed["package"]["predecessor_version"] = serde_json::json!("0.9.0");
+    fs::write(&manifest_path, serde_json::to_vec(&changed).unwrap()).unwrap();
+    let error = qualify_upgrade_with_observer(
+        overlay_request(&fixture, "original-manifest-mismatch.json"),
+        WorkloadObserver::Captured(fixture.base.serving.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("manifest identity mismatch")
+            && format!("{error:#}").contains(OVERLAY),
+        "{error:#}"
+    );
+    fs::write(&manifest_path, manifest_bytes).unwrap();
+    let migration = fs::read_dir(fixture.predecessor.join("migrations"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let migration_bytes = fs::read(&migration).unwrap();
+    let mut changed = migration_bytes.clone();
+    changed.extend_from_slice(b"\n");
+    fs::write(&migration, changed).unwrap();
+    let error = qualify_upgrade_with_observer(
+        overlay_request(&fixture, "original-migration-mismatch.json"),
+        WorkloadObserver::Captured(fixture.base.serving.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("migration identity mismatch")
+            && format!("{error:#}").contains(OVERLAY)
+            && format!("{error:#}").contains(migration.file_name().unwrap().to_str().unwrap()),
+        "{error:#}"
+    );
+    fs::write(&migration, migration_bytes).unwrap();
+    assert!(
+        !fixture
+            .base
+            .root
+            .join("original-manifest-mismatch.json")
+            .exists()
+    );
+    assert!(
+        !fixture
+            .base
+            .root
+            .join("original-migration-mismatch.json")
+            .exists()
+    );
+    assert_eq!(state(&mut fixture.base.source).await, original);
     let mut base_only = request(&fixture.base, "base-only.json");
     base_only
         .presented_packages

@@ -119,7 +119,17 @@ The root cause is the test method. The agent wrote the verb stage by stage with 
 
 `deploy/gcp/environments/<org>--<project>--<env>.json` holds only what `registry.project_envs` does not hold. It names the cluster, the kubeconfig context and the registry. It names the web client bucket and prefix, the route host and the host group. It names the edge, the URL map, the guest workloads and the gates image digest. The tenant and the database names come from `registry.project_envs`. The file does not repeat them, because two copies drift (owner ruling, 2026-10-02). It holds no credential. The verb refuses an environment without this file. The `wamn-dev` files for Receiving and WMS are written from the B12 record.
 
+The environment file also names `package_workloads`, a map from package IDs to WorkloadDeployment names.
+This map records deployment topology. Qualification reads each actual schema from the live workload, not from this file.
+Receiving maps `wamn_receiving` to `flow-http`. WMS maps `wamn_wms` to `wms-flow-http`.
+
 ### 4.2 The stages
+
+The owner requires original package inputs from the pushed artifact of each installed version in `catalog.package_artifacts`.
+The upgrade fetches that artifact by digest and refuses a manifest or migration mismatch with the installed database.
+The refusal names the mismatch. An attested Git checkout is not a fallback.
+The operator pushes artifacts once for the two existing `wamn-dev` versions from their attested commits.
+Later installed versions require their pushed artifacts.
 
 The verb runs these stages in order. Each stage is a function over the run record. Each one reads the state first and skips work that is done.
 
@@ -164,4 +174,4 @@ Epic 1, one branch, each issue with its tests. No issue runs against wamn-dev un
 - Non-Spot nodes for the broker and the database (`wamn-qjcd`).
 - A long-lived gate service. Until it exists, the verb runs the gate service for stages 7 and 11.
 - A CI provider that calls the verb (`docs/plan/delivery.md`).
-- Package migrations of an application (`docs/plan/upgrades.md`).
+- Migrations outside the accepted additive [package upgrade path](package-upgrade.md).

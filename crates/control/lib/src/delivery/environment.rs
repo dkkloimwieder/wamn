@@ -6,6 +6,7 @@
 //! come from the registry, so the file does not repeat them. It holds no
 //! credential.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
@@ -27,6 +28,9 @@ pub struct EnvironmentFile {
     /// The package roots that the environment publishes, relative to the
     /// repository. The registry names no package directory.
     pub packages: Vec<PathBuf>,
+    /// Package IDs mapped to serving WorkloadDeployment names. This is topology
+    /// only. Qualification reads runtime schemas from the live resources.
+    pub package_workloads: BTreeMap<String, String>,
     pub web_client: WebClient,
     pub route_host: String,
     /// The host group of the application in the host values.
@@ -153,6 +157,14 @@ mod tests {
         assert_eq!(receiving.route_host, "receiving.wamn.dev");
         assert_eq!(wms.route_host, "wms.wamn.dev");
         assert_eq!(
+            receiving.package_workloads,
+            BTreeMap::from([("wamn_receiving".to_owned(), "flow-http".to_owned())])
+        );
+        assert_eq!(
+            wms.package_workloads,
+            BTreeMap::from([("wamn_wms".to_owned(), "wms-flow-http".to_owned())])
+        );
+        assert_eq!(
             (receiving.host_group.as_str(), wms.host_group.as_str()),
             ("default", "wms")
         );
@@ -162,6 +174,7 @@ mod tests {
                 host_group: wms.host_group.clone(),
                 workloads: wms.workloads.clone(),
                 packages: wms.packages.clone(),
+                package_workloads: wms.package_workloads.clone(),
                 ..receiving
             },
             wms

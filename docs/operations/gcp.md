@@ -2305,6 +2305,9 @@ This evidence completes the owner-scheduled Epic 1 acceptance for `wamn-xvu5.5`.
 
 ## 11. Upgrade an environment
 
+The environment file uses `package_workloads` to map package IDs to their serving WorkloadDeployment names.
+This map contains no schema. Qualification reads the schema from the live workload.
+
 `wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
 
 ```bash

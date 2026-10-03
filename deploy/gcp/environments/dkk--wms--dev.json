@@ -10,6 +10,9 @@
   "packages": [
     "apps/wamn_wms"
   ],
+  "package_workloads": {
+    "wamn_wms": "wms-flow-http"
+  },
   "web_client": {
     "bucket": "wamn-dev-web",
     "prefix": "clients"

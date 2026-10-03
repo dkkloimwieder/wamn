@@ -355,13 +355,65 @@ async fn copy_predecessor(
         None
     } else {
         ensure!(
-            predecessors
-                .iter()
-                .map(|package| package.identity.clone())
-                .collect::<Vec<_>>()
-                == predecessor_packages,
-            "predecessor roots must match every currently installed package and migration identity"
+            predecessors.len() == predecessor_packages.len(),
+            "predecessor package count mismatch: supplied {}, installed {}",
+            predecessors.len(),
+            predecessor_packages.len()
         );
+        for package in predecessors {
+            let original = &package.identity;
+            let installed = predecessor_packages
+                .iter()
+                .find(|installed| installed.package_id == original.package_id)
+                .with_context(|| {
+                    format!(
+                        "predecessor package {} is not installed",
+                        original.package_id
+                    )
+                })?;
+            ensure!(
+                original.package_version == installed.package_version,
+                "predecessor version mismatch for {}: supplied {}, installed {}",
+                original.package_id,
+                original.package_version,
+                installed.package_version
+            );
+            ensure!(
+                original.manifest_sha256 == installed.manifest_sha256,
+                "predecessor manifest identity mismatch for {}@{}: supplied {}, installed {}",
+                original.package_id,
+                original.package_version,
+                original.manifest_sha256,
+                installed.manifest_sha256
+            );
+            ensure!(
+                original.migrations.len() == installed.migrations.len(),
+                "predecessor migration count mismatch for {}@{}: supplied {}, installed {}",
+                original.package_id,
+                original.package_version,
+                original.migrations.len(),
+                installed.migrations.len()
+            );
+            for (supplied, recorded) in original.migrations.iter().zip(&installed.migrations) {
+                ensure!(
+                    supplied == recorded,
+                    "predecessor migration identity mismatch for {}@{} at ordinal {}: supplied {} {}, installed {} {}",
+                    original.package_id,
+                    original.package_version,
+                    recorded.ordinal,
+                    supplied.relative_path,
+                    supplied.sha256,
+                    recorded.relative_path,
+                    recorded.sha256
+                );
+            }
+            ensure!(
+                original == installed,
+                "predecessor lineage identity mismatch for {}@{}",
+                original.package_id,
+                original.package_version
+            );
+        }
         let predecessor_base = predecessors
             .iter()
             .find(|package| package.identity.package_id == candidate.identity.package_id)
