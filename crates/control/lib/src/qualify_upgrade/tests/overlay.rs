@@ -280,6 +280,28 @@ async fn apply_set(
 }
 
 #[tokio::test]
+async fn unqualified_overlay_repin_preserves_installed_state() {
+    let mut fixture = overlay_fixture("overlay-unqualified-repin").await;
+    let original = state(&mut fixture.base.source).await;
+    let predecessor = read_package_directory(&fixture.predecessor).unwrap();
+    let candidate = read_package_directory(&fixture.candidate).unwrap();
+    assert_eq!(candidate.migrations, predecessor.migrations);
+    let error = crate::apply_package::apply_package(apply_request(
+        fixture.base.source_database.url(),
+        &fixture.candidate,
+    ))
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains(
+            "installed overlay successors require coordinated base upgrade qualification"
+        ),
+        "{error:#}"
+    );
+    assert_eq!(state(&mut fixture.base.source).await, original);
+}
+
+#[tokio::test]
 async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     let mut fixture = overlay_fixture("overlay-retained").await;
     let original = state(&mut fixture.base.source).await;
