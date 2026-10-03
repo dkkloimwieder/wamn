@@ -24,6 +24,8 @@
 //! the environments first and commits the system rows last, and an
 //! activation commits the system rows first.
 //!
+//! `project.create` writes a project of the org with no environment, and
+//! `project-admin` in it for each `org-admin` of the org (§5.1).
 //! `environment.create` writes one create-environment saga and all of its
 //! steps in the write transaction, with the SQL text of
 //! `wamn_control_provision::saga`, and `wamn-ctl serve` runs it (§5.2).
@@ -43,6 +45,7 @@ use wamn_control_provision::saga::{
     self, STEPS, create_environment_refusals_sql, create_environment_saga_sql, environment_target,
     project_sagas_sql,
 };
+use wamn_control_registry::identifiers::valid_project;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_platform_identity::application::{
@@ -53,10 +56,10 @@ use wamn_platform_identity::control::{
     control_projects, is_org_admin, is_project_admin, org_projects,
 };
 use wamn_platform_identity::org::{
-    EnvironmentStatus, MemberGrants, deactivate_org_membership, grant_member, grant_org_admin,
-    grant_project_admin, invite_member, org_environments, org_users, project_envs, project_members,
-    reactivate_org_membership, revoke_member, revoke_org_admin, revoke_project_admin,
-    set_environment_status, status_environments, user_contact,
+    EnvironmentStatus, MemberGrants, create_project, deactivate_org_membership, grant_member,
+    grant_org_admin, grant_project_admin, invite_member, org_environments, org_users, project_envs,
+    project_members, reactivate_org_membership, revoke_member, revoke_org_admin,
+    revoke_project_admin, set_environment_status, status_environments, user_contact,
 };
 use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
@@ -93,6 +96,7 @@ impl From<IdentityError> for Refusal {
         let (code, field) = match error.refusal() {
             Some(IdentityRefusal::Invalid(field)) => ("invalid_input", field),
             Some(IdentityRefusal::ProjectNotFound) => ("project_not_found", "project"),
+            Some(IdentityRefusal::ProjectExists) => ("project_exists", "project"),
             Some(IdentityRefusal::EnvironmentNotFound) => ("environment_not_found", "env"),
             Some(IdentityRefusal::UserNotActive) => ("user_not_active", "principal_id"),
             Some(IdentityRefusal::UserNotFound) => ("user_not_found", "principal_id"),
@@ -414,6 +418,20 @@ impl ControlRoutes<'_> {
                 self.set_status(attachment, caller, &request.project, None, status)
                     .await?;
                 Ok(json!({ "project": request.project, "status": status.as_str() }))
+            }
+            HostHandler::ProjectCreate => {
+                let request: ProjectRequest = parse(payload)?;
+                if !valid_project(&request.project) {
+                    return Err(Refusal::Declared {
+                        code: "invalid_input",
+                        detail: json!({ "field": "project" }),
+                    });
+                }
+                let mut writer = self.writer.lock().await;
+                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                create_project(&transaction, self.org, &request.project).await?;
+                transaction.commit().await?;
+                Ok(json!({ "project": request.project }))
             }
             HostHandler::EnvironmentCreate => {
                 let request: saga::EnvironmentRequest = parse(payload)?;

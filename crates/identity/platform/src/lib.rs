@@ -467,6 +467,8 @@ pub enum IdentityRefusal {
     Invalid(&'static str),
     /// The project is not a project of the org.
     ProjectNotFound,
+    /// The project is a project of the org already.
+    ProjectExists,
     /// The environment is not an environment of the org.
     EnvironmentNotFound,
     /// The principal is not an active member of the org.

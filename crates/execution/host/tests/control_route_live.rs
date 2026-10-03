@@ -1292,3 +1292,156 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn project_create_writes_a_project_that_every_org_admin_administers() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("control_project_create")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let control_url = install(&admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&admin, admin_url, "ledger").await?;
+
+    // Two org admins and a project admin of billing.
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&provisioning],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    for (email, name, grants) in [
+        (
+            "boss@example.test",
+            "Boss",
+            MemberGrants {
+                org_admin: true,
+                ..MemberGrants::default()
+            },
+        ),
+        (
+            "dee@example.test",
+            "Dee",
+            MemberGrants {
+                org_admin: true,
+                ..MemberGrants::default()
+            },
+        ),
+        (
+            "cat@example.test",
+            "Cat",
+            MemberGrants {
+                project_admins: vec!["billing".to_owned()],
+                ..MemberGrants::default()
+            },
+        ),
+    ] {
+        let user = create_or_reuse_user(&admin, email, name)
+            .await?
+            .principal_id;
+        invite_member(&admin, &user, ORG, &grants).await?;
+        ids.push(user);
+    }
+    let [boss, dee, cat]: [PrincipalId; 3] = ids.try_into().expect("three users");
+    let (boss, dee, cat) = (boss.as_str(), dee.as_str(), cat.as_str());
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            administration: Some(logins.clone()),
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            org: ORG.to_owned(),
+        },
+        None,
+    );
+
+    // Only an org admin creates a project, and the id is a project slug.
+    assert_eq!(
+        call(
+            &delivery,
+            "project/create",
+            cat,
+            json!({"project": "ledger"})
+        )
+        .await,
+        Err("permission denied wamn-control:project/create@0.3.0".to_owned())
+    );
+    for project in ["Ledger", "wamn-ledger", "led--ger"] {
+        assert_eq!(
+            call(
+                &delivery,
+                "project/create",
+                boss,
+                json!({"project": project})
+            )
+            .await,
+            Err(refused("invalid_input", &json!({"field": "project"}))),
+            "{project} is not a project id"
+        );
+    }
+    assert_eq!(
+        call(
+            &delivery,
+            "project/create",
+            boss,
+            json!({"project": "billing"})
+        )
+        .await,
+        Err(refused("project_exists", &json!({"field": "project"})))
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "project/create",
+            boss,
+            json!({"project": "ledger"})
+        )
+        .await,
+        Ok(json!({"project": "ledger"}))
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "project/create",
+            dee,
+            json!({"project": "ledger"})
+        )
+        .await,
+        Err(refused("project_exists", &json!({"field": "project"}))),
+        "ledger exists"
+    );
+
+    // The project has no environment, and each org admin, and only they,
+    // holds project-admin in it.
+    let projects = call(&delivery, "project/list", dee, json!({}))
+        .await
+        .expect("an org admin lists the projects");
+    assert_eq!(projects["projects"], json!(["billing", "ledger", "shop"]));
+    let listed = call(
+        &delivery,
+        "environment/list",
+        dee,
+        json!({"project": "ledger"}),
+    )
+    .await
+    .expect("an org admin lists the environments of ledger");
+    assert_eq!(listed, json!({"environments": [], "sagas": []}));
+    let mut admins: Vec<String> = admin
+        .query(
+            "SELECT principal_id::text FROM identity.project_roles \
+              WHERE org = $1 AND project = 'ledger' AND role = 'project-admin'",
+            &[&ORG],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    admins.sort();
+    let mut expected = vec![boss.to_owned(), dee.to_owned()];
+    expected.sort();
+    assert_eq!(admins, expected);
+    let _ = std::fs::remove_dir_all(&logins);
+    Ok(())
+}

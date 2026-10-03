@@ -314,6 +314,44 @@ pub async fn materialize_admin_grants(
     Ok(())
 }
 
+const CREATE_PROJECT_SQL: &str =
+    "INSERT INTO registry.projects (org, id) VALUES ($1, $2) ON CONFLICT (org, id) DO NOTHING";
+
+/// Create a project of the org with no environment, and give each `org-admin`
+/// of the org `project-admin` in it. A project that exists refuses.
+pub async fn create_project(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+    project: &str,
+) -> Result<(), IdentityError> {
+    let org = checked_scope_segment("org", org)?;
+    let project = checked_scope_segment("project", project)?;
+    let created = client
+        .execute(CREATE_PROJECT_SQL, &[&org, &project])
+        .await
+        .map_err(|error| database_error(&error))?;
+    if created == 0 {
+        return Err(IdentityError::refused(
+            IdentityErrorType::Conflict,
+            IdentityRefusal::ProjectExists,
+            format!("project {project} exists in org {org}"),
+        ));
+    }
+    client
+        .execute(
+            ORG_ADMINS_PROJECT_ADMIN_SQL,
+            &[
+                &org,
+                &project,
+                &control::PROJECT_ADMIN_ROLE,
+                &ORG_ADMIN_ROLE,
+            ],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    Ok(())
+}
+
 /// The checked org, when the principal is an active member of it.
 async fn active_member(
     client: &(impl GenericClient + Sync),

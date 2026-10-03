@@ -897,8 +897,9 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// operations, and it reads the projects and environments those grants
 /// cover. The `environment.create` route writes a provisioning saga and all
 /// of its steps, and the environment routes read them (owner rulings of
-/// 2026-10-02 on `wamn-zua8.3`). Only the worker updates a saga. It holds
-/// nothing else in the control database.
+/// 2026-10-02 on `wamn-zua8.3`). Only the worker updates a saga. The
+/// `project.create` route writes a project (owner ruling of 2026-10-03 on
+/// `wamn-zua8.4`). It holds nothing else in the control database.
 pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 10] = [
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
@@ -909,7 +910,7 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 10] = [
     ("provisioning", "saga_steps", &["SELECT", "INSERT"]),
     ("provisioning", "sagas", &["SELECT", "INSERT"]),
     ("registry", "project_envs", &["SELECT"]),
-    ("registry", "projects", &["SELECT"]),
+    ("registry", "projects", &["SELECT", "INSERT"]),
 ];
 
 /// The columns the control host writes in a relation of which it otherwise
@@ -937,7 +938,7 @@ pub fn grant_control_surface_sql() -> String {
 
 /// The grants of [`grant_control_surface_sql`] without the role bootstrap.
 ///
-/// The latest system migration that changes them, 0012, runs these as
+/// The latest system migration that changes them, 0013, runs these as
 /// `wamn_system`, which owns the tables and cannot create a role, so it
 /// carries the grants alone.
 pub fn control_surface_grants_sql() -> String {

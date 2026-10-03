@@ -86,6 +86,83 @@ export async function activate(
   );
 }
 
+/** Input for `wamn-control:project/create@0.3.0`. */
+export interface ProjectCreateRequest {
+  /** `text` */
+  requestId: string;
+  /** `object` */
+  value: ProjectCreateRequestValue;
+}
+
+export interface ProjectCreateRequestValue {
+  /** `text` */
+  project: string;
+}
+
+/** What `wamn-control:project/create@0.3.0` calls its input members. */
+export const PROJECT_CREATE_REQUEST_FIELDS: FieldMap = {
+  "request_id": "requestId",
+  "value": {
+    member: "value",
+    fields: {
+      "project": "project",
+    },
+  },
+};
+
+/** Result of `wamn-control:project/create@0.3.0`. */
+export interface ProjectCreateResult {
+  /** `text` */
+  readonly project: string;
+}
+
+/** What `wamn-control:project/create@0.3.0` calls its result members. */
+export const PROJECT_CREATE_RESULT_FIELDS: FieldMap = {
+  "project": "project",
+};
+
+/**
+ * Where the release publishes `wamn-control:project/create@0.3.0`.
+ *
+ * Method and template only. The host and base URL are the application's
+ * deployment configuration, not this release's facts.
+ */
+export const PROJECT_CREATE_ROUTE: OperationRoute = {
+  operation: "wamn-control:project/create@0.3.0",
+  method: "POST",
+  template: "/wamn_control/project/create",
+  freshOnly: false,
+  contract: {
+    resultClass: "one",
+    partialSchema: null,
+    errors: [
+      { literal: "invalid_input", required: ["field"], sources: ["malformed_input"], text: null },
+      { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
+      { literal: "project_exists", required: ["field"], sources: ["transaction_invariant"], text: "This project is a project of the org already." },
+    ],
+    replay: null,
+    direct: true,
+    type: "command",
+    transaction: "explicit_per_input",
+    reads: [],
+    writes: null,
+  },
+};
+
+/** Invoke `wamn-control:project/create@0.3.0` through a transport the application supplies. */
+export async function create(
+  transport: Transport,
+  items: readonly ProjectCreateRequest[],
+): Promise<Outcome<ProjectCreateResult>> {
+  return reviveOutcome<ProjectCreateResult>(
+    await transport.invoke({
+      ...PROJECT_CREATE_ROUTE,
+      items: items.map((item) => toWire(item, PROJECT_CREATE_REQUEST_FIELDS)),
+    }),
+    PROJECT_CREATE_RESULT_FIELDS,
+  );
+}
+
 /** Input for `wamn-control:project/inactivate@0.3.0`. */
 export interface ProjectInactivateRequest {
   /** `text` */

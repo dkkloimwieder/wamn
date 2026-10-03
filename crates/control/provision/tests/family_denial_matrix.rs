@@ -379,6 +379,7 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
             "provisioning.sagas|SELECT|table",
             "registry.project_envs|SELECT|table",
             "registry.project_envs|UPDATE|column",
+            "registry.projects|INSERT|table",
             "registry.projects|SELECT|table",
         ],
         routines: &[],

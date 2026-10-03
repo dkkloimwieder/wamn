@@ -1,7 +1,7 @@
 //! Live test of `system/0007_org_administration.sql` (wamn-a40n.3): on a
 //! control database installed before it, the migration changes the principal
 //! type `human` to `user`, creates the org tables as a fresh install has them,
-//! and, with 0008 and 0012 after it as an upgrade runs them, gives the control family
+//! and, with 0008, 0012 and 0013 after it as an upgrade runs them, gives the control family
 //! and the identity issuer the surfaces that provisioning grants. The test holds the process lock of its server, because
 //! the installers create cluster-wide roles.
 
@@ -18,6 +18,8 @@ const NEXT_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0008_environment_status.sql");
 const SAGA_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0012_saga_steps.sql");
+const PROJECT_MIGRATION: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0013_project_create.sql");
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 
 /// The relations whose principal type 0007 changes.
@@ -299,10 +301,11 @@ async fn the_migration_creates_the_org_tables_and_grants_the_provisioned_surface
     client
         .batch_execute(&format!(
             "BEGIN; SET LOCAL ROLE wamn_system; {NEXT_MIGRATION} COMMIT; \
-             BEGIN; SET LOCAL ROLE wamn_system; {SAGA_MIGRATION} COMMIT;"
+             BEGIN; SET LOCAL ROLE wamn_system; {SAGA_MIGRATION} COMMIT; \
+             BEGIN; SET LOCAL ROLE wamn_system; {PROJECT_MIGRATION} COMMIT;"
         ))
         .await
-        .expect("apply system/0008 and system/0012 as wamn_system");
+        .expect("apply system/0008, system/0012 and system/0013 as wamn_system");
     let control = surface(&client, "wamn_control").await;
     let issuer = surface(&client, "wamn_identity_issuer").await;
     client
