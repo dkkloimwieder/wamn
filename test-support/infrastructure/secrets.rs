@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use serde::Deserialize;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 
@@ -47,7 +47,12 @@ pub struct HostSecret {
     pub name: String,
 }
 
-/// Check the exact selected file set and each Secret's namespace and endpoint.
+/// Check the declared credential files and each Secret's namespace and endpoint.
+///
+/// A credential file is named `<family>.json` for a workload role family. The
+/// directory may hold other files beside the Secrets, and they are not read. A
+/// credential file that the input does not declare is refused by its name
+/// (owner ruling of 2026-10-03 on `wamn-h56j`).
 pub fn derive_host_secrets(
     directory: &Path,
     input: &HostSecretsInput,
@@ -80,33 +85,22 @@ pub fn derive_host_secrets(
         expected.len() == selected.len(),
         "host Secrets input repeats a credential file"
     );
-    let mut emitted = BTreeSet::<OsString>::new();
+    let credential_files = WorkloadRoleFamily::ALL
+        .iter()
+        .map(|family| OsString::from(format!("{}.json", family.cli_stem())))
+        .collect::<BTreeSet<_>>();
     for entry in std::fs::read_dir(directory)
         .with_context(|| format!("read Secret directory {}", directory.display()))?
     {
         let entry = entry.context("read Secret directory entry")?;
-        if entry
-            .file_type()
-            .context("read Secret file type")?
-            .is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "json")
-            // The administration prepare writes the control host's patch
-            // beside its Secret (crates/control/lib/src/dev/environment.rs).
-            && !entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".control-administration-patch.json")
-        {
-            emitted.insert(entry.file_name());
+        let name = entry.file_name();
+        if credential_files.contains(&name) && !expected.contains(&name) {
+            bail!(
+                "host credential file {} is not declared",
+                name.to_string_lossy()
+            );
         }
     }
-    ensure!(
-        emitted == expected,
-        "host credential files differ from the declaration: emitted {emitted:?}, declared {expected:?}"
-    );
     selected
         .into_iter()
         .map(|(family, file)| {
@@ -250,21 +244,21 @@ mod tests {
     }
 
     #[test]
-    fn the_control_administration_patch_beside_the_secrets_is_not_a_credential_file() {
+    fn a_stray_json_beside_the_secrets_passes() {
         let root = directory();
         let input = input();
         seed(&root, &input);
-        std::fs::write(
-            root.path()
-                .join("administration.control-administration-patch.json"),
-            b"{}",
-        )
-        .unwrap();
+        for stray in [
+            "administration.control-administration-patch.json",
+            "notes.json",
+        ] {
+            std::fs::write(root.path().join(stray), b"{}").unwrap();
+        }
         assert_eq!(derive_host_secrets(root.path(), &input).unwrap().len(), 5);
     }
 
     #[test]
-    fn missing_extra_repeated_or_empty_family_declarations_are_refused() {
+    fn an_undeclared_credential_file_refuses_with_its_name() {
         let root = directory();
         let input = input();
         seed(&root, &input);
@@ -273,20 +267,26 @@ mod tests {
             root.path().join("retention.json"),
         )
         .unwrap();
-        assert!(
+        assert_eq!(
             derive_host_secrets(root.path(), &input)
                 .unwrap_err()
-                .to_string()
-                .contains("files differ")
+                .to_string(),
+            "host credential file retention.json is not declared"
         );
-        std::fs::remove_file(root.path().join("retention.json")).unwrap();
+    }
+
+    #[test]
+    fn missing_repeated_or_empty_family_declarations_are_refused() {
+        let root = directory();
+        let input = input();
+        seed(&root, &input);
         let mut absent = input.clone();
         absent.role_families.push(WorkloadRoleFamily::Retention);
         assert!(
             derive_host_secrets(root.path(), &absent)
                 .unwrap_err()
                 .to_string()
-                .contains("files differ")
+                .contains("read Secret")
         );
         let mut repeated = input.clone();
         repeated.role_families.push(repeated.role_families[0]);
