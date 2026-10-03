@@ -88,7 +88,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     );
     assert!(fresh.iter().any(|fact| fact.contains("_immutable")));
 
-    // A pre-change project holds migrations 1–6 but has no evidence carrier.
+    // A pre-change project holds migrations 1–8 but has no evidence carrier.
     // Only this registry projection is needed to register the disposable target.
     client
         .batch_execute(
@@ -105,7 +105,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     let request = UpgradeSchemaRequest {
         system_database_url: coordinate.url().to_owned(),
         admin_database_url: Some(coordinate.url().to_owned()),
-        baseline: Some(6),
+        baseline: Some(8),
         confirm: true,
     };
     upgrade_schema(&request)
@@ -117,7 +117,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(migrations, 7);
+    assert_eq!(migrations, 9);
     upgrade_schema(&UpgradeSchemaRequest {
         baseline: None,
         ..request

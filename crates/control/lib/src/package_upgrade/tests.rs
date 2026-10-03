@@ -62,7 +62,7 @@ fn root_identity(package: PackageIdentity) -> PresentedRootIdentity {
     PresentedRootIdentity {
         package,
         statement_corpus_sha256: format!("sha256:{}", "1".repeat(64)),
-        package_weld_sha256: format!("sha256:{}", "2".repeat(64)),
+        package_identity_sha256: format!("sha256:{}", "2".repeat(64)),
         data_access_sha256: format!("sha256:{}", "3".repeat(64)),
     }
 }

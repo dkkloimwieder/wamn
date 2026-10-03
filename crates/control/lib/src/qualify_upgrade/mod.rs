@@ -78,7 +78,8 @@ pub(crate) struct PackageIdentity {
 pub(crate) struct PresentedRootIdentity {
     pub(crate) package: PackageIdentity,
     pub(crate) statement_corpus_sha256: String,
-    pub(crate) package_weld_sha256: String,
+    #[serde(rename = "package_weld_sha256")]
+    pub(crate) package_identity_sha256: String,
     pub(crate) data_access_sha256: String,
 }
 
@@ -926,7 +927,7 @@ pub(crate) fn presented_root_identity(root: &Path) -> anyhow::Result<PresentedRo
     Ok(PresentedRootIdentity {
         package: identity_from_directory(&directory)?,
         statement_corpus_sha256,
-        package_weld_sha256: digest_file("generated/package-weld.json")?,
+        package_identity_sha256: digest_file("generated/package-identity.json")?,
         data_access_sha256: digest_file(wamn_schema_generator::DATA_ACCESS_OVERLAY_PATH)?,
     })
 }

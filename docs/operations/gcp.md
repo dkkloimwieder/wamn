@@ -2083,6 +2083,15 @@ Read-only live `qualify-upgrade` ran on 2026-10-02 at 18:28:21 UTC and refused a
 
 ## 10. Epic 1 WMS upgrade acceptance, 2026-10-02
 
+Incident correction, 2026-10-03 (`wamn-a04x`): packaging ran the recorded live WMS schema changes outside deploy ownership.
+The owner reviewed and approved `deploy/sql/corrections/wamn-a04x-wms-0007.sql`.
+The correction removed the qualification objects and their migration-7 tracking row on October 3.
+Migration 6 remains. The read-only main check reports only environment migrations 7 and 8 as pending.
+The port-forward closed at 12:24:15 UTC. The resize client timed out, but GCP completed the resize at 13:25:17 UTC.
+At 13:27 UTC, Kubernetes reported no pool nodes. The backing instance group reported a stable target size of zero.
+The command outputs and timings are on `wamn-a04x`. The historical commands below retain their original record.
+Packaging continues offline. Any later live action requires separate explicit owner authorization.
+
 This record covers completed acceptance on `wamn-dev` from commit `f1f7fdb78853bdcf4f7dc3e8d0d959bf47584790`.
 The package changed from `wamn_wms@2.0.0` to `wamn_wms@2.1.0`.
 The new migration adds nullable `wms.location.description`.

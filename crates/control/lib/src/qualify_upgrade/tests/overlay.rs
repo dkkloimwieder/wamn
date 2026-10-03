@@ -45,7 +45,7 @@ fn frozen_predecessor(source: &Path, target: &Path) {
     for relative in [
         "wamn.k",
         "generated/wamn.json",
-        "generated/package-weld.json",
+        "generated/package-identity.json",
     ] {
         fs::copy(source.join(relative), target.join(relative)).unwrap();
     }
@@ -453,7 +453,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let contract_path = fixture
         .predecessor
         .join("generated/contracts/widget/get.operation.json");
-    let identity_path = fixture.predecessor.join("generated/package-weld.json");
+    let identity_path = fixture.predecessor.join("generated/package-identity.json");
     let sql = fs::read(&sql_path).unwrap();
     let contract = fs::read(&contract_path).unwrap();
     let identity_bytes = fs::read(&identity_path).unwrap();
