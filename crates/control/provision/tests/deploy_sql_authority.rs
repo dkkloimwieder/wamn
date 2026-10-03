@@ -373,8 +373,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "42",
-        "the sweep must cover exactly the 42 governed relations"
+        governed, "43",
+        "the sweep must cover exactly the 43 governed relations"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
