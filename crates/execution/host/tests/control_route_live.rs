@@ -599,7 +599,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing"})
         )
         .await,
-        Ok(json!({"environments": ["dev"]}))
+        Ok(json!({"environments": ["dev"], "sagas": []}))
     );
 
     // A membership goes to an active org member in an environment of the
@@ -1072,6 +1072,222 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             "row shop active"
         ],
         "an inactivation commits the system row after every environment"
+    );
+    let _ = std::fs::remove_dir_all(&logins);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn environment_create_writes_one_saga_that_environment_list_shows() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("control_environment_create")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let control_url = install(&admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&admin, admin_url, "create").await?;
+
+    // An org admin and a project admin of billing.
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&provisioning],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    for (email, name, grants) in [
+        (
+            "boss@example.test",
+            "Boss",
+            MemberGrants {
+                org_admin: true,
+                ..MemberGrants::default()
+            },
+        ),
+        (
+            "cat@example.test",
+            "Cat",
+            MemberGrants {
+                project_admins: vec!["billing".to_owned()],
+                ..MemberGrants::default()
+            },
+        ),
+    ] {
+        let user = create_or_reuse_user(&admin, email, name)
+            .await?
+            .principal_id;
+        invite_member(&admin, &user, ORG, &grants).await?;
+        ids.push(user);
+    }
+    let [boss, cat]: [PrincipalId; 2] = ids.try_into().expect("two users");
+    let (boss, cat) = (boss.as_str(), cat.as_str());
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            administration: Some(logins.clone()),
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            org: ORG.to_owned(),
+        },
+        None,
+    );
+    let request = |project: &str, env: &str| {
+        json!({
+            "project": project,
+            "env": env,
+            "tenant": "billing-test",
+            "route_host": "billing.example.test",
+            "packages": [{"package_id": "wamn_receiving", "version": "1.0.0"}],
+            "connections": [{
+                "instance_id": "labels",
+                "requirement_type": "blobstore",
+                "alias": "labels",
+                "definition": {"endpoint": "e", "container": "c", "prefix": "p"},
+            }],
+        })
+    };
+
+    // Only an org admin creates an environment.
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/create",
+            cat,
+            request("billing", "test")
+        )
+        .await,
+        Err("permission denied wamn-control:environment/create@0.3.0".to_owned())
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/create",
+            boss,
+            request("ledger", "test")
+        )
+        .await,
+        Err(refused("project_not_found", &json!({"field": "project"})))
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/create",
+            boss,
+            request("billing", "dev")
+        )
+        .await,
+        Err(refused("environment_exists", &json!({"field": "env"}))),
+        "billing/dev exists"
+    );
+    let created = call(
+        &delivery,
+        "environment/create",
+        boss,
+        request("billing", "test"),
+    )
+    .await
+    .expect("an org admin creates billing/test");
+    let first = created["saga_id"].as_str().expect("a saga id").to_owned();
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/create",
+            boss,
+            request("billing", "test")
+        )
+        .await,
+        Err(refused("environment_exists", &json!({"field": "env"}))),
+        "the saga of billing/test is open"
+    );
+
+    // The saga keeps the request, and every step is pending.
+    let input: String = admin
+        .query_one(
+            "SELECT input::text FROM provisioning.sagas WHERE saga_id = $1",
+            &[&first],
+        )
+        .await?
+        .get(0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&input)?,
+        request("billing", "test")
+    );
+    let listed = call(
+        &delivery,
+        "environment/list",
+        cat,
+        json!({"project": "billing"}),
+    )
+    .await
+    .expect("a project admin lists the environments");
+    assert_eq!(listed["environments"], json!(["dev"]));
+    let steps: Vec<Value> = wamn_control_provision::saga::STEPS
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            json!({
+                "step": index + 1,
+                "name": name,
+                "status": "pending",
+                "error": null,
+                "detail": null,
+                "started_at": null,
+                "finished_at": null,
+            })
+        })
+        .collect();
+    assert_eq!(
+        listed["sagas"],
+        json!([{
+            "saga_id": first,
+            "env": "test",
+            "status": "pending",
+            "last_error": null,
+            "steps": steps,
+        }])
+    );
+
+    // An abandoned saga is not open, so the environment can be created again.
+    admin
+        .execute(
+            "UPDATE provisioning.sagas SET status = 'abandoned' WHERE saga_id = $1",
+            &[&first],
+        )
+        .await?;
+    let second = call(
+        &delivery,
+        "environment/create",
+        boss,
+        request("billing", "test"),
+    )
+    .await
+    .expect("an abandoned saga leaves the environment free");
+    let listed = call(
+        &delivery,
+        "environment/list",
+        boss,
+        json!({"project": "billing"}),
+    )
+    .await
+    .expect("an org admin lists the environments");
+    let sagas: Vec<(&str, &str)> = listed["sagas"]
+        .as_array()
+        .expect("sagas")
+        .iter()
+        .map(|saga| {
+            (
+                saga["saga_id"].as_str().expect("an id"),
+                saga["status"].as_str().expect("a status"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        sagas,
+        [
+            (first.as_str(), "abandoned"),
+            (second["saga_id"].as_str().expect("a saga id"), "pending")
+        ]
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())

@@ -83,4 +83,62 @@ describe("the project screen", () => {
     expect(await screen.findByText("The user is not an active member of the org.")).toBeDefined();
     expect(toggle("project-admin ann@example.test")?.checked).toBe(false);
   });
+
+  it("shows each environment saga with its steps and the operator commands", async () => {
+    const state = controlState();
+    const step = (number: number, name: string, status: string, error: string | null, detail: JsonValue) => ({
+      step: number,
+      name,
+      status,
+      error,
+      detail,
+      started_at: null,
+      finished_at: null,
+    });
+    state.sagas["billing"] = [
+      {
+        saga_id: "saga-test",
+        env: "test",
+        status: "failed",
+        last_error: "the run plane refused",
+        steps: [
+          step(1, "provision-project-env", "completed", null, null),
+          step(2, "reconcile-run-plane", "failed", "the run plane refused", null),
+        ],
+      },
+      {
+        saga_id: "saga-stage",
+        env: "stage",
+        status: "awaiting-operator",
+        last_error: null,
+        steps: [
+          step(14, "awaiting-operator", "completed", null, {
+            commands: [
+              {
+                purpose: "the identity restart",
+                runbook: "docs/operations/gcp.md section 3.8",
+                commands: ["kubectl -n identity rollout restart deploy/identity"],
+              },
+            ],
+          }),
+        ],
+      },
+    ];
+    await open("billing", state);
+    const failed = document.querySelector('[data-saga="saga-test"]');
+    expect(failed?.textContent).toContain("test: failed, the run plane refused");
+    expect(failed?.querySelector('[data-step="reconcile-run-plane"]')?.textContent).toBe(
+      "2reconcile-run-planefailedthe run plane refused",
+    );
+    const waiting = document.querySelector('[data-saga="saga-stage"]');
+    expect(waiting?.textContent).toContain("stage: awaiting-operator");
+    expect(waiting?.querySelector('[data-slot="operator-commands"]')?.textContent).toBe(
+      "the identity restart (docs/operations/gcp.md section 3.8)kubectl -n identity rollout restart deploy/identity",
+    );
+  });
+
+  it("says when the project has no environment creation", async () => {
+    await open("shop");
+    expect(screen.getByText("No environment creation.")).toBeDefined();
+  });
 });

@@ -23,6 +23,11 @@
 //! `app_system.environment` in the same way (§5.4): an inactivation writes
 //! the environments first and commits the system rows last, and an
 //! activation commits the system rows first.
+//!
+//! `environment.create` writes one create-environment saga and all of its
+//! steps in the write transaction, with the SQL text of
+//! `wamn_control_provision::saga`, and `wamn-ctl serve` runs it (§5.2).
+//! `environment.list` answers the sagas of the project with their steps.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -34,6 +39,10 @@ use tokio::sync::Mutex;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
+use wamn_control_provision::saga::{
+    self, STEPS, create_environment_refusals_sql, create_environment_saga_sql, environment_target,
+    project_sagas_sql,
+};
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_platform_identity::application::{
@@ -268,7 +277,8 @@ impl ControlRoutes<'_> {
             HostHandler::EnvironmentList => {
                 let request: ProjectRequest = parse(payload)?;
                 let environments = project_envs(self.control, self.org, &request.project).await?;
-                Ok(json!({ "environments": environments }))
+                let sagas = self.project_sagas(&request.project).await?;
+                Ok(json!({ "environments": environments, "sagas": sagas }))
             }
             HostHandler::MemberList => {
                 let request: ProjectRequest = parse(payload)?;
@@ -405,10 +415,76 @@ impl ControlRoutes<'_> {
                     .await?;
                 Ok(json!({ "project": request.project, "status": status.as_str() }))
             }
+            HostHandler::EnvironmentCreate => {
+                let request: saga::EnvironmentRequest = parse(payload)?;
+                let mut writer = self.writer.lock().await;
+                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                let saga_id = self.create_environment(&transaction, &request).await?;
+                transaction.commit().await?;
+                Ok(json!({ "saga_id": saga_id }))
+            }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"
             ))),
         }
+    }
+
+    /// Refuse a project outside the org, and an environment that exists or
+    /// has an open saga. Then write the saga and its steps, and return its id.
+    async fn create_environment(
+        &self,
+        transaction: &Transaction<'_>,
+        request: &saga::EnvironmentRequest,
+    ) -> Result<String, Refusal> {
+        let target = environment_target(self.org, &request.project, &request.env);
+        let refusals = transaction
+            .query_one(
+                create_environment_refusals_sql(),
+                &[&self.org, &request.project, &request.env, &target],
+            )
+            .await?;
+        if !refusals.get::<_, bool>(0) {
+            return Err(Refusal::Declared {
+                code: "project_not_found",
+                detail: json!({ "field": "project" }),
+            });
+        }
+        if refusals.get::<_, bool>(1) {
+            return Err(Refusal::Declared {
+                code: "environment_exists",
+                detail: json!({ "field": "env" }),
+            });
+        }
+        let input = serde_json::to_string(request).context("encode the saga request")?;
+        let total_steps = i32::try_from(STEPS.len()).context("count the steps")?;
+        let row = transaction
+            .query_one(
+                create_environment_saga_sql(),
+                &[&target, &total_steps, &self.org, &input, &STEPS.as_slice()],
+            )
+            .await?;
+        Ok(row.get(0))
+    }
+
+    /// The create-environment sagas of one project, with their steps.
+    async fn project_sagas(&self, project: &str) -> Result<Vec<Value>, Refusal> {
+        let rows = self
+            .control
+            .query(project_sagas_sql(), &[&self.org, &project])
+            .await?;
+        rows.iter()
+            .map(|row| {
+                let steps: String = row.get(4);
+                let steps: Value = serde_json::from_str(&steps).context("decode the saga steps")?;
+                Ok(json!({
+                    "saga_id": row.get::<_, String>(0),
+                    "env": row.get::<_, Option<String>>(1),
+                    "status": row.get::<_, String>(2),
+                    "last_error": row.get::<_, Option<String>>(3),
+                    "steps": steps,
+                }))
+            })
+            .collect()
     }
 
     /// Identity creates or reuses the user, one transaction writes the org

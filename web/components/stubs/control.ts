@@ -8,6 +8,8 @@
  * `project_admin.revoke` as the control host does, over the projects
  * `billing` and `shop` with the environment `dev` each. A refusal goes through
  * the runtime's classifier, so it carries the text of its contract.
+ * `environment.list` also answers the create-environment sagas of the
+ * project, in the wire shape.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
@@ -34,6 +36,8 @@ export interface ControlState {
   readonly projectAdmins: Set<string>;
   /** `project env principal` for each environment membership. */
   readonly memberships: Set<string>;
+  /** The create-environment sagas, by project, as `environment.list` answers them. */
+  readonly sagas: Record<string, JsonValue[]>;
   /** The code the next write refuses with, and its detail, or null. */
   refuseNext: { readonly code: string; readonly detail: JsonValue } | null;
 }
@@ -49,6 +53,7 @@ export function controlState(): ControlState {
     orgAdmins: new Set([BOSS]),
     projectAdmins: new Set([`billing ${BOSS}`, `shop ${BOSS}`, `billing ${CAT}`]),
     memberships: new Set([`billing dev ${BOSS}`, `shop dev ${BOSS}`, `billing dev ${CAT}`, `billing dev ${ANN}`]),
+    sagas: {},
     refuseNext: null,
   };
 }
@@ -97,7 +102,7 @@ export function controlStub(state: ControlState = controlState()): { transport: 
       case "wamn-control:project/list":
         return completed({ projects: Object.keys(PROJECTS) });
       case "wamn-control:environment/list":
-        return completed({ environments: [...(PROJECTS[project] ?? [])] });
+        return completed({ environments: [...(PROJECTS[project] ?? [])], sagas: state.sagas[project] ?? [] });
       case "wamn-control:user/invite": {
         state.members.set(NEW, {
           email: String(value["email"]),

@@ -6,6 +6,72 @@
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "sagas[].saga_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "sagas[].env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "sagas[].status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "sagas[].last_error",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "sagas[].steps[].step",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "sagas[].steps[].name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "sagas[].steps[].status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "sagas[].steps[].error",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "sagas[].steps[].detail",
+      "type": "json",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "sagas[].steps[].started_at",
+      "type": "timestamptz",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "sagas[].steps[].finished_at",
+      "type": "timestamptz",
+      "nullable": true,
+      "values": []
     }
   ]
 }

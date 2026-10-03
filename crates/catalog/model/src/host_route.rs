@@ -158,6 +158,8 @@ pub enum HostHandler {
     ProjectActivate,
     /// Make every environment of one project inactive.
     ProjectInactivate,
+    /// Write one create-environment saga (docs/plan/platform-ui.md §5.2).
+    EnvironmentCreate,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -386,6 +388,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ProjectInactivate,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.create",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::EnvironmentCreate,
     },
 ];
 

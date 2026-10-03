@@ -12,10 +12,14 @@
  * Each write announces its outcome, a refusal shows the text of its contract
  * and the environments a partial write completed, and the screen reads the
  * members again after each write. It writes no database directly.
+ *
+ * Below the members, a read-only table shows each create-environment saga of
+ * the project from `environment.list`, with its steps and the commands that
+ * its `awaiting operator` step records (§5.2, issue 10).
  */
 
 import { environment, member, projectAdmin, user } from "@wamn/control-org-client";
-import { newRequestId, type Outcome, type Transport } from "@wamn/web-runtime";
+import { type JsonValue, newRequestId, type Outcome, type Transport } from "@wamn/web-runtime";
 import { createResource, createSignal, createUniqueId, For, type JSX, Show } from "solid-js";
 
 import { Button } from "../components/ui/button";
@@ -32,6 +36,22 @@ export interface ProjectScreenProps {
 /** The text of a control that a higher grant decides. */
 function Covered(): JSX.Element {
   return <span class="text-muted-foreground text-xs">hierarchy-controlled</span>;
+}
+
+/** One group of operator commands in the detail of the `awaiting operator` step. */
+interface OperatorCommands {
+  readonly purpose: string;
+  readonly runbook: string;
+  readonly commands: readonly string[];
+}
+
+/** The command groups of a step detail, or none. */
+function operatorCommands(detail: JsonValue | null): readonly OperatorCommands[] {
+  if (detail === null || typeof detail !== "object" || Array.isArray(detail)) {
+    return [];
+  }
+  const groups = (detail as { readonly [key: string]: JsonValue })["commands"];
+  return Array.isArray(groups) ? (groups as unknown as OperatorCommands[]) : [];
 }
 
 /** One switch with a label that only a screen reader reads. */
@@ -56,13 +76,14 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
       return outcome.status === "completed" ? outcome.value.members : [];
     },
   );
-  const [environments] = createResource(
+  const [listed] = createResource(
     () => props.project,
     async (project) => {
       const outcome = await environment.list(props.transport, [{ project }]);
-      return outcome.status === "completed" ? outcome.value.environments : [];
+      return outcome.status === "completed" ? outcome.value : { environments: [], sagas: [] };
     },
   );
+  const environments = () => listed()?.environments;
   const [users] = createResource(async () => {
     const outcome = await user.list(props.transport, [{}]);
     return outcome.status === "completed" ? outcome.value.users : [];
@@ -178,6 +199,56 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
         <Button class="self-start" onClick={() => void add()}>
           add
         </Button>
+      </section>
+      <section class="flex flex-col gap-2" data-slot="project-sagas">
+        <p class="text-sm font-semibold uppercase">environment creation</p>
+        <Show
+          when={(listed()?.sagas ?? []).length > 0}
+          fallback={<p class="text-muted-foreground text-sm">No environment creation.</p>}
+        >
+          <For each={listed()?.sagas ?? []}>
+            {(saga) => (
+              <div class="flex flex-col gap-1" data-saga={saga.sagaId}>
+                <p class="text-sm">
+                  {saga.env}: {saga.status}
+                  <Show when={saga.lastError}>{(error) => <span>, {error()}</span>}</Show>
+                </p>
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="text-left">
+                      <th>step</th>
+                      <th>name</th>
+                      <th>status</th>
+                      <th>error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={saga.steps}>
+                      {(step) => (
+                        <tr data-step={step.name}>
+                          <td>{step.step}</td>
+                          <td>{step.name}</td>
+                          <td>{step.status}</td>
+                          <td>{step.error ?? ""}</td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+                <For each={saga.steps.flatMap((step) => operatorCommands(step.detail))}>
+                  {(group) => (
+                    <div class="flex flex-col gap-1" data-slot="operator-commands">
+                      <p class="text-sm">
+                        {group.purpose} ({group.runbook})
+                      </p>
+                      <pre class="overflow-x-auto text-xs">{group.commands.join("\n")}</pre>
+                    </div>
+                  )}
+                </For>
+              </div>
+            )}
+          </For>
+        </Show>
       </section>
     </div>
   );
