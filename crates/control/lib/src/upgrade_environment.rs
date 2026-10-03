@@ -721,7 +721,16 @@ impl Run {
                         .iter()
                         .map(|package| package.root().to_owned())
                         .collect(),
-                    base_component: (changed.len() > 1).then(|| artifact.path.clone()),
+                    base_component: packages
+                        .iter()
+                        .any(|package| {
+                            package
+                                .manifest
+                                .base_dependencies
+                                .values()
+                                .any(|pin| pin.package == candidate.manifest.package.id)
+                        })
+                        .then(|| artifact.path.clone()),
                     workload: self.package_workload_target(environment).await?,
                     result: evidence_path.clone(),
                 },
