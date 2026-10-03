@@ -64,7 +64,7 @@ const FIRST_GENERATION: i64 = 1;
 /// The one connection type this verb can bind today. The enum is the closed
 /// vocabulary a caller chooses from, so a descriptor is never authored from
 /// a string.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequirementType {
     Blobstore,

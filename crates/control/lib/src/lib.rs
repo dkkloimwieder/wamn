@@ -21,6 +21,7 @@ pub mod delivery;
 pub mod dev;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
+pub mod environment_saga;
 #[cfg(feature = "ops")]
 pub mod event_advisories;
 pub mod event_streams;

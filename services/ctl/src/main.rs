@@ -7,7 +7,7 @@ mod print_platform_principals;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     component_verbs, delivery_verbs, identity_verbs, package_verbs, provisioning_verbs,
-    release_verbs, role_verbs, workflow_verbs,
+    release_verbs, role_verbs, saga_verbs, workflow_verbs,
 };
 
 #[derive(Parser)]
@@ -115,6 +115,10 @@ enum Command {
     ReconcileRunPlane(release_verbs::ReconcileRunPlaneArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
+    /// Return a failed create-environment saga to pending (wamn-zua8.3)
+    SagaResume(saga_verbs::SagaArgs),
+    /// End a failed or pending create-environment saga as abandoned (wamn-zua8.3)
+    SagaAbandon(saga_verbs::SagaArgs),
     /// Start, park, release, and list workflow runs.
     #[command(subcommand)]
     Workflow(workflow_verbs::WorkflowCommand),
@@ -181,6 +185,8 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
+        Command::SagaResume(args) => saga_verbs::resume(args).await,
+        Command::SagaAbandon(args) => saga_verbs::abandon(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
     }
 }
