@@ -543,13 +543,59 @@ The tracker records the exact commands, results, and fixing commit on `wamn-orb5
 
 ### 7.3 Epic 3: changes outside the predecessor-compatible additive subset
 
-Goal only: constraint strengthening on an existing relation, column removal, type change, backfill, and any drain or expand/contract sequence they require.
+Goal: support constraint strengthening, column removal, type change, and backfill through online expand/contract sequences.
+
+Expand/contract adds compatible structures before removing obsolete structures. Serving workloads continue throughout the sequence. A change that cannot be staged this way is refused and named.
+
+Owner scope (2026-10-03): Epic 3 implementation follows acceptance of Epic 2's two reviewed fixes and this scope. The owner resolved the final questions and authorized continuation. Implementation is offline. Live access remains parked.
+
+Each procedure consists of package-carried SQL with explicit preconditions and postconditions. Preconditions state what must hold before a step. Postconditions state what must hold after a step. Recorded manual steps are outside this epic.
+
+Each stage has one immutable package version. The installed package version advances only after the whole stage succeeds. Committed backfill progress does not mean that the new version is installed.
+
+Backfills use resumable batches. Each batch has its own transaction. The package declares the batch size. A cursor records where the next batch resumes.
+
+A platform-owned table records batches and their cursor, keyed by the stage version and marked in progress. Batch progress and the cursor persist across interruptions. A resumed stage reads the recorded cursor.
+
+The installed package version advances only after the last batch and the postcondition succeed. An abandoned stage leaves the installed version unchanged and names the retained cursor.
+
+Every stage statement uses a platform `lock_timeout` of five seconds. If a statement cannot acquire its lock, the stage stops for later resume. The platform must not retry it in a loop.
+
+Qualification tests each step against a copy with retained predecessor data. Application repeats the conditions against production state within the relevant transaction. A failed condition aborts that transaction and names the condition. Qualification alone cannot establish a data-dependent condition while serving workloads continue to write.
+
+The expand stage installs package-owned synchronization triggers. The application release writes one column, and the trigger mirrors that write. The contract stage removes the triggers. Application code does not need to write both columns.
+
+Every step must preserve compatibility with the workloads that still serve and the overlays that still consume its contracts. Changed or removed contracts require compatible intermediate stages. The contract step cannot remove structures or contracts while serving consumers still require them.
+
+Contract waits until no host serves an older release and no run pinned to an older release remains in flight. The run identity comes from `wamn_run.runs.effective_release_id`. If either condition cannot be read, contract refuses.
+
+After each contract, the environment records a floor release. This floor is the oldest release that selection permits. `select-release` refuses any release below that floor and names the contract that set it. Later upgrades must preserve this restriction. Reverse migrations and restore procedures are outside this epic.
+
+The existing package identities, complete presented-root identities, runtime schema requirement, and immutable transition history remain required. Schema relocation and execution across multiple schemas remain outside this epic. Ordinary release qualification remains required.
+
+The refusal of nontransactional migration statements remains required. This includes `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX CONCURRENTLY`, `VACUUM`, `CREATE DATABASE`, and `ALTER SYSTEM`.
 
 Owner decision (2026-10-01): migration-specific exceptions to the standard qualification checks belong to Epic 3. Epic 1 must refuse an upgrade if predecessor statements fail against the candidate schema under predecessor grants, even if candidate grants restore compatibility.
 
-One such case is a nullable column addition that breaks a predecessor whole-row query such as `to_jsonb(widget)`. The old grants do not cover the new column, so the query can fail between `apply-package` committing and data-access reconciliation completing. Epic 3 must address an explicit exception procedure for this case. This note records the requirement without scoping that procedure or adding an Epic-1 bypass.
+One such case is a nullable column addition that breaks a predecessor whole-row query such as `to_jsonb(widget)`. The old grants do not cover the new column. The query can fail between the package application commit and the data-access reconciliation commit.
 
-Scoped after Epic 2 closes.
+Epic 3 must provide an explicit online procedure for this case. It must prevent an externally visible schema/grant gap and preserve the owner of derived package privileges. It must not introduce a general qualification bypass or permit arbitrary package-authored privilege changes.
+
+For this exception, `apply-package` invokes the existing data-access owner inside the migration transaction. The schema, derived grants, and accepted evidence commit together.
+
+Implementation order:
+
+1. Define the carried procedure and immutable evidence for its steps, SQL, conditions, package identities, and serving consumers.
+2. Apply staged SQL, resumable backfills, and synchronization triggers with transactional conditions and the five-second lock limit.
+3. Provide the online whole-row grant exception without a visible compatibility gap.
+4. Guard contract against older hosts and runs, then enforce the environment's floor release.
+5. Prove the sequence with retained-data PostgreSQL tests and document its failures and retry behavior.
+
+The PostgreSQL exit covers successful staged changes, concurrent writes, failed conditions, premature contract, rollback refusal, and named refusal of unstaged changes. It also covers the whole-row grant exception under the actual predecessor privileges. Each implementation issue records its commit and proving test.
+
+Tests also cover cursor resume, declared batch size, lock timeout without automatic retry, and the synchronization trigger lifecycle. They require the installed version to remain unchanged during incomplete or abandoned backfills. The version advances only after the final postcondition succeeds. Contract tests cover older runs, unreadable consumer state, and floor enforcement after later upgrades.
+
+Live acceptance remains parked. Stopping serving workloads is not an accepted migration strategy. Epic 4 remains deferred.
 
 ### 7.4 Epic 4: upgrade in the platform UI
 
