@@ -851,9 +851,35 @@ impl SagaRun<'_> {
     }
 
     /// Step 11: release 1 selected, with a recorded qualification of the same
-    /// package set and platform images.
+    /// package set and platform images. A head that the environment already
+    /// has satisfies the step when its package set and component digests
+    /// equal those of release 1, and the later steps use that head (owner
+    /// ruling of 2026-10-03). A head with another set fails the step.
     async fn select_release(&mut self) -> anyhow::Result<()> {
-        let request = self.release_request(self.project_url().await?);
+        use crate::delivery::selection::package_set;
+        use crate::print_release_env::lookup_release_snapshot;
+        let project_url = self.project_url().await?;
+        let head = head_release(&project_url, &self.request.tenant, &self.request.env).await?;
+        let request = self.release_request(project_url);
+        if let Some(head) = head {
+            let snapshot = |release| {
+                lookup_release_snapshot(
+                    &request.database_url,
+                    &request.tenant,
+                    release,
+                    &request.artifact_base,
+                )
+            };
+            let published = package_set(&snapshot(RELEASE_ID).await?.manifest)?;
+            let current = package_set(&snapshot(head).await?.manifest)?;
+            ensure!(
+                published == current,
+                "the head release {head} of {} holds {current:?}, but release {RELEASE_ID} that \
+                 the saga published holds {published:?}",
+                self.request.env
+            );
+            return Ok(());
+        }
         crate::delivery::deployment::select(
             &crate::delivery::selection::QualificationSource::Images {
                 host: self.config.host_image.clone(),
@@ -867,7 +893,7 @@ impl SagaRun<'_> {
     }
 
     /// Step 12: the built web client of each package with a client package,
-    /// under the release digest.
+    /// under the digest of the head release.
     async fn upload_ui(&mut self) -> anyhow::Result<()> {
         use crate::web_upload::{
             ExistingObject, Sink, client_project, client_root, collect, release_hex, require_head,
@@ -877,12 +903,15 @@ impl SagaRun<'_> {
         let release: String = connect(&project_url)
             .await?
             .query_one(
-                "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
-                  WHERE tenant_id = $1 AND effective_release_id = $2",
-                &[&self.request.tenant, &i64::from(RELEASE_ID)],
+                "SELECT s.manifest_digest FROM catalog.effective_release_heads h \
+                   JOIN catalog.release_manifest_snapshots s \
+                     ON s.tenant_id = h.tenant_id \
+                    AND s.effective_release_id = h.effective_release_id \
+                  WHERE h.tenant_id = $1 AND h.environment = $2",
+                &[&self.request.tenant, &self.request.env],
             )
             .await
-            .context("read the manifest digest of release 1")?
+            .context("read the manifest digest of the head release")?
             .get(0);
         require_head(&project_url, &release).await?;
         let hex = release_hex(&release)?.to_owned();
@@ -1331,6 +1360,25 @@ async fn wait_applied(kind: &str, name: &str) -> anyhow::Result<()> {
     )
     .await
     .map(|_| ())
+}
+
+/// The head release of `environment`, if it has one.
+async fn head_release(
+    project_url: &str,
+    tenant: &str,
+    environment: &str,
+) -> anyhow::Result<Option<u32>> {
+    let row = connect(project_url)
+        .await?
+        .query_opt(
+            "SELECT effective_release_id FROM catalog.effective_release_heads \
+              WHERE tenant_id = $1 AND environment = $2",
+            &[&tenant, &environment],
+        )
+        .await
+        .context("read the head release")?;
+    row.map(|row| u32::try_from(row.get::<_, i32>(0)).context("read the head release id"))
+        .transpose()
 }
 
 /// One key of a Secret, decoded.
