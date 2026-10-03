@@ -5,7 +5,7 @@
  * membership of `dev`. In shop, only Boss is listed.
  */
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ProjectScreen } from "@wamn/ui/admin";
@@ -135,6 +135,55 @@ describe("the project screen", () => {
     expect(waiting?.querySelector('[data-slot="operator-commands"]')?.textContent).toBe(
       "the identity restart (docs/operations/gcp.md section 3.8)kubectl -n identity rollout restart deploy/identity",
     );
+  });
+
+  it("resumes a failed saga, and abandons a pending one once the operator confirms", async () => {
+    const state = controlState();
+    const saga = (sagaId: string, env: string, status: string) => ({
+      saga_id: sagaId,
+      env,
+      status,
+      last_error: status === "failed" ? "the run plane refused" : null,
+      steps: [],
+    });
+    state.sagas["billing"] = [saga("saga-test", "test", "failed"), saga("saga-stage", "stage", "awaiting-operator")];
+    const { sent } = await open("billing", state);
+    const buttons = (sagaId: string) =>
+      Array.from(document.querySelectorAll(`[data-saga="${sagaId}"] button`), (button) => button.textContent);
+    expect(buttons("saga-test")).toEqual(["resume", "abandon"]);
+    expect(buttons("saga-stage")).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "resume" }));
+    await waitFor(() =>
+      expect(document.querySelector('[data-saga="saga-test"]')?.textContent).toContain("test: pending"),
+    );
+    expect(written(sent, "environment/resume")).toEqual({ saga_id: "saga-test" });
+    expect(buttons("saga-test")).toEqual(["abandon"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "abandon" }));
+    await waitFor(() => expect(screen.getByRole("alertdialog")).toBeDefined());
+    fireEvent.click(screen.getByRole("button", { name: "cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(written(sent, "environment/abandon")).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "abandon" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("Abandon the creation of test?");
+    fireEvent.click(within(dialog).getByRole("button", { name: "abandon" }));
+    await waitFor(() =>
+      expect(document.querySelector('[data-saga="saga-test"]')?.textContent).toContain("test: abandoned"),
+    );
+    expect(written(sent, "environment/abandon")).toEqual({ saga_id: "saga-test" });
+    expect(buttons("saga-test")).toEqual([]);
+  });
+
+  it("shows a refused resume with its contract text", async () => {
+    const state = controlState();
+    state.sagas["billing"] = [{ saga_id: "saga-test", env: "test", status: "failed", last_error: null, steps: [] }];
+    await open("billing", state);
+    state.refuseNext = { code: "saga_not_resumable", detail: { field: "saga_id" } };
+    fireEvent.click(screen.getByRole("button", { name: "resume" }));
+    expect(await screen.findByText("Only a failed saga resumes.")).toBeDefined();
   });
 
   it("says when the project has no environment creation", async () => {

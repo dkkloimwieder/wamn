@@ -217,7 +217,8 @@ pub(super) async fn install_authority(
     principals: &[&str],
 ) -> anyhow::Result<()> {
     client.batch_execute("CREATE SCHEMA identity; CREATE SCHEMA provisioning; CREATE SCHEMA registry;
-        CREATE TABLE provisioning.sagas (saga_id text PRIMARY KEY);
+        CREATE TABLE provisioning.sagas (saga_id text PRIMARY KEY, status text, last_error text,
+            updated_at timestamptz);
         CREATE TABLE provisioning.saga_steps (saga_id text REFERENCES provisioning.sagas (saga_id), step int,
             PRIMARY KEY (saga_id, step));
         CREATE TABLE identity.principals (id uuid PRIMARY KEY, type text, status text);

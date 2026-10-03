@@ -154,15 +154,15 @@ pub fn lock_environment_saga_sql() -> &'static str {
       WHERE saga_id = $1 AND type = 'create-environment' FOR UPDATE"
 }
 
-/// Return the failed step of a saga to `pending`, without its error and
-/// times. Parameter: saga id.
-pub fn resume_failed_step_sql() -> &'static str {
-    "UPDATE provisioning.saga_steps \
-        SET status = 'pending', error = NULL, started_at = NULL, finished_at = NULL \
-      WHERE saga_id = $1 AND status = 'failed'"
+/// Lock one create-environment saga of an org and read its status.
+/// Parameters: saga id, org.
+pub fn lock_org_environment_saga_sql() -> &'static str {
+    "SELECT status FROM provisioning.sagas \
+      WHERE saga_id = $1 AND type = 'create-environment' AND org = $2 FOR UPDATE"
 }
 
-/// Return a saga to `pending`. Parameter: saga id.
+/// Return a saga to `pending`. The worker starts its failed step again when
+/// it claims the saga. Parameter: saga id.
 pub fn resume_saga_sql() -> &'static str {
     "UPDATE provisioning.sagas \
         SET status = 'pending', last_error = NULL, updated_at = now() \

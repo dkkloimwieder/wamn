@@ -9,7 +9,8 @@
  * `billing` and `shop` with the environment `dev` each. A refusal goes through
  * the runtime's classifier, so it carries the text of its contract.
  * `environment.list` also answers the create-environment sagas of the
- * project, in the wire shape.
+ * project, in the wire shape, and `environment.resume` and
+ * `environment.abandon` change the status of one of them.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
@@ -103,6 +104,28 @@ export function controlStub(state: ControlState = controlState()): { transport: 
         return completed({ projects: Object.keys(PROJECTS) });
       case "wamn-control:environment/list":
         return completed({ environments: [...(PROJECTS[project] ?? [])], sagas: state.sagas[project] ?? [] });
+      case "wamn-control:environment/resume":
+      case "wamn-control:environment/abandon": {
+        const sagaId = String(value["saga_id"] ?? "");
+        const saga = Object.values(state.sagas)
+          .flat()
+          .find((each) => (each as { [key: string]: JsonValue })["saga_id"] === sagaId) as
+          | { [key: string]: JsonValue }
+          | undefined;
+        if (saga === undefined) {
+          return refused(request, "saga_not_found", { field: "saga_id" });
+        }
+        const resume = route.endsWith("/resume");
+        const allowed = resume ? saga["status"] === "failed" : ["failed", "pending"].includes(String(saga["status"]));
+        if (!allowed) {
+          return refused(request, resume ? "saga_not_resumable" : "saga_not_abandonable", { field: "saga_id" });
+        }
+        saga["status"] = resume ? "pending" : "abandoned";
+        if (resume) {
+          saga["last_error"] = null;
+        }
+        return completed({ saga_id: sagaId, status: saga["status"] });
+      }
       case "wamn-control:user/invite": {
         state.members.set(NEW, {
           email: String(value["email"]),

@@ -1,0 +1,17 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.saga_id",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Saga"
+    }
+  ]
+}

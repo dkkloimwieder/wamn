@@ -351,7 +351,8 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
     // org, project and environment grants of the org operations, and reads
     // the projects and environments those grants cover, and it writes the
     // status of an environment and no other column of it. It writes a
-    // provisioning saga and its steps, reads them, and updates neither.
+    // provisioning saga and its steps and reads them. It updates the status
+    // columns of a saga and never a step. It creates a project.
     FamilyReach {
         family: WorkloadRoleFamily::Control,
         relations: &[
@@ -377,6 +378,7 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
             "provisioning.saga_steps|SELECT|table",
             "provisioning.sagas|INSERT|table",
             "provisioning.sagas|SELECT|table",
+            "provisioning.sagas|UPDATE|column",
             "registry.project_envs|SELECT|table",
             "registry.project_envs|UPDATE|column",
             "registry.projects|INSERT|table",

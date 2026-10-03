@@ -5,7 +5,88 @@
 import type { FieldMap, JsonValue, OperationRoute, Outcome, Timestamptz, Transport } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:environment/activate@0.3.0`. */
+/** Input for `wamn-control:environment/abandon@0.4.0`. */
+export interface EnvironmentAbandonRequest {
+  /** `text` */
+  requestId: string;
+  /** `object` */
+  value: EnvironmentAbandonRequestValue;
+}
+
+export interface EnvironmentAbandonRequestValue {
+  /** `text` */
+  sagaId: string;
+}
+
+/** What `wamn-control:environment/abandon@0.4.0` calls its input members. */
+export const ENVIRONMENT_ABANDON_REQUEST_FIELDS: FieldMap = {
+  "request_id": "requestId",
+  "value": {
+    member: "value",
+    fields: {
+      "saga_id": "sagaId",
+    },
+  },
+};
+
+/** Result of `wamn-control:environment/abandon@0.4.0`. */
+export interface EnvironmentAbandonResult {
+  /** `text` */
+  readonly sagaId: string;
+  /** `text` */
+  readonly status: string;
+}
+
+/** What `wamn-control:environment/abandon@0.4.0` calls its result members. */
+export const ENVIRONMENT_ABANDON_RESULT_FIELDS: FieldMap = {
+  "saga_id": "sagaId",
+  "status": "status",
+};
+
+/**
+ * Where the release publishes `wamn-control:environment/abandon@0.4.0`.
+ *
+ * Method and template only. The host and base URL are the application's
+ * deployment configuration, not this release's facts.
+ */
+export const ENVIRONMENT_ABANDON_ROUTE: OperationRoute = {
+  operation: "wamn-control:environment/abandon@0.4.0",
+  method: "POST",
+  template: "/wamn_control/environment/abandon",
+  freshOnly: false,
+  contract: {
+    resultClass: "one",
+    partialSchema: null,
+    errors: [
+      { literal: "invalid_input", required: ["field"], sources: ["malformed_input"], text: null },
+      { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
+      { literal: "saga_not_abandonable", required: ["field"], sources: ["transaction_invariant"], text: "Only a failed or pending saga is abandoned." },
+      { literal: "saga_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This saga is not a create-environment saga of the org." },
+    ],
+    replay: null,
+    direct: true,
+    type: "command",
+    transaction: "explicit_per_input",
+    reads: [],
+    writes: null,
+  },
+};
+
+/** Invoke `wamn-control:environment/abandon@0.4.0` through a transport the application supplies. */
+export async function abandon(
+  transport: Transport,
+  items: readonly EnvironmentAbandonRequest[],
+): Promise<Outcome<EnvironmentAbandonResult>> {
+  return reviveOutcome<EnvironmentAbandonResult>(
+    await transport.invoke({
+      ...ENVIRONMENT_ABANDON_ROUTE,
+      items: items.map((item) => toWire(item, ENVIRONMENT_ABANDON_REQUEST_FIELDS)),
+    }),
+    ENVIRONMENT_ABANDON_RESULT_FIELDS,
+  );
+}
+
+/** Input for `wamn-control:environment/activate@0.4.0`. */
 export interface EnvironmentActivateRequest {
   /** `text` */
   requestId: string;
@@ -20,7 +101,7 @@ export interface EnvironmentActivateRequestValue {
   project: string;
 }
 
-/** What `wamn-control:environment/activate@0.3.0` calls its input members. */
+/** What `wamn-control:environment/activate@0.4.0` calls its input members. */
 export const ENVIRONMENT_ACTIVATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -32,7 +113,7 @@ export const ENVIRONMENT_ACTIVATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:environment/activate@0.3.0`. */
+/** Result of `wamn-control:environment/activate@0.4.0`. */
 export interface EnvironmentActivateResult {
   /** `text` */
   readonly env: string;
@@ -42,7 +123,7 @@ export interface EnvironmentActivateResult {
   readonly status: string;
 }
 
-/** What `wamn-control:environment/activate@0.3.0` calls its result members. */
+/** What `wamn-control:environment/activate@0.4.0` calls its result members. */
 export const ENVIRONMENT_ACTIVATE_RESULT_FIELDS: FieldMap = {
   "env": "env",
   "project": "project",
@@ -50,13 +131,13 @@ export const ENVIRONMENT_ACTIVATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:environment/activate@0.3.0`.
+ * Where the release publishes `wamn-control:environment/activate@0.4.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ENVIRONMENT_ACTIVATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:environment/activate@0.3.0",
+  operation: "wamn-control:environment/activate@0.4.0",
   method: "POST",
   template: "/wamn_control/environment/activate",
   freshOnly: false,
@@ -78,7 +159,7 @@ export const ENVIRONMENT_ACTIVATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:environment/activate@0.3.0` through a transport the application supplies. */
+/** Invoke `wamn-control:environment/activate@0.4.0` through a transport the application supplies. */
 export async function activate(
   transport: Transport,
   items: readonly EnvironmentActivateRequest[],
@@ -92,7 +173,7 @@ export async function activate(
   );
 }
 
-/** Input for `wamn-control:environment/create@0.3.0`. */
+/** Input for `wamn-control:environment/create@0.4.0`. */
 export interface EnvironmentCreateRequest {
   /** `text` */
   requestId: string;
@@ -133,7 +214,7 @@ export interface EnvironmentCreateRequestValuePackages {
   version: string;
 }
 
-/** What `wamn-control:environment/create@0.3.0` calls its input members. */
+/** What `wamn-control:environment/create@0.4.0` calls its input members. */
 export const ENVIRONMENT_CREATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -163,25 +244,25 @@ export const ENVIRONMENT_CREATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:environment/create@0.3.0`. */
+/** Result of `wamn-control:environment/create@0.4.0`. */
 export interface EnvironmentCreateResult {
   /** `text` */
   readonly sagaId: string;
 }
 
-/** What `wamn-control:environment/create@0.3.0` calls its result members. */
+/** What `wamn-control:environment/create@0.4.0` calls its result members. */
 export const ENVIRONMENT_CREATE_RESULT_FIELDS: FieldMap = {
   "saga_id": "sagaId",
 };
 
 /**
- * Where the release publishes `wamn-control:environment/create@0.3.0`.
+ * Where the release publishes `wamn-control:environment/create@0.4.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ENVIRONMENT_CREATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:environment/create@0.3.0",
+  operation: "wamn-control:environment/create@0.4.0",
   method: "POST",
   template: "/wamn_control/environment/create",
   freshOnly: false,
@@ -203,7 +284,7 @@ export const ENVIRONMENT_CREATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:environment/create@0.3.0` through a transport the application supplies. */
+/** Invoke `wamn-control:environment/create@0.4.0` through a transport the application supplies. */
 export async function create(
   transport: Transport,
   items: readonly EnvironmentCreateRequest[],
@@ -217,7 +298,7 @@ export async function create(
   );
 }
 
-/** Input for `wamn-control:environment/inactivate@0.3.0`. */
+/** Input for `wamn-control:environment/inactivate@0.4.0`. */
 export interface EnvironmentInactivateRequest {
   /** `text` */
   requestId: string;
@@ -232,7 +313,7 @@ export interface EnvironmentInactivateRequestValue {
   project: string;
 }
 
-/** What `wamn-control:environment/inactivate@0.3.0` calls its input members. */
+/** What `wamn-control:environment/inactivate@0.4.0` calls its input members. */
 export const ENVIRONMENT_INACTIVATE_REQUEST_FIELDS: FieldMap = {
   "request_id": "requestId",
   "value": {
@@ -244,7 +325,7 @@ export const ENVIRONMENT_INACTIVATE_REQUEST_FIELDS: FieldMap = {
   },
 };
 
-/** Result of `wamn-control:environment/inactivate@0.3.0`. */
+/** Result of `wamn-control:environment/inactivate@0.4.0`. */
 export interface EnvironmentInactivateResult {
   /** `text` */
   readonly env: string;
@@ -254,7 +335,7 @@ export interface EnvironmentInactivateResult {
   readonly status: string;
 }
 
-/** What `wamn-control:environment/inactivate@0.3.0` calls its result members. */
+/** What `wamn-control:environment/inactivate@0.4.0` calls its result members. */
 export const ENVIRONMENT_INACTIVATE_RESULT_FIELDS: FieldMap = {
   "env": "env",
   "project": "project",
@@ -262,13 +343,13 @@ export const ENVIRONMENT_INACTIVATE_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:environment/inactivate@0.3.0`.
+ * Where the release publishes `wamn-control:environment/inactivate@0.4.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ENVIRONMENT_INACTIVATE_ROUTE: OperationRoute = {
-  operation: "wamn-control:environment/inactivate@0.3.0",
+  operation: "wamn-control:environment/inactivate@0.4.0",
   method: "POST",
   template: "/wamn_control/environment/inactivate",
   freshOnly: false,
@@ -290,7 +371,7 @@ export const ENVIRONMENT_INACTIVATE_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:environment/inactivate@0.3.0` through a transport the application supplies. */
+/** Invoke `wamn-control:environment/inactivate@0.4.0` through a transport the application supplies. */
 export async function inactivate(
   transport: Transport,
   items: readonly EnvironmentInactivateRequest[],
@@ -304,18 +385,18 @@ export async function inactivate(
   );
 }
 
-/** Input for `wamn-control:environment/list@0.3.0`. */
+/** Input for `wamn-control:environment/list@0.4.0`. */
 export interface EnvironmentListRequest {
   /** `text` */
   project: string;
 }
 
-/** What `wamn-control:environment/list@0.3.0` calls its input members. */
+/** What `wamn-control:environment/list@0.4.0` calls its input members. */
 export const ENVIRONMENT_LIST_REQUEST_FIELDS: FieldMap = {
   "project": "project",
 };
 
-/** Result of `wamn-control:environment/list@0.3.0`. */
+/** Result of `wamn-control:environment/list@0.4.0`. */
 export interface EnvironmentListResult {
   /** `array` */
   readonly environments: readonly string[];
@@ -353,7 +434,7 @@ export interface EnvironmentListResultSagasSteps {
   readonly step: number;
 }
 
-/** What `wamn-control:environment/list@0.3.0` calls its result members. */
+/** What `wamn-control:environment/list@0.4.0` calls its result members. */
 export const ENVIRONMENT_LIST_RESULT_FIELDS: FieldMap = {
   "environments": "environments",
   "sagas": {
@@ -380,13 +461,13 @@ export const ENVIRONMENT_LIST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:environment/list@0.3.0`.
+ * Where the release publishes `wamn-control:environment/list@0.4.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const ENVIRONMENT_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:environment/list@0.3.0",
+  operation: "wamn-control:environment/list@0.4.0",
   method: "GET",
   template: "/wamn_control/environment/list",
   freshOnly: false,
@@ -406,7 +487,7 @@ export const ENVIRONMENT_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:environment/list@0.3.0` through a transport the application supplies. */
+/** Invoke `wamn-control:environment/list@0.4.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly EnvironmentListRequest[],
@@ -417,5 +498,86 @@ export async function list(
       items: items.map((item) => toWire(item, ENVIRONMENT_LIST_REQUEST_FIELDS)),
     }),
     ENVIRONMENT_LIST_RESULT_FIELDS,
+  );
+}
+
+/** Input for `wamn-control:environment/resume@0.4.0`. */
+export interface EnvironmentResumeRequest {
+  /** `text` */
+  requestId: string;
+  /** `object` */
+  value: EnvironmentResumeRequestValue;
+}
+
+export interface EnvironmentResumeRequestValue {
+  /** `text` */
+  sagaId: string;
+}
+
+/** What `wamn-control:environment/resume@0.4.0` calls its input members. */
+export const ENVIRONMENT_RESUME_REQUEST_FIELDS: FieldMap = {
+  "request_id": "requestId",
+  "value": {
+    member: "value",
+    fields: {
+      "saga_id": "sagaId",
+    },
+  },
+};
+
+/** Result of `wamn-control:environment/resume@0.4.0`. */
+export interface EnvironmentResumeResult {
+  /** `text` */
+  readonly sagaId: string;
+  /** `text` */
+  readonly status: string;
+}
+
+/** What `wamn-control:environment/resume@0.4.0` calls its result members. */
+export const ENVIRONMENT_RESUME_RESULT_FIELDS: FieldMap = {
+  "saga_id": "sagaId",
+  "status": "status",
+};
+
+/**
+ * Where the release publishes `wamn-control:environment/resume@0.4.0`.
+ *
+ * Method and template only. The host and base URL are the application's
+ * deployment configuration, not this release's facts.
+ */
+export const ENVIRONMENT_RESUME_ROUTE: OperationRoute = {
+  operation: "wamn-control:environment/resume@0.4.0",
+  method: "POST",
+  template: "/wamn_control/environment/resume",
+  freshOnly: false,
+  contract: {
+    resultClass: "one",
+    partialSchema: null,
+    errors: [
+      { literal: "invalid_input", required: ["field"], sources: ["malformed_input"], text: null },
+      { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
+      { literal: "saga_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This saga is not a create-environment saga of the org." },
+      { literal: "saga_not_resumable", required: ["field"], sources: ["transaction_invariant"], text: "Only a failed saga resumes." },
+    ],
+    replay: null,
+    direct: true,
+    type: "command",
+    transaction: "explicit_per_input",
+    reads: [],
+    writes: null,
+  },
+};
+
+/** Invoke `wamn-control:environment/resume@0.4.0` through a transport the application supplies. */
+export async function resume(
+  transport: Transport,
+  items: readonly EnvironmentResumeRequest[],
+): Promise<Outcome<EnvironmentResumeResult>> {
+  return reviveOutcome<EnvironmentResumeResult>(
+    await transport.invoke({
+      ...ENVIRONMENT_RESUME_ROUTE,
+      items: items.map((item) => toWire(item, ENVIRONMENT_RESUME_REQUEST_FIELDS)),
+    }),
+    ENVIRONMENT_RESUME_RESULT_FIELDS,
   );
 }

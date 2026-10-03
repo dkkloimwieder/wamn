@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:environment/create@0.3.0",
+  "operation": "wamn-control:environment/create@0.4.0",
   "type": "command",
   "label": "Create an environment",
-  "grant": "wamn-control:environment/create@0.3.0",
+  "grant": "wamn-control:environment/create@0.4.0",
   "permission_token": "environment.create",
   "result": "one",
   "transaction": "explicit_per_input",

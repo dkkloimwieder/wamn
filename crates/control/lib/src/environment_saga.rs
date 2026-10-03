@@ -5,37 +5,34 @@
 //! `input` and every step in `provisioning.saga_steps`, so `environment.list`
 //! shows the whole chain from the start. The request types, the steps and the
 //! SQL text live in `wamn_control_provision::saga`, so the control host carries
-//! no code of this crate. `wamn-ctl serve` alone updates a saga and its steps,
-//! with the functions here. It runs the steps in [`STEPS`] order, one saga per
+//! no code of this crate. `wamn-ctl serve` alone runs a saga and updates its
+//! steps, with the functions here. It runs the steps in [`STEPS`] order, one saga per
 //! org at a time. A failure leaves the step `failed` with its error, and the
 //! saga `failed`. The last step writes the operator commands into its `detail`
 //! and leaves the saga `awaiting-operator`. [`saga_resume`] and
-//! [`saga_abandon`] are the two ways out of a failure.
+//! [`saga_abandon`] are the two ways out of a failure. The routes
+//! `environment.resume` and `environment.abandon` write the same saga
+//! statuses with the same SQL, and never a step.
 
 use anyhow::{Context as _, bail};
 use serde_json::Value;
 use tokio_postgres::{Client, GenericClient, Transaction};
 use wamn_control_provision::saga::{
     EnvironmentRequest, abandon_saga_sql, await_operator_sql, complete_step_sql, fail_step_sql,
-    lock_environment_saga_sql, next_open_saga_sql, resume_failed_step_sql, resume_saga_sql,
-    start_step_sql,
+    lock_environment_saga_sql, next_open_saga_sql, resume_saga_sql, start_step_sql,
 };
 
 #[cfg(doc)]
 use wamn_control_provision::saga::STEPS;
 
-/// Return a `failed` saga to `pending`: its failed step becomes `pending`
-/// again, without its error and times, and the worker runs it next.
+/// Return a `failed` saga to `pending`. Its failed step keeps its error until
+/// the worker claims the saga and starts that step again.
 pub async fn saga_resume(client: &mut Client, saga_id: &str) -> anyhow::Result<()> {
     let transaction = client.transaction().await.context("open the transaction")?;
     let status = lock_saga(&transaction, saga_id).await?;
     if status != "failed" {
         bail!("saga {saga_id} is {status}; only a failed saga resumes");
     }
-    transaction
-        .execute(resume_failed_step_sql(), &[&saga_id])
-        .await
-        .context("return the failed step to pending")?;
     transaction
         .execute(resume_saga_sql(), &[&saga_id])
         .await

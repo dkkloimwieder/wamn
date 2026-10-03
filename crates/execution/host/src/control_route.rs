@@ -30,6 +30,9 @@
 //! steps in the write transaction, with the SQL text of
 //! `wamn_control_provision::saga`, and `wamn-ctl serve` runs it (§5.2).
 //! `environment.list` answers the sagas of the project with their steps.
+//! `environment.resume` returns a failed saga to `pending`, and
+//! `environment.abandon` ends a failed or pending saga. They write the
+//! saga's status only, and the worker starts the failed step again.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -42,8 +45,8 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
 use wamn_control_provision::saga::{
-    self, STEPS, create_environment_refusals_sql, create_environment_saga_sql, environment_target,
-    project_sagas_sql,
+    self, STEPS, abandon_saga_sql, create_environment_refusals_sql, create_environment_saga_sql,
+    environment_target, lock_org_environment_saga_sql, project_sagas_sql, resume_saga_sql,
 };
 use wamn_control_registry::identifiers::valid_project;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
@@ -172,6 +175,12 @@ struct MemberRequest {
 struct EnvironmentRequest {
     project: String,
     env: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SagaRequest {
+    saga_id: String,
 }
 
 #[derive(Deserialize)]
@@ -441,6 +450,17 @@ impl ControlRoutes<'_> {
                 transaction.commit().await?;
                 Ok(json!({ "saga_id": saga_id }))
             }
+            HostHandler::EnvironmentResume | HostHandler::EnvironmentAbandon => {
+                let request: SagaRequest = parse(payload)?;
+                let resume = attachment.route.handler == HostHandler::EnvironmentResume;
+                let mut writer = self.writer.lock().await;
+                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                let status = self
+                    .end_failure(&transaction, &request.saga_id, resume)
+                    .await?;
+                transaction.commit().await?;
+                Ok(json!({ "saga_id": request.saga_id, "status": status }))
+            }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"
             ))),
@@ -482,6 +502,48 @@ impl ControlRoutes<'_> {
             )
             .await?;
         Ok(row.get(0))
+    }
+
+    /// Return a `failed` saga of the org to `pending`, or end a `failed` or
+    /// `pending` one as `abandoned`, and return the new status. A `running`
+    /// saga belongs to the worker. The steps stay as they are.
+    async fn end_failure(
+        &self,
+        transaction: &Transaction<'_>,
+        saga_id: &str,
+        resume: bool,
+    ) -> Result<&'static str, Refusal> {
+        let status: String = transaction
+            .query_opt(lock_org_environment_saga_sql(), &[&saga_id, &self.org])
+            .await?
+            .ok_or_else(|| Refusal::Declared {
+                code: "saga_not_found",
+                detail: json!({ "field": "saga_id" }),
+            })?
+            .get(0);
+        let (allowed, code, sql, next) = if resume {
+            (
+                status == "failed",
+                "saga_not_resumable",
+                resume_saga_sql(),
+                "pending",
+            )
+        } else {
+            (
+                status == "failed" || status == "pending",
+                "saga_not_abandonable",
+                abandon_saga_sql(),
+                "abandoned",
+            )
+        };
+        if !allowed {
+            return Err(Refusal::Declared {
+                code,
+                detail: json!({ "field": "saga_id" }),
+            });
+        }
+        transaction.execute(sql, &[&saga_id]).await?;
+        Ok(next)
     }
 
     /// The create-environment sagas of one project, with their steps.

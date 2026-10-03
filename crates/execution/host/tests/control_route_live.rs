@@ -337,7 +337,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     ] {
         assert_eq!(
             call(&delivery, operation, ann.as_str(), json!({})).await,
-            Err(format!("permission denied wamn-control:{operation}@0.3.0"))
+            Err(format!("permission denied wamn-control:{operation}@0.4.0"))
         );
     }
 
@@ -488,7 +488,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         .await?;
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.3.0".to_owned())
+        Err("permission denied wamn-control:project/list@0.4.0".to_owned())
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -565,7 +565,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     ] {
         assert_eq!(
             call(&delivery, operation, ann, payload).await,
-            Err(format!("permission denied wamn-control:{operation}@0.3.0"))
+            Err(format!("permission denied wamn-control:{operation}@0.4.0"))
         );
     }
     assert_eq!(
@@ -576,7 +576,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "shop"})
         )
         .await,
-        Err("permission denied wamn-control:environment/list@0.3.0".to_owned())
+        Err("permission denied wamn-control:environment/list@0.4.0".to_owned())
     );
     // A project admin reads the org's users, and holds no other org route.
     assert_eq!(
@@ -589,7 +589,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     );
     assert_eq!(
         call(&delivery, "project/list", cat, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.3.0".to_owned())
+        Err("permission denied wamn-control:project/list@0.4.0".to_owned())
     );
     assert_eq!(
         call(
@@ -687,7 +687,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing"})
         )
         .await,
-        Err("permission denied wamn-control:environment/list@0.3.0".to_owned())
+        Err("permission denied wamn-control:environment/list@0.4.0".to_owned())
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -963,7 +963,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             billing_dev.clone()
         )
         .await,
-        Err("permission denied wamn-control:environment/inactivate@0.3.0".to_owned())
+        Err("permission denied wamn-control:environment/inactivate@0.4.0".to_owned())
     );
     assert_eq!(
         call(
@@ -1157,7 +1157,7 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
             request("billing", "test")
         )
         .await,
-        Err("permission denied wamn-control:environment/create@0.3.0".to_owned())
+        Err("permission denied wamn-control:environment/create@0.4.0".to_owned())
     );
     assert_eq!(
         call(
@@ -1289,6 +1289,86 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
             (second["saga_id"].as_str().expect("a saga id"), "pending")
         ]
     );
+
+    // Only an org admin resumes or abandons a saga of the org, and only from
+    // the status that allows it. The routes write the saga, never a step.
+    let second = second["saga_id"].as_str().expect("a saga id").to_owned();
+    let saga = |saga_id: &str| json!({ "saga_id": saga_id });
+    assert_eq!(
+        call(&delivery, "environment/resume", cat, saga(&second)).await,
+        Err("permission denied wamn-control:environment/resume@0.4.0".to_owned())
+    );
+    assert_eq!(
+        call(&delivery, "environment/abandon", cat, saga(&second)).await,
+        Err("permission denied wamn-control:environment/abandon@0.4.0".to_owned())
+    );
+    assert_eq!(
+        call(&delivery, "environment/resume", boss, saga("missing")).await,
+        Err(refused("saga_not_found", &json!({"field": "saga_id"})))
+    );
+    assert_eq!(
+        call(&delivery, "environment/resume", boss, saga(&second)).await,
+        Err(refused("saga_not_resumable", &json!({"field": "saga_id"}))),
+        "a pending saga does not resume"
+    );
+    assert_eq!(
+        call(&delivery, "environment/abandon", boss, saga(&first)).await,
+        Err(refused(
+            "saga_not_abandonable",
+            &json!({"field": "saga_id"})
+        )),
+        "an abandoned saga stays abandoned"
+    );
+    admin
+        .batch_execute(&format!(
+            "UPDATE provisioning.saga_steps SET status = 'failed', error = 'refused' \
+              WHERE saga_id = '{second}' AND step = 1; \
+             UPDATE provisioning.sagas SET status = 'failed', last_error = 'refused' \
+              WHERE saga_id = '{second}';"
+        ))
+        .await?;
+    assert_eq!(
+        call(&delivery, "environment/resume", boss, saga(&second)).await,
+        Ok(json!({"saga_id": second, "status": "pending"}))
+    );
+    let row = admin
+        .query_one(
+            "SELECT s.status, s.last_error, t.status, t.error \
+               FROM provisioning.sagas s JOIN provisioning.saga_steps t USING (saga_id) \
+              WHERE s.saga_id = $1 AND t.step = 1",
+            &[&second],
+        )
+        .await?;
+    assert_eq!(
+        (
+            row.get::<_, String>(0),
+            row.get::<_, Option<String>>(1),
+            row.get::<_, String>(2),
+            row.get::<_, Option<String>>(3),
+        ),
+        (
+            "pending".to_owned(),
+            None,
+            "failed".to_owned(),
+            Some("refused".to_owned())
+        ),
+        "the saga is pending, and its failed step waits for the worker"
+    );
+    assert_eq!(
+        call(&delivery, "environment/abandon", boss, saga(&second)).await,
+        Ok(json!({"saga_id": second, "status": "abandoned"}))
+    );
+    admin
+        .execute(
+            "UPDATE provisioning.sagas SET org = 'other' WHERE saga_id = $1",
+            &[&second],
+        )
+        .await?;
+    assert_eq!(
+        call(&delivery, "environment/abandon", boss, saga(&second)).await,
+        Err(refused("saga_not_found", &json!({"field": "saga_id"}))),
+        "a saga of another org is not found"
+    );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }
@@ -1366,7 +1446,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             json!({"project": "ledger"})
         )
         .await,
-        Err("permission denied wamn-control:project/create@0.3.0".to_owned())
+        Err("permission denied wamn-control:project/create@0.4.0".to_owned())
     );
     for project in ["Ledger", "wamn-ledger", "led--ger"] {
         assert_eq!(

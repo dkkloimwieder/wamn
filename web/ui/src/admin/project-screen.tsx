@@ -13,9 +13,12 @@
  * and the environments a partial write completed, and the screen reads the
  * members again after each write. It writes no database directly.
  *
- * Below the members, a read-only table shows each create-environment saga of
- * the project from `environment.list`, with its steps and the commands that
- * its `awaiting operator` step records (§5.2, issue 10).
+ * Below the members, a table shows each create-environment saga of the
+ * project from `environment.list`, with its steps and the commands that its
+ * `awaiting operator` step records (§5.2, issue 10). A failed saga has a
+ * resume button, which calls `environment.resume`. A failed or pending saga
+ * has an abandon button, which the operator confirms first and which calls
+ * `environment.abandon` (issue 11).
  */
 
 import { environment, member, projectAdmin, user } from "@wamn/control-org-client";
@@ -24,6 +27,7 @@ import { createResource, createSignal, createUniqueId, For, type JSX, Show } fro
 
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
+import { ConfirmAction } from "../confirm";
 import { ChoiceField } from "../fields";
 import { announceOutcome } from "../outcome";
 import { controlRefusal } from "./refusal";
@@ -76,7 +80,7 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
       return outcome.status === "completed" ? outcome.value.members : [];
     },
   );
-  const [listed] = createResource(
+  const [listed, { refetch: refetchListed }] = createResource(
     () => props.project,
     async (project) => {
       const outcome = await environment.list(props.transport, [{ project }]);
@@ -120,6 +124,17 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
     } else {
       await settle(await projectAdmin.revoke(props.transport, [item]), "project-admin revoke");
     }
+  };
+
+  /** Resumes a failed saga, or abandons a failed or pending one, and reads the sagas again. */
+  const endFailure = async (sagaId: string, resume: boolean) => {
+    const item = [{ requestId: newRequestId(), value: { sagaId } }];
+    const outcome = resume
+      ? await environment.resume(props.transport, item)
+      : await environment.abandon(props.transport, item);
+    announceOutcome(outcome, resume ? "saga resume" : "saga abandon");
+    setRefusal(outcome.status === "refused" ? controlRefusal(outcome) : null);
+    await refetchListed();
   };
 
   const add = async () => {
@@ -213,6 +228,22 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
                   {saga.env}: {saga.status}
                   <Show when={saga.lastError}>{(error) => <span>, {error()}</span>}</Show>
                 </p>
+                <div class="flex gap-2">
+                  <Show when={saga.status === "failed"}>
+                    <Button class="self-start" onClick={() => void endFailure(saga.sagaId, true)}>
+                      resume
+                    </Button>
+                  </Show>
+                  <Show when={saga.status === "failed" || saga.status === "pending"}>
+                    <ConfirmAction
+                      trigger="abandon"
+                      question={`Abandon the creation of ${saga.env ?? "this environment"}?`}
+                      confirm="abandon"
+                      cancel="cancel"
+                      onConfirm={() => void endFailure(saga.sagaId, false)}
+                    />
+                  </Show>
+                </div>
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="text-left">

@@ -897,7 +897,7 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// operations, and it reads the projects and environments those grants
 /// cover. The `environment.create` route writes a provisioning saga and all
 /// of its steps, and the environment routes read them (owner rulings of
-/// 2026-10-02 on `wamn-zua8.3`). Only the worker updates a saga. The
+/// 2026-10-02 on `wamn-zua8.3`). Only the worker updates a step. The
 /// `project.create` route writes a project (owner ruling of 2026-10-03 on
 /// `wamn-zua8.4`). It holds nothing else in the control database.
 pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 10] = [
@@ -917,9 +917,18 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 10] = [
 /// only reads, with the privilege it holds on them. The status routes write
 /// the status of an environment (docs/plan/platform-ui.md §5.4, owner ruling
 /// of 2026-10-02 on `wamn-zua8.2`). The other columns of
-/// `registry.project_envs` belong to provisioning.
-pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
-    [("registry", "project_envs", "UPDATE", &["status"])];
+/// `registry.project_envs` belong to provisioning. The routes
+/// `environment.resume` and `environment.abandon` write the status of a saga,
+/// and never a step (owner ruling of 2026-10-03 on `wamn-zua8.4`).
+pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 2] = [
+    (
+        "provisioning",
+        "sagas",
+        "UPDATE",
+        &["status", "last_error", "updated_at"],
+    ),
+    ("registry", "project_envs", "UPDATE", &["status"]),
+];
 
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
 pub const CONTROL_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
@@ -938,7 +947,7 @@ pub fn grant_control_surface_sql() -> String {
 
 /// The grants of [`grant_control_surface_sql`] without the role bootstrap.
 ///
-/// The latest system migration that changes them, 0013, runs these as
+/// The latest system migration that changes them, 0014, runs these as
 /// `wamn_system`, which owns the tables and cannot create a role, so it
 /// carries the grants alone.
 pub fn control_surface_grants_sql() -> String {

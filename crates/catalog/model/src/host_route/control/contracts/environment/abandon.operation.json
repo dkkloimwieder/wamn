@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:environment/abandon@0.4.0",
+  "type": "command",
+  "label": "Abandon an environment saga",
+  "grant": "wamn-control:environment/abandon@0.4.0",
+  "permission_token": "environment.abandon",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

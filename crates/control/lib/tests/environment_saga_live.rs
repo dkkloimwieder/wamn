@@ -199,13 +199,25 @@ async fn the_saga_records_its_steps_resumes_and_abandons() {
         .expect("resume the failed saga");
     let (status, steps) = statuses(&client, &first).await;
     assert_eq!(status, "pending");
-    assert_eq!(steps[1], "2 reconcile-run-plane pending -");
-    let refused = environment_saga::saga_resume(&mut client, &first)
+    assert_eq!(
+        steps[1], "2 reconcile-run-plane failed the run plane refused",
+        "the failed step keeps its error until the worker starts it"
+    );
+    environment_saga::start_step(&client, &first, 2)
+        .await
+        .expect("start step 2 again");
+    let (status, steps) = statuses(&client, &first).await;
+    assert_eq!(status, "running");
+    assert_eq!(steps[1], "2 reconcile-run-plane running -");
+    environment_saga::fail_step(&client, &first, 2, "the run plane refused")
+        .await
+        .expect("fail step 2 again");
+    let refused = environment_saga::saga_resume(&mut client, &second)
         .await
         .expect_err("a pending saga does not resume");
     assert_eq!(
         refused.to_string(),
-        format!("saga {first} is pending; only a failed saga resumes")
+        format!("saga {second} is pending; only a failed saga resumes")
     );
 
     environment_saga::saga_abandon(&mut client, &second)

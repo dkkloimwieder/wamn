@@ -1,0 +1,17 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "saga_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}
