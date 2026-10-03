@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use serde_json::Value;
-use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
+use wamn_catalog::RequirementType;
+use wamn_control::bind_connection::{self, BindConnectionRequest};
 use wamn_control::component_declaration::{authored_base_digests, render_declaration_document};
 use wamn_control::push_component::{
     self, AdmitComponentRequest, PublishAdmittedComponentOutcome, PublishAdmittedComponentRequest,

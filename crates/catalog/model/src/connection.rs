@@ -130,6 +130,23 @@ pub enum CredentialInjection {
     HostSignedRequest,
 }
 
+/// The connection types that `bind-connection` can bind today. The enum is
+/// the closed vocabulary a caller chooses from, so a descriptor is never
+/// authored from a string.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RequirementType {
+    Blobstore,
+}
+
+impl RequirementType {
+    pub fn descriptor(self) -> ConnectionTypeDescriptor {
+        match self {
+            Self::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
+        }
+    }
+}
+
 /// Versioned portable semantics for one connection type.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

@@ -5793,7 +5793,6 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "url",
- "uuid",
  "wamn-authoring-model",
  "wamn-catalog",
  "wamn-client-terminal",

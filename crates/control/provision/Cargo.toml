@@ -42,6 +42,9 @@ serde_yaml = { workspace = true }
 # the rendered clusters and the org's registry.orgs row name the same clusters.
 # A lean pure→pure edge (wamn-control-registry deps serde + serde_json only).
 wamn-control-registry = { workspace = true }
+# The create-environment saga request names a connection by the closed
+# RequirementType vocabulary (wamn-zua8.3).
+wamn-catalog = { workspace = true }
 wamn-pg-core = { workspace = true }
 # The platform principal rows take their component list, names, and derived
 # ids from the app_system model.

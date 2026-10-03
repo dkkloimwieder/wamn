@@ -842,7 +842,7 @@ mod tests {
             r#"{"endpoint":"https://objects.invalid","container":"fixture","prefix":"local/"}"#,
         )?;
         let mut input = crate::bind_connection::LocalInstanceInput {
-            requirement_type: crate::bind_connection::RequirementType::Blobstore,
+            requirement_type: wamn_catalog::RequirementType::Blobstore,
             definition,
             credential_handle: "fixture-vault-handle".to_owned(),
         };

@@ -3,7 +3,7 @@
 //!
 //! The worker polls the system database every 5 seconds with one query, and
 //! runs the oldest open create-environment saga of an org with no other
-//! running saga. It runs the steps of [`crate::environment_saga::STEPS`] in
+//! running saga. It runs the steps of [`wamn_control_provision::saga::STEPS`] in
 //! order, with the same library functions as the CLI verbs. It runs the role
 //! and privilege SQL as its own login `wamn_provisioner`, and applies
 //! Kubernetes objects with `kubectl`, which reads the ServiceAccount of the
@@ -27,10 +27,11 @@ use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::{Child, Command};
 use tokio_postgres::{Client, NoTls};
+use wamn_control_provision::saga::{EnvironmentRequest, STEPS};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_control_registry::Triple;
 
-use crate::environment_saga::{self, EnvironmentRequest, OpenSaga, STEPS};
+use crate::environment_saga::{self, OpenSaga};
 use crate::package_artifact::{
     COMPONENT_LIST, ListedComponent, OpenedPackage, PackageRegistry, PackageSource,
     open_package_source,

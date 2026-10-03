@@ -39,7 +39,7 @@ pub use component_library::{
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,
     ConnectionField, ConnectionFieldOwner, ConnectionFieldOwnership, ConnectionTypeDescriptor,
-    CredentialInjection,
+    CredentialInjection, RequirementType,
 };
 pub use host_route::{
     HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteSet, host_route_package,

@@ -6,11 +6,13 @@
 
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
-use wamn_control::bind_connection::RequirementType;
-use wamn_control::environment_saga::{
-    self, ConnectionRequest, EnvironmentRequest, PackageReference, STEPS,
-};
+use wamn_catalog::RequirementType;
+use wamn_control::environment_saga;
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
+use wamn_control_provision::saga::{
+    ConnectionRequest, EnvironmentRequest, PackageReference, STEPS, create_environment_saga_sql,
+    environment_target,
+};
 use wamn_control_provision::sql::grant_control_surface_sql;
 use wamn_test_infrastructure::locked_database;
 
@@ -50,9 +52,18 @@ async fn create(client: &mut Client, org: &str, env: &str) -> String {
         .batch_execute("SET LOCAL ROLE wamn_control")
         .await
         .expect("enter the control family");
-    let saga = environment_saga::create_environment_saga(&transaction, org, &request(env))
+    let request = request(env);
+    let target = environment_target(org, &request.project, &request.env);
+    let input = serde_json::to_string(&request).expect("encode the request");
+    let total_steps = i32::try_from(STEPS.len()).expect("count the steps");
+    let saga: String = transaction
+        .query_one(
+            create_environment_saga_sql(),
+            &[&target, &total_steps, &org, &input, &STEPS.as_slice()],
+        )
         .await
-        .expect("the control family writes the saga");
+        .expect("the control family writes the saga")
+        .get(0);
     transaction.commit().await.expect("commit the saga");
     saga
 }

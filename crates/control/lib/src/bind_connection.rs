@@ -34,7 +34,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail, ensure};
 use serde_json::Value;
 use tokio_postgres::NoTls;
-use wamn_catalog::ConnectionTypeDescriptor;
+use wamn_catalog::{ConnectionTypeDescriptor, RequirementType};
 use wamn_runtime::connection_generation::definition_hash;
 use wamn_schema_control::connections::{
     activate_connection_generation_sql, insert_component_connection_binding_sql,
@@ -61,34 +61,22 @@ SELECT requirement.requirement_json::text, requirement.requirement_hash \
         AND member.effective_release_id = $4 AND release.environment = $5)";
 const FIRST_GENERATION: i64 = 1;
 
-/// The one connection type this verb can bind today. The enum is the closed
-/// vocabulary a caller chooses from, so a descriptor is never authored from
-/// a string.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RequirementType {
-    Blobstore,
-}
-
-impl RequirementType {
-    pub fn descriptor(self) -> ConnectionTypeDescriptor {
-        match self {
-            Self::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
+/// The coordinates the type's plugin reads from a generation definition.
+/// For blobstore these are the ones `wamn_blobstore::binding::resolve`
+/// demands for the definition's `provider`, and nothing else: a key nobody
+/// reads is a key nobody validates. An `s3` definition may omit `provider`.
+fn coordinates(
+    requirement_type: RequirementType,
+    provider: Option<&str>,
+) -> anyhow::Result<&'static [&'static str]> {
+    match (requirement_type, provider) {
+        (RequirementType::Blobstore, None) => Ok(&["endpoint", "container", "prefix"]),
+        (RequirementType::Blobstore, Some("s3")) => {
+            Ok(&["provider", "endpoint", "container", "prefix"])
         }
-    }
-
-    /// The coordinates the type's plugin reads from a generation definition.
-    /// For blobstore these are the ones `wamn_blobstore::binding::resolve`
-    /// demands for the definition's `provider`, and nothing else: a key nobody
-    /// reads is a key nobody validates. An `s3` definition may omit `provider`.
-    fn coordinates(self, provider: Option<&str>) -> anyhow::Result<&'static [&'static str]> {
-        match (self, provider) {
-            (Self::Blobstore, None) => Ok(&["endpoint", "container", "prefix"]),
-            (Self::Blobstore, Some("s3")) => Ok(&["provider", "endpoint", "container", "prefix"]),
-            (Self::Blobstore, Some("gcs")) => Ok(&["provider", "container", "prefix"]),
-            (Self::Blobstore, Some(other)) => {
-                bail!("the generation definition's provider {other:?} is neither s3 nor gcs")
-            }
+        (RequirementType::Blobstore, Some("gcs")) => Ok(&["provider", "container", "prefix"]),
+        (RequirementType::Blobstore, Some(other)) => {
+            bail!("the generation definition's provider {other:?} is neither s3 nor gcs")
         }
     }
 }
@@ -157,7 +145,7 @@ pub fn validate_definition(
         Some(Value::String(provider)) => Some(provider.as_str()),
         Some(_) => bail!("the generation definition's provider must be a string"),
     };
-    let coordinates = requirement_type.coordinates(provider)?;
+    let coordinates = coordinates(requirement_type, provider)?;
     for coordinate in coordinates {
         match object.get(*coordinate) {
             Some(Value::String(value)) if !value.is_empty() => {}

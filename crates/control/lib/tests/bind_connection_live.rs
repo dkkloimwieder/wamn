@@ -22,11 +22,11 @@ use std::sync::Arc;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ConnectionTypeDescriptor,
-    DefinitionHash, WiringDocument, WiringNode, WiringTerminal,
+    DefinitionHash, RequirementType, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{AuthorWiringRequest, author_wiring};
-use wamn_control::bind_connection::{self, BindConnectionRequest, RequirementType};
+use wamn_control::bind_connection::{self, BindConnectionRequest};
 use wamn_control::push_component::admitted_projection_hash;
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
