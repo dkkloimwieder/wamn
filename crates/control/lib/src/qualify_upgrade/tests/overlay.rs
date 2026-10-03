@@ -302,6 +302,119 @@ async fn unqualified_overlay_repin_preserves_installed_state() {
 }
 
 #[tokio::test]
+async fn qualification_refuses_input_changes_before_publication() {
+    let mut fixture = overlay_fixture("overlay-input-changes").await;
+    let predecessor = fixture.base.root.join("frozen-base-predecessor");
+    frozen_predecessor(&wamn_fixture_package::package_root(), &predecessor);
+    let original = state(&mut fixture.base.source).await;
+    let mut accepted = overlay_request(&fixture, "unchanged.json");
+    accepted.predecessor_packages[0] = predecessor.clone();
+    qualify_upgrade_with_observer(
+        accepted,
+        WorkloadObserver::CapturedWithChange {
+            serving: fixture.base.serving.clone(),
+            before_publication: Box::new(|| {}),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(state(&mut fixture.base.source).await, original);
+    let append = |path: PathBuf| {
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.push(b'\n');
+        (path, bytes)
+    };
+    let contract = |path: PathBuf| {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        value["properties"]["id"]["type"] = serde_json::json!("integer");
+        (path, serde_json::to_vec(&value).unwrap())
+    };
+    let original_contract = predecessor.join("generated/contracts/widget/archive.input.json");
+    let candidate_contract = fixture
+        .base
+        .root
+        .join("candidate/generated/contracts/widget/archive.input.json");
+    let identity = fixture.predecessor.join("generated/package-identity.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&identity).unwrap()).unwrap();
+    metadata["verified_schema_state_id"] = serde_json::json!(format!("sha256:{}", "0".repeat(64)));
+    let changed_identity = wamn_execution_contract::canonical_json_bytes(&metadata);
+    let migration = fs::read_dir(fixture.predecessor.join("migrations"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    for (name, changes, expected) in [
+        (
+            "manifest",
+            vec![append(fixture.predecessor.join("generated/wamn.json"))],
+            "presented package changed during qualification",
+        ),
+        (
+            "migration",
+            vec![append(migration)],
+            "presented package changed during qualification",
+        ),
+        (
+            "identity",
+            vec![(identity, changed_identity)],
+            "presented generated or SQL bytes changed during qualification",
+        ),
+        (
+            "sql",
+            vec![append(
+                fixture.predecessor.join("generated/sql/widget/get.sql"),
+            )],
+            "statement-digest-mismatch",
+        ),
+        (
+            "contract",
+            vec![contract(original_contract.clone())],
+            "changes its contract",
+        ),
+        (
+            "both-contracts",
+            vec![contract(original_contract), contract(candidate_contract)],
+            "consumed contracts or base component bytes changed during qualification",
+        ),
+        (
+            "component",
+            vec![(fixture.component.clone(), b"changed component".to_vec())],
+            "overlay successor must change only its package coordinate and affected base version/digest",
+        ),
+    ] {
+        let restore = changes
+            .iter()
+            .map(|(path, _)| (path.clone(), fs::read(path).unwrap()))
+            .collect::<Vec<_>>();
+        let mut qualification = overlay_request(&fixture, &format!("changed-{name}.json"));
+        qualification.predecessor_packages[0] = predecessor.clone();
+        let result = qualification.result.clone();
+        let error = qualify_upgrade_with_observer(
+            qualification,
+            WorkloadObserver::CapturedWithChange {
+                serving: fixture.base.serving.clone(),
+                before_publication: Box::new(move || {
+                    for (path, bytes) in changes {
+                        fs::write(path, bytes).unwrap();
+                    }
+                }),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains(expected), "{name}: {error:#}");
+        assert!(!result.exists(), "{name} emitted qualification evidence");
+        assert_eq!(state(&mut fixture.base.source).await, original, "{name}");
+        for (path, bytes) in restore {
+            fs::write(path, bytes).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
 async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     let mut fixture = overlay_fixture("overlay-retained").await;
     let original = state(&mut fixture.base.source).await;

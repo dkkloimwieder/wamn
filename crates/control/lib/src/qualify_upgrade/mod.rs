@@ -118,6 +118,11 @@ enum WorkloadObserver {
     Live,
     #[cfg(test)]
     Captured(workload::ServingWorkloads),
+    #[cfg(test)]
+    CapturedWithChange {
+        serving: workload::ServingWorkloads,
+        before_publication: Box<dyn FnOnce() + Send + Sync>,
+    },
 }
 
 /// Qualify a direct successor without writing to the source project database.
@@ -215,6 +220,13 @@ async fn qualify_upgrade_with_observer(
         });
     }
     proof?;
+    #[cfg(test)]
+    if let WorkloadObserver::CapturedWithChange {
+        before_publication, ..
+    } = observer
+    {
+        before_publication();
+    }
     // Both callers and the scratch executors consume paths. Recheck their exact
     // migration/manifest inputs before publishing an identity for those bytes.
     for package in packages.iter().chain(&predecessors) {
@@ -475,7 +487,8 @@ async fn copy_predecessor(
             .await?
         }
         #[cfg(test)]
-        WorkloadObserver::Captured(serving) => serving.clone(),
+        WorkloadObserver::Captured(serving)
+        | WorkloadObserver::CapturedWithChange { serving, .. } => serving.clone(),
     };
     ensure!(
         serving_workloads.manifest_digest == manifest_digest,
