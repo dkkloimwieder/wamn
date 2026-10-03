@@ -69,6 +69,8 @@ The build tool requires `jq` and `sha256sum`.
 `build-only app APP_DIRECTORY...` and `build-only all` emit an artifact plan to stdout.
 Its `palette` list gives each palette component, its declaration, and its artifact: the virtualized output when the allowlist names the crate, and the raw guest otherwise.
 `virtualize-only ARTIFACT_PLAN` refuses changed inputs or raw hashes before it updates outputs. It then composes the overlays.
+After it composes, the tool writes the build index `apps/target/components.json`. Each entry gives a package or palette component's name, source crate, file, `sha256` and `recorded_at` second. A build replaces the entries of the components it built and keeps the others.
+`wamn-ctl push-package` reads the index. It refuses a component without an entry, and an entry whose file is missing or newer than its record.
 `watch-roots app APP_DIRECTORY...` lists selected source dependencies without building them.
 It also includes the shared platform WIT sources, so interface edits rebuild the selected components.
 For a manifest-only change, inspect `cargo metadata --no-deps` before deciding whether compilation is needed.

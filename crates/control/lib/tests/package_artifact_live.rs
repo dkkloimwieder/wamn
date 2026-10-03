@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use tokio_postgres::NoTls;
 use wamn_control::package_artifact::{
-    COMPONENT_BUILD_DIRECTORY, COMPONENT_LIST, ListedComponent, PackagePushDisposition,
-    PackageRegistry, PackageSource, PushPackageRequest, open_package_source, push_package,
+    COMPONENT_LIST, ListedComponent, PackagePushDisposition, PackageRegistry, PackageSource,
+    PushPackageRequest, open_package_source, push_package,
 };
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_test_infrastructure::locked_database;
@@ -172,7 +172,7 @@ async fn push_repeat_fetch_and_a_refused_fetch() {
     .expect("decode the component list");
     let built = std::fs::read(
         receiving_package()
-            .join(COMPONENT_BUILD_DIRECTORY)
+            .join("../target/virtualized/std-empty-environment")
             .join("receiving.wasm"),
     )
     .expect("read the built receiving component");

@@ -75,8 +75,8 @@ pub struct OptionalRegistryArgs {
 #[derive(Debug, Args)]
 pub struct PushPackageArgs {
     /// Root of the authored package (it holds `wamn.k`). Its built components
-    /// are read from `../target/virtualized/std-empty-environment`, where
-    /// `tools/build-components` writes them.
+    /// are read through `../target/components.json`, the build index that
+    /// `tools/build-components` writes.
     #[arg(long)]
     pub package: PathBuf,
 

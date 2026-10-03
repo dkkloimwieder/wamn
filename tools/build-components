@@ -785,6 +785,63 @@ wamn_compose() {
   done
 }
 
+# The build index (owner rulings of 2026-10-03 on wamn-zua8.3): one entry per
+# component this run built, package and palette, with its name, source crate,
+# file, sha256 and the Unix second it was recorded. push-package reads it and
+# refuses an entry whose file is missing or newer than its record. An entry
+# replaces the entry of the same name, and the other entries stay, because an
+# app build rebuilds only its own files.
+wamn_write_index() {
+  local -r artifact_plan="$1"
+  local index entries application component crate file digest recorded
+  index="$(jq -er '.target_directory' <<<"${WAMN_METADATA[0]}")/components.json" || {
+    wamn_fail 65 'cannot read the target directory of apps/Cargo.toml'
+  }
+  entries='[]'
+  for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
+    while IFS= read -r component; do
+      crate="${component//_/-}"
+      file="$(wamn_artifact_output "$artifact_plan" "$crate")" || {
+        wamn_fail 65 "the artifact plan has no output for $component"
+      }
+      entries="$(jq -c --arg name "$component" --arg crate "$crate" --arg file "$file" \
+        '. + [{name: $name, crate: $crate, file: $file}]' <<<"$entries")"
+    done < <(jq -r '(.components // {}) | keys[]' "$application")
+  done
+  entries="$(jq -c --argjson plan "$artifact_plan" --argjson members "$WAMN_PALETTE_MEMBERS" \
+    '. + [$plan.palette[] as $entry
+          | {name: $entry.component,
+             crate: ([$members[] | select(.component == $entry.component) | .package][0]),
+             file: $entry.artifact}]' <<<"$entries")"
+  recorded="$(date +%s)"
+  local -a lines=()
+  while IFS=$'\t' read -r component crate file; do
+    [[ -s "$file" ]] || wamn_fail 65 "built component is missing or empty for $component: $file"
+    digest="$(sha256sum -- "$file")" || wamn_fail 65 "cannot hash built component $file"
+    lines+=("$(jq -nc --arg name "$component" --arg crate "$crate" --arg file "$file" \
+      --arg sha256 "${digest%% *}" --argjson recorded "$recorded" \
+      '{name: $name, crate: $crate, file: $file, sha256: $sha256, recorded_at: $recorded}')")
+  done < <(jq -r '.[] | [.name, .crate, .file] | @tsv' <<<"$entries")
+  ((${#lines[@]} > 0)) || return 0
+  local previous='[]'
+  if [[ -f "$index" ]]; then
+    previous="$(jq -ce 'select(type == "array")' "$index")" || {
+      wamn_fail 65 "the build index $index is not a JSON array"
+    }
+  fi
+  trap wamn_cleanup_partial_output EXIT
+  WAMN_PENDING_OUTPUT="${index}.partial.$$"
+  printf '%s\n' "${lines[@]}" | jq -s --argjson previous "$previous" \
+    '. as $built
+     | ($built | map(.name)) as $names
+     | [$previous[] | select(.name as $name | $names | index($name) == null)] + $built
+     | sort_by(.name)' >"$WAMN_PENDING_OUTPUT" || wamn_fail 65 "cannot write the build index $index"
+  mv -f -- "$WAMN_PENDING_OUTPUT" "$index"
+  WAMN_PENDING_OUTPUT=''
+  trap - EXIT
+  printf 'build-components: indexed %s components in %s\n' "${#lines[@]}" "$index" >&2
+}
+
 if [[ "$WAMN_MODE" != virtualize-only ]]; then
   wamn_build
   wamn_check_outputs
@@ -803,3 +860,4 @@ fi
 
 wamn_virtualize "$WAMN_CURRENT_ARTIFACT_PLAN"
 wamn_compose "$WAMN_CURRENT_ARTIFACT_PLAN"
+wamn_write_index "$WAMN_CURRENT_ARTIFACT_PLAN"
