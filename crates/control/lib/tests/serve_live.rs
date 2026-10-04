@@ -15,7 +15,9 @@
 //! instance suffix is substituted, the tenant-key label is checked against
 //! the key of the tenant in its database and masked, every Secret value is
 //! replaced with one fixed marker, and the PAT annotations that each run mints
-//! anew are replaced with another. The prerequisites are in `docs/operations/running-tests.md`.
+//! anew are replaced with another. Then `read-source` and `copy-roles` of a
+//! copy saga read the new environment as their source, and copy its roles
+//! into the author database. The prerequisites are in `docs/operations/running-tests.md`.
 
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -33,8 +35,8 @@ use wamn_control::package_artifact::{
 use wamn_control::provision_system::{EmitProvisionerRequest, emit_provisioner_credential};
 use wamn_control::serve::{ServeConfig, run_saga};
 use wamn_control_provision::saga::{
-    ConnectionRequest, EnvironmentRequest, PackageReference, STEPS, create_environment_saga_sql,
-    environment_target,
+    ConnectionReplacement, ConnectionRequest, EnvironmentRequest, PackageReference, STEPS,
+    SourceRead, create_environment_saga_sql, environment_target,
 };
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -499,6 +501,89 @@ async fn a_create_environment_saga_runs_all_fifteen_steps() -> anyhow::Result<()
             kept.display()
         );
     }
+
+    // The two steps of a copy saga that read a source (wamn-zua8.4), with
+    // the environment this saga made as the source, as the worker login.
+    // A role `clerk` selects one operation in the source first.
+    let source_url = database_url(
+        &worker_url,
+        &wamn_control_provision::project_env_database_name(ORG, PROJECT, ENVIRONMENT, &instance),
+    )?;
+    let snapshot = wamn_control::print_release_env::lookup_release_snapshot(
+        &source_url,
+        TENANT,
+        1,
+        &config.release_artifact_base,
+    )
+    .await?;
+    let closures = wamn_catalog::ReleaseClosures::from_manifest(&snapshot.manifest);
+    let root = closures
+        .roots()
+        .next()
+        .context("release 1 serves an operation")?
+        .to_owned();
+    let mut source = connect(&source_url).await?;
+    let transaction = source.transaction().await?;
+    wamn_control::role_permissions::create_role(&transaction, TENANT, "clerk").await?;
+    wamn_control::role_permissions::grant_permission(
+        &transaction,
+        TENANT,
+        "clerk",
+        &root,
+        &closures,
+    )
+    .await?;
+    transaction.commit().await?;
+    let replacement = json!({"provider": "gcs", "container": "copied", "prefix": "wms/"});
+    let read = wamn_control::environment_copy::read_source(
+        &source_url,
+        ENVIRONMENT,
+        &[ConnectionReplacement {
+            instance_id: "labels".to_owned(),
+            definition: replacement.clone(),
+        }],
+    )
+    .await?;
+    assert_eq!(
+        read,
+        SourceRead {
+            release: 1,
+            packages: request.packages.clone(),
+            connections: vec![ConnectionRequest {
+                definition: replacement,
+                ..request.connections[0].clone()
+            }],
+        }
+    );
+    // `copy-roles` into the author database, which serves the same package.
+    let target_url = database_url(&worker_url, &author_database)?;
+    wamn_control::environment_copy::copy_roles(
+        &source_url,
+        ENVIRONMENT,
+        &target_url,
+        author_tenant,
+        &closures,
+    )
+    .await?;
+    let permissions = async |url: &str, tenant: &str| -> anyhow::Result<Vec<(String, String)>> {
+        Ok(connect(url)
+            .await?
+            .query(
+                "SELECT permission, required_by FROM app_system.permissions \
+                  WHERE tenant_id = $1 AND role_name = 'clerk' ORDER BY 1, 2",
+                &[&tenant],
+            )
+            .await?
+            .iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect())
+    };
+    let copied = permissions(&target_url, author_tenant).await?;
+    assert!(
+        copied.contains(&(root.clone(), root.clone())),
+        "the copy selects {root}: {copied:?}"
+    );
+    assert_eq!(copied, permissions(&source_url, TENANT).await?);
     drop(broker);
     drop(author);
     Ok(())

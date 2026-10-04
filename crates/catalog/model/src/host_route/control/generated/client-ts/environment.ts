@@ -61,7 +61,7 @@ export const ENVIRONMENT_ABANDON_ROUTE: OperationRoute = {
       { literal: "invalid_input", required: ["field"], sources: ["malformed_input"], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
       { literal: "saga_not_abandonable", required: ["field"], sources: ["transaction_invariant"], text: "Only a failed or pending saga is abandoned." },
-      { literal: "saga_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This saga is not a create-environment saga of the org." },
+      { literal: "saga_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This saga is not a create or copy saga of the org." },
     ],
     replay: null,
     direct: true,
@@ -170,6 +170,113 @@ export async function activate(
       items: items.map((item) => toWire(item, ENVIRONMENT_ACTIVATE_REQUEST_FIELDS)),
     }),
     ENVIRONMENT_ACTIVATE_RESULT_FIELDS,
+  );
+}
+
+/** Input for `wamn-control:environment/copy@0.4.0`. */
+export interface EnvironmentCopyRequest {
+  /** `text` */
+  requestId: string;
+  /** `object` */
+  value: EnvironmentCopyRequestValue;
+}
+
+export interface EnvironmentCopyRequestValue {
+  /** `array` */
+  connections: EnvironmentCopyRequestValueConnections[];
+  /** `text` */
+  env: string;
+  /** `text` */
+  project: string;
+  /** `text` */
+  routeHost: string;
+  /** `text` */
+  sourceEnv: string;
+  /** `text` */
+  tenant: string;
+}
+
+export interface EnvironmentCopyRequestValueConnections {
+  /** `json` */
+  definition: JsonValue;
+  /** `text` */
+  instanceId: string;
+}
+
+/** What `wamn-control:environment/copy@0.4.0` calls its input members. */
+export const ENVIRONMENT_COPY_REQUEST_FIELDS: FieldMap = {
+  "request_id": "requestId",
+  "value": {
+    member: "value",
+    fields: {
+      "connections": {
+        member: "connections",
+        fields: {
+          "definition": "definition",
+          "instance_id": "instanceId",
+        },
+      },
+      "env": "env",
+      "project": "project",
+      "route_host": "routeHost",
+      "source_env": "sourceEnv",
+      "tenant": "tenant",
+    },
+  },
+};
+
+/** Result of `wamn-control:environment/copy@0.4.0`. */
+export interface EnvironmentCopyResult {
+  /** `text` */
+  readonly sagaId: string;
+}
+
+/** What `wamn-control:environment/copy@0.4.0` calls its result members. */
+export const ENVIRONMENT_COPY_RESULT_FIELDS: FieldMap = {
+  "saga_id": "sagaId",
+};
+
+/**
+ * Where the release publishes `wamn-control:environment/copy@0.4.0`.
+ *
+ * Method and template only. The host and base URL are the application's
+ * deployment configuration, not this release's facts.
+ */
+export const ENVIRONMENT_COPY_ROUTE: OperationRoute = {
+  operation: "wamn-control:environment/copy@0.4.0",
+  method: "POST",
+  template: "/wamn_control/environment/copy",
+  freshOnly: false,
+  contract: {
+    resultClass: "one",
+    partialSchema: null,
+    errors: [
+      { literal: "environment_exists", required: ["field"], sources: ["transaction_invariant"], text: "This environment exists, or a saga that creates it is open." },
+      { literal: "environment_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This environment is not an environment of the org." },
+      { literal: "invalid_input", required: ["field"], sources: ["malformed_input"], text: null },
+      { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
+      { literal: "project_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This project is not a project of the org." },
+    ],
+    replay: null,
+    direct: true,
+    type: "command",
+    transaction: "explicit_per_input",
+    reads: [],
+    writes: null,
+  },
+};
+
+/** Invoke `wamn-control:environment/copy@0.4.0` through a transport the application supplies. */
+export async function copy(
+  transport: Transport,
+  items: readonly EnvironmentCopyRequest[],
+): Promise<Outcome<EnvironmentCopyResult>> {
+  return reviveOutcome<EnvironmentCopyResult>(
+    await transport.invoke({
+      ...ENVIRONMENT_COPY_ROUTE,
+      items: items.map((item) => toWire(item, ENVIRONMENT_COPY_REQUEST_FIELDS)),
+    }),
+    ENVIRONMENT_COPY_RESULT_FIELDS,
   );
 }
 
@@ -412,9 +519,13 @@ export interface EnvironmentListResultSagas {
   /** `text` */
   readonly sagaId: string;
   /** `text` */
+  readonly sourceEnv: string | null;
+  /** `text` */
   readonly status: string;
   /** `array` */
   readonly steps: readonly EnvironmentListResultSagasSteps[];
+  /** `text` */
+  readonly type: string;
 }
 
 export interface EnvironmentListResultSagasSteps {
@@ -443,6 +554,7 @@ export const ENVIRONMENT_LIST_RESULT_FIELDS: FieldMap = {
       "env": "env",
       "last_error": "lastError",
       "saga_id": "sagaId",
+      "source_env": "sourceEnv",
       "status": "status",
       "steps": {
         member: "steps",
@@ -456,6 +568,7 @@ export const ENVIRONMENT_LIST_RESULT_FIELDS: FieldMap = {
           "step": "step",
         },
       },
+      "type": "type",
     },
   },
 };
@@ -556,7 +669,7 @@ export const ENVIRONMENT_RESUME_ROUTE: OperationRoute = {
     errors: [
       { literal: "invalid_input", required: ["field"], sources: ["malformed_input"], text: null },
       { literal: "permission_denied", required: ["operation"], sources: ["permission_denied"], text: null },
-      { literal: "saga_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This saga is not a create-environment saga of the org." },
+      { literal: "saga_not_found", required: ["field"], sources: ["transaction_invariant"], text: "This saga is not a create or copy saga of the org." },
       { literal: "saga_not_resumable", required: ["field"], sources: ["transaction_invariant"], text: "Only a failed saga resumes." },
     ],
     replay: null,

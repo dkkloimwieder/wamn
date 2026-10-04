@@ -13,8 +13,8 @@
  * and the environments a partial write completed, and the screen reads the
  * members again after each write. It writes no database directly.
  *
- * Below the members, a table shows each create-environment saga of the
- * project from `environment.list`, with its steps and the commands that its
+ * Below the members, a table shows each create or copy saga of the project
+ * from `environment.list`, with its steps and the commands that its
  * `awaiting operator` step records (§5.2, issue 10). A failed saga has a
  * resume button, which calls `environment.resume`. A failed or pending saga
  * has an abandon button, which the operator confirms first and which calls
@@ -23,7 +23,9 @@
  * For an org-admin, as `control.mine` answers it, a form above the sagas
  * calls `environment.create`. It offers one version per package from
  * `package.list`, and takes each connection as typed fields and one JSON
- * object for its definition (issue 11).
+ * object for its definition (issue 11). A second form calls
+ * `environment.copy`: the source is one environment of the project, and each
+ * replacement row gives one connection a new definition.
  */
 
 import { control, environment, member, package_, projectAdmin, user } from "@wamn/control-org-client";
@@ -245,6 +247,134 @@ function CreateEnvironmentForm(props: {
   );
 }
 
+/** One replacement of the copy form, as the operator types it. */
+interface ReplacementDraft {
+  readonly key: number;
+  instanceId: string;
+  /** The definition as JSON text. */
+  definition: string;
+}
+
+/**
+ * The copy form of one environment, for an org-admin. The source is one of
+ * the environments of the project. The control login reads no project
+ * database, so the form knows no source connection: the operator adds one
+ * replacement row per connection to replace, and `read-source` names every
+ * connection with a credential that has no replacement.
+ */
+function CopyEnvironmentForm(props: {
+  transport: Transport;
+  project: string;
+  environments: readonly string[];
+  settle: (outcome: Outcome<unknown>, screen: string) => Promise<void>;
+  refuse: (text: string) => void;
+}): JSX.Element {
+  const [sourceEnv, setSourceEnv] = createSignal<string | null>(null);
+  const [env, setEnv] = createSignal("");
+  const [tenant, setTenant] = createSignal("");
+  const [routeHost, setRouteHost] = createSignal("");
+  const [replacements, setReplacements] = createSignal<ReplacementDraft[]>([]);
+  let nextKey = 0;
+
+  const edit = (key: number, change: Partial<ReplacementDraft>) =>
+    setReplacements((all) => all.map((each) => (each.key === key ? { ...each, ...change } : each)));
+
+  const copy = async () => {
+    const source = sourceEnv();
+    if (source === null) {
+      return;
+    }
+    const connections: { instanceId: string; definition: JsonValue }[] = [];
+    for (const each of replacements()) {
+      let definition: unknown;
+      try {
+        definition = JSON.parse(each.definition);
+      } catch {
+        definition = null;
+      }
+      if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
+        props.refuse(`The definition of ${each.instanceId} is not a JSON object.`);
+        return;
+      }
+      connections.push({ instanceId: each.instanceId, definition: definition as JsonValue });
+    }
+    const value = {
+      project: props.project,
+      sourceEnv: source,
+      env: env(),
+      tenant: tenant(),
+      routeHost: routeHost(),
+      connections,
+    };
+    const outcome = await environment.copy(props.transport, [{ requestId: newRequestId(), value }]);
+    await props.settle(outcome, "environment copy");
+    if (outcome.status === "completed") {
+      setSourceEnv(null);
+      setEnv("");
+      setTenant("");
+      setRouteHost("");
+      setReplacements([]);
+    }
+  };
+
+  return (
+    <section class="flex max-w-md flex-col gap-3" data-slot="project-copy-environment">
+      <p class="text-sm font-semibold uppercase">copy an environment</p>
+      <ChoiceField
+        label="source environment"
+        choices={props.environments.map((each) => ({ value: each, text: each }))}
+        allowEmpty={false}
+        value={sourceEnv()}
+        onChange={(each) => setSourceEnv(each === "" ? null : each)}
+      />
+      <TextField label="new environment name" type="text" value={env()} onInput={setEnv} />
+      <TextField label="new tenant" type="text" value={tenant()} onInput={setTenant} />
+      <TextField label="new route host" type="text" value={routeHost()} onInput={setRouteHost} />
+      <Index each={replacements()}>
+        {(draft) => {
+          const id = createUniqueId();
+          return (
+            <div class="flex flex-col gap-2" data-replacement={draft().key}>
+              <TextField
+                label="instance id"
+                type="text"
+                value={draft().instanceId}
+                onInput={(instanceId) => edit(draft().key, { instanceId })}
+              />
+              <Field>
+                <FieldLabel for={id}>definition</FieldLabel>
+                <textarea
+                  id={id}
+                  class="border-input min-h-24 rounded-md border bg-transparent p-2 font-mono text-xs"
+                  value={draft().definition}
+                  onInput={(event) => edit(draft().key, { definition: event.currentTarget.value })}
+                />
+              </Field>
+              <Button
+                class="self-start"
+                variant="outline"
+                onClick={() => setReplacements((all) => all.filter((each) => each.key !== draft().key))}
+              >
+                remove replacement
+              </Button>
+            </div>
+          );
+        }}
+      </Index>
+      <Button
+        class="self-start"
+        variant="outline"
+        onClick={() => setReplacements((all) => [...all, { key: nextKey++, instanceId: "", definition: "" }])}
+      >
+        add replacement
+      </Button>
+      <Button class="self-start" onClick={() => void copy()}>
+        copy
+      </Button>
+    </section>
+  );
+}
+
 export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
   const [refusal, setRefusal] = createSignal<string | null>(null);
   const [members, { refetch }] = createResource(
@@ -406,6 +536,13 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
           settle={settleSaga}
           refuse={(text) => setRefusal(text)}
         />
+        <CopyEnvironmentForm
+          transport={props.transport}
+          project={props.project}
+          environments={environments() ?? []}
+          settle={settleSaga}
+          refuse={(text) => setRefusal(text)}
+        />
       </Show>
       <section class="flex flex-col gap-2" data-slot="project-sagas">
         <p class="text-sm font-semibold uppercase">environment creation</p>
@@ -417,7 +554,8 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
             {(saga) => (
               <div class="flex flex-col gap-1" data-saga={saga.sagaId}>
                 <p class="text-sm">
-                  {saga.env}: {saga.status}
+                  {saga.env}
+                  <Show when={saga.sourceEnv}>{(source) => <span> (copy of {source()})</span>}</Show>: {saga.status}
                   <Show when={saga.lastError}>{(error) => <span>, {error()}</span>}</Show>
                 </p>
                 <div class="flex gap-2">

@@ -4,7 +4,9 @@
 //! `wamn-zua8.3`) keeps its request types and the SQL text of each of its
 //! records here. The `environment.create` route of the control host runs the
 //! insert, and `wamn_control::environment_saga` runs the rest for
-//! `wamn-ctl serve` (owner ruling of 2026-10-03).
+//! `wamn-ctl serve` (owner ruling of 2026-10-03). The copy-environment saga
+//! (§5.3, `wamn-zua8.4`) uses the same records, and the
+//! `environment.copy` route writes it.
 
 use serde::{Deserialize, Serialize};
 use wamn_catalog::RequirementType;
@@ -101,40 +103,144 @@ pub struct ConnectionRequest {
     pub definition: serde_json::Value,
 }
 
+/// The saga type of the copy-environment saga.
+pub const COPY_ENVIRONMENT: &str = "copy-environment";
+
+/// The steps of a copy-environment saga (owner rulings of 2026-10-03 and
+/// 2026-10-04 on `wamn-zua8.4`): `read-source`, then the steps of [`STEPS`]
+/// with `copy-roles` before `select-release`.
+pub const COPY_STEPS: [&str; 17] = [
+    "read-source",
+    "provision-project-env",
+    "reconcile-run-plane",
+    "prepare-credentials",
+    "apply-packages",
+    "reconcile-package-data-access",
+    "enable-cdc",
+    "wait-publication",
+    "admit-components",
+    "publish-release",
+    "bind-connection",
+    "push-release-manifest",
+    "copy-roles",
+    "select-release",
+    "upload-ui",
+    "materialize-admin-grants",
+    "awaiting-operator",
+];
+
+/// The request of one copy-environment saga, kept in `input`. The
+/// `environment.copy` route takes exactly this shape.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CopyRequest {
+    pub project: String,
+    /// The environment of the same project that the copy reads.
+    pub source_env: String,
+    pub env: String,
+    pub tenant: String,
+    /// The hostname applied to every HTTP route of the release.
+    pub route_host: String,
+    /// The new definitions. A source connection that this list does not
+    /// name keeps its definition.
+    pub connections: Vec<ConnectionReplacement>,
+}
+
+/// A new definition for the source connection `instance_id`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionReplacement {
+    pub instance_id: String,
+    /// The non-secret definition, a JSON object.
+    pub definition: serde_json::Value,
+}
+
+/// What `read-source` read from the source environment, with the
+/// replacements of the request applied. The step keeps it in its `detail`,
+/// and every later step of the copy reads it from there.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRead {
+    /// The head release of the source environment.
+    pub release: i32,
+    pub packages: Vec<PackageReference>,
+    pub connections: Vec<ConnectionRequest>,
+}
+
+impl CopyRequest {
+    /// The request that the create steps of the copy run with.
+    pub fn environment(&self, read: SourceRead) -> EnvironmentRequest {
+        EnvironmentRequest {
+            project: self.project.clone(),
+            env: self.env.clone(),
+            tenant: self.tenant.clone(),
+            route_host: self.route_host.clone(),
+            packages: read.packages,
+            connections: read.connections,
+        }
+    }
+}
+
 /// The `target` of the create-environment saga of one environment.
 pub fn environment_target(org: &str, project: &str, env: &str) -> String {
     format!("{org}/{project}/{env}")
 }
 
 /// Whether the project is a project of the org, and whether the environment
-/// exists or has an open saga: `pending`, `running`, or `failed`, which can
-/// resume. Parameters: org, project, env, the saga target.
+/// exists or has an open create or copy saga: `pending`, `running`, or
+/// `failed`, which can resume. Parameters: org, project, env, the saga target.
 pub fn create_environment_refusals_sql() -> &'static str {
     "SELECT EXISTS (SELECT 1 FROM registry.projects WHERE org = $1 AND id = $2), \
             EXISTS (SELECT 1 FROM registry.project_envs \
                      WHERE org = $1 AND project = $2 AND env = $3) \
          OR EXISTS (SELECT 1 FROM provisioning.sagas \
-                     WHERE type = 'create-environment' AND target = $4 \
+                     WHERE type IN ('create-environment', 'copy-environment') AND target = $4 \
                        AND status IN ('pending', 'running', 'failed'))"
+}
+
+/// Whether the environment exists in the project. Parameters: org,
+/// project, env.
+pub fn environment_exists_sql() -> &'static str {
+    "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
+                     WHERE org = $1 AND project = $2 AND env = $3)"
+}
+
+/// The insert of one saga of type `$type` and all of its steps, `pending`,
+/// that returns its new id.
+macro_rules! saga_insert_sql {
+    ($type:literal) => {
+        concat!(
+            "WITH saga AS ( \
+               INSERT INTO provisioning.sagas (saga_id, type, target, total_steps, org, input) \
+               VALUES (gen_random_uuid()::text, '",
+            $type,
+            "', $1, $2, $3, $4::text::jsonb) \
+               RETURNING saga_id), \
+             steps AS ( \
+               INSERT INTO provisioning.saga_steps (saga_id, step, name) \
+               SELECT saga.saga_id, s.step::int, s.name \
+                 FROM saga, unnest($5::text[]) WITH ORDINALITY AS s (name, step)) \
+             SELECT saga_id FROM saga"
+        )
+    };
 }
 
 /// Write one create-environment saga and all of its steps, `pending`, and
 /// return its new id. Parameters: the saga target, the step count, org, the
 /// request as JSON text, and the step names in order.
 pub fn create_environment_saga_sql() -> &'static str {
-    "WITH saga AS ( \
-       INSERT INTO provisioning.sagas (saga_id, type, target, total_steps, org, input) \
-       VALUES (gen_random_uuid()::text, 'create-environment', $1, $2, $3, $4::text::jsonb) \
-       RETURNING saga_id), \
-     steps AS ( \
-       INSERT INTO provisioning.saga_steps (saga_id, step, name) \
-       SELECT saga.saga_id, s.step::int, s.name \
-         FROM saga, unnest($5::text[]) WITH ORDINALITY AS s (name, step)) \
-     SELECT saga_id FROM saga"
+    saga_insert_sql!("create-environment")
 }
 
-/// The create-environment sagas of one project, oldest first: id, env,
-/// status, last error, and the steps as JSON text. Parameters: org, project.
+/// Write one copy-environment saga, with the parameters of
+/// [`create_environment_saga_sql`].
+pub fn copy_environment_saga_sql() -> &'static str {
+    saga_insert_sql!("copy-environment")
+}
+
+/// The create and copy sagas of one project, oldest first: id, env, status,
+/// last error, the steps as JSON text, type, and the source environment of a
+/// copy. Parameters: org, project.
 pub fn project_sagas_sql() -> &'static str {
     "SELECT s.saga_id, s.input->>'env', s.status, s.last_error, \
             (SELECT coalesce(jsonb_agg(jsonb_build_object( \
@@ -142,23 +248,26 @@ pub fn project_sagas_sql() -> &'static str {
                         'error', t.error, 'detail', t.detail, \
                         'started_at', t.started_at, 'finished_at', t.finished_at) \
                       ORDER BY t.step), '[]'::jsonb) \
-               FROM provisioning.saga_steps t WHERE t.saga_id = s.saga_id)::text \
+               FROM provisioning.saga_steps t WHERE t.saga_id = s.saga_id)::text, \
+            s.type, s.input->>'source_env' \
        FROM provisioning.sagas s \
-      WHERE s.type = 'create-environment' AND s.org = $1 AND s.input->>'project' = $2 \
+      WHERE s.type IN ('create-environment', 'copy-environment') \
+        AND s.org = $1 AND s.input->>'project' = $2 \
       ORDER BY s.created_at, s.saga_id"
 }
 
-/// Lock one create-environment saga and read its status. Parameter: saga id.
+/// Lock one create or copy saga and read its status. Parameter: saga id.
 pub fn lock_environment_saga_sql() -> &'static str {
     "SELECT status FROM provisioning.sagas \
-      WHERE saga_id = $1 AND type = 'create-environment' FOR UPDATE"
+      WHERE saga_id = $1 AND type IN ('create-environment', 'copy-environment') FOR UPDATE"
 }
 
-/// Lock one create-environment saga of an org and read its status.
+/// Lock one create or copy saga of an org and read its status.
 /// Parameters: saga id, org.
 pub fn lock_org_environment_saga_sql() -> &'static str {
     "SELECT status FROM provisioning.sagas \
-      WHERE saga_id = $1 AND type = 'create-environment' AND org = $2 FOR UPDATE"
+      WHERE saga_id = $1 AND type IN ('create-environment', 'copy-environment') \
+        AND org = $2 FOR UPDATE"
 }
 
 /// Return a saga to `pending`. The worker starts its failed step again when
@@ -175,15 +284,17 @@ pub fn abandon_saga_sql() -> &'static str {
       WHERE saga_id = $1"
 }
 
-/// The oldest `pending` or `running` create-environment saga of an org with
-/// no other running saga: its id, org, request, and first step that is not
-/// `completed`.
+/// The oldest `pending` or `running` create or copy saga of an org with no
+/// other running saga: its id, org, request, first step that is not
+/// `completed`, and type.
 pub fn next_open_saga_sql() -> &'static str {
     "SELECT s.saga_id, s.org, s.input, \
             (SELECT min(t.step) FROM provisioning.saga_steps t \
-              WHERE t.saga_id = s.saga_id AND t.status <> 'completed') \
+              WHERE t.saga_id = s.saga_id AND t.status <> 'completed'), \
+            s.type \
        FROM provisioning.sagas s \
-      WHERE s.type = 'create-environment' AND s.status IN ('pending', 'running') \
+      WHERE s.type IN ('create-environment', 'copy-environment') \
+        AND s.status IN ('pending', 'running') \
         AND NOT EXISTS ( \
             SELECT FROM provisioning.sagas o \
              WHERE o.org = s.org AND o.saga_id <> s.saga_id AND o.status = 'running') \
@@ -218,6 +329,12 @@ pub fn fail_step_sql() -> &'static str {
      UPDATE provisioning.saga_steps \
         SET status = 'failed', error = $3, finished_at = now() \
       WHERE saga_id = $1 AND step = $2"
+}
+
+/// The detail of one completed step. Parameters: saga id, step.
+pub fn step_detail_sql() -> &'static str {
+    "SELECT detail FROM provisioning.saga_steps \
+      WHERE saga_id = $1 AND step = $2 AND status = 'completed'"
 }
 
 /// Complete the last step with the operator commands in `detail`, and leave

@@ -47,7 +47,8 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
 use wamn_control_provision::saga::{
-    self, STEPS, abandon_saga_sql, create_environment_refusals_sql, create_environment_saga_sql,
+    self, COPY_STEPS, STEPS, abandon_saga_sql, copy_environment_saga_sql,
+    create_environment_refusals_sql, create_environment_saga_sql, environment_exists_sql,
     environment_target, lock_org_environment_saga_sql, project_sagas_sql, resume_saga_sql,
 };
 use wamn_control_registry::identifiers::valid_project;
@@ -462,6 +463,14 @@ impl ControlRoutes<'_> {
                 transaction.commit().await?;
                 Ok(json!({ "saga_id": saga_id }))
             }
+            HostHandler::EnvironmentCopy => {
+                let request: saga::CopyRequest = parse(payload)?;
+                let mut writer = self.writer.lock().await;
+                let transaction = self.begin(&mut writer, attachment, caller).await?;
+                let saga_id = self.copy_environment(&transaction, &request).await?;
+                transaction.commit().await?;
+                Ok(json!({ "saga_id": saga_id }))
+            }
             HostHandler::PackageList => {
                 let packages: String = self.control.query_one(PACKAGES_SQL, &[]).await?.get(0);
                 let packages: Value =
@@ -509,11 +518,68 @@ impl ControlRoutes<'_> {
                     detail: json!({ "field": "connections", "reason": reason }),
                 })?;
         }
-        let target = environment_target(self.org, &request.project, &request.env);
+        let input = serde_json::to_string(request).context("encode the saga request")?;
+        self.write_saga(
+            transaction,
+            (&request.project, &request.env, None),
+            &input,
+            create_environment_saga_sql(),
+            &STEPS,
+        )
+        .await
+    }
+
+    /// Refuse a definition that is not a JSON object, a project outside the
+    /// org, a source environment that is not an environment of the project,
+    /// and an environment that exists or has an open saga. Then write the
+    /// copy saga and its steps, and return its id. The worker's `read-source`
+    /// checks each definition against the type of its source connection.
+    async fn copy_environment(
+        &self,
+        transaction: &Transaction<'_>,
+        request: &saga::CopyRequest,
+    ) -> Result<String, Refusal> {
+        for connection in &request.connections {
+            if !connection.definition.is_object() {
+                return Err(Refusal::Declared {
+                    code: "invalid_input",
+                    detail: json!({
+                        "field": "connections",
+                        "reason": format!(
+                            "the definition of {} is not a JSON object",
+                            connection.instance_id
+                        ),
+                    }),
+                });
+            }
+        }
+        let input = serde_json::to_string(request).context("encode the saga request")?;
+        self.write_saga(
+            transaction,
+            (&request.project, &request.env, Some(&request.source_env)),
+            &input,
+            copy_environment_saga_sql(),
+            &COPY_STEPS,
+        )
+        .await
+    }
+
+    /// Refuse a project outside the org, a source environment that is not
+    /// an environment of the project, and an environment that exists or has
+    /// an open saga. Then write the saga with `sql` and return its id.
+    async fn write_saga(
+        &self,
+        transaction: &Transaction<'_>,
+        (project, env, source_env): (&str, &str, Option<&str>),
+        input: &str,
+        sql: &str,
+        steps: &[&str],
+    ) -> Result<String, Refusal> {
+        let target = environment_target(self.org, project, env);
         let refusals = transaction
             .query_one(
                 create_environment_refusals_sql(),
-                &[&self.org, &request.project, &request.env, &target],
+                &[&self.org, &project, &env, &target],
             )
             .await?;
         if !refusals.get::<_, bool>(0) {
@@ -522,19 +588,30 @@ impl ControlRoutes<'_> {
                 detail: json!({ "field": "project" }),
             });
         }
+        if let Some(source_env) = source_env {
+            let exists: bool = transaction
+                .query_one(
+                    environment_exists_sql(),
+                    &[&self.org, &project, &source_env],
+                )
+                .await?
+                .get(0);
+            if !exists {
+                return Err(Refusal::Declared {
+                    code: "environment_not_found",
+                    detail: json!({ "field": "source_env" }),
+                });
+            }
+        }
         if refusals.get::<_, bool>(1) {
             return Err(Refusal::Declared {
                 code: "environment_exists",
                 detail: json!({ "field": "env" }),
             });
         }
-        let input = serde_json::to_string(request).context("encode the saga request")?;
-        let total_steps = i32::try_from(STEPS.len()).context("count the steps")?;
+        let total_steps = i32::try_from(steps.len()).context("count the steps")?;
         let row = transaction
-            .query_one(
-                create_environment_saga_sql(),
-                &[&target, &total_steps, &self.org, &input, &STEPS.as_slice()],
-            )
+            .query_one(sql, &[&target, &total_steps, &self.org, &input, &steps])
             .await?;
         Ok(row.get(0))
     }
@@ -581,7 +658,7 @@ impl ControlRoutes<'_> {
         Ok(next)
     }
 
-    /// The create-environment sagas of one project, with their steps.
+    /// The create and copy sagas of one project, with their steps.
     async fn project_sagas(&self, project: &str) -> Result<Vec<Value>, Refusal> {
         let rows = self
             .control
@@ -594,6 +671,8 @@ impl ControlRoutes<'_> {
                 Ok(json!({
                     "saga_id": row.get::<_, String>(0),
                     "env": row.get::<_, Option<String>>(1),
+                    "type": row.get::<_, String>(5),
+                    "source_env": row.get::<_, Option<String>>(6),
                     "status": row.get::<_, String>(2),
                     "last_error": row.get::<_, Option<String>>(3),
                     "steps": steps,

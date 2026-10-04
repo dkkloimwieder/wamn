@@ -20,6 +20,18 @@
       "values": []
     },
     {
+      "path": "sagas[].type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "sagas[].source_env",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
       "path": "sagas[].status",
       "type": "text",
       "nullable": false,

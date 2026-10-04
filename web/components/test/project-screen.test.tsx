@@ -254,7 +254,51 @@ describe("the project screen", () => {
     ).toBeDefined();
   });
 
-  it("shows no create form to a project admin", async () => {
+  it("copies an environment of the project with one replacement row per connection", async () => {
+    const { sent } = await open("billing");
+    const form = await waitFor(() => {
+      const found = document.querySelector('[data-slot="project-copy-environment"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    const type = (label: string, text: string, scope: HTMLElement = form) =>
+      fireEvent.input(within(scope).getByLabelText(label), { target: { value: text } });
+    await pick("source environment", "dev");
+    type("new environment name", "test");
+    type("new tenant", "billing-test");
+    type("new route host", "billing.example.test");
+    fireEvent.click(within(form).getByRole("button", { name: "add replacement" }));
+    const replacement = await waitFor(() => form.querySelector("[data-replacement]") as HTMLElement);
+    type("instance id", "labels", replacement);
+    type("definition", '{"provider": "gcs", "container": "c", "prefix": "p"}', replacement);
+    fireEvent.click(within(form).getByRole("button", { name: "copy" }));
+    await waitFor(() =>
+      expect(document.querySelector('[data-saga="saga-test"]')?.textContent).toContain("test (copy of dev): pending"),
+    );
+    expect(written(sent, "environment/copy")).toEqual({
+      project: "billing",
+      source_env: "dev",
+      env: "test",
+      tenant: "billing-test",
+      route_host: "billing.example.test",
+      connections: [{ instance_id: "labels", definition: { provider: "gcs", container: "c", prefix: "p" } }],
+    });
+  });
+
+  it("refuses a replacement that is not a JSON object before it sends anything", async () => {
+    const { sent } = await open("billing");
+    const form = await waitFor(() => document.querySelector('[data-slot="project-copy-environment"]') as HTMLElement);
+    await pick("source environment", "dev");
+    fireEvent.click(within(form).getByRole("button", { name: "add replacement" }));
+    const replacement = await waitFor(() => form.querySelector("[data-replacement]") as HTMLElement);
+    fireEvent.input(within(replacement).getByLabelText("instance id"), { target: { value: "labels" } });
+    fireEvent.input(within(replacement).getByLabelText("definition"), { target: { value: "[1]" } });
+    fireEvent.click(within(form).getByRole("button", { name: "copy" }));
+    expect(await screen.findByText("The definition of labels is not a JSON object.")).toBeDefined();
+    expect(written(sent, "environment/copy")).toBeUndefined();
+  });
+
+  it("shows no create or copy form to a project admin", async () => {
     const state = controlState();
     state.callerOrgAdmin = false;
     const { sent } = await open("billing", state);
@@ -262,6 +306,7 @@ describe("the project screen", () => {
       expect(sent.some((each) => each.operation.startsWith("wamn-control:control/mine@"))).toBe(true),
     );
     expect(document.querySelector('[data-slot="project-create-environment"]')).toBeNull();
+    expect(document.querySelector('[data-slot="project-copy-environment"]')).toBeNull();
   });
 
   it("says when the project has no environment creation", async () => {

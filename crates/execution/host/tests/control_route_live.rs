@@ -1271,6 +1271,8 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
         json!([{
             "saga_id": first,
             "env": "test",
+            "type": "create-environment",
+            "source_env": null,
             "status": "pending",
             "last_error": null,
             "steps": steps,
@@ -1397,6 +1399,235 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
         call(&delivery, "environment/abandon", boss, saga(&second)).await,
         Err(refused("saga_not_found", &json!({"field": "saga_id"}))),
         "a saga of another org is not found"
+    );
+    let _ = std::fs::remove_dir_all(&logins);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn environment_copy_writes_one_copy_saga_that_environment_list_shows() -> anyhow::Result<()> {
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let test_database = postgres.create_database("control_environment_copy")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
+    let control_url = install(&admin, admin_url).await?;
+    let (logins, _billing, _shop) = environments(&admin, admin_url, "copy").await?;
+
+    // An org admin and a project admin of billing.
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&provisioning],
+        )
+        .await?;
+    let mut ids = Vec::new();
+    for (email, name, grants) in [
+        (
+            "boss@example.test",
+            "Boss",
+            MemberGrants {
+                org_admin: true,
+                ..MemberGrants::default()
+            },
+        ),
+        (
+            "cat@example.test",
+            "Cat",
+            MemberGrants {
+                project_admins: vec!["billing".to_owned()],
+                ..MemberGrants::default()
+            },
+        ),
+    ] {
+        let user = create_or_reuse_user(&admin, email, name)
+            .await?
+            .principal_id;
+        invite_member(&admin, &user, ORG, &grants).await?;
+        ids.push(user);
+    }
+    let [boss, cat]: [PrincipalId; 2] = ids.try_into().expect("two users");
+    let (boss, cat) = (boss.as_str(), cat.as_str());
+    let delivery = HostRouteDelivery::new(
+        Arc::new(LoadedRelease::control_root()),
+        HostRouteHandlers::Control {
+            administration: Some(logins.clone()),
+            control: Arc::new(connect(&control_url).await?),
+            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            identity: None,
+            org: ORG.to_owned(),
+        },
+        None,
+    );
+    let request = |project: &str, source_env: &str, env: &str| {
+        json!({
+            "project": project,
+            "source_env": source_env,
+            "env": env,
+            "tenant": "billing-test",
+            "route_host": "billing.example.test",
+            "connections": [{
+                "instance_id": "labels",
+                "definition": {"provider": "gcs", "container": "c", "prefix": "p"},
+            }],
+        })
+    };
+
+    // Only an org admin copies an environment.
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/copy",
+            cat,
+            request("billing", "dev", "test")
+        )
+        .await,
+        Err("permission denied wamn-control:environment/copy@0.4.0".to_owned())
+    );
+
+    // The route reads no project database, so it refuses only a definition
+    // that is not a JSON object. `read-source` checks the rest.
+    let mut not_object = request("billing", "dev", "test");
+    not_object["connections"][0]["definition"] = json!(["c"]);
+    assert_eq!(
+        call(&delivery, "environment/copy", boss, not_object).await,
+        Err(refused(
+            "invalid_input",
+            &json!({
+                "field": "connections",
+                "reason": "the definition of labels is not a JSON object",
+            })
+        ))
+    );
+    for (copy, code, field) in [
+        (
+            request("ledger", "dev", "test"),
+            "project_not_found",
+            "project",
+        ),
+        (
+            request("billing", "stage", "test"),
+            "environment_not_found",
+            "source_env",
+        ),
+        (
+            request("billing", "dev", "dev"),
+            "environment_exists",
+            "env",
+        ),
+    ] {
+        assert_eq!(
+            call(&delivery, "environment/copy", boss, copy).await,
+            Err(refused(code, &json!({ "field": field })))
+        );
+    }
+    let written: i64 = admin
+        .query_one("SELECT count(*) FROM provisioning.sagas", &[])
+        .await?
+        .get(0);
+    assert_eq!(written, 0, "a refused copy writes no saga");
+
+    let copied = call(
+        &delivery,
+        "environment/copy",
+        boss,
+        request("billing", "dev", "test"),
+    )
+    .await
+    .expect("an org admin copies billing/dev to billing/test");
+    let saga_id = copied["saga_id"].as_str().expect("a saga id").to_owned();
+
+    // An open copy holds the environment against a second copy and a create.
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/copy",
+            boss,
+            request("billing", "dev", "test")
+        )
+        .await,
+        Err(refused("environment_exists", &json!({"field": "env"})))
+    );
+    let mut create = request("billing", "dev", "test");
+    let create = create.as_object_mut().expect("an object");
+    create.remove("source_env");
+    create.insert("packages".to_owned(), json!([]));
+    create.insert("connections".to_owned(), json!([]));
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/create",
+            boss,
+            Value::Object(create.clone())
+        )
+        .await,
+        Err(refused("environment_exists", &json!({"field": "env"})))
+    );
+
+    // The saga keeps the request, and every step is pending.
+    let (kind, input): (String, String) = admin
+        .query_one(
+            "SELECT type, input::text FROM provisioning.sagas WHERE saga_id = $1",
+            &[&saga_id],
+        )
+        .await
+        .map(|row| (row.get(0), row.get(1)))?;
+    assert_eq!(kind, "copy-environment");
+    assert_eq!(
+        serde_json::from_str::<Value>(&input)?,
+        request("billing", "dev", "test")
+    );
+    let steps: Vec<Value> = wamn_control_provision::saga::COPY_STEPS
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            json!({
+                "step": index + 1,
+                "name": name,
+                "status": "pending",
+                "error": null,
+                "detail": null,
+                "started_at": null,
+                "finished_at": null,
+            })
+        })
+        .collect();
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/list",
+            cat,
+            json!({"project": "billing"})
+        )
+        .await
+        .expect("a project admin lists the environments")["sagas"],
+        json!([{
+            "saga_id": saga_id,
+            "env": "test",
+            "type": "copy-environment",
+            "source_env": "dev",
+            "status": "pending",
+            "last_error": null,
+            "steps": steps,
+        }])
+    );
+
+    // Resume and abandon take a copy saga as they take a create saga.
+    let saga = json!({ "saga_id": saga_id });
+    admin
+        .execute(
+            "UPDATE provisioning.sagas SET status = 'failed', last_error = 'refused' \
+              WHERE saga_id = $1",
+            &[&saga_id],
+        )
+        .await?;
+    assert_eq!(
+        call(&delivery, "environment/resume", boss, saga.clone()).await,
+        Ok(json!({"saga_id": saga_id, "status": "pending"}))
+    );
+    assert_eq!(
+        call(&delivery, "environment/abandon", boss, saga).await,
+        Ok(json!({"saga_id": saga_id, "status": "abandoned"}))
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())

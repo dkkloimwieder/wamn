@@ -809,14 +809,15 @@ CREATE TABLE provisioning.sagas (
     org         text,
     input       jsonb,
     CONSTRAINT sagas_type_check
-        CHECK (type IN ('provision-org', 'provision-project-env', 'create-environment')),
+        CHECK (type IN ('provision-org', 'provision-project-env', 'create-environment',
+                        'copy-environment')),
     CONSTRAINT sagas_status_check
         CHECK (status IN ('pending', 'running', 'completed', 'failed',
                           'compensating', 'compensated', 'abandoned',
                           'awaiting-operator')),
     CONSTRAINT sagas_step_nonneg CHECK (step >= 0),
     CONSTRAINT sagas_create_environment_input
-        CHECK (type <> 'create-environment'
+        CHECK (type NOT IN ('create-environment', 'copy-environment')
                OR (org IS NOT NULL AND jsonb_typeof(input) = 'object'))
 );
 

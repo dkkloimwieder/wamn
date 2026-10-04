@@ -40,7 +40,7 @@ export interface ControlState {
   readonly projectAdmins: Set<string>;
   /** `project env principal` for each environment membership. */
   readonly memberships: Set<string>;
-  /** The create-environment sagas, by project, as `environment.list` answers them. */
+  /** The create and copy sagas, by project, as `environment.list` answers them. */
   readonly sagas: Record<string, JsonValue[]>;
   /** The code the next write refuses with, and its detail, or null. */
   refuseNext: { readonly code: string; readonly detail: JsonValue } | null;
@@ -129,6 +129,21 @@ export function controlStub(state: ControlState = controlState()): { transport: 
         (state.sagas[project] ??= []).push({
           saga_id: sagaId,
           env: value["env"] ?? null,
+          type: "create-environment",
+          source_env: null,
+          status: "pending",
+          last_error: null,
+          steps: [],
+        });
+        return completed({ saga_id: sagaId });
+      }
+      case "wamn-control:environment/copy": {
+        const sagaId = `saga-${String(value["env"])}`;
+        (state.sagas[project] ??= []).push({
+          saga_id: sagaId,
+          env: value["env"] ?? null,
+          type: "copy-environment",
+          source_env: value["source_env"] ?? null,
           status: "pending",
           last_error: null,
           steps: [],

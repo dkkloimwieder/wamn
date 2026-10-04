@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:environment/copy@0.4.0",
+  "type": "command",
+  "label": "Copy an environment",
+  "grant": "wamn-control:environment/copy@0.4.0",
+  "permission_token": "environment.copy",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -238,6 +238,6 @@ async fn the_saga_records_its_steps_resumes_and_abandons() {
         .expect_err("an unknown saga is refused");
     assert_eq!(
         refused.to_string(),
-        "no create-environment saga has the id missing"
+        "no create or copy saga has the id missing"
     );
 }

@@ -19,7 +19,7 @@
           "field"
         ]
       },
-      "text": "This saga is not a create-environment saga of the org."
+      "text": "This saga is not a create or copy saga of the org."
     },
     {
       "literal": "saga_not_abandonable",

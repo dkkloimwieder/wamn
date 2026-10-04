@@ -2,9 +2,11 @@
 //! §5.5, `wamn-zua8.3`).
 //!
 //! The worker polls the system database every 5 seconds with one query, and
-//! runs the oldest open create-environment saga of an org with no other
-//! running saga. It runs the steps of [`wamn_control_provision::saga::STEPS`] in
-//! order, with the same library functions as the CLI verbs. It runs the role
+//! runs the oldest open create or copy saga of an org with no other running
+//! saga. It runs the steps of [`wamn_control_provision::saga::STEPS`] in
+//! order, with the same library functions as the CLI verbs. A copy runs
+//! [`wamn_control_provision::saga::COPY_STEPS`]: `read-source` first, then the
+//! same steps with what it read (`wamn-zua8.4`). It runs the role
 //! and privilege SQL as its own login `wamn_provisioner`, and applies
 //! Kubernetes objects with `kubectl`, which reads the ServiceAccount of the
 //! pod. A Secret reaches `kubectl apply -f -` on its standard input. A
@@ -27,11 +29,11 @@ use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::{Child, Command};
 use tokio_postgres::{Client, NoTls};
-use wamn_control_provision::saga::{EnvironmentRequest, STEPS};
+use wamn_control_provision::saga::{COPY_STEPS, EnvironmentRequest, STEPS};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_control_registry::Triple;
 
-use crate::environment_saga::{self, OpenSaga};
+use crate::environment_saga::{self, OpenSaga, SagaRequest};
 use crate::package_artifact::{
     COMPONENT_LIST, ListedComponent, OpenedPackage, PackageRegistry, PackageSource,
     open_package_source,
@@ -123,35 +125,95 @@ pub async fn serve(config: &ServeConfig) -> anyhow::Result<()> {
 /// Run one saga from its first step that is not completed. A failed step
 /// ends the run and leaves the saga failed.
 pub async fn run_saga(config: &ServeConfig, client: &Client, open: OpenSaga) -> anyhow::Result<()> {
+    let saga_id = open.saga_id.as_str();
+    let mut next_step = open.next_step;
+    let (steps, source_env, request): (&[&str], _, _) = match open.request {
+        SagaRequest::Create(request) => (&STEPS, None, request),
+        SagaRequest::Copy(copy) => {
+            // A copy runs the create steps with what `read-source` read, and
+            // a resumed copy reads that again from the step's detail.
+            let read = if next_step == 1 {
+                environment_saga::start_step(client, saga_id, 1).await?;
+                tracing::info!(saga = %saga_id, step = 1, name = "read-source", "step started");
+                let source_url = project_env_url(
+                    &config.system_database_url,
+                    &open.org,
+                    &copy.project,
+                    &copy.source_env,
+                )
+                .await?;
+                match crate::environment_copy::read_source(
+                    &source_url,
+                    &copy.source_env,
+                    &copy.connections,
+                )
+                .await
+                {
+                    Ok(read) => {
+                        let detail = serde_json::to_value(&read).context("encode the source")?;
+                        environment_saga::complete_step(client, saga_id, 1, Some(&detail)).await?;
+                        next_step = 2;
+                        read
+                    }
+                    Err(error) => {
+                        let error = step_error(&error);
+                        tracing::warn!(saga = %saga_id, step = 1, name = "read-source", %error, "step failed");
+                        environment_saga::fail_step(client, saga_id, 1, &error).await?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                environment_saga::read_source_detail(client, saga_id).await?
+            };
+            let source_env = copy.source_env.clone();
+            (&COPY_STEPS, Some(source_env), copy.environment(read))
+        }
+    };
     let mut run = SagaRun {
         config,
         org: open.org,
-        request: open.request,
+        request,
+        source_env,
         packages: Vec::new(),
     };
-    for step in open.next_step..=i32::try_from(STEPS.len()).context("count the steps")? {
-        let name = STEPS[usize::try_from(step - 1).context("index the step")?];
-        environment_saga::start_step(client, &open.saga_id, step).await?;
-        tracing::info!(saga = %open.saga_id, step, name, "step started");
+    for step in next_step..=i32::try_from(steps.len()).context("count the steps")? {
+        let name = steps[usize::try_from(step - 1).context("index the step")?];
+        environment_saga::start_step(client, saga_id, step).await?;
+        tracing::info!(saga = %saga_id, step, name, "step started");
         if name == "awaiting-operator" {
             let detail = run.operator_commands();
-            environment_saga::await_operator(client, &open.saga_id, step, &detail).await?;
+            environment_saga::await_operator(client, saga_id, step, &detail).await?;
             return Ok(());
         }
         match run.step(name).await {
             Ok(detail) => {
-                environment_saga::complete_step(client, &open.saga_id, step, detail.as_ref())
-                    .await?;
+                environment_saga::complete_step(client, saga_id, step, detail.as_ref()).await?;
             }
             Err(error) => {
                 let error = step_error(&error);
-                tracing::warn!(saga = %open.saga_id, step, name, %error, "step failed");
-                environment_saga::fail_step(client, &open.saga_id, step, &error).await?;
+                tracing::warn!(saga = %saga_id, step, name, %error, "step failed");
+                environment_saga::fail_step(client, saga_id, step, &error).await?;
                 return Ok(());
             }
         }
     }
     Ok(())
+}
+
+/// The `wamn_provisioner` URL of the database of one project environment.
+async fn project_env_url(
+    system_url: &str,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> anyhow::Result<String> {
+    let instance = read_project_env_instance(system_url, &Triple::new(org, project, env)).await?;
+    let mut url = url::Url::parse(system_url).context("parse the system URL")?;
+    url.set_path(&format!(
+        "/{}",
+        wamn_control_provision::project_env_database_name(org, project, env, &instance)
+    ));
+    Ok(url.to_string())
 }
 
 /// The error text of a failed step. A PostgreSQL error is named by its
@@ -229,6 +291,8 @@ struct SagaRun<'a> {
     config: &'a ServeConfig,
     org: String,
     request: EnvironmentRequest,
+    /// The source environment of a copy.
+    source_env: Option<String>,
     /// The package artifacts, opened by the first step that reads them.
     packages: Vec<Package>,
 }
@@ -253,6 +317,7 @@ impl SagaRun<'_> {
             "select-release" => self.select_release().await,
             "upload-ui" => self.upload_ui().await,
             "materialize-admin-grants" => self.materialize_admin_grants().await,
+            "copy-roles" => self.copy_roles().await,
             other => bail!("the worker has no step {other}"),
         }
         .map(|()| None)
@@ -285,9 +350,13 @@ impl SagaRun<'_> {
 
     /// The `wamn_provisioner` URL of the project-environment database.
     async fn project_url(&self) -> anyhow::Result<String> {
-        let mut url = url::Url::parse(self.system_url()).context("parse the system URL")?;
-        url.set_path(&format!("/{}", self.database().await?));
-        Ok(url.to_string())
+        project_env_url(
+            self.system_url(),
+            &self.org,
+            &self.request.project,
+            &self.request.env,
+        )
+        .await
     }
 
     fn registry(&self) -> PackageRegistry {
@@ -905,6 +974,38 @@ impl SagaRun<'_> {
         }
         crate::delivery::deployment::select_new_environment(&request).await?;
         Ok(())
+    }
+
+    /// `copy-roles` of a copy: the authored roles of the source and their
+    /// directly selected permissions, with each closure from release 1.
+    async fn copy_roles(&mut self) -> anyhow::Result<()> {
+        let source_env = self
+            .source_env
+            .clone()
+            .context("copy-roles runs only in a copy")?;
+        let source_url = project_env_url(
+            self.system_url(),
+            &self.org,
+            &self.request.project,
+            &source_env,
+        )
+        .await?;
+        let request = self.release_request(self.project_url().await?);
+        let snapshot = crate::print_release_env::lookup_release_snapshot(
+            &request.database_url,
+            &request.tenant,
+            RELEASE_ID,
+            &request.artifact_base,
+        )
+        .await?;
+        crate::environment_copy::copy_roles(
+            &source_url,
+            &source_env,
+            &request.database_url,
+            &request.tenant,
+            &wamn_catalog::ReleaseClosures::from_manifest(&snapshot.manifest),
+        )
+        .await
     }
 
     /// Step 13: the built web client of each package with a client package,

@@ -8,28 +8,41 @@
       "detail": {
         "required": [
           "field"
+        ],
+        "optional": [
+          "reason"
         ]
       }
     },
     {
-      "literal": "saga_not_found",
+      "literal": "project_not_found",
       "from": "transaction_invariant",
       "detail": {
         "required": [
           "field"
         ]
       },
-      "text": "This saga is not a create or copy saga of the org."
+      "text": "This project is not a project of the org."
     },
     {
-      "literal": "saga_not_resumable",
+      "literal": "environment_not_found",
       "from": "transaction_invariant",
       "detail": {
         "required": [
           "field"
         ]
       },
-      "text": "Only a failed saga resumes."
+      "text": "This environment is not an environment of the org."
+    },
+    {
+      "literal": "environment_exists",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      },
+      "text": "This environment exists, or a saga that creates it is open."
     },
     {
       "literal": "permission_denied",

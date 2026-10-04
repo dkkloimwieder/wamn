@@ -162,12 +162,14 @@ pub enum HostHandler {
     EnvironmentCreate,
     /// Create a project with no environment (docs/plan/platform-ui.md §5.1).
     ProjectCreate,
-    /// Return a failed create-environment saga to `pending`.
+    /// Return a failed create or copy saga to `pending`.
     EnvironmentResume,
-    /// End a failed or pending create-environment saga as `abandoned`.
+    /// End a failed or pending create or copy saga as `abandoned`.
     EnvironmentAbandon,
     /// Every package version that `push-package` pushed.
     PackageList,
+    /// Write one copy-environment saga (docs/plan/platform-ui.md §5.3).
+    EnvironmentCopy,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -431,6 +433,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::Member,
         handler: HostHandler::PackageList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.copy",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::EnvironmentCopy,
     },
 ];
 
