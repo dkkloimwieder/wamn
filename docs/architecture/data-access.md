@@ -83,7 +83,37 @@ Stage declarations require a predecessor and a package that declares SQL.
 
 Qualification format 3 carries the stage declaration alongside the existing package, root, workload, and privilege identities.
 Formats 1 and 2 retain their existing serialized form and remain readable.
-The stage executor is not available yet, so qualification and application refuse stage declarations before database mutation.
+Expand stages currently support the admitted column additions on package-owned relations.
+They run named conditions before and after their migration suffix in the same transaction.
+Application repeats the conditions against current data and records qualification evidence only after success.
+Each stage statement uses a five-second lock timeout. A lock failure aborts the transaction without an automatic retry.
+Condition inspection reads relation ownership and scalar column types from the current database.
+Conditions admit package-owned column references, bound parameters, comparisons, and `EXISTS`.
+Functions and casts use the shared column-default policy. Defaults retain their existing restrictions.
+Backfill stages retain the predecessor migration files and carry no new DDL suffix.
+Each batch updates one owned relation, ordered and bounded by an immediate, non-null, single-column unique key.
+The supported SQL selects a `batch`, updates those keys, then returns the cursor unchanged and whether the batch was empty.
+The package predicate must exclude processed rows. Inspection does not establish that the procedure terminates.
+Each successful batch commits its data and progress together. The installed version stays at the predecessor until completion and successful postconditions.
+Resume uses the recorded cursor and exact qualification. A different unfinished stage or a changed stage manifest is refused.
+Preconditions run before the first committed batch. A failed final postcondition preserves earlier batches and leaves the predecessor installed.
+Expand migrations also admit one invoker function and its synchronization trigger together in one SQL file.
+The trigger runs before each insert or update and assigns approved expressions to explicitly writable package columns.
+The function body contains `BEGIN`, `NEW` assignments, `RETURN NEW`, and `END`.
+It cannot write identity fields, generated fields, declared server-owned fields, or platform history and tombstone fields.
+Application code writes the source column. The trigger writes its destination column without an application grant on that destination.
+
+Immutable ownership records bind the function and trigger to their package and relation.
+Before each batch, application compares inherited definitions against the exact artifact, current column types, and stored owners.
+Unknown triggers, changed function bodies, elevated privileges, and changed trigger behavior are refused.
+Function replacement and reuse of names with ownership history are refused.
+An expand stage can declare `exceptions = ["whole_row_grants"]` for nullable column additions without defaults.
+The existing data-access owner derives grants from the complete candidate roots inside the package transaction.
+The platform then runs postconditions and plans the selected release's serving SQL under those grants.
+Schema changes, derived grants, and accepted qualification evidence commit together.
+If a condition or statement fails, the transaction rolls back all three.
+The exception does not admit package-authored grants or skip statement planning.
+Other staged DDL and contract execution remain unavailable.
 The [Epic 3 scope](../plan/package-upgrade.md#73-epic-3-changes-outside-the-predecessor-compatible-additive-subset) defines the remaining execution work.
 
 `wamn.json` declares application choices that another source cannot determine exactly.

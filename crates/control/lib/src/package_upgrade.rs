@@ -6,13 +6,14 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
 use wamn_catalog::ServingManifest;
 use wamn_schema_control::{PackageDirectory, PackageMigrationPlan};
-use wamn_schema_introspection::migration_policy::validate_predecessor_compatible_migration_bytes_for_schemas;
 
 use crate::qualify_upgrade::{
     self, MigrationIdentity, PackageIdentity, PresentedRootIdentity, UpgradeQualification,
     identity_from_directory, read_current_packages, read_selected_manifest,
 };
 use crate::reconcile_package_data_access::upgrade::read_upgrade_privileges;
+
+pub(crate) mod progress;
 
 #[cfg(test)]
 mod tests;
@@ -24,6 +25,12 @@ pub(crate) struct AcceptedUpgrade {
     sha256: String,
     #[cfg(test)]
     observed_workloads: Option<qualify_upgrade::workload::ServingWorkloads>,
+}
+
+impl AcceptedUpgrade {
+    pub(crate) fn qualification_sha256(&self) -> &str {
+        &self.sha256
+    }
 }
 
 pub(crate) fn read_evidence(path: &Path) -> anyhow::Result<AcceptedUpgrade> {
@@ -49,27 +56,24 @@ pub(crate) async fn apply_coordinated(
     use tokio_postgres::NoTls;
 
     let evidence = &accepted.evidence;
-    let proof = evidence
-        .overlay
-        .as_ref()
-        .context("coordinated application requires base and overlay qualification")?;
+    let whole_row = qualify_upgrade::stage::whole_row_grants(evidence.upgrade_stage.as_ref());
+    ensure!(
+        evidence.overlay.is_some() || whole_row,
+        "coordinated application requires overlay qualification or whole_row_grants"
+    );
     require_prefix(evidence)?;
     ensure!(
         request.tenant == evidence.tenant,
         "qualified tenant changed"
     );
     require_candidate_root(&request.package, evidence)?;
-    let mut presented = roots
-        .iter()
-        .map(|root| qualify_upgrade::presented_root_identity(root))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
-    ensure!(
-        presented == evidence.presented_roots,
-        "application roots differ from the exact qualified complete successor set"
-    );
+    require_presented_roots(roots, evidence)?;
     let mut ordered = vec![prepare_package(&request.package)?];
-    for overlay in &proof.overlays {
+    for overlay in evidence
+        .overlay
+        .iter()
+        .flat_map(|evidence| &evidence.overlays)
+    {
         let root = roots
             .iter()
             .find(|root| {
@@ -79,15 +83,25 @@ pub(crate) async fn apply_coordinated(
             .context("application roots omit a qualified overlay successor")?;
         ordered.push(prepare_package(root)?);
     }
+    let whole_row = whole_row
+        || ordered.iter().any(|package| {
+            qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())
+        });
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect for coordinated package application")?;
     let driver = tokio::spawn(connection);
     let result = async {
-        let tx = client
+        let mut tx = client
             .transaction()
             .await
             .context("begin atomic base and overlay application")?;
+        if ordered
+            .iter()
+            .any(|package| package.manifest.upgrade_stage.is_some())
+        {
+            tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
+        }
         tx.query_one(
             "SELECT set_config('app.tenant', $1, true)",
             &[&request.tenant],
@@ -143,6 +157,21 @@ pub(crate) async fn apply_coordinated(
             "atomic application does not match the complete qualified successor state"
         );
         if let Some(accepted) = &persist {
+            if whole_row {
+                let (manifest, _) =
+                    read_selected_manifest(&tx, &request.tenant, &evidence.environment).await?;
+                crate::apply_package::finish_whole_row_stage(
+                    &mut tx,
+                    &request.tenant,
+                    roots,
+                    &ordered,
+                    &manifest,
+                    &evidence.serving_workloads,
+                )
+                .await?;
+                require_reconciled_privileges(&tx, evidence).await?;
+                require_presented_roots(roots, evidence)?;
+            }
             self::persist(&tx, accepted).await?;
         }
         tx.commit()
@@ -161,6 +190,22 @@ pub(crate) async fn apply_coordinated(
             .context("drive coordinated package connection")?;
     }
     result
+}
+
+fn require_presented_roots(
+    roots: &[PathBuf],
+    evidence: &UpgradeQualification,
+) -> anyhow::Result<()> {
+    let mut presented = roots
+        .iter()
+        .map(|root| qualify_upgrade::presented_root_identity(root))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+    ensure!(
+        presented == evidence.presented_roots,
+        "application roots differ from the exact qualified complete successor set"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -211,7 +256,8 @@ async fn read_accepted(
     let sha256 = wamn_execution_contract::canonical_json_sha256(&value);
     ensure!(
         ((evidence.format_version == 1 && evidence.overlay.is_none())
-            || (evidence.format_version == 2 && evidence.overlay.is_some()))
+            || (evidence.format_version == 2 && evidence.overlay.is_some())
+            || (evidence.format_version == 3 && evidence.upgrade_stage.is_some()))
             && wamn_execution_contract::canonical_json_bytes(&value) == bytes
             && sha256 == row.get::<_, String>(1)
             && evidence.tenant == tenant
@@ -241,7 +287,11 @@ pub(crate) async fn require_application(
     coordinated: bool,
 ) -> anyhow::Result<Option<AcceptedUpgrade>> {
     ensure!(
-        supplied.is_none_or(|accepted| coordinated == accepted.evidence.overlay.is_some()),
+        supplied.is_none_or(|accepted| coordinated
+            == (accepted.evidence.overlay.is_some()
+                || qualify_upgrade::stage::whole_row_grants(
+                    accepted.evidence.upgrade_stage.as_ref()
+                ))),
         "coordinated base and overlay evidence requires apply-package with the complete presented package roots"
     );
     if plan.predecessor_version.is_none() {
@@ -288,7 +338,12 @@ pub(crate) async fn require_application(
         // and the selected head. An exact accepted retry does not rewind them.
         return Ok(None);
     }
-    if plan.pending.is_empty() {
+    if plan.pending.is_empty()
+        && !wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)?
+            .upgrade_stage
+            .as_ref()
+            .is_some_and(|stage| stage.phase == wamn_schema_generator::UpgradeStagePhase::Backfill)
+    {
         let manifest =
             wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)?;
         ensure!(
@@ -336,10 +391,11 @@ pub(crate) async fn require_application(
             .iter()
             .find(|source| source.relative_path == migration.relative_path)
             .context("planned successor migration has no source bytes")?;
-        validate_predecessor_compatible_migration_bytes_for_schemas(
+        crate::qualify_upgrade::stage::validate_successor_migration(
             Path::new(&source.relative_path),
             &source.bytes,
             &schemas,
+            evidence.upgrade_stage.as_ref(),
         )?;
     }
     ensure!(
@@ -403,7 +459,10 @@ fn require_prefix(evidence: &UpgradeQualification) -> anyhow::Result<()> {
             && candidate.predecessor_version.as_deref()
                 == Some(predecessor.package_version.as_str())
             && candidate.migrations.starts_with(&predecessor.migrations)
-            && candidate.migrations.len() > predecessor.migrations.len()
+            && (candidate.migrations.len() > predecessor.migrations.len()
+                || evidence.upgrade_stage.as_ref().is_some_and(
+                    |stage| stage.phase == wamn_schema_generator::UpgradeStagePhase::Backfill
+                ))
             && candidate.migrations[predecessor.migrations.len()..] == evidence.candidate_suffix,
         "upgrade evidence does not name the exact immediate predecessor migration prefix"
     );

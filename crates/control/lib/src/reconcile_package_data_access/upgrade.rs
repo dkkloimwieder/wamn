@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
+use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
@@ -221,6 +222,27 @@ fn validate_fact(
         "package-upgrade-privilege-fact-invalid: schema={schema}; privilege={privilege}"
     );
     Ok(())
+}
+
+/// Reconcile the complete successor roots in the caller's package transaction.
+///
+/// The caller admits exact upgrade qualification before mutation and compares
+/// its recorded privileges afterward. All installed-set and ACL checks still run.
+pub(crate) async fn reconcile_upgrade_in_transaction(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    roots: &[PathBuf],
+) -> anyhow::Result<DataAccessReconcileResult> {
+    ensure!(!tenant.is_empty(), "tenant must not be empty");
+    let packages = super::read_presented_packages(roots)?;
+    super::reconcile_in_transaction(
+        tx,
+        tenant,
+        &packages,
+        super::ReconcileMode::Qualification,
+        true,
+    )
+    .await
 }
 
 /// Run ordinary reconciliation on the private qualification copy.

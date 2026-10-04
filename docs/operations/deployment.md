@@ -426,7 +426,7 @@ Use a minor version for predecessor-compatible additive schema or operation chan
 Use a major version for an incompatible contract or migration that requires client changes.
 A nonempty application migration suffix requires at least a minor version, such as `2.0.0 → 2.1.0`.
 
-The shared upgrade policy permits new ordinary tables, nullable modeled columns without defaults, and two non-null constant defaults: `boolean DEFAULT false` and `text DEFAULT 'not_required'`.
+The ordinary upgrade policy permits new ordinary tables, nullable modeled columns without defaults, and two non-null constant defaults: `boolean DEFAULT false` and `text DEFAULT 'not_required'`.
 It refuses new constraints on existing relations, type changes, backfills, and destructive changes.
 Migration-specific exceptions, including a whole-row query that loses access to an added column, remain in Epic 3 of [package upgrade](../plan/package-upgrade.md).
 
@@ -501,6 +501,21 @@ wamn-ctl reconcile-package-data-access \
 wamn-ctl reconcile-replica-identity \
   --admin-database-url "$OWNER_URL" --package "$CANDIDATE_PACKAGE"
 ```
+
+An expand stage with `whole_row_grants` applies nullable column additions and derived grants in one transaction.
+The same transaction records the accepted qualification after postconditions and serving SQL planning succeed.
+If the qualified root set contains other packages, pass every root with `--presented-package`.
+A failed condition or statement leaves the schema, grants, and qualification records unchanged.
+
+If a backfill stops, correct the reported cause before you repeat the same `apply-package` command.
+Use the original package bytes and qualification file.
+Committed batches and their cursor remain recorded while the predecessor version stays installed.
+The final batch, postconditions, new package version, and accepted evidence commit together.
+To abandon an incomplete backfill, repeat its `apply-package` command with `--abandon-stage` and the original `--upgrade-qualification` file.
+This command records abandonment and prints the retained cursor, completed batch count, and unchanged installed version.
+It does not reverse committed batches. The abandoned stage cannot resume.
+The command refuses a completed stage, changed package bytes, changed qualification bytes, or a changed installed predecessor.
+The current backfill grammar and its limits are in [application declarations](../architecture/data-access.md#application-declarations).
 
 Repeat reconciliation's `--package` arguments for the same complete root set that qualification used.
 Run replica-identity reconciliation for each package whose registrations require old-row fields.

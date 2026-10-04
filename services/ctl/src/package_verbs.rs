@@ -50,7 +50,15 @@ pub struct ApplyPackageArgs {
     #[arg(long)]
     pub upgrade_qualification: Option<PathBuf>,
 
-    /// Complete successor roots for a coordinated base and overlay upgrade.
+    /// Abandon an existing backfill and retain its recorded cursor.
+    #[arg(
+        long,
+        requires = "upgrade_qualification",
+        conflicts_with = "presented_packages"
+    )]
+    pub abandon_stage: bool,
+
+    /// Complete successor roots for an overlay upgrade or whole-row grant exception.
     #[arg(long = "presented-package", requires = "upgrade_qualification")]
     pub presented_packages: Vec<PathBuf>,
 }
@@ -293,7 +301,21 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
         database_url: args.database_url,
         tenant: args.tenant,
     };
-    if args.presented_packages.is_empty() {
+    if args.abandon_stage {
+        let path = args
+            .upgrade_qualification
+            .as_deref()
+            .context("--abandon-stage requires --upgrade-qualification")?;
+        let outcome = apply_package::abandon_stage(request, path).await?;
+        println!(
+            "abandoned {}@{}: installed version {}; retained cursor {} ({} completed batches)",
+            outcome.package_id,
+            outcome.package_version,
+            outcome.installed_version,
+            outcome.cursor,
+            outcome.completed_batches,
+        );
+    } else if args.presented_packages.is_empty() {
         let outcome = if let Some(path) = args.upgrade_qualification {
             apply_package::apply_qualified_package(request, &path).await?
         } else {
@@ -390,5 +412,46 @@ fn print_replica_identity_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
     }
     for table in &plan.skipped_absent {
         println!("[skip] {table} is absent; apply the package before reconciling");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    #[derive(Debug, clap::Parser)]
+    struct ApplyCli {
+        #[command(flatten)]
+        args: super::ApplyPackageArgs,
+    }
+
+    #[test]
+    fn abandonment_requires_qualification_and_refuses_presented_roots() {
+        let mut arguments = vec![
+            "apply-package",
+            "--package",
+            "unused",
+            "--database-url",
+            "unused",
+            "--tenant",
+            "fixture",
+            "--abandon-stage",
+        ];
+        assert_eq!(
+            ApplyCli::try_parse_from(&arguments).unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument,
+        );
+        arguments.extend(["--upgrade-qualification", "qualification.json"]);
+        assert!(
+            ApplyCli::try_parse_from(&arguments)
+                .unwrap()
+                .args
+                .abandon_stage
+        );
+        arguments.extend(["--presented-package", "other"]);
+        assert_eq!(
+            ApplyCli::try_parse_from(&arguments).unwrap_err().kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+        );
     }
 }

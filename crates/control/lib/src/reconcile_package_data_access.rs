@@ -265,14 +265,35 @@ async fn reconcile_mode(
     mode: ReconcileMode<'_>,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
-    let local = match mode {
-        ReconcileMode::Local(environment) => Some(environment),
-        _ => None,
-    };
     let tx = client
         .transaction()
         .await
         .context("begin package data-access reconciliation")?;
+    let result = reconcile_in_transaction(&tx, tenant, packages, mode, apply).await?;
+    if apply {
+        tx.commit()
+            .await
+            .context("commit package data-access reconciliation")?;
+    } else {
+        tx.rollback()
+            .await
+            .context("finish local data-access validation")?;
+    }
+    Ok(result)
+}
+
+/// Reconcile through the existing owner without committing the caller's transaction.
+async fn reconcile_in_transaction(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    packages: &[PresentedPackage],
+    mode: ReconcileMode<'_>,
+    apply: bool,
+) -> anyhow::Result<DataAccessReconcileResult> {
+    let local = match mode {
+        ReconcileMode::Local(environment) => Some(environment),
+        _ => None,
+    };
     tx.query_one(CLAIM_TENANT_SQL, &[&tenant])
         .await
         .context("claim package tenant")?;
@@ -282,21 +303,21 @@ async fn reconcile_mode(
     if local.is_some() {
         for package in packages {
             crate::apply_package::reconcile_local_package_configuration(
-                &tx,
+                tx,
                 tenant,
                 &package.directory,
             )
             .await?;
         }
     }
-    validate_installed_set(&tx, tenant, packages, local.is_some()).await?;
+    validate_installed_set(tx, tenant, packages, local.is_some()).await?;
     let accepted_upgrade = match mode {
         ReconcileMode::Production => {
             let roots = packages
                 .iter()
                 .map(|package| package.root.clone())
                 .collect::<Vec<_>>();
-            crate::package_upgrade::reconciliation_evidence(&tx, tenant, &roots).await?
+            crate::package_upgrade::reconciliation_evidence(tx, tenant, &roots).await?
         }
         ReconcileMode::Qualification | ReconcileMode::Local(_) => None,
     };
@@ -306,7 +327,7 @@ async fn reconcile_mode(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let relation_fields = load_relation_fields(&tx, &schemas).await?;
+    let relation_fields = load_relation_fields(tx, &schemas).await?;
     let overlays = packages
         .iter()
         .map(|package| package.overlay.clone())
@@ -330,11 +351,11 @@ async fn reconcile_mode(
         "package-data-access-role-login-refused: role={DATA_ACCESS_ROLE} must remain NOLOGIN"
     );
 
-    let before = direct_acl(&tx, &effective).await?;
+    let before = direct_acl(tx, &effective).await?;
     let desired = desired_acl(&effective);
-    let before_effective = effective_acl(&tx, &effective).await?;
+    let before_effective = effective_acl(tx, &effective).await?;
     let desired_effective = desired_effective_acl(&effective);
-    let residue = undeclared_residue(&tx, &effective).await?;
+    let residue = undeclared_residue(tx, &effective).await?;
     let changed = before != desired || before_effective != desired_effective || !residue.is_empty();
     if changed {
         tx.batch_execute(
@@ -349,9 +370,9 @@ async fn reconcile_mode(
                 .context("revoke App authority on undeclared package relations")?;
         }
     }
-    let after = direct_acl(&tx, &effective).await?;
-    let after_effective = effective_acl(&tx, &effective).await?;
-    let after_residue = undeclared_residue(&tx, &effective).await?;
+    let after = direct_acl(tx, &effective).await?;
+    let after_effective = effective_acl(tx, &effective).await?;
+    let after_residue = undeclared_residue(tx, &effective).await?;
     ensure!(
         after == desired,
         "package-data-access-postcondition-refused: server ACL differs from generated evidence"
@@ -369,19 +390,10 @@ async fn reconcile_mode(
         residue_targets(&after_residue)
     );
     if let Some(evidence) = &accepted_upgrade {
-        crate::package_upgrade::require_reconciled_privileges(&tx, evidence).await?;
+        crate::package_upgrade::require_reconciled_privileges(tx, evidence).await?;
     }
-    if apply {
-        if let Some(environment) = local {
-            record_local_manifests(&tx, tenant, environment, packages).await?;
-        }
-        tx.commit()
-            .await
-            .context("commit package data-access reconciliation")?;
-    } else {
-        tx.rollback()
-            .await
-            .context("finish local data-access validation")?;
+    if apply && let Some(environment) = local {
+        record_local_manifests(tx, tenant, environment, packages).await?;
     }
     Ok(DataAccessReconcileResult {
         coordinates: packages

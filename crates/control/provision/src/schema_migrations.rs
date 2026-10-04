@@ -212,6 +212,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0009_package_upgrade_qualifications.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0010_package_upgrade_stages.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0010_package_upgrade_stages.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

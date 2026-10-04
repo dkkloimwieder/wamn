@@ -8,7 +8,7 @@ use wamn_schema_control::PackageDirectory;
 use wamn_schema_generator::{ModelDeclaration, PackageManifest};
 use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorType,
-    inspect_migration_definition_mutations,
+    inspect_migration_definition_mutations, inspect_stage_synchronization_declaration,
 };
 
 use super::definition_ownership::{
@@ -16,6 +16,7 @@ use super::definition_ownership::{
     load_definition_owner, model_for_relation,
 };
 use super::error::{ApplyPackageErrorType, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL};
+use super::synchronization::PlannedSynchronization;
 
 #[derive(Debug)]
 pub(super) struct DeferredMigrationPolicyError {
@@ -26,6 +27,7 @@ pub(super) struct DeferredMigrationPolicyError {
 #[derive(Debug)]
 pub(super) struct MigrationPolicyPlan {
     pub(super) mutations: Vec<PlannedDefinitionMutation>,
+    pub(super) synchronizations: Vec<PlannedSynchronization>,
     pub(super) deferred: Option<DeferredMigrationPolicyError>,
 }
 
@@ -41,6 +43,7 @@ pub(super) fn validate_migration_policy(
     {
         return Ok(MigrationPolicyPlan {
             mutations: Vec::new(),
+            synchronizations: Vec::new(),
             deferred: None,
         });
     }
@@ -61,9 +64,18 @@ pub(super) fn validate_migration_policy(
     schemas.sort_unstable();
     schemas.dedup();
     let mut mutations = Vec::new();
+    let mut synchronizations = Vec::new();
     let mut deferred = None;
     for migration in &directory.migrations {
         let path = package_root.join(&migration.relative_path);
+        if let Ok(declaration) = inspect_stage_synchronization_declaration(&path, &migration.bytes)
+        {
+            synchronizations.push(PlannedSynchronization {
+                relative_path: migration.relative_path.clone(),
+                declaration,
+            });
+            continue;
+        }
         let inspected =
             inspect_migration_definition_mutations(&path, &migration.bytes, &schemas)
                 .with_context(|| format!("inspect {} before apply", migration.relative_path))?;
@@ -108,6 +120,7 @@ pub(super) fn validate_migration_policy(
     validate_relation_classifications(plan, &mutations)?;
     Ok(MigrationPolicyPlan {
         mutations,
+        synchronizations,
         deferred,
     })
 }

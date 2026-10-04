@@ -8,7 +8,9 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context as _, Result, ensure};
 use tokio_postgres::NoTls;
 use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
+use wamn_schema_introspection::postgres::read_catalog_with_synchronizations;
+
+mod synchronization;
 
 use crate::StatementTransactionality;
 use crate::authoring::{
@@ -84,8 +86,13 @@ pub async fn introspect_package(database_url: &str, package_root: &Path) -> Resu
                 .map(move |table| (*schema, *table))
         })
         .collect::<Vec<_>>();
-    let catalog_result =
-        read_catalog_excluding_relations(&client, &schema_names, &excluded_relations).await;
+    let catalog_result = async {
+        let expected = synchronization::expectations(&client, package_root, &manifest).await?;
+        read_catalog_with_synchronizations(&client, &schema_names, &excluded_relations, &expected)
+            .await
+            .context("introspect package schemas")
+    }
+    .await;
     drop(client);
     connection_task
         .await

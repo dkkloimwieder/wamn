@@ -565,11 +565,19 @@ Qualification tests each step against a copy with retained predecessor data. App
 
 The expand stage installs package-owned synchronization triggers. The application release writes one column, and the trigger mirrors that write. The contract stage removes the triggers. Application code does not need to write both columns.
 
+Stage SQL touches only relations owned by its package. The existing column-default list governs stage functions and casts through one constant shared with default inspection. Defaults retain their current restrictions. The list admits `gen_random_uuid()`, `CURRENT_TIMESTAMP`, and same-type casts. Stage grammar also admits package-owned column references, bound parameters, comparison operators, and `EXISTS`. It does not admit `now()`, `coalesce`, arithmetic, string operators, or casts between different scalar types. An expression outside the list is refused and named. Widening this policy remains an open owner question on `wamn-5ihq.3`.
+
+Synchronization triggers use `SECURITY INVOKER` functions. Dynamic SQL, including `EXECUTE`, `DO`, and `SECURITY DEFINER`, is refused and named. A stage that requires broader SQL is outside Epic 3 and is not built.
+
 Every step must preserve compatibility with the workloads that still serve and the overlays that still consume its contracts. Changed or removed contracts require compatible intermediate stages. The contract step cannot remove structures or contracts while serving consumers still require them.
 
 Contract waits until no host serves an older release and no run pinned to an older release remains in flight. The run identity comes from `wamn_run.runs.effective_release_id`. If either condition cannot be read, contract refuses.
 
-After each contract, the environment records a floor release. This floor is the oldest release that selection permits. `select-release` refuses any release below that floor and names the contract that set it. Later upgrades must preserve this restriction. Reverse migrations and restore procedures are outside this epic.
+Contract pins the currently selected release as the environment's floor release. This floor is the oldest release that selection permits. Qualification records the exact selected release identity and its serving SQL. Application rechecks that identity and plans every statement against the contracted schema before the contract transaction commits. If any statement fails, the transaction aborts and names the statement.
+
+Older releases' SQL can stop working after contract because those releases fall below the floor. Contract does not require their SQL to remain valid. The selected release's serving SQL must remain valid.
+
+The contract transaction records the floor with the schema changes. `select-release` refuses any release below that floor and names the contract that set it. Later upgrades must preserve this restriction. Reverse migrations and restore procedures are outside this epic.
 
 The existing package identities, complete presented-root identities, runtime schema requirement, and immutable transition history remain required. Schema relocation and execution across multiple schemas remain outside this epic. Ordinary release qualification remains required.
 

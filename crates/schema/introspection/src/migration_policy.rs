@@ -23,6 +23,13 @@ use std::path::{Path, PathBuf};
 
 use crate::ir::postgres_type;
 
+mod stage;
+pub use stage::{
+    StageRelation, StageSynchronization, StageUniqueKey, inspect_stage_synchronization,
+    inspect_stage_synchronization_declaration, refuse_dynamic_stage_sql, validate_stage_batch,
+    validate_stage_condition, validate_stage_expression, validate_stage_trigger_body,
+};
+
 /// Stable internal class for a refused migration artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationPolicyErrorType {
@@ -315,7 +322,7 @@ enum Token<'a> {
     Word(&'a str),
     QuotedIdentifier(&'a str),
     StringLiteral(&'a str),
-    Opaque,
+    Opaque(&'a str),
     Symbol(u8),
 }
 
@@ -1105,10 +1112,11 @@ fn lex_statements<'a>(
                 if bytes.get(cursor + 1) == Some(&b'\'')
                     && (cursor == 0 || !is_word_continue(bytes[cursor - 1])) =>
             {
+                let start = cursor;
                 cursor = scan_single_quote(bytes, cursor + 1, true).ok_or_else(|| {
                     lexical_error(path, statements.len() + 1, "unterminated escape string")
                 })?;
-                tokens.push(Token::Opaque);
+                tokens.push(Token::Opaque(&sql[start..cursor]));
             }
             b'\'' => {
                 let start = cursor;
@@ -1125,6 +1133,7 @@ fn lex_statements<'a>(
                 tokens.push(Token::QuotedIdentifier(&sql[start..cursor - 1]));
             }
             b'$' if dollar_delimiter_end(bytes, cursor).is_some() => {
+                let start = cursor;
                 cursor = scan_dollar_quote(sql, cursor).ok_or_else(|| {
                     lexical_error(
                         path,
@@ -1132,7 +1141,7 @@ fn lex_statements<'a>(
                         "unterminated dollar-quoted string",
                     )
                 })?;
-                tokens.push(Token::Opaque);
+                tokens.push(Token::Opaque(&sql[start..cursor]));
             }
             b';' => {
                 if !tokens.is_empty() {

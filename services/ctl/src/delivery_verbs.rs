@@ -441,7 +441,7 @@ pub async fn upgrade_environment(args: UpgradeEnvironmentArgs) -> anyhow::Result
             .context("neither XDG_CACHE_HOME nor HOME is set; pass --work-root")?
             .join("wamn-upgrade"),
     };
-    let record = upgrade_environment(&UpgradeEnvironmentRequest {
+    let record = Box::pin(upgrade_environment(&UpgradeEnvironmentRequest {
         repository: std::fs::canonicalize(&args.repository)
             .with_context(|| format!("find {}", args.repository.display()))?,
         work_root,
@@ -451,7 +451,7 @@ pub async fn upgrade_environment(args: UpgradeEnvironmentArgs) -> anyhow::Result
             &args.environment,
             &args.commit,
         )?,
-    })
+    }))
     .await?;
     println!("{}", serde_json::to_string_pretty(&record)?);
     Ok(())

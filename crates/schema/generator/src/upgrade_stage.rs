@@ -34,7 +34,7 @@ pub enum UpgradeStagePhase {
     Contract,
 }
 
-/// An explicit exception that requires its own qualification proof.
+/// An explicit exception that requires its own qualification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpgradeStageException {

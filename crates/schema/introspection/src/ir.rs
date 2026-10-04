@@ -711,6 +711,20 @@ pub fn postgres_type(postgres_name: &str) -> Result<ColumnType, IrError> {
     }
 }
 
+/// Exact typed server expressions shared by defaults and staged expression checks.
+pub(crate) const POSTGRES_SERVER_EXPRESSIONS: &[(ColumnType, &str, ColumnDefault)] = &[
+    (
+        ColumnType::Uuid,
+        "gen_random_uuid()",
+        ColumnDefault::GenRandomUuid,
+    ),
+    (
+        ColumnType::Timestamptz,
+        "CURRENT_TIMESTAMP",
+        ColumnDefault::CurrentTimestamp,
+    ),
+];
+
 /// Normalize an admitted `pg_get_expr` default to its semantic IR variant.
 ///
 /// Two server functions are admitted by name, each for the one type it serves.
@@ -728,12 +742,14 @@ pub fn postgres_default(
         column_type: Some(column_type),
     };
 
-    match (column_type, normalized) {
-        (ColumnType::Uuid, "gen_random_uuid()") => return Ok(ColumnDefault::GenRandomUuid),
-        (ColumnType::Timestamptz, "CURRENT_TIMESTAMP") => {
-            return Ok(ColumnDefault::CurrentTimestamp);
-        }
-        _ => {}
+    if let Some((_, _, value)) =
+        POSTGRES_SERVER_EXPRESSIONS
+            .iter()
+            .find(|(expected_type, expression, _)| {
+                *expected_type == column_type && *expression == normalized
+            })
+    {
+        return Ok(value.clone());
     }
 
     let literal = strip_own_cast(normalized, column_type).ok_or_else(refuse)?;

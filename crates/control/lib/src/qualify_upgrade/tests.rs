@@ -8,6 +8,8 @@ use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
 mod overlay;
 mod stage;
+mod synchronization;
+mod whole_row;
 
 const TENANT: &str = "upgrade-proof";
 const ENVIRONMENT: &str = "dev";

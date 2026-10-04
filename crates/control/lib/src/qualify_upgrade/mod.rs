@@ -21,7 +21,6 @@ use wamn_schema_control::{
     AppliedPackage, PackageDirectory, RecordedMigration, plan_package_migrations,
 };
 use wamn_schema_generator::{MaterializeMode, PackageManifest};
-use wamn_schema_introspection::migration_policy::validate_predecessor_compatible_migration_bytes_for_schemas;
 
 use crate::apply_package::{
     ApplyPackageRequest, apply_qualification_package, read_package_directory,
@@ -166,7 +165,7 @@ async fn qualify_upgrade_with_observer(
         .find(|package| package.root == candidate_root)
         .context("candidate package must occur in the complete presented root set")?;
     for package in &packages {
-        stage::require_executor(&package.manifest)?;
+        stage::require_executor(&package.manifest, &package.directory)?;
     }
     let schemas = package_schemas(&packages)?;
     let sql_packages = packages
@@ -326,9 +325,23 @@ async fn copy_predecessor(
     );
     let plan = plan_package_migrations(&candidate.directory, Some(&applied_package(predecessor)?))
         .context("verify the inherited migration prefix")?;
+    if candidate
+        .manifest
+        .upgrade_stage
+        .as_ref()
+        .is_some_and(|stage| stage.phase == wamn_schema_generator::UpgradeStagePhase::Backfill)
+    {
+        ensure!(
+            plan.pending.is_empty(),
+            "backfill stage cannot carry a DDL suffix; apply an expand version first"
+        );
+    }
     ensure!(
-        !plan.pending.is_empty(),
-        "upgrade qualification requires a non-empty successor suffix"
+        !plan.pending.is_empty()
+            || candidate.manifest.upgrade_stage.as_ref().is_some_and(
+                |stage| stage.phase == wamn_schema_generator::UpgradeStagePhase::Backfill
+            ),
+        "upgrade qualification requires a successor suffix or a backfill stage"
     );
     let candidate_schemas =
         wamn_schema_generator::data_access_schemas(&candidate.directory.manifest_bytes)?;
@@ -343,10 +356,11 @@ async fn copy_predecessor(
             .iter()
             .find(|migration| migration.relative_path == pending.relative_path)
             .context("planned successor migration is missing")?;
-        validate_predecessor_compatible_migration_bytes_for_schemas(
+        stage::validate_successor_migration(
             candidate.root.join(&migration.relative_path),
             &migration.bytes,
             &policy_schemas,
+            candidate.manifest.upgrade_stage.as_ref(),
         )?;
     }
     let mut expected_roots = predecessor_packages.clone();
@@ -509,8 +523,14 @@ async fn copy_predecessor(
         .get(0);
     let scratch = scratch::copy_database(&request.database_url, &snapshot).await?;
     let evidence = UpgradeQualification {
-        format_version: if overlay.is_some() { 2 } else { 1 },
-        upgrade_stage: None,
+        format_version: if candidate.manifest.upgrade_stage.is_some() {
+            3
+        } else if overlay.is_some() {
+            2
+        } else {
+            1
+        },
+        upgrade_stage: candidate.manifest.upgrade_stage.clone(),
         tenant: request.tenant.clone(),
         environment: request.environment.clone(),
         predecessor_release_id: i32::try_from(manifest.release.effective_release_id.get())?,
@@ -613,9 +633,13 @@ async fn prove_connected_copy(
         .await
         .context("commit exact predecessor scratch privileges")?;
     require_predecessor_statement_facts(predecessors, manifest)?;
-    if let Some(proof) = &evidence.overlay {
+    if evidence.overlay.is_some() || stage::whole_row_grants(evidence.upgrade_stage.as_ref()) {
         let mut roots = vec![candidate.root.clone()];
-        for transition in &proof.overlays {
+        for transition in evidence
+            .overlay
+            .iter()
+            .flat_map(|overlay| &overlay.overlays)
+        {
             roots.push(
                 packages
                     .iter()
@@ -625,11 +649,20 @@ async fn prove_connected_copy(
                     .clone(),
             );
         }
-        crate::apply_package::apply_qualification_packages(database_url, &request.tenant, &roots)
-            .await
-            .context(
-                "apply base and overlay successors atomically on the owned predecessor copy",
-            )?;
+        let complete_roots = packages
+            .iter()
+            .map(|package| package.root.clone())
+            .collect::<Vec<_>>();
+        crate::apply_package::apply_qualification_packages(
+            database_url,
+            &request.tenant,
+            &roots,
+            &complete_roots,
+            manifest,
+            &evidence.serving_workloads,
+        )
+        .await
+        .context("apply base and overlay successors atomically on the owned predecessor copy")?;
     } else {
         apply_qualification_package(ApplyPackageRequest {
             package: candidate.root.clone(),
