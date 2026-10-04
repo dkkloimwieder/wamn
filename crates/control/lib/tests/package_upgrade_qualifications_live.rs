@@ -14,12 +14,12 @@ async fn connect(url: &str) -> Client {
 }
 
 /// Describe the database-enforced contract without database-local object IDs.
-async fn carrier_shape(client: &Client) -> Vec<String> {
+async fn carrier_shape(client: &Client, table: &str) -> Vec<String> {
     client
         .query(
             "WITH carrier AS ( \
                SELECT oid, relrowsecurity, relforcerowsecurity, relacl \
-                 FROM pg_class WHERE oid = 'catalog.package_upgrade_qualifications'::regclass \
+                 FROM pg_class WHERE oid = $1::text::regclass \
              ) SELECT fact FROM ( \
                SELECT 'column ' || a.attnum || ' ' || a.attname || ' ' || \
                       format_type(a.atttypid, a.atttypmod) || ' ' || a.attnotnull || ' ' || \
@@ -34,16 +34,16 @@ async fn carrier_shape(client: &Client) -> Vec<String> {
                UNION ALL SELECT 'policy ' || policyname || ' ' || permissive || ' ' || \
                       roles::text || ' ' || cmd || ' ' || qual || ' ' || with_check \
                  FROM pg_policies WHERE schemaname = 'catalog' \
-                  AND tablename = 'package_upgrade_qualifications' \
+                  AND tablename = $2 \
                UNION ALL SELECT 'trigger ' || pg_get_triggerdef(oid) FROM pg_trigger \
                 WHERE tgrelid = (SELECT oid FROM carrier) AND NOT tgisinternal \
                UNION ALL SELECT 'security ' || relrowsecurity || ' ' || relforcerowsecurity \
                       || ' ' || coalesce(relacl::text, '') FROM carrier \
              ) facts ORDER BY fact COLLATE \"C\"",
-            &[],
+            &[&format!("catalog.{table}"), &table],
         )
         .await
-        .expect("describe the qualification carrier")
+        .expect("describe the catalog carrier")
         .iter()
         .map(|row| row.get(0))
         .collect()
@@ -80,7 +80,9 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .expect("install the fresh catalog");
-    let fresh = carrier_shape(&client).await;
+    let fresh = carrier_shape(&client, "package_upgrade_qualifications").await;
+    let fresh_stages = carrier_shape(&client, "package_upgrade_stages").await;
+    let fresh_owners = carrier_shape(&client, "package_definition_owners").await;
     assert!(
         fresh
             .iter()
@@ -88,11 +90,18 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     );
     assert!(fresh.iter().any(|fact| fact.contains("_immutable")));
 
-    // A pre-change project holds migrations 1–8 but has no evidence carrier.
+    // A pre-change project holds migrations 1–8 without either upgrade carrier.
     // Only this registry projection is needed to register the disposable target.
     client
         .batch_execute(
             "DROP TABLE catalog.package_upgrade_qualifications; \
+             DROP TABLE catalog.package_upgrade_stages; \
+             DROP FUNCTION catalog.guard_package_upgrade_stage_change(); \
+             DROP INDEX catalog.package_definition_owners_synchronization_function; \
+             ALTER TABLE catalog.package_definition_owners \
+               DROP CONSTRAINT package_definition_owners_definition_type_check, \
+               ADD CONSTRAINT package_definition_owners_definition_type_check \
+                 CHECK (definition_type IN ('relation', 'field', 'constraint')); \
              CREATE SCHEMA app_system; \
              CREATE SCHEMA registry; \
              CREATE TABLE registry.project_envs \
@@ -111,13 +120,24 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     upgrade_schema(&request)
         .await
         .expect("upgrade the installed project through the production verb");
-    assert_eq!(carrier_shape(&client).await, fresh);
+    assert_eq!(
+        carrier_shape(&client, "package_upgrade_qualifications").await,
+        fresh
+    );
+    assert_eq!(
+        carrier_shape(&client, "package_upgrade_stages").await,
+        fresh_stages
+    );
+    assert_eq!(
+        carrier_shape(&client, "package_definition_owners").await,
+        fresh_owners
+    );
     let migrations: i64 = client
         .query_one("SELECT count(*) FROM app_system.schema_migrations", &[])
         .await
         .unwrap()
         .get(0);
-    assert_eq!(migrations, 9);
+    assert_eq!(migrations, 10);
     upgrade_schema(&UpgradeSchemaRequest {
         baseline: None,
         ..request

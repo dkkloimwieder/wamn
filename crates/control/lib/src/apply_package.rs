@@ -303,7 +303,7 @@ async fn apply_request(
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = apply(&mut client, &request.tenant, &package, mode).await;
+    let result = Box::pin(apply(&mut client, &request.tenant, &package, mode)).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();

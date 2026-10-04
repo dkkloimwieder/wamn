@@ -227,11 +227,18 @@ fn native_images_have_package_scoped_build_stages(dockerfile: &str, problems: &m
         let Some(image) = stage(dockerfile, image_stage, problems) else {
             continue;
         };
+        if image_stage == "ctl" {
+            problems.require(
+                image.contains("COPY --from=build-scenario-worker /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker"),
+                || "ctl must carry the scenario worker from its own build stage".to_owned(),
+            );
+        }
         let native_copies: Vec<_> = image
             .lines()
             .filter(|line| line.contains("/native-output/"))
             .collect();
-        problems.require(native_copies.len() == outputs.len(), || {
+        let extra_copies = usize::from(image_stage == "ctl");
+        problems.require(native_copies.len() == outputs.len() + extra_copies, || {
             format!("{image_stage} native output list drifted: {native_copies:?}")
         });
         for output in outputs {

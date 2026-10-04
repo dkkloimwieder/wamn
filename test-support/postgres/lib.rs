@@ -316,8 +316,10 @@ impl OwnedPostgres {
             .env("LC_ALL", "C")
             .arg("-D")
             .arg(self.directory.join("data"))
+            // Test connections use authenticated loopback TCP. Do not create
+            // unused Unix sockets whose path can exceed the platform limit.
             .arg("-k")
-            .arg(&self.directory)
+            .arg("")
             .args(["-h", "127.0.0.1", "-p", &port.to_string()]);
         for (name, value) in settings {
             command.arg("-c").arg(format!("{name}={value}"));

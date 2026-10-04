@@ -354,7 +354,7 @@ mod tests {
             match field {
                 "manifest_sha256" => changed.manifest_sha256 = format!("sha256:{}", "d".repeat(64)),
                 "qualification_sha256" => {
-                    changed.qualification_sha256 = format!("sha256:{}", "d".repeat(64))
+                    changed.qualification_sha256 = format!("sha256:{}", "d".repeat(64));
                 }
                 _ => changed.predecessor_version = "0.9.0".into(),
             }

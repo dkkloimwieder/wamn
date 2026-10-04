@@ -1,5 +1,5 @@
-//! Live test of `system/0012_saga_steps.sql` (wamn-zua8.3): on a control
-//! database installed before it, the migration gives `provisioning.sagas` and
+//! Live test of saga migrations from `system/0012_saga_steps.sql`: on a control
+//! database installed before it, the migrations give `provisioning.sagas` and
 //! `provisioning.saga_steps` the definition a fresh install has, and the
 //! control family the grants on them that its prepare grants. The test holds
 //! the process lock of its server, because the installers create cluster-wide
@@ -10,8 +10,29 @@ use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_control_provision::sql::grant_control_surface_sql;
 use wamn_test_infrastructure::locked_database;
 
-const MIGRATION: &str =
-    include_str!("../../../../deploy/sql/migrations/system/0012_saga_steps.sql");
+// Replay the migrations that change saga tables or their control grants, in order.
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0012_saga_steps",
+        include_str!("../../../../deploy/sql/migrations/system/0012_saga_steps.sql"),
+    ),
+    (
+        "0013_project_create",
+        include_str!("../../../../deploy/sql/migrations/system/0013_project_create.sql"),
+    ),
+    (
+        "0014_saga_routes",
+        include_str!("../../../../deploy/sql/migrations/system/0014_saga_routes.sql"),
+    ),
+    (
+        "0015_package_list",
+        include_str!("../../../../deploy/sql/migrations/system/0015_package_list.sql"),
+    ),
+    (
+        "0016_copy_environment",
+        include_str!("../../../../deploy/sql/migrations/system/0016_copy_environment.sql"),
+    ),
+];
 
 /// The two saga tables as system migration 0011 left them.
 const BEFORE_0012: &str = "\
@@ -135,16 +156,18 @@ async fn the_migration_adds_the_saga_steps_as_a_fresh_install_has_them() {
         .batch_execute(BEFORE_0012)
         .await
         .expect("make the tables as 0011 left them");
-    client
-        .batch_execute(&format!(
-            "BEGIN; SET LOCAL ROLE wamn_system; {MIGRATION} COMMIT;"
-        ))
-        .await
-        .expect("apply system/0012 as wamn_system");
+    for (name, migration) in MIGRATIONS {
+        client
+            .batch_execute(&format!(
+                "BEGIN; SET LOCAL ROLE wamn_system; {migration} COMMIT;"
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("apply system/{name} as wamn_system: {error}"));
+    }
     assert_eq!(
         definition(&client).await,
         fresh,
-        "the migration gives the saga tables the definition of a fresh install"
+        "the migration chain gives the saga tables the definition of a fresh install"
     );
     assert_eq!(
         control_grants(&client).await,
