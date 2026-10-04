@@ -166,6 +166,8 @@ pub enum HostHandler {
     EnvironmentResume,
     /// End a failed or pending create-environment saga as `abandoned`.
     EnvironmentAbandon,
+    /// Every package version that `push-package` pushed.
+    PackageList,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -422,6 +424,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::EnvironmentAbandon,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "package.list",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Member,
+        handler: HostHandler::PackageList,
     },
 ];
 

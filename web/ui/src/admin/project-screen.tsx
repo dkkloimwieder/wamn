@@ -19,16 +19,22 @@
  * resume button, which calls `environment.resume`. A failed or pending saga
  * has an abandon button, which the operator confirms first and which calls
  * `environment.abandon` (issue 11).
+ *
+ * For an org-admin, as `control.mine` answers it, a form above the sagas
+ * calls `environment.create`. It offers one version per package from
+ * `package.list`, and takes each connection as typed fields and one JSON
+ * object for its definition (issue 11).
  */
 
-import { environment, member, projectAdmin, user } from "@wamn/control-org-client";
+import { control, environment, member, package_, projectAdmin, user } from "@wamn/control-org-client";
 import { type JsonValue, newRequestId, type Outcome, type Transport } from "@wamn/web-runtime";
-import { createResource, createSignal, createUniqueId, For, type JSX, Show } from "solid-js";
+import { createResource, createSignal, createUniqueId, For, Index, type JSX, Show } from "solid-js";
 
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
 import { ConfirmAction } from "../confirm";
-import { ChoiceField } from "../fields";
+import { Field, FieldLabel } from "../components/ui/field";
+import { ChoiceField, TextField } from "../fields";
 import { announceOutcome } from "../outcome";
 import { controlRefusal } from "./refusal";
 
@@ -68,6 +74,174 @@ function Toggle(props: { label: string; checked: boolean; onChange: (on: boolean
         {props.label}
       </label>
     </>
+  );
+}
+
+/** One connection of the create form, as the operator types it. */
+interface ConnectionDraft {
+  readonly key: number;
+  instanceId: string;
+  alias: string;
+  requirementType: string;
+  /** The definition as JSON text. */
+  definition: string;
+}
+
+/** The connection types that `bind-connection` binds. */
+const REQUIREMENT_TYPES = [{ value: "blobstore", text: "blobstore" }];
+
+/**
+ * The create form of one environment, for an org-admin. It offers only the
+ * package versions that `package.list` answers, one version per package, and
+ * sends one JSON object per connection definition to `environment.create`,
+ * which checks each definition before it writes the saga.
+ */
+function CreateEnvironmentForm(props: {
+  transport: Transport;
+  project: string;
+  settle: (outcome: Outcome<unknown>, screen: string) => Promise<void>;
+  refuse: (text: string) => void;
+}): JSX.Element {
+  const [packages] = createResource(async () => {
+    const outcome = await package_.list(props.transport, [{}]);
+    return outcome.status === "completed" ? outcome.value.packages : [];
+  });
+  /** Each package id with its versions, in the order `package.list` answers them. */
+  const versions = () => {
+    const byPackage = new Map<string, string[]>();
+    for (const each of packages() ?? []) {
+      byPackage.set(each.packageId, [...(byPackage.get(each.packageId) ?? []), each.version]);
+    }
+    return [...byPackage.entries()];
+  };
+  const [env, setEnv] = createSignal("");
+  const [tenant, setTenant] = createSignal("");
+  const [routeHost, setRouteHost] = createSignal("");
+  const [chosen, setChosen] = createSignal<Record<string, string>>({});
+  const [connections, setConnections] = createSignal<ConnectionDraft[]>([]);
+  let nextKey = 0;
+
+  const edit = (key: number, change: Partial<ConnectionDraft>) =>
+    setConnections((all) => all.map((each) => (each.key === key ? { ...each, ...change } : each)));
+
+  const create = async () => {
+    const definitions: JsonValue[] = [];
+    for (const each of connections()) {
+      let definition: unknown;
+      try {
+        definition = JSON.parse(each.definition);
+      } catch {
+        definition = null;
+      }
+      if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
+        props.refuse(`The definition of ${each.instanceId} is not a JSON object.`);
+        return;
+      }
+      definitions.push(definition as JsonValue);
+    }
+    const value = {
+      project: props.project,
+      env: env(),
+      tenant: tenant(),
+      routeHost: routeHost(),
+      packages: Object.entries(chosen())
+        .filter(([, version]) => version !== "")
+        .map(([packageId, version]) => ({ packageId, version })),
+      connections: connections().map((each, index) => ({
+        instanceId: each.instanceId,
+        alias: each.alias,
+        requirementType: each.requirementType as "blobstore",
+        definition: definitions[index] as JsonValue,
+      })),
+    };
+    const outcome = await environment.create(props.transport, [{ requestId: newRequestId(), value }]);
+    await props.settle(outcome, "environment create");
+    if (outcome.status === "completed") {
+      setEnv("");
+      setTenant("");
+      setRouteHost("");
+      setChosen({});
+      setConnections([]);
+    }
+  };
+
+  return (
+    <section class="flex max-w-md flex-col gap-3" data-slot="project-create-environment">
+      <p class="text-sm font-semibold uppercase">create an environment</p>
+      <TextField label="environment name" type="text" value={env()} onInput={setEnv} />
+      <TextField label="tenant" type="text" value={tenant()} onInput={setTenant} />
+      <TextField label="route host" type="text" value={routeHost()} onInput={setRouteHost} />
+      <For each={versions()}>
+        {([packageId, list]) => (
+          <ChoiceField
+            label={`version of ${packageId}`}
+            choices={list.map((version) => ({ value: version, text: version }))}
+            allowEmpty={true}
+            value={chosen()[packageId] ?? ""}
+            onChange={(version) => setChosen((all) => ({ ...all, [packageId]: version }))}
+          />
+        )}
+      </For>
+      <Index each={connections()}>
+        {(draft) => {
+          const id = createUniqueId();
+          return (
+            <div class="flex flex-col gap-2" data-connection={draft().key}>
+              <TextField
+                label="instance id"
+                type="text"
+                value={draft().instanceId}
+                onInput={(instanceId) => edit(draft().key, { instanceId })}
+              />
+              <TextField
+                label="alias"
+                type="text"
+                value={draft().alias}
+                onInput={(alias) => edit(draft().key, { alias })}
+              />
+              <ChoiceField
+                label="requirement type"
+                choices={REQUIREMENT_TYPES}
+                allowEmpty={false}
+                value={draft().requirementType}
+                onChange={(requirementType) => edit(draft().key, { requirementType })}
+              />
+              <Field>
+                <FieldLabel for={id}>definition</FieldLabel>
+                <textarea
+                  id={id}
+                  class="border-input min-h-24 rounded-md border bg-transparent p-2 font-mono text-xs"
+                  value={draft().definition}
+                  onInput={(event) => edit(draft().key, { definition: event.currentTarget.value })}
+                />
+              </Field>
+              <Button
+                class="self-start"
+                variant="outline"
+                onClick={() => setConnections((all) => all.filter((each) => each.key !== draft().key))}
+              >
+                remove connection
+              </Button>
+            </div>
+          );
+        }}
+      </Index>
+      <Button
+        class="self-start"
+        variant="outline"
+        onClick={() =>
+          setConnections((all) => [
+            ...all,
+            { key: nextKey++, instanceId: "", alias: "", requirementType: "blobstore", definition: "" },
+          ])
+        }
+      >
+        add connection
+      </Button>
+      <Button class="self-start" onClick={() => void create()}>
+        create
+      </Button>
+    </section>
   );
 }
 
@@ -126,15 +300,25 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
     }
   };
 
+  const [mine] = createResource(async () => {
+    const outcome = await control.mine(props.transport, [{}]);
+    return outcome.status === "completed" && outcome.value.orgAdmin;
+  });
+
+  /** Announces one saga write, shows a refusal's text, and reads the sagas again. */
+  const settleSaga = async (outcome: Outcome<unknown>, screen: string) => {
+    announceOutcome(outcome, screen);
+    setRefusal(outcome.status === "refused" ? controlRefusal(outcome) : null);
+    await refetchListed();
+  };
+
   /** Resumes a failed saga, or abandons a failed or pending one, and reads the sagas again. */
   const endFailure = async (sagaId: string, resume: boolean) => {
     const item = [{ requestId: newRequestId(), value: { sagaId } }];
     const outcome = resume
       ? await environment.resume(props.transport, item)
       : await environment.abandon(props.transport, item);
-    announceOutcome(outcome, resume ? "saga resume" : "saga abandon");
-    setRefusal(outcome.status === "refused" ? controlRefusal(outcome) : null);
-    await refetchListed();
+    await settleSaga(outcome, resume ? "saga resume" : "saga abandon");
   };
 
   const add = async () => {
@@ -215,6 +399,14 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
           add
         </Button>
       </section>
+      <Show when={mine()}>
+        <CreateEnvironmentForm
+          transport={props.transport}
+          project={props.project}
+          settle={settleSaga}
+          refuse={(text) => setRefusal(text)}
+        />
+      </Show>
       <section class="flex flex-col gap-2" data-slot="project-sagas">
         <p class="text-sm font-semibold uppercase">environment creation</p>
         <Show

@@ -216,7 +216,10 @@ pub(super) async fn install_authority(
     audience: &str,
     principals: &[&str],
 ) -> anyhow::Result<()> {
-    client.batch_execute("CREATE SCHEMA identity; CREATE SCHEMA provisioning; CREATE SCHEMA registry;
+    client.batch_execute("CREATE SCHEMA IF NOT EXISTS catalog;
+        CREATE TABLE IF NOT EXISTS catalog.package_artifacts (package_id text, version text,
+            attested_at timestamptz);
+        CREATE SCHEMA identity; CREATE SCHEMA provisioning; CREATE SCHEMA registry;
         CREATE TABLE provisioning.sagas (saga_id text PRIMARY KEY, status text, last_error text,
             updated_at timestamptz);
         CREATE TABLE provisioning.saga_steps (saga_id text REFERENCES provisioning.sagas (saga_id), step int,

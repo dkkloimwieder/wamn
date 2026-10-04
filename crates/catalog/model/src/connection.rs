@@ -145,6 +145,96 @@ impl RequirementType {
             Self::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
         }
     }
+
+    /// The coordinates the type's plugin reads from a generation definition.
+    /// For blobstore these are the ones `wamn_blobstore::binding::resolve`
+    /// demands for the definition's `provider`, and nothing else: a key nobody
+    /// reads is a key nobody validates. An `s3` definition may omit `provider`.
+    fn coordinates(self, provider: Option<&str>) -> Result<&'static [&'static str], String> {
+        match (self, provider) {
+            (Self::Blobstore, None) => Ok(&["endpoint", "container", "prefix"]),
+            (Self::Blobstore, Some("s3")) => Ok(&["provider", "endpoint", "container", "prefix"]),
+            (Self::Blobstore, Some("gcs")) => Ok(&["provider", "container", "prefix"]),
+            (Self::Blobstore, Some(other)) => Err(format!(
+                "the generation definition's provider {other:?} is neither s3 nor gcs"
+            )),
+        }
+    }
+
+    /// Check a generation definition against the coordinates this type's
+    /// plugin reads, and return the reason it is refused. `wamn-ctl
+    /// bind-connection` and the `environment.create` route both refuse with
+    /// it.
+    pub fn check_definition(self, definition: &serde_json::Value) -> Result<(), String> {
+        use serde_json::Value;
+        let Some(object) = definition.as_object() else {
+            return Err("the generation definition must be a JSON object".to_owned());
+        };
+        let provider = match object.get("provider") {
+            None => None,
+            Some(Value::String(provider)) => Some(provider.as_str()),
+            Some(_) => {
+                return Err("the generation definition's provider must be a string".to_owned());
+            }
+        };
+        let coordinates = self.coordinates(provider)?;
+        for coordinate in coordinates {
+            match object.get(*coordinate) {
+                Some(Value::String(value)) if !value.is_empty() => {}
+                Some(Value::String(_)) => {
+                    return Err(format!(
+                        "the generation definition's {coordinate} is empty; {self:?} needs it"
+                    ));
+                }
+                Some(_) => {
+                    return Err(format!(
+                        "the generation definition's {coordinate} must be a string; \
+                         {self:?} reads it as one"
+                    ));
+                }
+                None => {
+                    return Err(format!(
+                        "the generation definition lacks {coordinate}; \
+                         {self:?} reads it at resolve time"
+                    ));
+                }
+            }
+        }
+        if let Some(key) = object
+            .keys()
+            .find(|key| !coordinates.contains(&key.as_str()))
+        {
+            return Err(format!(
+                "the generation definition carries {key}, which {self:?} never reads; \
+                 a coordinate nobody reads is a coordinate nobody validates"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check the credential handle of a checked definition. A `gcs`
+    /// definition takes none, because the host signs with its pod's service
+    /// account, and every other definition needs one.
+    pub fn check_credential_handle(
+        self,
+        definition: &serde_json::Value,
+        credential_handle: Option<&str>,
+    ) -> Result<(), String> {
+        let gcs = definition
+            .get("provider")
+            .and_then(serde_json::Value::as_str)
+            == Some("gcs");
+        match (self, gcs, credential_handle) {
+            (Self::Blobstore, true, Some(_)) => Err(
+                "a gcs definition takes no credential handle; the host signs with its pod's service account"
+                    .to_owned(),
+            ),
+            (Self::Blobstore, false, None | Some("")) => Err(
+                "the credential handle must not be empty; the host resolves it by name".to_owned(),
+            ),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Versioned portable semantics for one connection type.

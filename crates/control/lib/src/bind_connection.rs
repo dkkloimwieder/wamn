@@ -61,32 +61,6 @@ SELECT requirement.requirement_json::text, requirement.requirement_hash \
         AND member.effective_release_id = $4 AND release.environment = $5)";
 const FIRST_GENERATION: i64 = 1;
 
-/// The coordinates the type's plugin reads from a generation definition.
-/// For blobstore these are the ones `wamn_blobstore::binding::resolve`
-/// demands for the definition's `provider`, and nothing else: a key nobody
-/// reads is a key nobody validates. An `s3` definition may omit `provider`.
-fn coordinates(
-    requirement_type: RequirementType,
-    provider: Option<&str>,
-) -> anyhow::Result<&'static [&'static str]> {
-    match (requirement_type, provider) {
-        (RequirementType::Blobstore, None) => Ok(&["endpoint", "container", "prefix"]),
-        (RequirementType::Blobstore, Some("s3")) => {
-            Ok(&["provider", "endpoint", "container", "prefix"])
-        }
-        (RequirementType::Blobstore, Some("gcs")) => Ok(&["provider", "container", "prefix"]),
-        (RequirementType::Blobstore, Some(other)) => {
-            bail!("the generation definition's provider {other:?} is neither s3 nor gcs")
-        }
-    }
-}
-
-/// Whether a definition names the `gcs` provider, which signs with the pod's
-/// service account and so takes no credential handle.
-fn is_gcs(definition: &Value) -> bool {
-    definition.get("provider").and_then(Value::as_str) == Some("gcs")
-}
-
 #[derive(Debug)]
 pub struct BindConnectionRequest {
     /// The project-environment database holding the catalog schema.
@@ -132,44 +106,15 @@ pub struct BoundConnection {
 }
 
 /// Check a definition against the descriptor's coordinates. Pure; the CLI's
-/// refusal and the test's controls both go through here.
+/// refusal and the test's controls both go through here, and the
+/// `environment.create` route refuses with the same reason.
 pub fn validate_definition(
     requirement_type: RequirementType,
     definition: &Value,
 ) -> anyhow::Result<()> {
-    let Some(object) = definition.as_object() else {
-        bail!("the generation definition must be a JSON object");
-    };
-    let provider = match object.get("provider") {
-        None => None,
-        Some(Value::String(provider)) => Some(provider.as_str()),
-        Some(_) => bail!("the generation definition's provider must be a string"),
-    };
-    let coordinates = coordinates(requirement_type, provider)?;
-    for coordinate in coordinates {
-        match object.get(*coordinate) {
-            Some(Value::String(value)) if !value.is_empty() => {}
-            Some(Value::String(_)) => bail!(
-                "the generation definition's {coordinate} is empty; {requirement_type:?} needs it"
-            ),
-            Some(_) => bail!(
-                "the generation definition's {coordinate} must be a string; \
-                 {requirement_type:?} reads it as one"
-            ),
-            None => bail!(
-                "the generation definition lacks {coordinate}; \
-                 {requirement_type:?} reads it at resolve time"
-            ),
-        }
-    }
-    for key in object.keys() {
-        ensure!(
-            coordinates.contains(&key.as_str()),
-            "the generation definition carries {key}, which {requirement_type:?} never reads; \
-             a coordinate nobody reads is a coordinate nobody validates"
-        );
-    }
-    Ok(())
+    requirement_type
+        .check_definition(definition)
+        .map_err(anyhow::Error::msg)
 }
 
 #[doc(inline)]
@@ -187,19 +132,9 @@ pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnectio
         .with_context(|| format!("{} is not JSON", args.definition.display()))?;
     validate_definition(args.requirement_type, &definition)?;
     let descriptor = args.requirement_type.descriptor();
-    if is_gcs(&definition) {
-        ensure!(
-            args.credential_handle.is_none(),
-            "a gcs definition takes no credential handle; the host signs with its pod's service account"
-        );
-    } else {
-        ensure!(
-            args.credential_handle
-                .as_deref()
-                .is_some_and(|handle| !handle.is_empty()),
-            "the credential handle must not be empty; the host resolves it by name"
-        );
-    }
+    args.requirement_type
+        .check_credential_handle(&definition, args.credential_handle.as_deref())
+        .map_err(anyhow::Error::msg)?;
 
     let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await

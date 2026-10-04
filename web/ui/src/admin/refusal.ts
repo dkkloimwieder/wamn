@@ -3,7 +3,9 @@
  *
  * It is the text of the contract. A write that stopped part way through the
  * environments of the org (`application_write_incomplete`) also names the
- * environment where it stopped and the environments that completed.
+ * environment where it stopped and the environments that completed. A
+ * refused connection definition also gives the reason that
+ * `bind-connection` gives.
  */
 
 import { type JsonValue, type Outcome, refusalSentence } from "@wamn/web-runtime";
@@ -22,6 +24,10 @@ export function controlRefusal(outcome: Refused): string {
   const sentence = refusalSentence(outcome.code, outcome.text);
   const outer = members(outcome.detail);
   const detail = members(outer["detail"] ?? outcome.detail);
+  const reason = detail["reason"];
+  if (typeof reason === "string") {
+    return `${sentence} ${reason}`;
+  }
   const environment = detail["environment"];
   if (typeof environment !== "string") {
     return sentence;

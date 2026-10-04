@@ -33,6 +33,8 @@
 //! `environment.resume` returns a failed saga to `pending`, and
 //! `environment.abandon` ends a failed or pending saga. They write the
 //! saga's status only, and the worker starts the failed step again.
+//! `package.list` reads every package version in `catalog.package_artifacts`,
+//! so the create form offers only versions that `push-package` pushed.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -67,6 +69,16 @@ use wamn_platform_identity::org::{
 use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
 };
+
+/// Every pushed package version, as JSON text, for `package.list`. The time
+/// is UTC RFC 3339 with six fractional digits and a `Z`, as the runtime spells
+/// a `timestamptz`, whatever the session's time zone.
+const PACKAGES_SQL: &str = "SELECT coalesce(jsonb_agg(jsonb_build_object( \
+        'package_id', package_id, 'version', version, \
+        'attested_at', to_char(attested_at AT TIME ZONE 'UTC', \
+                               'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) \
+      ORDER BY package_id, version), '[]'::jsonb)::text \
+      FROM catalog.package_artifacts";
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -450,6 +462,12 @@ impl ControlRoutes<'_> {
                 transaction.commit().await?;
                 Ok(json!({ "saga_id": saga_id }))
             }
+            HostHandler::PackageList => {
+                let packages: String = self.control.query_one(PACKAGES_SQL, &[]).await?.get(0);
+                let packages: Value =
+                    serde_json::from_str(&packages).context("decode the packages")?;
+                Ok(json!({ "packages": packages }))
+            }
             HostHandler::EnvironmentResume | HostHandler::EnvironmentAbandon => {
                 let request: SagaRequest = parse(payload)?;
                 let resume = attachment.route.handler == HostHandler::EnvironmentResume;
@@ -467,13 +485,30 @@ impl ControlRoutes<'_> {
         }
     }
 
-    /// Refuse a project outside the org, and an environment that exists or
-    /// has an open saga. Then write the saga and its steps, and return its id.
+    /// Refuse a connection definition that `bind-connection` would refuse, a
+    /// project outside the org, and an environment that exists or has an open
+    /// saga. Then write the saga and its steps, and return its id.
     async fn create_environment(
         &self,
         transaction: &Transaction<'_>,
         request: &saga::EnvironmentRequest,
     ) -> Result<String, Refusal> {
+        // The worker binds every connection with no credential handle, so a
+        // definition refuses here with the reason `bind-connection` gives.
+        for connection in &request.connections {
+            connection
+                .requirement_type
+                .check_definition(&connection.definition)
+                .and_then(|()| {
+                    connection
+                        .requirement_type
+                        .check_credential_handle(&connection.definition, None)
+                })
+                .map_err(|reason| Refusal::Declared {
+                    code: "invalid_input",
+                    detail: json!({ "field": "connections", "reason": reason }),
+                })?;
+        }
         let target = environment_target(self.org, &request.project, &request.env);
         let refusals = transaction
             .query_one(

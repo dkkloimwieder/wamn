@@ -1143,7 +1143,7 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
                 "instance_id": "labels",
                 "requirement_type": "blobstore",
                 "alias": "labels",
-                "definition": {"endpoint": "e", "container": "c", "prefix": "p"},
+                "definition": {"provider": "gcs", "container": "c", "prefix": "p"},
             }],
         })
     };
@@ -1159,6 +1159,35 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
         .await,
         Err("permission denied wamn-control:environment/create@0.4.0".to_owned())
     );
+
+    // A definition that bind-connection would refuse refuses before any saga
+    // is written, with the same reason. The worker binds with no credential
+    // handle, so only a gcs definition binds.
+    for (definition, reason) in [
+        (
+            json!({"endpoint": "e", "container": "c", "prefix": "p"}),
+            "the credential handle must not be empty; the host resolves it by name",
+        ),
+        (
+            json!({"provider": "gcs", "container": "c"}),
+            "the generation definition lacks prefix; Blobstore reads it at resolve time",
+        ),
+    ] {
+        let mut refused_request = request("billing", "test");
+        refused_request["connections"][0]["definition"] = definition;
+        assert_eq!(
+            call(&delivery, "environment/create", boss, refused_request).await,
+            Err(refused(
+                "invalid_input",
+                &json!({"field": "connections", "reason": reason})
+            ))
+        );
+    }
+    let written: i64 = admin
+        .query_one("SELECT count(*) FROM provisioning.sagas", &[])
+        .await?
+        .get(0);
+    assert_eq!(written, 0, "a refused definition writes no saga");
     assert_eq!(
         call(
             &delivery,
@@ -1522,6 +1551,33 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     let mut expected = vec![boss.to_owned(), dee.to_owned()];
     expected.sort();
     assert_eq!(admins, expected);
+
+    // An org admin and a project admin read every pushed package version.
+    assert_eq!(
+        call(&delivery, "package/list", cat, json!({})).await,
+        Ok(json!({"packages": []}))
+    );
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO catalog.package_artifacts (package_id, version, digest, attested_at) \
+             VALUES ('wamn_wms', '1.0.0', 'sha256:{a}', '2026-10-03T10:00:00Z'), \
+                    ('wamn_receiving', '1.1.0', 'sha256:{b}', '2026-10-03T11:00:00Z'), \
+                    ('wamn_receiving', '1.0.0', 'sha256:{a}', '2026-10-03T09:00:00Z');",
+            a = "a".repeat(64),
+            b = "b".repeat(64),
+        ))
+        .await?;
+    let expected = json!({"packages": [
+        {"package_id": "wamn_receiving", "version": "1.0.0", "attested_at": "2026-10-03T09:00:00.000000Z"},
+        {"package_id": "wamn_receiving", "version": "1.1.0", "attested_at": "2026-10-03T11:00:00.000000Z"},
+        {"package_id": "wamn_wms", "version": "1.0.0", "attested_at": "2026-10-03T10:00:00.000000Z"},
+    ]});
+    for reader in [boss, cat] {
+        assert_eq!(
+            call(&delivery, "package/list", reader, json!({})).await,
+            Ok(expected.clone())
+        );
+    }
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }

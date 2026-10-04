@@ -11,6 +11,9 @@
  * `environment.list` also answers the create-environment sagas of the
  * project, in the wire shape, and `environment.resume` and
  * `environment.abandon` change the status of one of them.
+ * `environment.create` adds a pending saga, `package.list` answers three
+ * package versions, and `control.mine` answers whether the caller holds
+ * org-admin.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
@@ -41,6 +44,10 @@ export interface ControlState {
   readonly sagas: Record<string, JsonValue[]>;
   /** The code the next write refuses with, and its detail, or null. */
   refuseNext: { readonly code: string; readonly detail: JsonValue } | null;
+  /** Whether the caller holds org-admin, as `control.mine` answers it. */
+  callerOrgAdmin: boolean;
+  /** The pushed package versions, as `package.list` answers them. */
+  readonly packages: JsonValue[];
 }
 
 /** Boss holds org-admin, Cat project-admin of billing, and Ann a membership of billing dev. */
@@ -56,6 +63,12 @@ export function controlState(): ControlState {
     memberships: new Set([`billing dev ${BOSS}`, `shop dev ${BOSS}`, `billing dev ${CAT}`, `billing dev ${ANN}`]),
     sagas: {},
     refuseNext: null,
+    callerOrgAdmin: true,
+    packages: [
+      { package_id: "wamn_receiving", version: "1.0.0", attested_at: "2026-10-03T09:00:00.000000Z" },
+      { package_id: "wamn_receiving", version: "1.1.0", attested_at: "2026-10-03T11:00:00.000000Z" },
+      { package_id: "wamn_wms", version: "1.0.0", attested_at: "2026-10-03T10:00:00.000000Z" },
+    ],
   };
 }
 
@@ -104,14 +117,31 @@ export function controlStub(state: ControlState = controlState()): { transport: 
         return completed({ projects: Object.keys(PROJECTS) });
       case "wamn-control:environment/list":
         return completed({ environments: [...(PROJECTS[project] ?? [])], sagas: state.sagas[project] ?? [] });
+      case "wamn-control:control/mine":
+        return completed({
+          org_admin: state.callerOrgAdmin,
+          projects: Object.keys(PROJECTS).map((name) => ({ project: name, project_admin: true })),
+        });
+      case "wamn-control:package/list":
+        return completed({ packages: state.packages });
+      case "wamn-control:environment/create": {
+        const sagaId = `saga-${String(value["env"])}`;
+        (state.sagas[project] ??= []).push({
+          saga_id: sagaId,
+          env: value["env"] ?? null,
+          status: "pending",
+          last_error: null,
+          steps: [],
+        });
+        return completed({ saga_id: sagaId });
+      }
       case "wamn-control:environment/resume":
       case "wamn-control:environment/abandon": {
         const sagaId = String(value["saga_id"] ?? "");
         const saga = Object.values(state.sagas)
           .flat()
           .find((each) => (each as { [key: string]: JsonValue })["saga_id"] === sagaId) as
-          | { [key: string]: JsonValue }
-          | undefined;
+          { [key: string]: JsonValue } | undefined;
         if (saga === undefined) {
           return refused(request, "saga_not_found", { field: "saga_id" });
         }

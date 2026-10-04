@@ -898,9 +898,11 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// cover. The `environment.create` route writes a provisioning saga and all
 /// of its steps, and the environment routes read them (owner rulings of
 /// 2026-10-02 on `wamn-zua8.3`). Only the worker updates a step. The
-/// `project.create` route writes a project (owner ruling of 2026-10-03 on
+/// `project.create` route writes a project, and the `package.list` route
+/// reads the pushed package versions (owner rulings of 2026-10-03 on
 /// `wamn-zua8.4`). It holds nothing else in the control database.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 10] = [
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 11] = [
+    ("catalog", "package_artifacts", &["SELECT"]),
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
     ("identity", "password_logins", &["SELECT"]),
@@ -931,7 +933,7 @@ pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 2] = [
 ];
 
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
-pub const CONTROL_SCHEMAS: [&str; 3] = ["identity", "provisioning", "registry"];
+pub const CONTROL_SCHEMAS: [&str; 4] = ["catalog", "identity", "provisioning", "registry"];
 
 /// Converge the stable control role to exactly [`CONTROL_SURFACE`] and
 /// [`CONTROL_COLUMN_SURFACE`] in the
@@ -947,7 +949,7 @@ pub fn grant_control_surface_sql() -> String {
 
 /// The grants of [`grant_control_surface_sql`] without the role bootstrap.
 ///
-/// The latest system migration that changes them, 0014, runs these as
+/// The latest system migration that changes them, 0015, runs these as
 /// `wamn_system`, which owns the tables and cannot create a role, so it
 /// carries the grants alone.
 pub fn control_surface_grants_sql() -> String {

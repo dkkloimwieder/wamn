@@ -8,6 +8,9 @@
       "detail": {
         "required": [
           "field"
+        ],
+        "optional": [
+          "reason"
         ]
       }
     },

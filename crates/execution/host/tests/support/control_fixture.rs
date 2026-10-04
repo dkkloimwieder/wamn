@@ -42,6 +42,18 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
     admin
         .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
         .await?;
+    // The package versions that `package.list` reads. The control store
+    // creates them in `control-portable-store.sql`, which this fixture does
+    // not install.
+    admin
+        .batch_execute(
+            "CREATE SCHEMA catalog; \
+             CREATE TABLE catalog.package_artifacts ( \
+               package_id text NOT NULL, version text NOT NULL, digest text NOT NULL, \
+               source_commit text, attested_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+               PRIMARY KEY (package_id, version));",
+        )
+        .await?;
     admin
         .batch_execute(
             "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \

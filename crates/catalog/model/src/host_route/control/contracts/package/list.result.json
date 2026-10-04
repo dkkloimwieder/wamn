@@ -1,0 +1,23 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "packages[].package_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "packages[].version",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "packages[].attested_at",
+      "type": "timestamptz",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

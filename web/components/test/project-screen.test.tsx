@@ -186,6 +186,84 @@ describe("the project screen", () => {
     expect(await screen.findByText("Only a failed saga resumes.")).toBeDefined();
   });
 
+  it("creates an environment from the pushed package versions and one JSON object per connection", async () => {
+    const { sent } = await open("billing");
+    const form = await waitFor(() => {
+      const found = document.querySelector('[data-slot="project-create-environment"]');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    const type = (label: string, text: string, scope: HTMLElement = form) =>
+      fireEvent.input(within(scope).getByLabelText(label), { target: { value: text } });
+    type("environment name", "test");
+    type("tenant", "billing-test");
+    type("route host", "billing.example.test");
+    await pick("version of wamn_receiving", "1.1.0");
+    fireEvent.click(within(form).getByRole("button", { name: "add connection" }));
+    const connection = await waitFor(() => form.querySelector("[data-connection]") as HTMLElement);
+    type("instance id", "labels", connection);
+    type("alias", "labels", connection);
+    type("definition", '{"provider": "gcs", "container": "c", "prefix": "p"}', connection);
+    fireEvent.click(within(form).getByRole("button", { name: "create" }));
+    await waitFor(() =>
+      expect(document.querySelector('[data-saga="saga-test"]')?.textContent).toContain("test: pending"),
+    );
+    expect(written(sent, "environment/create")).toEqual({
+      project: "billing",
+      env: "test",
+      tenant: "billing-test",
+      route_host: "billing.example.test",
+      packages: [{ package_id: "wamn_receiving", version: "1.1.0" }],
+      connections: [
+        {
+          instance_id: "labels",
+          alias: "labels",
+          requirement_type: "blobstore",
+          definition: { provider: "gcs", container: "c", prefix: "p" },
+        },
+      ],
+    });
+  });
+
+  it("refuses a definition that is not a JSON object before it sends anything", async () => {
+    const { sent } = await open("billing");
+    const form = await waitFor(() => document.querySelector('[data-slot="project-create-environment"]') as HTMLElement);
+    fireEvent.click(within(form).getByRole("button", { name: "add connection" }));
+    const connection = await waitFor(() => form.querySelector("[data-connection]") as HTMLElement);
+    fireEvent.input(within(connection).getByLabelText("instance id"), { target: { value: "labels" } });
+    fireEvent.input(within(connection).getByLabelText("definition"), { target: { value: "[1]" } });
+    fireEvent.click(within(form).getByRole("button", { name: "create" }));
+    expect(await screen.findByText("The definition of labels is not a JSON object.")).toBeDefined();
+    expect(written(sent, "environment/create")).toBeUndefined();
+  });
+
+  it("shows the reason a definition is refused", async () => {
+    const state = controlState();
+    await open("billing", state);
+    const form = await waitFor(() => document.querySelector('[data-slot="project-create-environment"]') as HTMLElement);
+    state.refuseNext = {
+      code: "invalid_input",
+      detail: {
+        field: "connections",
+        reason: "the credential handle must not be empty; the host resolves it by name",
+      },
+    };
+    fireEvent.click(within(form).getByRole("button", { name: "create" }));
+    expect(
+      await screen.findByText(/the credential handle must not be empty; the host resolves it by name$/),
+    ).toBeDefined();
+  });
+
+  it("shows no create form to a project admin", async () => {
+    const state = controlState();
+    state.callerOrgAdmin = false;
+    const { sent } = await open("billing", state);
+    await waitFor(() =>
+      expect(sent.some((each) => each.operation.startsWith("wamn-control:control/mine@"))).toBe(true),
+    );
+    expect(document.querySelector('[data-slot="project-create-environment"]')).toBeNull();
+  });
+
   it("says when the project has no environment creation", async () => {
     await open("shop");
     expect(screen.getByText("No environment creation.")).toBeDefined();

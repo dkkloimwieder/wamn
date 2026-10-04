@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {
+      "literal": "permission_denied",
+      "from": "permission_denied",
+      "detail": {
+        "required": [
+          "operation"
+        ]
+      }
+    }
+  ],
+  "closed": true
+}

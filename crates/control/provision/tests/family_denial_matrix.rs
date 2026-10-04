@@ -1734,7 +1734,9 @@ fn the_scenario_author_has_no_platform_membership_or_project_reads() {
 /// tenant, so their policies admit every row (owner rulings of 2026-10-02 on
 /// `wamn-zua8.3`). That is safe only while they are the only pass-all policies
 /// of the control database and no role but the owner holds a privilege on
-/// either table. Both are read from the server.
+/// either table, except the control family's SELECT on the package versions,
+/// which `package.list` reads (owner ruling of 2026-10-03 on `wamn-zua8.4`).
+/// Both are read from the server.
 #[test]
 fn the_tenantless_tables_are_the_only_pass_all_policies_and_owner_only() {
     let fixture = fixture();
@@ -1766,7 +1768,7 @@ fn the_tenantless_tables_are_the_only_pass_all_policies_and_owner_only() {
                 AND acl.grantee <> c.relowner \
               ORDER BY 1",
         ),
-        Vec::<String>::new(),
+        ["package_artifacts wamn_control:SELECT"],
         "a role other than the owner holds a privilege on a tenant-less table"
     );
 }
