@@ -57,6 +57,8 @@ too_many_lines = "allow"
 missing_panics_doc = "allow"
 multiple_crate_versions = "allow"
 return_self_not_must_use = "allow"
+# Rust 1.99 adds this assertion style rule; keep the root workspace policy.
+assert_is_empty = "allow"
 
 [workspace.package]
 version = "0.1.0"
@@ -64,7 +66,7 @@ edition = "2024"
 
 [workspace.dependencies]
 dlmalloc = { version = "0.2.14", features = ["global"] }
-wit-bindgen = { version = "0.44", default-features = false, features = ["macros", "realloc"] }
+wit-bindgen = { version = "0.62.0", default-features = false, features = ["macros", "realloc"] }
 
 [profile.release]
 opt-level = "s"

@@ -3,8 +3,8 @@ set -euo pipefail
 
 readonly WAMN_USAGE='usage: tools/wasmcloud-release-check [run|dry-run] [upstream-checkout]'
 readonly WAMN_EXPECTED_REPOSITORY='https://github.com/wasmCloud/wasmCloud'
-readonly WAMN_EXPECTED_TAG='v2.10.1'
-readonly WAMN_EXPECTED_REVISION='fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa'
+readonly WAMN_EXPECTED_TAG='v2.10.3'
+readonly WAMN_EXPECTED_REVISION='548bb21b65ac8cc03776f73656c4bf7be2f96992'
 
 wamn_fail() {
   local -r exit_code="$1"

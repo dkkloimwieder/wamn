@@ -580,8 +580,10 @@ fn embedded_components(component_bytes: &[u8]) -> anyhow::Result<EmbeddedCompone
             unchecked_range, ..
         } = payload?
         {
+            let start = usize::try_from(unchecked_range.start)?;
+            let end = usize::try_from(unchecked_range.end)?;
             let member = component_bytes
-                .get(unchecked_range)
+                .get(start..end)
                 .ok_or_else(|| anyhow::anyhow!("a nested component section is out of range"))?;
             embedded.digests.insert(component_digest(member));
             embedded.exports.extend(top_level_exports(member)?);

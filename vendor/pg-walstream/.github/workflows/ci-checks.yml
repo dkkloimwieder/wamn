@@ -1,0 +1,606 @@
+name: CI Checks
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  MIN_COVERAGE: 90
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        rust: [stable, beta]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+        components: rustfmt, clippy
+
+    - name: Install dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        # Default backend is rustls-tls (aws-lc-rs) — needs only cmake + a C
+        # compiler (preinstalled). No libpq / OpenSSL / pkg-config on this path.
+        sudo apt-get install -y cmake
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Cache target directory
+      uses: actions/cache@v4
+      with:
+        path: target
+        key: ${{ runner.os }}-${{ matrix.rust }}-target-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.rust }}-target-
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+    - name: Clippy (workspace, derive feature)
+      # Gate lints on stable only; beta may add lints that would fail -D warnings.
+      if: matrix.rust == 'stable'
+      run: cargo clippy --workspace --all-targets --features derive -- -D warnings
+
+    - name: Build
+      run: cargo build --workspace --verbose
+
+    - name: Run unit tests
+      run: cargo test --lib --verbose
+
+    - name: Run unit tests (derive feature)
+      run: cargo test --lib --features derive --verbose
+
+  libpq-backend:
+    name: libpq backend (pq-sys, clean env)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy
+
+    # Clean, minimal environment for the opt-in libpq backend: only libpq +
+    # OpenSSL + pkg-config. Deliberately NO clang/libclang (pq-sys ships
+    # pre-generated bindings — no bindgen) and NO cmake (no aws-lc-rs on this
+    # path). If this job builds, the libpq/pq-sys backend needs nothing more.
+    - name: Install dependencies (libpq only)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev libssl-dev pkg-config
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-libpq-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-libpq-
+
+    - name: Build (libpq / pq-sys)
+      run: cargo build --no-default-features --features libpq --verbose
+
+    - name: Clippy (libpq / pq-sys)
+      run: cargo clippy --no-default-features --features libpq --all-targets -- -D warnings
+
+    - name: Unit tests (libpq / pq-sys)
+      run: cargo test --lib --no-default-features --features libpq --verbose
+
+  examples:
+    name: Examples build
+    runs-on: ubuntu-latest
+    # Examples are workspace-excluded, so nothing else in CI compiles them: a
+    # signature change in the crate leaves them broken and silent until a user
+    # copies one. Enumerated from the filesystem so a new example is picked up
+    # without touching this file.
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev libssl-dev pkg-config cmake
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-examples-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-examples-
+
+    - name: Check every example
+      run: |
+        set -uo pipefail
+        failed=()
+        ran=0
+        for manifest in examples/*/Cargo.toml; do
+          name=$(basename "$(dirname "$manifest")")
+          ran=$((ran + 1))
+          echo "::group::$name"
+          cargo check --manifest-path "$manifest" --all-targets || failed+=("$name")
+          echo "::endgroup::"
+        done
+
+        if [ "$ran" -eq 0 ]; then
+          echo "::error::no examples/*/Cargo.toml found - examples would be silently skipped"
+          exit 1
+        fi
+
+        if [ ${#failed[@]} -gt 0 ]; then
+          printf '::error::%d example(s) failed to build:\n' "${#failed[@]}"
+          printf '  - %s\n' "${failed[@]}"
+          exit 1
+        fi
+        echo "All $ran example(s) built."
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        # Coverage runs on the default rustls-tls backend (aws-lc-rs): cmake only.
+        sudo apt-get install -y cmake
+
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-coverage-
+
+    - name: Generate coverage report (lcov for Codecov)
+      run: cargo llvm-cov --lib --features derive --lcov --output-path lcov.info
+
+    - name: Generate coverage report (json for threshold check)
+      run: cargo llvm-cov --lib --features derive --json --output-path coverage.json
+
+    - name: Check coverage threshold (minimum ${{ env.MIN_COVERAGE }}%)
+      run: |
+        COVERAGE=$(cat coverage.json | python3 -c "
+        import json, sys
+        data = json.load(sys.stdin)
+        totals = data['data'][0]['totals']
+        lines = totals['lines']
+        pct = lines['percent']
+        print(f'{pct:.2f}')
+        ")
+        echo "Line coverage: ${COVERAGE}%"
+        if python3 -c "exit(0 if float('${COVERAGE}') >= ${{ env.MIN_COVERAGE }} else 1)"; then
+          echo "Coverage ${COVERAGE}% meets minimum threshold of ${{ env.MIN_COVERAGE }}%"
+        else
+          echo "Coverage ${COVERAGE}% is below minimum threshold of ${{ env.MIN_COVERAGE }}%"
+          exit 1
+        fi
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: lcov.info
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+  integration:
+    name: Integration Tests (PG ${{ matrix.pg_version }})
+    runs-on: ubuntu-latest
+    # The suite deliberately kills backends and drops connections mid-COPY, so a
+    # hang is a plausible failure mode — and most tests carry no timeout of their
+    # own. Without this a wedged read burns GitHub's 6h default on every cell of
+    # the matrix.
+    timeout-minutes: 45
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        # pgoutput protocol v2 (streaming in-progress transactions) requires PG 15+
+        pg_version: [15, 16, 17, 18]
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg_version }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_walstream
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libpq-dev pkg-config libssl-dev cmake
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-integration-
+
+    - name: Configure PostgreSQL for logical replication
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET wal_level = 'logical';"
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET max_replication_slots = 16;"
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET max_wal_senders = 16;"
+        # Two-phase commit tests (pgoutput_fidelity, streaming_decode) need prepared transactions.
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET max_prepared_transactions = 16;"
+        # streaming_decode forces protocol-v2 streaming by keeping the reorder buffer tiny.
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET logical_decoding_work_mem = '64kB';"
+        # The library has no statement deadline on the blocking sync path (exec/connect
+        # park the caller's thread), so an in-test `tokio::time::timeout` cannot reach a
+        # lock wait. Server-side lock_timeout is the only bound: a leaked prepared txn or
+        # a stranded COPY reader turns a setup TRUNCATE/DROP into a permanent wedge
+        # otherwise. Every legitimate wait here is sub-second; 30s only fires on a wedge,
+        # and names the blocking PID. NOT statement_timeout - that would kill long COPY.
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET lock_timeout = '30s';"
+        # upload_manifest's incremental BASE_BACKUP needs WAL summaries. The GUC is PG17+;
+        # on 15/16 this fails and the test skips itself.
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET summarize_wal = 'on';" \
+          || echo "summarize_wal unsupported (PG<17) - the incremental backup test will skip"
+        # Restart PostgreSQL container to apply wal_level change (requires restart)
+        docker restart ${{ job.services.postgres.id }}
+        # Wait for PostgreSQL to be ready after restart
+        for i in $(seq 1 30); do
+          pg_isready -h localhost -p 5432 -U postgres && break
+          echo "Waiting for PostgreSQL after restart... ($i/30)"
+          sleep 2
+        done
+
+    - name: Verify PostgreSQL logical replication config
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -d test_walstream -c "SHOW wal_level;"
+        psql -h localhost -U postgres -d test_walstream -c "SHOW max_replication_slots;"
+        psql -h localhost -U postgres -d test_walstream -c "SHOW max_wal_senders;"
+
+    # A real backup_manifest for the incremental BASE_BACKUP test. Taken inside the
+    # container so the local trust rule applies: the image's pg_hba.conf has no
+    # `host replication` entry for the runner's address, and pg_basebackup opens a
+    # physical replication connection (unlike the logical `replication=database`
+    # connections every other test uses, which match on database name instead).
+    - name: Prepare a backup manifest (PG17+)
+      env:
+        PGPASSWORD: postgres
+      run: |
+        VER=$(psql -h localhost -U postgres -d test_walstream -tAc "SHOW server_version_num")
+        if [ "$VER" -ge 170000 ]; then
+          docker exec ${{ job.services.postgres.id }} rm -rf /tmp/bb
+          docker exec -u postgres ${{ job.services.postgres.id }} \
+            pg_basebackup -D /tmp/bb -Fp -X stream --no-sync
+          docker cp ${{ job.services.postgres.id }}:/tmp/bb/backup_manifest ./backup_manifest
+          echo "BACKUP_MANIFEST_PATH=$PWD/backup_manifest" >> $GITHUB_ENV
+          echo "prepared a backup manifest for PG $VER"
+        else
+          echo "PG $VER < 17: UPLOAD_MANIFEST does not exist, the test will skip"
+        fi
+
+    - name: Run integration tests
+      env:
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_walstream?replication=database&connect_timeout=10"
+        DATABASE_URL_REGULAR: "postgresql://postgres:postgres@localhost:5432/test_walstream?connect_timeout=10"
+        PGPASSWORD: postgres
+        RUST_BACKTRACE: 1
+      # The suite list comes from the filesystem, so a new integration-tests/*.rs
+      # runs automatically, and one that is missing its `[[test]]` target in
+      # Cargo.toml fails here ("no test target named ...") instead of being
+      # silently skipped. Only the exceptions need naming below; every other
+      # suite runs once on default features. Each suite's purpose is documented
+      # in its own `//!` header rather than duplicated here.
+      run: |
+        set -uo pipefail
+        failed=()
+
+        for f in integration-tests/*.rs; do
+          suite=$(basename "$f" .rs)
+
+          case "$suite" in
+            # `ssl_*` suites belong to the integration-ssl job below, which has a
+            # TLS-configured server and generated certificates. The two jobs
+            # partition integration-tests/ on this prefix, so every file lands in
+            # exactly one of them.
+            ssl_*) continue ;;
+            # Exercise the opt-in derive-macro layer.
+            typed_deserialization|ergonomics) variants=("--features derive") ;;
+            # libpq-only API surface.
+            pg_result_get_bytes) variants=("--no-default-features --features libpq") ;;
+            # Server diagnostics and COPY framing are parsed independently by each
+            # backend, so these must prove out on both. `initial_snapshot` joins
+            # them: its COPY-out reader is a hand-rolled state machine over
+            # `wire::read_message` on the native backend and `PQgetCopyData` on
+            # libpq, with nothing shared between the two.
+            error_classification|upload_manifest|initial_snapshot)
+              variants=("" "--no-default-features --features libpq") ;;
+            *) variants=("") ;;
+          esac
+
+          for v in "${variants[@]}"; do
+            label="$suite${v:+ [$v]}"
+            echo "::group::$label"
+            timeout -k 30 600 \
+              cargo test --test "$suite" $v -- --ignored --nocapture --test-threads=1 \
+              || failed+=("$label")
+            echo "::endgroup::"
+            # Drop every slot between suites: an orphan blocks WAL recycling and
+            # can exhaust the server's disk.
+            psql -h localhost -U postgres -d test_walstream \
+              -c "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots;" \
+              >/dev/null 2>&1 || true
+            psql -h localhost -U postgres -d test_walstream -tAc \
+              "SELECT format('ROLLBACK PREPARED %L;', gid) FROM pg_prepared_xacts" \
+              | psql -h localhost -U postgres -d test_walstream -q >/dev/null 2>&1 || true
+          done
+        done
+
+        if [ ${#failed[@]} -gt 0 ]; then
+          printf '::error::%d integration suite(s) failed:\n' "${#failed[@]}"
+          printf '  - %s\n' "${failed[@]}"
+          exit 1
+        fi
+        echo "All integration suites passed."
+
+  integration-ssl:
+    name: SSL Integration Tests (PG ${{ matrix.pg_version }})
+    runs-on: ubuntu-latest
+    # See the `integration` job.
+    timeout-minutes: 45
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        # pgoutput protocol v2 (streaming in-progress transactions) requires PG 15+
+        pg_version: [15, 16, 17, 18]
+
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg_version }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_walstream
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake pkg-config libssl-dev postgresql-client
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-ssl-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-ssl-
+
+    - name: Generate SSL certificates
+      run: |
+        mkdir -p /tmp/pg-ssl
+
+        # Generate CA key and self-signed certificate
+        openssl req -new -x509 -days 365 -nodes \
+          -newkey rsa:2048 \
+          -keyout /tmp/pg-ssl/ca.key \
+          -out /tmp/pg-ssl/ca.crt \
+          -subj "/CN=pg-walstream-test-ca"
+
+        # Generate server key and CSR
+        openssl req -new -nodes \
+          -newkey rsa:2048 \
+          -keyout /tmp/pg-ssl/server.key \
+          -out /tmp/pg-ssl/server.csr \
+          -subj "/CN=localhost"
+
+        # Write SAN extension config to a file (avoids process substitution issues)
+        echo "subjectAltName=DNS:localhost" > /tmp/pg-ssl/server.ext
+
+        # Sign server cert with CA (SAN=DNS:localhost only, no IP SAN)
+        # This allows verify-full to succeed with localhost but fail with 127.0.0.1
+        openssl x509 -req -days 365 \
+          -in /tmp/pg-ssl/server.csr \
+          -CA /tmp/pg-ssl/ca.crt \
+          -CAkey /tmp/pg-ssl/ca.key \
+          -CAcreateserial \
+          -out /tmp/pg-ssl/server.crt \
+          -extfile /tmp/pg-ssl/server.ext
+
+        # Generate a separate "wrong" CA for negative tests
+        openssl req -new -x509 -days 365 -nodes \
+          -newkey rsa:2048 \
+          -keyout /tmp/pg-ssl/wrong-ca.key \
+          -out /tmp/pg-ssl/wrong-ca.crt \
+          -subj "/CN=wrong-ca"
+
+    - name: Verify generated certificates
+      run: |
+        echo "=== CA Certificate ==="
+        openssl x509 -in /tmp/pg-ssl/ca.crt -noout -subject -issuer
+        echo "=== Server Certificate ==="
+        openssl x509 -in /tmp/pg-ssl/server.crt -noout -subject -issuer
+        echo "=== Server Certificate SAN ==="
+        openssl x509 -in /tmp/pg-ssl/server.crt -noout -ext subjectAltName
+        echo "=== Verify server cert against CA ==="
+        openssl verify -CAfile /tmp/pg-ssl/ca.crt /tmp/pg-ssl/server.crt
+
+    - name: Configure PostgreSQL with SSL and logical replication
+      env:
+        PGPASSWORD: postgres
+      run: |
+        CONTAINER_ID=${{ job.services.postgres.id }}
+
+        # Copy certificates into the PostgreSQL container
+        docker cp /tmp/pg-ssl/server.crt $CONTAINER_ID:/var/lib/postgresql/server.crt
+        docker cp /tmp/pg-ssl/server.key $CONTAINER_ID:/var/lib/postgresql/server.key
+        docker cp /tmp/pg-ssl/ca.crt $CONTAINER_ID:/var/lib/postgresql/ca.crt
+
+        # Set proper ownership and permissions
+        docker exec $CONTAINER_ID chown postgres:postgres \
+          /var/lib/postgresql/server.crt \
+          /var/lib/postgresql/server.key \
+          /var/lib/postgresql/ca.crt
+        docker exec $CONTAINER_ID chmod 0600 /var/lib/postgresql/server.key
+
+        # Configure SSL
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET ssl = 'on';"
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/server.crt';"
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/server.key';"
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET ssl_ca_file = '/var/lib/postgresql/ca.crt';"
+
+        # Configure logical replication
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET wal_level = 'logical';"
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET max_replication_slots = 16;"
+        psql -h localhost -U postgres -d test_walstream -c "ALTER SYSTEM SET max_wal_senders = 16;"
+
+        # Restart PostgreSQL to apply changes
+        docker restart $CONTAINER_ID
+
+        # Wait for PostgreSQL to be ready after restart
+        for i in $(seq 1 30); do
+          pg_isready -h localhost -p 5432 -U postgres && break
+          echo "Waiting for PostgreSQL after restart... ($i/30)"
+          sleep 2
+        done
+
+    - name: Verify PostgreSQL SSL and replication config
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -d test_walstream -c "SHOW ssl;"
+        psql -h localhost -U postgres -d test_walstream -c "SHOW wal_level;"
+        psql -h localhost -U postgres -d test_walstream -c "SHOW max_replication_slots;"
+        psql -h localhost -U postgres -d test_walstream -c "SHOW max_wal_senders;"
+        # Verify SSL is actually working from the client side
+        PGSSLMODE=require psql -h localhost -U postgres -d test_walstream \
+          -c "SELECT ssl, version FROM pg_stat_ssl WHERE pid = pg_backend_pid();"
+
+    # Compile first so a build break is reported before the server setup above is
+    # blamed for it. SSL is a rustls-tls capability; the libpq backend delegates
+    # TLS to libpq and has nothing to exercise here.
+    - name: Build SSL test binaries
+      run: |
+        set -uo pipefail
+        shopt -s nullglob
+        for f in integration-tests/ssl_*.rs; do
+          cargo test --test "$(basename "$f" .rs)" \
+            --no-default-features --features rustls-tls --no-run
+        done
+
+    - name: Run SSL integration tests
+      env:
+        DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/test_walstream?replication=database&connect_timeout=10"
+        DATABASE_URL_REGULAR: "postgresql://postgres:postgres@localhost:5432/test_walstream?connect_timeout=10"
+        SSL_CA_CERT_PATH: "/tmp/pg-ssl/ca.crt"
+        SSL_WRONG_CA_CERT_PATH: "/tmp/pg-ssl/wrong-ca.crt"
+        RUST_BACKTRACE: 1
+      # Same filesystem enumeration as the integration job, over the `ssl_*`
+      # half of the partition: a new SSL suite is picked up automatically.
+      run: |
+        set -uo pipefail
+        shopt -s nullglob
+        failed=()
+        ran=0
+
+        for f in integration-tests/ssl_*.rs; do
+          suite=$(basename "$f" .rs)
+          ran=$((ran + 1))
+          echo "::group::$suite"
+          # Same per-suite cap as the integration job. ssl_initial_snapshot's COPY
+          # drains have no deadline at all and its teardown is a blocking Drop, so
+          # this job carries the identical 45-minute-burn exposure.
+          timeout -k 30 600 \
+            cargo test --test "$suite" --no-default-features --features rustls-tls \
+            -- --ignored --nocapture --test-threads=1 || failed+=("$suite")
+          echo "::endgroup::"
+          # Drop every slot between suites: an orphan blocks WAL recycling.
+          PGPASSWORD=postgres psql -h localhost -U postgres -d test_walstream \
+            -c "SELECT pg_drop_replication_slot(slot_name) FROM pg_replication_slots;" \
+            >/dev/null 2>&1 || true
+        done
+
+        # Without this the job would pass silently if the suites were renamed out
+        # of the `ssl_*` prefix the integration job skips on.
+        if [ "$ran" -eq 0 ]; then
+          echo "::error::no integration-tests/ssl_*.rs found - SSL coverage would be silently skipped"
+          exit 1
+        fi
+
+        if [ ${#failed[@]} -gt 0 ]; then
+          printf '::error::%d SSL suite(s) failed:\n' "${#failed[@]}"
+          printf '  - %s\n' "${failed[@]}"
+          exit 1
+        fi
+        echo "All $ran SSL suite(s) passed."

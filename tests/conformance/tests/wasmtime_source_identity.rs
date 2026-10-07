@@ -9,9 +9,9 @@ use std::sync::OnceLock;
 
 const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
 // The lockfile resolution and the workspace requirement are separate facts.
-// Upstream 2.10.0 declares 48.0.2; a later lockfile-only patch can resolve higher.
-const WASMTIME_RESOLVED: &str = "48.0.2";
-const WASMTIME_REQUIREMENT: &str = "48.0.2";
+// Upstream 2.10.3 declares 48.0.3; a later lockfile-only patch can resolve higher.
+const WASMTIME_RESOLVED: &str = "48.0.5";
+const WASMTIME_REQUIREMENT: &str = "48.0.5";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
 #[derive(Debug, Deserialize)]
@@ -220,7 +220,7 @@ fn workspace_owns_canonical_wasmtime_source_contract() {
     assert_eq!(
         workspace.get("wasmtime").map(String::as_str),
         Some(
-            "{version=\"48.0.2\",default-features=false,features=[\"cache\",\"parallel-compilation\"]}"
+            "{version=\"48.0.5\",default-features=false,features=[\"cache\",\"parallel-compilation\"]}"
         ),
         "workspace must own the cache-enabled canonical `wasmtime` requirement"
     );

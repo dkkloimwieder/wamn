@@ -8,7 +8,7 @@ description = "Palette node evaluating one JSONata expression, its configuration
 # The expression engine. `simd` is off: it adds simd-json and gives nothing on
 # wasm. The crate builds for wasm32-wasip2 and passes the reference JSONata
 # suite (wamn-upl3.2 records the measurement).
-jsonata-core = { version = "=2.2.7", default-features = false }
+jsonata-core = { version = "=2.2.11", default-features = false }
 serde_json = { workspace = true }
 wit-bindgen = { workspace = true }
 

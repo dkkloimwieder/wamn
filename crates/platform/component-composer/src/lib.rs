@@ -313,7 +313,11 @@ mod tests {
             .filter_map(|payload| match payload.expect("the composed bytes parse") {
                 Payload::ComponentSection {
                     unchecked_range, ..
-                } => Some(Sha256::digest(&bytes[unchecked_range]).to_vec()),
+                } => {
+                    let start = usize::try_from(unchecked_range.start).expect("offset fits memory");
+                    let end = usize::try_from(unchecked_range.end).expect("offset fits memory");
+                    Some(Sha256::digest(&bytes[start..end]).to_vec())
+                }
                 _ => None,
             })
             .collect()

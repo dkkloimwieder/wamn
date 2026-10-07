@@ -15,7 +15,7 @@ wamn-schema-generator.workspace = true
 [dev-dependencies]
 sha2.workspace = true
 wasmparser.workspace = true
-wat = "1.252"
+wat = "=1.254.2"
 
 [lints]
 workspace = true

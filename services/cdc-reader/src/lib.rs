@@ -1424,7 +1424,10 @@ async fn drain(
                         Ok(p) => bytes::Bytes::from(p),
                         Err(e) => {
                             return DrainOutcome::Severed(
-                                ReplicationError::Generic(format!("serialize envelope: {e}")),
+                                ReplicationError::Io(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    e,
+                                )),
                                 summary,
                             );
                         }
@@ -1535,7 +1538,7 @@ async fn drain(
                 table,
                 relation_oid,
             ),
-            EventType::Truncate(tables) => {
+            EventType::Truncate { tables, .. } => {
                 // The declared publication omits `truncate`, so a TRUNCATE
                 // frame proves the publication drifted after this session
                 // opened. Count it and alert; the event plane still carries
@@ -2334,7 +2337,7 @@ mod tests {
             SlotIncident
         );
         assert_eq!(
-            classify(&ReplicationError::Generic(
+            classify(&ReplicationError::Protocol(
                 "slot can no longer be used".into()
             )),
             SlotIncident

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use argon2::{
     Algorithm, Argon2, Params, Version,
-    password_hash::{PasswordHash, PasswordHasher as _, PasswordVerifier as _, SaltString},
+    password_hash::{PasswordHasher as _, PasswordVerifier as _, phc::PasswordHash},
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
 use sha2::{Digest as _, Sha256};
@@ -241,9 +241,8 @@ impl PasswordWork {
                     "password salt generation failed",
                 )
             })?;
-            let salt = SaltString::encode_b64(&salt).expect("fixed salt fits base64 buffer");
             argon()
-                .hash_password(password.0.as_bytes(), &salt)
+                .hash_password_with_salt(password.0.as_bytes(), &salt)
                 .map(|hash| hash.to_string())
                 .map_err(|source| infrastructure("password hashing failed", source))
         })
@@ -268,7 +267,7 @@ impl PasswordWork {
             }
             match argon().verify_password(password.0.as_bytes(), &hash) {
                 Ok(()) => Ok(true),
-                Err(argon2::password_hash::Error::Password) => Ok(false),
+                Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
                 Err(source) => Err(infrastructure("password verification failed", source)),
             }
         })

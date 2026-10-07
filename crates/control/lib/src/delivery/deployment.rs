@@ -227,11 +227,12 @@ pub async fn deploy_release(
         &qualification.candidate.host_image,
         "host",
     )?];
-    for (role, image, path) in [(
-        "identity",
-        &qualification.candidate.identity_image,
-        &request.identity_deployment,
-    )] {
+    {
+        let (role, image, path) = (
+            "identity",
+            &qualification.candidate.identity_image,
+            &request.identity_deployment,
+        );
         match (image, path) {
             (Some(image), Some(path)) => documents.push(deployment_document(
                 &qualification,

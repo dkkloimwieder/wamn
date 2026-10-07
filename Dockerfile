@@ -12,7 +12,7 @@
 # host artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
 # IDENTICAL host stage so Jobs exercise the same host lib code they verify.
-FROM rust:1.98-trixie AS toolchain
+FROM rust:1.99-trixie AS toolchain
 # libprotobuf-dev carries the well-known types (google/protobuf/*.proto)
 # that protobuf-compiler alone does not ship on Debian.
 RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
@@ -28,6 +28,7 @@ WORKDIR /build
 FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY vendor ./vendor
 # Native packages use shared guest libraries under apps/platform.
 COPY apps ./apps
 COPY services ./services
@@ -116,11 +117,12 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 
 # ---- locked component outputs shared by every embedding image --------------
 FROM toolchain AS component-toolchain
-RUN rustup target add --toolchain 1.98.1 wasm32-wasip2 \
- && rustup toolchain install 1.98.1 --profile minimal --target wasm32-wasip2
+RUN rustup target add --toolchain 1.99.0 wasm32-wasip2 \
+ && rustup toolchain install 1.99.0 --profile minimal --target wasm32-wasip2
 COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
+COPY vendor /build/vendor
 COPY apps /build/apps
 COPY tools/guest-rustflags /build/tools/guest-rustflags
 WORKDIR /build/apps
@@ -133,17 +135,17 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked \
     export RUSTFLAGS="$(/build/tools/guest-rustflags)" \
- && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
       -p http-route \
  && (cd target/wasm32-wasip2/release \
      && sha256sum -c /build/apps/platform/ingress/http-route/http_route.wasm.sha256) \
- && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
       -p materializer \
- && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
       -p busyloop \
- && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
       -p connection-http-standard \
- && cargo +1.98.1 build --locked --release --target wasm32-wasip2 \
+ && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
       -p sockprobe \
  && install -d /component-output \
  && for artifact in \

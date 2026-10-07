@@ -7,9 +7,9 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 
 ## Upstream ownership
 
-The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.10.1` source at `fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa`.
-The resolved Wasmtime family is `48.0.2`.
-There are no carried upstream patches, and upstream default providers remain disabled.
+The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.10.3` source at `548bb21b65ac8cc03776f73656c4bf7be2f96992`.
+The resolved Wasmtime family is `48.0.5`.
+There are no carried wasmCloud patches, and upstream default providers remain disabled.
 The existing owner rule forbids restoring the retired fork patches.
 
 Native loading and dispatch own compilation, linking, fresh and warm stores, epoch interruption, and guest cancellation.
@@ -68,3 +68,12 @@ A change to its external address-enforcement boundary requires its own security 
 Former 2.8 patches and detailed run observations remain in the [prior source record](https://github.com/dkkloimwieder/wamn/blob/8f38861387debc392b4b57c92f4cc052974f4f02/docs/architecture/native-alignment-ledger.md).
 The old private P2 phase spans and missing-handle 503 patch are not present in current upstream code.
 Historical measurements do not establish current diagnostic coverage or close unresolved behavior.
+
+## PostgreSQL replication dependency
+
+The root manifest uses the released `pg_walstream` 0.9.0 crate from `vendor/pg-walstream`.
+The local patch returns typed keepalive events so idle readers can report acknowledged progress.
+The raw event API retains its upstream behavior.
+Upstream 0.9.0 includes the FAILOVER slot syntax fix.
+Remove the local patch when upstream returns typed keepalive events with the same position semantics.
+See [the patch record](../../vendor/pg-walstream/WAMN-PATCH.md).

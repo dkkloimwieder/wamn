@@ -17,7 +17,7 @@ ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-syn = { version = "2", features = ["full", "visit"] }
+syn = { version = "3.0.6", features = ["full", "visit"] }
 tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
 url = { workspace = true }
 wamn-component-policy = { workspace = true }
@@ -41,8 +41,8 @@ wamn-execution-host = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 wasi-virt = { workspace = true }
-wat = "=1.254.0"
-wit-parser = "=0.254.0"
+wat = "=1.254.2"
+wit-parser = "=0.254.2"
 
 [lints]
 workspace = true

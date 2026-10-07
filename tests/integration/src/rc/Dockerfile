@@ -1,4 +1,4 @@
-FROM rust:1.98-trixie AS native
+FROM rust:1.99-trixie AS native
 RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /build

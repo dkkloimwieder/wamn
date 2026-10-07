@@ -14,7 +14,7 @@
     "noUnusedLocals": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "paths": {
       "@wamn/web-runtime": ["../../../web/runtime/src/index.ts"],
       "@wamn/ui": ["../../../web/ui/src/index.ts"],

@@ -23,7 +23,7 @@ default-members = [
   "services/scenario-worker",
 ]
 # Guest components are built separately for wasm32-wasip2 (see apps/*).
-exclude = ["apps"]
+exclude = ["apps", "vendor/pg-walstream"]
 
 [workspace.package]
 version = "0.1.0"
@@ -87,19 +87,22 @@ missing_panics_doc = "allow"      #  72. Library-API doc contract, as above.
 multiple_crate_versions = "allow" #  46. Duplicate transitive versions we do not control;
                                   #      the wasmtime/async-nats pins are upstream-governed.
 return_self_not_must_use = "allow"#   8. Library-API concern, as above.
+# Rust 1.99 adds this assertion style rule. Existing empty checks already assert
+# the required property; rewriting them adds no coverage.
+assert_is_empty = "allow"
 
 [workspace.dependencies]
 ratatui-core = { version = "0.1.2", default-features = false, features = ["std"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29", default-features = false, features = ["event-stream", "events"] }
-# Direct upstream v2.10.1, with zero patches. Source identity and evidence
+# Direct upstream v2.10.3, with zero patches. Source identity and evidence
 # are recorded in docs/architecture/native-alignment.md.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # No `oci` here, because wamn-engine must not link it. A crate that uses the
 # OCI registry source turns `oci` on in its own manifest.
 # wamn and wash-runtime resolve one crates.io Wasmtime 48.0.x family from the
-# shared 48.0.2 requirement; enforce that source identity in conformance.
-wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "fd2bbc0a1e40f5575780d63ca67285ea6f9dc0aa", default-features = false }
+# compatible 48.x requirements; enforce that source identity in conformance.
+wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "548bb21b65ac8cc03776f73656c4bf7be2f96992", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
 # parallel-compilation is a wasmtime DEFAULT that default-features=false drops.
 # Without it Cranelift compiles every component on one core: receiving took
@@ -108,17 +111,14 @@ wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "fd2bbc0a
 # (wamn-0h0g.17.22). It adds rayon and
 # nothing else. default-features stays false: that is the shared-wasmtime-family
 # constraint above, and naming one feature does not weaken it.
-wasmtime = { version = "48.0.2", default-features = false, features = ["cache", "parallel-compilation"] }
-wasmtime-wasi = "48.0.2"
-wasmtime-wasi-http = "48.0.2"
-# pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
-# wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
-# commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork
-# emits the parenthesized option list) + next_event returning a keepalive as
-# EventType::Keepalive (wamn-59z6). Pin a REV, never a branch.
-pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "a0df8cee8727abee763f9715436bfc41d348b01e" }
+wasmtime = { version = "48.0.5", default-features = false, features = ["cache", "parallel-compilation"] }
+wasmtime-wasi = "48.0.5"
+wasmtime-wasi-http = "48.0.5"
+# Released pg_walstream 0.9.0 with the local typed-keepalive patch.
+# Upstream already contains the FAILOVER syntax fix.
+pg_walstream = { path = "vendor/pg-walstream", version = "=0.9.0" }
 anyhow = "1"
-argon2 = { version = "0.5.3", features = ["std", "zeroize"] }
+argon2 = { version = "0.6.0", features = ["zeroize"] }
 zeroize = "1"
 async-nats = { version = "0.49.1", default-features = false }
 base64 = "0.22"
@@ -140,7 +140,7 @@ url = "2"
 # why the emitter's own compile gate declares them too (wamn-10yt.45).
 rust_decimal = { version = "1", default-features = false }
 uuid = "1"
-jmespath = "0.3"
+jmespath = "0.5.0"
 libc = "0.2"
 opentelemetry = { version = "0.31", default-features = false }
 opentelemetry-otlp = { version = "0.31", default-features = false }
@@ -190,7 +190,7 @@ serde_yaml = "=0.9.34"
 sha2 = "0.11"
 subtle = "2"
 tokio = "1"
-toml = "0.9.12"
+toml = "1.1.6"
 tokio-postgres = "0.7"
 tokio-rustls = "0.26"
 tower-service = "0.3"
@@ -198,10 +198,10 @@ tracing = "0.1"
 tracing-opentelemetry = { version = "0.32", default-features = false }
 tracing-subscriber = "0.3"
 async-trait = "0.1"
-# The composer uses the wac-graph line that wasi-virt already locks.
-wac-graph = "0.10.1"
-wasm-encoder = "0.251"
-wasmparser = "0.251"
+# The composer uses the latest released wac-graph. WASI-Virt keeps its adapter pin.
+wac-graph = "0.12.0"
+wasm-encoder = "0.261.0"
+wasmparser = "0.261.0"
 # Post-link normalization uses one immutable upstream adapter. Its embedded
 # `virtual_adapter-wasip2.wasm` is sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632.
 wasi-virt = { version = "=0.2.0", git = "https://github.com/bytecodealliance/WASI-Virt.git", rev = "448f6df8f688cee5d6995e96b1ffc31f9bf00742", default-features = false }

@@ -405,7 +405,7 @@ fn every_effect_surface_opens_the_shared_span() {
             let Item::Impl(implementation) = item else {
                 continue;
             };
-            let Some((_, path, _)) = &implementation.trait_ else {
+            let Some((path, _)) = &implementation.trait_ else {
                 continue;
             };
             if !is_host_ctx(&implementation.self_ty) {
