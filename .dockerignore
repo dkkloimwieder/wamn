@@ -8,4 +8,3 @@
 docs
 # deploy/ contains `include_str!` build inputs (including sql/run-state.sql),
 # so it must remain in the build context.
-vendor
