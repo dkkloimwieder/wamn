@@ -29,6 +29,8 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 # Route input schemas. A pure schema check with no I/O.
 boon = { workspace = true }
+# The `wamn.release` label value: the manifest digest as lowercase base32.
+data-encoding = { workspace = true }
 hex = { workspace = true }
 # The route limiter's in-flight and shed gauges.
 opentelemetry = { workspace = true, features = ["metrics"] }

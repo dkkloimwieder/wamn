@@ -70,8 +70,8 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use wamn_catalog::{
-    AdmittedComponent, ArtifactHash, ManifestDigest, RELEASE_MANIFEST_FILE_NAME,
-    RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
+    AdmittedComponent, ArtifactHash, CatalogIdentityError, ManifestDigest,
+    RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
 };
 
 /// Stable classification for a refused release load.
@@ -284,6 +284,25 @@ pub fn validate_component_in_release(
     Ok(())
 }
 
+/// The `wamn.release` label value of a release: its 32 digest bytes as RFC 4648
+/// base32, unpadded and lowercase, 52 characters.
+///
+/// A Kubernetes label value holds at most 63 characters, so the hex digest does
+/// not fit. Base32 carries the whole digest exactly. The host puts this value in
+/// its heartbeat, the operator copies it onto the `Host` resource, and the
+/// `release` chart's `hostSelector` matches it (docs/plan/platform-deploy.md §9.2).
+pub fn release_label(digest: &str) -> Result<String, CatalogIdentityError> {
+    let digest = ManifestDigest::parse(digest)?;
+    let hex = digest
+        .as_str()
+        .strip_prefix("sha256:")
+        .expect("a parsed manifest digest has the sha256 prefix");
+    let bytes = hex::decode(hex).expect("a parsed manifest digest is 64 hex characters");
+    Ok(data_encoding::BASE32_NOPAD
+        .encode(&bytes)
+        .to_ascii_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -374,6 +393,28 @@ mod tests {
     impl Drop for Mounts {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn release_label_is_the_digest_as_lowercase_unpadded_base32() {
+        let label = release_label(
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )
+        .expect("a canonical digest");
+        assert_eq!(
+            label,
+            "4oymiquy7qobjgx36tejs35zeqt24qpemsnzgtfeswmrw6csxbkq"
+        );
+        assert_eq!(label.len(), 52);
+        let zero = format!("sha256:{}", "0".repeat(64));
+        assert_eq!(release_label(&zero).expect("digest"), "a".repeat(52));
+        for refused in [
+            "e3b0",
+            "sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+            "sha256:00",
+        ] {
+            assert!(release_label(refused).is_err(), "{refused} is refused");
         }
     }
 

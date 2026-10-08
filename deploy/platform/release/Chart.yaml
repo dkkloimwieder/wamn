@@ -1,0 +1,13 @@
+apiVersion: v2
+name: release
+description: One environment of one application, a release on its own host group (docs/plan/platform-deploy.md §9.2).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  # Host-only: values.yaml switches off every cluster-singular half, which the
+  # operator release owns. The pin is the operator release's
+  # (tests/conformance/tests/chart_seam_governance.rs EXPECTED_CHART_VERSION).
+  - name: runtime-operator
+    version: 2.10.3
+    repository: oci://ghcr.io/wasmcloud/charts

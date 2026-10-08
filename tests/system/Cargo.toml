@@ -22,6 +22,8 @@ wash-runtime = { workspace = true }
 
 [dev-dependencies]
 opentelemetry_sdk = { workspace = true }
+# The release chart's install values, built from the host tier's values file.
+serde_yaml = { workspace = true }
 tracing-subscriber = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 

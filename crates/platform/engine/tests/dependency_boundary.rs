@@ -56,6 +56,10 @@ const ACCEPTED: &[(&str, &str)] = &[
         "boon",
         "route input schemas: a pure schema check with no I/O",
     ),
+    (
+        "data-encoding",
+        "the base32 wamn.release label of a release digest (platform-deploy.md §9.2)",
+    ),
     ("hex", "the route CSRF digest"),
     (
         "hyper",

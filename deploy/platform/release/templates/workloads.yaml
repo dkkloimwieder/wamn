@@ -1,0 +1,97 @@
+{{- include "release.requireImageSet" . }}
+{{- range .Values.roles }}
+{{- if eq .name "http" }}
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: {{ $.Release.Name }}-http
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "release.annotations" $ | nindent 4 }}
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        {{- include "release.hostSelector" $ | nindent 8 }}
+      environment: {{ $.Release.Namespace }}
+      kubernetes:
+        service:
+          name: {{ $.Release.Name }}-http
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          version: "0.3.0"
+          interfaces: [handler]
+          config:
+            host: {{ required "routeHost is required for the http role" $.Values.routeHost | quote }}
+        - namespace: wamn
+          package: flow-http-routing
+          version: "0.1.0"
+          interfaces: [routing]
+        - namespace: wamn
+          package: router-delivery
+          version: "0.3.0"
+          interfaces: [delivery]
+      components:
+        - name: flow-http
+          image: {{ $.Values.platform.roles.http.image }}
+          imagePullPolicy: Always
+          localResources:
+            allowedIpNameLookups: []
+            config:
+              {{- toYaml (required "roles[http].config is required" .config) | nindent 14 }}
+{{- else if eq .name "materializer" }}
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: {{ $.Release.Name }}-materializer
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "release.annotations" $ | nindent 4 }}
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        {{- include "release.hostSelector" $ | nindent 8 }}
+      environment: {{ $.Release.Namespace }}
+      hostInterfaces:
+        - namespace: wamn
+          package: postgres
+          version: "0.3.0"
+          interfaces: [types, client]
+        - namespace: wamn
+          package: jetstream
+          version: "0.1.0"
+          interfaces: [types, registration]
+        - namespace: wasmcloud
+          package: nats
+          version: "0.1.0"
+          name: events
+          interfaces: [types, jetstream]
+        - namespace: wamn
+          package: flow-http-routing
+          version: "0.1.0"
+          interfaces: [routing]
+        - namespace: wamn
+          package: router-delivery
+          version: "0.3.0"
+          interfaces: [delivery]
+      service:
+        image: {{ $.Values.platform.roles.materializer.image }}
+        imagePullPolicy: Always
+        maxRestarts: 5
+        localResources:
+          allowedIpNameLookups: []
+          config:
+            {{- toYaml (required "roles[materializer].config is required" .config) | nindent 12 }}
+          environment:
+            config:
+              {{- toYaml (required "roles[materializer].environment is required" .environment) | nindent 14 }}
+{{- else }}
+{{- fail (printf "unknown role %q: the roles are http and materializer" .name) }}
+{{- end }}
+{{- end }}

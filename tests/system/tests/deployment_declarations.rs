@@ -269,6 +269,15 @@ fn read(root: &Path, file: &str) -> String {
         );
         return String::from_utf8(output.stdout).expect("Helm output is UTF-8");
     }
+    if file == "release" {
+        let output = render_release(root);
+        assert!(
+            output.status.success(),
+            "render release chart: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return String::from_utf8(output.stdout).expect("Helm output is UTF-8");
+    }
     if file == "edge" {
         let output = render_edge(root);
         assert!(
@@ -280,6 +289,84 @@ fn read(root: &Path, file: &str) -> String {
     }
     let path = root.join(PLATFORM).join(file);
     fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+}
+
+/// The release chart of one environment, with its platform image set stamped
+/// and the host tier's host group as the environment's.
+///
+/// The install values follow `wamn_control::release_chart::values`: the host
+/// group body of [`HOST_VALUES_FILE`] under the release's derived name, with the
+/// release arguments, pod label and annotations, and both roles.
+fn render_release(root: &Path) -> Output {
+    const NAME: &str = "r-dev-0123456789abcdef0123";
+    const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const LABEL: &str = "4oymiquy7qobjgx36tejs35zeqt24qpemsnzgtfeswmrw6csxbkq";
+    let host_values: serde_yaml::Value = serde_yaml::from_str(
+        &fs::read_to_string(root.join(PLATFORM).join(HOST_VALUES_FILE))
+            .expect("read the host tier values"),
+    )
+    .expect("parse the host tier values");
+    let mut group = host_values["runtime"]["hostGroups"][0]
+        .as_mapping()
+        .expect("the host tier names one host group")
+        .clone();
+    for key in ["name", "namespace", "service"] {
+        group.remove(key);
+    }
+    group.insert("name".into(), NAME.into());
+    group.insert(
+        "extraArgs".into(),
+        serde_yaml::from_str(&format!(
+            "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}]"
+        ))
+        .expect("arguments"),
+    );
+    let mut values: serde_yaml::Value = serde_yaml::from_str(&format!(
+        "release: {{manifestDigest: '{DIGEST}', artifactBase: registry.example/releases}}
+environment: acme/wms/dev
+routeHost: wms.example.invalid
+roles:
+  - {{name: http, config: {{wamn.tenant: acme}}}}
+  - {{name: materializer, config: {{wamn.tenant: acme}}, environment: {{WAMN_MAT_ORG: acme}}}}
+platform:
+  roles:
+    http: {{image: 'registry.example/wamn/flow-http@sha256:{two}'}}
+    materializer: {{image: 'registry.example/wamn/materializer@sha256:{three}'}}
+runtime-operator:
+  runtime:
+    image: {{repository: wamn-host, tag: 'dev@sha256:{one}'}}
+    podLabels: {{wamn.release: {LABEL}}}
+    podAnnotations: {{wamn.release-digest: '{DIGEST}', wamn.environment: acme/wms/dev}}
+",
+        one = "1".repeat(64),
+        two = "2".repeat(64),
+        three = "3".repeat(64),
+    ))
+    .expect("release values");
+    values["runtime-operator"]["runtime"]["hostGroups"] =
+        serde_yaml::Value::Sequence(vec![serde_yaml::Value::Mapping(group)]);
+    let path = std::env::temp_dir().join(format!(
+        "wamn-release-values-{}-{:?}.yaml",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    fs::write(&path, serde_yaml::to_string(&values).expect("yaml")).expect("write values");
+    let output = Command::new("helm")
+        .current_dir(root)
+        .args([
+            "template",
+            NAME,
+            "deploy/platform/release",
+            "--namespace",
+            "wamn-system",
+            "--skip-crds",
+            "-f",
+        ])
+        .arg(&path)
+        .output()
+        .expect("run Helm to render the release chart");
+    let _ = fs::remove_file(&path);
+    output
 }
 
 /// The edge chart as the kind edge installs it, with its certificate issued

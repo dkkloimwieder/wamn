@@ -1,0 +1,64 @@
+# Defaults of the `release` chart (docs/plan/platform-deploy.md §9.2).
+#
+# The platform part is here: the host-only subchart settings and the platform
+# image set. The image set has one source, these defaults (R15). The committed
+# values are empty, so the chart does not render until the platform build stamps
+# them (`wamn_control::release_chart::stamp`). No values file passed at install
+# time carries an image digest.
+
+global:
+  certificates:
+    # The operator release owns the CA and the certificate Secrets in this
+    # namespace. The host still mounts them, because `global.tls.enabled` stays
+    # at its default true.
+    generate: false
+
+runtime-operator:
+  # The cluster-singular halves of the subchart. The operator release owns them.
+  operator:
+    enabled: false
+  nats:
+    enabled: false
+  gateway:
+    enabled: false
+  # `global.nats.*` is left out on purpose. The subchart's default is
+  # `nats.<.Release.Namespace>`, and this release lives in the operator
+  # release's namespace (R6).
+  runtime:
+    # The host image of the platform image set: `tag` is `<tag>@sha256:<hex>`,
+    # because the subchart renders only `repository:tag`.
+    image:
+      registry: ""
+      repository: ""
+      tag: ""
+      pull_policy: IfNotPresent
+    terminationGracePeriodSeconds: 70
+    drainDelaySeconds: 5
+    natsConnectTimeoutSeconds: 60
+    probes:
+      endpoint:
+        enabled: true
+        port: 8081
+        startupFailureThreshold: 60
+    # The install values supply the one host group, named after the release.
+    hostGroups: []
+
+platform:
+  # The role component images of the platform image set: `<repository>@sha256:<hex>`.
+  roles:
+    http:
+      image: ""
+    materializer:
+      image: ""
+
+# Install values. `wamn_control::release_chart::values` writes them.
+release:
+  # `sha256:<hex>` of the release manifest.
+  manifestDigest: ""
+  artifactBase: ""
+# `org/project/env`.
+environment: ""
+routeHost: ""
+# One entry per role: `{name: http | materializer, config: {}, environment: {}}`.
+# `environment` is for the materializer only.
+roles: []

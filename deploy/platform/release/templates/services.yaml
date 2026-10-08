@@ -1,0 +1,19 @@
+{{- range .Values.roles }}
+{{- if eq .name "http" }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-http
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "release.annotations" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+{{- end }}
+{{- end }}

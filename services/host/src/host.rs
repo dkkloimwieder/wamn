@@ -32,7 +32,7 @@ use wamn_engine::engine::{
 use wamn_engine::flow_http_routing::{
     FlowHttpRouting, requires_pat_route_authentication, requires_session_route_authentication,
 };
-use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::release_manifest::{LoadedRelease, release_label};
 use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope, RouterDeliveryBridge,
@@ -1372,6 +1372,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     if let Some(bindings) = native_event_bindings {
         host_builder = host_builder.with_plugin_bindings(bindings);
+    }
+    // The heartbeat carries the release so that `hostSelector` can tell this
+    // host from a host of another release in the same group (platform-deploy.md §9.2).
+    if let Some(digest) = &args.release_manifest_digest {
+        let label =
+            release_label(digest).context("--release-manifest-digest is not a sha256 digest")?;
+        host_builder = host_builder.with_label("wamn.release", label);
     }
     let mut builder = ClusterHostBuilder::default()
         .with_host_builder(host_builder)

@@ -53,6 +53,7 @@ pub mod qualify_upgrade;
 pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
+pub mod release_chart;
 pub mod release_composition;
 pub mod role_permissions;
 pub mod serve;
