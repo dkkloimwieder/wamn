@@ -14,7 +14,7 @@
 # half of it switched off:
 #
 #   helm upgrade --install -n wamn-system wamn-host \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 \
 #     -f deploy/platform/values-host-default.yaml
 #   kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
 #
@@ -31,7 +31,7 @@
 #
 # WHY THIS ENVIRONMENT'S HOST NAMESPACE EQUALS THE OPERATOR'S RELEASE NAMESPACE.
 # Giving the host tier a namespace of its own is not free at the pinned chart
-# (upstream rev f9b37fc3 = chart 2.10.0), and both failure modes are in the chart
+# (upstream rev 548bb21b = chart 2.10.3), and both failure modes are in the chart
 # source rather than in anything we wrote:
 #   * templates/certificates.yaml:24 looks the CA up in `.Release.Namespace`
 #     only. A host release in its own namespace, at the chart defaults
@@ -237,7 +237,7 @@ runtime:
           readOnly: true
       # [wamn-0h0g.15.155] Verify the in-cluster registry instead of dropping to
       # plain HTTP. This replaces `extraArgs: [--allow-insecure-registries]`,
-      # which chart 2.10.0 argues against in exactly these terms (chart
+      # which chart 2.10.3 argues against in exactly these terms (chart
       # values.yaml:270-272): the flag "does not relax verification but replaces
       # it: every registry drops to plain HTTP, so nothing is verified and
       # credentials travel in the clear".

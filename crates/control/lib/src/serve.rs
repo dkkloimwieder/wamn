@@ -1180,7 +1180,7 @@ impl SagaRun<'_> {
                             secret(WorkloadRoleFamily::Administration),
                         ),
                         "helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator \
-                         --version 2.10.0 -n hosts -f deploy/gcp/values-host.yaml".to_owned(),
+                         --version 2.10.3 -n hosts -f deploy/gcp/values-host.yaml".to_owned(),
                         format!(
                             "apply the HTTP and materializer workloads of {project} as in \
                              section 5.5, then kubectl -n hosts rollout status \

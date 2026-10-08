@@ -1,8 +1,8 @@
 {
   "spec_hash_encoding": "UTF-8 JSON of CRD .spec, sorted keys, compact separators, ensure_ascii=False",
-  "source_commit": "f9b37fc3ab52db32378f88b116a24a763b4484db",
+  "source_commit": "548bb21b65ac8cc03776f73656c4bf7be2f96992",
   "versions": {
-    "2.10.0": {
+    "2.10.3": {
       "artifacts.runtime.wasmcloud.dev": {
         "chart_path": "runtime-operator/crds/runtime.wasmcloud.dev_artifacts.yaml",
         "api_version": "apiextensions.k8s.io/v1",

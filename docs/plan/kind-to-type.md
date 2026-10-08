@@ -1034,7 +1034,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
 4. Upgrade the hosts (`gcp.md` §5.5 "helm upgrade", the timeout of `gcp.md` §6.7). The values set one replica per host group. If `kubectl -n hosts get deploy` shows 0 for a host group, scale it to 1:
 
    ```bash
-   helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+   helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
      -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 10m
    kubectl -n hosts get deploy
    ```

@@ -334,7 +334,7 @@ for n in platform identity hosts; do kubectl create namespace $n; done
 
 ```bash
 helm upgrade --install --namespace platform wamn \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 \
   -f deploy/infra/values-wamn.yaml -f deploy/gcp/values-operator.yaml --wait --timeout 5m
 sed -e 's/__ENVIRONMENT_NAMESPACE__/hosts/' -e 's/namespace: wamn-system/namespace: platform/' \
   deploy/platform/runtime-operator-events-rbac.example.yaml | kubectl apply -f -
@@ -772,7 +772,7 @@ The program makes these differences from kind:
 The two `wamn-system` values in the base host group have no effect, because the overlay replaces the whole `hostGroups` list. Install the host as release `wamn-host`, with the base file first:
 
 ```bash
-helm install wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+helm install wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
   -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 5m
 ```
 
@@ -1384,7 +1384,7 @@ The host values program writes the annotation into `runtime.serviceAccount` of `
 ```bash
 cargo run -p wamn-test-infrastructure --example host_values_files -- \
   deploy/gcp us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving release manifest digest>
-helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
   -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 5m
 ```
 
@@ -1514,7 +1514,7 @@ The host values program renders the WMS overlay as host group `wms` next to Rece
 ```bash
 cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp "$HOST_IMAGE" \
   us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving manifest digest> <WMS manifest digest>
-helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
   -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 6m
 ```
 
@@ -2304,7 +2304,7 @@ Each stage applied these commands with its reviewed private directory:
 
 ```bash
 helm --kubeconfig "$KUBECONFIG" --kube-context "$CONTEXT" upgrade wamn-host \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.0 -n hosts \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
   -f "$STAGE_DIR/values-host-base.yaml" -f "$STAGE_DIR/values-host-qualified.yaml" \
   --wait --timeout 10m
 kubectl --kubeconfig "$KUBECONFIG" --context "$CONTEXT" -n hosts apply \

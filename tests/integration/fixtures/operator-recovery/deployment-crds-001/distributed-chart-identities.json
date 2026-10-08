@@ -1,4 +1,11 @@
 {
+  "2.10.3": {
+    "chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator",
+    "version": "2.10.3",
+    "app_version": "2.10.3",
+    "oci_manifest_digest": "sha256:01e493b77df7bb340afe2302a48664d5a9c1670c7d0bf8c5592055d9283dff0d",
+    "package_sha256": "65ffe276e2f970becea25d7dd1a45c8428bdb9f25fb9ec854f367f68c7db9740"
+  },
   "2.10.0": {
     "chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator",
     "version": "2.10.0",

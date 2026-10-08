@@ -2338,7 +2338,7 @@ pub(crate) async fn apply_environment_package_qualification(
 const HOST_RELEASE: &str = "wamn-host";
 const HOST_NAMESPACE: &str = "hosts";
 const HOST_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
-const HOST_CHART_VERSION: &str = "2.10.0";
+const HOST_CHART_VERSION: &str = "2.10.3";
 /// The host groups that `host_values_files` renders, in the order of its
 /// release digest arguments.
 const HOST_VALUES_GROUPS: [&str; 2] = ["default", "wms"];

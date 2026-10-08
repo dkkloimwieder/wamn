@@ -1,32 +1,32 @@
 {
-  "image": "ghcr.io/wasmcloud/runtime-operator:2.10.0",
-  "manifest_url": "https://ghcr.io/v2/wasmcloud/runtime-operator/manifests/2.10.0",
-  "digest": "sha256:2471b0b0a304c8be6408e5235a6803bbe3550221550f8b86549e2818b1fbabf5",
+  "image": "ghcr.io/wasmcloud/runtime-operator:2.10.3",
+  "manifest_url": "https://ghcr.io/v2/wasmcloud/runtime-operator/manifests/2.10.3",
+  "digest": "sha256:bf5706eeccd4fbb58cc8f1116cba7e5124f108196d9e1a3e40b85ebac0526762",
   "media_type": "application/vnd.oci.image.index.v1+json",
   "platforms": [
     {
-      "digest": "sha256:8ce6059ed3c1c376c437bbe4001bc7142e9bb93ab91a10cd592e48e6015d3f81",
+      "digest": "sha256:a5c9caa8ebbe036c845b7ed5a65db1c8dc02f84108be398fe0470c03ba20a54e",
       "platform": {
         "architecture": "amd64",
         "os": "linux"
       }
     },
     {
-      "digest": "sha256:fdfee9106ecba0cefd1f99fa0d6fd54c714af282b85ae30788f6e11d0fa87e5a",
+      "digest": "sha256:a460df27c9930230a63308e01b4ba4bc6571d1b4af5001fa2f2694720b096c6d",
       "platform": {
         "architecture": "unknown",
         "os": "unknown"
       }
     },
     {
-      "digest": "sha256:540de622d0d7f4520deb1aa3961c1b77ff710a69d99c27786950ddd604f32f2f",
+      "digest": "sha256:41ff5ffdece4f98456c201e064586e2756b2ee69a8acfddf64ab5a57b01bd1a7",
       "platform": {
         "architecture": "arm64",
         "os": "linux"
       }
     },
     {
-      "digest": "sha256:2406862f76e53e5e83cd641c7555f8d5f99b792583b77b4013c0e62f90eccfb7",
+      "digest": "sha256:a3169685c637ecc0cef9d20635f08c5d001d405fc2e3985577d29d575d0917cb",
       "platform": {
         "architecture": "unknown",
         "os": "unknown"

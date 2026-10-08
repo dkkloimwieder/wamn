@@ -133,7 +133,7 @@ The steps ran in this order. Section 5.3 gives the owner rulings, and section 3 
 1. Scale `main` to 2.
 2. Build the host and identity images with `tools/journey-image-cache`, and push them to `us-central1-docker.pkg.dev/wamn-dev/wamn`. The nodes pull them as `wamn-nodes`, with `roles/artifactregistry.reader`.
 3. Build the Receiving components with `tools/build-components`, which applies the path remapping of `tools/guest-rustflags`, so the digests match a local build.
-4. Install the runtime operator chart `2.10.0` with `deploy/infra/values-wamn.yaml`, and the internal CA of `deploy/infra/wasmcloud-ca-issuer.yaml`.
+4. Install the runtime operator chart `2.10.3` with `deploy/infra/values-wamn.yaml`, and the internal CA of `deploy/infra/wasmcloud-ca-issuer.yaml`.
 5. Run the example program `event_broker_files`, and make the Secrets `evt-nats-authorization` and `evt-nats-bootstrap`. Install the event NATS from `deploy/gcp/nats-jetstream.yaml` with one replica, and run its tap-stream Job. Make the three user Secrets in `platform` and the two host Secrets in `hosts`.
 6. Install CloudNativePG from `deploy/infra/cnpg-operator.yaml` and the cluster `wamn-pg` with one instance on the storage class `standard`. Its `initdb` makes the database `wamn_system` with the owner `wamn_system`.
 7. Run `wamn-ctl provision-system`, which installs the control store and sets `registry.meta.platform_domain`.
