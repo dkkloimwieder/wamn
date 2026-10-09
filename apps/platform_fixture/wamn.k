@@ -99,16 +99,6 @@ manifest.Package {
             error_details = {
                 already_archived = {required = ["field"], text = "This widget is already archived."}
             }
-            constraint_errors = {}
-            relations = [{
-                $schema = _schema
-                table = "widget"
-                select_fields = ["id", "edit_version", "note"]
-                insert_fields = []
-                update_fields = []
-                lock = True
-                constraints = []
-            }]
             statements = {
                 archive = manifest.Statement("command/widget", "archive") {
                     fetch = "one"
@@ -134,16 +124,6 @@ manifest.Package {
                 ]
             }
             errors = ["invalid_input", *_errors_after_input]
-            constraint_errors = {}
-            relations = [{
-                $schema = _schema
-                table = "widget"
-                select_fields = ["code", "created_at", "edit_version", "id", "maker_id", "note"]
-                insert_fields = []
-                update_fields = []
-                lock = False
-                constraints = []
-            }]
             statements = {
                 list = manifest.Statement("query", "widget_list") {
                     fetch = "bounded_list"
@@ -154,9 +134,7 @@ manifest.Package {
             lists = {model = "widget", key_field = "id", display_field = "code"}
         }
         "widget.record_batch" = manifest.Command("widget.record_batch") {
-            input = {
-                raw_body_maximum = 1048576
-                envelope = {minimum = 1, maximum = 100}
+            input: {
                 line = {minimum = 1, maximum = 10, label = "Batch lines", description = "One line for each widget this batch records."}
                 fields = [
                     manifest.request_id
@@ -173,17 +151,8 @@ manifest.Package {
             }
             result = {class = "one", fields = [{path = "widget_id", type = "uuid"}]}
             errors = ["invalid_input", "idempotency_conflict", *_errors_after_input]
-            error_details = {idempotency_conflict = manifest.conflict_details}
-            constraint_errors = {}
-            relations = [{
-                $schema = _schema
-                table = "widget"
-                select_fields = ["id"]
-                insert_fields = []
-                update_fields = []
-                lock = False
-                constraints = []
-            }]
+            # No business error, so no detail: the platform derives each one.
+            error_details = {}
             statements = {
                 find_widget = manifest.Statement("command/widget", "record_batch") {
                     fetch = "one"
@@ -193,7 +162,6 @@ manifest.Package {
             }
             idempotent_by = "claim"
             canonicalization = {
-                excluded_fields = ["request_id", "value.idempotency_key"]
                 line_order = {ascending_by = "widget_id", positive_member = "amount"}
             }
             label = "Record a batch"
@@ -206,16 +174,6 @@ manifest.Package {
                 fields = [{path = "id", type = "uuid"}, {path = "name", type = "text"}]
             }
             errors = ["invalid_input", *_errors_after_input]
-            constraint_errors = {}
-            relations = [{
-                $schema = _schema
-                table = "widget_maker"
-                select_fields = ["id", "name"]
-                insert_fields = []
-                update_fields = []
-                lock = False
-                constraints = []
-            }]
             statements = {
                 list = manifest.Statement("query", "widget_maker_list") {
                     fetch = "bounded_list"

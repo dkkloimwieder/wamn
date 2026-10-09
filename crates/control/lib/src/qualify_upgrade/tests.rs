@@ -113,19 +113,6 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
             "ALTER TABLE inventory.widget ADD COLUMN upgrade_note text;\n",
         )
         .unwrap();
-        let manifest_path = candidate.join("wamn.k");
-        let declaration = fs::read_to_string(&manifest_path).unwrap();
-        let old_fields = "select_fields = [\"code\", \"created_at\", \"edit_version\", \"id\", \"maker_id\", \"note\"]";
-        assert_eq!(declaration.matches(old_fields).count(), 1);
-        fs::write(
-            manifest_path,
-            declaration.replacen(
-                old_fields,
-                "select_fields = [\"code\", \"created_at\", \"edit_version\", \"id\", \"maker_id\", \"note\", \"upgrade_note\"]",
-                1,
-            ),
-        )
-        .unwrap();
     }
     fs::write(
         wamn_schema_generator::package_manifest_path(&candidate),

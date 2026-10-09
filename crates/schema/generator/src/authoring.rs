@@ -2,12 +2,15 @@
 //!
 //! A package authors its manifest in KCL. The generator compiles `wamn.k` with
 //! the pinned `kcl` CLI against the `manifest` schema module that ships in this
-//! crate, and writes the JSON to `generated/wamn.json`. Every other reader reads
+//! crate. Generation adds the members it derives, such as each custom
+//! operation's relations, and writes the JSON to `generated/wamn.json`. The
+//! author states none of them. Every other reader reads
 //! that file and never `wamn.k` (docs/plan/manifest-authoring.md §4.3). Every
 //! package under `apps/` authors `wamn.k`, and the repository policy lint
 //! refuses a root `wamn.json` there. A test fixture keeps its hand-written
 //! `wamn.json`.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::Value;
 
-use crate::PackageManifest;
+use crate::{PackageManifest, StaticSqlRelationDeclaration};
 
 /// The manifest file an author writes.
 pub const AUTHORED_MANIFEST: &str = "wamn.k";
@@ -93,6 +96,7 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
     );
     let module = SchemaModule::write("manifest", SCHEMA_MODULE_DECLARATION, SCHEMA_MODULE)?;
     let bytes = run_kcl(&module, package_root, Path::new(AUTHORED_MANIFEST))?;
+    refuse_derived_members(package_root, &bytes)?;
     PackageManifest::from_slice(&bytes).with_context(|| {
         format!(
             "the compiled {} is not a valid manifest",
@@ -102,9 +106,12 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Compile `wamn.k` and write `generated/wamn.json` when the bytes differ.
+/// Compile `wamn.k` and write `generated/wamn.json` when its authored members
+/// differ.
 ///
-/// A package without `wamn.k` is left unchanged. A reader that runs before
+/// Generation writes the same file with the members it derives, such as each
+/// custom operation's relations, and a file whose other members equal the
+/// compile is left as it is. A package without `wamn.k` is left unchanged. A reader that runs before
 /// generation calls this first, so it reads the manifest of the current
 /// `wamn.k` from the file (wamn-vgsl).
 ///
@@ -117,7 +124,12 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     }
     let bytes = compile_manifest(package_root)?;
     let path = package_root.join(COMPILED_MANIFEST);
-    if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+    // A file that generation compiled from the same wamn.k is kept, with the
+    // members it derived.
+    let current = fs::read(&path)
+        .ok()
+        .and_then(|compiled| without_derived_members(&compiled).ok());
+    if current.as_deref() != Some(bytes.as_slice()) {
         let directory = package_root.join("generated");
         fs::create_dir_all(&directory)
             .with_context(|| format!("create generated directory {}", directory.display()))?;
@@ -326,6 +338,213 @@ fn without_terminal_colors(text: &str) -> String {
     out
 }
 
+/// The members of a custom operation that generation derives, so `wamn.k`
+/// states none of them (docs/plan/platform-deploy.md §6.1, R9).
+const DERIVED_OPERATION_MEMBERS: [&str; 1] = ["relations"];
+
+/// Refuse an authored manifest that states a member generation derives.
+fn refuse_derived_members(package_root: &Path, authored: &[u8]) -> Result<()> {
+    let document: OrderedJson =
+        serde_json::from_slice(authored).context("parse the compiled manifest")?;
+    for (operation, member) in operation_members(&document) {
+        ensure!(
+            !DERIVED_OPERATION_MEMBERS.contains(&member),
+            "{}: custom operation {operation} states {member}, which the generator derives from its statements; remove it",
+            package_root.join(AUTHORED_MANIFEST).display()
+        );
+    }
+    Ok(())
+}
+
+/// Each `(operation, member)` pair of the document's custom operations.
+fn operation_members(document: &OrderedJson) -> impl Iterator<Item = (&str, &str)> {
+    document
+        .member("custom_operations")
+        .map(OrderedJson::members)
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|(operation, declaration)| {
+            declaration
+                .members()
+                .iter()
+                .map(move |(member, _)| (operation.as_str(), member.as_str()))
+        })
+}
+
+/// The compiled manifest: the authored bytes with each custom operation's
+/// derived relations in place, before its statements.
+///
+/// The members keep the order the schema module gives them, so the compiled
+/// file differs from the authored compile only where generation derived.
+pub(crate) fn with_derived_relations(
+    authored: &[u8],
+    relations: &BTreeMap<String, Vec<StaticSqlRelationDeclaration>>,
+) -> serde_json::Result<Vec<u8>> {
+    let mut document: OrderedJson = serde_json::from_slice(authored)?;
+    if let Some(OrderedJson::Object(operations)) = document.member_mut("custom_operations") {
+        for (operation, declaration) in operations {
+            let (Some(derived), OrderedJson::Object(members)) =
+                (relations.get(operation), declaration)
+            else {
+                continue;
+            };
+            let value = serde_json::from_slice(&serde_json::to_vec(derived)?)?;
+            let at = members
+                .iter()
+                .position(|(member, _)| member == "statements")
+                .unwrap_or(members.len());
+            members.insert(at, ("relations".to_owned(), value));
+        }
+    }
+    document.to_bytes()
+}
+
+/// The authored compile of a compiled manifest: the bytes without the members
+/// generation derived.
+fn without_derived_members(compiled: &[u8]) -> serde_json::Result<Vec<u8>> {
+    let mut document: OrderedJson = serde_json::from_slice(compiled)?;
+    if let Some(OrderedJson::Object(operations)) = document.member_mut("custom_operations") {
+        for (_, declaration) in operations {
+            if let OrderedJson::Object(members) = declaration {
+                members.retain(|(member, _)| !DERIVED_OPERATION_MEMBERS.contains(&member.as_str()));
+            }
+        }
+    }
+    document.to_bytes()
+}
+
+/// A JSON document whose objects keep their members in the order written.
+///
+/// `serde_json` here sorts the members of an object, and the compiled
+/// manifest keeps the order of the schema module.
+#[derive(Debug, Clone, PartialEq)]
+enum OrderedJson {
+    Scalar(Value),
+    Array(Vec<OrderedJson>),
+    Object(Vec<(String, OrderedJson)>),
+}
+
+impl OrderedJson {
+    fn members(&self) -> &[(String, Self)] {
+        match self {
+            Self::Object(members) => members,
+            Self::Scalar(_) | Self::Array(_) => &[],
+        }
+    }
+
+    fn member(&self, name: &str) -> Option<&Self> {
+        self.members()
+            .iter()
+            .find_map(|(member, value)| (member == name).then_some(value))
+    }
+
+    fn member_mut(&mut self, name: &str) -> Option<&mut Self> {
+        match self {
+            Self::Object(members) => members
+                .iter_mut()
+                .find_map(|(member, value)| (member == name).then_some(value)),
+            Self::Scalar(_) | Self::Array(_) => None,
+        }
+    }
+
+    /// 2-space indented JSON ending with one newline, as the compile writes it.
+    fn to_bytes(&self) -> serde_json::Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        let mut serializer = serde_json::Serializer::with_formatter(
+            &mut bytes,
+            serde_json::ser::PrettyFormatter::with_indent(b"  "),
+        );
+        serde::Serialize::serialize(self, &mut serializer)?;
+        bytes.push(b'\n');
+        Ok(bytes)
+    }
+}
+
+impl serde::Serialize for OrderedJson {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap as _, SerializeSeq as _};
+        match self {
+            Self::Scalar(value) => value.serialize(serializer),
+            Self::Array(items) => {
+                let mut sequence = serializer.serialize_seq(Some(items.len()))?;
+                for item in items {
+                    sequence.serialize_element(item)?;
+                }
+                sequence.end()
+            }
+            Self::Object(members) => {
+                let mut map = serializer.serialize_map(Some(members.len()))?;
+                for (name, value) in members {
+                    map.serialize_entry(name, value)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OrderedJson {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = OrderedJson;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON value")
+            }
+
+            fn visit_bool<E>(self, value: bool) -> Result<OrderedJson, E> {
+                Ok(OrderedJson::Scalar(Value::Bool(value)))
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<OrderedJson, E> {
+                Ok(OrderedJson::Scalar(Value::from(value)))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<OrderedJson, E> {
+                Ok(OrderedJson::Scalar(Value::from(value)))
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<OrderedJson, E> {
+                Ok(OrderedJson::Scalar(Value::from(value)))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<OrderedJson, E> {
+                Ok(OrderedJson::Scalar(Value::from(value)))
+            }
+
+            fn visit_unit<E>(self) -> Result<OrderedJson, E> {
+                Ok(OrderedJson::Scalar(Value::Null))
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut sequence: A,
+            ) -> Result<OrderedJson, A::Error> {
+                let mut items = Vec::new();
+                while let Some(item) = sequence.next_element()? {
+                    items.push(item);
+                }
+                Ok(OrderedJson::Array(items))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<OrderedJson, A::Error> {
+                let mut members = Vec::new();
+                while let Some(member) = map.next_entry()? {
+                    members.push(member);
+                }
+                Ok(OrderedJson::Object(members))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -377,6 +596,59 @@ mod tests {
             Some(root.as_path())
         );
         fs::remove_dir_all(&root).expect("remove the package");
+    }
+
+    #[test]
+    fn placing_derived_members_keeps_every_authored_byte() {
+        let apps = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps");
+        for app in [
+            "wamn_wms",
+            "wamn_receiving",
+            "client_acme_receiving",
+            "platform_fixture",
+            "platform_fixture_overlay",
+            "edge_samples",
+            "edge_device",
+        ] {
+            let authored = compile_manifest(&apps.join(app)).expect("compile wamn.k");
+            let compiled = with_derived_relations(&authored, &BTreeMap::new()).expect("place");
+            assert_eq!(
+                String::from_utf8(compiled.clone()).expect("UTF-8"),
+                String::from_utf8(authored.clone()).expect("UTF-8"),
+                "{app}"
+            );
+            assert_eq!(without_derived_members(&compiled).expect("strip"), authored);
+        }
+    }
+
+    #[test]
+    fn a_derived_relation_lands_before_the_statements() {
+        let authored = br#"{"custom_operations": {"a.b": {"errors": [], "statements": {}}}}"#;
+        let relation = StaticSqlRelationDeclaration {
+            schema: "s".to_owned(),
+            table: "t".to_owned(),
+            select_fields: vec!["id".to_owned()],
+            insert_fields: Vec::new(),
+            update_fields: Vec::new(),
+            delete: false,
+            lock: true,
+            constraints: Vec::new(),
+        };
+        let compiled = with_derived_relations(
+            authored,
+            &BTreeMap::from([("a.b".to_owned(), vec![relation])]),
+        )
+        .expect("place");
+        let text = String::from_utf8(compiled.clone()).expect("UTF-8");
+        let at = |key: &str| text.find(&format!("\"{key}\"")).expect(key);
+        assert!(at("errors") < at("relations") && at("relations") < at("statements"));
+        assert!(at("select_fields") < at("lock") && at("lock") < at("constraints"));
+        assert!(!text.contains("\"delete\""));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&without_derived_members(&compiled).expect("strip"))
+                .expect("JSON"),
+            serde_json::from_slice::<Value>(authored).expect("JSON")
+        );
     }
 
     #[test]

@@ -59,9 +59,7 @@ manifest.Package {
             automatic_retry = None
             idempotent_by = {inherited = {base = "base_receiving", operation = "receiving.record_receipt"}}
             participant = "receiving.record_receipt_participant"
-            input = {
-                raw_body_maximum = 1048576
-                envelope = {minimum = 1, maximum = 100}
+            input: {
                 line = {minimum = 1, maximum = 100}
                 fields = [
                     manifest.request_id
@@ -102,39 +100,15 @@ manifest.Package {
                 location_not_found = manifest.not_found_details
                 quantity_exceeds_remaining = {required = ["field", "id"]}
                 receipt_reference_conflict = {required = ["constraint"]}
-                idempotency_conflict = manifest.conflict_details
             }
-            constraint_errors = {}
-            relations = []
             statements = {}
         }
         "receiving.record_receipt_participant" = manifest.Command("receiving.record_receipt_participant") {
             automatic_retry = None
             transaction = "participant"
             idempotent_by = {inherited = {base = "base_receiving", operation = "receiving.record_receipt"}}
-            input = {fields = [{path = "receipt_id", type = "uuid"}, {path = "purchase_order_id", type = "uuid"}]}
+            input: {fields = [{path = "receipt_id", type = "uuid"}, {path = "purchase_order_id", type = "uuid"}]}
             errors = ["invalid_input", *_errors_after_input]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "purchase_order"
-                    select_fields = ["id", "acme_inspection_required", "acme_quality_status"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "quality_inspection"
-                    select_fields = ["receipt_id"]
-                    insert_fields = ["receipt_id", "status"]
-                    update_fields = []
-                    lock = False
-                    constraints = ["quality_inspection_receipt_id_pkey"]
-                }
-            ]
             statements = {
                 record_receipt_participant = manifest.Statement("command/record_receipt_participant", "record_receipt_participant") {
                     fetch = "one"
@@ -144,7 +118,7 @@ manifest.Package {
             }
         }
         "quality.load_purchase_order_detail" = manifest.Projection("quality.load_purchase_order_detail") {
-            input = {fields = [{path = "purchase_order_id", type = "uuid"}]}
+            input: {fields = [{path = "purchase_order_id", type = "uuid"}]}
             result = {
                 class = "one"
                 fields = [
@@ -158,26 +132,6 @@ manifest.Package {
                 ]
             }
             errors = ["invalid_input", "not_found", *_errors_after_input]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "purchase_order"
-                    select_fields = [
-                        "id"
-                        "purchase_order_number"
-                        "supplier_id"
-                        "status"
-                        "row_version"
-                        "acme_inspection_required"
-                        "acme_quality_status"
-                    ]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 load_purchase_order_detail = manifest.Statement("query", "quality_purchase_order_detail") {
                     fetch = "optional_one"
@@ -196,7 +150,7 @@ manifest.Package {
         }
         "quality.approve_inspection" = manifest.Command("quality.approve_inspection") {
             idempotent_by = {state = {guards = {quality_inspection = "expected_row_version"}}}
-            input = {
+            input: {
                 fields = [
                     manifest.request_id
                     {path = "receipt_id", type = "uuid"}
@@ -214,36 +168,6 @@ manifest.Package {
                 ]
             }
             errors = ["invalid_input", "not_found", "concurrency_conflict", *_errors_after_input]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "quality_inspection"
-                    select_fields = ["receipt_id", "status", "row_version"]
-                    insert_fields = []
-                    update_fields = ["status", "row_version"]
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "receipt"
-                    select_fields = ["id", "purchase_order_id"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "purchase_order"
-                    select_fields = ["id", "row_version"]
-                    insert_fields = []
-                    update_fields = ["acme_quality_status", "row_version"]
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 approve_inspection = manifest.Statement("command/approve_inspection", "approve_inspection") {
                     fetch = "one"
@@ -263,38 +187,8 @@ manifest.Package {
         "quality.create_inspection" = manifest.EventHandler("quality.create_inspection") {
             permission = None
             visibility = "private"
-            input = {fields = [{path = "event", type = "text", values = ["insert"]}, {path = "new.id", type = "uuid"}]}
+            input: {fields = [{path = "event", type = "text", values = ["insert"]}, {path = "new.id", type = "uuid"}]}
             errors = ["invalid_input", "retry", "timeout", "internal_error"]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "receipt"
-                    select_fields = ["id", "purchase_order_id"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "purchase_order"
-                    select_fields = ["id", "acme_inspection_required"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "quality_inspection"
-                    select_fields = ["receipt_id"]
-                    insert_fields = ["receipt_id"]
-                    update_fields = []
-                    lock = False
-                    constraints = ["quality_inspection_receipt_id_pkey"]
-                }
-            ]
             registration = {source_package = "wamn_receiving", entity = "receipt", ops = ["insert"]}
             statements = {
                 insert_inspection = manifest.Statement("command/create_inspection", "insert_inspection") {

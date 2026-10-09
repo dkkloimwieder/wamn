@@ -235,15 +235,8 @@
           "required": [
             "constraint"
           ]
-        },
-        "idempotency_conflict": {
-          "required": [
-            "field"
-          ]
         }
       },
-      "constraint_errors": {},
-      "relations": [],
       "statements": {},
       "idempotent_by": {
         "inherited": {
@@ -278,15 +271,14 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "receiving",
           "table": "purchase_order",
           "select_fields": [
-            "id",
             "acme_inspection_required",
-            "acme_quality_status"
+            "acme_quality_status",
+            "id"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -421,19 +413,18 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "receiving",
           "table": "purchase_order",
           "select_fields": [
+            "acme_inspection_required",
+            "acme_quality_status",
             "id",
             "purchase_order_number",
-            "supplier_id",
-            "status",
             "row_version",
-            "acme_inspection_required",
-            "acme_quality_status"
+            "status",
+            "supplier_id"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -561,20 +552,34 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "row_version"
+          ],
+          "insert_fields": [],
+          "update_fields": [
+            "acme_quality_status",
+            "row_version"
+          ],
+          "lock": false,
+          "constraints": []
+        },
         {
           "schema": "receiving",
           "table": "quality_inspection",
           "select_fields": [
             "receipt_id",
-            "status",
-            "row_version"
+            "row_version",
+            "status"
           ],
           "insert_fields": [],
           "update_fields": [
-            "status",
-            "row_version"
+            "row_version",
+            "status"
           ],
           "lock": true,
           "constraints": []
@@ -588,21 +593,6 @@
           ],
           "insert_fields": [],
           "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "receiving",
-          "table": "purchase_order",
-          "select_fields": [
-            "id",
-            "row_version"
-          ],
-          "insert_fields": [],
-          "update_fields": [
-            "acme_quality_status",
-            "row_version"
-          ],
           "lock": false,
           "constraints": []
         }
@@ -699,26 +689,13 @@
         "timeout",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
-        {
-          "schema": "receiving",
-          "table": "receipt",
-          "select_fields": [
-            "id",
-            "purchase_order_id"
-          ],
-          "insert_fields": [],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
         {
           "schema": "receiving",
           "table": "purchase_order",
           "select_fields": [
-            "id",
-            "acme_inspection_required"
+            "acme_inspection_required",
+            "id"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -739,6 +716,18 @@
           "constraints": [
             "quality_inspection_receipt_id_pkey"
           ]
+        },
+        {
+          "schema": "receiving",
+          "table": "receipt",
+          "select_fields": [
+            "id",
+            "purchase_order_id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
         }
       ],
       "statements": {

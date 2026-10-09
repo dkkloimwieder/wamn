@@ -89,14 +89,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {
-        "idempotency_conflict": {
-          "required": [
-            "field"
-          ]
-        }
-      },
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "edge_samples",
@@ -110,9 +102,7 @@
           ],
           "update_fields": [],
           "lock": false,
-          "constraints": [
-            "sample_id_pkey"
-          ]
+          "constraints": []
         }
       ],
       "statements": {

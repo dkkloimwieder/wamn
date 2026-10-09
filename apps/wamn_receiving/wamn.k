@@ -168,9 +168,7 @@ manifest.Package {
             description = "One submission records every line of one receipt against one purchase order."
             idempotent_by = "claim"
             pre_commit = {fields = [{path = "receipt_id", type = "uuid"}, {path = "purchase_order_id", type = "uuid"}]}
-            input = {
-                raw_body_maximum = 1048576
-                envelope = {minimum = 1, maximum = 100}
+            input: {
                 line = {
                     minimum = 1
                     maximum = 100
@@ -218,7 +216,6 @@ manifest.Package {
                 ]
             }
             canonicalization = {
-                excluded_fields = ["request_id", "value.idempotency_key"]
                 line_order = {ascending_by = "purchase_order_line_id", positive_member = "quantity"}
             }
             errors = [
@@ -243,56 +240,8 @@ manifest.Package {
                 location_not_found = manifest.not_found_details
                 quantity_exceeds_remaining = {required = ["field", "id"]}
                 receipt_reference_conflict = {required = ["constraint"]}
-                idempotency_conflict = manifest.conflict_details
             }
             constraint_errors = {receipt_purchase_order_id_receipt_reference_key = "receipt_reference_conflict"}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "location"
-                    select_fields = ["id"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "purchase_order"
-                    select_fields = ["id", "status", "row_version"]
-                    insert_fields = []
-                    update_fields = ["status", "row_version"]
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "purchase_order_line"
-                    select_fields = ["id", "purchase_order_id", "ordered_quantity", "received_quantity"]
-                    insert_fields = []
-                    update_fields = ["received_quantity"]
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "receipt"
-                    select_fields = ["id"]
-                    insert_fields = ["purchase_order_id", "receipt_reference", "occurred_at"]
-                    update_fields = []
-                    lock = False
-                    constraints = ["receipt_purchase_order_id_receipt_reference_key"]
-                }
-                {
-                    $schema = _schema
-                    table = "receipt_line"
-                    select_fields = ["id"]
-                    insert_fields = ["receipt_id", "purchase_order_line_id", "quantity", "location_id"]
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 lock_purchase_order = manifest.Statement("command/record_receipt", "lock_purchase_order") {
                     fetch = "optional_one"
@@ -333,7 +282,7 @@ manifest.Package {
         "receiving.load_receipt_screen" = manifest.Projection("receiving.load_receipt_screen") {
             label = "Receiving screen"
             lists = {model = "purchase_order_line", key_field = "line_id", display_field = "item_number"}
-            input = {
+            input: {
                 fields = [
                     {
                         path = "purchase_order_id"
@@ -366,43 +315,6 @@ manifest.Package {
                 ]
             }
             errors = ["invalid_input", "not_found", *_errors_after_input]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "purchase_order"
-                    select_fields = ["id", "purchase_order_number", "status", "supplier_id", "row_version"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "purchase_order_line"
-                    select_fields = [
-                        "id"
-                        "purchase_order_id"
-                        "line_number"
-                        "item_id"
-                        "ordered_quantity"
-                        "received_quantity"
-                    ]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "item"
-                    select_fields = ["id", "item_number"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 load_receipt_screen = manifest.Statement("query", "load_receipt_screen") {
                     fetch = "bounded_list"
@@ -427,7 +339,7 @@ manifest.Package {
         "receiving.load_purchase_order_history" = manifest.Projection("receiving.load_purchase_order_history") {
             label = "Purchase order history"
             lists = {key_field = "id"}
-            input = {
+            input: {
                 fields = [
                     {path = "id", type = "uuid", label = "Purchase order"}
                     {
@@ -455,47 +367,6 @@ manifest.Package {
                 ]
             }
             errors = ["invalid_input", *_errors_after_input]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "purchase_order"
-                    select_fields = [
-                        "id"
-                        "purchase_order_number"
-                        "supplier_id"
-                        "status"
-                        "row_version"
-                        "created_at"
-                        "created_by"
-                        "updated_at"
-                        "updated_by"
-                    ]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "purchase_order_history"
-                    select_fields = [
-                        "id"
-                        "position"
-                        "row_key"
-                        "type"
-                        "operation"
-                        "changed_by"
-                        "changed_at"
-                        "before"
-                        "after"
-                    ]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 load_purchase_order_history = manifest.Statement("query", "load_purchase_order_history") {
                     fetch = "bounded_list"
@@ -517,7 +388,7 @@ manifest.Package {
         "location.list" = manifest.Projection("location.list") {
             label = "Locations"
             lists = {model = "location", key_field = "id", display_field = "location_code"}
-            input = {fields = []}
+            input: {fields = []}
             result = {
                 class = "bounded_list"
                 fields = [
@@ -526,18 +397,6 @@ manifest.Package {
                 ]
             }
             errors = ["invalid_input", *_errors_after_input]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "location"
-                    select_fields = ["id", "location_code"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 list_locations = manifest.Statement("query", "location") {
                     fetch = "bounded_list"

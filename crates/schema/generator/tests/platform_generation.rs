@@ -1736,3 +1736,92 @@ fn a_minimum_length_without_its_check_refuses() {
         );
     }
 }
+
+/// The authored manifest with no relation, as `wamn.k` compiles it.
+fn without_relations(mut manifest: Value) -> Value {
+    for operation in manifest["custom_operations"]
+        .as_object_mut()
+        .expect("custom operations")
+        .values_mut()
+    {
+        operation
+            .as_object_mut()
+            .expect("an operation")
+            .remove("relations");
+    }
+    manifest
+}
+
+fn derive(manifest: &Value) -> Result<Value, wamn_schema_generator::GenerateError> {
+    let sql = fixture::authored_sql();
+    let sources = sql
+        .iter()
+        .map(|(path, bytes)| wamn_schema_generator::AuthoredSql::new(path, bytes))
+        .collect::<Vec<_>>();
+    let compiled = wamn_schema_generator::derive_manifest(
+        &fixture::catalog(),
+        &serde_json::to_vec(manifest).expect("serialize manifest"),
+        &sources,
+    )?;
+    Ok(serde_json::from_slice(&compiled).expect("compiled JSON"))
+}
+
+/// Generation derives each custom operation's relations from its statements,
+/// and the compiled manifest carries exactly what the fixture application's
+/// compiled manifest carries (docs/plan/platform-deploy.md §6.1).
+#[test]
+fn the_compiled_manifest_carries_the_relations_the_statements_reach() {
+    let committed = fixture::manifest();
+    let compiled = derive(&without_relations(committed.clone())).expect("derive the manifest");
+    assert_eq!(compiled, committed);
+    // The widget list reads the whole row, so it reads every column.
+    assert_eq!(
+        compiled["custom_operations"]["widget.list"]["relations"][0]["select_fields"],
+        json!([
+            "code",
+            "created_at",
+            "edit_version",
+            "id",
+            "maker_id",
+            "note"
+        ])
+    );
+
+    let error = derive(&committed).expect_err("a stated relation is refused");
+    assert!(
+        error
+            .to_string()
+            .contains("states its relations, which generation derives from its statements"),
+        "{error}"
+    );
+}
+
+/// A constraint that a command maps to an error belongs to the relation that
+/// its SQL reaches and that defines it. One that no reached relation defines
+/// refuses.
+#[test]
+fn a_mapped_constraint_lands_on_the_relation_that_defines_it() {
+    let mut manifest = without_relations(fixture::manifest());
+    let archive = &mut manifest["custom_operations"]["widget.archive"];
+    archive["errors"]
+        .as_array_mut()
+        .expect("errors")
+        .push(json!("code_taken"));
+    archive["error_details"]["code_taken"] = json!({"required": ["constraint"]});
+    archive["constraint_errors"] = json!({"widget_code_key": "code_taken"});
+    let compiled = derive(&manifest).expect("derive the manifest");
+    assert_eq!(
+        compiled["custom_operations"]["widget.archive"]["relations"][0]["constraints"],
+        json!(["widget_code_key"])
+    );
+
+    manifest["custom_operations"]["widget.archive"]["constraint_errors"] =
+        json!({"widget_maker_id_pkey": "code_taken"});
+    let error = derive(&manifest).expect_err("widget.archive reaches no widget_maker");
+    assert!(
+        error.to_string().contains(
+            "widget.archive maps constraint widget_maker_id_pkey, which no relation its SQL reaches defines"
+        ),
+        "{error}"
+    );
+}

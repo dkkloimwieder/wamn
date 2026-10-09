@@ -357,6 +357,54 @@ fn valid_sha256(value: &str) -> bool {
     })
 }
 
+/// Compile an authored manifest: add the members that generation derives.
+///
+/// The author states no relation of a custom operation
+/// (docs/plan/platform-deploy.md §6.1). Each one comes from the operation's
+/// statements over the catalog, and the compiled manifest that every reader
+/// reads carries it. The authored members keep their bytes and order.
+///
+/// # Errors
+///
+/// When the manifest is invalid or already states a relation, when an
+/// authored statement is missing, or when the SQL cannot be derived.
+pub fn derive_manifest(
+    catalog: &CatalogIr,
+    manifest_json: &[u8],
+    authored_sql: &[AuthoredSql<'_>],
+) -> Result<Vec<u8>, GenerateError> {
+    let manifest = PackageManifest::from_slice(manifest_json)?;
+    validation::validate_authored_sources(&manifest, authored_sql)?;
+    let mut relations = BTreeMap::new();
+    for (name, operation) in &manifest.custom_operations {
+        if !operation.relations.is_empty() {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidOperation,
+                format!(
+                    "{name} states its relations, which generation derives from its statements"
+                ),
+            ));
+        }
+        if operation.statements.is_empty() {
+            continue;
+        }
+        relations.insert(
+            name.clone(),
+            validation::derive_relations(catalog, &manifest, authored_sql, name, operation)?,
+        );
+    }
+    let compiled =
+        crate::authoring::with_derived_relations(manifest_json, &relations).map_err(|source| {
+            GenerateError::with_source(
+                GenerateErrorType::InvalidManifest,
+                "write the derived members into the compiled manifest",
+                source,
+            )
+        })?;
+    PackageManifest::from_slice(&compiled)?;
+    Ok(compiled)
+}
+
 /// Generate a package without filesystem, database, clock, or environment I/O.
 ///
 /// The one child process is `rustfmt`, which formats each emitted `.rs`

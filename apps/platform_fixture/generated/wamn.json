@@ -289,14 +289,13 @@
           "text": "This widget is already archived."
         }
       },
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "inventory",
           "table": "widget",
           "select_fields": [
-            "id",
             "edit_version",
+            "id",
             "note"
           ],
           "insert_fields": [],
@@ -402,7 +401,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "inventory",
@@ -562,14 +560,7 @@
         "permission_denied",
         "internal_error"
       ],
-      "error_details": {
-        "idempotency_conflict": {
-          "required": [
-            "field"
-          ]
-        }
-      },
-      "constraint_errors": {},
+      "error_details": {},
       "relations": [
         {
           "schema": "inventory",
@@ -649,7 +640,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "inventory",

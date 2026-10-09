@@ -1453,10 +1453,13 @@ fn validate_state_guards(
         ));
     }
     for (relation, field) in &state.guards {
-        if !operation
-            .relations
-            .iter()
-            .any(|candidate| candidate.table == *relation)
+        // An authored manifest states no relation, and generation checks the
+        // guard against the relations it derives.
+        if !operation.relations.is_empty()
+            && !operation
+                .relations
+                .iter()
+                .any(|candidate| candidate.table == *relation)
         {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidOperation,
@@ -1941,6 +1944,7 @@ fn shared_custom_error_detail(
         )),
         "not_found" => Some((FIELD_ID, NONE)),
         "concurrency_conflict" => Some((CONCURRENCY, NONE)),
+        "idempotency_conflict" => Some((FIELD, NONE)),
         "permission_denied" => Some((OPERATION, NONE)),
         "retry" | "timeout" | "internal_error" => Some((NONE, NONE)),
         _ => None,
@@ -2007,11 +2011,13 @@ fn validate_static_sql_declarations(
             ),
         ));
     }
-    if !(has_connection && has_relations && has_statements) {
+    // An authored manifest states no relation: generation derives them from
+    // the statements, and the compiled manifest carries them.
+    if !(has_connection && has_statements) {
         return Err(GenerateError::new(
             GenerateErrorType::InvalidOperation,
             format!(
-                "{operation_name} local SQL connection, relations, and statements must be declared together"
+                "{operation_name} local SQL connection and statements must be declared together, and relations only with them"
             ),
         ));
     }

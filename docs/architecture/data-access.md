@@ -122,8 +122,9 @@ Receiving, Acme, and WMS use the same declaration format.
 
 Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `tools/repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
 The generator compiles it to `generated/wamn.json`, and every reader reads that compiled file.
-The table below does not change: the author still writes everything that it retains.
-The schema module fills only authoring defaults, and the compiled file states what an authored `wamn.json` states.
+The author states a fact once, in the place that owns it (R9 of the platform deployment plan).
+The schema module fills authoring defaults, and generation adds each member that the table below marks derived, so the compiled file states what an authored `wamn.json` states.
+The schema module and generation refuse a derived member that `wamn.k` states.
 An optional key that the author does not write stays absent. To leave out a key that has a default, such as `connection`, the author sets it to `None`.
 A package converts to `wamn.k` with its next version, because sealed bytes never change.
 
@@ -152,13 +153,15 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Custom operation `type`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |
 | `transaction`, `automatic_retry`, `idempotent_by` | Application transaction and replay choices. `idempotent_by: claim` is the whole declaration of a claim: the engine claims the key in the [write log](#the-write-log), and `inherited` takes the claim of a base operation. Validation refuses a `claim` object. Retain. |
 | `pre_commit`, `participant` | Application participation contract and selection. Retain. |
-| `input.raw_body_maximum`, `.envelope.minimum`, `.maximum`, `.line.minimum`, `.maximum` | Application input bounds. Retain. |
+| `input.raw_body_maximum`, `.envelope.minimum`, `.maximum` | Application input bounds. A command that claims its key, or that rides a base claim and is not the base's participant, takes the public envelope, and the schema module fills a raw body of at most 1048576 bytes and 1 to 100 inputs. Written only to change. |
+| `input.line.minimum`, `.maximum` | Application input bounds. Retain. |
 | Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
 | Input/result `fields[].path`, `.type`, `.nullable`, `.values`, `.revision`, and result `class` | Application boundary contract. Generated WIT consumes these fields, so it cannot replace their source. Retain. |
-| Canonicalization `excluded_fields`, `line_order` | Application command-identity choices. Retain. |
+| Canonicalization `excluded_fields`, `line_order` | Application command-identity choices. A command that claims its key gets `excluded_fields` `request_id` and `value.idempotency_key` from the schema module, written only to change. Retain `line_order`. |
 | Canonicalization `payload`, `uuid`, `timestamptz`, `numeric`, `duplicate_line` | Fixed platform codecs and duplicate-line refusal. Derive. |
-| Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. A business error detail can state the `text` that a screen shows. Retain. Derive fixed details for standard platform errors. |
-| `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.lock`, `.constraints` | Declared SQL authority. Compare with the SQL corpus and PostgreSQL. Retain the authority boundary. |
+| Custom `errors`, business `error_details`, `constraint_errors` | Application error choices and constraint mappings. A business error detail can state the `text` that a screen shows. Retain. Derive fixed details for standard platform errors, `idempotency_conflict` among them. |
+| `relations[].schema`, `.table`, `.select_fields`, `.insert_fields`, `.update_fields`, `.delete`, `.lock` | SQL authority. The SQL owns what a statement reads, writes, locks and deletes, so generation derives each relation from the statements over the tables of the package's own schemas and writes it into the compiled manifest. PostgreSQL then plans each statement under the grants it derives. Derive. |
+| `relations[].constraints` | The constraints a statement relies on: each one its SQL names in `ON CONFLICT ON CONSTRAINT`, and each one `constraint_errors` maps, on the reached relation that defines it. Derive. |
 | `statements.*.path`, `.fetch`, `.parameters`, `.row` | Static SQL selection and accessor contract. PostgreSQL checks types, privileges, and transaction requirements. Retain names and declared shape. |
 | Parameter/row `name`, `type`, `nullable` | Accessor names and representation. SQL planning does not determine all application names or nullability contracts. Retain. |
 | `connections` aliases | Application database-capability selection. Retain alias names as an array. The PostgreSQL interface is fixed, so remove repeated interface records. |

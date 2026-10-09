@@ -208,6 +208,7 @@ mod tests {
     fn history_columns_are_the_declared_purchase_order_columns() {
         let manifest: Value =
             serde_json::from_str(include_str!("../../generated/wamn.json")).unwrap();
+        // Generation derives the relation from the statement, in name order.
         let declared =
             manifest["custom_operations"]["receiving.load_purchase_order_history"]["relations"]
                 .as_array()
@@ -216,7 +217,9 @@ mod tests {
                 .find(|relation| relation["table"] == "purchase_order")
                 .unwrap()["select_fields"]
                 .clone();
-        assert_eq!(declared, serde_json::json!(PURCHASE_ORDER_HISTORY_COLUMNS));
+        let mut columns = PURCHASE_ORDER_HISTORY_COLUMNS;
+        columns.sort_unstable();
+        assert_eq!(declared, serde_json::json!(columns));
     }
 
     #[test]

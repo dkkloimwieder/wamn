@@ -387,7 +387,7 @@ pub fn materialize_package_classified(
     // The route readers below read the compiled manifest from its file, so a
     // write puts the file in place before them.
     if mode == MaterializeMode::Write && is_authored(package_root) {
-        let (bytes, _) = load_manifest(package_root)?;
+        let (bytes, _) = load_compiled_manifest(package_root, catalog)?;
         let path = package_root.join(COMPILED_MANIFEST);
         fs::create_dir_all(&output_root)
             .with_context(|| format!("create generated directory {}", output_root.display()))?;
@@ -399,7 +399,7 @@ pub fn materialize_package_classified(
     let mut expected = expected_files(&package)?;
     // The compiled manifest is one more file of the owned set.
     let compiled_manifest = if is_authored(package_root) {
-        let (bytes, _) = load_manifest(package_root)?;
+        let (bytes, _) = load_compiled_manifest(package_root, catalog)?;
         if mode == MaterializeMode::Check {
             check_compiled_manifest(package_root, &bytes)?;
         }
@@ -507,7 +507,7 @@ fn generate_package(
     package_root: &Path,
     transactional: &StatementTransactionality,
 ) -> Result<crate::GeneratedPackage> {
-    let (manifest_bytes, manifest) = load_manifest(package_root)?;
+    let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
     let source_files = load_authored_sql(package_root, &manifest)?;
     let authored_sql = source_files
         .iter()
@@ -645,6 +645,28 @@ fn load_manifest(package_root: &Path) -> Result<(Vec<u8>, PackageManifest)> {
     let manifest =
         PackageManifest::from_slice(&manifest_bytes).context("parse package manifest")?;
     Ok((manifest_bytes, manifest))
+}
+
+/// The compiled manifest bytes and their parse. A package authored in `wamn.k`
+/// compiles it here and adds the members that generation derives over this
+/// catalog. Any other package reads its hand-written `wamn.json`.
+fn load_compiled_manifest(
+    package_root: &Path,
+    catalog: &CatalogIr,
+) -> Result<(Vec<u8>, PackageManifest)> {
+    let (bytes, manifest) = load_manifest(package_root)?;
+    if !is_authored(package_root) {
+        return Ok((bytes, manifest));
+    }
+    let sources = load_authored_sql(package_root, &manifest)?;
+    let authored_sql = sources
+        .iter()
+        .map(|source| AuthoredSql::new(&source.path, &source.bytes))
+        .collect::<Vec<_>>();
+    let compiled = crate::derive_manifest(catalog, &bytes, &authored_sql)
+        .context("derive the compiled manifest")?;
+    let manifest = PackageManifest::from_slice(&compiled).context("parse package manifest")?;
+    Ok((compiled, manifest))
 }
 
 fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<Vec<SourceFile>> {

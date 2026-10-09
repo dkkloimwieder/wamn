@@ -141,9 +141,7 @@ manifest.Package {
     custom_operations = {
         "inventory.move" = manifest.Command("inventory.move") {
             idempotent_by = "claim"
-            input = {
-                raw_body_maximum = 1048576
-                envelope = {minimum = 1, maximum = 100}
+            input: {
                 fields = [
                     manifest.request_id
                     manifest.idempotency_key
@@ -161,34 +159,11 @@ manifest.Package {
                     {path = "row_version", type = "int32", revision = True}
                 ]
             }
-            canonicalization = {excluded_fields = ["request_id", "value.idempotency_key"]}
             errors = ["invalid_input", "packaging_not_found", "location_not_found", *_command_errors]
             error_details = {
                 packaging_not_found = manifest.not_found_details
                 location_not_found = manifest.not_found_details
-                idempotency_conflict = manifest.conflict_details
             }
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "packaging"
-                    select_fields = ["id", "location_id", "row_version", "status"]
-                    insert_fields = []
-                    update_fields = ["located_at", "location_id", "row_version"]
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "location"
-                    select_fields = ["id"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 lock_packaging = manifest.Statement("command/inventory_move", "lock_packaging") {
                     fetch = "optional_one"
@@ -213,9 +188,7 @@ manifest.Package {
         }
         "inventory.adjust" = manifest.Command("inventory.adjust") {
             idempotent_by = "claim"
-            input = {
-                raw_body_maximum = 1048576
-                envelope = {minimum = 1, maximum = 100}
+            input: {
                 fields = [
                     manifest.request_id
                     manifest.idempotency_key
@@ -238,53 +211,11 @@ manifest.Package {
                     {path = "row_version", type = "int32", revision = True}
                 ]
             }
-            canonicalization = {excluded_fields = ["request_id", "value.idempotency_key"]}
             errors = ["invalid_input", "packaging_not_found", "quantity_not_found", *_command_errors]
             error_details = {
                 packaging_not_found = manifest.not_found_details
                 quantity_not_found = manifest.not_found_details
-                idempotency_conflict = manifest.conflict_details
             }
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "inventory_transaction"
-                    select_fields = ["id"]
-                    insert_fields = [
-                        "from_packaging_id"
-                        "from_status"
-                        "occurred_at"
-                        "product_id"
-                        "quantity"
-                        "reason_code"
-                        "to_packaging_id"
-                        "to_status"
-                    ]
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "packaging"
-                    select_fields = ["id", "location_id", "row_version", "status"]
-                    insert_fields = []
-                    update_fields = ["row_version"]
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "packaging_quantity"
-                    select_fields = ["id", "packaging_id", "product_id", "quantity", "status"]
-                    insert_fields = []
-                    update_fields = ["quantity"]
-                    delete = True
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 lock_packaging = manifest.Statement("command/inventory_adjust", "lock_packaging") {
                     fetch = "optional_one"
@@ -332,9 +263,7 @@ manifest.Package {
         }
         "inventory.merge" = manifest.Command("inventory.merge") {
             idempotent_by = "claim"
-            input = {
-                raw_body_maximum = 1048576
-                envelope = {minimum = 1, maximum = 100}
+            input: {
                 fields = [
                     manifest.request_id
                     manifest.idempotency_key
@@ -354,51 +283,10 @@ manifest.Package {
                     {path = "row_version", type = "int32", revision = True}
                 ]
             }
-            canonicalization = {excluded_fields = ["request_id", "value.idempotency_key"]}
             errors = ["invalid_input", "packaging_not_found", *_command_errors]
             error_details = {
                 packaging_not_found = manifest.not_found_details
-                idempotency_conflict = manifest.conflict_details
             }
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "inventory_transaction"
-                    select_fields = ["id"]
-                    insert_fields = [
-                        "from_packaging_id"
-                        "from_status"
-                        "occurred_at"
-                        "product_id"
-                        "quantity"
-                        "to_packaging_id"
-                        "to_status"
-                    ]
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "packaging"
-                    select_fields = ["id", "location_id", "row_version", "status"]
-                    insert_fields = []
-                    update_fields = ["row_version", "status"]
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "packaging_quantity"
-                    select_fields = ["id", "packaging_id", "product_id", "quantity", "status"]
-                    insert_fields = ["packaging_id", "product_id", "quantity", "status"]
-                    update_fields = ["quantity"]
-                    delete = True
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 lock_both_packagings = manifest.Statement("command/inventory_merge", "lock_both_packagings") {
                     fetch = "bounded_list"
@@ -466,9 +354,7 @@ manifest.Package {
         }
         "inventory.split" = manifest.Command("inventory.split") {
             idempotent_by = "claim"
-            input = {
-                raw_body_maximum = 1048576
-                envelope = {minimum = 1, maximum = 100}
+            input: {
                 fields = [
                     manifest.request_id
                     manifest.idempotency_key
@@ -497,7 +383,6 @@ manifest.Package {
                     {path = "row_version", type = "int32", revision = True}
                 ]
             }
-            canonicalization = {excluded_fields = ["request_id", "value.idempotency_key"]}
             errors = [
                 "invalid_input"
                 "packaging_not_found"
@@ -511,55 +396,7 @@ manifest.Package {
                 location_not_found = manifest.not_found_details
                 quantity_not_found = manifest.not_found_details
                 insufficient_quantity = {required = ["field"], optional = ["maximum", "observed"]}
-                idempotency_conflict = manifest.conflict_details
             }
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "inventory_transaction"
-                    select_fields = ["id"]
-                    insert_fields = [
-                        "from_packaging_id"
-                        "from_status"
-                        "occurred_at"
-                        "product_id"
-                        "quantity"
-                        "to_packaging_id"
-                        "to_status"
-                    ]
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "location"
-                    select_fields = ["id"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "packaging"
-                    select_fields = ["id", "location_id", "row_version", "status"]
-                    insert_fields = ["located_at", "location_id", "packaging_code", "status", "type"]
-                    update_fields = ["row_version"]
-                    lock = True
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "packaging_quantity"
-                    select_fields = ["id", "packaging_id", "product_id", "quantity", "status"]
-                    insert_fields = ["packaging_id", "product_id", "quantity", "status"]
-                    update_fields = ["quantity"]
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 lock_packaging = manifest.Statement("command/inventory_split", "lock_packaging") {
                     fetch = "optional_one"
@@ -632,7 +469,7 @@ manifest.Package {
         }
         "inventory.aggregate" = manifest.Projection("inventory.aggregate") {
             lists = {key_field = ["product_id", "location_id", "status"]}
-            input = {fields = []}
+            input: {fields = []}
             result = {
                 class = "bounded_list"
                 fields = [
@@ -644,27 +481,6 @@ manifest.Package {
                 ]
             }
             errors = ["invalid_input", *_errors_after_input]
-            constraint_errors = {}
-            relations = [
-                {
-                    $schema = _schema
-                    table = "packaging"
-                    select_fields = ["id", "location_id", "status"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-                {
-                    $schema = _schema
-                    table = "packaging_quantity"
-                    select_fields = ["packaging_id", "product_id", "quantity", "status"]
-                    insert_fields = []
-                    update_fields = []
-                    lock = False
-                    constraints = []
-                }
-            ]
             statements = {
                 inventory_aggregate = manifest.Statement("query", "inventory_aggregate") {
                     fetch = "bounded_list"

@@ -557,11 +557,6 @@
           "required": [
             "constraint"
           ]
-        },
-        "idempotency_conflict": {
-          "required": [
-            "field"
-          ]
         }
       },
       "constraint_errors": {
@@ -584,13 +579,13 @@
           "table": "purchase_order",
           "select_fields": [
             "id",
-            "status",
-            "row_version"
+            "row_version",
+            "status"
           ],
           "insert_fields": [],
           "update_fields": [
-            "status",
-            "row_version"
+            "row_version",
+            "status"
           ],
           "lock": true,
           "constraints": []
@@ -600,8 +595,8 @@
           "table": "purchase_order_line",
           "select_fields": [
             "id",
-            "purchase_order_id",
             "ordered_quantity",
+            "purchase_order_id",
             "received_quantity"
           ],
           "insert_fields": [],
@@ -618,9 +613,9 @@
             "id"
           ],
           "insert_fields": [
+            "occurred_at",
             "purchase_order_id",
-            "receipt_reference",
-            "occurred_at"
+            "receipt_reference"
           ],
           "update_fields": [],
           "lock": false,
@@ -635,10 +630,10 @@
             "id"
           ],
           "insert_fields": [
-            "receipt_id",
+            "location_id",
             "purchase_order_line_id",
             "quantity",
-            "location_id"
+            "receipt_id"
           ],
           "update_fields": [],
           "lock": false,
@@ -912,17 +907,28 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
+        {
+          "schema": "receiving",
+          "table": "item",
+          "select_fields": [
+            "id",
+            "item_number"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
         {
           "schema": "receiving",
           "table": "purchase_order",
           "select_fields": [
             "id",
             "purchase_order_number",
+            "row_version",
             "status",
-            "supplier_id",
-            "row_version"
+            "supplier_id"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -934,23 +940,11 @@
           "table": "purchase_order_line",
           "select_fields": [
             "id",
-            "purchase_order_id",
-            "line_number",
             "item_id",
+            "line_number",
             "ordered_quantity",
+            "purchase_order_id",
             "received_quantity"
-          ],
-          "insert_fields": [],
-          "update_fields": [],
-          "lock": false,
-          "constraints": []
-        },
-        {
-          "schema": "receiving",
-          "table": "item",
-          "select_fields": [
-            "id",
-            "item_number"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -1139,19 +1133,18 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "receiving",
           "table": "purchase_order",
           "select_fields": [
-            "id",
-            "purchase_order_number",
-            "supplier_id",
-            "status",
-            "row_version",
             "created_at",
             "created_by",
+            "id",
+            "purchase_order_number",
+            "row_version",
+            "status",
+            "supplier_id",
             "updated_at",
             "updated_by"
           ],
@@ -1164,15 +1157,15 @@
           "schema": "receiving",
           "table": "purchase_order_history",
           "select_fields": [
+            "after",
+            "before",
+            "changed_at",
+            "changed_by",
             "id",
+            "operation",
             "position",
             "row_key",
-            "type",
-            "operation",
-            "changed_by",
-            "changed_at",
-            "before",
-            "after"
+            "type"
           ],
           "insert_fields": [],
           "update_fields": [],
@@ -1286,7 +1279,6 @@
         "permission_denied",
         "internal_error"
       ],
-      "constraint_errors": {},
       "relations": [
         {
           "schema": "receiving",

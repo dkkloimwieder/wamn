@@ -10,6 +10,7 @@ use super::{
     server_owned_fields, validate_identifier, validate_operation_vocabulary,
 };
 use crate::FilterMatch;
+use crate::manifest::StaticSqlRelationDeclaration;
 use wamn_record_history::HISTORY_COLUMNS;
 
 /// Refuse a client package name that a package manifest cannot carry.
@@ -972,24 +973,30 @@ fn validate_delete_target(
     ))
 }
 
-fn validate_static_sql_relation_access(
+/// What one custom operation's statements do to each relation they reach,
+/// keyed by table: its schema, the access the lexer derives, and the
+/// constraints the statements name as conflict targets.
+///
+/// The lexer resolves a table by its name over the relations of the package's
+/// own schemas, so a table name that two of them share refuses.
+pub(super) fn derive_relation_access(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
     operation: &str,
     declaration: &CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    let schemas = declaration
-        .relations
-        .iter()
-        .map(|relation| relation.schema.as_str())
-        .collect::<BTreeSet<_>>();
-    let relation_fields = catalog
+) -> Result<BTreeMap<String, DerivedRelation>, GenerateError> {
+    let schemas = crate::data_access::application_schemas(manifest)?;
+    let schemas = schemas.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let mut owners = BTreeMap::<String, &str>::new();
+    let mut relation_fields = BTreeMap::<String, BTreeSet<String>>::new();
+    let tables = catalog
         .tables()
         .iter()
         .filter(|table| schemas.contains(table.schema()))
         .map(|table| {
             (
+                table.schema(),
                 table.name().to_owned(),
                 table
                     .columns()
@@ -1001,8 +1008,9 @@ fn validate_static_sql_relation_access(
         .chain(
             logged_history_tables(manifest)
                 .filter(|(schema, _)| schemas.contains(schema))
-                .map(|(_, history)| {
+                .map(|(schema, history)| {
                     (
+                        schema,
                         history,
                         HISTORY_COLUMNS
                             .iter()
@@ -1010,14 +1018,32 @@ fn validate_static_sql_relation_access(
                             .collect(),
                     )
                 }),
-        )
-        .collect::<BTreeMap<_, _>>();
-    let mut actual = BTreeMap::<String, crate::sql_lex::RelationAccess>::new();
+        );
+    for (schema, table, columns) in tables {
+        if let Some(other) = owners.insert(table.clone(), schema) {
+            return Err(GenerateError::for_object(
+                GenerateErrorType::InvalidOperation,
+                format!(
+                    "{operation} cannot derive its relations: schemas {other} and {schema} both define {table}"
+                ),
+                table,
+            ));
+        }
+        relation_fields.insert(table, columns);
+    }
+    let mut derived = BTreeMap::<String, DerivedRelation>::new();
     for statement in declaration.statements.values() {
         let source = authored_sql
             .iter()
             .find(|source| source.path == statement.path)
             .expect("authored-source validation supplied every custom-operation statement");
+        let lexed = |detail| {
+            GenerateError::for_path(
+                GenerateErrorType::InvalidOperation,
+                format!("{}: {detail}", statement.path),
+                statement.path.as_str(),
+            )
+        };
         let statement_access = crate::sql_lex::relation_access(source.bytes, &relation_fields)
             .map_err(|detail| {
                 GenerateError::for_path(
@@ -1029,25 +1055,146 @@ fn validate_static_sql_relation_access(
                     statement.path.as_str(),
                 )
             })?;
-        let deleted = crate::sql_lex::delete_targets(source.bytes).map_err(|detail| {
-            GenerateError::for_path(
-                GenerateErrorType::InvalidOperation,
-                format!("{}: {detail}", statement.path),
-                statement.path.as_str(),
-            )
-        })?;
+        let deleted = crate::sql_lex::delete_targets(source.bytes).map_err(lexed)?;
         for target in &deleted {
             validate_delete_target(manifest, &schemas, operation, &statement.path, target)?;
         }
         for (table, observed) in statement_access {
-            let aggregate = actual.entry(table).or_default();
+            let schema = owners[&table].to_owned();
+            let aggregate = &mut derived
+                .entry(table)
+                .or_insert_with(|| DerivedRelation {
+                    schema,
+                    access: crate::sql_lex::RelationAccess::default(),
+                    constraints: BTreeSet::new(),
+                })
+                .access;
             aggregate.select_fields.extend(observed.select_fields);
             aggregate.insert_fields.extend(observed.insert_fields);
             aggregate.update_fields.extend(observed.update_fields);
             aggregate.lock |= observed.lock;
             aggregate.delete |= observed.delete;
         }
+        for name in crate::sql_lex::conflict_constraints(source.bytes).map_err(lexed)? {
+            let relation = defining_relation(catalog, &mut derived, &name).ok_or_else(|| {
+                GenerateError::for_path(
+                    GenerateErrorType::InvalidOperation,
+                    format!(
+                        "{} names conflict target {name}, which no relation it reaches defines",
+                        statement.path
+                    ),
+                    statement.path.as_str(),
+                )
+            })?;
+            relation.constraints.insert(name);
+        }
     }
+    Ok(derived)
+}
+
+/// One relation that a custom operation's statements reach.
+#[derive(Debug)]
+pub(super) struct DerivedRelation {
+    schema: String,
+    access: crate::sql_lex::RelationAccess,
+    /// The constraints the operation relies on that this relation defines.
+    constraints: BTreeSet<String>,
+}
+
+/// The reached relation that defines a constraint or an exclusion of this name.
+fn defining_relation<'a>(
+    catalog: &CatalogIr,
+    derived: &'a mut BTreeMap<String, DerivedRelation>,
+    name: &str,
+) -> Option<&'a mut DerivedRelation> {
+    derived
+        .iter_mut()
+        .find(|(table, relation)| {
+            catalog
+                .tables()
+                .iter()
+                .find(|candidate| {
+                    candidate.schema() == relation.schema && candidate.name() == table.as_str()
+                })
+                .is_some_and(|table| {
+                    table
+                        .constraints()
+                        .iter()
+                        .any(|constraint| constraint.name() == name)
+                        || table
+                            .exclusions()
+                            .iter()
+                            .any(|exclusion| exclusion.name() == name)
+                })
+        })
+        .map(|(_, relation)| relation)
+}
+
+/// The relations of one custom operation, derived from its statements.
+///
+/// A relation requires each constraint that the statements name as a conflict
+/// target, and each constraint that the operation maps to an error. A mapped
+/// constraint belongs to the reached relation that defines it.
+pub(super) fn derive_relations(
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
+    authored_sql: &[AuthoredSql<'_>],
+    operation: &str,
+    declaration: &CustomOperationDeclaration,
+) -> Result<Vec<StaticSqlRelationDeclaration>, GenerateError> {
+    let mut derived =
+        derive_relation_access(catalog, manifest, authored_sql, operation, declaration)?;
+    if derived.is_empty() && !declaration.statements.is_empty() {
+        return Err(GenerateError::new(
+            GenerateErrorType::InvalidOperation,
+            format!("{operation} SQL reaches no relation of the package"),
+        ));
+    }
+    for name in declaration.constraint_errors.keys() {
+        defining_relation(catalog, &mut derived, name)
+            .ok_or_else(|| {
+                GenerateError::for_object(
+                    GenerateErrorType::InvalidOperation,
+                    format!(
+                        "{operation} maps constraint {name}, which no relation its SQL reaches defines"
+                    ),
+                    name.clone(),
+                )
+            })?
+            .constraints
+            .insert(name.clone());
+    }
+    Ok(derived
+        .into_iter()
+        .map(|(table, relation)| StaticSqlRelationDeclaration {
+            schema: relation.schema,
+            table,
+            select_fields: relation.access.select_fields.into_iter().collect(),
+            insert_fields: relation.access.insert_fields.into_iter().collect(),
+            update_fields: relation.access.update_fields.into_iter().collect(),
+            delete: relation.access.delete,
+            lock: relation.access.lock,
+            constraints: relation.constraints.into_iter().collect(),
+        })
+        .collect())
+}
+
+/// Refuse a stated relation that the statements do not reach exactly as stated.
+///
+/// A compiled manifest states the relations that generation derived, and a
+/// hand-written one states its own. Either way the SQL decides.
+fn validate_static_sql_relation_access(
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
+    authored_sql: &[AuthoredSql<'_>],
+    operation: &str,
+    declaration: &CustomOperationDeclaration,
+) -> Result<(), GenerateError> {
+    let mut actual =
+        derive_relation_access(catalog, manifest, authored_sql, operation, declaration)?
+            .into_iter()
+            .map(|(table, relation)| (table, relation.access))
+            .collect::<BTreeMap<_, _>>();
     for relation in &declaration.relations {
         let observed = actual.remove(&relation.table).unwrap_or_default();
         let declared = crate::sql_lex::RelationAccess {
@@ -1175,7 +1322,7 @@ fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError>
     Ok(())
 }
 
-fn validate_authored_sources(
+pub(super) fn validate_authored_sources(
     manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
 ) -> Result<(), GenerateError> {

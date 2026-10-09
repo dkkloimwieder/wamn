@@ -20,7 +20,6 @@ pub(super) fn manifest() -> Value {
             {"path": "id", "type": "uuid", "nullable": false}]},
         "errors": ["invalid_input", "idempotency_conflict", "retry", "timeout",
             "permission_denied", "internal_error"],
-        "error_details": {"idempotency_conflict": {"required": ["field"]}},
         "constraint_errors": {},
         "relations": [{"schema": "inventory", "table": "widget",
             "select_fields": ["id", "edit_version", "note"],

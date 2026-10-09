@@ -61,7 +61,7 @@ pub use data_access::{
 pub use error::{GenerateError, GenerateErrorType};
 pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GeneratedPackageMetadata, GenerationInput,
-    GenerationProvenance, StatementTransactionality, corpus_sha256, generate,
+    GenerationProvenance, StatementTransactionality, corpus_sha256, derive_manifest, generate,
 };
 pub use manifest::{
     AccessOperationErrorLiteral, AuditLogDeclaration, AuthoredSqlDeclaration, AuthoredSqlVariant,

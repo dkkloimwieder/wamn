@@ -26,25 +26,11 @@ manifest.Package {
             label = "Record a sample"
             description = "One reading that an edge box forwards. The edge sample key is the idempotency key."
             idempotent_by = "claim"
-            canonicalization = {excluded_fields = ["request_id", "value.idempotency_key"]}
-            input = {
-                envelope = {minimum = 1, maximum = 100}
-                raw_body_maximum = 1048576
+            input: {
                 fields = [manifest.request_id, manifest.idempotency_key, _frame, _captured_at]
             }
             result = {class = "one", fields = [{path = "sample_id", type = "uuid"}]}
             errors = ["invalid_input", "idempotency_conflict", "retry", "timeout", "permission_denied", "internal_error"]
-            error_details = {idempotency_conflict = manifest.conflict_details}
-            constraint_errors = {}
-            relations = [{
-                $schema = _schema
-                table = "sample"
-                insert_fields = ["captured_at", "frame"]
-                select_fields = ["id"]
-                update_fields = []
-                constraints = ["sample_id_pkey"]
-                lock = False
-            }]
             statements = {
                 record_sample = manifest.Statement("command/sample", "record") {
                     fetch = "one"

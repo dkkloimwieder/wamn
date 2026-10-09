@@ -235,6 +235,30 @@ pub(crate) fn delete_targets(sql: &[u8]) -> Result<BTreeSet<String>, &'static st
     Ok(targets)
 }
 
+/// Report every constraint one authored SQL artifact names as a conflict
+/// target, `ON CONFLICT ON CONSTRAINT <name>`.
+///
+/// The statement relies on that constraint, so the operation requires it. The
+/// scan is flat over the token stream, as [`delete_targets`] is.
+pub(crate) fn conflict_constraints(sql: &[u8]) -> Result<BTreeSet<String>, &'static str> {
+    let tokens = tokens(sql);
+    let mut constraints = BTreeSet::new();
+    for index in 0..tokens.len() {
+        let keywords = (0..4)
+            .map(|offset| tokens.get(index + offset).and_then(identifier))
+            .collect::<Vec<_>>();
+        if keywords != [Some("on"), Some("conflict"), Some("on"), Some("constraint")] {
+            continue;
+        }
+        let name = tokens
+            .get(index + 4)
+            .and_then(identifier)
+            .ok_or("ON CONFLICT ON CONSTRAINT must name its constraint")?;
+        constraints.insert(name.to_owned());
+    }
+    Ok(constraints)
+}
+
 fn depths(tokens: &[Token]) -> Result<Vec<usize>, &'static str> {
     let mut depth = 0_usize;
     let mut depths = Vec::with_capacity(tokens.len());
@@ -1241,6 +1265,26 @@ mod tests {
                 .is_empty()
         );
         assert!(delete_targets(b"DELETE FROM").is_err());
+    }
+
+    #[test]
+    fn conflict_targets_name_the_constraints_a_statement_relies_on() {
+        let sql =
+            b"INSERT INTO item (id) SELECT $1 ON CONFLICT ON CONSTRAINT item_pkey DO NOTHING \
+            -- ON CONFLICT ON CONSTRAINT commented_out\n RETURNING id";
+        assert_eq!(
+            conflict_constraints(sql).unwrap(),
+            ["item_pkey".to_owned()].into_iter().collect()
+        );
+        assert!(
+            conflict_constraints(b"INSERT INTO item (id) VALUES ($1) ON CONFLICT (id) DO NOTHING")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            conflict_constraints(b"INSERT INTO item (id) VALUES ($1) ON CONFLICT ON CONSTRAINT")
+                .is_err()
+        );
     }
 
     #[test]

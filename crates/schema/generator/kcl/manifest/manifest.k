@@ -7,6 +7,13 @@ reader, crates/schema/generator/src/manifest.rs, and the compiled JSON keeps
 that order. A default here is an authoring default: it fills a value that the
 author did not write, and the compiled JSON states it. An author who sets an
 optional key to None leaves the key out of the compiled JSON.
+
+The author states a fact once (docs/plan/platform-deploy.md §6, R9). The SQL
+owns what a statement reads and writes, so no schema here has a relations key:
+the generator derives each custom operation's relations from its statements
+and writes them into generated/wamn.json. A command's envelope bounds and
+canonicalization are defaults, written only to change them, and the detail of
+idempotency_conflict is derived with the other platform error details.
 """
 
 type ColumnType = "boolean" | "int32" | "int64" | "float64" | "text" | "bytes" | "numeric" | "timestamptz" | "json" | "uuid"
@@ -98,16 +105,6 @@ schema ErrorDetail:
     optional?: [ErrorDetailKey]
     text?: str
 
-schema Relation:
-    $schema: str
-    table: str
-    select_fields: [str]
-    insert_fields: [str]
-    update_fields: [str]
-    delete?: bool
-    lock: bool
-    constraints?: [str]
-
 schema Statement[directory: str, name: str]:
     """A statement of a custom operation. Its path defaults to <directory>/<name>.sql,
     for example Statement("command/inventory_move", "lock_packaging") or
@@ -135,7 +132,7 @@ schema LineOrder:
     positive_member?: str
 
 schema Canonicalization:
-    excluded_fields: [str]
+    excluded_fields: [str] = ["request_id", "value.idempotency_key"]
     line_order?: LineOrder
 
 schema Registration:
@@ -164,8 +161,8 @@ schema CustomOperation[name: str]:
     result?: Result
     errors: [str]
     error_details?: {str:ErrorDetail}
+    # A constraint the SQL can violate, mapped to the business error it answers.
     constraint_errors?: {str:str}
-    relations?: [Relation]
     statements?: {str:Statement}
     transaction?: Transaction
     automatic_retry?: bool
@@ -176,10 +173,34 @@ schema CustomOperation[name: str]:
     description?: str
     lists?: List
 
+    check:
+        not error_details or "idempotency_conflict" not in error_details, "${name} states the detail of idempotency_conflict, which the generator derives; remove it"
+
+_claims = lambda idempotent_by: any -> bool {
+    typeof(idempotent_by) == "str" and idempotent_by == "claim"
+}
+# Whether a command takes the public envelope: a batch of keyed inputs under one
+# raw body bound. A command that claims its key does, and so does one that rides
+# a base claim unless it is the base's execution-only participant.
+_takes_envelope = lambda idempotent_by: any, transaction: any -> bool {
+    _claims(idempotent_by) or (typeof(idempotent_by) == "Inherited" and transaction != "participant")
+}
+
 schema Command[name: str](CustomOperation):
+    """A command. One that takes the public envelope gets the platform's bounds,
+    a raw body of at most 1 MiB and 1 to 100 inputs, and one that claims its key
+    leaves the request id and the key out of its canonical input. Merge the input
+    with the union operator, input: {...}, so that the command fills its bounds."""
     type = "command"
     transaction = "explicit_per_input"
     automatic_retry = False
+
+    if _takes_envelope(idempotent_by, transaction) and not input.raw_body_maximum:
+        input.raw_body_maximum = 1048576
+    if _takes_envelope(idempotent_by, transaction) and not input.envelope:
+        input.envelope = {minimum = 1, maximum = 100}
+    if _claims(idempotent_by) and not canonicalization:
+        canonicalization = {}
 
 schema Projection[name: str](CustomOperation):
     type = "projection"
@@ -352,6 +373,10 @@ schema Package:
                 not model.operations[op] or model.operations[op].permission
             }
         }, "a model operation has no permission: merge the operations with ':', operations: {get: {...}}, so that the model fills each permission"
+        # The same holds for a command's input and its envelope bounds.
+        not custom_operations or all _, operation in custom_operations {
+            operation.type != "command" or not _takes_envelope(operation.idempotent_by, operation.transaction) or (operation.input.raw_body_maximum and operation.input.envelope)
+        }, "a command that takes the public envelope has no bounds: merge the input with ':', input: {...}, so that the command fills them"
 
 # Typed constructors of a statement value.
 uuid = lambda name: str -> Value {
@@ -388,6 +413,5 @@ command_inputs = [request_id, idempotency_key, occurred_at]
 # The seven platform error codes, in the order the manifests list them. Business
 # errors follow invalid_input.
 platform_errors = ["invalid_input", "concurrency_conflict", "idempotency_conflict", "retry", "timeout", "permission_denied", "internal_error"]
-# The standard details of a not-found error and of an idempotency conflict.
+# The standard details of a not-found error.
 not_found_details = ErrorDetail {required = ["field", "id"]}
-conflict_details = ErrorDetail {required = ["field"]}
