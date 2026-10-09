@@ -9,9 +9,11 @@
 //! does. The fixture is rewritten to that journey scope's tenant and
 //! environment.
 //!
-//! The chart is installed with no role. Two probe WorkloadDeployments, one on
-//! the release's labels and one on a wrong `wamn.release`, check placement
-//! only: their component image is not in the registry.
+//! The chart is installed with the http role, and its `<name>-http` Workload
+//! must be placed on the host. Two probe WorkloadDeployments, one on the
+//! release's labels and one on a wrong `wamn.release`, check placement too.
+//! The checks are of placement only: no role or probe component image is in
+//! the registry.
 //!
 //! Run:
 //! `cargo build -p wamn-identity` first, then
@@ -30,7 +32,7 @@ use wamn_control::dev::environment::{
 };
 use wamn_control::push_release_manifest::push_manifest_bytes;
 use wamn_control::release_chart::{
-    ImageSet, Target, ValuesInput, release_name, stamp, uninstall, upgrade, values,
+    ImageSet, Role, RoleName, Target, ValuesInput, release_name, stamp, uninstall, upgrade, values,
 };
 use wamn_engine::release_manifest::release_label;
 
@@ -636,6 +638,7 @@ async fn run(smoke: &mut Smoke, repository: &Path, host_image: &str) -> anyhow::
     let name = release_name(org, project, env)?;
     let host_group = serde_yaml::from_value(serde_yaml::to_value(json!({
         "replicas": 1,
+        "http": {"enabled": true, "port": 80},
         "env": [
             {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/smoke-registry/config.json"},
             {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{REGISTRY}:5000/wamn/components")},
@@ -654,9 +657,11 @@ async fn run(smoke: &mut Smoke, repository: &Path, host_image: &str) -> anyhow::
         manifest_digest: digest.clone(),
         artifact_base: format!("{REGISTRY}:5000/wamn/releases"),
         route_host: "smoke.invalid".to_owned(),
-        // No role: `helm --wait` would wait on a role workload whose component
-        // is not in the registry. The probes below select the host instead.
-        roles: Vec::new(),
+        roles: vec![Role {
+            name: RoleName::Http,
+            config: serde_yaml::Mapping::new(),
+            environment: None,
+        }],
         drain_bound_seconds: 70,
         host_group,
     })?;
@@ -703,6 +708,28 @@ async fn run(smoke: &mut Smoke, repository: &Path, host_image: &str) -> anyhow::
         .and_then(|host| host["hostId"].as_str())
         .unwrap_or_default()
         .to_owned();
+
+    // The chart's http role Workload is placed on the host.
+    let role = format!("{name}-http");
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let mut workloads = smoke.workloads(&role).await?;
+    while !workloads
+        .iter()
+        .any(|workload| workload["status"]["hostId"] == host_id.as_str())
+        && Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        workloads = smoke.workloads(&role).await?;
+    }
+    smoke.record(
+        "http role placed on the host",
+        &format!("kubectl -n {NAMESPACE} get workloads -o json (names {role}*)"),
+        json!({"hostId": host_id, "workloads": placements(&workloads)}),
+        !host_id.is_empty()
+            && workloads
+                .iter()
+                .any(|workload| workload["status"]["hostId"] == host_id.as_str()),
+    );
 
     // 2. A WorkloadDeployment that selects on both labels is placed on the host.
     let placed = format!("{name}-probe-placed");
