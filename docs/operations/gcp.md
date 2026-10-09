@@ -2006,9 +2006,9 @@ On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four 
 
 Then `gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags` turned immutable tags on at 17:12 UTC. The deletes and the update took 6 seconds. `gcloud artifacts repositories describe wamn` shows `immutableTags: true`, and every tag of `components` is a sha256 hex.
 
-### Provisioning worker
+### Provisioning login
 
-The provisioning worker `wamn-ctl serve` runs its SQL as the login `wamn_provisioner`, which is not a superuser (`wamn-zua8.3`, `docs/plan/platform-ui.md` §5.5). Three superuser statements prepare an installed deployment for it. Apply each one once, as the superuser, connected to `wamn_system`. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Make a private work directory, mode 0700:
+The provisioning login `wamn_provisioner` is not a superuser (`wamn-zua8.3`, `docs/plan/platform-ui.md` §5.5). Three superuser statements prepare an installed deployment for it. Apply each one once, as the superuser, connected to `wamn_system`. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Make a private work directory, mode 0700:
 
 ```bash
 D=$(mktemp -d)
@@ -2035,7 +2035,7 @@ rm $D/provisioner-secret.json
 rm $D/provisioner.sql
 ```
 
-The `ADMIN OPTION` statement is not yet applied on wamn-dev. It is the second block of `$D/provisioner.sql` above, so the same `psql` run applies it. It grants `wamn_provisioner` `ADMIN OPTION`, with `INHERIT FALSE` and `SET FALSE`, on each stable ACL role of `WorkloadRoleFamily::ALL` that exists, and nothing else. A superuser made those roles on wamn-dev, so without this grant the worker cannot make a new environment's generations their members.
+The `ADMIN OPTION` statement is not yet applied on wamn-dev. It is the second block of `$D/provisioner.sql` above, so the same `psql` run applies it. It grants `wamn_provisioner` `ADMIN OPTION`, with `INHERIT FALSE` and `SET FALSE`, on each stable ACL role of `WorkloadRoleFamily::ALL` that exists, and nothing else. A superuser made those roles on wamn-dev, so without this grant the provisioning login cannot make a new environment's generations their members.
 
 ## 8. Package upgrade acceptance prerequisite audit
 

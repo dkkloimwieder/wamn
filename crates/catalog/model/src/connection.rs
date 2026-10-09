@@ -163,8 +163,7 @@ impl RequirementType {
 
     /// Check a generation definition against the coordinates this type's
     /// plugin reads, and return the reason it is refused. `wamn-ctl
-    /// bind-connection` and the `environment.create` route both refuse with
-    /// it.
+    /// bind-connection` refuses with it.
     pub fn check_definition(self, definition: &serde_json::Value) -> Result<(), String> {
         use serde_json::Value;
         let Some(object) = definition.as_object() else {

@@ -337,7 +337,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     ] {
         assert_eq!(
             call(&delivery, operation, ann.as_str(), json!({})).await,
-            Err(format!("permission denied wamn-control:{operation}@0.4.0"))
+            Err(format!("permission denied wamn-control:{operation}@0.5.0"))
         );
     }
 
@@ -488,7 +488,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
         .await?;
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.4.0".to_owned())
+        Err("permission denied wamn-control:project/list@0.5.0".to_owned())
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -565,7 +565,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     ] {
         assert_eq!(
             call(&delivery, operation, ann, payload).await,
-            Err(format!("permission denied wamn-control:{operation}@0.4.0"))
+            Err(format!("permission denied wamn-control:{operation}@0.5.0"))
         );
     }
     assert_eq!(
@@ -576,7 +576,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "shop"})
         )
         .await,
-        Err("permission denied wamn-control:environment/list@0.4.0".to_owned())
+        Err("permission denied wamn-control:environment/list@0.5.0".to_owned())
     );
     // A project admin reads the org's users, and holds no other org route.
     assert_eq!(
@@ -589,7 +589,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     );
     assert_eq!(
         call(&delivery, "project/list", cat, json!({})).await,
-        Err("permission denied wamn-control:project/list@0.4.0".to_owned())
+        Err("permission denied wamn-control:project/list@0.5.0".to_owned())
     );
     assert_eq!(
         call(
@@ -599,7 +599,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing"})
         )
         .await,
-        Ok(json!({"environments": ["dev"], "sagas": []}))
+        Ok(json!({"environments": ["dev"]}))
     );
 
     // A membership goes to an active org member in an environment of the
@@ -687,7 +687,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing"})
         )
         .await,
-        Err("permission denied wamn-control:environment/list@0.4.0".to_owned())
+        Err("permission denied wamn-control:environment/list@0.5.0".to_owned())
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -963,7 +963,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             billing_dev.clone()
         )
         .await,
-        Err("permission denied wamn-control:environment/inactivate@0.4.0".to_owned())
+        Err("permission denied wamn-control:environment/inactivate@0.5.0".to_owned())
     );
     assert_eq!(
         call(
@@ -1078,560 +1078,6 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn environment_create_writes_one_saga_that_environment_list_shows() -> anyhow::Result<()> {
-    let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("control_environment_create")?;
-    let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let control_url = install(&admin, admin_url).await?;
-    let (logins, _billing, _shop) = environments(&admin, admin_url, "create").await?;
-
-    // An org admin and a project admin of billing.
-    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&provisioning],
-        )
-        .await?;
-    let mut ids = Vec::new();
-    for (email, name, grants) in [
-        (
-            "boss@example.test",
-            "Boss",
-            MemberGrants {
-                org_admin: true,
-                ..MemberGrants::default()
-            },
-        ),
-        (
-            "cat@example.test",
-            "Cat",
-            MemberGrants {
-                project_admins: vec!["billing".to_owned()],
-                ..MemberGrants::default()
-            },
-        ),
-    ] {
-        let user = create_or_reuse_user(&admin, email, name)
-            .await?
-            .principal_id;
-        invite_member(&admin, &user, ORG, &grants).await?;
-        ids.push(user);
-    }
-    let [boss, cat]: [PrincipalId; 2] = ids.try_into().expect("two users");
-    let (boss, cat) = (boss.as_str(), cat.as_str());
-    let delivery = HostRouteDelivery::new(
-        Arc::new(LoadedRelease::control_root()),
-        HostRouteHandlers::Control {
-            administration: Some(logins.clone()),
-            control: Arc::new(connect(&control_url).await?),
-            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
-            identity: None,
-            org: ORG.to_owned(),
-        },
-        None,
-    );
-    let request = |project: &str, env: &str| {
-        json!({
-            "project": project,
-            "env": env,
-            "route_host": "billing.example.test",
-            "packages": [{"package_id": "wamn_receiving", "version": "1.0.0"}],
-            "connections": [{
-                "instance_id": "labels",
-                "requirement_type": "blobstore",
-                "alias": "labels",
-                "definition": {"provider": "gcs", "container": "c", "prefix": "p"},
-            }],
-        })
-    };
-
-    // Only an org admin creates an environment.
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/create",
-            cat,
-            request("billing", "test")
-        )
-        .await,
-        Err("permission denied wamn-control:environment/create@0.4.0".to_owned())
-    );
-
-    // A definition that bind-connection would refuse refuses before any saga
-    // is written, with the same reason. The worker binds with no credential
-    // handle, so only a gcs definition binds.
-    for (definition, reason) in [
-        (
-            json!({"endpoint": "e", "container": "c", "prefix": "p"}),
-            "the credential handle must not be empty; the host resolves it by name",
-        ),
-        (
-            json!({"provider": "gcs", "container": "c"}),
-            "the generation definition lacks prefix; Blobstore reads it at resolve time",
-        ),
-    ] {
-        let mut refused_request = request("billing", "test");
-        refused_request["connections"][0]["definition"] = definition;
-        assert_eq!(
-            call(&delivery, "environment/create", boss, refused_request).await,
-            Err(refused(
-                "invalid_input",
-                &json!({"field": "connections", "reason": reason})
-            ))
-        );
-    }
-    let written: i64 = admin
-        .query_one("SELECT count(*) FROM provisioning.sagas", &[])
-        .await?
-        .get(0);
-    assert_eq!(written, 0, "a refused definition writes no saga");
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/create",
-            boss,
-            request("ledger", "test")
-        )
-        .await,
-        Err(refused("project_not_found", &json!({"field": "project"})))
-    );
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/create",
-            boss,
-            request("billing", "dev")
-        )
-        .await,
-        Err(refused("environment_exists", &json!({"field": "env"}))),
-        "billing/dev exists"
-    );
-    let created = call(
-        &delivery,
-        "environment/create",
-        boss,
-        request("billing", "test"),
-    )
-    .await
-    .expect("an org admin creates billing/test");
-    let first = created["saga_id"].as_str().expect("a saga id").to_owned();
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/create",
-            boss,
-            request("billing", "test")
-        )
-        .await,
-        Err(refused("environment_exists", &json!({"field": "env"}))),
-        "the saga of billing/test is open"
-    );
-
-    // The saga keeps the request, and every step is pending.
-    let input: String = admin
-        .query_one(
-            "SELECT input::text FROM provisioning.sagas WHERE saga_id = $1",
-            &[&first],
-        )
-        .await?
-        .get(0);
-    assert_eq!(
-        serde_json::from_str::<Value>(&input)?,
-        request("billing", "test")
-    );
-    let listed = call(
-        &delivery,
-        "environment/list",
-        cat,
-        json!({"project": "billing"}),
-    )
-    .await
-    .expect("a project admin lists the environments");
-    assert_eq!(listed["environments"], json!(["dev"]));
-    let steps: Vec<Value> = wamn_control_provision::saga::STEPS
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            json!({
-                "step": index + 1,
-                "name": name,
-                "status": "pending",
-                "error": null,
-                "detail": null,
-                "started_at": null,
-                "finished_at": null,
-            })
-        })
-        .collect();
-    assert_eq!(
-        listed["sagas"],
-        json!([{
-            "saga_id": first,
-            "env": "test",
-            "type": "create-environment",
-            "source_env": null,
-            "status": "pending",
-            "last_error": null,
-            "steps": steps,
-        }])
-    );
-
-    // An abandoned saga is not open, so the environment can be created again.
-    admin
-        .execute(
-            "UPDATE provisioning.sagas SET status = 'abandoned' WHERE saga_id = $1",
-            &[&first],
-        )
-        .await?;
-    let second = call(
-        &delivery,
-        "environment/create",
-        boss,
-        request("billing", "test"),
-    )
-    .await
-    .expect("an abandoned saga leaves the environment free");
-    let listed = call(
-        &delivery,
-        "environment/list",
-        boss,
-        json!({"project": "billing"}),
-    )
-    .await
-    .expect("an org admin lists the environments");
-    let sagas: Vec<(&str, &str)> = listed["sagas"]
-        .as_array()
-        .expect("sagas")
-        .iter()
-        .map(|saga| {
-            (
-                saga["saga_id"].as_str().expect("an id"),
-                saga["status"].as_str().expect("a status"),
-            )
-        })
-        .collect();
-    assert_eq!(
-        sagas,
-        [
-            (first.as_str(), "abandoned"),
-            (second["saga_id"].as_str().expect("a saga id"), "pending")
-        ]
-    );
-
-    // Only an org admin resumes or abandons a saga of the org, and only from
-    // the status that allows it. The routes write the saga, never a step.
-    let second = second["saga_id"].as_str().expect("a saga id").to_owned();
-    let saga = |saga_id: &str| json!({ "saga_id": saga_id });
-    assert_eq!(
-        call(&delivery, "environment/resume", cat, saga(&second)).await,
-        Err("permission denied wamn-control:environment/resume@0.4.0".to_owned())
-    );
-    assert_eq!(
-        call(&delivery, "environment/abandon", cat, saga(&second)).await,
-        Err("permission denied wamn-control:environment/abandon@0.4.0".to_owned())
-    );
-    assert_eq!(
-        call(&delivery, "environment/resume", boss, saga("missing")).await,
-        Err(refused("saga_not_found", &json!({"field": "saga_id"})))
-    );
-    assert_eq!(
-        call(&delivery, "environment/resume", boss, saga(&second)).await,
-        Err(refused("saga_not_resumable", &json!({"field": "saga_id"}))),
-        "a pending saga does not resume"
-    );
-    assert_eq!(
-        call(&delivery, "environment/abandon", boss, saga(&first)).await,
-        Err(refused(
-            "saga_not_abandonable",
-            &json!({"field": "saga_id"})
-        )),
-        "an abandoned saga stays abandoned"
-    );
-    admin
-        .batch_execute(&format!(
-            "UPDATE provisioning.saga_steps SET status = 'failed', error = 'refused' \
-              WHERE saga_id = '{second}' AND step = 1; \
-             UPDATE provisioning.sagas SET status = 'failed', last_error = 'refused' \
-              WHERE saga_id = '{second}';"
-        ))
-        .await?;
-    assert_eq!(
-        call(&delivery, "environment/resume", boss, saga(&second)).await,
-        Ok(json!({"saga_id": second, "status": "pending"}))
-    );
-    let row = admin
-        .query_one(
-            "SELECT s.status, s.last_error, t.status, t.error \
-               FROM provisioning.sagas s JOIN provisioning.saga_steps t USING (saga_id) \
-              WHERE s.saga_id = $1 AND t.step = 1",
-            &[&second],
-        )
-        .await?;
-    assert_eq!(
-        (
-            row.get::<_, String>(0),
-            row.get::<_, Option<String>>(1),
-            row.get::<_, String>(2),
-            row.get::<_, Option<String>>(3),
-        ),
-        (
-            "pending".to_owned(),
-            None,
-            "failed".to_owned(),
-            Some("refused".to_owned())
-        ),
-        "the saga is pending, and its failed step waits for the worker"
-    );
-    assert_eq!(
-        call(&delivery, "environment/abandon", boss, saga(&second)).await,
-        Ok(json!({"saga_id": second, "status": "abandoned"}))
-    );
-    admin
-        .execute(
-            "UPDATE provisioning.sagas SET org = 'other' WHERE saga_id = $1",
-            &[&second],
-        )
-        .await?;
-    assert_eq!(
-        call(&delivery, "environment/abandon", boss, saga(&second)).await,
-        Err(refused("saga_not_found", &json!({"field": "saga_id"}))),
-        "a saga of another org is not found"
-    );
-    let _ = std::fs::remove_dir_all(&logins);
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn environment_copy_writes_one_copy_saga_that_environment_list_shows() -> anyhow::Result<()> {
-    let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("control_environment_copy")?;
-    let admin_url = test_database.url();
-    let admin = connect(admin_url).await?;
-    let control_url = install(&admin, admin_url).await?;
-    let (logins, _billing, _shop) = environments(&admin, admin_url, "copy").await?;
-
-    // An org admin and a project admin of billing.
-    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&provisioning],
-        )
-        .await?;
-    let mut ids = Vec::new();
-    for (email, name, grants) in [
-        (
-            "boss@example.test",
-            "Boss",
-            MemberGrants {
-                org_admin: true,
-                ..MemberGrants::default()
-            },
-        ),
-        (
-            "cat@example.test",
-            "Cat",
-            MemberGrants {
-                project_admins: vec!["billing".to_owned()],
-                ..MemberGrants::default()
-            },
-        ),
-    ] {
-        let user = create_or_reuse_user(&admin, email, name)
-            .await?
-            .principal_id;
-        invite_member(&admin, &user, ORG, &grants).await?;
-        ids.push(user);
-    }
-    let [boss, cat]: [PrincipalId; 2] = ids.try_into().expect("two users");
-    let (boss, cat) = (boss.as_str(), cat.as_str());
-    let delivery = HostRouteDelivery::new(
-        Arc::new(LoadedRelease::control_root()),
-        HostRouteHandlers::Control {
-            administration: Some(logins.clone()),
-            control: Arc::new(connect(&control_url).await?),
-            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
-            identity: None,
-            org: ORG.to_owned(),
-        },
-        None,
-    );
-    let request = |project: &str, source_env: &str, env: &str| {
-        json!({
-            "project": project,
-            "source_env": source_env,
-            "env": env,
-            "route_host": "billing.example.test",
-            "connections": [{
-                "instance_id": "labels",
-                "definition": {"provider": "gcs", "container": "c", "prefix": "p"},
-            }],
-        })
-    };
-
-    // Only an org admin copies an environment.
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/copy",
-            cat,
-            request("billing", "dev", "test")
-        )
-        .await,
-        Err("permission denied wamn-control:environment/copy@0.4.0".to_owned())
-    );
-
-    // The route reads no project database, so it refuses only a definition
-    // that is not a JSON object. `read-source` checks the rest.
-    let mut not_object = request("billing", "dev", "test");
-    not_object["connections"][0]["definition"] = json!(["c"]);
-    assert_eq!(
-        call(&delivery, "environment/copy", boss, not_object).await,
-        Err(refused(
-            "invalid_input",
-            &json!({
-                "field": "connections",
-                "reason": "the definition of labels is not a JSON object",
-            })
-        ))
-    );
-    for (copy, code, field) in [
-        (
-            request("ledger", "dev", "test"),
-            "project_not_found",
-            "project",
-        ),
-        (
-            request("billing", "stage", "test"),
-            "environment_not_found",
-            "source_env",
-        ),
-        (
-            request("billing", "dev", "dev"),
-            "environment_exists",
-            "env",
-        ),
-    ] {
-        assert_eq!(
-            call(&delivery, "environment/copy", boss, copy).await,
-            Err(refused(code, &json!({ "field": field })))
-        );
-    }
-    let written: i64 = admin
-        .query_one("SELECT count(*) FROM provisioning.sagas", &[])
-        .await?
-        .get(0);
-    assert_eq!(written, 0, "a refused copy writes no saga");
-
-    let copied = call(
-        &delivery,
-        "environment/copy",
-        boss,
-        request("billing", "dev", "test"),
-    )
-    .await
-    .expect("an org admin copies billing/dev to billing/test");
-    let saga_id = copied["saga_id"].as_str().expect("a saga id").to_owned();
-
-    // An open copy holds the environment against a second copy and a create.
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/copy",
-            boss,
-            request("billing", "dev", "test")
-        )
-        .await,
-        Err(refused("environment_exists", &json!({"field": "env"})))
-    );
-    let mut create = request("billing", "dev", "test");
-    let create = create.as_object_mut().expect("an object");
-    create.remove("source_env");
-    create.insert("packages".to_owned(), json!([]));
-    create.insert("connections".to_owned(), json!([]));
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/create",
-            boss,
-            Value::Object(create.clone())
-        )
-        .await,
-        Err(refused("environment_exists", &json!({"field": "env"})))
-    );
-
-    // The saga keeps the request, and every step is pending.
-    let (kind, input): (String, String) = admin
-        .query_one(
-            "SELECT type, input::text FROM provisioning.sagas WHERE saga_id = $1",
-            &[&saga_id],
-        )
-        .await
-        .map(|row| (row.get(0), row.get(1)))?;
-    assert_eq!(kind, "copy-environment");
-    assert_eq!(
-        serde_json::from_str::<Value>(&input)?,
-        request("billing", "dev", "test")
-    );
-    let steps: Vec<Value> = wamn_control_provision::saga::COPY_STEPS
-        .iter()
-        .enumerate()
-        .map(|(index, name)| {
-            json!({
-                "step": index + 1,
-                "name": name,
-                "status": "pending",
-                "error": null,
-                "detail": null,
-                "started_at": null,
-                "finished_at": null,
-            })
-        })
-        .collect();
-    assert_eq!(
-        call(
-            &delivery,
-            "environment/list",
-            cat,
-            json!({"project": "billing"})
-        )
-        .await
-        .expect("a project admin lists the environments")["sagas"],
-        json!([{
-            "saga_id": saga_id,
-            "env": "test",
-            "type": "copy-environment",
-            "source_env": "dev",
-            "status": "pending",
-            "last_error": null,
-            "steps": steps,
-        }])
-    );
-
-    // Resume and abandon take a copy saga as they take a create saga.
-    let saga = json!({ "saga_id": saga_id });
-    admin
-        .execute(
-            "UPDATE provisioning.sagas SET status = 'failed', last_error = 'refused' \
-              WHERE saga_id = $1",
-            &[&saga_id],
-        )
-        .await?;
-    assert_eq!(
-        call(&delivery, "environment/resume", boss, saga.clone()).await,
-        Ok(json!({"saga_id": saga_id, "status": "pending"}))
-    );
-    assert_eq!(
-        call(&delivery, "environment/abandon", boss, saga).await,
-        Ok(json!({"saga_id": saga_id, "status": "abandoned"}))
-    );
-    let _ = std::fs::remove_dir_all(&logins);
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn project_create_writes_a_project_that_every_org_admin_administers() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_project_create")?;
@@ -1704,7 +1150,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             json!({"project": "ledger"})
         )
         .await,
-        Err("permission denied wamn-control:project/create@0.4.0".to_owned())
+        Err("permission denied wamn-control:project/create@0.5.0".to_owned())
     );
     for project in ["Ledger", "wamn-ledger", "led--ger"] {
         assert_eq!(
@@ -1765,7 +1211,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     )
     .await
     .expect("an org admin lists the environments of ledger");
-    assert_eq!(listed, json!({"environments": [], "sagas": []}));
+    assert_eq!(listed, json!({"environments": []}));
     let mut admins: Vec<String> = admin
         .query(
             "SELECT principal_id::text FROM identity.project_roles \

@@ -129,8 +129,8 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
            ASSERT (SELECT string_agg(table_name,',' ORDER BY table_name) \
                      FROM information_schema.tables \
                      WHERE table_schema='provisioning' AND table_type='BASE TABLE') = \
-                  'copy_sagas,dumps,saga_steps,sagas', \
-             'core plus ops provisioning relation set';\n\
+                  'copy_sagas,dumps', \
+             'the ops provisioning relation set';\n\
            ASSERT (SELECT string_agg(DISTINCT confrelid::regclass::text, ',') \
                      FROM pg_catalog.pg_constraint \
                      WHERE contype = 'f' \

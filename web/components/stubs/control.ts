@@ -8,12 +8,8 @@
  * `project_admin.revoke` as the control host does, over the projects
  * `billing` and `shop` with the environment `dev` each. A refusal goes through
  * the runtime's classifier, so it carries the text of its contract.
- * `environment.list` also answers the create-environment sagas of the
- * project, in the wire shape, and `environment.resume` and
- * `environment.abandon` change the status of one of them.
- * `environment.create` adds a pending saga, `package.list` answers three
- * package versions, and `control.mine` answers whether the caller holds
- * org-admin.
+ * `package.list` answers three package versions, and `control.mine` answers
+ * whether the caller holds org-admin.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
@@ -40,8 +36,6 @@ export interface ControlState {
   readonly projectAdmins: Set<string>;
   /** `project env principal` for each environment membership. */
   readonly memberships: Set<string>;
-  /** The create and copy sagas, by project, as `environment.list` answers them. */
-  readonly sagas: Record<string, JsonValue[]>;
   /** The code the next write refuses with, and its detail, or null. */
   refuseNext: { readonly code: string; readonly detail: JsonValue } | null;
   /** Whether the caller holds org-admin, as `control.mine` answers it. */
@@ -61,7 +55,6 @@ export function controlState(): ControlState {
     orgAdmins: new Set([BOSS]),
     projectAdmins: new Set([`billing ${BOSS}`, `shop ${BOSS}`, `billing ${CAT}`]),
     memberships: new Set([`billing dev ${BOSS}`, `shop dev ${BOSS}`, `billing dev ${CAT}`, `billing dev ${ANN}`]),
-    sagas: {},
     refuseNext: null,
     callerOrgAdmin: true,
     packages: [
@@ -116,7 +109,7 @@ export function controlStub(state: ControlState = controlState()): { transport: 
       case "wamn-control:project/list":
         return completed({ projects: Object.keys(PROJECTS) });
       case "wamn-control:environment/list":
-        return completed({ environments: [...(PROJECTS[project] ?? [])], sagas: state.sagas[project] ?? [] });
+        return completed({ environments: [...(PROJECTS[project] ?? [])] });
       case "wamn-control:control/mine":
         return completed({
           org_admin: state.callerOrgAdmin,
@@ -124,53 +117,6 @@ export function controlStub(state: ControlState = controlState()): { transport: 
         });
       case "wamn-control:package/list":
         return completed({ packages: state.packages });
-      case "wamn-control:environment/create": {
-        const sagaId = `saga-${String(value["env"])}`;
-        (state.sagas[project] ??= []).push({
-          saga_id: sagaId,
-          env: value["env"] ?? null,
-          type: "create-environment",
-          source_env: null,
-          status: "pending",
-          last_error: null,
-          steps: [],
-        });
-        return completed({ saga_id: sagaId });
-      }
-      case "wamn-control:environment/copy": {
-        const sagaId = `saga-${String(value["env"])}`;
-        (state.sagas[project] ??= []).push({
-          saga_id: sagaId,
-          env: value["env"] ?? null,
-          type: "copy-environment",
-          source_env: value["source_env"] ?? null,
-          status: "pending",
-          last_error: null,
-          steps: [],
-        });
-        return completed({ saga_id: sagaId });
-      }
-      case "wamn-control:environment/resume":
-      case "wamn-control:environment/abandon": {
-        const sagaId = String(value["saga_id"] ?? "");
-        const saga = Object.values(state.sagas)
-          .flat()
-          .find((each) => (each as { [key: string]: JsonValue })["saga_id"] === sagaId) as
-          { [key: string]: JsonValue } | undefined;
-        if (saga === undefined) {
-          return refused(request, "saga_not_found", { field: "saga_id" });
-        }
-        const resume = route.endsWith("/resume");
-        const allowed = resume ? saga["status"] === "failed" : ["failed", "pending"].includes(String(saga["status"]));
-        if (!allowed) {
-          return refused(request, resume ? "saga_not_resumable" : "saga_not_abandonable", { field: "saga_id" });
-        }
-        saga["status"] = resume ? "pending" : "abandoned";
-        if (resume) {
-          saga["last_error"] = null;
-        }
-        return completed({ saga_id: sagaId, status: saga["status"] });
-      }
       case "wamn-control:user/invite": {
         state.members.set(NEW, {
           email: String(value["email"]),

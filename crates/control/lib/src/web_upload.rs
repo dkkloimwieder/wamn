@@ -1,9 +1,8 @@
 //! Web client files in a bucket (docs/plan/web-deployment.md).
 //!
-//! `wamn web upload` builds a client and writes it here, and the
-//! create-environment saga writes the built client of a package artifact
-//! (`wamn-zua8.3`). Both write under `<prefix>/<package_id>/<release hex>/`,
-//! every built file create-only, then `config.json`, and the index last.
+//! `wamn web upload` builds a client and writes it here, under
+//! `<prefix>/<package_id>/<release hex>/`, every built file create-only, then
+//! `config.json`, and the index last.
 
 use std::path::{Path, PathBuf};
 

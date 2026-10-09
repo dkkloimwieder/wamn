@@ -1,7 +1,6 @@
 -- The T1 control-plane REGISTRY storage schema (wamn-q3n.3). The tables that
 -- PERSIST the identity/placement model defined by crates/control/registry — orgs,
--- projects, and the provisioned (org, project, env) databases — plus a minimal
--- provisioning-saga state table (exactly-once / resumable).
+-- projects, and the provisioned (org, project, env) databases.
 --
 -- This is the schema that fills the EMPTY wamn_system DB the T1 cluster
 -- (deploy/platform/wamn-sysdb.yaml, wamn-q3n.2) bootstraps: registry-model → registry
@@ -77,8 +76,7 @@
 
 -- ---------------------------------------------------------------------------
 -- Schemas. `registry` = the org/project placement model (wamn-q3n.1);
--- `provisioning` = the saga state that orchestrates it (10.1's
--- exactly-once/resumable steps); `identity` = first-party platform principals,
+-- `provisioning` = the operations state of deploy/sql/ops-schema.sql; `identity` = first-party platform principals,
 -- local user credential hashes, project-role assignments (wamn-ctc8.6), and
 -- personal-access-token digests (wamn-ctc8.7), and signing generations (wamn-ctc8.15.1).
 -- Distinct schemas keep each control-plane subsystem namespaced.
@@ -686,8 +684,7 @@ ALTER TABLE registry.env_policies
 -- uniqueness mechanism (wamn-0h0g.13.57) and nothing here is ever consulted when
 -- a suffix is minted; this table only remembers what was.
 --
--- Deliberately NOT FK'd to registry.project_envs (the `provisioning.sagas.target`
--- precedent): the whole point is to OUTLIVE the row, and the org/project CASCADE
+-- Deliberately NOT FK'd to registry.project_envs: the whole point is to OUTLIVE the row, and the org/project CASCADE
 -- that removes it, so an FK would erase the record at exactly the moment it
 -- becomes the only copy. Keyed by (triple, instance_suffix) so a triple
 -- accumulates one row per superseded instance and a repeated delete is idempotent.
@@ -795,62 +792,6 @@ CREATE TABLE registry.generation_passwords (
     role        text PRIMARY KEY,
     sha256      text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
     recorded_at timestamptz NOT NULL DEFAULT now()
-);
-
--- ---------------------------------------------------------------------------
--- Provisioning sagas — minimal exactly-once / resumable state for the
--- provisioning orchestrator (10.1; consumed by .6 provision-org / .7
--- provision-project-env). One row per saga run.
---
--- `target` is decoupled text (the org id, or the `org/project/env` triple) — NOT
--- an FK, because a provision-org saga runs BEFORE its org row exists (it creates
--- it). `step` is the durable resume checkpoint (the write-ahead pattern this repo
--- uses for exactly-once: the orchestrator advances `step` in the SAME txn as each
--- step's effect, so a crash-then-resume re-reads `step` and never re-applies a
--- committed step); creating a saga is exactly-once via the `saga_id` PK
--- (INSERT … ON CONFLICT (saga_id) DO NOTHING).
--- ---------------------------------------------------------------------------
-CREATE TABLE provisioning.sagas (
-    saga_id     text PRIMARY KEY,
-    type        text NOT NULL,
-    target      text NOT NULL,
-    status      text NOT NULL DEFAULT 'pending',
-    step        int  NOT NULL DEFAULT 0,
-    total_steps int,
-    last_error  text,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    updated_at  timestamptz NOT NULL DEFAULT now(),
-    org         text,
-    input       jsonb,
-    CONSTRAINT sagas_type_check
-        CHECK (type IN ('provision-org', 'provision-project-env', 'create-environment',
-                        'copy-environment')),
-    CONSTRAINT sagas_status_check
-        CHECK (status IN ('pending', 'running', 'completed', 'failed',
-                          'compensating', 'compensated', 'abandoned',
-                          'awaiting-operator')),
-    CONSTRAINT sagas_step_nonneg CHECK (step >= 0),
-    CONSTRAINT sagas_create_environment_input
-        CHECK (type NOT IN ('create-environment', 'copy-environment')
-               OR (org IS NOT NULL AND jsonb_typeof(input) = 'object'))
-);
-
--- The steps of a saga (system migration 0012, wamn-zua8.3). The
--- environment.create route writes every step of a create-environment saga
--- when it writes the saga, so environment.list shows the whole chain from the
--- start. Only wamn-ctl serve updates a step. `detail` holds the commands of
--- the last step, `awaiting operator`.
-CREATE TABLE provisioning.saga_steps (
-    saga_id     text NOT NULL REFERENCES provisioning.sagas (saga_id),
-    step        int  NOT NULL CHECK (step > 0),
-    name        text NOT NULL CHECK (name <> ''),
-    status      text NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'running', 'completed', 'failed')),
-    error       text,
-    detail      jsonb,
-    started_at  timestamptz,
-    finished_at timestamptz,
-    PRIMARY KEY (saga_id, step)
 );
 
 -- The issuer can lock a principal without gaining principal mutation rights.

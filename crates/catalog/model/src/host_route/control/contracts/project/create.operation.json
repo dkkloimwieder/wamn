@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:project/create@0.4.0",
+  "operation": "wamn-control:project/create@0.5.0",
   "type": "command",
   "label": "Create a project",
-  "grant": "wamn-control:project/create@0.4.0",
+  "grant": "wamn-control:project/create@0.5.0",
   "permission_token": "project.create",
   "result": "one",
   "transaction": "explicit_per_input",

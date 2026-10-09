@@ -5,14 +5,14 @@
 import type { FieldMap, OperationRoute, Outcome, Timestamptz, Transport } from "@wamn/web-runtime";
 import { reviveOutcome, toWire } from "@wamn/web-runtime";
 
-/** Input for `wamn-control:package/list@0.4.0`. */
+/** Input for `wamn-control:package/list@0.5.0`. */
 export interface PackageListRequest {
 }
 
-/** What `wamn-control:package/list@0.4.0` calls its input members. */
+/** What `wamn-control:package/list@0.5.0` calls its input members. */
 export const PACKAGE_LIST_REQUEST_FIELDS: FieldMap = {};
 
-/** Result of `wamn-control:package/list@0.4.0`. */
+/** Result of `wamn-control:package/list@0.5.0`. */
 export interface PackageListResult {
   /** `array` */
   readonly packages: readonly PackageListResultPackages[];
@@ -27,7 +27,7 @@ export interface PackageListResultPackages {
   readonly version: string;
 }
 
-/** What `wamn-control:package/list@0.4.0` calls its result members. */
+/** What `wamn-control:package/list@0.5.0` calls its result members. */
 export const PACKAGE_LIST_RESULT_FIELDS: FieldMap = {
   "packages": {
     member: "packages",
@@ -40,13 +40,13 @@ export const PACKAGE_LIST_RESULT_FIELDS: FieldMap = {
 };
 
 /**
- * Where the release publishes `wamn-control:package/list@0.4.0`.
+ * Where the release publishes `wamn-control:package/list@0.5.0`.
  *
  * Method and template only. The host and base URL are the application's
  * deployment configuration, not this release's facts.
  */
 export const PACKAGE_LIST_ROUTE: OperationRoute = {
-  operation: "wamn-control:package/list@0.4.0",
+  operation: "wamn-control:package/list@0.5.0",
   method: "GET",
   template: "/wamn_control/package/list",
   freshOnly: false,
@@ -65,7 +65,7 @@ export const PACKAGE_LIST_ROUTE: OperationRoute = {
   },
 };
 
-/** Invoke `wamn-control:package/list@0.4.0` through a transport the application supplies. */
+/** Invoke `wamn-control:package/list@0.5.0` through a transport the application supplies. */
 export async function list(
   transport: Transport,
   items: readonly PackageListRequest[],

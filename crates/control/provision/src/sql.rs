@@ -892,13 +892,11 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// password login of a control session is live. It writes the org
 /// memberships and the org, project and environment grants of the org
 /// operations, and it reads the projects and environments those grants
-/// cover. The `environment.create` route writes a provisioning saga and all
-/// of its steps, and the environment routes read them (owner rulings of
-/// 2026-10-02 on `wamn-zua8.3`). Only the worker updates a step. The
-/// `project.create` route writes a project, and the `package.list` route
-/// reads the pushed package versions (owner rulings of 2026-10-03 on
-/// `wamn-zua8.4`). It holds nothing else in the control database.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 11] = [
+/// cover. The `project.create` route writes a project, and the
+/// `package.list` route reads the pushed package versions (owner rulings of
+/// 2026-10-03 on `wamn-zua8.4`). It holds nothing else in the control
+/// database.
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 9] = [
     ("catalog", "package_artifacts", &["SELECT"]),
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
@@ -906,8 +904,6 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 11] = [
     ("identity", "principals", &["SELECT"]),
     ("identity", "project_env_memberships", CONTROL_WRITE),
     ("identity", "project_roles", CONTROL_WRITE),
-    ("provisioning", "saga_steps", &["SELECT", "INSERT"]),
-    ("provisioning", "sagas", &["SELECT", "INSERT"]),
     ("registry", "project_envs", &["SELECT"]),
     ("registry", "projects", &["SELECT", "INSERT"]),
 ];
@@ -916,21 +912,12 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 11] = [
 /// only reads, with the privilege it holds on them. The status routes write
 /// the status of an environment (docs/plan/platform-ui.md §5.4, owner ruling
 /// of 2026-10-02 on `wamn-zua8.2`). The other columns of
-/// `registry.project_envs` belong to provisioning. The routes
-/// `environment.resume` and `environment.abandon` write the status of a saga,
-/// and never a step (owner ruling of 2026-10-03 on `wamn-zua8.4`).
-pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 2] = [
-    (
-        "provisioning",
-        "sagas",
-        "UPDATE",
-        &["status", "last_error", "updated_at"],
-    ),
-    ("registry", "project_envs", "UPDATE", &["status"]),
-];
+/// `registry.project_envs` belong to provisioning.
+pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
+    [("registry", "project_envs", "UPDATE", &["status"])];
 
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
-pub const CONTROL_SCHEMAS: [&str; 4] = ["catalog", "identity", "provisioning", "registry"];
+pub const CONTROL_SCHEMAS: [&str; 3] = ["catalog", "identity", "registry"];
 
 /// Converge the stable control role to exactly [`CONTROL_SURFACE`] and
 /// [`CONTROL_COLUMN_SURFACE`] in the
@@ -946,9 +933,9 @@ pub fn grant_control_surface_sql() -> String {
 
 /// The grants of [`grant_control_surface_sql`] without the role bootstrap.
 ///
-/// The latest system migration that changes them, 0015, runs these as
-/// `wamn_system`, which owns the tables and cannot create a role, so it
-/// carries the grants alone.
+/// The latest system migration that changes them, `remove_environment_sagas`,
+/// runs these as `wamn_system`, which owns the tables and cannot create a
+/// role, so it carries the grants alone.
 pub fn control_surface_grants_sql() -> String {
     let role = quote_ident(WorkloadRoleFamily::Control.acl_role());
     let plane = SYSTEM_PLANE_SCHEMAS

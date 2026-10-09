@@ -304,7 +304,6 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
         "identity.principals",
         "identity.project_env_memberships",
         "identity.project_roles",
-        "provisioning.sagas",
         "registry.orgs",
         "registry.projects",
         "registry.project_envs",
@@ -506,11 +505,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         )
         .expect("writing to a String cannot fail");
     }
-    for relation in [
-        "registry.event_readers",
-        "registry.orgs",
-        "provisioning.sagas",
-    ] {
+    for relation in ["registry.event_readers", "registry.orgs"] {
         writeln!(
             probes,
             "  ASSERT NOT has_table_privilege(r, '{relation}', 'SELECT'), \

@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:package/list@0.4.0",
+  "operation": "wamn-control:package/list@0.5.0",
   "type": "get",
   "label": "Packages",
-  "grant": "wamn-control:package/list@0.4.0",
+  "grant": "wamn-control:package/list@0.5.0",
   "permission_token": "package.list",
   "result": "one",
   "transaction": "implicit",

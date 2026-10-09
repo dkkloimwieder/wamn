@@ -102,8 +102,7 @@ pub struct BoundConnection {
 }
 
 /// Check a definition against the descriptor's coordinates. Pure; the CLI's
-/// refusal and the test's controls both go through here, and the
-/// `environment.create` route refuses with the same reason.
+/// refusal and the test's controls both go through here.
 pub fn validate_definition(
     requirement_type: RequirementType,
     definition: &Value,

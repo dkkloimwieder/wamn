@@ -26,15 +26,7 @@
 //!
 //! `project.create` writes a project of the org with no environment, and
 //! `project-admin` in it for each `org-admin` of the org (§5.1).
-//! `environment.create` writes one create-environment saga and all of its
-//! steps in the write transaction, with the SQL text of
-//! `wamn_control_provision::saga`, and `wamn-ctl serve` runs it (§5.2).
-//! `environment.list` answers the sagas of the project with their steps.
-//! `environment.resume` returns a failed saga to `pending`, and
-//! `environment.abandon` ends a failed or pending saga. They write the
-//! saga's status only, and the worker starts the failed step again.
-//! `package.list` reads every package version in `catalog.package_artifacts`,
-//! so the create form offers only versions that `push-package` pushed.
+//! `package.list` reads every package version in `catalog.package_artifacts`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -46,11 +38,6 @@ use tokio::sync::Mutex;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
-use wamn_control_provision::saga::{
-    self, COPY_STEPS, STEPS, abandon_saga_sql, copy_environment_saga_sql,
-    create_environment_refusals_sql, create_environment_saga_sql, environment_exists_sql,
-    environment_target, lock_org_environment_saga_sql, project_sagas_sql, resume_saga_sql,
-};
 use wamn_control_registry::identifiers::valid_project;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
@@ -192,12 +179,6 @@ struct EnvironmentRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SagaRequest {
-    saga_id: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct InviteRequest {
     email: String,
     display_name: String,
@@ -303,8 +284,7 @@ impl ControlRoutes<'_> {
             HostHandler::EnvironmentList => {
                 let request: ProjectRequest = parse(payload)?;
                 let environments = project_envs(self.control, self.org, &request.project).await?;
-                let sagas = self.project_sagas(&request.project).await?;
-                Ok(json!({ "environments": environments, "sagas": sagas }))
+                Ok(json!({ "environments": environments }))
             }
             HostHandler::MemberList => {
                 let request: ProjectRequest = parse(payload)?;
@@ -455,230 +435,16 @@ impl ControlRoutes<'_> {
                 transaction.commit().await?;
                 Ok(json!({ "project": request.project }))
             }
-            HostHandler::EnvironmentCreate => {
-                let request: saga::EnvironmentRequest = parse(payload)?;
-                let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
-                let saga_id = self.create_environment(&transaction, &request).await?;
-                transaction.commit().await?;
-                Ok(json!({ "saga_id": saga_id }))
-            }
-            HostHandler::EnvironmentCopy => {
-                let request: saga::CopyRequest = parse(payload)?;
-                let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
-                let saga_id = self.copy_environment(&transaction, &request).await?;
-                transaction.commit().await?;
-                Ok(json!({ "saga_id": saga_id }))
-            }
             HostHandler::PackageList => {
                 let packages: String = self.control.query_one(PACKAGES_SQL, &[]).await?.get(0);
                 let packages: Value =
                     serde_json::from_str(&packages).context("decode the packages")?;
                 Ok(json!({ "packages": packages }))
             }
-            HostHandler::EnvironmentResume | HostHandler::EnvironmentAbandon => {
-                let request: SagaRequest = parse(payload)?;
-                let resume = attachment.route.handler == HostHandler::EnvironmentResume;
-                let mut writer = self.writer.lock().await;
-                let transaction = self.begin(&mut writer, attachment, caller).await?;
-                let status = self
-                    .end_failure(&transaction, &request.saga_id, resume)
-                    .await?;
-                transaction.commit().await?;
-                Ok(json!({ "saga_id": request.saga_id, "status": status }))
-            }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"
             ))),
         }
-    }
-
-    /// Refuse a connection definition that `bind-connection` would refuse, a
-    /// project outside the org, and an environment that exists or has an open
-    /// saga. Then write the saga and its steps, and return its id.
-    async fn create_environment(
-        &self,
-        transaction: &Transaction<'_>,
-        request: &saga::EnvironmentRequest,
-    ) -> Result<String, Refusal> {
-        // The worker binds every connection with no credential handle, so a
-        // definition refuses here with the reason `bind-connection` gives.
-        for connection in &request.connections {
-            connection
-                .requirement_type
-                .check_definition(&connection.definition)
-                .and_then(|()| {
-                    connection
-                        .requirement_type
-                        .check_credential_handle(&connection.definition, None)
-                })
-                .map_err(|reason| Refusal::Declared {
-                    code: "invalid_input",
-                    detail: json!({ "field": "connections", "reason": reason }),
-                })?;
-        }
-        let input = serde_json::to_string(request).context("encode the saga request")?;
-        self.write_saga(
-            transaction,
-            (&request.project, &request.env, None),
-            &input,
-            create_environment_saga_sql(),
-            &STEPS,
-        )
-        .await
-    }
-
-    /// Refuse a definition that is not a JSON object, a project outside the
-    /// org, a source environment that is not an environment of the project,
-    /// and an environment that exists or has an open saga. Then write the
-    /// copy saga and its steps, and return its id. The worker's `read-source`
-    /// checks each definition against the type of its source connection.
-    async fn copy_environment(
-        &self,
-        transaction: &Transaction<'_>,
-        request: &saga::CopyRequest,
-    ) -> Result<String, Refusal> {
-        for connection in &request.connections {
-            if !connection.definition.is_object() {
-                return Err(Refusal::Declared {
-                    code: "invalid_input",
-                    detail: json!({
-                        "field": "connections",
-                        "reason": format!(
-                            "the definition of {} is not a JSON object",
-                            connection.instance_id
-                        ),
-                    }),
-                });
-            }
-        }
-        let input = serde_json::to_string(request).context("encode the saga request")?;
-        self.write_saga(
-            transaction,
-            (&request.project, &request.env, Some(&request.source_env)),
-            &input,
-            copy_environment_saga_sql(),
-            &COPY_STEPS,
-        )
-        .await
-    }
-
-    /// Refuse a project outside the org, a source environment that is not
-    /// an environment of the project, and an environment that exists or has
-    /// an open saga. Then write the saga with `sql` and return its id.
-    async fn write_saga(
-        &self,
-        transaction: &Transaction<'_>,
-        (project, env, source_env): (&str, &str, Option<&str>),
-        input: &str,
-        sql: &str,
-        steps: &[&str],
-    ) -> Result<String, Refusal> {
-        let target = environment_target(self.org, project, env);
-        let refusals = transaction
-            .query_one(
-                create_environment_refusals_sql(),
-                &[&self.org, &project, &env, &target],
-            )
-            .await?;
-        if !refusals.get::<_, bool>(0) {
-            return Err(Refusal::Declared {
-                code: "project_not_found",
-                detail: json!({ "field": "project" }),
-            });
-        }
-        if let Some(source_env) = source_env {
-            let exists: bool = transaction
-                .query_one(
-                    environment_exists_sql(),
-                    &[&self.org, &project, &source_env],
-                )
-                .await?
-                .get(0);
-            if !exists {
-                return Err(Refusal::Declared {
-                    code: "environment_not_found",
-                    detail: json!({ "field": "source_env" }),
-                });
-            }
-        }
-        if refusals.get::<_, bool>(1) {
-            return Err(Refusal::Declared {
-                code: "environment_exists",
-                detail: json!({ "field": "env" }),
-            });
-        }
-        let total_steps = i32::try_from(steps.len()).context("count the steps")?;
-        let row = transaction
-            .query_one(sql, &[&target, &total_steps, &self.org, &input, &steps])
-            .await?;
-        Ok(row.get(0))
-    }
-
-    /// Return a `failed` saga of the org to `pending`, or end a `failed` or
-    /// `pending` one as `abandoned`, and return the new status. A `running`
-    /// saga belongs to the worker. The steps stay as they are.
-    async fn end_failure(
-        &self,
-        transaction: &Transaction<'_>,
-        saga_id: &str,
-        resume: bool,
-    ) -> Result<&'static str, Refusal> {
-        let status: String = transaction
-            .query_opt(lock_org_environment_saga_sql(), &[&saga_id, &self.org])
-            .await?
-            .ok_or_else(|| Refusal::Declared {
-                code: "saga_not_found",
-                detail: json!({ "field": "saga_id" }),
-            })?
-            .get(0);
-        let (allowed, code, sql, next) = if resume {
-            (
-                status == "failed",
-                "saga_not_resumable",
-                resume_saga_sql(),
-                "pending",
-            )
-        } else {
-            (
-                status == "failed" || status == "pending",
-                "saga_not_abandonable",
-                abandon_saga_sql(),
-                "abandoned",
-            )
-        };
-        if !allowed {
-            return Err(Refusal::Declared {
-                code,
-                detail: json!({ "field": "saga_id" }),
-            });
-        }
-        transaction.execute(sql, &[&saga_id]).await?;
-        Ok(next)
-    }
-
-    /// The create and copy sagas of one project, with their steps.
-    async fn project_sagas(&self, project: &str) -> Result<Vec<Value>, Refusal> {
-        let rows = self
-            .control
-            .query(project_sagas_sql(), &[&self.org, &project])
-            .await?;
-        rows.iter()
-            .map(|row| {
-                let steps: String = row.get(4);
-                let steps: Value = serde_json::from_str(&steps).context("decode the saga steps")?;
-                Ok(json!({
-                    "saga_id": row.get::<_, String>(0),
-                    "env": row.get::<_, Option<String>>(1),
-                    "type": row.get::<_, String>(5),
-                    "source_env": row.get::<_, Option<String>>(6),
-                    "status": row.get::<_, String>(2),
-                    "last_error": row.get::<_, Option<String>>(3),
-                    "steps": steps,
-                }))
-            })
-            .collect()
     }
 
     /// Identity creates or reuses the user, one transaction writes the org

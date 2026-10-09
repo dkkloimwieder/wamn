@@ -207,47 +207,6 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         retired = wamn_control_registry::sql::select_retired_project_envs_sql(),
     )
     .expect("writing to a String cannot fail");
-    // Exercise the REAL saga builders: a repeated create changes nothing, a step
-    // moves the checkpoint forward, and complete and fail set their status.
-    writeln!(
-        script,
-        "PREPARE saga_create (text,text,text,int) AS {create};\n\
-         PREPARE saga_advance (text) AS {advance};\n\
-         PREPARE saga_complete (text) AS {complete};\n\
-         PREPARE saga_fail (text,text) AS {fail};\n\
-         PREPARE saga_select (text) AS {select};\n\
-         EXECUTE saga_create('saga-a','provision-org','demo',3);\n\
-         EXECUTE saga_create('saga-a','provision-project-env','other',9);\n\
-         EXECUTE saga_advance('saga-a');\n\
-         EXECUTE saga_advance('saga-a');\n\
-         CREATE TEMP TABLE saga_running AS EXECUTE saga_select('saga-a');\n\
-         EXECUTE saga_complete('saga-a');\n\
-         CREATE TEMP TABLE saga_done AS EXECUTE saga_select('saga-a');\n\
-         EXECUTE saga_create('saga-b','provision-org','demo',2);\n\
-         EXECUTE saga_fail('saga-b','boom');\n\
-         CREATE TEMP TABLE saga_failed AS EXECUTE saga_select('saga-b');\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT type || '/' || target FROM provisioning.sagas WHERE saga_id='saga-a')\n\
-               ='provision-org/demo',\n\
-             'a repeated create_saga_sql changes nothing';\n\
-           ASSERT (SELECT status || '/' || step || '/' || total_steps FROM saga_running)='running/2/3',\n\
-             'advance_saga_step_sql moves the checkpoint forward';\n\
-           ASSERT (SELECT status || '/' || step FROM saga_done)='completed/2',\n\
-             'complete_saga_sql completes the saga at its checkpoint';\n\
-           ASSERT (SELECT status FROM saga_failed)='failed'\n\
-              AND (SELECT last_error FROM provisioning.sagas WHERE saga_id='saga-b')='boom',\n\
-             'fail_saga_sql fails the saga and keeps the diagnostic';\n\
-         END $$;\n\
-         DROP TABLE saga_running, saga_done, saga_failed;\n\
-         DEALLOCATE saga_create; DEALLOCATE saga_advance; DEALLOCATE saga_complete;\n\
-         DEALLOCATE saga_fail; DEALLOCATE saga_select;",
-        create = wamn_control_provision::saga::create_saga_sql(),
-        advance = wamn_control_provision::saga::advance_saga_step_sql(),
-        complete = wamn_control_provision::saga::complete_saga_sql(),
-        fail = wamn_control_provision::saga::fail_saga_sql(),
-        select = wamn_control_provision::saga::select_saga_sql(),
-    )
-    .expect("writing to a String cannot fail");
     // Exercise the REAL CDC reader-registration builders (wamn-l5i9.9) against
     // the demo/app/dev project-env provisioned above: upsert twice (the second
     // refreshes slot/enabled — ON CONFLICT DO UPDATE), read it back via the real
@@ -628,26 +587,9 @@ DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
-  ASSERT tbls = 'identity.org_memberships,identity.org_roles,identity.password_attempts,identity.password_credentials,identity.password_logins,identity.password_tokens,identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.renewal_credentials,identity.session_keys,identity.session_signing_state,provisioning.saga_steps,provisioning.sagas,registry.capture_gap,registry.env_policies,registry.event_readers,registry.generation_passwords,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs,registry.schema_migrations',
+  ASSERT tbls = 'identity.org_memberships,identity.org_roles,identity.password_attempts,identity.password_credentials,identity.password_logins,identity.password_tokens,identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.renewal_credentials,identity.session_keys,identity.session_signing_state,registry.capture_gap,registry.env_policies,registry.event_readers,registry.generation_passwords,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs,registry.schema_migrations',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
-
--- Saga: creation is exactly-once via the saga_id PK; the kind/status CHECKs hold.
-INSERT INTO provisioning.sagas (saga_id, type, target) VALUES ('s1','provision-org','acme')
-  ON CONFLICT (saga_id) DO NOTHING;
-DO $$ BEGIN BEGIN
-  INSERT INTO provisioning.sagas (saga_id, type, target) VALUES ('s2','provision-everything','x');
-  ASSERT false, 'an unknown saga kind must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
--- Copy sagas belong to the operations artifact, never to the core relation.
-DO $$ BEGIN BEGIN
-  INSERT INTO provisioning.sagas (saga_id, type, target) VALUES ('s3','copy','x');
-  ASSERT false, 'a copy saga must be rejected by the core relation';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
-DO $$ BEGIN BEGIN
-  UPDATE provisioning.sagas SET status='bogus' WHERE saga_id='s1';
-  ASSERT false, 'an unknown saga status must be rejected';
-EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
 -- Deleting an org cascades its projects, project-envs, and policy rows — the
 -- whole-org delete succeeds despite the in-use-policy

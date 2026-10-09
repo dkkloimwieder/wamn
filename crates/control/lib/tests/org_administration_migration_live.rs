@@ -1,7 +1,8 @@
 //! Live test of `system/0007_org_administration.sql` (wamn-a40n.3): on a
 //! control database installed before it, the migration changes the principal
 //! type `human` to `user`, creates the org tables as a fresh install has them,
-//! and, with 0008 and 0012 to 0016 after it as an upgrade runs them, gives the control family
+//! and, with 0008, 0012 to 0016 and the removal of the environment sagas after
+//! it as an upgrade runs them, gives the control family
 //! and the identity issuer the surfaces that provisioning grants. The test holds the process lock of its server, because
 //! the installers create cluster-wide roles.
 
@@ -26,6 +27,8 @@ const PACKAGE_LIST_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0015_package_list.sql");
 const COPY_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0016_copy_environment.sql");
+const REMOVE_SAGAS_MIGRATION: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0020_remove_environment_sagas.sql");
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 
 /// The relations whose principal type 0007 changes.
@@ -225,9 +228,18 @@ async fn the_migration_creates_the_org_tables_and_grants_the_provisioned_surface
             "{control} {issuer} \
              DROP TABLE identity.org_roles, identity.org_memberships; \
              ALTER TABLE registry.project_envs DROP COLUMN status; \
-             DROP TABLE provisioning.saga_steps; \
-             ALTER TABLE provisioning.sagas DROP CONSTRAINT sagas_create_environment_input, \
-               DROP COLUMN org, DROP COLUMN input; \
+             CREATE TABLE provisioning.sagas (saga_id text PRIMARY KEY, type text NOT NULL, \
+               target text NOT NULL, status text NOT NULL DEFAULT 'pending', \
+               step int NOT NULL DEFAULT 0, total_steps int, last_error text, \
+               created_at timestamptz NOT NULL DEFAULT now(), \
+               updated_at timestamptz NOT NULL DEFAULT now(), \
+               CONSTRAINT sagas_type_check \
+                 CHECK (type IN ('provision-org', 'provision-project-env')), \
+               CONSTRAINT sagas_status_check \
+                 CHECK (status IN ('pending', 'running', 'completed', 'failed', \
+                   'compensating', 'compensated')), \
+               CONSTRAINT sagas_step_nonneg CHECK (step >= 0)); \
+             ALTER TABLE provisioning.sagas OWNER TO wamn_system; \
              REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA identity, provisioning, registry \
                FROM wamn_control; \
              REVOKE ALL PRIVILEGES ON SCHEMA identity, provisioning, registry FROM wamn_control; \
@@ -311,10 +323,11 @@ async fn the_migration_creates_the_org_tables_and_grants_the_provisioned_surface
              BEGIN; SET LOCAL ROLE wamn_system; {PROJECT_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {SAGA_ROUTES_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {PACKAGE_LIST_MIGRATION} COMMIT; \
-             BEGIN; SET LOCAL ROLE wamn_system; {COPY_MIGRATION} COMMIT;"
+             BEGIN; SET LOCAL ROLE wamn_system; {COPY_MIGRATION} COMMIT; \
+             BEGIN; SET LOCAL ROLE wamn_system; {REMOVE_SAGAS_MIGRATION} COMMIT;"
         ))
         .await
-        .expect("apply system/0008 and 0012 to 0016 as wamn_system");
+        .expect("apply system/0008, 0012 to 0016 and the saga removal as wamn_system");
     let control = surface(&client, "wamn_control").await;
     let issuer = surface(&client, "wamn_identity_issuer").await;
     client

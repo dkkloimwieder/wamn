@@ -22,8 +22,6 @@ pub mod dev;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
 pub mod environment;
-pub mod environment_copy;
-pub mod environment_saga;
 #[cfg(feature = "ops")]
 pub mod event_advisories;
 pub mod event_streams;
@@ -56,7 +54,6 @@ pub mod reconcile_run_plane;
 pub mod release_chart;
 pub mod release_composition;
 pub mod role_permissions;
-pub mod serve;
 pub mod sql_params;
 pub mod terminalize_effect_uncertain;
 pub mod upgrade_environment;

@@ -75,16 +75,6 @@ pub async fn select(
     record_selection(Some(qualification), release).await
 }
 
-/// Select the release that the create-environment saga published, with no
-/// qualification. A new environment has no head, no users and no data, so the
-/// selection records the reason `environment-creation` and no hash (owner
-/// ruling of 2026-10-03 on wamn-zua8.3).
-pub async fn select_new_environment(
-    release: &PushReleaseManifestRequest,
-) -> anyhow::Result<SelectedRelease> {
-    record_selection(None, release).await
-}
-
 async fn record_selection(
     qualification: Option<&QualificationSource>,
     release: &PushReleaseManifestRequest,

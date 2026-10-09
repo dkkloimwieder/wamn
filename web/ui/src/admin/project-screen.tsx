@@ -12,31 +12,15 @@
  * Each write announces its outcome, a refusal shows the text of its contract
  * and the environments a partial write completed, and the screen reads the
  * members again after each write. It writes no database directly.
- *
- * Below the members, a table shows each create or copy saga of the project
- * from `environment.list`, with its steps and the commands that its
- * `awaiting operator` step records (§5.2, issue 10). A failed saga has a
- * resume button, which calls `environment.resume`. A failed or pending saga
- * has an abandon button, which the operator confirms first and which calls
- * `environment.abandon` (issue 11).
- *
- * For an org-admin, as `control.mine` answers it, a form above the sagas
- * calls `environment.create`. It offers one version per package from
- * `package.list`, and takes each connection as typed fields and one JSON
- * object for its definition (issue 11). A second form calls
- * `environment.copy`: the source is one environment of the project, and each
- * replacement row gives one connection a new definition.
  */
 
-import { control, environment, member, package_, projectAdmin, user } from "@wamn/control-org-client";
-import { type JsonValue, newRequestId, type Outcome, type Transport } from "@wamn/web-runtime";
-import { createResource, createSignal, createUniqueId, For, Index, type JSX, Show } from "solid-js";
+import { environment, member, projectAdmin, user } from "@wamn/control-org-client";
+import { newRequestId, type Outcome, type Transport } from "@wamn/web-runtime";
+import { createResource, createSignal, createUniqueId, For, type JSX, Show } from "solid-js";
 
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
-import { ConfirmAction } from "../confirm";
-import { Field, FieldLabel } from "../components/ui/field";
-import { ChoiceField, TextField } from "../fields";
+import { ChoiceField } from "../fields";
 import { announceOutcome } from "../outcome";
 import { controlRefusal } from "./refusal";
 
@@ -48,22 +32,6 @@ export interface ProjectScreenProps {
 /** The text of a control that a higher grant decides. */
 function Covered(): JSX.Element {
   return <span class="text-muted-foreground text-xs">hierarchy-controlled</span>;
-}
-
-/** One group of operator commands in the detail of the `awaiting operator` step. */
-interface OperatorCommands {
-  readonly purpose: string;
-  readonly runbook: string;
-  readonly commands: readonly string[];
-}
-
-/** The command groups of a step detail, or none. */
-function operatorCommands(detail: JsonValue | null): readonly OperatorCommands[] {
-  if (detail === null || typeof detail !== "object" || Array.isArray(detail)) {
-    return [];
-  }
-  const groups = (detail as { readonly [key: string]: JsonValue })["commands"];
-  return Array.isArray(groups) ? (groups as unknown as OperatorCommands[]) : [];
 }
 
 /** One switch with a label that only a screen reader reads. */
@@ -79,294 +47,6 @@ function Toggle(props: { label: string; checked: boolean; onChange: (on: boolean
   );
 }
 
-/** One connection of the create form, as the operator types it. */
-interface ConnectionDraft {
-  readonly key: number;
-  instanceId: string;
-  alias: string;
-  requirementType: string;
-  /** The definition as JSON text. */
-  definition: string;
-}
-
-/** The connection types that `bind-connection` binds. */
-const REQUIREMENT_TYPES = [{ value: "blobstore", text: "blobstore" }];
-
-/**
- * The create form of one environment, for an org-admin. It offers only the
- * package versions that `package.list` answers, one version per package, and
- * sends one JSON object per connection definition to `environment.create`,
- * which checks each definition before it writes the saga.
- */
-function CreateEnvironmentForm(props: {
-  transport: Transport;
-  project: string;
-  settle: (outcome: Outcome<unknown>, screen: string) => Promise<void>;
-  refuse: (text: string) => void;
-}): JSX.Element {
-  const [packages] = createResource(async () => {
-    const outcome = await package_.list(props.transport, [{}]);
-    return outcome.status === "completed" ? outcome.value.packages : [];
-  });
-  /** Each package id with its versions, in the order `package.list` answers them. */
-  const versions = () => {
-    const byPackage = new Map<string, string[]>();
-    for (const each of packages() ?? []) {
-      byPackage.set(each.packageId, [...(byPackage.get(each.packageId) ?? []), each.version]);
-    }
-    return [...byPackage.entries()];
-  };
-  const [env, setEnv] = createSignal("");
-  const [routeHost, setRouteHost] = createSignal("");
-  const [chosen, setChosen] = createSignal<Record<string, string>>({});
-  const [connections, setConnections] = createSignal<ConnectionDraft[]>([]);
-  let nextKey = 0;
-
-  const edit = (key: number, change: Partial<ConnectionDraft>) =>
-    setConnections((all) => all.map((each) => (each.key === key ? { ...each, ...change } : each)));
-
-  const create = async () => {
-    const definitions: JsonValue[] = [];
-    for (const each of connections()) {
-      let definition: unknown;
-      try {
-        definition = JSON.parse(each.definition);
-      } catch {
-        definition = null;
-      }
-      if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
-        props.refuse(`The definition of ${each.instanceId} is not a JSON object.`);
-        return;
-      }
-      definitions.push(definition as JsonValue);
-    }
-    const value = {
-      project: props.project,
-      env: env(),
-      routeHost: routeHost(),
-      packages: Object.entries(chosen())
-        .filter(([, version]) => version !== "")
-        .map(([packageId, version]) => ({ packageId, version })),
-      connections: connections().map((each, index) => ({
-        instanceId: each.instanceId,
-        alias: each.alias,
-        requirementType: each.requirementType as "blobstore",
-        definition: definitions[index] as JsonValue,
-      })),
-    };
-    const outcome = await environment.create(props.transport, [{ requestId: newRequestId(), value }]);
-    await props.settle(outcome, "environment create");
-    if (outcome.status === "completed") {
-      setEnv("");
-      setRouteHost("");
-      setChosen({});
-      setConnections([]);
-    }
-  };
-
-  return (
-    <section class="flex max-w-md flex-col gap-3" data-slot="project-create-environment">
-      <p class="text-sm font-semibold uppercase">create an environment</p>
-      <TextField label="environment name" type="text" value={env()} onInput={setEnv} />
-      <TextField label="route host" type="text" value={routeHost()} onInput={setRouteHost} />
-      <For each={versions()}>
-        {([packageId, list]) => (
-          <ChoiceField
-            label={`version of ${packageId}`}
-            choices={list.map((version) => ({ value: version, text: version }))}
-            allowEmpty={true}
-            value={chosen()[packageId] ?? ""}
-            onChange={(version) => setChosen((all) => ({ ...all, [packageId]: version }))}
-          />
-        )}
-      </For>
-      <Index each={connections()}>
-        {(draft) => {
-          const id = createUniqueId();
-          return (
-            <div class="flex flex-col gap-2" data-connection={draft().key}>
-              <TextField
-                label="instance id"
-                type="text"
-                value={draft().instanceId}
-                onInput={(instanceId) => edit(draft().key, { instanceId })}
-              />
-              <TextField
-                label="alias"
-                type="text"
-                value={draft().alias}
-                onInput={(alias) => edit(draft().key, { alias })}
-              />
-              <ChoiceField
-                label="requirement type"
-                choices={REQUIREMENT_TYPES}
-                allowEmpty={false}
-                value={draft().requirementType}
-                onChange={(requirementType) => edit(draft().key, { requirementType })}
-              />
-              <Field>
-                <FieldLabel for={id}>definition</FieldLabel>
-                <textarea
-                  id={id}
-                  class="border-input min-h-24 rounded-md border bg-transparent p-2 font-mono text-xs"
-                  value={draft().definition}
-                  onInput={(event) => edit(draft().key, { definition: event.currentTarget.value })}
-                />
-              </Field>
-              <Button
-                class="self-start"
-                variant="outline"
-                onClick={() => setConnections((all) => all.filter((each) => each.key !== draft().key))}
-              >
-                remove connection
-              </Button>
-            </div>
-          );
-        }}
-      </Index>
-      <Button
-        class="self-start"
-        variant="outline"
-        onClick={() =>
-          setConnections((all) => [
-            ...all,
-            { key: nextKey++, instanceId: "", alias: "", requirementType: "blobstore", definition: "" },
-          ])
-        }
-      >
-        add connection
-      </Button>
-      <Button class="self-start" onClick={() => void create()}>
-        create
-      </Button>
-    </section>
-  );
-}
-
-/** One replacement of the copy form, as the operator types it. */
-interface ReplacementDraft {
-  readonly key: number;
-  instanceId: string;
-  /** The definition as JSON text. */
-  definition: string;
-}
-
-/**
- * The copy form of one environment, for an org-admin. The source is one of
- * the environments of the project. The control login reads no project
- * database, so the form knows no source connection: the operator adds one
- * replacement row per connection to replace, and `read-source` names every
- * connection with a credential that has no replacement.
- */
-function CopyEnvironmentForm(props: {
-  transport: Transport;
-  project: string;
-  environments: readonly string[];
-  settle: (outcome: Outcome<unknown>, screen: string) => Promise<void>;
-  refuse: (text: string) => void;
-}): JSX.Element {
-  const [sourceEnv, setSourceEnv] = createSignal<string | null>(null);
-  const [env, setEnv] = createSignal("");
-  const [routeHost, setRouteHost] = createSignal("");
-  const [replacements, setReplacements] = createSignal<ReplacementDraft[]>([]);
-  let nextKey = 0;
-
-  const edit = (key: number, change: Partial<ReplacementDraft>) =>
-    setReplacements((all) => all.map((each) => (each.key === key ? { ...each, ...change } : each)));
-
-  const copy = async () => {
-    const source = sourceEnv();
-    if (source === null) {
-      return;
-    }
-    const connections: { instanceId: string; definition: JsonValue }[] = [];
-    for (const each of replacements()) {
-      let definition: unknown;
-      try {
-        definition = JSON.parse(each.definition);
-      } catch {
-        definition = null;
-      }
-      if (definition === null || typeof definition !== "object" || Array.isArray(definition)) {
-        props.refuse(`The definition of ${each.instanceId} is not a JSON object.`);
-        return;
-      }
-      connections.push({ instanceId: each.instanceId, definition: definition as JsonValue });
-    }
-    const value = {
-      project: props.project,
-      sourceEnv: source,
-      env: env(),
-      routeHost: routeHost(),
-      connections,
-    };
-    const outcome = await environment.copy(props.transport, [{ requestId: newRequestId(), value }]);
-    await props.settle(outcome, "environment copy");
-    if (outcome.status === "completed") {
-      setSourceEnv(null);
-      setEnv("");
-      setRouteHost("");
-      setReplacements([]);
-    }
-  };
-
-  return (
-    <section class="flex max-w-md flex-col gap-3" data-slot="project-copy-environment">
-      <p class="text-sm font-semibold uppercase">copy an environment</p>
-      <ChoiceField
-        label="source environment"
-        choices={props.environments.map((each) => ({ value: each, text: each }))}
-        allowEmpty={false}
-        value={sourceEnv()}
-        onChange={(each) => setSourceEnv(each === "" ? null : each)}
-      />
-      <TextField label="new environment name" type="text" value={env()} onInput={setEnv} />
-      <TextField label="new route host" type="text" value={routeHost()} onInput={setRouteHost} />
-      <Index each={replacements()}>
-        {(draft) => {
-          const id = createUniqueId();
-          return (
-            <div class="flex flex-col gap-2" data-replacement={draft().key}>
-              <TextField
-                label="instance id"
-                type="text"
-                value={draft().instanceId}
-                onInput={(instanceId) => edit(draft().key, { instanceId })}
-              />
-              <Field>
-                <FieldLabel for={id}>definition</FieldLabel>
-                <textarea
-                  id={id}
-                  class="border-input min-h-24 rounded-md border bg-transparent p-2 font-mono text-xs"
-                  value={draft().definition}
-                  onInput={(event) => edit(draft().key, { definition: event.currentTarget.value })}
-                />
-              </Field>
-              <Button
-                class="self-start"
-                variant="outline"
-                onClick={() => setReplacements((all) => all.filter((each) => each.key !== draft().key))}
-              >
-                remove replacement
-              </Button>
-            </div>
-          );
-        }}
-      </Index>
-      <Button
-        class="self-start"
-        variant="outline"
-        onClick={() => setReplacements((all) => [...all, { key: nextKey++, instanceId: "", definition: "" }])}
-      >
-        add replacement
-      </Button>
-      <Button class="self-start" onClick={() => void copy()}>
-        copy
-      </Button>
-    </section>
-  );
-}
-
 export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
   const [refusal, setRefusal] = createSignal<string | null>(null);
   const [members, { refetch }] = createResource(
@@ -376,11 +56,11 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
       return outcome.status === "completed" ? outcome.value.members : [];
     },
   );
-  const [listed, { refetch: refetchListed }] = createResource(
+  const [listed] = createResource(
     () => props.project,
     async (project) => {
       const outcome = await environment.list(props.transport, [{ project }]);
-      return outcome.status === "completed" ? outcome.value : { environments: [], sagas: [] };
+      return outcome.status === "completed" ? outcome.value : { environments: [] };
     },
   );
   const environments = () => listed()?.environments;
@@ -420,27 +100,6 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
     } else {
       await settle(await projectAdmin.revoke(props.transport, [item]), "project-admin revoke");
     }
-  };
-
-  const [mine] = createResource(async () => {
-    const outcome = await control.mine(props.transport, [{}]);
-    return outcome.status === "completed" && outcome.value.orgAdmin;
-  });
-
-  /** Announces one saga write, shows a refusal's text, and reads the sagas again. */
-  const settleSaga = async (outcome: Outcome<unknown>, screen: string) => {
-    announceOutcome(outcome, screen);
-    setRefusal(outcome.status === "refused" ? controlRefusal(outcome) : null);
-    await refetchListed();
-  };
-
-  /** Resumes a failed saga, or abandons a failed or pending one, and reads the sagas again. */
-  const endFailure = async (sagaId: string, resume: boolean) => {
-    const item = [{ requestId: newRequestId(), value: { sagaId } }];
-    const outcome = resume
-      ? await environment.resume(props.transport, item)
-      : await environment.abandon(props.transport, item);
-    await settleSaga(outcome, resume ? "saga resume" : "saga abandon");
   };
 
   const add = async () => {
@@ -520,88 +179,6 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
         <Button class="self-start" onClick={() => void add()}>
           add
         </Button>
-      </section>
-      <Show when={mine()}>
-        <CreateEnvironmentForm
-          transport={props.transport}
-          project={props.project}
-          settle={settleSaga}
-          refuse={(text) => setRefusal(text)}
-        />
-        <CopyEnvironmentForm
-          transport={props.transport}
-          project={props.project}
-          environments={environments() ?? []}
-          settle={settleSaga}
-          refuse={(text) => setRefusal(text)}
-        />
-      </Show>
-      <section class="flex flex-col gap-2" data-slot="project-sagas">
-        <p class="text-sm font-semibold uppercase">environment creation</p>
-        <Show
-          when={(listed()?.sagas ?? []).length > 0}
-          fallback={<p class="text-muted-foreground text-sm">No environment creation.</p>}
-        >
-          <For each={listed()?.sagas ?? []}>
-            {(saga) => (
-              <div class="flex flex-col gap-1" data-saga={saga.sagaId}>
-                <p class="text-sm">
-                  {saga.env}
-                  <Show when={saga.sourceEnv}>{(source) => <span> (copy of {source()})</span>}</Show>: {saga.status}
-                  <Show when={saga.lastError}>{(error) => <span>, {error()}</span>}</Show>
-                </p>
-                <div class="flex gap-2">
-                  <Show when={saga.status === "failed"}>
-                    <Button class="self-start" onClick={() => void endFailure(saga.sagaId, true)}>
-                      resume
-                    </Button>
-                  </Show>
-                  <Show when={saga.status === "failed" || saga.status === "pending"}>
-                    <ConfirmAction
-                      trigger="abandon"
-                      question={`Abandon the creation of ${saga.env ?? "this environment"}?`}
-                      confirm="abandon"
-                      cancel="cancel"
-                      onConfirm={() => void endFailure(saga.sagaId, false)}
-                    />
-                  </Show>
-                </div>
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-left">
-                      <th>step</th>
-                      <th>name</th>
-                      <th>status</th>
-                      <th>error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={saga.steps}>
-                      {(step) => (
-                        <tr data-step={step.name}>
-                          <td>{step.step}</td>
-                          <td>{step.name}</td>
-                          <td>{step.status}</td>
-                          <td>{step.error ?? ""}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-                <For each={saga.steps.flatMap((step) => operatorCommands(step.detail))}>
-                  {(group) => (
-                    <div class="flex flex-col gap-1" data-slot="operator-commands">
-                      <p class="text-sm">
-                        {group.purpose} ({group.runbook})
-                      </p>
-                      <pre class="overflow-x-auto text-xs">{group.commands.join("\n")}</pre>
-                    </div>
-                  )}
-                </For>
-              </div>
-            )}
-          </For>
-        </Show>
       </section>
     </div>
   );

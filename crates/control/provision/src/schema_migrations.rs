@@ -176,6 +176,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0019_release_digest.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0019_release_digest.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0020_remove_environment_sagas.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0020_remove_environment_sagas.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -336,11 +342,15 @@ mod tests {
     }
 
     #[test]
-    fn system_migration_0015_carries_the_rendered_control_surface() {
+    fn the_latest_control_surface_migration_carries_the_rendered_control_surface() {
         let migration = SYSTEM_MIGRATIONS
             .iter()
-            .find(|migration| migration.ordinal() == 15)
-            .expect("system migration 0015 exists");
+            .find(|migration| {
+                migration
+                    .relative_path
+                    .ends_with("_remove_environment_sagas.sql")
+            })
+            .expect("the migration that removes the environment sagas exists");
         let grants = format!(
             "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control') THEN\n    {}\n  END IF;",
             crate::sql::control_surface_grants_sql()
