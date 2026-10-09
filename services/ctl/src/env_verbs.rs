@@ -1,7 +1,7 @@
 //! Arguments and output of the `env` verbs (docs/plan/platform-deploy.md
-//! §10.1, R21). The lifecycle has two flags, `--dry-run` and `--data`. Every
-//! other input is a field of the environment document, or a platform input
-//! that [`wamn_control::environment::Platform::from_env`] reads.
+//! §10.1, R21). `apply` has one flag, `--dry-run`. Every other input is a
+//! field of the environment document, or a platform input that
+//! [`wamn_control::environment::Platform::from_env`] reads.
 
 use std::path::PathBuf;
 
