@@ -810,7 +810,6 @@ impl SagaRun<'_> {
             self.request.env.clone(),
             self.tenant(),
         );
-        let route_host = self.request.route_host.clone();
         let config = self.config;
         let packages = self.packages().await?;
         let inputs: Vec<PackageInput> = packages.iter().map(Package::input).collect();
@@ -870,7 +869,6 @@ impl SagaRun<'_> {
                 .map(|package| package.root().join("publication/attachments.json"))
                 .filter(|path| path.is_file())
                 .collect(),
-            route_host: Some(route_host),
             package_manifests: packages
                 .iter()
                 .map(|package| wamn_schema_generator::package_manifest_path(package.root()))
@@ -1204,14 +1202,17 @@ impl SagaRun<'_> {
                     "commands": [
                         format!(
                             "add a host group for {project} to deploy/gcp/values-host.yaml that \
-                             names the Secrets {}, {}, {}, {}, {} and {}, and the selected \
-                             release of {org}/{project}/{env}",
+                             names the Secrets {}, {}, {}, {}, {} and {}, the selected \
+                             release of {org}/{project}/{env}, and the variables \
+                             WAMN_ORG={org}, WAMN_PROJECT={project}, \
+                             WASMCLOUD_HOST_ENVIRONMENT={env} and WAMN_ROUTE_HOST={}",
                             secret(WorkloadRoleFamily::App),
                             secret(WorkloadRoleFamily::ExecutorPlatform),
                             secret(WorkloadRoleFamily::HttpAdmitter),
                             secret(WorkloadRoleFamily::EventMaterializer),
                             secret(WorkloadRoleFamily::IdentityReader),
                             secret(WorkloadRoleFamily::Administration),
+                            self.request.route_host,
                         ),
                         "helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator \
                          --version 2.10.3 -n hosts -f deploy/gcp/values-host.yaml".to_owned(),

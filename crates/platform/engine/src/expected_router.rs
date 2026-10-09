@@ -1,6 +1,9 @@
-//! Native HTTP routing with a bounded refusal for hosts in the verified release.
+//! Native HTTP routing with a bounded refusal for the host's route host.
 //!
-//! During serving, an unbound explicit release hostname reports unavailable.
+//! The release names no route host (R1). The host configuration names it
+//! (`WAMN_ROUTE_HOST`), and the http workload binds it as its `config.host`.
+//! During serving, the configured route host reports unavailable until a
+//! workload binds it.
 //! Shutdown refuses further requests, including on existing connections.
 //! Native parsing, workload selection, and outgoing policy remain unchanged.
 //! Operator-created aliases and wildcard expansion are outside this projection.
@@ -12,9 +15,6 @@ use wash_runtime::engine::workload::ResolvedWorkload;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::{DynamicRouter, IngressRoute, RouteError, Router};
 use wasmtime_wasi_http::{RequestOptions, WasiBody};
-
-use crate::flow_http_routing::expected_http_hostnames;
-use crate::release_manifest::LoadedRelease;
 
 /// A native router whose unbound release hostnames report temporary unavailability.
 pub struct ExpectedHostRouter {
@@ -32,16 +32,19 @@ impl std::fmt::Debug for ExpectedHostRouter {
     }
 }
 
-/// Project explicit hostnames once from the host's verified release.
+/// A router that expects the configured route host. A wildcard or an empty
+/// value names no host before a workload binds it, so it expects none.
 pub fn expected_host_router(
-    release: Option<&LoadedRelease>,
+    route_host: Option<&str>,
     stopping: tokio::sync::watch::Receiver<bool>,
 ) -> ExpectedHostRouter {
     ExpectedHostRouter {
         inner: DynamicRouter::default(),
-        expected_hosts: release
-            .map(|release| expected_http_hostnames(release.manifest()))
-            .unwrap_or_default(),
+        expected_hosts: route_host
+            .filter(|host| !host.is_empty() && *host != "*")
+            .map(str::to_ascii_lowercase)
+            .into_iter()
+            .collect(),
         stopping,
     }
 }
@@ -109,61 +112,16 @@ impl Router for ExpectedHostRouter {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use serde_json::json;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use wash_runtime::host::http::{HostHandler, Ingress, ServiceHttpJob};
 
     use super::*;
 
     const HOST: &str = "api.example.test";
-
-    fn release() -> LoadedRelease {
-        let hash = wamn_catalog::DefinitionHash::parse(format!("sha256:{}", "a".repeat(64)))
-            .expect("fixture definition hash");
-        let manifest = wamn_catalog::ServingManifest::new(
-            wamn_catalog::ServingRelease {
-                packages: BTreeSet::from([
-                    wamn_catalog::PackageCoordinate::new("app", "1.0.0").unwrap()
-                ]),
-            },
-            BTreeSet::new(),
-            BTreeSet::new(),
-            BTreeSet::from([wamn_catalog::ServingWiring {
-                package_id: "app".into(),
-                wiring_id: "route".into(),
-                wiring_version: 1,
-                graph_hash: hash.clone(),
-            }]),
-            BTreeMap::from([(
-                "route".into(),
-                wamn_catalog::ServingAttachment {
-                    type_: wamn_catalog::AttachmentType::Http,
-                    package_id: "app".into(),
-                    target: wamn_catalog::AttachmentTarget::Wiring {
-                        wiring_id: "route".into(),
-                        wiring_version: 1,
-                    },
-                    definition_hash: hash,
-                    definition: json!({"route": {"host": HOST, "path": "/", "method": "GET"}}),
-                    auth_policy: json!({"modes": ["none"]}),
-                    registered_operation: None,
-                },
-            )]),
-            BTreeMap::new(),
-        )
-        .expect("fixture manifest");
-        LoadedRelease::load_canonical_bytes(
-            &manifest.canonical_bytes(),
-            "expected-router-test",
-            crate::release_manifest::ReleaseScope::new("tenant", "test"),
-        )
-        .expect("fixture release passes the production reader")
-    }
 
     async fn request(
         ingress: &Ingress<ExpectedHostRouter>,
@@ -203,10 +161,9 @@ mod tests {
 
     #[tokio::test]
     async fn native_ingress_preserves_refusals_bind_transitions_and_application_404() {
-        let loaded_release = release();
         let (stop, stopping) = tokio::sync::watch::channel(false);
         let ingress = Ingress::new(
-            expected_host_router(Some(&loaded_release), stopping),
+            expected_host_router(Some(HOST), stopping),
             "127.0.0.1:0".parse().unwrap(),
         )
         .await
@@ -308,9 +265,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_native_handle_still_returns_404() {
-        let loaded_release = release();
-        let router =
-            expected_host_router(Some(&loaded_release), tokio::sync::watch::channel(false).1);
+        let router = expected_host_router(Some(HOST), tokio::sync::watch::channel(false).1);
         router
             .on_service_http_resolved("missing-handle", &[IngressRoute::ingress(HOST)])
             .await

@@ -242,10 +242,6 @@ impl Drop for RoutePermit {
     }
 }
 
-/// The authored spelling for "any authority", normalized by the exposure
-/// resolver and matched verbatim by the adapter.
-const WILDCARD_HOST: &str = "*";
-
 const INPUT_SCHEMA_URI: &str = "mem://route-input.json";
 const SCHEMA_INVALID: &str = "schema-invalid";
 
@@ -643,13 +639,11 @@ impl FlowHttpRouting {
         Ok(Self::new(release, limit))
     }
 
-    fn routes(&self, method: &str, authority: &str) -> Result<Vec<RouteDefinition>, NoRelease> {
+    /// The release names no route host (R1): the workload's `config.host`
+    /// already selected this host, so the authority takes no part here.
+    fn routes(&self, method: &str, _authority: &str) -> Result<Vec<RouteDefinition>, NoRelease> {
         let loaded_release = self.release.as_ref().ok_or(NoRelease)?;
-        Ok(route_definitions(
-            loaded_release.manifest(),
-            method,
-            authority,
-        ))
+        Ok(route_definitions(loaded_release.manifest(), method))
     }
 
     fn carries_route(&self, attachment_id: &str) -> Result<bool, NoRelease> {
@@ -762,11 +756,7 @@ impl FlowHttpRouting {
 ///
 /// Free of `self` and of the loaded release so the projection can be shown against a
 /// manifest fixture without a mount.
-fn route_definitions(
-    manifest: &ServingManifest,
-    method: &str,
-    authority: &str,
-) -> Vec<RouteDefinition> {
+fn route_definitions(manifest: &ServingManifest, method: &str) -> Vec<RouteDefinition> {
     manifest
         .every_served_attachment()
         .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
@@ -783,7 +773,7 @@ fn route_definitions(
             }
             definition
         })
-        .filter(|definition| matches_request(definition, method, authority))
+        .filter(|definition| matches_request(definition, method))
         .collect()
 }
 
@@ -791,20 +781,6 @@ fn route_definitions(
 /// none and must never be reachable over HTTP.
 fn carries_http_route(kind: AttachmentType) -> bool {
     matches!(kind, AttachmentType::Http | AttachmentType::Studio)
-}
-
-/// Project explicit hostnames from the same routes that the HTTP plugin serves.
-///
-/// Wildcards cannot identify a host before its workload binds. This projection
-/// neither expands them nor invents aliases from operator-managed Services.
-pub(crate) fn expected_http_hostnames(manifest: &ServingManifest) -> HashSet<String> {
-    manifest
-        .every_served_attachment()
-        .filter(|(_, attachment)| carries_http_route(attachment.attachment_type()))
-        .filter_map(|(id, attachment)| route_definition(manifest, id, attachment))
-        .map(|definition| definition.host)
-        .filter(|host| !host.is_empty() && host != WILDCARD_HOST)
-        .collect()
 }
 
 /// Return whether a serving release requires PAT-backed route authentication.
@@ -835,18 +811,16 @@ pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool
         })
 }
 
-/// Exactly the host and method predicates the adapter's own `select_route`
-/// applies (`apps/platform/ingress/http-route/src/lib.rs`).
+/// Exactly the method predicate the adapter's own `select_route` applies
+/// (`apps/platform/ingress/http-route/src/lib.rs`).
 ///
-/// Mirrored rather than tightened on purpose: this provider returns candidates and
-/// the adapter performs final selection and path matching, so a candidate dropped
-/// here is one the adapter would have accepted. Case cannot be the reason a route
-/// is missed — the adapter uppercases the method and lowercases the authority
-/// before it asks, and the exposure resolver normalizes the projection the same
-/// way, but neither normalization is assumed.
-fn matches_request(definition: &RouteDefinition, method: &str, authority: &str) -> bool {
+/// A route matches on its path and method only (R1). The workload's
+/// `config.host` selected the host before the adapter asked, so the route
+/// names no host. Case cannot be the reason a route is missed: the adapter
+/// uppercases the method before it asks, but that normalization is not
+/// assumed.
+fn matches_request(definition: &RouteDefinition, method: &str) -> bool {
     definition.method.eq_ignore_ascii_case(method)
-        && (definition.host == WILDCARD_HOST || definition.host.eq_ignore_ascii_case(authority))
 }
 
 /// One attachment's route definition, or `None` when its definition document
@@ -879,7 +853,8 @@ fn route_definition(
     };
     Some(RouteDefinition {
         attachment_id: attachment_id.to_string(),
-        host: route.get("host")?.as_str()?.to_string(),
+        // The WIT field stays, and the release names no host, so it is empty.
+        host: String::new(),
         path: route.get("path")?.as_str()?.to_string(),
         method: route.get("method")?.as_str()?.to_string(),
         mappings,
@@ -1363,7 +1338,7 @@ mod tests {
             "id": "orders",
             "kind": "http",
             "source-id": "public",
-            "route": {"host": "api.example.test", "path": "/orders/{order}", "method": "POST"},
+            "route": {"path": "/orders/{order}", "method": "POST"},
             "mappings": [
                 {"from": "body", "name": "amount", "to": "/amount"},
                 {"from": "path", "name": "order", "to": "/order", "optional": false},
@@ -1479,7 +1454,7 @@ mod tests {
             .insert(wamn_catalog::HostRouteSet::Application);
         let (manifest, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
             .expect("a manifest with host routes is canonical");
-        let served = route_definitions(&manifest, "GET", "any.example.test");
+        let served = route_definitions(&manifest, "GET");
         assert_eq!(
             served_ids(&served),
             [
@@ -1499,7 +1474,7 @@ mod tests {
         assert!(requires_session_route_authentication(&manifest));
 
         let root = LoadedRelease::control_root();
-        let served = route_definitions(root.manifest(), "GET", "any.example.test");
+        let served = route_definitions(root.manifest(), "GET");
         assert_eq!(
             served_ids(&served),
             [
@@ -1560,7 +1535,6 @@ mod tests {
                     "kind": "http",
                     "source-id": "public",
                     "route": {
-                        "host": "api.example.test",
                         "path": "/orders",
                         "method": kind.http_method()
                     }
@@ -1586,7 +1560,7 @@ mod tests {
                 BTreeMap::from([("route".to_string(), route)]),
             );
 
-            let served = route_definitions(&manifest, kind.http_method(), "api.example.test");
+            let served = route_definitions(&manifest, kind.http_method());
 
             let [definition] = served.as_slice() else {
                 panic!("the {kind:?} route is served");
@@ -1594,7 +1568,7 @@ mod tests {
             assert_eq!(definition.cache_control, expected, "{kind:?} {policy}");
         }
 
-        let wiring = route_definitions(&one_http_route(), "POST", "api.example.test");
+        let wiring = route_definitions(&one_http_route(), "POST");
         assert_eq!(wiring[0].cache_control, None, "a wiring can write");
     }
 
@@ -1602,13 +1576,13 @@ mod tests {
     fn a_matching_method_and_authority_serves_the_release_attachment() {
         let manifest = one_http_route();
 
-        let served = route_definitions(&manifest, "POST", "api.example.test");
+        let served = route_definitions(&manifest, "POST");
 
         let [definition] = served.as_slice() else {
             panic!("exactly one attachment matches this request");
         };
         assert_eq!(definition.attachment_id, "orders");
-        assert_eq!(definition.host, "api.example.test");
+        assert_eq!(definition.host, "", "the release names no route host");
         assert_eq!(definition.path, "/orders/{order}");
         assert_eq!(definition.method, "POST");
         assert_eq!(
@@ -1633,7 +1607,7 @@ mod tests {
         let plugin =
             FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
-        let served = route_definitions(&manifest, "POST", "api.example.test");
+        let served = route_definitions(&manifest, "POST");
 
         let [definition] = served.as_slice() else {
             panic!("exactly one attachment matches this request");
@@ -1671,7 +1645,7 @@ mod tests {
         let plugin =
             FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
-        let served = route_definitions(&manifest, "POST", "api.example.test");
+        let served = route_definitions(&manifest, "POST");
 
         let [definition] = served.as_slice() else {
             panic!("exactly one attachment matches this request");
@@ -1840,41 +1814,24 @@ mod tests {
             )]));
 
             assert!(
-                route_definitions(&manifest, "POST", "api.example.test").is_empty(),
+                route_definitions(&manifest, "POST").is_empty(),
                 "a malformed authored ceiling must fail its attachment closed"
             );
         }
     }
 
     #[test]
-    fn a_method_or_authority_that_matches_nothing_serves_no_route() {
+    fn a_method_that_matches_nothing_serves_no_route() {
         let manifest = one_http_route();
 
-        assert!(route_definitions(&manifest, "GET", "api.example.test").is_empty());
-        assert!(route_definitions(&manifest, "POST", "other.example.test").is_empty());
-        // Both sides are normalized before they meet here, so case can never be
-        // the reason a live route is missed.
+        assert!(route_definitions(&manifest, "GET").is_empty());
         assert_eq!(
-            served_ids(&route_definitions(&manifest, "post", "API.EXAMPLE.TEST")),
+            served_ids(&route_definitions(&manifest, "POST")),
             ["orders"]
         );
-    }
-
-    #[test]
-    fn a_wildcard_host_attachment_is_served_for_any_authority() {
-        let mut definition = orders_definition();
-        definition["route"]["host"] = json!(WILDCARD_HOST);
-        let manifest = release_manifest(BTreeMap::from([(
-            "orders".to_string(),
-            attachment(AttachmentType::Http, definition),
-        )]));
-
+        // Case can never be the reason a live route is missed.
         assert_eq!(
-            served_ids(&route_definitions(
-                &manifest,
-                "POST",
-                "anything.example.test"
-            )),
+            served_ids(&route_definitions(&manifest, "post")),
             ["orders"]
         );
     }
@@ -1893,60 +1850,13 @@ mod tests {
         .map(|(id, kind)| (id.to_string(), attachment(kind, orders_definition())))
         .collect();
 
-        let served = route_definitions(&release_manifest(attachments), "POST", "api.example.test");
+        let served = route_definitions(&release_manifest(attachments), "POST");
 
         assert_eq!(
             served_ids(&served),
             ["http-attachment", "studio-attachment"],
             "an internal or cron attachment has no HTTP route and must never be reachable \
              over HTTP"
-        );
-    }
-
-    #[test]
-    fn expected_hosts_follow_the_serviceable_projection_without_wildcard_expansion() {
-        let attachments = [
-            ("http", AttachmentType::Http, "api.example.test", false),
-            ("duplicate", AttachmentType::Http, "api.example.test", false),
-            (
-                "studio",
-                AttachmentType::Studio,
-                "studio.example.test",
-                false,
-            ),
-            ("cron", AttachmentType::Cron, "cron.example.test", false),
-            (
-                "internal",
-                AttachmentType::Internal,
-                "internal.example.test",
-                false,
-            ),
-            ("wildcard", AttachmentType::Http, WILDCARD_HOST, false),
-            ("empty", AttachmentType::Http, "", false),
-            (
-                "malformed",
-                AttachmentType::Http,
-                "broken.example.test",
-                true,
-            ),
-        ]
-        .into_iter()
-        .map(|(id, kind, host, malformed)| {
-            let mut definition = orders_definition();
-            definition["route"]["host"] = json!(host);
-            if malformed {
-                definition["raw-body-bytes"] = json!({"maximum": "invalid"});
-            }
-            (id.to_string(), attachment(kind, definition))
-        })
-        .collect();
-
-        assert_eq!(
-            expected_http_hostnames(&release_manifest(attachments)),
-            HashSet::from([
-                "api.example.test".to_string(),
-                "studio.example.test".to_string()
-            ]),
         );
     }
 
@@ -2007,7 +1917,7 @@ mod tests {
             "id": "broken",
             "kind": "http",
             "source-id": "public",
-            "route": {"host": "api.example.test", "method": "POST"}
+            "route": {"method": "POST"}
         });
         let manifest = release_manifest(BTreeMap::from([
             (
@@ -2020,7 +1930,7 @@ mod tests {
             ),
         ]));
 
-        let served = route_definitions(&manifest, "POST", "api.example.test");
+        let served = route_definitions(&manifest, "POST");
 
         assert_eq!(
             served_ids(&served),
@@ -2039,7 +1949,7 @@ mod tests {
         )]));
 
         assert!(
-            route_definitions(&manifest, "POST", "api.example.test").is_empty(),
+            route_definitions(&manifest, "POST").is_empty(),
             "a mapping source this host cannot honour must not be silently dropped from \
              the route it belongs to"
         );

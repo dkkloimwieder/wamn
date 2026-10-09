@@ -599,7 +599,6 @@ pub(super) async fn publish_journey_release(
             .collect::<Result<Vec<_>, _>>()?,
         wirings,
         attachments,
-        route_host: Some(inputs.route_host.clone()),
         package_manifests: released_journey_packages()
             .map(|package| {
                 wamn_schema_generator::package_manifest_path(&journey_package_root(
@@ -708,7 +707,6 @@ pub(super) async fn publish_and_push_journey_release(
 
 pub(super) fn released_component_digests(
     release: &LoadedRelease,
-    route_host: &str,
 ) -> anyhow::Result<HashMap<String, String>> {
     let expected_packages = JOURNEY_PACKAGES
         .iter()
@@ -794,7 +792,7 @@ pub(super) fn released_component_digests(
                 && attachment.registered_operation == Some(sealed(expected.operation))
                 && attachment.definition["route"]["method"] == expected.method
                 && attachment.definition["route"]["path"] == expected.path
-                && attachment.definition["route"]["host"] == route_host
+                && attachment.definition["route"].get("host").is_none()
                 && attachment.auth_policy == serde_json::json!({"modes": ["pat", "session"]}),
             "released attachment {} does not match its exact authenticated route tuple: {attachment:?}",
             expected.id

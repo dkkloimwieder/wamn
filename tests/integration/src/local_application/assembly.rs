@@ -530,7 +530,6 @@ fn selected_attachments(
                 AttachmentTarget::Wiring { .. } => "POST",
             };
             attachment.definition["route"]["method"] = Value::String(method.into());
-            attachment.definition["route"]["host"] = Value::String(input.route_host.into());
             attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
                 wamn_execution_contract::canonical_json_sha256(&attachment.definition),
             )?;

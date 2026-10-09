@@ -292,7 +292,7 @@ async fn receiving_release_journey(
         return Ok(route);
     }
     let (_, release) = publish_and_push_journey_release(inputs, target).await?;
-    let component_digests = released_component_digests(&release, &inputs.route_host)?;
+    let component_digests = released_component_digests(&release)?;
     anyhow::ensure!(
         component_digests == admitted_component_digests,
         "released component digests differ from the two admitted artifacts"

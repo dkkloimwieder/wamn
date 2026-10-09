@@ -407,8 +407,7 @@ async fn try_handle(
     let routes = backend
         .routes(&method, &authority)
         .map_err(|_| error_response(503, "routing-provider-failed"))?;
-    let matched = select_route(routes, &method, &authority, &path)
-        .map_err(|code| error_response(404, code))?;
+    let matched = select_route(routes, &method, &path).map_err(|code| error_response(404, code))?;
     let caller = backend
         .authenticate(&matched.definition.attachment_id, &head.headers)
         .await
@@ -648,31 +647,26 @@ fn percent_encode_segment(value: &str) -> String {
     encoded
 }
 
+/// Select the route by method and path. A release names no route host (R1):
+/// the workload's `config.host` selected this host before the request came
+/// here, and the `host` field of a route definition is empty.
 fn select_route(
     routes: Vec<RouteDefinition>,
     method: &str,
-    authority: &str,
     path: &str,
 ) -> Result<MatchedRoute, &'static str> {
     let mut candidates = routes
         .into_iter()
         .filter(|route| route.method.eq_ignore_ascii_case(method))
         .filter_map(|definition| {
-            let host_score = if definition.host.eq_ignore_ascii_case(authority) {
-                2
-            } else if definition.host == "*" {
-                1
-            } else {
-                return None;
-            };
             let (path_score, path_values) = match_path(&definition.path, path)?;
-            Some((host_score, path_score, definition, path_values))
+            Some((path_score, definition, path_values))
         })
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
-        (right.0, &right.1, &right.2.attachment_id).cmp(&(left.0, &left.1, &left.2.attachment_id))
+        (&right.0, &right.1.attachment_id).cmp(&(&left.0, &left.1.attachment_id))
     });
-    let Some((_, _, definition, path_values)) = candidates.into_iter().next() else {
+    let Some((_, definition, path_values)) = candidates.into_iter().next() else {
         return Err("route-not-found");
     };
     Ok(MatchedRoute {

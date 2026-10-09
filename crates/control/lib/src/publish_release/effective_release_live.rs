@@ -12,7 +12,7 @@ use super::{
     DependencyDigestRule, PublishManifestErrorType, PublishReleaseManifest, PublishedRelease,
     ReleaseWiringTarget, effect_free_operation_dependencies,
     publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
-    resolve_route_host_overlay, sha256, validate_package_metadata,
+    resolve_route_methods, sha256, validate_package_metadata,
 };
 use crate::apply_package::{self, ApplyPackageRequest};
 use crate::author_wiring::{self, AuthorWiringRequest};
@@ -421,8 +421,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     let mut authored_attachments = read(&inputs[0]);
     authored_attachments.extend(read(&inputs[1]));
     let attachments =
-        resolve_route_host_overlay(&authored_attachments, Some("fixture.localhost"), &kinds)
-            .expect("bind the deployment-owned route hostname");
+        resolve_route_methods(&authored_attachments, &kinds).expect("resolve the route methods");
     let request = PublishReleaseManifest {
         tenant_id: TENANT,
         environment: ENVIRONMENT,

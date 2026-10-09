@@ -6,9 +6,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
-use wamn_catalog::{
-    AttachmentType, ManifestDigest, PackageCoordinate, ServingManifest, ServingRelease,
-};
+use wamn_catalog::{ManifestDigest, PackageCoordinate, ServingManifest, ServingRelease};
 
 pub mod deployment;
 pub mod environment;
@@ -31,6 +29,8 @@ pub struct PrepareReleaseRequest {
     pub environment: String,
     /// Tenant that holds the published release, which its manifest does not name.
     pub tenant: String,
+    /// Route host of the environment, which the manifest does not name (R1).
+    pub route_host: String,
     /// The published release, as its manifest digest.
     pub manifest_digest: String,
     /// The `<registry>/<repository>` the release manifest was pushed to.
@@ -68,6 +68,7 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
         project: request.project,
         environment: request.environment,
         tenant: request.tenant,
+        route_host: request.route_host,
         manifest_path: request.manifest_output,
         target_directory: fs::canonicalize(request.target_directory)?,
         host_image: request.host_image,
@@ -113,6 +114,9 @@ pub struct Candidate {
     pub environment: String,
     /// Tenant of the release. The manifest does not name it (R1).
     pub tenant: String,
+    /// Route host of the release's environment. The manifest does not name it
+    /// (R1).
+    pub route_host: String,
     pub manifest_path: PathBuf,
     pub target_directory: PathBuf,
     pub host_image: String,
@@ -200,39 +204,16 @@ impl Candidate {
     }
 
     /// The release inputs that a fixture provisions and publishes: the org, the
-    /// project, the environment and the tenant of the candidate, and the rest
-    /// from its manifest.
+    /// project, the environment, the tenant and the route host of the
+    /// candidate, and the packages from its manifest.
     pub fn identity(&self) -> anyhow::Result<ReleaseIdentity> {
         let (manifest, _) = self.manifest()?;
-        // The publish writes one deployment route host into every routed
-        // attachment (publish_release/attachments.rs resolve_route_host_overlay).
-        let hosts = manifest
-            .attachments
-            .iter()
-            .filter(|(_, attachment)| {
-                matches!(
-                    attachment.type_,
-                    AttachmentType::Http | AttachmentType::Studio
-                )
-            })
-            .map(|(id, attachment)| {
-                attachment
-                    .definition
-                    .pointer("/route/host")
-                    .and_then(serde_json::Value::as_str)
-                    .with_context(|| format!("candidate attachment {id:?} carries no route host"))
-            })
-            .collect::<anyhow::Result<BTreeSet<_>>>()?;
-        let mut hosts = hosts.into_iter();
-        let (Some(route_host), None) = (hosts.next(), hosts.next()) else {
-            anyhow::bail!("the candidate manifest must carry exactly one route host");
-        };
         Ok(ReleaseIdentity {
             org: self.org.clone(),
             project: self.project.clone(),
             environment: self.environment.clone(),
             tenant: self.tenant.clone(),
-            route_host: route_host.to_owned(),
+            route_host: self.route_host.clone(),
             packages: manifest.release.packages,
         })
     }
@@ -462,6 +443,7 @@ mod tests {
             project: "unused".into(),
             environment: "unused".into(),
             tenant: "unused".into(),
+            route_host: "unused".into(),
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: format!("localhost:5000/host@sha256:{}", "a".repeat(64)),

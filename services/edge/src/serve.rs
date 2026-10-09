@@ -223,7 +223,7 @@ pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let (stopping, stopped) = tokio::sync::watch::channel(false);
     let ingress = Arc::new(
         Ingress::builder(
-            expected_host_router(Some(release.release()), stopped.clone()),
+            expected_host_router(Some(&config.http.route_host), stopped.clone()),
             config.http.listen,
         )
         .build()

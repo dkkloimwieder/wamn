@@ -48,6 +48,8 @@ runtime:
       value: receiving
     - name: WASMCLOUD_HOST_ENVIRONMENT
       value: dev
+    - name: WAMN_ROUTE_HOST
+      value: receiving.wamn.dev
     - name: WAMN_SCHEMA
       value: receiving
     - name: WAMN_SYSTEM_URL
@@ -192,6 +194,8 @@ runtime:
       value: wms
     - name: WASMCLOUD_HOST_ENVIRONMENT
       value: dev
+    - name: WAMN_ROUTE_HOST
+      value: wms.wamn.dev
     - name: WAMN_SCHEMA
       value: wms
     - name: WAMN_SYSTEM_URL

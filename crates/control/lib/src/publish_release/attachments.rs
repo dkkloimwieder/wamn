@@ -254,42 +254,17 @@ pub(super) fn validate_attachment_definition_hashes(
     Ok(())
 }
 
-/// Resolve deployment-owned route identity without letting package content
-/// become a second hostname emitter, and write each route's method from the
-/// kind of the operation it calls.
-pub(super) fn resolve_route_host_overlay(
+/// Write each route's method from the kind of the operation it calls, and
+/// refuse ambiguous routes.
+///
+/// The release names no route host (R1): a route is its path and method, and
+/// the host configuration and the http workload's `config.host` name the host.
+pub(super) fn resolve_route_methods(
     authored: &BTreeMap<String, ServingAttachment>,
-    route_host: Option<&str>,
     route_contracts: &RouteContracts,
 ) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     validate_authored_attachment_routes(authored)?;
     validate_attachment_definition_hashes(authored)?;
-    let first_routed = authored.iter().find(|(_, attachment)| {
-        matches!(
-            attachment.type_,
-            wamn_catalog::AttachmentType::Http | wamn_catalog::AttachmentType::Studio
-        )
-    });
-    let Some((first_attachment_id, _)) = first_routed else {
-        return Ok(authored.clone());
-    };
-    let route_host = route_host.filter(|host| !host.is_empty()).ok_or_else(|| {
-        PublishManifestError::new(
-            PublishManifestErrorType::RouteHostUnbound,
-            format!(
-                "attachment {first_attachment_id:?} requires deployment route host; pass --route-host"
-            ),
-        )
-    })?;
-    if route_host != "*"
-        && (route_host.contains('/') || route_host.chars().any(char::is_whitespace))
-    {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Document,
-            format!("deployment route host {route_host:?} is invalid"),
-        ));
-    }
-    let route_host = route_host.to_ascii_lowercase();
     let mut resolved = authored.clone();
     let mut route_keys = BTreeSet::new();
     for (attachment_id, attachment) in &mut resolved {
@@ -364,10 +339,6 @@ pub(super) fn resolve_route_host_overlay(
             "method".to_owned(),
             serde_json::Value::String(method.to_owned()),
         );
-        route.insert(
-            "host".to_owned(),
-            serde_json::Value::String(route_host.clone()),
-        );
         attachment.definition_hash = wamn_catalog::DefinitionHash::parse(
             wamn_execution_contract::canonical_json_sha256(&attachment.definition),
         )
@@ -399,9 +370,9 @@ fn route_method(
         })
 }
 
-/// Admit only package-owned route coordinates. The deployment hostname and
-/// the method are deliberately absent from this schema: the hostname joins at
-/// publication, and the method follows from the operation kind.
+/// Admit only package-owned route coordinates. The hostname and the method
+/// are deliberately absent from this schema: no release names a hostname
+/// (R1), and the method follows from the operation kind.
 fn validate_authored_attachment_routes(
     authored: &BTreeMap<String, ServingAttachment>,
 ) -> Result<(), PublishManifestError> {
@@ -410,7 +381,7 @@ fn validate_authored_attachment_routes(
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::Document,
                 format!(
-                    "attachment {attachment_id:?} authors route.host; remove it and pass --route-host"
+                    "attachment {attachment_id:?} authors route.host; remove it, because the host configuration names the route host"
                 ),
             ));
         }

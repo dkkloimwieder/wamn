@@ -998,7 +998,6 @@ impl ProductionDevStageRunner {
             packages: package_coordinates,
             wirings,
             attachments,
-            route_host: Some(self.config.route_host().to_owned()),
             package_manifests,
         };
         let local = self.config.local_artifacts();

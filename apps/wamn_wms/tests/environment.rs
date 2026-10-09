@@ -613,7 +613,6 @@ pub async fn publish(
         packages: vec![package],
         wirings: targets,
         attachments: vec![root.join("publication/attachments.json")],
-        route_host: Some(inputs.route_host.clone()),
         package_manifests: vec![wamn_schema_generator::package_manifest_path(&root)],
     })
     .await?

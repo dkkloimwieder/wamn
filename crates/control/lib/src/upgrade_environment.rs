@@ -994,7 +994,6 @@ impl Run {
                     .map(|root| root.join("publication/attachments.json"))
                     .filter(|path| path.is_file())
                     .collect(),
-                route_host: Some(environment.route_host.clone()),
                 package_manifests: roots
                     .iter()
                     .map(|root| wamn_schema_generator::package_manifest_path(root))
@@ -1034,6 +1033,7 @@ impl Run {
             project: self.arguments.project.clone(),
             environment: self.arguments.environment.clone(),
             tenant: databases.tenant.clone(),
+            route_host: environment.route_host.clone(),
             manifest_digest,
             artifact_base: format!("{}/releases", environment.registry),
             target_directory: self.delivery(),

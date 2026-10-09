@@ -84,7 +84,6 @@ pub fn write(
 pub struct PackageRelease<'a> {
     pub scope: EdgeScope<'a>,
     pub publisher: &'a str,
-    pub route_host: &'a str,
 }
 
 /// Write the bundle of `package`, whose component `component` is built at
@@ -133,7 +132,6 @@ pub fn write_package(
         )?],
         wirings: Vec::new(),
         attachments: vec![package.join(PACKAGE_ATTACHMENTS)],
-        route_host: Some(release.route_host.to_owned()),
         package_manifests: vec![wamn_schema_generator::package_manifest_path(package)],
     };
     let assembled = assemble_local_release(&request, std::slice::from_ref(&admission), Vec::new())?;

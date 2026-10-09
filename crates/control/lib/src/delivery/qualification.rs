@@ -817,6 +817,7 @@ mod tests {
             project: "billing".into(),
             environment: "prod".into(),
             tenant: "tenant-a".into(),
+            route_host: "billing.example.test".into(),
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: pinned("host"),

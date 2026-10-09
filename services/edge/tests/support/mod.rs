@@ -151,7 +151,6 @@ fn build_bundle() -> PathBuf {
                 environment: ENVIRONMENT,
             },
             publisher: PRINCIPAL,
-            route_host: HOST,
         },
         &out,
     )

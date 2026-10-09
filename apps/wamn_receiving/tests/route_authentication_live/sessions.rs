@@ -335,7 +335,7 @@ pub(super) async fn assert_nested_session(
             && operation_freshness(*OVERLAY_RECORD_RECEIPT) == Some(fresh_only),
         "nested test requires the admitted base freshness, folded into the overlay entry"
     );
-    let digests = released_component_digests(&previous, &inputs.route_host)?;
+    let digests = released_component_digests(&previous)?;
     let deployed_bytes = release_bytes(project.as_ref(), 2).await?;
     // The frozen driver checks the registered digest, so this is an actual
     // disposable release 3, not an unregistered in-memory manifest alteration.

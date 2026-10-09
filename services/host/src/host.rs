@@ -326,6 +326,12 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
 
+    /// The route host of the environment. The release names none (R1): the
+    /// http workload binds it as its `config.host`, and the ingress reports a
+    /// request to it unavailable until that workload binds.
+    #[arg(long, env = "WAMN_ROUTE_HOST")]
+    pub route_host: Option<String>,
+
     /// Trusted HTTPS issuer for session routes, never discovered from a token.
     #[arg(long, env = "WAMN_SESSION_ISSUER", requires = "session_jwks_ca")]
     pub session_issuer: Option<String>,
@@ -1443,7 +1449,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let mut ingress_handler = None;
     if let Some(addr) = args.http_addr {
         let router = wamn_engine::expected_router::expected_host_router(
-            release.as_deref(),
+            args.route_host.as_deref(),
             stopping.clone(),
         );
         let mut ingress = Ingress::builder(router, addr);

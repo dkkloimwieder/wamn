@@ -137,6 +137,9 @@ pub struct PrepareReleaseArgs {
     /// Environment of the published release, written into the candidate.
     #[arg(long)]
     pub environment: String,
+    /// Route host of the environment, written into the candidate.
+    #[arg(long)]
+    pub route_host: String,
     #[arg(long)]
     pub target_directory: PathBuf,
     #[arg(long)]
@@ -296,6 +299,7 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
         project: args.project,
         environment: args.environment,
         tenant: args.release.tenant,
+        route_host: args.route_host,
         manifest_digest: args.release.release_digest,
         artifact_base: args.release.artifact_base,
         target_directory: args.target_directory,

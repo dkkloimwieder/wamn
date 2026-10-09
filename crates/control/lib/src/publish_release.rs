@@ -33,7 +33,7 @@ mod components;
 mod package_sources;
 
 use attachments::{
-    read_package_attachments, resolve_route_host_overlay, validate_attachment_definition_hashes,
+    read_package_attachments, resolve_route_methods, validate_attachment_definition_hashes,
 };
 use components::{
     project_serving_component, resolve_component_dependency_closure, resolve_route_component,
@@ -237,7 +237,6 @@ pub enum PublishManifestErrorType {
     ClosureConflict,
     Document,
     DuplicateAttachmentId,
-    RouteHostUnbound,
     EnvironmentPolicyAbsent,
     EnvironmentPolicyMismatch,
     EnvironmentPolicySourceMismatch,
@@ -260,7 +259,6 @@ impl PublishManifestErrorType {
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
             Self::DuplicateAttachmentId => "duplicate-attachment-id",
-            Self::RouteHostUnbound => "route-host-unbound",
             Self::EnvironmentPolicyAbsent => "environment-policy-not-converged",
             Self::EnvironmentPolicyMismatch => "environment-policy-environment-mismatch",
             Self::EnvironmentPolicySourceMismatch => "environment-policy-source-mismatch",
@@ -380,8 +378,6 @@ pub struct PublishReleaseRequest {
     pub wirings: Vec<ReleaseWiringTarget>,
     /// Package-owned attachment documents.
     pub attachments: Vec<PathBuf>,
-    /// Deployment-owned hostname applied to every HTTP route.
-    pub route_host: Option<String>,
     /// Exact `wamn.json` for every package in the release.
     pub package_manifests: Vec<PathBuf>,
 }
@@ -489,8 +485,7 @@ pub fn assemble_local_release(
     use wamn_runtime::local_application::{LocalApplicationFacts, LocalWiringFacts};
     let authored = read_package_attachments(&args.attachments, &args.package_manifests)?;
     let (package_manifests, _, route_contracts) = read_package_manifests(&args.package_manifests)?;
-    let attachments =
-        resolve_route_host_overlay(&authored, args.route_host.as_deref(), &route_contracts)?;
+    let attachments = resolve_route_methods(&authored, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -664,11 +659,7 @@ async fn publish_candidate(
         read_package_attachments(&args.attachments, &args.package_manifests)?;
     let (package_manifests, package_manifest_hashes, route_contracts) =
         read_package_manifests(&args.package_manifests)?;
-    let attachments = resolve_route_host_overlay(
-        &authored_attachments,
-        args.route_host.as_deref(),
-        &route_contracts,
-    )?;
+    let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
         packages.len() == args.packages.len(),
@@ -2061,16 +2052,13 @@ mod tests {
                 .count(),
             1
         );
-        let resolved = resolve_route_host_overlay(
-            &authored,
-            Some("Fixture.Localhost"),
-            &RouteContracts::new(),
-        )
-        .expect("merged routes retain deployment-owned host binding");
+        let resolved = resolve_route_methods(&authored, &RouteContracts::new())
+            .expect("merged routes resolve");
         assert!(
             resolved
                 .values()
-                .all(|attachment| attachment.definition["route"]["host"] == "fixture.localhost")
+                .all(|attachment| attachment.definition["route"].get("host").is_none()),
+            "a release names no route host"
         );
     }
 
@@ -2139,12 +2127,8 @@ mod tests {
             ),
         ])
         .expect("distinct attachment identities merge before route validation");
-        let error = resolve_route_host_overlay(
-            &authored,
-            Some("fixture.localhost"),
-            &RouteContracts::new(),
-        )
-        .expect_err("canonical route collisions remain refused after package merging");
+        let error = resolve_route_methods(&authored, &RouteContracts::new())
+            .expect_err("canonical route collisions remain refused after package merging");
 
         assert_eq!(error.error_type(), PublishManifestErrorType::Document);
         assert!(error.detail().contains("canonical path and method"));
@@ -2186,7 +2170,7 @@ mod tests {
     }
 
     #[test]
-    fn release_publish_requires_and_applies_the_deployment_route_host() {
+    fn release_publish_writes_no_route_host_and_refuses_an_authored_one() {
         let definition = serde_json::json!({
             "id": "fixture-http",
             "kind": "http",
@@ -2208,27 +2192,13 @@ mod tests {
         };
         let authored = BTreeMap::from([("fixture-http".to_owned(), attachment)]);
 
-        let missing = resolve_route_host_overlay(&authored, None, &RouteContracts::new())
-            .expect_err("a routed release requires its deployment hostname");
-        assert_eq!(
-            missing.error_type(),
-            PublishManifestErrorType::RouteHostUnbound
-        );
-        assert_eq!(missing.error_type().as_str(), "route-host-unbound");
-        assert!(missing.detail().contains("fixture-http"));
-        assert!(missing.detail().contains("--route-host"));
-
-        let resolved =
-            resolve_route_host_overlay(&authored, Some("Route.Example"), &RouteContracts::new())
-                .expect("the deployment overlay resolves the route hostname");
+        let resolved = resolve_route_methods(&authored, &RouteContracts::new())
+            .expect("a routed release needs no route host");
         assert!(
-            authored["fixture-http"].definition["route"]
+            resolved["fixture-http"].definition["route"]
                 .get("host")
-                .is_none()
-        );
-        assert_eq!(
-            resolved["fixture-http"].definition["route"]["host"],
-            "route.example"
+                .is_none(),
+            "a release names no route host"
         );
         assert_ne!(
             resolved["fixture-http"].definition_hash.as_str(),
@@ -2249,22 +2219,20 @@ mod tests {
                 .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
-        let package_host =
-            resolve_route_host_overlay(&package_authored, None, &RouteContracts::new())
-                .expect_err("package content cannot author a deployment hostname");
+        let package_host = resolve_route_methods(&package_authored, &RouteContracts::new())
+            .expect_err("package content cannot author a hostname");
         assert_eq!(
             package_host.error_type(),
             PublishManifestErrorType::Document
         );
         assert!(package_host.detail().contains("remove it"));
-        assert!(package_host.detail().contains("--route-host"));
 
         let mut non_routed = package_authored;
         non_routed
             .get_mut("fixture-http")
             .expect("the attachment exists")
             .type_ = wamn_catalog::AttachmentType::Internal;
-        let package_host = resolve_route_host_overlay(&non_routed, None, &RouteContracts::new())
+        let package_host = resolve_route_methods(&non_routed, &RouteContracts::new())
             .expect_err("every attachment kind refuses an authored route hostname");
         assert_eq!(
             package_host.error_type(),
@@ -2281,12 +2249,8 @@ mod tests {
                 .get_mut("fixture-http")
                 .expect("the attachment exists"),
         );
-        let extra = resolve_route_host_overlay(
-            &extra_route_field,
-            Some("route.example"),
-            &RouteContracts::new(),
-        )
-        .expect_err("package route schema admits only a path");
+        let extra = resolve_route_methods(&extra_route_field, &RouteContracts::new())
+            .expect_err("package route schema admits only a path");
         assert_eq!(extra.error_type(), PublishManifestErrorType::Document);
         assert!(extra.detail().contains("exactly a string path field"));
 
@@ -2301,9 +2265,8 @@ mod tests {
         second.definition["route"]["path"] = serde_json::json!("/widget/{widget_id}");
         refresh_definition_hash(&mut second);
         colliding.insert("fixture-http-alias".to_owned(), second);
-        let collision =
-            resolve_route_host_overlay(&colliding, Some("route.example"), &RouteContracts::new())
-                .expect_err("one overlay host cannot carry ambiguous route templates");
+        let collision = resolve_route_methods(&colliding, &RouteContracts::new())
+            .expect_err("one release cannot carry ambiguous route templates");
         assert_eq!(collision.error_type(), PublishManifestErrorType::Document);
         assert!(collision.detail().contains("canonical path and method"));
     }
@@ -2369,8 +2332,8 @@ mod tests {
             )
         })
         .collect();
-        let resolved = resolve_route_host_overlay(&authored, Some("route.example"), &kinds)
-            .expect("every route resolves a method");
+        let resolved =
+            resolve_route_methods(&authored, &kinds).expect("every route resolves a method");
         for (id, method) in [
             ("get-http", "GET"),
             ("query-http", "GET"),
@@ -2382,9 +2345,8 @@ mod tests {
             assert_eq!(resolved[id].definition["route"]["method"], method, "{id}");
         }
 
-        let unknown =
-            resolve_route_host_overlay(&authored, Some("route.example"), &RouteContracts::new())
-                .expect_err("a route to an operation with no contract kind refuses");
+        let unknown = resolve_route_methods(&authored, &RouteContracts::new())
+            .expect_err("a route to an operation with no contract kind refuses");
         assert_eq!(
             unknown.error_type(),
             PublishManifestErrorType::GeneratedPackageMetadata
@@ -2396,7 +2358,7 @@ mod tests {
             .expect("the attachment exists");
         get.definition["route"]["method"] = serde_json::json!("GET");
         refresh_definition_hash(get);
-        let refusal = resolve_route_host_overlay(&authored_method, Some("route.example"), &kinds)
+        let refusal = resolve_route_methods(&authored_method, &kinds)
             .expect_err("an authored method refuses");
         assert_eq!(refusal.error_type(), PublishManifestErrorType::Document);
         assert!(

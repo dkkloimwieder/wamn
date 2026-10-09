@@ -142,12 +142,18 @@ impl RoleName {
     }
 }
 
-/// The host variables that carry the environment coordinate (R1). The host
-/// derives its tenant from them, because the manifest names no scope. The
-/// operator chart sets `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace
-/// first, and this later entry replaces it, because the namespace is shared
-/// by every environment (R6).
-const SCOPE_VARIABLES: [&str; 3] = ["WAMN_ORG", "WAMN_PROJECT", "WASMCLOUD_HOST_ENVIRONMENT"];
+/// The host variables that carry the environment coordinate and route host
+/// (R1). The host derives its tenant from the coordinate and expects the route
+/// host, because the manifest names neither. The operator chart sets
+/// `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace first, and this later
+/// entry replaces it, because the namespace is shared by every environment
+/// (R6).
+const HOST_VARIABLES: [&str; 4] = [
+    "WAMN_ORG",
+    "WAMN_PROJECT",
+    "WASMCLOUD_HOST_ENVIRONMENT",
+    "WAMN_ROUTE_HOST",
+];
 
 /// The inputs of one environment's install values.
 #[derive(Debug, Clone)]
@@ -189,14 +195,14 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         !variables.iter().any(|variable| {
             variable["name"]
                 .as_str()
-                .is_some_and(|name| SCOPE_VARIABLES.contains(&name))
+                .is_some_and(|name| HOST_VARIABLES.contains(&name))
         }),
         "the host group body sets a scope variable, which the release chart derives"
     );
     for (variable, value) in
-        SCOPE_VARIABLES
+        HOST_VARIABLES
             .into_iter()
-            .zip([&input.org, &input.project, &input.env])
+            .zip([&input.org, &input.project, &input.env, &input.route_host])
     {
         variables.push(mapping([
             ("name", variable.to_owned()),
@@ -456,7 +462,8 @@ mod tests {
             group["env"],
             serde_yaml::from_str::<Value>(
                 "[{name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
-                 {name: WASMCLOUD_HOST_ENVIRONMENT, value: prod}]"
+                 {name: WASMCLOUD_HOST_ENVIRONMENT, value: prod}, \
+                 {name: WAMN_ROUTE_HOST, value: wms.acme.example}]"
             )
             .expect("yaml")
         );

@@ -221,6 +221,8 @@ async fn exercise(
     prepare
         .arg("prepare-release")
         .args([
+            "--route-host",
+            identity().route_host.as_str(),
             "--database-url",
             &route.database_url,
             "--org",

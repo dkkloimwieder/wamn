@@ -77,9 +77,6 @@ pub struct PublishReleaseArgs {
     /// Package-owned attachment documents; repeat once per package.
     #[arg(long = "attachments", value_name = "PATH", required = true)]
     pub attachments: Vec<PathBuf>,
-    /// Deployment-owned hostname applied to every HTTP route.
-    #[arg(long)]
-    pub route_host: Option<String>,
     /// Exact `wamn.json` for every package in the release.
     #[arg(long = "package-manifest", value_name = "PATH", required = true)]
     pub package_manifests: Vec<PathBuf>,
@@ -225,7 +222,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         packages: args.packages,
         wirings: args.wirings,
         attachments: args.attachments,
-        route_host: args.route_host,
         package_manifests: args.package_manifests,
     })
     .await?;

@@ -280,7 +280,6 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                 .map_err(anyhow::Error::msg)?,
         ],
         attachments: vec![attachment],
-        route_host: Some(test.inputs.route_host.clone()),
         package_manifests: manifests,
     })
     .await?

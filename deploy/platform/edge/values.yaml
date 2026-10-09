@@ -8,8 +8,8 @@ image:
   pullPolicy: IfNotPresent
 
 # The applications the edge serves, one server each. host is the public host,
-# which the release of the application publishes as its --route-host, so the
-# edge passes the Host header to the router unchanged. api is the route
+# the WAMN_ROUTE_HOST of the environment's host group, so the edge passes the
+# Host header to the router unchanged. api is the route
 # ingress of its host group, plain HTTP; the edge removes /api before it
 # forwards. bucketPath is the path that `wamn web upload` wrote, readable
 # without credentials: <bucket>/<prefix>/<package>/<release digest hex>.

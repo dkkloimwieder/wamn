@@ -226,7 +226,7 @@ impl BodyReader for StreamedChunks {
 fn route() -> RouteDefinition {
     RouteDefinition {
         attachment_id: "attachment-a".to_string(),
-        host: "api.example.test".to_string(),
+        host: String::new(),
         path: "/receipts/{receipt}".to_string(),
         method: "POST".to_string(),
         mappings: vec![
@@ -322,11 +322,7 @@ fn error_operation(body: &[u8]) -> Option<String> {
 
 #[test]
 fn partial_body_selected_attachment_mapping_and_delivery() {
-    let mut wildcard = route();
-    wildcard.attachment_id = "wildcard".to_string();
-    wildcard.host = "*".to_string();
     let mut backend = FakeBackend::new(route());
-    backend.routes.insert(0, wildcard);
     let mut body = Chunks::json(&[br#"{"am"#, br#"ount":12.50}"#]);
 
     let output = block_on(handle_request(&mut backend, &mut body, &head(), limits()));
