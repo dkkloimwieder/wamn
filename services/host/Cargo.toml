@@ -38,6 +38,7 @@ url = { workspace = true }
 wamn-test-postgres = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true, features = ["aws-lc-rs"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

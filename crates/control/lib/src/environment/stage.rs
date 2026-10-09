@@ -131,7 +131,7 @@ pub async fn stage(
 }
 
 /// The installed packages of the project database, read now.
-async fn installed(
+pub(super) async fn installed(
     platform: &Platform,
     document: &EnvironmentDocument,
 ) -> anyhow::Result<BTreeMap<String, Installed>> {
@@ -151,7 +151,11 @@ async fn installed(
 
 /// The package artifact `<id>-<version>`, verified against the digest
 /// `catalog.package_artifacts` records.
-async fn open(platform: &Platform, id: &str, version: &str) -> anyhow::Result<OpenedPackage> {
+pub(super) async fn open(
+    platform: &Platform,
+    id: &str,
+    version: &str,
+) -> anyhow::Result<OpenedPackage> {
     let Some(base) = &platform.package_artifact_base else {
         bail!(
             "release names package {id}@{version}; set WAMN_PACKAGE_ARTIFACT_BASE to read \

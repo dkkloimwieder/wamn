@@ -81,6 +81,12 @@ pub struct HostArgs {
     #[arg(long, env = "WASH_DRAIN_DELAY", default_value = "0s", value_parser = humantime::parse_duration)]
     pub drain_delay: Duration,
 
+    /// The environment policy's drain bound, which the release chart also
+    /// renders as the pod's `terminationGracePeriodSeconds` (R20). One budget
+    /// bounds the whole shutdown sequence after SIGTERM.
+    #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS", default_value_t = 300)]
+    pub drain_bound_seconds: u64,
+
     #[arg(long = "scheduler-nats-tls-ca")]
     pub scheduler_nats_tls_ca: Option<PathBuf>,
 
@@ -1616,7 +1622,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             stop_queue,
             &probe_state,
             args.drain_delay,
-            cleanup_budget,
+            shutdown_budget(args.drain_bound_seconds),
         )
         .await
     };
@@ -1849,6 +1855,18 @@ async fn load_local_materializer(
     })
 }
 
+/// The time the auxiliary teardown after [`stop_combined_after`] may take:
+/// the identity connection and the probe tasks, one second each.
+const EXIT_RESERVE: Duration = Duration::from_secs(2);
+
+/// The one budget of the shutdown sequence (R20): the drain bound, less the
+/// auxiliary teardown that follows it, so the process exits before the pod's
+/// `terminationGracePeriodSeconds`, which the release chart renders from the
+/// same drain bound.
+fn shutdown_budget(drain_bound_seconds: u64) -> Duration {
+    Duration::from_secs(drain_bound_seconds).saturating_sub(EXIT_RESERVE)
+}
+
 fn probe_listener_failure(task: Option<&Result<(), tokio::task::JoinError>>) -> anyhow::Error {
     anyhow::anyhow!("native probe listener stopped unexpectedly: {task:?}")
 }
@@ -1900,7 +1918,7 @@ async fn stop_combined_after<I, Q, N>(
     stop_queue: tokio::sync::watch::Sender<bool>,
     probes: &ProbeState,
     drain_delay: Duration,
-    cleanup_budget: Duration,
+    shutdown_budget: Duration,
 ) -> anyhow::Result<()>
 where
     I: std::future::Future<Output = anyhow::Result<()>>,
@@ -1915,6 +1933,11 @@ where
             true,
         ),
     };
+    // One deadline for the whole sequence, set when the shutdown trigger
+    // arrives (R20). Ingress stop, queue drain and native cleanup share what
+    // remains of it.
+    let deadline = tokio::time::Instant::now() + shutdown_budget;
+    let remaining = || deadline.saturating_duration_since(tokio::time::Instant::now());
     // This is the single admission cut: readiness drains before either HTTP
     // cleanup or queue cleanup can wait. The expected router reads the same
     // stop signal and admits no new request; the queue turns to its drain.
@@ -1925,27 +1948,40 @@ where
     } else {
         Duration::ZERO
     };
-    tracing::info!("shutting down wamn-host");
+    tracing::info!(
+        budget_secs = shutdown_budget.as_secs(),
+        "shutting down wamn-host"
+    );
     // Admission closes completely before the queue drains.
-    let ingress_result =
-        wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, stop_ingress).await;
+    let ingress_result = wamn_engine::lifecycle::bounded_cleanup(remaining(), stop_ingress).await;
     let drain_then_cleanup = async {
         // The queue keeps claiming the runs pinned to this host's release
-        // until none remains, then stops (R20). The pod's
-        // terminationGracePeriodSeconds bounds the drain. Kubernetes owns that
-        // clock, so no host budget applies to it.
+        // until none remains, then stops (R20). At the deadline the host stops
+        // the queue, runs no further cleanup step and exits. The runs left keep
+        // their pin, and another host of the release reclaims them when their
+        // leases lapse.
         let queue_result = if !queue_enabled || queue_finished {
             Ok(())
+        } else if let Ok(queue_result) =
+            tokio::time::timeout_at(deadline, queue_serving.as_mut()).await
+        {
+            queue_result
         } else {
-            queue_serving.as_mut().await
+            tracing::warn!(
+                "the drain bound passed with runs pinned to this release; \
+                 stopping without further cleanup"
+            );
+            return (Ok(()), Ok(()));
         };
         // Native cleanup starts only after the queue stopped.
         let native_result =
-            wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, native_cleanup).await;
+            wamn_engine::lifecycle::bounded_cleanup(remaining(), native_cleanup).await;
         (queue_result, native_result)
     };
-    let ((queue_result, native_result), ()) =
-        tokio::join!(drain_then_cleanup, tokio::time::sleep(propagation_delay));
+    let ((queue_result, native_result), ()) = tokio::join!(
+        drain_then_cleanup,
+        tokio::time::sleep(propagation_delay.min(remaining()))
+    );
     let native_result =
         normalize_explicit_ingress_stop(native_result, had_ingress && ingress_result.is_ok());
     let cleanup_result = ingress_result.and(queue_result).and(native_result);
@@ -2044,6 +2080,7 @@ mod tests {
     fn chart_lifecycle_flags_parse_with_native_defaults() {
         let defaults = TestCli::try_parse_from(["wamn-host"]).unwrap().args;
         assert!(defaults.drain_delay.is_zero());
+        assert_eq!(defaults.drain_bound_seconds, 300);
         assert!(defaults.nats_connect_timeout.is_zero());
         let args = TestCli::try_parse_from([
             "wamn-host",
@@ -2148,8 +2185,9 @@ mod tests {
         .expect("combined cleanup");
     }
 
-    /// R20: HTTP admission closes, the queue drains its pinned backlog with no
-    /// host budget, and native cleanup starts only after the queue stopped.
+    /// R20: HTTP admission closes, the queue drains its pinned backlog within
+    /// the one shutdown budget, and native cleanup starts only after the queue
+    /// stopped.
     #[tokio::test]
     async fn shutdown_closes_admission_drains_the_queue_then_cleans_up() {
         use std::sync::Mutex;
@@ -2158,7 +2196,6 @@ mod tests {
         let (stop_queue, mut stopping) = tokio::sync::watch::channel(false);
         let queue = async {
             stopping.changed().await.expect("queue stop sender");
-            // The drain outlives the cleanup budget below.
             tokio::time::sleep(Duration::from_millis(300)).await;
             order.lock().unwrap().push("queue");
             Ok(())
@@ -2180,11 +2217,58 @@ mod tests {
             stop_queue,
             &probes,
             Duration::ZERO,
-            Duration::from_millis(100),
+            Duration::from_secs(5),
         )
         .await
         .expect("combined cleanup");
         assert_eq!(*order.lock().unwrap(), ["ingress", "queue", "native"]);
+    }
+
+    /// R20: one budget bounds the whole sequence. With a queue drain and a
+    /// native cleanup each slower than the budget, the host stops the queue at
+    /// the deadline, runs no further cleanup step and exits cleanly, at the
+    /// deadline and not at the sum of the steps.
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_sequence_exits_within_one_drain_budget() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let budget = shutdown_budget(30);
+        assert_eq!(budget, Duration::from_secs(28));
+        let native_started = AtomicBool::new(false);
+        let probes = ProbeState::default();
+        let (stop_queue, mut stopping) = tokio::sync::watch::channel(false);
+        let queue = async {
+            stopping.changed().await.expect("queue stop sender");
+            tokio::time::sleep(Duration::from_secs(100)).await;
+            Ok(())
+        };
+        tokio::pin!(queue);
+        let started = tokio::time::Instant::now();
+        stop_combined_after(
+            async { Ok(()) },
+            async {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Ok(())
+            },
+            false,
+            async {
+                native_started.store(true, Ordering::Relaxed);
+                tokio::time::sleep(Duration::from_secs(100)).await;
+                Ok(())
+            },
+            queue.as_mut(),
+            true,
+            stop_queue,
+            &probes,
+            Duration::from_secs(5),
+            budget,
+        )
+        .await
+        .expect("the deadline is a clean exit");
+        assert_eq!(started.elapsed(), budget);
+        assert!(
+            !native_started.load(Ordering::Relaxed),
+            "no cleanup step runs after the deadline"
+        );
     }
 
     #[tokio::test]

@@ -243,8 +243,7 @@ fn global_fifo_uses_available_stream_run_tie_break() {
     assert!(sql.contains("selected_run.package_id = ANY($1::text[])"));
     assert!(sql.contains("selected_run.environment = $2"));
     // R20 (1): FIFO is per release while two releases coexist.
-    assert!(sql.contains("AND ($3::text IS NULL OR selected_run.manifest_digest IS NULL"));
-    assert!(sql.contains("OR selected_run.manifest_digest = $3)"));
+    assert!(sql.contains("AND selected_run.manifest_digest IS NOT DISTINCT FROM $3::text"));
     assert!(sql.contains("AS router_caller_attached"));
     assert!(sql.contains("AS durable_caller_attached"));
     assert!(sql.contains("r.flow_id IS NULL AND r.flow_version IS NULL"));

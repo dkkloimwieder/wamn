@@ -437,6 +437,21 @@ CREATE TABLE catalog.event_registrations (
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, package_id, entity_id);
 
+-- The recorded floor of each installed package (docs/plan/platform-deploy.md
+-- R13, R16): the version `env apply` contracted it to at step 9. A floor only
+-- advances along `predecessor_version`; `apply` refuses a document that omits
+-- it or declares an ancestor of it.
+CREATE TABLE catalog.package_floors (
+    tenant_id   text        NOT NULL CHECK (tenant_id <> ''),
+    package_id  text        NOT NULL,
+    version     text        NOT NULL,
+    recorded_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT package_floors_pkey PRIMARY KEY (tenant_id, package_id),
+    CONSTRAINT package_floors_package_fkey
+        FOREIGN KEY (tenant_id, package_id, version)
+        REFERENCES catalog.packages (tenant_id, package_id, package_version)
+);
+
 -- Tenant floors are one mechanism applied to the complete current relation
 -- set. The server catalog, rather than checked-in SQL text, shows the result.
 DO $tenant_floors$
@@ -451,7 +466,7 @@ BEGIN
         'connection_generations', 'connection_bindings', 'wirings',
         'wiring_tombstones',
         'package_upgrade_qualifications',
-        'event_registrations', 'package_upgrade_stages'
+        'event_registrations', 'package_upgrade_stages', 'package_floors'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
@@ -481,7 +496,7 @@ BEGIN
         'packages', 'package_migrations', 'package_definition_owners',
         'releases', 'component_digest_owners', 'component_library',
         'connection_requirements', 'connection_generations',
-        'connection_bindings', 'wirings', 'wiring_tombstones',
+        'wirings', 'wiring_tombstones',
         'package_upgrade_qualifications'
     ] LOOP
         EXECUTE format(
@@ -491,6 +506,12 @@ BEGIN
     END LOOP;
 END
 $immutable_facts$;
+
+-- A binding never changes. `env apply` removes the bindings of a release
+-- that left the live set, after the drain (docs/plan/platform-deploy.md R22 (3)).
+CREATE TRIGGER connection_bindings_immutable
+    BEFORE UPDATE ON catalog.connection_bindings
+    FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 GRANT SELECT ON catalog.packages,
     catalog.releases,

@@ -398,7 +398,7 @@ package_id,registration_id,status,tenant_id,trigger_source,wiring_hash,wiring_id
 /// R20 (1): the candidate select filters by the claiming host's release. The
 /// FIFO head is pinned to release 2, and a host of release 1 claims the
 /// release-1 run queued behind it instead of selecting the head. A host with
-/// no release keeps the global order.
+/// no release selects no pinned run.
 #[test]
 fn release_scoped_queue_claim_skips_another_releases_head_live() {
     let _serialized = wamn_test_postgres::lock();
@@ -476,8 +476,8 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
     );
     assert_eq!(
         head_for("NULL"),
-        "run-b",
-        "a host with no release keeps the global FIFO"
+        "",
+        "a host with no release claims no pinned run"
     );
     assert_eq!(
         head_for("'sha256:3333333333333333333333333333333333333333333333333333333333333333'"),

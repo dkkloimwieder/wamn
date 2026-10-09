@@ -55,7 +55,7 @@ The control host of an org holds the administration login of each environment of
 `provision-org --emit-control-administration-secret PATH` writes the empty Secret `wamn-control-administration-<org>`. Apply it before the control host starts, because the host mounts it.
 Each administration prepare of `provision-project-env` needs `--emit-control-administration-patch PATH`, and each rotation writes the patch again.
 Apply the patch to that Secret with `kubectl patch secret wamn-control-administration-<org> --type merge --patch-file PATH`.
-`delete-project-env --emit-control-administration-patch PATH` writes the patch that removes the key. Apply it before the run.
+`env delete <org/project/env>` removes the key itself.
 
 If a package declares a registration condition that reads the old row, run `reconcile-replica-identity` after `apply-package`.
 The verb sets REPLICA IDENTITY FULL on each table that such a registration names. WMS needs it for `wms.packaging`:

@@ -438,7 +438,10 @@ async fn read_release(
 }
 
 /// Run `helm` with the platform's kubeconfig and context.
-async fn helm(platform: &Platform, arguments: &[&str]) -> anyhow::Result<std::process::Output> {
+pub(crate) async fn helm(
+    platform: &Platform,
+    arguments: &[&str],
+) -> anyhow::Result<std::process::Output> {
     Command::new("helm")
         .args(arguments)
         .arg("--kubeconfig")
@@ -508,6 +511,24 @@ pub(crate) async fn read_revision(
     }))
 }
 
+/// Whether Helm holds the release chart of the environment, in any status.
+pub(crate) async fn release_present(
+    platform: &Platform,
+    release_name: &str,
+) -> anyhow::Result<bool> {
+    let output = helm(platform, &["status", release_name]).await?;
+    if output.status.success() {
+        return Ok(true);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    ensure!(
+        stderr.contains("not found"),
+        "helm status {release_name} exited {}: {stderr}",
+        output.status
+    );
+    Ok(false)
+}
+
 /// The newest entry of `helm history` with status `deployed` or `superseded`.
 pub(crate) fn newest_successful(history: &[Value]) -> Option<&Value> {
     history
@@ -522,6 +543,11 @@ pub(crate) async fn read_live_set(
     platform: &Platform,
     release_name: &str,
 ) -> anyhow::Result<BTreeMap<String, usize>> {
+    Ok(live_set(&read_pods(platform, release_name).await?))
+}
+
+/// The host pods of the environment's host group, as `kubectl get pods -o json`.
+pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow::Result<Value> {
     let selector = format!("wasmcloud.com/hostgroup={release_name}");
     let output = Command::new("kubectl")
         .arg("--kubeconfig")
@@ -540,8 +566,7 @@ pub(crate) async fn read_live_set(
         output.status,
         String::from_utf8_lossy(&output.stderr)
     );
-    let pods: Value = serde_json::from_slice(&output.stdout).context("decode the pod list")?;
-    Ok(live_set(&pods))
+    serde_json::from_slice(&output.stdout).context("decode the pod list")
 }
 
 pub(crate) fn live_set(pods: &Value) -> BTreeMap<String, usize> {
@@ -624,8 +649,12 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                     "floor {package}@{declared}: with release none no floor advances from {recorded}"
                 ));
             }
+            // A version not registered yet is a successor step 9 applies from
+            // its artifact; it cannot be an ancestor of a registered floor.
             Some(declared)
-                if !lineage.is_some_and(|lineage| descends(lineage, recorded, declared)) =>
+                if lineage.is_some_and(|lineage| {
+                    lineage.contains_key(declared) && !descends(lineage, recorded, declared)
+                }) =>
             {
                 refusals.push(format!(
                     "floor {package}@{declared} does not descend from the recorded floor {recorded}"
@@ -639,9 +668,16 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
             None => refusals.push(format!(
                 "floor {package}@{declared} names a package not installed"
             )),
-            Some(installed) if !installed.lineage.contains_key(declared) => refusals.push(format!(
-                "floor {package}@{declared} names a version not registered"
-            )),
+            Some(_)
+                if document.release == DeclaredRelease::None
+                    && !project.floors.contains_key(package) =>
+            {
+                refusals.push(format!(
+                    "floor {package}@{declared}: with release none no floor advances"
+                ));
+            }
+            // Step 9 applies a version not registered yet from its verified
+            // artifact, when its predecessor is the installed version.
             Some(_) => {}
         }
     }
@@ -899,9 +935,21 @@ mod tests {
         );
         assert!(advanced[0].contains("no floor advances"), "{advanced:?}");
         let first = refusals(
-            &document(digest, &[("wamn_wms", "2.4.0")]),
+            &document(digest.clone(), &[("wamn_wms", "2.4.0")]),
             &authorities(&[]),
         );
         assert!(first.is_empty(), "{first:?}");
+        // A version not registered yet is the contract-phase successor that
+        // step 9 applies from its artifact.
+        let successor = refusals(&document(digest, &[("wamn_wms", "2.5.0")]), &recorded);
+        assert!(successor.is_empty(), "{successor:?}");
+        let none_first = refusals(
+            &document(DeclaredRelease::None, &[("wamn_wms", "2.4.0")]),
+            &authorities(&[]),
+        );
+        assert!(
+            none_first[0].contains("no floor advances"),
+            "{none_first:?}"
+        );
     }
 }

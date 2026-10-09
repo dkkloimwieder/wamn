@@ -1011,7 +1011,7 @@ for project in receiving wms; do
 done
 ```
 
-A later environment adds its key through the patch of its administration prepare, and `delete-project-env --emit-control-administration-patch` removes it.
+A later environment adds its key through the patch of its administration prepare, and `env delete` removes it.
 
 ## 4. Public edge
 
@@ -1857,49 +1857,13 @@ The tier table is in section 6.1 of [the deployment plan](../plan/gcp-deployment
 
 ### 6.7 Tear down an environment
 
-`wamn-ctl delete-project-env` deletes one environment and everything that its instance names, so that `provision-project-env` mints a new suffix (finding `wamn-psss`, plan `docs/plan/environment-teardown.md`). It deletes the source and advisory streams, the slot, the database, the CDC role, the generation roles of the nine instance families, the control rows of the tenant and the registry rows. The control-family roles, their `author_login_tenants` rows, the service principals and their PATs stay. Keep the port-forwards of sections 3.6 and 3.18, and set the names of the environment:
+`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document mints a new suffix (docs/plan/platform-deploy.md §12.3). Under the lifecycle lock it uninstalls the release chart and waits for the host pods to drain, refuses if a run is pinned to a release with no pod, revokes the provisioning PATs, deletes the credential Secrets, removes the environment's key of `wamn-control-administration-<org>`, deletes the source and advisory streams, drops the slot, deletes the CloudNativePG `Database`, deletes the control rows of the tenant and deletes the registry rows. The `Database` keeps `databaseReclaimPolicy: retain`, so the database and its owner roles stay on the cluster. With `--data` it drops the database and the instance roles too, and asks for the coordinate again at a terminal. It reads the platform inputs of `env apply`; set `WAMN_EVENT_NATS_URL`, `WAMN_EVENT_NATS_USERNAME` and `WAMN_EVENT_NATS_PASSWORD_FILE` when the environment captures events:
 
 ```bash
-ORG=dkk PROJECT=receiving ENV=dev
-export WAMN_PG_ADMIN_URL="${WAMN_SYSTEM_ADMIN_URL%/*}/postgres"
+target/debug/wamn-ctl env delete $ORG/$PROJECT/$ENV
 ```
 
-Print the plan. Without `--confirm`, the verb changes nothing:
-
-```bash
-target/debug/wamn-ctl delete-project-env --org $ORG --project $PROJECT --env $ENV \
-  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $E/provisioning-username)" \
-  --nats-password-file $E/provisioning-password
-```
-
-The plan lists the Kubernetes objects first, as "delete before this run". The verb has no Kubernetes client, so you delete them. Delete the CloudNativePG `Database` first. It has `ensure: present`, so it creates the database again if it stays:
-
-```bash
-kubectl -n platform delete database <database of the plan>
-```
-
-Delete each Secret of the plan. The plan names the namespace of `wamn-db-` and `wamn-cdc-`. Each other Secret is in the namespace of the workload that reads it: `hosts` on wamn-dev, and `identity` for `wamn-session-role-reader-`:
-
-```bash
-kubectl -n <namespace> delete secret <Secret of the plan>
-```
-
-Stop every workload that reads one of these Secrets, for example the CDC reader and the host group of the environment:
-
-```bash
-kubectl -n platform scale deploy/cdc-reader --replicas=0
-kubectl -n hosts scale deploy/hostgroup-default --replicas=0
-```
-
-Run the verb with `--confirm`. It refuses and changes nothing if the slot is active or the database has a session. The refusal names each login that is still connected, so stop the workload that uses it and run the verb again. The verb also refuses if the admin URL is not the `postgres` database of the org's cluster:
-
-```bash
-target/debug/wamn-ctl delete-project-env --org $ORG --project $PROJECT --env $ENV --confirm \
-  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $E/provisioning-username)" \
-  --nats-password-file $E/provisioning-password
-```
-
-A trigger records the old suffix in `registry.retired_project_envs`. The delete also removes the memberships of the environment and its `registry.event_readers` row, so grant the memberships of section 4.5 again after the new provision. A second run finds no registry row and refuses.
+Every step is "if present", so a failed run is finished by running it again. A trigger records the old suffix in `registry.retired_project_envs`. The delete also removes the memberships of the environment and its `registry.event_readers` row, so grant the memberships of section 4.5 again after the new provision. A second run finds no registry row and stops there.
 
 No user may purge a stream, and a torn-down environment's stream is deleted, not purged. After `enable-cdc-project-env` runs again, run the tap-stream Job of section 3.5 again. Since finding `wamn-fipl`, the role SQL of every `enable-cdc-project-env` run sets the Secret's password and attributes on an existing role. The reader reads the Secret at start, so restart it after the Secret changes:
 

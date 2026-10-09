@@ -256,6 +256,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0014_stage_digests.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0014_stage_digests.sql"),
     },
+    Migration {
+        relative_path: "migrations/project/0015_package_floors.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0015_package_floors.sql"),
+    },
 ];
 
 #[cfg(test)]

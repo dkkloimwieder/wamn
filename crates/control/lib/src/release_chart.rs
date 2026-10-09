@@ -198,12 +198,15 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
 /// host, because the manifest names neither. The operator chart sets
 /// `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace first, and this later
 /// entry replaces it, because the namespace is shared by every environment
-/// (R6).
-const HOST_VARIABLES: [&str; 4] = [
+/// (R6). `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one
+/// budget of the host's shutdown sequence, from the same value as the pods'
+/// `terminationGracePeriodSeconds` (R20).
+const HOST_VARIABLES: [&str; 5] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WASMCLOUD_HOST_ENVIRONMENT",
     "WAMN_ROUTE_HOST",
+    "WAMN_DRAIN_BOUND_SECONDS",
 ];
 
 /// The inputs of one environment's install values.
@@ -218,7 +221,8 @@ pub struct ValuesInput {
     pub route_host: String,
     pub roles: Vec<Role>,
     /// The drain bound of the environment policy, rendered as the host pods'
-    /// `terminationGracePeriodSeconds` (R20).
+    /// `terminationGracePeriodSeconds` and as the host's
+    /// `WAMN_DRAIN_BOUND_SECONDS` (R20).
     pub drain_bound_seconds: u32,
     /// Who applied. It renders nothing and is kept with the revision (§9.2).
     pub actor: String,
@@ -255,15 +259,14 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         }),
         "the host group body sets a scope variable, which the release chart derives"
     );
-    for (variable, value) in
-        HOST_VARIABLES
-            .into_iter()
-            .zip([&input.org, &input.project, &input.env, &input.route_host])
-    {
-        variables.push(mapping([
-            ("name", variable.to_owned()),
-            ("value", value.clone()),
-        ]));
+    for (variable, value) in HOST_VARIABLES.into_iter().zip([
+        input.org.clone(),
+        input.project.clone(),
+        input.env.clone(),
+        input.route_host.clone(),
+        input.drain_bound_seconds.to_string(),
+    ]) {
+        variables.push(mapping([("name", variable.to_owned()), ("value", value)]));
     }
     group.insert(
         "extraArgs".into(),
@@ -533,7 +536,8 @@ mod tests {
             serde_yaml::from_str::<Value>(
                 "[{name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
                  {name: WASMCLOUD_HOST_ENVIRONMENT, value: prod}, \
-                 {name: WAMN_ROUTE_HOST, value: wms.acme.example}]"
+                 {name: WAMN_ROUTE_HOST, value: wms.acme.example}, \
+                 {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}]"
             )
             .expect("yaml")
         );

@@ -7,7 +7,8 @@
 //! readiness still runs. Otherwise it runs `helm upgrade --install` at
 //! [`release_chart::CHART_VERSION`] with `--wait`, the policy's readiness
 //! budget as `--timeout`, `--rollback-on-failure`, `--history-max 50` and the
-//! description `apply by <actor>`. A connection-only apply writes no revision,
+//! description `apply by <actor>`, or `rollback by <actor>: <reason>` (§11.2).
+//! A connection-only apply writes no revision,
 //! because no connection fact is in the values.
 
 use std::time::{Duration, Instant};
@@ -69,6 +70,7 @@ pub async fn write(
     document: &EnvironmentDocument,
     analysis: &Analysis,
     release: &ReleaseFacts,
+    reason: Option<&str>,
 ) -> anyhow::Result<Written> {
     let policy = &analysis.authorities.policy;
     let budget = Duration::from_secs(u64::try_from(policy.readiness_budget_seconds)?);
@@ -130,7 +132,10 @@ pub async fn write(
         &release_name,
         &values,
         budget,
-        &format!("apply by {}", analysis.actor),
+        &match reason {
+            None => format!("apply by {}", analysis.actor),
+            Some(reason) => format!("rollback by {}: {reason}", analysis.actor),
+        },
     )
     .await?;
     Ok(Written {

@@ -22,6 +22,20 @@
 //!    differs and derives from the coordinate, and each host mounts only its
 //!    own Secrets.
 //!
+//! Checks of `wamn-snz0.4` (§10.1 steps 8 and 9, §11.2, §12.2, §12.3, R8,
+//! R20, R22):
+//! 6. apply B, then rollback: the live set is A, the route host and the
+//!    connections are unchanged, and no revision is a `helm rollback`.
+//! 7. rollback with one retained revision refuses "no retained prior
+//!    release" and the history is unchanged.
+//! 8. `host_exits_before_its_grace_period`: a deleted host pod with a pinned
+//!    backlog exits with code 0 before `terminationGracePeriodSeconds`.
+//! 9. release = none: no host pod remains, the declared instance stays
+//!    enabled, no binding remains.
+//! 10. delete with a run pinned to a release with no pod refuses.
+//! 11. and 12. delete --data drops the database; a plain delete leaves it on
+//!    the cluster and removes the row.
+//!
 //! A6 (kind half) and A7 (kind half) need a staged package upgrade and an
 //! http role; this fixture has neither, and the report says so.
 //!
@@ -62,6 +76,8 @@ const POLICY: &str = "dev";
 /// The canonical fixture of `release_chart_smoke.rs`: one package, no http
 /// attachment, no registration.
 const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+/// The second fixture release, B: the same package, another component digest.
+const MANIFEST_B: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 /// A role image no WorkloadDeployment pulls: the fixture renders no role.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
 /// The package `orders@1.0.0` the fixture release names: no model, no
@@ -120,6 +136,45 @@ impl Run {
             )
             .await?;
         Ok(history.as_array().map_or(0, Vec::len))
+    }
+
+    /// The release digests of the host pods of `release` that are not terminated.
+    async fn live_digests(&self, release: &str) -> anyhow::Result<Vec<String>> {
+        let pods = self
+            .json(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "pods",
+                    "-l",
+                    &format!("wasmcloud.com/hostgroup={release}"),
+                    "-o",
+                    "json",
+                ],
+            )
+            .await?;
+        let mut digests: Vec<String> = pods["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|pod| {
+                !matches!(
+                    pod["status"]["phase"].as_str(),
+                    Some("Succeeded" | "Failed")
+                )
+            })
+            .map(|pod| {
+                pod["metadata"]["annotations"]["wamn.release-digest"]
+                    .as_str()
+                    .unwrap_or("unlabelled")
+                    .to_owned()
+            })
+            .collect();
+        digests.sort();
+        digests.dedup();
+        Ok(digests)
     }
 
     async fn remove(&self) {
@@ -848,6 +903,283 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
                 test. Every environment Secret is <family prefix><org>--<project>--<env>, every \
                 chart object is named after r-<slug>-<hash>."}),
         !dev_names.is_empty() && !qa_names.is_empty() && shared.is_empty() && own,
+    );
+
+    // The checks of wamn-snz0.4: rollback, release none, the host's one
+    // shutdown budget, and delete.
+    let digest_b = push_manifest_bytes(
+        MANIFEST_B,
+        &format!("{local}/wamn/releases"),
+        false,
+        &platform.oci_ca_paths,
+        &work.join("auth.json"),
+    )
+    .await
+    .context("push the second fixture release manifest")?
+    .digest
+    .as_str()
+    .to_owned();
+    let dev_triple = Triple::new(ORG, PROJECT, "dev");
+    let qa_triple = Triple::new(ORG, PROJECT, "qa");
+    let project_database = async |env: &str| -> anyhow::Result<(String, String)> {
+        let (system, task) = connect(&system_url).await?;
+        let suffix: String = system
+            .query_one(
+                "SELECT instance_suffix FROM registry.project_envs \
+                  WHERE org = $1 AND project = $2 AND env = $3",
+                &[&ORG, &PROJECT, &env],
+            )
+            .await?
+            .get(0);
+        task.abort();
+        let database =
+            wamn_control_provision::project_env_database_name(ORG, PROJECT, env, &suffix);
+        let url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
+        Ok((database, url))
+    };
+
+    // 6. R8: apply B, then rollback. The live set is A again, the route host
+    // and the connections are unchanged, and no `helm rollback` ran: every
+    // revision is an apply's.
+    let mut dev_b = shown.clone();
+    dev_b.release = DeclaredRelease::Digest(digest_b.clone());
+    apply(&dev_b, "dev-b").await?;
+    let after_b = run.live_digests(&name).await?;
+    let rolled = environment::rollback::rollback(&platform, &dev_triple, "kind check").await?;
+    let after_rollback = run.live_digests(&name).await?;
+    let shown_after = environment::show::show(&platform, &dev_triple).await?;
+    let history = run
+        .json(
+            "helm",
+            &[
+                "-n", NAMESPACE, "history", &name, "--max", "50", "-o", "json",
+            ],
+        )
+        .await?;
+    let descriptions: Vec<String> = history
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry["description"].as_str().map(str::to_owned))
+        .collect();
+    let no_helm_rollback = descriptions
+        .iter()
+        .all(|description| !description.starts_with("Rollback to"));
+    run.pass(
+        "rollback is an apply of the previous intended release",
+        &format!("wamn-ctl env rollback {dev_triple} --reason 'kind check'; helm -n {NAMESPACE} history {name}"),
+        json!({"after_b": after_b, "after_rollback": after_rollback, "plan": rolled.plan,
+            "descriptions": descriptions, "shown_before": shown.to_kcl(), "shown_after": shown_after.to_kcl()}),
+        after_b == [digest_b.clone()]
+            && after_rollback == [digest.clone()]
+            && shown_after == shown
+            && no_helm_rollback
+            && descriptions
+                .last()
+                .is_some_and(|description| description.starts_with("rollback by")),
+    );
+
+    // 7. R8 (3): one retained revision refuses and writes nothing.
+    let qa_before = run.revisions(&qa_name).await?;
+    let refused = environment::rollback::rollback(&platform, &qa_triple, "kind check").await;
+    let qa_after = run.revisions(&qa_name).await?;
+    let message = refused.as_ref().err().map(|error| format!("{error:#}"));
+    run.pass(
+        "rollback with one retained revision refuses",
+        &format!("wamn-ctl env rollback {qa_triple} --reason 'kind check'"),
+        json!({"error": message, "revisions": [qa_before, qa_after]}),
+        message.as_deref().is_some_and(|message| {
+            message.contains(environment::rollback::NO_RETAINED_PRIOR_RELEASE)
+        }) && qa_before == qa_after,
+    );
+
+    // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
+    // it never empties exits with code 0 before its grace period.
+    let (system, system_task) = connect(&system_url).await?;
+    system.batch_execute("SET ROLE wamn_system").await?;
+    system
+        .execute(
+            "UPDATE registry.env_policies SET drain_bound_seconds = 30 WHERE org = $1 AND name = $2",
+            &[&ORG, &POLICY],
+        )
+        .await?;
+    system_task.abort();
+    apply(&shown, "dev-short-drain").await?;
+    let (_, dev_url) = project_database("dev").await?;
+    let (project, project_task) = connect(&dev_url).await?;
+    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
+    project
+        .execute(
+            "INSERT INTO wamn_run.runs \
+               (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+                wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
+             VALUES ($1, 'pinned-backlog', 'orders', 1, 'orders', $2, 'dev', 'orders', 1, \
+                     'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
+            &[&tenant, &digest],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at) \
+             VALUES ($1, 'pinned-backlog', 'infinity')",
+            &[&tenant],
+        )
+        .await?;
+    project_task.abort();
+    let pods = run
+        .json(
+            "kubectl",
+            &[
+                "-n",
+                NAMESPACE,
+                "get",
+                "pods",
+                "-l",
+                &format!("wasmcloud.com/hostgroup={name}"),
+                "-o",
+                "json",
+            ],
+        )
+        .await?;
+    let pod = pods["items"][0]["metadata"]["name"]
+        .as_str()
+        .context("a dev host pod")?
+        .to_owned();
+    let grace = pods["items"][0]["spec"]["terminationGracePeriodSeconds"]
+        .as_u64()
+        .context("the pod's grace period")?;
+    let deleted = Instant::now();
+    run.run(
+        "kubectl",
+        &["-n", NAMESPACE, "delete", "pod", &pod, "--wait=false"],
+    )
+    .await?;
+    let mut exit_code = None;
+    let mut exited_after = None;
+    while deleted.elapsed() < Duration::from_secs(grace + 30) {
+        let text = run
+            .run(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "pod",
+                    &pod,
+                    "--ignore-not-found",
+                    "-o",
+                    "json",
+                ],
+            )
+            .await?;
+        if text.trim().is_empty() {
+            exited_after.get_or_insert(deleted.elapsed().as_secs());
+            break;
+        }
+        let observed: Value = serde_json::from_str(&text)?;
+        if let Some(code) =
+            observed["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"].as_i64()
+        {
+            exit_code = Some(code);
+            exited_after = Some(deleted.elapsed().as_secs());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    run.pass(
+        "host_exits_before_its_grace_period",
+        &format!("kubectl -n {NAMESPACE} delete pod {pod}; kubectl get pod {pod} -o json"),
+        json!({"grace_seconds": grace, "exit_code": exit_code, "exited_after_seconds": exited_after}),
+        exit_code == Some(0) && exited_after.is_some_and(|seconds| seconds < grace),
+    );
+
+    // 9. release = none: no host pod remains, the declared instances stay
+    // enabled, and the release's bindings are gone.
+    let mut qa_none = environment::show::show(&platform, &qa_triple).await?;
+    qa_none.release = DeclaredRelease::None;
+    qa_none.connections.insert(
+        "labels".to_owned(),
+        ConnectionDefinition {
+            requirement_type: wamn_catalog::RequirementType::Blobstore,
+            definition: json!({"endpoint": "http://store.invalid", "container": "labels", "prefix": "qa/"}),
+        },
+    );
+    apply(&qa_none, "qa-none").await?;
+    let qa_live = run.live_digests(&qa_name).await?;
+    let (_, qa_url) = project_database("qa").await?;
+    let (project, project_task) = connect(&qa_url).await?;
+    let qa_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "qa");
+    let enabled: Vec<String> = project
+        .query(
+            "SELECT instance_id FROM catalog.connection_instances \
+              WHERE tenant_id = $1 AND environment = 'qa' AND lifecycle_status = 'enabled'",
+            &[&qa_tenant],
+        )
+        .await?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    let bindings: i64 = project
+        .query_one(
+            "SELECT count(*) FROM catalog.connection_bindings WHERE tenant_id = $1",
+            &[&qa_tenant],
+        )
+        .await?
+        .get(0);
+    project_task.abort();
+    run.pass(
+        "release none uninstalls and keeps the declared instances",
+        &format!(
+            "wamn-ctl env apply qa-none.k; kubectl get pods -l wasmcloud.com/hostgroup={qa_name}"
+        ),
+        json!({"live": qa_live, "enabled": enabled, "bindings": bindings,
+            "note": "the fixture's components declare no store alias, so A had no binding"}),
+        qa_live.is_empty() && enabled == ["labels"] && bindings == 0,
+    );
+
+    // 10. delete refuses on the run pinned to A, which no pod serves now.
+    let refused = environment::delete::delete(&platform, &dev_triple, false).await;
+    let message = refused.as_ref().err().map(|error| format!("{error:#}"));
+    run.pass(
+        "delete refuses on a stranded run",
+        &format!("wamn-ctl env delete {dev_triple}"),
+        json!({"error": message}),
+        message
+            .as_deref()
+            .is_some_and(|message| message.contains("pinned-backlog")),
+    );
+
+    // 11. delete --data drops the database; 12. a plain delete keeps it.
+    let (dev_database, _) = project_database("dev").await?;
+    let (qa_database, _) = project_database("qa").await?;
+    let dev_lines = environment::delete::delete(&platform, &dev_triple, true).await?;
+    let qa_lines = environment::delete::delete(&platform, &qa_triple, false).await?;
+    let (admin, admin_task) = connect(&admin_url).await?;
+    let exists = async |database: &str| -> anyhow::Result<bool> {
+        Ok(admin
+            .query_opt("SELECT 1 FROM pg_database WHERE datname = $1", &[&database])
+            .await?
+            .is_some())
+    };
+    let dev_kept = exists(&dev_database).await?;
+    let qa_kept = exists(&qa_database).await?;
+    admin_task.abort();
+    let (system, system_task) = connect(&system_url).await?;
+    system.batch_execute("SET ROLE wamn_system").await?;
+    let rows: i64 = system
+        .query_one(
+            "SELECT count(*) FROM registry.project_envs WHERE org = $1 AND project = $2",
+            &[&ORG, &PROJECT],
+        )
+        .await?
+        .get(0);
+    system_task.abort();
+    run.pass(
+        "delete --data drops the database; a plain delete keeps it",
+        &format!("wamn-ctl env delete {dev_triple} --data; wamn-ctl env delete {qa_triple}"),
+        json!({"dev": dev_lines, "qa": qa_lines, "dev_database_kept": dev_kept,
+            "qa_database_kept": qa_kept, "rows": rows}),
+        !dev_kept && qa_kept && rows == 0,
     );
 
     run.record(

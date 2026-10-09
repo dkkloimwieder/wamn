@@ -11,7 +11,6 @@ use serde_json::Value;
 use wamn_control::capture_gap::{
     self, CloseCaptureGapRequest, ClosedCaptureGap, RecoverCaptureGapRequest, RecoveredCaptureGap,
 };
-use wamn_control::delete_project_env::DeleteProjectEnvRequest;
 use wamn_control::enable_cdc_project_env::{
     self, EnableCdcProjectEnvOutcome, EnableCdcProjectEnvRequest,
 };
@@ -610,53 +609,6 @@ pub struct CloseCaptureGapArgs {
     pub system_database_url: String,
 }
 
-#[derive(Debug, Args)]
-pub struct DeleteProjectEnvArgs {
-    /// Org id.
-    #[arg(long)]
-    pub org: String,
-
-    /// Project id.
-    #[arg(long)]
-    pub project: String,
-
-    /// Environment slug.
-    #[arg(long)]
-    pub env: String,
-
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`): the registry
-    /// row, the tenant row and the control rows.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
-    pub system_database_url: String,
-
-    /// Superuser connection to the `postgres` database of the target cluster:
-    /// the slot, the database and the roles.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: String,
-
-    /// Event broker of the environment.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
-    pub nats_url: String,
-
-    /// Provisioning username of the stream, which may delete it.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
-    pub nats_username: String,
-
-    /// Private file containing the provisioning password.
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
-    pub nats_password_file: PathBuf,
-
-    /// Run the deletes. Without it, the verb prints the plan and changes nothing.
-    #[arg(long)]
-    pub confirm: bool,
-
-    /// Write the JSON merge patch that removes the environment's key from the
-    /// control host's Secret `wamn-control-administration-<org>`. Apply it
-    /// before the run, as the plan says.
-    #[arg(long, value_name = "PATH")]
-    pub emit_control_administration_patch: Option<PathBuf>,
-}
-
 /// Arguments of `upgrade-schema` (docs/plan/schema-upgrade.md).
 #[derive(Debug, Args)]
 pub struct UpgradeSchemaArgs {
@@ -1001,23 +953,6 @@ pub async fn recover_capture_gap(args: RecoverCaptureGapArgs) -> anyhow::Result<
         start_lsn.as_deref().unwrap_or("null"),
     );
     Ok(())
-}
-
-/// Delete one project environment. The library prints each step.
-pub async fn delete_project_env(args: DeleteProjectEnvArgs) -> anyhow::Result<()> {
-    wamn_control::delete_project_env::delete_project_env(&DeleteProjectEnvRequest {
-        org: args.org,
-        project: args.project,
-        env: args.env,
-        system_database_url: args.system_database_url,
-        admin_database_url: args.admin_database_url,
-        nats_url: args.nats_url,
-        nats_username: args.nats_username,
-        nats_password_file: args.nats_password_file,
-        confirm: args.confirm,
-        control_administration_patch: args.emit_control_administration_patch,
-    })
-    .await
 }
 
 /// Upgrade one installed database. The library prints each file.

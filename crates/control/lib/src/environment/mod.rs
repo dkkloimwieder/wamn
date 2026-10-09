@@ -3,21 +3,27 @@
 //!
 //! An environment is declared in one document, `environment.k`. `apply` moves
 //! the environment toward it, under one lifecycle lock: lock, analyse, ensure,
-//! expand, write, readiness, drain, contract (§10.1). `show` synthesizes the
-//! document from the authorities. This module holds steps 1 to 7; drain and
-//! contract (steps 8 and 9) land with `wamn-snz0.4`.
+//! expand, write, readiness, drain, contract (§10.1). `rollback` is `apply`
+//! of the previous intended release (§11.2), `delete` the one destructive
+//! verb (§12.3). `show` synthesizes the document from the authorities, and
+//! `status` reads the current state (§11.4).
 //!
 //! The platform inputs are environment variables of the verb, not flags and
 //! not document fields (epic decision D2).
 
 pub mod analyse;
+pub mod contract;
+pub mod delete;
 pub mod document;
+pub mod drain;
 pub mod ensure;
 pub mod expand;
 pub mod lock;
 pub mod readiness;
+pub mod rollback;
 pub mod show;
 pub mod stage;
+pub mod status;
 pub mod write;
 
 use std::path::{Path, PathBuf};
@@ -185,13 +191,7 @@ pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysi
     analyse::analyse(platform, &document).await
 }
 
-/// `env apply <file>`: take the lifecycle lock, analyse, then run steps 4 to
-/// 7 of §10.1: ensure the substrate, expand (row, policy projection,
-/// connections, packages, the package stage), write the release chart, and
-/// wait for readiness. Drain and contract are `wamn-snz0.4`.
-///
-/// Every step is an ensure judged by observation, so a crash anywhere is
-/// repaired by applying again.
+/// `env apply <file>`: take the lifecycle lock and run the steps of §10.1.
 ///
 /// # Errors
 ///
@@ -200,34 +200,60 @@ pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysi
 pub async fn apply(platform: &Platform, file: &Path) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
     let _lock = LifecycleLock::acquire(&platform.system_database_url, &document.triple()).await?;
-    let mut analysis = analyse::analyse(platform, &document).await?;
-    if analysis.authorities.release.is_none() && analysis.authorities.revision.is_some() {
-        bail!(
-            "release none uninstalls the release chart, and that write lands with wamn-snz0.4; \
-             nothing was written"
-        );
-    }
-    ensure::ensure(platform, &document, &analysis)
+    apply_locked(platform, &document, None).await
+}
+
+/// Steps 2 to 9 of §10.1 under a lifecycle lock the caller holds: analyse,
+/// ensure the substrate, expand (row, policy projection, connections,
+/// packages, the package stage), write the release chart and wait for
+/// readiness, or uninstall it for `release = none`, then drain and contract.
+/// `reason` is a rollback's, kept in the Helm description (§11.2).
+///
+/// Every step is an ensure judged by observation, so a crash anywhere is
+/// repaired by applying again.
+///
+/// # Errors
+///
+/// When the document is refused, or a step fails. The error names the step.
+pub(crate) async fn apply_locked(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    reason: Option<&str>,
+) -> anyhow::Result<Analysis> {
+    let mut analysis = analyse::analyse(platform, document).await?;
+    ensure::ensure(platform, document, &analysis)
         .await
         .context("step 4, ensure the substrate")?;
-    expand::expand(platform, &document, &analysis)
+    expand::expand(platform, document, &analysis)
         .await
         .context("step 5, expand")?;
+    let release_name = analysis.authorities.release_name.clone();
     if let Some(release) = &analysis.authorities.release {
-        let written = write::write(platform, &document, &analysis, release)
+        let written = write::write(platform, document, &analysis, release, reason)
             .await
             .context("step 6, write the release chart")?;
         readiness::wait(platform, &written)
             .await
             .context("step 7, readiness")?;
         analysis.plan.push(if written.helm_written {
-            format!("wrote a revision of {}", written.release_name)
+            format!("wrote a revision of {release_name}")
         } else {
-            format!(
-                "the values of {} are unchanged; Helm wrote nothing",
-                written.release_name
-            )
+            format!("the values of {release_name} are unchanged; Helm wrote nothing")
         });
+    } else if analyse::release_present(platform, &release_name).await? {
+        // Release none: no qualification, stage or readiness. The uninstall
+        // starts the drain (§12.2).
+        release_chart::uninstall(&platform.target, &release_name)
+            .await
+            .context("step 6, uninstall the release chart")?;
+        analysis.plan.push(format!("uninstalled {release_name}"));
     }
+    let live = drain::drain(platform, document, &analysis)
+        .await
+        .context("step 8, drain")?;
+    let contracted = contract::contract(platform, document, &analysis, &live)
+        .await
+        .context("step 9, contract")?;
+    analysis.plan.extend(contracted);
     Ok(analysis)
 }

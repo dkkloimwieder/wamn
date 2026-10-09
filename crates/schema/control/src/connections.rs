@@ -130,6 +130,32 @@ pub fn insert_component_connection_binding_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 }
 
+/// Remove the bindings of every release outside the live set `$3` (a text
+/// array) after the drain (docs/plan/platform-deploy.md R22 (3)). Returns the
+/// removed bindings' release digests.
+pub fn remove_connection_bindings_outside_live_set_sql() -> &'static str {
+    "DELETE FROM catalog.connection_bindings \
+      WHERE tenant_id = $1 AND environment = $2 AND NOT (manifest_digest = ANY($3)) \
+      RETURNING manifest_digest"
+}
+
+/// Disable each enabled instance that the document no longer names (`$3`, a
+/// text array) and no surviving binding uses (R22 (3), (7)). An instance is
+/// never deleted. Returns the disabled instance ids.
+pub fn disable_unbound_connection_instances_sql() -> &'static str {
+    "UPDATE catalog.connection_instances AS instance \
+        SET lifecycle_status = 'disabled', revision = instance.revision + 1 \
+      WHERE instance.tenant_id = $1 AND instance.environment = $2 \
+        AND instance.lifecycle_status = 'enabled' \
+        AND NOT (instance.instance_id = ANY($3)) \
+        AND NOT EXISTS ( \
+            SELECT 1 FROM catalog.connection_bindings AS binding \
+             WHERE binding.tenant_id = instance.tenant_id \
+               AND binding.environment = instance.environment \
+               AND binding.instance_id = instance.instance_id) \
+      RETURNING instance.instance_id"
+}
+
 /// The `sha256:<hex>` identity of `bytes`. The package manifest digest and the
 /// per-migration digest both use this one copy.
 pub(crate) fn prefixed_sha256(bytes: &[u8]) -> String {

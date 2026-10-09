@@ -37,11 +37,13 @@ use crate::{RunStatus, sql as run_sql};
 ///
 /// `$3` is the claiming host's release manifest digest, or NULL for a host that
 /// carries none. A run executes only on hosts of the release it was admitted
-/// under, so the candidate select skips a run pinned to another release. A
-/// candidate run carries no pin and any host of the environment may take it
-/// instead of locking it as the head: while two releases coexist, FIFO is per
-/// release and a draining host claims only its own backlog
-/// (platform-deploy.md R20). [`grant_production_claim_sql`] rechecks the pin.
+/// under, so the select takes only runs whose pin equals `$3`: a production
+/// host, which always carries a digest, selects exactly its own release's
+/// runs, and a run pinned to another release never becomes its head. While two
+/// releases coexist, FIFO is per release and a draining host claims only its
+/// own backlog (platform-deploy.md R20). A candidate run carries no pin, so
+/// only a host with no release selects it: candidate selection keeps its own
+/// path. [`grant_production_claim_sql`] rechecks the pin.
 pub fn select_production_claim_sql() -> String {
     format!(
         "WITH candidate AS MATERIALIZED ( \
@@ -54,8 +56,7 @@ pub fn select_production_claim_sql() -> String {
               WHERE q.tenant_id = current_setting('app.tenant', true) \
                 AND selected_run.package_id = ANY($1::text[]) \
                 AND selected_run.environment = $2 \
-                AND ($3::text IS NULL OR selected_run.manifest_digest IS NULL \
-                     OR selected_run.manifest_digest = $3) \
+                AND selected_run.manifest_digest IS NOT DISTINCT FROM $3::text \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
                 AND ( \
@@ -376,7 +377,9 @@ mod tests {
     fn production_turns_filter_one_global_fifo_by_the_release_package_set() {
         let claim = select_production_claim_sql();
         assert!(claim.contains("selected_run.package_id = ANY($1::text[])"));
-        assert!(claim.contains("selected_run.manifest_digest = $3"));
+        // R20: no NULL on either side skips the release filter.
+        assert!(claim.contains("selected_run.manifest_digest IS NOT DISTINCT FROM $3::text"));
+        assert!(!claim.contains("IS NULL OR selected_run.manifest_digest"));
         assert!(claim.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
         assert_eq!(claim.matches("LIMIT 1").count(), 1);
 
