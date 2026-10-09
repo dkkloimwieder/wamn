@@ -31,9 +31,8 @@ pub struct WidgetDeleteRow {
 pub(crate) const CREATE_SQL: &str = include_str!("../sql/widget/create.sql");
 pub(crate) const DELETE_SQL: &str = include_str!("../sql/widget/delete.sql");
 pub(crate) const GET_SQL: &str = include_str!("../sql/widget/get.sql");
-pub(crate) const QUERY_0_SQL: &str = include_str!("../../query/widget.sql");
-pub(crate) const QUERY_1_SQL: &str =
-    include_str!("../../query/widget_by_created_at_descending.sql");
+pub(crate) const QUERY_0_SQL: &str = include_str!("../sql/widget/query_created_at_ascending.sql");
+pub(crate) const QUERY_1_SQL: &str = include_str!("../sql/widget/query_created_at_descending.sql");
 pub(crate) const UPDATE_SQL: &str = include_str!("../sql/widget/update.sql");
 
 pub(crate) fn get_id_bind_fixture() -> uuid::Uuid {

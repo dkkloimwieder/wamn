@@ -359,15 +359,19 @@ fn valid_sha256(value: &str) -> bool {
 
 /// Compile an authored manifest: add the members that generation derives.
 ///
-/// The author states no relation of a custom operation
-/// (docs/plan/platform-deploy.md §6.1). Each one comes from the operation's
-/// statements over the catalog, and the compiled manifest that every reader
-/// reads carries it. The authored members keep their bytes and order.
+/// The author states no relation of a custom operation and no stamp column
+/// (docs/plan/platform-deploy.md §6.1). Each relation comes from the
+/// operation's statements over the catalog, and the compiled manifest that
+/// every reader reads carries it. The other authored members keep their bytes
+/// and order. A model's `enum_fields` are checked here: an authored list only
+/// narrows a CHECK's value set or names a set that no CHECK carries, and
+/// generation reads the rest from the CHECKs ([`generate`]).
 ///
 /// # Errors
 ///
-/// When the manifest is invalid or already states a relation, when an
-/// authored statement is missing, or when the SQL cannot be derived.
+/// When the manifest is invalid or states a derived member, when an authored
+/// statement is missing, when the SQL cannot be derived, or when a CHECK that
+/// carries a quoted value is not of the form `col IN ('a', ...)`.
 pub fn derive_manifest(
     catalog: &CatalogIr,
     manifest_json: &[u8],
@@ -393,6 +397,24 @@ pub fn derive_manifest(
             validation::derive_relations(catalog, &manifest, authored_sql, name, operation)?,
         );
     }
+    for (name, model) in &manifest.models {
+        if let Some(stamp) = model.server_owned_fields.iter().find(|field| {
+            RecordHistoryColumn::ALL
+                .iter()
+                .any(|column| column.as_str() == field.as_str())
+        }) {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidModel,
+                format!(
+                    "{name} states stamp column {stamp} as server-owned; generation reads each stamp from the table, so remove it"
+                ),
+            ));
+        }
+        let Some(table) = relation(catalog, model) else {
+            continue;
+        };
+        model_enum_fields(name, model, table)?;
+    }
     let compiled =
         crate::authoring::with_derived_relations(manifest_json, &relations).map_err(|source| {
             GenerateError::with_source(
@@ -410,7 +432,8 @@ pub fn derive_manifest(
 /// The one child process is `rustfmt`, which formats each emitted `.rs`
 /// artifact. It reads and writes only the bytes it is handed.
 pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, GenerateError> {
-    let manifest = PackageManifest::from_slice(input.manifest_json)?;
+    let mut manifest = PackageManifest::from_slice(input.manifest_json)?;
+    complete_enum_fields(input.catalog, &mut manifest);
     validate(input, &manifest)?;
 
     let mut files = BTreeMap::<String, Vec<u8>>::new();
@@ -992,6 +1015,132 @@ fn relation<'a>(catalog: &'a CatalogIr, model: &ModelDeclaration) -> Option<&'a 
         .find(|table| table.schema() == model.schema && table.name() == model.table)
 }
 
+/// Give each model the value set of every text column whose CHECK has the form
+/// `col IN ('a', ...)`, unless the manifest states a list for that column.
+///
+/// The schema owns these sets, so the compiled manifest carries only the
+/// authored lists, and [`derive_manifest`] has refused an authored list that
+/// widens a set or states it again.
+fn complete_enum_fields(catalog: &CatalogIr, manifest: &mut PackageManifest) {
+    for model in manifest.models.values_mut() {
+        let Some(table) = relation(catalog, model) else {
+            continue;
+        };
+        for constraint in table.constraints() {
+            let ConstraintType::Check { expression } = constraint.constraint_type() else {
+                continue;
+            };
+            if let Some((field, values)) = check_value_set(expression).filter(|(field, _)| {
+                column(table, field).is_some_and(|column| column.column_type() == ColumnType::Text)
+            }) {
+                model.enum_fields.entry(field).or_insert(values);
+            }
+        }
+    }
+}
+
+/// The value set of each text column of the model's table, read from its
+/// CHECKs, with each authored list that narrows one.
+///
+/// A CHECK that carries a quoted value is a value set, and it takes the form
+/// `col IN ('a', ...)`, which PostgreSQL stores as
+/// `(col = ANY (ARRAY['a'::text, ...]))`. Any other CHECK with a quoted value
+/// refuses with its name, and a CHECK without one is not a value set. An
+/// authored list equal to the CHECK's set is the derived set stated again, and
+/// one that names a value outside it widens it: both refuse.
+fn model_enum_fields(
+    model_name: &str,
+    model: &ModelDeclaration,
+    table: &Table,
+) -> Result<BTreeMap<String, Vec<String>>, GenerateError> {
+    let mut values = BTreeMap::new();
+    for constraint in table.constraints() {
+        let ConstraintType::Check { expression } = constraint.constraint_type() else {
+            continue;
+        };
+        if !expression.contains('\'') {
+            continue;
+        }
+        let (field, set) = check_value_set(expression)
+            .filter(|(field, _)| {
+                column(table, field).is_some_and(|column| column.column_type() == ColumnType::Text)
+            })
+            .ok_or_else(|| {
+                GenerateError::for_object(
+                    GenerateErrorType::InvalidModel,
+                    format!(
+                        "{model_name} CHECK {} carries a quoted value but is not of the form col IN ('a', ...) on one text column: {expression}",
+                        constraint.name()
+                    ),
+                    format!("{}.{}.{}", table.schema(), table.name(), constraint.name()),
+                )
+            })?;
+        if values.insert(field.clone(), set).is_some() {
+            return Err(GenerateError::for_object(
+                GenerateErrorType::InvalidModel,
+                format!(
+                    "{model_name}.{field} has more than one value-set CHECK; {} is the second",
+                    constraint.name()
+                ),
+                format!("{}.{}.{}", table.schema(), table.name(), constraint.name()),
+            ));
+        }
+    }
+    for (field, declared) in &model.enum_fields {
+        if let Some(derived) = values.get(field) {
+            let derived_set = derived.iter().collect::<BTreeSet<_>>();
+            let declared_set = declared.iter().collect::<BTreeSet<_>>();
+            if declared_set == derived_set {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidModel,
+                    format!(
+                        "{model_name}.{field} states enum_fields that its CHECK already carries; remove it"
+                    ),
+                ));
+            }
+            if !declared_set.is_subset(&derived_set) {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidModel,
+                    format!(
+                        "{model_name}.{field} enum_fields names a value that its CHECK refuses; a declared list narrows the CHECK and never widens it"
+                    ),
+                ));
+            }
+        }
+        values.insert(field.clone(), declared.clone());
+    }
+    Ok(values)
+}
+
+/// The column and values of `(col = ANY (ARRAY['a'::text, ...]))`, the one
+/// stored form of `col IN ('a', ...)`, or `None` for any other expression.
+fn check_value_set(expression: &str) -> Option<(String, Vec<String>)> {
+    let expression = expression
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(expression);
+    let (field, items) = expression
+        .strip_suffix("])")?
+        .split_once(" = ANY (ARRAY[")?;
+    if field.is_empty()
+        || !field
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return None;
+    }
+    let values = items
+        .split(", ")
+        .map(|item| {
+            item.strip_prefix('\'')?
+                .strip_suffix("'::text")
+                .filter(|value| !value.is_empty() && !value.contains('\''))
+                .map(str::to_owned)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((field.to_owned(), values))
+}
+
 fn column<'a>(table: &'a Table, name: &str) -> Option<&'a Column> {
     table.columns().iter().find(|column| column.name() == name)
 }
@@ -1088,5 +1237,33 @@ fn constraint_error(kind: &ConstraintType) -> &'static str {
         ConstraintType::PrimaryKey { .. } | ConstraintType::Unique { .. } => "unique_violation",
         ConstraintType::ForeignKey { .. } => "foreign_key_violation",
         ConstraintType::Check { .. } => "check_violation",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_value_set;
+
+    #[test]
+    fn only_the_stored_in_form_is_a_value_set() {
+        let set = |values: &[&str]| values.iter().map(|value| (*value).to_owned()).collect();
+        assert_eq!(
+            check_value_set("(status = ANY (ARRAY['open'::text, 'complete'::text]))"),
+            Some(("status".to_owned(), set(&["open", "complete"])))
+        );
+        assert_eq!(
+            check_value_set("code = ANY (ARRAY['priority'::text])"),
+            Some(("code".to_owned(), set(&["priority"])))
+        );
+        for other in [
+            "((status = 'open'::text) OR (status = 'complete'::text))",
+            "(status <> ''::text)",
+            "((kind)::text = ANY (ARRAY['a'::text]))",
+            "(\"Status\" = ANY (ARRAY['a'::text]))",
+            "(status = ANY (ARRAY['it''s'::text]))",
+            "(status = ANY (ARRAY['a'::character varying]))",
+        ] {
+            assert_eq!(check_value_set(other), None, "{other}");
+        }
     }
 }

@@ -1,0 +1,93 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n    model.code,\n    model.created_at,\n    model.edit_version,\n    model.id,\n    model.maker_id,\n    model.note\nFROM widget AS model\nWHERE\n    ($1::jsonb IS NULL OR model.code IN (\n        SELECT filter.value::text\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n    ))\n    AND\n    ($2::jsonb IS NULL OR EXISTS (\n        SELECT 1\n        FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n        WHERE starts_with(model.note, filter.value)\n    ))\n    AND\n    ($3::jsonb IS NULL OR (model.maker_id IS NULL) = ($3::jsonb)::boolean)\n    AND\n    ($4::timestamptz IS NULL OR model.created_at < $4::timestamptz\n        OR (model.created_at = $4::timestamptz AND model.id < $5::uuid))\nORDER BY model.created_at DESC, model.id DESC\nLIMIT $6::int8;\n",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "code",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "code"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "edit_version",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "edit_version"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "maker_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "maker_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "note",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "widget",
+            "name": "note"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Jsonb",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "624fc462cbf08418c6fe94f24bf28e57923005249ff47c8aadaf4793ceb1d9d8"
+}

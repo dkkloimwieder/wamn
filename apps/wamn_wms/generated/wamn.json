@@ -19,7 +19,6 @@
       "server_owned_fields": [
         "id"
       ],
-      "enum_fields": {},
       "audit_log": {
         "columns": [
           "created_at",
@@ -58,10 +57,8 @@
       "owner": "wamn_wms",
       "server_owned_fields": [
         "id",
-        "row_version",
-        "created_at"
+        "row_version"
       ],
-      "enum_fields": {},
       "min_lengths": {
         "location_code": 1
       },
@@ -124,24 +121,8 @@
       "owner": "wamn_wms",
       "server_owned_fields": [
         "id",
-        "row_version",
-        "created_at",
-        "updated_at"
+        "row_version"
       ],
-      "enum_fields": {
-        "status": [
-          "available",
-          "held",
-          "consumed"
-        ],
-        "type": [
-          "pallet",
-          "tote",
-          "bin",
-          "case",
-          "loose"
-        ]
-      },
       "min_lengths": {
         "packaging_code": 1
       },
@@ -162,51 +143,6 @@
         },
         "query": {
           "permission": "packaging.query",
-          "authored_sql": {
-            "default": "query/open_packaging.sql",
-            "variants": [
-              {
-                "field": "packaging_code",
-                "direction": "ascending",
-                "path": "query/open_packaging_by_packaging_code_ascending.sql"
-              },
-              {
-                "field": "packaging_code",
-                "direction": "descending",
-                "path": "query/open_packaging_by_packaging_code_descending.sql"
-              },
-              {
-                "field": "location_id",
-                "direction": "ascending",
-                "path": "query/open_packaging_by_location_id_ascending.sql"
-              },
-              {
-                "field": "location_id",
-                "direction": "descending",
-                "path": "query/open_packaging_by_location_id_descending.sql"
-              },
-              {
-                "field": "updated_at",
-                "direction": "ascending",
-                "path": "query/open_packaging_by_updated_at_ascending.sql"
-              },
-              {
-                "field": "updated_at",
-                "direction": "descending",
-                "path": "query/open_packaging_by_updated_at_descending.sql"
-              },
-              {
-                "field": "created_at",
-                "direction": "ascending",
-                "path": "query/open_packaging.sql"
-              },
-              {
-                "field": "created_at",
-                "direction": "descending",
-                "path": "query/open_packaging_by_created_at_descending.sql"
-              }
-            ]
-          },
           "revision_field": "row_version",
           "filters": [
             {
@@ -272,10 +208,8 @@
       "table": "packaging_quantity",
       "owner": "wamn_wms",
       "server_owned_fields": [
-        "id",
-        "created_at"
+        "id"
       ],
-      "enum_fields": {},
       "audit_log": {
         "columns": [
           "created_at"
@@ -314,10 +248,8 @@
       "owner": "wamn_wms",
       "server_owned_fields": [
         "id",
-        "row_version",
-        "created_at"
+        "row_version"
       ],
-      "enum_fields": {},
       "min_lengths": {
         "product_code": 1
       },

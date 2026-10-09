@@ -13,8 +13,7 @@ manifest.Package {
             table = "widget"
             owner = "platform_fixture"
             client_field_extensible = True
-            server_owned_fields = ["id", "edit_version", "created_at"]
-            enum_fields = {code = ["priority", "standard"]}
+            server_owned_fields = ["id", "edit_version"]
             field_text = {
                 code = {label = "Widget code", description = "The code an operator types to find one widget."}
                 note = {label = "Operator note"}
@@ -26,14 +25,6 @@ manifest.Package {
                 get: {revision_field = "edit_version", result = "one"}
                 query: {
                     display_field = "code"
-                    # Each sort direction has its own authored statement.
-                    authored_sql = {
-                        default = "query/widget.sql"
-                        variants = [
-                            {field = "created_at", direction = "ascending", path = "query/widget.sql"}
-                            {field = "created_at", direction = "descending", path = "query/widget_by_created_at_descending.sql"}
-                        ]
-                    }
                     filters = [
                         {field = "code"}
                         {field = "note", match = "prefix"}
@@ -51,8 +42,7 @@ manifest.Package {
         widget_maker = manifest.Model("widget_maker", _schema) {
             table = "widget_maker"
             owner = "platform_fixture"
-            server_owned_fields = ["id", "edit_version", "created_at"]
-            enum_fields = {}
+            server_owned_fields = ["id", "edit_version"]
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {revision_field = "edit_version", result = "one"}
@@ -74,7 +64,6 @@ manifest.Package {
             table = "widget_tag"
             owner = "platform_fixture"
             server_owned_fields = ["id", "edit_version"]
-            enum_fields = {}
             audit_log = {columns = [], retention = "P30D"}
             operations: {
                 update: {writable_fields = ["label"], revision_field = "edit_version", result = "one"}

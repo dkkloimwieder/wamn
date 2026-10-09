@@ -30,16 +30,17 @@ pub struct PurchaseOrderUpdateRow {
 
 pub(crate) const GET_SQL: &str = include_str!("../sql/purchase_order/get.sql");
 pub(crate) const QUERY_0_SQL: &str =
-    include_str!("../../query/open_purchase_order_by_purchase_order_number_ascending.sql");
+    include_str!("../sql/purchase_order/query_purchase_order_number_ascending.sql");
 pub(crate) const QUERY_1_SQL: &str =
-    include_str!("../../query/open_purchase_order_by_purchase_order_number_descending.sql");
+    include_str!("../sql/purchase_order/query_purchase_order_number_descending.sql");
 pub(crate) const QUERY_2_SQL: &str =
-    include_str!("../../query/open_purchase_order_by_status_ascending.sql");
+    include_str!("../sql/purchase_order/query_status_ascending.sql");
 pub(crate) const QUERY_3_SQL: &str =
-    include_str!("../../query/open_purchase_order_by_status_descending.sql");
-pub(crate) const QUERY_4_SQL: &str = include_str!("../../query/open_purchase_order.sql");
+    include_str!("../sql/purchase_order/query_status_descending.sql");
+pub(crate) const QUERY_4_SQL: &str =
+    include_str!("../sql/purchase_order/query_created_at_ascending.sql");
 pub(crate) const QUERY_5_SQL: &str =
-    include_str!("../../query/open_purchase_order_by_created_at_descending.sql");
+    include_str!("../sql/purchase_order/query_created_at_descending.sql");
 pub(crate) const UPDATE_SQL: &str = include_str!("../sql/purchase_order/update.sql");
 
 pub(crate) fn get_id_bind_fixture() -> uuid::Uuid {

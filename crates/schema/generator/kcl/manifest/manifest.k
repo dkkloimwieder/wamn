@@ -13,7 +13,12 @@ owns what a statement reads and writes, so no schema here has a relations key:
 the generator derives each custom operation's relations from its statements
 and writes them into generated/wamn.json. A command's envelope bounds and
 canonicalization are defaults, written only to change them, and the detail of
-idempotency_conflict is derived with the other platform error details.
+idempotency_conflict is derived with the other platform error details. The
+schema owns column checks and stamps: a model's enum_fields come from its
+CHECK col IN ('a', ...) constraints, and its stamp columns are server-owned
+without being listed. A model states enum_fields only to narrow a CHECK's set
+or to name a set that no CHECK carries. A model query that one table answers
+states its sort and filters, and the generator writes its SQL.
 """
 
 type ColumnType = "boolean" | "int32" | "int64" | "float64" | "text" | "bytes" | "numeric" | "timestamptz" | "json" | "uuid"
@@ -314,7 +319,9 @@ schema Model[name: str, schema_name: str]:
     client_field_extensible?: bool
     field_owners?: {str:str}
     constraint_owners?: {str:str}
+    # Server-owned fields other than the stamps, which come from the table.
     server_owned_fields?: [str]
+    # Only a narrower set than the column's CHECK, or a set no CHECK carries.
     enum_fields?: {str:[str]}
     min_lengths?: {str:int}
     field_text?: {str:TextOfField}
@@ -332,6 +339,11 @@ schema Model[name: str, schema_name: str]:
         operations.update.permission = "${name}.update"
     if operations and operations.delete and not operations.delete.permission:
         operations.delete.permission = "${name}.delete"
+
+    check:
+        not server_owned_fields or all field in server_owned_fields {
+            field not in ["created_at", "created_by", "updated_at", "updated_by"]
+        }, "${name} states a stamp column as server-owned; the generator reads each stamp from the table, so remove it"
 
 schema InternalRelation:
     $schema: str

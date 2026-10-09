@@ -155,17 +155,13 @@ fn a_whole_row_reference_reads_every_column_of_its_relation() {
 
 #[test]
 fn a_statement_takes_exactly_the_parameters_its_accessor_binds() {
-    // Each case replaces one authored statement. The query accessor binds the
-    // code, note and maker filters, the two cursor keys, and the limit. The archive accessor
-    // binds the one declared parameter.
+    // Each case replaces one authored statement. The list accessor binds no
+    // parameter. The archive accessor binds the one declared parameter.
     for (path, sql, expected) in [
         (
-            "query/widget.sql",
-            "SELECT widget.code, widget.created_at, widget.edit_version, widget.id, widget.maker_id, widget.note FROM widget AS widget \
-             WHERE ($1::jsonb IS NULL OR widget.code IN (SELECT jsonb_array_elements_text($1::jsonb))) \
-             AND ($2::jsonb IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements_text($2::jsonb) AS filter(value) WHERE starts_with(widget.note, filter.value))) \
-             AND ($3::jsonb IS NULL OR (widget.maker_id IS NULL) = ($3::jsonb)::boolean);\n",
-            "query/widget.sql takes 3 parameters, but its generated accessor query_created_at_ascending binds 6",
+            "query/widget_list.sql",
+            "SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM widget WHERE id = $1 ORDER BY id;\n",
+            "query/widget_list.sql takes 1 parameters, but its generated accessor list binds 0",
         ),
         (
             "command/widget/archive.sql",
@@ -1737,7 +1733,8 @@ fn a_minimum_length_without_its_check_refuses() {
     }
 }
 
-/// The authored manifest with no relation, as `wamn.k` compiles it.
+/// The authored manifest, as `wamn.k` compiles it: no relation, and no value
+/// set that a CHECK carries.
 fn without_relations(mut manifest: Value) -> Value {
     for operation in manifest["custom_operations"]
         .as_object_mut()
@@ -1748,6 +1745,16 @@ fn without_relations(mut manifest: Value) -> Value {
             .as_object_mut()
             .expect("an operation")
             .remove("relations");
+    }
+    for model in manifest["models"]
+        .as_object_mut()
+        .expect("models")
+        .values_mut()
+    {
+        model
+            .as_object_mut()
+            .expect("a model")
+            .remove("enum_fields");
     }
     manifest
 }
@@ -1824,4 +1831,108 @@ fn a_mapped_constraint_lands_on_the_relation_that_defines_it() {
         ),
         "{error}"
     );
+}
+
+/// A model's value sets come from its CHECKs. An authored list narrows one,
+/// and a list that states the CHECK's set again or widens it refuses.
+#[test]
+fn enum_fields_come_from_the_check_and_an_authored_list_only_narrows() {
+    let authored = without_relations(fixture::manifest());
+    let compiled = derive(&authored).expect("derive the manifest");
+    // The schema owns the set, so the compiled manifest states none.
+    assert!(compiled["models"]["widget"].get("enum_fields").is_none());
+    let code_values = |manifest: &Value| {
+        let package = fixture::generate_with(&fixture::catalog(), manifest);
+        let input = artifact(&package, "generated/contracts/widget/create.input.json");
+        input["writable_fields"]
+            .as_array()
+            .expect("writable fields")
+            .iter()
+            .find(|field| field["field"] == "code")
+            .expect("code is writable")["values"]
+            .clone()
+    };
+    assert_eq!(code_values(&compiled), json!(["priority", "standard"]));
+
+    let mut narrowed = authored.clone();
+    narrowed["models"]["widget"]["enum_fields"] = json!({"code": ["priority"]});
+    let compiled = derive(&narrowed).expect("a narrower list");
+    assert_eq!(code_values(&compiled), json!(["priority"]));
+    // A text column with no CHECK takes the set its author names.
+    narrowed["models"]["widget"]["enum_fields"] = json!({"note": ["a", "b"]});
+    derive(&narrowed).expect("a set no CHECK carries");
+
+    for (declared, refusal) in [
+        (
+            json!({"code": ["standard", "priority"]}),
+            "widget.code states enum_fields that its CHECK already carries; remove it",
+        ),
+        (
+            json!({"code": ["priority", "rush"]}),
+            "widget.code enum_fields names a value that its CHECK refuses",
+        ),
+    ] {
+        let mut stated = authored.clone();
+        stated["models"]["widget"]["enum_fields"] = declared;
+        let error = derive(&stated).expect_err("the list refuses");
+        assert!(error.to_string().contains(refusal), "{error}");
+    }
+}
+
+/// The stamp columns are server-owned from the table, so an authored list
+/// that names one refuses.
+#[test]
+fn a_stated_stamp_column_refuses() {
+    let mut authored = without_relations(fixture::manifest());
+    authored["models"]["widget"]["server_owned_fields"] = json!(["id", "created_at"]);
+    let error = derive(&authored).expect_err("a stamp is not authored");
+    assert!(
+        error
+            .to_string()
+            .contains("widget states stamp column created_at as server-owned"),
+        "{error}"
+    );
+}
+
+/// A model query that its table alone answers is generated: authored SQL for
+/// it refuses. Authored SQL that joins another table stays.
+#[test]
+fn authored_sql_for_a_query_generation_writes_refuses() {
+    let path = "query/widget_query.sql";
+    let mut manifest = fixture::manifest();
+    manifest["models"]["widget"]["operations"]["query"]["authored_sql"] = json!({
+        "default": path,
+        "variants": [
+            {"field": "created_at", "direction": "ascending", "path": path},
+            {"field": "created_at", "direction": "descending", "path": "query/widget_query_descending.sql"}
+        ]
+    });
+    // The statement generation writes for this query, authored as is.
+    let one_table = include_str!(
+        "../../../../apps/platform_fixture/generated/sql/widget/query_created_at_ascending.sql"
+    );
+    let sources = |sql: &str| {
+        fixture::authored_sql()
+            .into_iter()
+            .chain([
+                (path.to_owned(), sql.as_bytes().to_vec()),
+                (
+                    "query/widget_query_descending.sql".to_owned(),
+                    sql.as_bytes().to_vec(),
+                ),
+            ])
+            .collect::<Vec<_>>()
+    };
+    let error = fixture::try_generate_with_sql(&fixture::catalog(), &manifest, &sources(one_table))
+        .expect_err("generation writes this query");
+    assert_eq!(error.path(), Some(path));
+    assert!(
+        error
+            .to_string()
+            .contains("widget.query authored_sql reads only widget with no GROUP BY and no window"),
+        "{error}"
+    );
+    let grouped = one_table.replace("ORDER BY", "GROUP BY model.id ORDER BY");
+    fixture::try_generate_with_sql(&fixture::catalog(), &manifest, &sources(&grouped))
+        .expect("a grouped query stays authored");
 }

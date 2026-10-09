@@ -28,7 +28,7 @@ pub const INVENTORY_TRANSACTION_FIELDS: &[FieldDescriptor] = &[
         path: "from_status",
         type_name: "text",
         nullable: true,
-        values: &[],
+        values: &["available", "held"],
     },
     FieldDescriptor {
         path: "id",
@@ -70,7 +70,7 @@ pub const INVENTORY_TRANSACTION_FIELDS: &[FieldDescriptor] = &[
         path: "to_status",
         type_name: "text",
         nullable: true,
-        values: &[],
+        values: &["available", "held"],
     },
 ];
 
@@ -140,7 +140,7 @@ pub const INVENTORY_TRANSACTION_GET_RESULT: &[FieldDescriptor] = &[
         path: "from_status",
         type_name: "text",
         nullable: true,
-        values: &[],
+        values: &["available", "held"],
     },
     FieldDescriptor {
         path: "id",
@@ -182,7 +182,7 @@ pub const INVENTORY_TRANSACTION_GET_RESULT: &[FieldDescriptor] = &[
         path: "to_status",
         type_name: "text",
         nullable: true,
-        values: &[],
+        values: &["available", "held"],
     },
 ];
 
@@ -242,7 +242,7 @@ pub const INVENTORY_TRANSACTION_GET_RESULT_SCHEMA: &[wamn_client::descriptor::Fi
             path: "from_status",
             type_name: "text",
             nullable: true,
-            values: &[],
+            values: &["available", "held"],
         },
         required: true,
         minimum: None,
@@ -326,7 +326,7 @@ pub const INVENTORY_TRANSACTION_GET_RESULT_SCHEMA: &[wamn_client::descriptor::Fi
             path: "to_status",
             type_name: "text",
             nullable: true,
-            values: &[],
+            values: &["available", "held"],
         },
         required: true,
         minimum: None,
@@ -456,7 +456,7 @@ pub const INVENTORY_TRANSACTION_QUERY_RESULT: &[FieldDescriptor] = &[
         path: "from_status",
         type_name: "text",
         nullable: true,
-        values: &[],
+        values: &["available", "held"],
     },
     FieldDescriptor {
         path: "id",
@@ -498,7 +498,7 @@ pub const INVENTORY_TRANSACTION_QUERY_RESULT: &[FieldDescriptor] = &[
         path: "to_status",
         type_name: "text",
         nullable: true,
-        values: &[],
+        values: &["available", "held"],
     },
 ];
 
@@ -571,7 +571,7 @@ pub const INVENTORY_TRANSACTION_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::
             path: "from_status",
             type_name: "text",
             nullable: true,
-            values: &[],
+            values: &["available", "held"],
         },
         required: true,
         minimum: None,
@@ -655,7 +655,7 @@ pub const INVENTORY_TRANSACTION_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::
             path: "to_status",
             type_name: "text",
             nullable: true,
-            values: &[],
+            values: &["available", "held"],
         },
         required: true,
         minimum: None,

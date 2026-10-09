@@ -16,7 +16,6 @@ manifest.Package {
             table = "inventory_transaction"
             owner = "wamn_wms"
             server_owned_fields = ["id"]
-            enum_fields = {}
             audit_log = {columns = ["created_at", "created_by"]}
             operations: {
                 get: {result = "one"}
@@ -27,8 +26,7 @@ manifest.Package {
             table = "location"
             owner = "wamn_wms"
             min_lengths = {location_code = 1}
-            server_owned_fields = ["id", "row_version", "created_at"]
-            enum_fields = {}
+            server_owned_fields = ["id", "row_version"]
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {result = "one"}
@@ -41,58 +39,13 @@ manifest.Package {
             table = "packaging"
             owner = "wamn_wms"
             min_lengths = {packaging_code = 1}
-            server_owned_fields = ["id", "row_version", "created_at", "updated_at"]
-            enum_fields = {
-                status = ["available", "held", "consumed"]
-                type = ["pallet", "tote", "bin", "case", "loose"]
-            }
+            server_owned_fields = ["id", "row_version"]
             audit_log = {columns = ["created_at", "created_by", "updated_at", "updated_by"], retention = "unlimited"}
             operations: {
                 get: {revision_field = "row_version", result = "one"}
                 query: {
                     display_field = "packaging_code"
                     revision_field = "row_version"
-                    authored_sql = {
-                        default = "query/open_packaging.sql"
-                        variants = [
-                            {
-                                field = "packaging_code"
-                                direction = "ascending"
-                                path = "query/open_packaging_by_packaging_code_ascending.sql"
-                            }
-                            {
-                                field = "packaging_code"
-                                direction = "descending"
-                                path = "query/open_packaging_by_packaging_code_descending.sql"
-                            }
-                            {
-                                field = "location_id"
-                                direction = "ascending"
-                                path = "query/open_packaging_by_location_id_ascending.sql"
-                            }
-                            {
-                                field = "location_id"
-                                direction = "descending"
-                                path = "query/open_packaging_by_location_id_descending.sql"
-                            }
-                            {
-                                field = "updated_at"
-                                direction = "ascending"
-                                path = "query/open_packaging_by_updated_at_ascending.sql"
-                            }
-                            {
-                                field = "updated_at"
-                                direction = "descending"
-                                path = "query/open_packaging_by_updated_at_descending.sql"
-                            }
-                            {field = "created_at", direction = "ascending", path = "query/open_packaging.sql"}
-                            {
-                                field = "created_at"
-                                direction = "descending"
-                                path = "query/open_packaging_by_created_at_descending.sql"
-                            }
-                        ]
-                    }
                     filters = [
                         {field = "status"}
                         {field = "location_id"}
@@ -114,8 +67,7 @@ manifest.Package {
         packaging_quantity = manifest.Model("packaging_quantity", _schema) {
             table = "packaging_quantity"
             owner = "wamn_wms"
-            server_owned_fields = ["id", "created_at"]
-            enum_fields = {}
+            server_owned_fields = ["id"]
             audit_log = {columns = ["created_at"]}
             delete_mode = "hard"
             operations: {
@@ -127,8 +79,7 @@ manifest.Package {
             table = "product"
             owner = "wamn_wms"
             min_lengths = {product_code = 1}
-            server_owned_fields = ["id", "row_version", "created_at"]
-            enum_fields = {}
+            server_owned_fields = ["id", "row_version"]
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {result = "one"}

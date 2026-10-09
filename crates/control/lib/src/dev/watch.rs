@@ -1177,7 +1177,7 @@ mod tests {
                 wamn_fixture_package::manifest_bytes(),
             )
             .expect("write package manifest");
-            fs::write(self.package().join("query/widget.sql"), "SELECT 1")
+            fs::write(self.package().join("query/widget_list.sql"), "SELECT 1")
                 .expect("write authored SQL");
             fs::write(self.component().join("src/lib.rs"), "pub fn value() {}")
                 .expect("write component source");
@@ -1234,7 +1234,7 @@ mod tests {
             "wamn.json",
             "wamn.k",
             "migrations/0002.sql",
-            "query/widget.sql",
+            "query/widget_list.sql",
             "publication/components/fixture.json.in",
             "publication/wirings/widget_get.json",
             "publication/attachments.json",
@@ -1910,8 +1910,11 @@ mod tests {
                 .all(|event| *event == DevInvalidation::Ignore)
         );
 
-        fs::write(repository.package().join("query/widget.sql"), "SELECT 2")
-            .expect("edit authored SQL");
+        fs::write(
+            repository.package().join("query/widget_list.sql"),
+            "SELECT 2",
+        )
+        .expect("edit authored SQL");
         let first = tokio::time::timeout(Duration::from_secs(2), source.next())
             .await
             .expect("authored SQL event arrived")

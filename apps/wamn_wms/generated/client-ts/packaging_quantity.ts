@@ -29,7 +29,7 @@ export interface PackagingQuantityGetResult {
   /** `numeric` */
   readonly quantity: Numeric;
   /** `text` */
-  readonly status: string;
+  readonly status: "available" | "held";
 }
 
 /** What `wamn-wms:packaging-quantity/get@2.1.0` calls its result members. */
@@ -114,7 +114,7 @@ export interface PackagingQuantityQueryRow {
   /** `numeric` */
   readonly quantity: Numeric;
   /** `text` */
-  readonly status: string;
+  readonly status: "available" | "held";
 }
 
 /** Result of `wamn-wms:packaging-quantity/query@2.1.0`. */

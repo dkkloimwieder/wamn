@@ -14,10 +14,8 @@
       "table": "sample",
       "owner": "edge_samples",
       "server_owned_fields": [
-        "id",
-        "created_at"
+        "id"
       ],
-      "enum_fields": {},
       "audit_log": {
         "columns": [
           "created_at"

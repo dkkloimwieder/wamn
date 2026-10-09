@@ -259,6 +259,19 @@ pub(crate) fn conflict_constraints(sql: &[u8]) -> Result<BTreeSet<String>, &'sta
     Ok(constraints)
 }
 
+/// Whether one SQL artifact aggregates or windows its rows: a `GROUP BY`, or
+/// a window call `OVER (`. Generation writes neither, so a query with one is
+/// a query only its author can write.
+pub(crate) fn groups_or_windows(sql: &[u8]) -> bool {
+    let tokens = tokens(sql);
+    tokens.windows(2).any(|pair| {
+        matches!(
+            (identifier(&pair[0]), &pair[1]),
+            (Some("group"), Token::Identifier(next)) if next.as_ref() == "by"
+        ) || (identifier(&pair[0]) == Some("over") && pair[1] == Token::LeftParen)
+    })
+}
+
 fn depths(tokens: &[Token]) -> Result<Vec<usize>, &'static str> {
     let mut depth = 0_usize;
     let mut depths = Vec::with_capacity(tokens.len());
@@ -1265,6 +1278,19 @@ mod tests {
                 .is_empty()
         );
         assert!(delete_targets(b"DELETE FROM").is_err());
+    }
+
+    #[test]
+    fn grouping_and_windows_are_seen_outside_comments_and_strings() {
+        assert!(groups_or_windows(
+            b"SELECT item.status, count(*) FROM item GROUP BY item.status"
+        ));
+        assert!(groups_or_windows(
+            b"SELECT row_number() OVER (ORDER BY item.id) FROM item"
+        ));
+        assert!(!groups_or_windows(
+            b"SELECT item.id FROM item -- GROUP BY item.id\n WHERE item.note = 'over (x)'"
+        ));
     }
 
     #[test]

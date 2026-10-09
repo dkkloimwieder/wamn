@@ -19,7 +19,6 @@
       "server_owned_fields": [
         "id"
       ],
-      "enum_fields": {},
       "field_text": {
         "item_number": {
           "label": "Item number"
@@ -38,7 +37,6 @@
       "server_owned_fields": [
         "id"
       ],
-      "enum_fields": {},
       "field_text": {
         "location_code": {
           "label": "Location code"
@@ -59,17 +57,8 @@
         "id",
         "purchase_order_number",
         "status",
-        "row_version",
-        "created_at",
-        "updated_at"
+        "row_version"
       ],
-      "enum_fields": {
-        "status": [
-          "open",
-          "complete",
-          "cancelled"
-        ]
-      },
       "field_text": {
         "purchase_order_number": {
           "label": "Order number"
@@ -113,41 +102,6 @@
         },
         "query": {
           "permission": "purchase_order.query",
-          "authored_sql": {
-            "default": "query/open_purchase_order.sql",
-            "variants": [
-              {
-                "field": "purchase_order_number",
-                "direction": "ascending",
-                "path": "query/open_purchase_order_by_purchase_order_number_ascending.sql"
-              },
-              {
-                "field": "purchase_order_number",
-                "direction": "descending",
-                "path": "query/open_purchase_order_by_purchase_order_number_descending.sql"
-              },
-              {
-                "field": "status",
-                "direction": "ascending",
-                "path": "query/open_purchase_order_by_status_ascending.sql"
-              },
-              {
-                "field": "status",
-                "direction": "descending",
-                "path": "query/open_purchase_order_by_status_descending.sql"
-              },
-              {
-                "field": "created_at",
-                "direction": "ascending",
-                "path": "query/open_purchase_order.sql"
-              },
-              {
-                "field": "created_at",
-                "direction": "descending",
-                "path": "query/open_purchase_order_by_created_at_descending.sql"
-              }
-            ]
-          },
           "filters": [
             {
               "field": "supplier_id"
@@ -208,7 +162,6 @@
       "server_owned_fields": [
         "id"
       ],
-      "enum_fields": {},
       "field_text": {
         "line_number": {
           "label": "Line"
@@ -237,10 +190,8 @@
         "id",
         "purchase_order_id",
         "receipt_reference",
-        "occurred_at",
-        "created_at"
+        "occurred_at"
       ],
-      "enum_fields": {},
       "field_text": {
         "receipt_reference": {
           "label": "Receipt reference"
@@ -300,7 +251,6 @@
       "server_owned_fields": [
         "id"
       ],
-      "enum_fields": {},
       "field_text": {
         "quantity": {
           "label": "Quantity"
@@ -323,10 +273,8 @@
       "table": "supplier",
       "owner": "wamn_receiving",
       "server_owned_fields": [
-        "id",
-        "created_at"
+        "id"
       ],
-      "enum_fields": {},
       "min_lengths": {
         "name": 1
       },

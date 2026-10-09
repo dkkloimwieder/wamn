@@ -13,8 +13,7 @@ manifest.Package {
         sample = manifest.Model("sample", _schema) {
             table = "sample"
             owner = "edge_samples"
-            server_owned_fields = ["id", "created_at"]
-            enum_fields = {}
+            server_owned_fields = ["id"]
             audit_log = {columns = ["created_at"]}
             operations: {
                 get: {result = "one"}

@@ -18,20 +18,21 @@ pub struct PackagingRow {
 pub(crate) const CREATE_SQL: &str = include_str!("../sql/packaging/create.sql");
 pub(crate) const GET_SQL: &str = include_str!("../sql/packaging/get.sql");
 pub(crate) const QUERY_0_SQL: &str =
-    include_str!("../../query/open_packaging_by_packaging_code_ascending.sql");
+    include_str!("../sql/packaging/query_packaging_code_ascending.sql");
 pub(crate) const QUERY_1_SQL: &str =
-    include_str!("../../query/open_packaging_by_packaging_code_descending.sql");
+    include_str!("../sql/packaging/query_packaging_code_descending.sql");
 pub(crate) const QUERY_2_SQL: &str =
-    include_str!("../../query/open_packaging_by_location_id_ascending.sql");
+    include_str!("../sql/packaging/query_location_id_ascending.sql");
 pub(crate) const QUERY_3_SQL: &str =
-    include_str!("../../query/open_packaging_by_location_id_descending.sql");
+    include_str!("../sql/packaging/query_location_id_descending.sql");
 pub(crate) const QUERY_4_SQL: &str =
-    include_str!("../../query/open_packaging_by_updated_at_ascending.sql");
+    include_str!("../sql/packaging/query_updated_at_ascending.sql");
 pub(crate) const QUERY_5_SQL: &str =
-    include_str!("../../query/open_packaging_by_updated_at_descending.sql");
-pub(crate) const QUERY_6_SQL: &str = include_str!("../../query/open_packaging.sql");
+    include_str!("../sql/packaging/query_updated_at_descending.sql");
+pub(crate) const QUERY_6_SQL: &str =
+    include_str!("../sql/packaging/query_created_at_ascending.sql");
 pub(crate) const QUERY_7_SQL: &str =
-    include_str!("../../query/open_packaging_by_created_at_descending.sql");
+    include_str!("../sql/packaging/query_created_at_descending.sql");
 
 pub(crate) fn get_id_bind_fixture() -> uuid::Uuid {
     uuid::Uuid::nil()

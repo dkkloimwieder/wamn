@@ -257,6 +257,19 @@ fn an_input_assigned_with_equals_is_refused() {
 }
 
 #[test]
+fn a_stated_stamp_column_is_refused() {
+    let package = Package::new(&source(
+        r#"            server_owned_fields = ["id", "updated_by"]"#,
+        "",
+    ));
+    let refusal = package.refusal();
+    assert!(
+        refusal.contains("widget states a stamp column as server-owned"),
+        "{refusal}"
+    );
+}
+
+#[test]
 fn a_derived_member_is_refused() {
     let relations = Package::new(&source(
         "",

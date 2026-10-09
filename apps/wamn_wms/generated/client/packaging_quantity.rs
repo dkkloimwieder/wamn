@@ -40,7 +40,7 @@ pub const PACKAGING_QUANTITY_FIELDS: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["available", "held"],
     },
 ];
 
@@ -112,7 +112,7 @@ pub const PACKAGING_QUANTITY_GET_RESULT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["available", "held"],
     },
 ];
 
@@ -196,7 +196,7 @@ pub const PACKAGING_QUANTITY_GET_RESULT_SCHEMA: &[wamn_client::descriptor::Field
             path: "status",
             type_name: "text",
             nullable: false,
-            values: &[],
+            values: &["available", "held"],
         },
         required: true,
         minimum: None,
@@ -328,7 +328,7 @@ pub const PACKAGING_QUANTITY_QUERY_RESULT: &[FieldDescriptor] = &[
         path: "status",
         type_name: "text",
         nullable: false,
-        values: &[],
+        values: &["available", "held"],
     },
 ];
 
@@ -425,7 +425,7 @@ pub const PACKAGING_QUANTITY_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::Fie
             path: "status",
             type_name: "text",
             nullable: false,
-            values: &[],
+            values: &["available", "held"],
         },
         required: true,
         minimum: None,

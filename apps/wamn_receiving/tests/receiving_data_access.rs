@@ -70,14 +70,21 @@ mod tests {
         "../../../apps/client_acme_receiving/command/create_inspection/load_inspection.sql"
     );
 
+    /// The generated get result of a purchase order. Its status values come
+    /// from the column's CHECK.
+    const PURCHASE_ORDER_RESULT: &[u8] = include_bytes!(
+        "../../../apps/wamn_receiving/generated/contracts/purchase_order/get.result.json"
+    );
+
     #[derive(Debug, Deserialize)]
-    struct Manifest {
-        models: BTreeMap<String, Model>,
+    struct ResultContract {
+        fields: Vec<ResultField>,
     }
 
     #[derive(Debug, Deserialize)]
-    struct Model {
-        enum_fields: BTreeMap<String, Vec<String>>,
+    struct ResultField {
+        path: String,
+        values: Vec<String>,
     }
 
     #[derive(Debug)]
@@ -1835,15 +1842,14 @@ mod tests {
     }
 
     async fn assert_status_vocabulary(client: &Client) -> Result<()> {
-        let manifest: Manifest =
-            serde_json::from_slice(MANIFEST).context("parse Receiving manifest")?;
-        let statuses = manifest
-            .models
-            .get("purchase_order")
-            .context("manifest must declare purchase_order")?
-            .enum_fields
-            .get("status")
-            .context("manifest must declare purchase_order.status outcomes")?;
+        let contract: ResultContract = serde_json::from_slice(PURCHASE_ORDER_RESULT)
+            .context("parse the purchase order result contract")?;
+        let statuses = &contract
+            .fields
+            .iter()
+            .find(|field| field.path == "status")
+            .context("the purchase order result must state its status outcomes")?
+            .values;
         ensure!(
             !statuses.is_empty(),
             "purchase_order.status vocabulary is empty"

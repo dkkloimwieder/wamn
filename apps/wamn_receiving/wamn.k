@@ -16,7 +16,6 @@ manifest.Package {
             table = "item"
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
-            enum_fields = {}
             field_text = {item_number = {label = "Item number"}}
             audit_log = {columns = []}
             operations = {}
@@ -25,7 +24,6 @@ manifest.Package {
             table = "location"
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
-            enum_fields = {}
             field_text = {location_code = {label = "Location code"}}
             audit_log = {columns = []}
             operations = {}
@@ -34,8 +32,7 @@ manifest.Package {
             table = "purchase_order"
             owner = "wamn_receiving"
             client_field_extensible = True
-            server_owned_fields = ["id", "purchase_order_number", "status", "row_version", "created_at", "updated_at"]
-            enum_fields = {status = ["open", "complete", "cancelled"]}
+            server_owned_fields = ["id", "purchase_order_number", "status", "row_version"]
             field_text = {
                 purchase_order_number = {label = "Order number"}
                 supplier_id = {label = "Supplier"}
@@ -51,37 +48,6 @@ manifest.Package {
                 get: {label = "Purchase order", result = "one"}
                 query: {
                     display_field = "purchase_order_number"
-                    authored_sql = {
-                        default = "query/open_purchase_order.sql"
-                        variants = [
-                            {
-                                field = "purchase_order_number"
-                                direction = "ascending"
-                                path = "query/open_purchase_order_by_purchase_order_number_ascending.sql"
-                            }
-                            {
-                                field = "purchase_order_number"
-                                direction = "descending"
-                                path = "query/open_purchase_order_by_purchase_order_number_descending.sql"
-                            }
-                            {
-                                field = "status"
-                                direction = "ascending"
-                                path = "query/open_purchase_order_by_status_ascending.sql"
-                            }
-                            {
-                                field = "status"
-                                direction = "descending"
-                                path = "query/open_purchase_order_by_status_descending.sql"
-                            }
-                            {field = "created_at", direction = "ascending", path = "query/open_purchase_order.sql"}
-                            {
-                                field = "created_at"
-                                direction = "descending"
-                                path = "query/open_purchase_order_by_created_at_descending.sql"
-                            }
-                        ]
-                    }
                     filters = [
                         {field = "supplier_id"}
                         {field = "status"}
@@ -107,7 +73,6 @@ manifest.Package {
             table = "purchase_order_line"
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
-            enum_fields = {}
             field_text = {
                 line_number = {label = "Line"}
                 item_id = {label = "Item"}
@@ -120,8 +85,7 @@ manifest.Package {
         receipt = manifest.Model("receipt", _schema) {
             table = "receipt"
             owner = "wamn_receiving"
-            server_owned_fields = ["id", "purchase_order_id", "receipt_reference", "occurred_at", "created_at"]
-            enum_fields = {}
+            server_owned_fields = ["id", "purchase_order_id", "receipt_reference", "occurred_at"]
             field_text = {
                 receipt_reference = {label = "Receipt reference"}
                 purchase_order_id = {label = "Purchase order"}
@@ -139,7 +103,6 @@ manifest.Package {
             table = "receipt_line"
             owner = "wamn_receiving"
             server_owned_fields = ["id"]
-            enum_fields = {}
             field_text = {
                 quantity = {label = "Quantity"}
                 location_id = {label = "Location"}
@@ -152,8 +115,7 @@ manifest.Package {
             table = "supplier"
             owner = "wamn_receiving"
             min_lengths = {name = 1}
-            server_owned_fields = ["id", "created_at"]
-            enum_fields = {}
+            server_owned_fields = ["id"]
             field_text = {name = {label = "Supplier name"}, created_at = {label = "Added"}}
             audit_log = {columns = ["created_at"]}
             operations: {

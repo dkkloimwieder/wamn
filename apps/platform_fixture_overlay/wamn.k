@@ -21,8 +21,7 @@ manifest.Package {
             table = "widget"
             owner = "platform_fixture"
             field_owners = {overlay_note = "platform_fixture_overlay"}
-            server_owned_fields = ["id", "edit_version", "created_at"]
-            enum_fields = {code = ["priority", "standard"]}
+            server_owned_fields = ["id", "edit_version"]
             operations: {
                 get: {result = "one"}
             }

@@ -15,7 +15,7 @@ manifest.Package {
         base_receiving = {
             package = "wamn_receiving"
             version = "2.1.0"
-            digest = "sha256:e34d0218af83ea540111cb9096f9b13ca5d2b9e5e3f14ddd9763b7b6ed71dba0"
+            digest = "sha256:6b4de02fab0bf296335c6ae2422bf222a391f595af6a3310e5e7ed466bc6cbf7"
             operations = ["receiving.record_receipt"]
         }
     }
@@ -30,10 +30,6 @@ manifest.Package {
             }
             constraint_owners = {purchase_order_acme_quality_status_check = "client_acme_receiving"}
             server_owned_fields = ["id", "purchase_order_number", "supplier_id", "status", "row_version"]
-            enum_fields = {
-                status = ["open", "complete", "cancelled"]
-                acme_quality_status = ["not_required", "pending", "approved"]
-            }
             operations: {
                 get: {result = "one"}
                 update: {
@@ -47,7 +43,6 @@ manifest.Package {
             table = "quality_inspection"
             owner = "client_acme_receiving"
             server_owned_fields = ["receipt_id", "status", "row_version"]
-            enum_fields = {status = ["pending", "approved"]}
             audit_log = {columns = ["created_at", "created_by", "updated_at", "updated_by"]}
             operations = {}
         }

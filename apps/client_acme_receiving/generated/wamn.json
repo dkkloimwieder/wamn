@@ -8,7 +8,7 @@
     "base_receiving": {
       "package": "wamn_receiving",
       "version": "2.1.0",
-      "digest": "sha256:e34d0218af83ea540111cb9096f9b13ca5d2b9e5e3f14ddd9763b7b6ed71dba0",
+      "digest": "sha256:6b4de02fab0bf296335c6ae2422bf222a391f595af6a3310e5e7ed466bc6cbf7",
       "operations": [
         "receiving.record_receipt"
       ]
@@ -37,18 +37,6 @@
         "status",
         "row_version"
       ],
-      "enum_fields": {
-        "status": [
-          "open",
-          "complete",
-          "cancelled"
-        ],
-        "acme_quality_status": [
-          "not_required",
-          "pending",
-          "approved"
-        ]
-      },
       "operations": {
         "get": {
           "permission": "purchase_order.get",
@@ -74,12 +62,6 @@
         "status",
         "row_version"
       ],
-      "enum_fields": {
-        "status": [
-          "pending",
-          "approved"
-        ]
-      },
       "audit_log": {
         "columns": [
           "created_at",

@@ -16,15 +16,8 @@
       "client_field_extensible": true,
       "server_owned_fields": [
         "id",
-        "edit_version",
-        "created_at"
+        "edit_version"
       ],
-      "enum_fields": {
-        "code": [
-          "priority",
-          "standard"
-        ]
-      },
       "field_text": {
         "code": {
           "label": "Widget code",
@@ -49,21 +42,6 @@
         },
         "query": {
           "permission": "widget.query",
-          "authored_sql": {
-            "default": "query/widget.sql",
-            "variants": [
-              {
-                "field": "created_at",
-                "direction": "ascending",
-                "path": "query/widget.sql"
-              },
-              {
-                "field": "created_at",
-                "direction": "descending",
-                "path": "query/widget_by_created_at_descending.sql"
-              }
-            ]
-          },
           "filters": [
             {
               "field": "code"
@@ -136,10 +114,8 @@
       "owner": "platform_fixture",
       "server_owned_fields": [
         "id",
-        "edit_version",
-        "created_at"
+        "edit_version"
       ],
-      "enum_fields": {},
       "audit_log": {
         "columns": [
           "created_at"
@@ -210,7 +186,6 @@
         "id",
         "edit_version"
       ],
-      "enum_fields": {},
       "audit_log": {
         "columns": [],
         "retention": "P30D"

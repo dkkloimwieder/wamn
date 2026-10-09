@@ -28,15 +28,8 @@
       },
       "server_owned_fields": [
         "id",
-        "edit_version",
-        "created_at"
+        "edit_version"
       ],
-      "enum_fields": {
-        "code": [
-          "priority",
-          "standard"
-        ]
-      },
       "operations": {
         "get": {
           "permission": "widget.get",

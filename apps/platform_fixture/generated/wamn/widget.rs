@@ -37,9 +37,9 @@ pub(crate) const DELETE_DIGEST: &str =
 pub(crate) const GET_DIGEST: &str =
     "sha256:9033b3a1caa6ee73ba3aa4a5df84824c1aaf806e3e7c90329e2a9a3324e9b9bf";
 pub(crate) const QUERY_0_DIGEST: &str =
-    "sha256:dcb9f07cc0496bb54721a3bb9c6df6fd15f1614d2e4ebf6f32ac3513a63b19e1";
+    "sha256:e1d1b5246edf6aed6d2a1806cccc673d5a501291f5eeff719e7afefab998ee2c";
 pub(crate) const QUERY_1_DIGEST: &str =
-    "sha256:dfbee8737b4ddca521e79a1d2559d61cd55a3fbe439f0ce46486973844fc0172";
+    "sha256:624fc462cbf08418c6fe94f24bf28e57923005249ff47c8aadaf4793ceb1d9d8";
 pub(crate) const UPDATE_DIGEST: &str =
     "sha256:a012c26134f98282143795c4c02c39ff6b7db89ef85661c279a275a3125ef540";
 

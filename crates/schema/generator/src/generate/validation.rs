@@ -127,6 +127,7 @@ pub(super) fn validate(
     validate_connections(manifest)?;
     validate_authored_sources(manifest, input.authored_sql)?;
     validate_authored_query_filters(manifest, input.authored_sql)?;
+    refuse_generator_owned_queries(input.catalog, manifest, input.authored_sql)?;
     for (operation_name, operation) in &manifest.custom_operations {
         validate_custom_operation_sql(
             input.catalog,
@@ -986,51 +987,13 @@ pub(super) fn derive_relation_access(
     operation: &str,
     declaration: &CustomOperationDeclaration,
 ) -> Result<BTreeMap<String, DerivedRelation>, GenerateError> {
-    let schemas = crate::data_access::application_schemas(manifest)?;
-    let schemas = schemas.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    let mut owners = BTreeMap::<String, &str>::new();
-    let mut relation_fields = BTreeMap::<String, BTreeSet<String>>::new();
-    let tables = catalog
-        .tables()
+    let relations = package_relations(catalog, manifest, operation)?;
+    let schemas = relations
+        .schemas
         .iter()
-        .filter(|table| schemas.contains(table.schema()))
-        .map(|table| {
-            (
-                table.schema(),
-                table.name().to_owned(),
-                table
-                    .columns()
-                    .iter()
-                    .map(|column| column.name().to_owned())
-                    .collect::<BTreeSet<_>>(),
-            )
-        })
-        .chain(
-            logged_history_tables(manifest)
-                .filter(|(schema, _)| schemas.contains(schema))
-                .map(|(schema, history)| {
-                    (
-                        schema,
-                        history,
-                        HISTORY_COLUMNS
-                            .iter()
-                            .map(|(name, _)| (*name).to_owned())
-                            .collect(),
-                    )
-                }),
-        );
-    for (schema, table, columns) in tables {
-        if let Some(other) = owners.insert(table.clone(), schema) {
-            return Err(GenerateError::for_object(
-                GenerateErrorType::InvalidOperation,
-                format!(
-                    "{operation} cannot derive its relations: schemas {other} and {schema} both define {table}"
-                ),
-                table,
-            ));
-        }
-        relation_fields.insert(table, columns);
-    }
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let (owners, relation_fields) = (&relations.owners, &relations.fields);
     let mut derived = BTreeMap::<String, DerivedRelation>::new();
     for statement in declaration.statements.values() {
         let source = authored_sql
@@ -1044,7 +1007,7 @@ pub(super) fn derive_relation_access(
                 statement.path.as_str(),
             )
         };
-        let statement_access = crate::sql_lex::relation_access(source.bytes, &relation_fields)
+        let statement_access = crate::sql_lex::relation_access(source.bytes, relation_fields)
             .map_err(|detail| {
                 GenerateError::for_path(
                     GenerateErrorType::InvalidOperation,
@@ -1060,7 +1023,7 @@ pub(super) fn derive_relation_access(
             validate_delete_target(manifest, &schemas, operation, &statement.path, target)?;
         }
         for (table, observed) in statement_access {
-            let schema = owners[&table].to_owned();
+            let schema = owners[&table].clone();
             let aggregate = &mut derived
                 .entry(table)
                 .or_insert_with(|| DerivedRelation {
@@ -1090,6 +1053,73 @@ pub(super) fn derive_relation_access(
         }
     }
     Ok(derived)
+}
+
+/// The relations of the package's own schemas that its SQL can name: each
+/// table's schema and columns, keyed by table name, as the lexer reads them.
+struct PackageRelations {
+    schemas: Vec<String>,
+    owners: BTreeMap<String, String>,
+    fields: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Read the package's relations from the catalog, with each logged history
+/// table. A table name that two of the package's schemas share refuses.
+fn package_relations(
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
+    subject: &str,
+) -> Result<PackageRelations, GenerateError> {
+    let schemas = crate::data_access::application_schemas(manifest)?;
+    let mut owners = BTreeMap::<String, String>::new();
+    let mut relation_fields = BTreeMap::<String, BTreeSet<String>>::new();
+    let schema_set = schemas.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    let tables = catalog
+        .tables()
+        .iter()
+        .filter(|table| schema_set.contains(table.schema()))
+        .map(|table| {
+            (
+                table.schema(),
+                table.name().to_owned(),
+                table
+                    .columns()
+                    .iter()
+                    .map(|column| column.name().to_owned())
+                    .collect::<BTreeSet<_>>(),
+            )
+        })
+        .chain(
+            logged_history_tables(manifest)
+                .filter(|(schema, _)| schema_set.contains(schema))
+                .map(|(schema, history)| {
+                    (
+                        schema,
+                        history,
+                        HISTORY_COLUMNS
+                            .iter()
+                            .map(|(name, _)| (*name).to_owned())
+                            .collect(),
+                    )
+                }),
+        );
+    for (schema, table, columns) in tables {
+        if let Some(other) = owners.insert(table.clone(), schema.to_owned()) {
+            return Err(GenerateError::for_object(
+                GenerateErrorType::InvalidOperation,
+                format!(
+                    "{subject} cannot derive its relations: schemas {other} and {schema} both define {table}"
+                ),
+                table,
+            ));
+        }
+        relation_fields.insert(table, columns);
+    }
+    Ok(PackageRelations {
+        schemas,
+        owners,
+        fields: relation_fields,
+    })
 }
 
 /// One relation that a custom operation's statements reach.
@@ -1428,6 +1458,53 @@ fn validate_authored_query_filters(
                         path,
                     ));
                 }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Refuse authored SQL for a model query that generation writes itself.
+///
+/// Generation writes a model query from its filters, search and sort: one
+/// table, no aggregate and no window. Authored SQL whose every variant reads
+/// the model's table and no other, with no `GROUP BY` and no `OVER (`, is such a query,
+/// so the author states its sort and filters and no SQL. Authored SQL stays for
+/// a query that joins, aggregates or windows. A variant the lexer cannot read
+/// stays authored, because generation never rewrites SQL it did not write.
+fn refuse_generator_owned_queries(
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
+    authored_sql: &[AuthoredSql<'_>],
+) -> Result<(), GenerateError> {
+    for (model_name, model) in &manifest.models {
+        for (action, operation) in &model.operations {
+            let Some(authored) = &operation.authored_sql else {
+                continue;
+            };
+            let context = format!("{model_name}.{}", action.as_str());
+            let relations = package_relations(catalog, manifest, &context)?;
+            let generator_owned = authored.variants.iter().all(|variant| {
+                authored_sql
+                    .iter()
+                    .find(|source| source.path == variant.path)
+                    .is_some_and(|source| {
+                        !crate::sql_lex::groups_or_windows(source.bytes)
+                            && crate::sql_lex::relation_access(source.bytes, &relations.fields)
+                                .is_ok_and(|access| {
+                                    access.len() == 1 && access.contains_key(&model.table)
+                                })
+                    })
+            });
+            if generator_owned {
+                return Err(GenerateError::for_path(
+                    GenerateErrorType::InvalidOperation,
+                    format!(
+                        "{context} authored_sql reads only {} with no GROUP BY and no window, so generation writes it from its sort and filters; remove authored_sql and its files",
+                        model.table
+                    ),
+                    authored.default.as_str(),
+                ));
             }
         }
     }

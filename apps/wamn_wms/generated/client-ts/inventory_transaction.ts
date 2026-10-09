@@ -25,7 +25,7 @@ export interface InventoryTransactionGetResult {
   /** `uuid` */
   readonly fromPackagingId: Uuid | null;
   /** `text` */
-  readonly fromStatus: string | null;
+  readonly fromStatus: "available" | "held" | null;
   /** `uuid` */
   readonly id: Uuid;
   /** `timestamptz` */
@@ -39,7 +39,7 @@ export interface InventoryTransactionGetResult {
   /** `uuid` */
   readonly toPackagingId: Uuid | null;
   /** `text` */
-  readonly toStatus: string | null;
+  readonly toStatus: "available" | "held" | null;
 }
 
 /** What `wamn-wms:inventory-transaction/get@2.1.0` calls its result members. */
@@ -125,7 +125,7 @@ export interface InventoryTransactionQueryRow {
   /** `uuid` */
   readonly fromPackagingId: Uuid | null;
   /** `text` */
-  readonly fromStatus: string | null;
+  readonly fromStatus: "available" | "held" | null;
   /** `uuid` */
   readonly id: Uuid;
   /** `timestamptz` */
@@ -139,7 +139,7 @@ export interface InventoryTransactionQueryRow {
   /** `uuid` */
   readonly toPackagingId: Uuid | null;
   /** `text` */
-  readonly toStatus: string | null;
+  readonly toStatus: "available" | "held" | null;
 }
 
 /** Result of `wamn-wms:inventory-transaction/query@2.1.0`. */
