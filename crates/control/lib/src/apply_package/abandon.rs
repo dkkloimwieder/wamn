@@ -133,8 +133,9 @@ async fn abandon_existing(
         package_id: candidate.package_id.clone(),
         package_version: candidate.package_version.clone(),
         predecessor_version: installed_version.clone(),
-        manifest_sha256: candidate.manifest_sha256.clone(),
-        qualification_sha256: digest.to_owned(),
+        package_artifact_digest: crate::package_artifact::package_artifact_digest(&package.root)?,
+        predecessor_release_digest: evidence.predecessor_manifest_digest.clone(),
+        evidence_digest: digest.to_owned(),
     };
     // Recheck the supplied snapshot immediately before the only durable mutation.
     require_exact_stage(tenant, package, evidence)?;
@@ -238,8 +239,10 @@ mod tests {
             package_id: candidate.package_id.clone(),
             package_version: candidate.package_version.clone(),
             predecessor_version: predecessor.package_version.clone(),
-            manifest_sha256: candidate.manifest_sha256.clone(),
-            qualification_sha256: digest,
+            package_artifact_digest: crate::package_artifact::package_artifact_digest(&files.0)
+                .unwrap(),
+            predecessor_release_digest: evidence.predecessor_manifest_digest.clone(),
+            evidence_digest: digest,
         };
         let mut server = wamn_test_postgres::start(&[]).unwrap();
         let database = server.create_database("abandon_stage").unwrap();
@@ -299,7 +302,7 @@ mod tests {
                 .await
                 .unwrap_err()
                 .to_string()
-                .contains("qualification_sha256 mismatch")
+                .contains("evidence_digest mismatch")
         );
         write_evidence(&files.0, &evidence);
         let mut wrong_tenant = request();

@@ -56,6 +56,12 @@ SELECT requirement.requirement_json::text, requirement.requirement_hash \
       WHERE release.tenant_id = $1 AND release.manifest_digest = $4 \
         AND component.value ->> 'digest' = $2)";
 const FIRST_GENERATION: i64 = 1;
+/// Enable a disabled instance again, at the revision the caller read.
+const ENABLE_INSTANCE_SQL: &str = "\
+UPDATE catalog.connection_instances \
+   SET lifecycle_status = 'enabled', revision = revision + 1, updated_at = now() \
+ WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+   AND lifecycle_status = 'disabled' AND revision = $4";
 
 #[derive(Debug)]
 pub struct BindConnectionRequest {
@@ -74,7 +80,7 @@ pub struct BindConnectionRequest {
 
     /// The generation's non-secret definition: a JSON object of exactly the
     /// coordinates the requirement type's plugin reads.
-    pub definition: PathBuf,
+    pub definition: Value,
 
     /// The host-held credential's handle. Never the credential. A `gcs`
     /// definition takes none, and every other definition needs one.
@@ -88,6 +94,81 @@ pub struct BindConnectionRequest {
 
     /// The store alias that component declared for this connection.
     pub store_alias: String,
+}
+
+/// One environment-owned connection instance with the inputs of its active
+/// generation, with no binding (docs/plan/platform-deploy.md R22 (1)).
+#[derive(Clone, Debug)]
+pub struct ConnectionInstance {
+    /// The project-environment database holding the catalog schema.
+    pub database_url: String,
+    pub tenant: String,
+    pub environment: String,
+    pub instance_id: String,
+    pub requirement_type: RequirementType,
+    pub definition: Value,
+    pub credential_handle: Option<String>,
+}
+
+impl From<&BindConnectionRequest> for ConnectionInstance {
+    fn from(request: &BindConnectionRequest) -> Self {
+        Self {
+            database_url: request.database_url.clone(),
+            tenant: request.tenant.clone(),
+            environment: request.environment.clone(),
+            instance_id: request.instance_id.clone(),
+            requirement_type: request.requirement_type,
+            definition: request.definition.clone(),
+            credential_handle: request.credential_handle.clone(),
+        }
+    }
+}
+
+/// Ensure an enabled instance at the generation of `instance`'s definition,
+/// with no binding. Equal inputs write nothing; changed inputs append a
+/// generation and activate it; a disabled instance of the same type is
+/// enabled again. Returns the previous and the active generation.
+pub async fn ensure_instance(instance: &ConnectionInstance) -> anyhow::Result<(Option<i64>, i64)> {
+    validate_definition(instance.requirement_type, &instance.definition)?;
+    let descriptor = instance.requirement_type.descriptor();
+    instance
+        .requirement_type
+        .check_credential_handle(&instance.definition, instance.credential_handle.as_deref())
+        .map_err(anyhow::Error::msg)?;
+    let (mut client, connection) = tokio_postgres::connect(&instance.database_url, NoTls)
+        .await
+        .context("connect to the project-environment database")?;
+    let connection_task = tokio::spawn(connection);
+    let result = async {
+        let transaction = client
+            .transaction()
+            .await
+            .context("open the connection instance transaction")?;
+        transaction
+            .execute(CLAIM_TENANT_SQL, &[&instance.tenant])
+            .await
+            .context("claim the tenant for the connection instance transaction")?;
+        let generations = bind_generation(
+            &transaction,
+            instance,
+            &descriptor,
+            &instance.definition,
+            &definition_hash(&instance.definition),
+        )
+        .await?;
+        transaction
+            .commit()
+            .await
+            .context("commit the connection instance transaction")?;
+        Ok(generations)
+    }
+    .await;
+    drop(client);
+    connection_task
+        .await
+        .context("join the connection instance connection")?
+        .context("drive the connection instance connection")?;
+    result
 }
 
 /// What the verb wrote, for the caller's result.
@@ -116,26 +197,23 @@ pub fn validate_definition(
 pub use wamn_runtime::connection_generation::binding_validation_subject as validation_subject;
 
 /// Validate configuration and atomically bind or rotate its connection generation.
+///
+/// An ensure: an instance, generation and binding equal to the request write
+/// nothing, and a disabled instance of the same type is enabled again
+/// (docs/plan/platform-deploy.md R22).
 pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnection> {
-    let definition_bytes = std::fs::read(&args.definition).with_context(|| {
-        format!(
-            "read the generation definition {}",
-            args.definition.display()
-        )
-    })?;
-    let definition: Value = serde_json::from_slice(&definition_bytes)
-        .with_context(|| format!("{} is not JSON", args.definition.display()))?;
-    validate_definition(args.requirement_type, &definition)?;
+    let definition = &args.definition;
+    validate_definition(args.requirement_type, definition)?;
     let descriptor = args.requirement_type.descriptor();
     args.requirement_type
-        .check_credential_handle(&definition, args.credential_handle.as_deref())
+        .check_credential_handle(definition, args.credential_handle.as_deref())
         .map_err(anyhow::Error::msg)?;
 
     let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
         .context("connect to the project-environment database")?;
     let connection_task = tokio::spawn(connection);
-    let result = bind_in(&mut client, args, &descriptor, &definition).await;
+    let result = bind_in(&mut client, args, &descriptor, definition).await;
     drop(client);
     connection_task
         .await
@@ -235,7 +313,7 @@ async fn bind_in(
     }
     let (previous_generation, generation) = bind_generation(
         &transaction,
-        args,
+        &ConnectionInstance::from(args),
         descriptor,
         definition,
         &definition_digest,
@@ -277,16 +355,42 @@ async fn bind_in(
 /// The caller rolls back generation insertion and activation together on any error.
 async fn bind_generation(
     transaction: &tokio_postgres::Transaction<'_>,
-    args: &BindConnectionRequest,
+    args: &ConnectionInstance,
     descriptor: &ConnectionTypeDescriptor,
     definition: &Value,
     definition_digest: &str,
 ) -> anyhow::Result<(Option<i64>, i64)> {
     let coordinate: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
         [&args.tenant, &args.environment, &args.instance_id];
-    let current = transaction
+    let mut current = transaction
         .query_opt(select_connection_instance_sql(), &coordinate)
         .await?;
+    if let Some(row) = &current
+        && row.get::<_, String>(0) == descriptor.requirement_type
+        && row.get::<_, String>(1) == descriptor.contract
+        && row.get::<_, String>(2) == "disabled"
+    {
+        let revision: i64 = row.get(4);
+        let enabled = transaction
+            .execute(
+                ENABLE_INSTANCE_SQL,
+                &[
+                    &args.tenant,
+                    &args.environment,
+                    &args.instance_id,
+                    &revision,
+                ],
+            )
+            .await
+            .context("enable the declared connection instance")?;
+        ensure!(
+            enabled == 1,
+            "connection inputs changed during binding; activation refused"
+        );
+        current = transaction
+            .query_opt(select_connection_instance_sql(), &coordinate)
+            .await?;
+    }
     let Some(current) = current else {
         insert_instance_generation(
             transaction,

@@ -115,7 +115,7 @@ pub use output::{
 pub use pat_secrets::{IssuedPatSecret, parse_pat_prefix, revoke_provisioning_pat};
 pub use registry::{
     claim_environment_instance, project_tenant_environment, read_project_env_instance,
-    resolve_cluster,
+    read_project_env_policy, resolve_cluster,
 };
 pub use workload::{run_org_workload_action, run_workload_action};
 
@@ -142,9 +142,11 @@ pub struct ProvisionProjectEnvRequest {
     /// Derives the target cluster via `cluster_of`.
     pub env: String,
 
-    /// Tenant identity for the environment's control-store projection. It is
-    /// never inferred from the project or environment.
-    pub tenant: Option<String>,
+    /// The environment policy a new environment row names. Absent names the
+    /// policy whose name is the env. A recorded row keeps its policy: the
+    /// environment document owns it (docs/plan/platform-deploy.md R2). The
+    /// tenant is derived from the coordinate (`project_env_tenant`).
+    pub policy: Option<String>,
 
     /// Mark this environment DISPOSABLE: its admitted component facts may be
     /// REPLACED rather than frozen (wamn-10yt.38). The marker is recorded on the
@@ -510,7 +512,7 @@ pub async fn provision_project_env(
         record_project_env(
             system_url,
             &triple,
-            args.tenant.as_deref(),
+            args.policy.as_deref(),
             &secret_name,
             args.secret_namespace.as_deref(),
             &mint_instance_suffix()?,
@@ -527,7 +529,7 @@ pub async fn provision_project_env(
         let url = args.system_database_url.as_deref().context(
             "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
         )?;
-        resolve_cluster(url, org, env).await?
+        resolve_cluster(url, org, args.policy.as_deref().unwrap_or(env)).await?
     };
 
     let db_name = project_env_database_name(org, project, env, &instance);

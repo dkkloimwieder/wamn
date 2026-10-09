@@ -135,7 +135,7 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
     .await
     .unwrap_err();
     assert!(
-        format!("{error:#}").contains("immutable stage manifest"),
+        format!("{error:#}").contains("immutable stage artifact"),
         "{error:#}"
     );
     fs::write(&manifest_path, frozen).unwrap();

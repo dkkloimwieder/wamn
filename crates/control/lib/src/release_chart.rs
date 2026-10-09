@@ -17,6 +17,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use serde_yaml::{Mapping, Value};
 use tokio::process::Command;
+use wamn_catalog::{AttachmentType, ServingManifest};
 use wamn_engine::release_manifest::release_label;
 
 /// The chart version this module renders for. It equals `version` in
@@ -134,12 +135,62 @@ pub enum RoleName {
 }
 
 impl RoleName {
-    fn as_str(self) -> &'static str {
+    /// `http` or `materializer`, the suffix of the role's object names.
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Http => "http",
             Self::Materializer => "materializer",
         }
     }
+}
+
+/// The roles a release implies (R4, epic decision D6): http iff the manifest
+/// has an http attachment, materializer iff it has an event registration.
+/// Each role's configuration derives from the coordinate.
+pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
+    let tenant = wamn_control_provision::project_env_tenant(org, project, env);
+    let scope = |extra: &[(&str, &str)]| -> Mapping {
+        [
+            ("wamn.tenant", tenant.as_str()),
+            ("wamn.project", project),
+            ("wamn.environment", env),
+        ]
+        .iter()
+        .chain(extra)
+        .map(|(key, value)| ((*key).into(), (*value).into()))
+        .collect()
+    };
+    let mut roles = Vec::new();
+    if manifest
+        .attachments
+        .values()
+        .any(|attachment| attachment.type_ == AttachmentType::Http)
+    {
+        roles.push(Role {
+            name: RoleName::Http,
+            config: scope(&[]),
+            environment: None,
+        });
+    }
+    if !manifest.workflow.registrations.is_empty() {
+        let stream = wamn_control_provision::event_stream_name(org, project, env);
+        let environment = [
+            ("WAMN_MAT_STREAM", stream.as_str()),
+            ("WAMN_MAT_ORG", org),
+            ("WAMN_MAT_PROJECT", project),
+            ("WAMN_MAT_ENV", env),
+            ("WAMN_MAT_TENANT", tenant.as_str()),
+        ]
+        .iter()
+        .map(|(key, value)| ((*key).into(), (*value).into()))
+        .collect();
+        roles.push(Role {
+            name: RoleName::Materializer,
+            config: scope(&[("wamn.postgres.authority", "event-materializer")]),
+            environment: Some(environment),
+        });
+    }
+    roles
 }
 
 /// The host variables that carry the environment coordinate and route host
@@ -169,6 +220,8 @@ pub struct ValuesInput {
     /// The drain bound of the environment policy, rendered as the host pods'
     /// `terminationGracePeriodSeconds` (R20).
     pub drain_bound_seconds: u32,
+    /// Who applied. It renders nothing and is kept with the revision (§9.2).
+    pub actor: String,
     /// The body of the one host group entry: env, volumes, volumeMounts,
     /// replicas, http, resources, ociCaPaths. The name, namespace, service and
     /// release arguments are this module's and are refused here.
@@ -262,6 +315,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("environment".into(), environment.into());
     values.insert("routeHost".into(), input.route_host.clone().into());
     values.insert("roles".into(), Value::Sequence(roles));
+    values.insert("audit".into(), mapping([("actor", input.actor.clone())]));
     values.insert("runtime-operator".into(), Value::Mapping(operator));
     Ok(Value::Mapping(values))
 }
@@ -275,13 +329,15 @@ pub struct Target {
     pub namespace: String,
 }
 
-/// Install or upgrade one environment's release and wait for its host Deployment.
+/// Install or upgrade one environment's release at [`CHART_VERSION`] and wait
+/// for its host Deployment. `description` is kept with the revision.
 pub async fn upgrade(
     target: &Target,
     chart: &Path,
     name: &str,
     values: &Path,
     timeout: Duration,
+    description: &str,
 ) -> anyhow::Result<()> {
     let timeout = format!("{}s", timeout.as_secs());
     helm(&[
@@ -289,6 +345,10 @@ pub async fn upgrade(
         "--install".as_ref(),
         name.as_ref(),
         chart.as_os_str(),
+        "--version".as_ref(),
+        CHART_VERSION.as_ref(),
+        "--description".as_ref(),
+        description.as_ref(),
         "--kubeconfig".as_ref(),
         target.kubeconfig.as_os_str(),
         "--kube-context".as_ref(),
@@ -411,6 +471,7 @@ mod tests {
                 environment: None,
             }],
             drain_bound_seconds: 300,
+            actor: "ops".into(),
             host_group: group,
         }
     }
@@ -484,6 +545,7 @@ mod tests {
             .expect("yaml")
         );
         assert!(runtime.get("image").is_none());
+        assert_eq!(values["audit"]["actor"].as_str(), Some("ops"));
         assert!(values.get("platform").is_none());
         let text = serde_yaml::to_string(&values).expect("yaml");
         assert_eq!(

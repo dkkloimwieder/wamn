@@ -2253,17 +2253,14 @@ async fn copy_bindings(
                 "release {current} binds {instance_id} to the component {component}, which this run did not push"
             )
         })?;
-        let file = run
-            .release_files()
-            .join(format!("{instance_id}.definition.json"));
-        fs::write(&file, &definition)?;
         let bound = crate::bind_connection::bind(&crate::bind_connection::BindConnectionRequest {
             database_url: databases.project_url(),
             tenant: databases.tenant.clone(),
             environment: run.arguments.environment.clone(),
             instance_id: instance_id.clone(),
             requirement_type: serde_json::from_value(Value::String(requirement))?,
-            definition: file,
+            definition: serde_json::from_str(&definition)
+                .with_context(|| format!("the definition of {instance_id} is not JSON"))?,
             credential_handle,
             manifest_digest: release.to_owned(),
             component_digest: new_digest.clone(),

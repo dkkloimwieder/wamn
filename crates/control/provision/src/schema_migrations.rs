@@ -252,6 +252,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0013_remove_wiring_activation.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0014_stage_digests.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0014_stage_digests.sql"),
+    },
 ];
 
 #[cfg(test)]

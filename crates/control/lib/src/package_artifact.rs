@@ -356,6 +356,41 @@ fn collect_files(
     Ok(())
 }
 
+/// The package artifact digest of the package at `root`, the key of its stage
+/// evidence and stage progress (docs/plan/platform-deploy.md §10.2).
+///
+/// An authored package packs to its deterministic layer, whose digest is the
+/// one `push-package` recorded. A hand-written package has no artifact; its
+/// digest is over the layer of its manifest and migrations, which is the
+/// whole of what `apply-package` reads from it.
+pub fn package_artifact_digest(root: &Path) -> anyhow::Result<String> {
+    if wamn_schema_generator::is_authored(root) {
+        return Ok(pack_package(root, None)?.digest);
+    }
+    let directory = crate::apply_package::read_package_directory(root)?;
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut entries = vec![("wamn.json".to_owned(), directory.manifest_bytes.as_slice())];
+    entries.extend(
+        directory
+            .migrations
+            .iter()
+            .map(|migration| (migration.relative_path.clone(), migration.bytes.as_slice())),
+    );
+    for (name, data) in entries {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_size(data.len() as u64);
+        header.set_mode(0o644);
+        header.set_mtime(0);
+        builder
+            .append_data(&mut header, &name, data)
+            .with_context(|| format!("add {name} to the package digest"))?;
+    }
+    Ok(sha256_digest(
+        &builder.into_inner().context("finish the package digest")?,
+    ))
+}
+
 fn sha256_digest(bytes: &[u8]) -> String {
     format!(
         "sha256:{}",

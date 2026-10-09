@@ -147,16 +147,47 @@ pub async fn read_project_env_instance(
     result
 }
 
+/// Read the policy name of one project-env's registry row. The environment
+/// document owns it (docs/plan/platform-deploy.md R2).
+pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyhow::Result<String> {
+    let (client, conn) = tokio_postgres::connect(system_url, NoTls)
+        .await
+        .context("system db connect")?;
+    let conn_task = tokio::spawn(conn);
+    let result = async {
+        client
+            .batch_execute("SET ROLE wamn_system")
+            .await
+            .context("SET ROLE wamn_system")?;
+        let env = triple.env.as_str();
+        client
+            .query_opt(
+                "SELECT policy_name FROM registry.project_envs \
+                  WHERE org = $1 AND project = $2 AND env = $3",
+                &[&triple.org, &triple.project, &env],
+            )
+            .await
+            .context("read the policy name of registry.project_envs")?
+            .map(|row| row.get::<_, String>(0))
+            .with_context(|| format!("project-env {triple} is not recorded"))
+    }
+    .await;
+    drop(client);
+    let _ = conn_task.await;
+    result
+}
+
 /// Record the project and the provisioned project-env in the registry (idempotent).
 /// Connects as superuser and `SET ROLE wamn_system` (the registry owner — the
 /// wamn-q3n.3 apply pattern), then runs the pure `wamn-control-registry` builders.
 ///
 /// Returns the environment's STORED instance suffix, which is `minted` only on a
-/// first provision — see [`do_record_project_env`].
+/// first provision — see [`do_record_project_env`]. The tenant derives from
+/// the coordinate (`project_env_tenant`).
 pub(super) async fn record_project_env(
     system_url: &str,
     triple: &Triple,
-    tenant: Option<&str>,
+    policy: Option<&str>,
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
@@ -166,10 +197,16 @@ pub(super) async fn record_project_env(
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
+    let tenant = wamn_control_registry::project_env_tenant(
+        &triple.org,
+        &triple.project,
+        triple.env.as_str(),
+    );
     let result = do_record_project_env(
         &mut client,
         triple,
-        tenant,
+        Some(&tenant),
+        policy,
         secret_name,
         secret_namespace,
         minted,
@@ -181,10 +218,12 @@ pub(super) async fn record_project_env(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn do_record_project_env(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
     tenant: Option<&str>,
+    policy: Option<&str>,
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
@@ -204,7 +243,7 @@ pub(super) async fn do_record_project_env(
     let env = triple.env.as_str();
     let row = client
         .query_one(
-            wamn_control_registry::sql::upsert_project_env_sql(),
+            wamn_control_registry::sql::upsert_project_env_with_policy_sql(),
             &[
                 &triple.org,
                 &triple.project,
@@ -213,6 +252,7 @@ pub(super) async fn do_record_project_env(
                 &secret_namespace,
                 &minted,
                 &disposable,
+                &policy.unwrap_or(env),
             ],
         )
         .await

@@ -10,7 +10,7 @@
 //! WAMN_SYSTEM_ADMIN_URL=<superuser URL of wamn_system> \
 //! WAMN_IDENTITY_BINARY=<wamn-identity executable> \
 //! cargo run -p wamn-test-infrastructure --example pat_for_disposable_stack -- \
-//!   <org> <project> <env> <tenant> <namespace> <PAT Secret file>
+//!   <org> <project> <env> <namespace> <PAT Secret file>
 
 use std::path::PathBuf;
 
@@ -22,11 +22,11 @@ use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 async fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     ensure!(
-        arguments.len() == 6,
-        "usage: <org> <project> <env> <tenant> <namespace> <PAT Secret file>"
+        arguments.len() == 5,
+        "usage: <org> <project> <env> <namespace> <PAT Secret file>"
     );
     let system_url = std::env::var("WAMN_SYSTEM_ADMIN_URL").context("set WAMN_SYSTEM_ADMIN_URL")?;
-    let output = PathBuf::from(&arguments[5]);
+    let output = PathBuf::from(&arguments[4]);
     let directory = output
         .parent()
         .context("the PAT Secret file names its private directory")?;
@@ -35,14 +35,14 @@ async fn main() -> anyhow::Result<()> {
         org: arguments[0].clone(),
         project: arguments[1].clone(),
         env: arguments[2].clone(),
-        tenant: Some(arguments[3].clone()),
+        policy: None,
         disposable: false,
         system_database_url: Some(system_url),
         cluster: None,
         connection_limit: None,
         // The default of the verb; a run that only issues a PAT renders no Database.
         cluster_namespace: "wamn-system".to_owned(),
-        namespace: arguments[4].clone(),
+        namespace: arguments[3].clone(),
         secret_namespace: None,
         emit_database: None,
         emit_role_sql: None,

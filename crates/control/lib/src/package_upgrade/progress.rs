@@ -4,15 +4,18 @@ use anyhow::{Context as _, bail, ensure};
 use serde_json::Value;
 use tokio_postgres::{Row, Transaction};
 
-/// Exact immutable identity of one package stage and its accepted qualification.
+/// Exact immutable identity of one package stage and its accepted qualification:
+/// the package artifact digest, the predecessor release digest and the
+/// evidence digest (docs/plan/platform-deploy.md §10.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StageIdentity {
     pub tenant_id: String,
     pub package_id: String,
     pub package_version: String,
     pub predecessor_version: String,
-    pub manifest_sha256: String,
-    pub qualification_sha256: String,
+    pub package_artifact_digest: String,
+    pub predecessor_release_digest: String,
+    pub evidence_digest: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +38,7 @@ pub(crate) async fn require_no_other_stage(
     tenant: &str,
     package: &str,
     version: &str,
-    manifest_sha256: &str,
+    package_artifact_digest: &str,
 ) -> anyhow::Result<()> {
     let installed: bool = tx
         .query_one(
@@ -49,7 +52,7 @@ pub(crate) async fn require_no_other_stage(
     }
     for row in tx
         .query(
-            "SELECT package_version,cursor,manifest_sha256 FROM catalog.package_upgrade_stages \
+            "SELECT package_version,cursor,package_artifact_digest FROM catalog.package_upgrade_stages \
          WHERE tenant_id=$1 AND package_id=$2 AND (package_version=$3 OR status='in_progress') \
          ORDER BY package_version",
             &[&tenant, &package, &version],
@@ -58,8 +61,8 @@ pub(crate) async fn require_no_other_stage(
     {
         if row.try_get::<_, String>(0)? == version {
             ensure!(
-                row.try_get::<_, String>(2)? == manifest_sha256,
-                "package {package}@{version} differs from its immutable stage manifest; retained cursor {}",
+                row.try_get::<_, String>(2)? == package_artifact_digest,
+                "package {package}@{version} differs from its immutable stage artifact; retained cursor {}",
                 row.try_get::<_, Value>(1)?
             );
             continue;
@@ -81,13 +84,23 @@ pub(crate) async fn open(
 ) -> anyhow::Result<StageProgress> {
     tx.execute(
         "INSERT INTO catalog.package_upgrade_stages \
-         (tenant_id,package_id,package_version,predecessor_version,manifest_sha256,qualification_sha256,status,cursor) \
-         VALUES ($1,$2,$3,$4,$5,$6,'in_progress',$7) \
+         (tenant_id,package_id,package_version,predecessor_version,package_artifact_digest,\
+          predecessor_release_digest,evidence_digest,status,cursor) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'in_progress',$8) \
          ON CONFLICT (tenant_id,package_id,package_version) DO NOTHING",
-        &[&identity.tenant_id, &identity.package_id, &identity.package_version,
-          &identity.predecessor_version, &identity.manifest_sha256, &identity.qualification_sha256,
-          initial_cursor],
-    ).await.context("create package upgrade stage progress")?;
+        &[
+            &identity.tenant_id,
+            &identity.package_id,
+            &identity.package_version,
+            &identity.predecessor_version,
+            &identity.package_artifact_digest,
+            &identity.predecessor_release_digest,
+            &identity.evidence_digest,
+            initial_cursor,
+        ],
+    )
+    .await
+    .context("create package upgrade stage progress")?;
     let progress = locked(tx, identity).await?;
     ensure!(
         progress.status != StageStatus::Abandoned,
@@ -167,7 +180,8 @@ async fn set_status(
 
 async fn locked(tx: &Transaction<'_>, identity: &StageIdentity) -> anyhow::Result<StageProgress> {
     let row = tx.query_opt(
-        "SELECT predecessor_version,manifest_sha256,qualification_sha256,status,cursor,completed_batches \
+        "SELECT predecessor_version,package_artifact_digest,predecessor_release_digest,evidence_digest,\
+                status,cursor,completed_batches \
          FROM catalog.package_upgrade_stages \
          WHERE tenant_id=$1 AND package_id=$2 AND package_version=$3 FOR UPDATE",
         &[&identity.tenant_id, &identity.package_id, &identity.package_version],
@@ -175,8 +189,12 @@ async fn locked(tx: &Transaction<'_>, identity: &StageIdentity) -> anyhow::Resul
         .with_context(|| format!("package upgrade stage {}@{} has no recorded cursor", identity.package_id, identity.package_version))?;
     for (field, expected) in [
         ("predecessor_version", &identity.predecessor_version),
-        ("manifest_sha256", &identity.manifest_sha256),
-        ("qualification_sha256", &identity.qualification_sha256),
+        ("package_artifact_digest", &identity.package_artifact_digest),
+        (
+            "predecessor_release_digest",
+            &identity.predecessor_release_digest,
+        ),
+        ("evidence_digest", &identity.evidence_digest),
     ] {
         let recorded: &str = row.try_get(field)?;
         ensure!(
@@ -227,8 +245,9 @@ mod tests {
             package_id: "fixture".into(),
             package_version: version.into(),
             predecessor_version: "1.0.0".into(),
-            manifest_sha256: format!("sha256:{}", "a".repeat(64)),
-            qualification_sha256: format!("sha256:{}", "b".repeat(64)),
+            package_artifact_digest: format!("sha256:{}", "a".repeat(64)),
+            predecessor_release_digest: format!("sha256:{}", "e".repeat(64)),
+            evidence_digest: format!("sha256:{}", "b".repeat(64)),
         }
     }
 
@@ -252,13 +271,15 @@ mod tests {
             .unwrap();
         let catalog = "SELECT jsonb_build_object(            'columns', (SELECT jsonb_agg(jsonb_build_array(attname,format_type(atttypid,atttypmod),attnotnull) ORDER BY attnum) FROM pg_attribute WHERE attrelid='catalog.package_upgrade_stages'::regclass AND attnum>0 AND NOT attisdropped),            'constraints', (SELECT jsonb_agg(pg_get_constraintdef(oid) ORDER BY conname) FROM pg_constraint WHERE conrelid='catalog.package_upgrade_stages'::regclass),            'policies', (SELECT jsonb_agg(jsonb_build_array(polname,polroles,pg_get_expr(polqual,polrelid),pg_get_expr(polwithcheck,polrelid)) ORDER BY polname) FROM pg_policy WHERE polrelid='catalog.package_upgrade_stages'::regclass),            'security', (SELECT jsonb_build_array(relrowsecurity,relforcerowsecurity,relowner::regrole::text,relacl::text) FROM pg_class WHERE oid='catalog.package_upgrade_stages'::regclass),            'triggers', (SELECT jsonb_agg(pg_get_triggerdef(oid) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='catalog.package_upgrade_stages'::regclass AND NOT tgisinternal))";
         let fresh: Value = client.query_one(catalog, &[]).await.unwrap().get(0);
-        client.batch_execute("DROP TABLE catalog.package_upgrade_stages; DROP FUNCTION catalog.guard_package_upgrade_stage_change(); DROP INDEX catalog.package_definition_owners_synchronization_function;").await.unwrap();
-        client
-            .batch_execute(include_str!(
+        client.batch_execute("DROP TABLE catalog.package_upgrade_stages; DROP FUNCTION catalog.guard_package_upgrade_stage_change(); DROP INDEX catalog.package_definition_owners_synchronization_function; ALTER TABLE catalog.package_upgrade_qualifications DROP COLUMN package_artifact_digest; ALTER TABLE catalog.connection_requirements ADD CONSTRAINT connection_requirements_component_fkey FOREIGN KEY (tenant_id, component_digest) REFERENCES catalog.component_digest_owners (tenant_id, component_digest);").await.unwrap();
+        for migration in [
+            include_str!(
                 "../../../../../deploy/sql/migrations/project/0010_package_upgrade_stages.sql"
-            ))
-            .await
-            .unwrap();
+            ),
+            include_str!("../../../../../deploy/sql/migrations/project/0014_stage_digests.sql"),
+        ] {
+            client.batch_execute(migration).await.unwrap();
+        }
         let migrated: Value = client.query_one(catalog, &[]).await.unwrap().get(0);
         assert_eq!(fresh, migrated);
         let identity = identity("2.0.0");
@@ -267,8 +288,9 @@ mod tests {
         tx.commit().await.unwrap();
         for sql in [
             "UPDATE catalog.package_upgrade_stages SET predecessor_version='0.9.0'",
-            "UPDATE catalog.package_upgrade_stages SET manifest_sha256='sha256:' || repeat('c',64)",
-            "UPDATE catalog.package_upgrade_stages SET qualification_sha256='sha256:' || repeat('c',64)",
+            "UPDATE catalog.package_upgrade_stages SET package_artifact_digest='sha256:' || repeat('c',64)",
+            "UPDATE catalog.package_upgrade_stages SET predecessor_release_digest='sha256:' || repeat('c',64)",
+            "UPDATE catalog.package_upgrade_stages SET evidence_digest='sha256:' || repeat('c',64)",
             "UPDATE catalog.package_upgrade_stages SET cursor='1'::jsonb",
             "UPDATE catalog.package_upgrade_stages SET completed_batches=2",
             "DELETE FROM catalog.package_upgrade_stages",
@@ -346,16 +368,17 @@ mod tests {
         tx.commit().await.unwrap();
 
         for field in [
-            "manifest_sha256",
-            "qualification_sha256",
+            "package_artifact_digest",
+            "predecessor_release_digest",
+            "evidence_digest",
             "predecessor_version",
         ] {
             let mut changed = identity.clone();
+            let other = format!("sha256:{}", "d".repeat(64));
             match field {
-                "manifest_sha256" => changed.manifest_sha256 = format!("sha256:{}", "d".repeat(64)),
-                "qualification_sha256" => {
-                    changed.qualification_sha256 = format!("sha256:{}", "d".repeat(64));
-                }
+                "package_artifact_digest" => changed.package_artifact_digest = other,
+                "predecessor_release_digest" => changed.predecessor_release_digest = other,
+                "evidence_digest" => changed.evidence_digest = other,
                 _ => changed.predecessor_version = "0.9.0".into(),
             }
             let tx = client.transaction().await.unwrap();

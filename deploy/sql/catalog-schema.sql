@@ -227,10 +227,7 @@ CREATE TABLE catalog.connection_requirements (
     requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
     requirement_hash text  NOT NULL CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT connection_requirements_pkey
-        PRIMARY KEY (tenant_id, component_digest, store_alias),
-    CONSTRAINT connection_requirements_component_fkey
-        FOREIGN KEY (tenant_id, component_digest)
-        REFERENCES catalog.component_digest_owners (tenant_id, component_digest)
+        PRIMARY KEY (tenant_id, component_digest, store_alias)
 );
 
 CREATE TABLE catalog.connection_instances (
@@ -364,6 +361,8 @@ CREATE TABLE catalog.package_upgrade_qualifications (
     predecessor_manifest_digest text        NOT NULL
         CHECK (predecessor_manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     recorded_at                 timestamptz NOT NULL DEFAULT now(),
+    package_artifact_digest     text        NOT NULL
+        CHECK (package_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT package_upgrade_qualifications_pkey
         PRIMARY KEY (tenant_id, package_id, candidate_package_version),
     CONSTRAINT package_upgrade_qualifications_package_fkey
@@ -382,11 +381,12 @@ CREATE TABLE catalog.package_upgrade_stages (
     package_id           text NOT NULL CHECK (package_id <> ''),
     package_version      text NOT NULL CHECK (package_version <> ''),
     predecessor_version  text NOT NULL CHECK (predecessor_version <> '' AND predecessor_version <> package_version),
-    manifest_sha256      text NOT NULL CHECK (manifest_sha256 ~ '^sha256:[0-9a-f]{64}$'),
-    qualification_sha256 text NOT NULL CHECK (qualification_sha256 ~ '^sha256:[0-9a-f]{64}$'),
     status               text NOT NULL CHECK (status IN ('in_progress', 'abandoned', 'completed')),
     cursor               jsonb NOT NULL,
     completed_batches    bigint NOT NULL DEFAULT 0 CHECK (completed_batches >= 0),
+    package_artifact_digest    text NOT NULL CHECK (package_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    predecessor_release_digest text NOT NULL CHECK (predecessor_release_digest ~ '^sha256:[0-9a-f]{64}$'),
+    evidence_digest            text NOT NULL CHECK (evidence_digest ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT package_upgrade_stages_pkey PRIMARY KEY (tenant_id, package_id, package_version)
 );
 
@@ -400,10 +400,10 @@ BEGIN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-cannot-be-deleted';
     END IF;
     IF ROW(NEW.tenant_id, NEW.package_id, NEW.package_version, NEW.predecessor_version,
-           NEW.manifest_sha256, NEW.qualification_sha256)
+           NEW.package_artifact_digest, NEW.predecessor_release_digest, NEW.evidence_digest)
        IS DISTINCT FROM
        ROW(OLD.tenant_id, OLD.package_id, OLD.package_version, OLD.predecessor_version,
-           OLD.manifest_sha256, OLD.qualification_sha256) THEN
+           OLD.package_artifact_digest, OLD.predecessor_release_digest, OLD.evidence_digest) THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-identity-is-immutable';
     END IF;
     IF OLD.status <> 'in_progress' THEN

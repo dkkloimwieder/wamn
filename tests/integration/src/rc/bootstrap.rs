@@ -11,7 +11,7 @@ use wamn_control::provision_org::{self, ProvisionOrgRequest};
 use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 use wamn_control_provision::sql;
 
-use super::{NAMESPACE, Resources, TENANT, apply, command_json, kubectl, save};
+use super::{NAMESPACE, Resources, apply, command_json, kubectl, save};
 
 pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
     let network: Value = serde_json::from_slice(
@@ -96,7 +96,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         org: "rc".into(),
         project: "app".into(),
         env: "dev".into(),
-        tenant: Some(TENANT.into()),
+        policy: None,
         disposable: false,
         system_database_url: Some(system_url),
         cluster: Some("rc-pg".into()),

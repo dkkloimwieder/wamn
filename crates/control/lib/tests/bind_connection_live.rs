@@ -326,7 +326,8 @@ fn args(
         environment: ENVIRONMENT.to_owned(),
         instance_id: "labels-store".to_owned(),
         requirement_type: RequirementType::Blobstore,
-        definition,
+        definition: serde_json::from_slice(&std::fs::read(definition).expect("read a definition"))
+            .expect("a JSON definition"),
         credential_handle: Some("labels-store".to_owned()),
         manifest_digest: digest_of(RELEASE_BYTES),
         component_digest: digest.to_owned(),

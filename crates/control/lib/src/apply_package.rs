@@ -427,7 +427,7 @@ async fn apply_prepared(
             tenant,
             &package_id,
             &package_version,
-            &presented.manifest_sha256,
+            &crate::package_artifact::package_artifact_digest(package_root)?,
         )
         .await?;
     }
@@ -701,7 +701,12 @@ async fn apply_prepared(
         None => false,
     };
     if let Some(evidence) = &accepted_upgrade {
-        crate::package_upgrade::persist(tx, evidence).await?;
+        crate::package_upgrade::persist(
+            tx,
+            evidence,
+            &crate::package_artifact::package_artifact_digest(package_root)?,
+        )
+        .await?;
     }
     Ok(ApplyOutcome {
         package_id,

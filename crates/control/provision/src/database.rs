@@ -95,6 +95,12 @@ pub fn render_project_env_database(
                 "wamn.project": triple.project,
                 "wamn.env": triple.env.as_str(),
             },
+            // The full coordinate, as every object of the environment carries
+            // it (docs/plan/platform-deploy.md §9.1).
+            "annotations": {
+                "wamn.environment":
+                    format!("{}/{}/{}", triple.org, triple.project, triple.env.as_str()),
+            },
         },
         "spec": spec,
     })
@@ -204,6 +210,10 @@ mod tests {
         assert_eq!(cr["spec"]["name"], "wamn-db-acme--billing--dev--k3m9x2p7");
         // The Database shares the namespace of its Cluster, the caller's value.
         assert_eq!(cr["metadata"]["namespace"], "platform");
+        assert_eq!(
+            cr["metadata"]["annotations"]["wamn.environment"],
+            "acme/billing/dev"
+        );
         // Owned by the NOLOGIN title role — never by the role guest-authored SQL
         // executes as, and never by a superuser (R9).
         assert_eq!(cr["spec"]["owner"], "wamn_db_owner");

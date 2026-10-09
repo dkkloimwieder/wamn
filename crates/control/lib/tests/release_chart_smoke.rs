@@ -663,6 +663,7 @@ async fn run(smoke: &mut Smoke, repository: &Path, host_image: &str) -> anyhow::
             environment: None,
         }],
         drain_bound_seconds: 70,
+        actor: "smoke".to_owned(),
         host_group,
     })?;
     std::fs::write(work.join("values.yaml"), serde_yaml::to_string(&rendered)?)?;
@@ -678,6 +679,7 @@ async fn run(smoke: &mut Smoke, repository: &Path, host_image: &str) -> anyhow::
         &name,
         &work.join("values.yaml"),
         Duration::from_secs(300),
+        "apply by smoke",
     )
     .await?;
 

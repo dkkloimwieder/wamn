@@ -172,6 +172,20 @@ pub fn upsert_project_env_sql() -> &'static str {
      RETURNING instance_suffix, disposable"
 }
 
+/// [`upsert_project_env_sql`] with the policy a new row names as `$8`. A
+/// conflict keeps the stored policy name.
+pub fn upsert_project_env_with_policy_sql() -> &'static str {
+    "INSERT INTO registry.project_envs \
+       (org, project, env, secret_name, secret_namespace, instance_suffix, disposable, \
+        policy_name) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+     ON CONFLICT (org, project, env) DO UPDATE SET \
+       secret_name = EXCLUDED.secret_name, \
+       secret_namespace = EXCLUDED.secret_namespace, \
+       disposable = EXCLUDED.disposable \
+     RETURNING instance_suffix, disposable"
+}
+
 // --- event readers (wamn-l5i9.9, D19 v3) ------------------------------------
 //
 // The `registry.event_readers` row an `enable-cdc-project-env` overlay records:

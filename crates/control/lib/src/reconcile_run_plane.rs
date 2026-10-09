@@ -146,7 +146,7 @@ pub struct ReconcileRunPlaneRequest {
     /// Tenant whose project-local policy row is converged.
     pub tenant: String,
 
-    /// Environment policy name in the owning organization's registry set.
+    /// Environment name. The policy is the one the environment row names.
     pub env: String,
 
     /// The project-env schema the run-plane tables live in (e.g.
@@ -323,10 +323,16 @@ pub async fn reconcile_run_plane(
         );
     }
     let result = async {
+        // The environment row names the policy (docs/plan/platform-deploy.md R2).
+        let policy = crate::provision_project_env::read_project_env_policy(
+            &args.system_database_url,
+            &triple,
+        )
+        .await?;
         let source_policy = crate::verification_policy::read_authoritative_environment_policy(
             &args.system_database_url,
             &args.org,
-            &args.env,
+            &policy,
             !args.dry_run,
         )
         .await?;
@@ -336,6 +342,7 @@ pub async fn reconcile_run_plane(
             &client,
             &schema,
             &args.tenant,
+            &args.env,
             &source_policy,
             !args.dry_run,
         )
@@ -794,10 +801,16 @@ async fn converge_tenant_identity(
 /// relation owned by this reconciler. `apply=false` observes only, including a
 /// from-zero schema where the relation or additive source carriers do not yet
 /// exist.
+///
+/// `expected_environment` is the environment's name, which the run plane
+/// and publish compare with the scope. The policy the environment row names
+/// supplies the durability class and the source identity
+/// (docs/plan/platform-deploy.md R2).
 pub(crate) async fn converge_environment_policy(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
     tenant_id: &str,
+    environment: &str,
     source: &crate::verification_policy::AuthoritativeEnvironmentPolicy,
     apply: bool,
 ) -> anyhow::Result<bool> {
@@ -853,7 +866,7 @@ pub(crate) async fn converge_environment_policy(
     let wanted_class = source.durability_class().as_sql();
     let changed = current.as_ref().is_none_or(
         |(current_environment, current_class, current_org, current_hash)| {
-            current_environment != source.environment()
+            current_environment != environment
                 || current_class != wanted_class
                 || current_org.as_deref() != Some(source.source_policy_org.as_ref())
                 || current_hash.as_deref() != Some(source.source_policy_hash.as_ref())
@@ -887,7 +900,7 @@ pub(crate) async fn converge_environment_policy(
                 ),
                 &[
                     &tenant_id,
-                    &source.environment(),
+                    &environment,
                     &wanted_class,
                     &source.source_policy_org.as_ref(),
                     &source.source_policy_hash.as_ref(),

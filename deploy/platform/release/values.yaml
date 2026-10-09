@@ -65,3 +65,6 @@ routeHost: ""
 # One entry per role: `{name: http | materializer, config: {}, environment: {}}`.
 # `environment` is for the materializer only.
 roles: []
+# `{actor}`: who applied. It renders nothing. Helm keeps it with the revision,
+# and `apply` leaves it out when it compares values (§10.1 step 6).
+audit: {}

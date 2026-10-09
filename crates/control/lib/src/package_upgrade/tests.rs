@@ -222,7 +222,9 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
     );
     tx.rollback().await.unwrap();
     let tx = client.transaction().await.unwrap();
-    persist(&tx, &accepted).await.unwrap();
+    persist(&tx, &accepted, &format!("sha256:{}", "f".repeat(64)))
+        .await
+        .unwrap();
     tx.rollback().await.unwrap();
     let mut tx = client.transaction().await.unwrap();
     assert!(
@@ -231,7 +233,9 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
             .unwrap()
             .is_none()
     );
-    persist(&tx, &accepted).await.unwrap();
+    persist(&tx, &accepted, &format!("sha256:{}", "f".repeat(64)))
+        .await
+        .unwrap();
     require_compatible_schema(&mut tx, &manifest, &scope())
         .await
         .expect("persisted proof admits its immediate predecessor");

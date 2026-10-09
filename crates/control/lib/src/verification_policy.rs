@@ -18,10 +18,6 @@ pub(crate) struct AuthoritativeEnvironmentPolicy {
 }
 
 impl AuthoritativeEnvironmentPolicy {
-    pub(crate) fn environment(&self) -> &str {
-        self.policy.name.as_str()
-    }
-
     pub(crate) const fn durability_class(&self) -> DurabilityClass {
         self.policy.durability_class
     }
@@ -81,7 +77,12 @@ pub async fn project_environment_policy(
         .context("connect to the verification policy target")?;
     let connection_task = tokio::spawn(connection);
     let changed = crate::reconcile_run_plane::converge_environment_policy(
-        &target, run_schema, tenant_id, &source, true,
+        &target,
+        run_schema,
+        tenant_id,
+        environment,
+        &source,
+        true,
     )
     .await;
     drop(target);

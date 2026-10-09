@@ -120,20 +120,25 @@ pub(super) async fn apply(
                 unreachable!("mode checked before transaction")
             }
         };
+        let artifact = crate::package_artifact::package_artifact_digest(&package.root)?;
         let identity = StageIdentity {
             tenant_id: tenant.to_owned(),
             package_id: package_id.clone(),
             package_version: version.clone(),
             predecessor_version: predecessor_version.to_owned(),
-            manifest_sha256: plan.manifest_sha256.clone(),
-            // Qualification uses an owned disposable copy before final evidence exists.
-            qualification_sha256: accepted.as_ref().map_or_else(
-                || plan.manifest_sha256.clone(),
+            package_artifact_digest: artifact.clone(),
+            // Qualification uses an owned disposable copy before final
+            // evidence exists, so the artifact digest stands for both.
+            predecessor_release_digest: accepted.as_ref().map_or_else(
+                || artifact.clone(),
+                |accepted| accepted.predecessor_release_digest().to_owned(),
+            ),
+            evidence_digest: accepted.as_ref().map_or_else(
+                || artifact.clone(),
                 |accepted| accepted.qualification_sha256().to_owned(),
             ),
         };
-        progress::require_no_other_stage(&tx, tenant, package_id, version, &plan.manifest_sha256)
-            .await?;
+        progress::require_no_other_stage(&tx, tenant, package_id, version, &artifact).await?;
         let recorded = progress::open(&tx, &identity, &batch.initial_cursor).await?;
         ensure!(
             recorded.status == StageStatus::InProgress,
@@ -214,7 +219,7 @@ pub(super) async fn apply(
             let outcome =
                 apply_prepared(&tx, tenant, package, ApplicationMode::BackfillCompletion).await?;
             if let Some(accepted) = accepted {
-                crate::package_upgrade::persist(&tx, &accepted).await?;
+                crate::package_upgrade::persist(&tx, &accepted, &artifact).await?;
             }
             progress::complete(&tx, &identity).await?;
             tx.commit()

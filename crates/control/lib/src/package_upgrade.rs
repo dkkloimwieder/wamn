@@ -27,8 +27,14 @@ pub(crate) struct AcceptedUpgrade {
 }
 
 impl AcceptedUpgrade {
+    /// The evidence digest.
     pub(crate) fn qualification_sha256(&self) -> &str {
         &self.sha256
+    }
+
+    /// The release the evidence was made against.
+    pub(crate) fn predecessor_release_digest(&self) -> &str {
+        &self.evidence.predecessor_manifest_digest
     }
 }
 
@@ -169,7 +175,12 @@ pub(crate) async fn apply_coordinated(
                 require_reconciled_privileges(&tx, evidence).await?;
                 require_presented_roots(roots, evidence)?;
             }
-            self::persist(&tx, accepted).await?;
+            self::persist(
+                &tx,
+                accepted,
+                &crate::package_artifact::package_artifact_digest(&base.root)?,
+            )
+            .await?;
         }
         tx.commit()
             .await
@@ -364,26 +375,24 @@ pub(crate) async fn require_application(
             evidence.upgrade_stage.as_ref(),
         )?;
     }
+    // The predecessor recheck (docs/plan/platform-deploy.md §10.2 step 1): the
+    // installed packages and their data access are the predecessor the
+    // evidence was made against. `apply` holds the lifecycle lock, and the
+    // release the predecessor serves is the evidence's own digest.
+    let installed = read_current_packages(tx, tenant).await?;
     ensure!(
-        read_current_packages(tx, tenant).await? == evidence.predecessor_packages,
-        "live predecessor package leaves or migrations changed after qualification"
-    );
-    let head = tx
-        .query_opt(
-            "SELECT manifest_digest FROM catalog.effective_release_heads \
-         WHERE tenant_id = $1 AND environment = $2 FOR UPDATE",
-            &[&tenant, &evidence.environment],
-        )
-        .await?
-        .context("qualified predecessor release is no longer selected")?;
-    ensure!(
-        head.get::<_, String>(0) == evidence.predecessor_manifest_digest,
-        "qualified predecessor head changed"
-    );
-    let (_, digest) = read_selected_manifest(tx, tenant, &evidence.environment).await?;
-    ensure!(
-        digest == evidence.predecessor_manifest_digest,
-        "qualified predecessor manifest changed"
+        installed == evidence.predecessor_packages,
+        "live predecessor package leaves or migrations changed after qualification: \
+         installed {:?}, qualified against {:?}",
+        installed
+            .iter()
+            .map(|package| format!("{}@{}", package.package_id, package.package_version))
+            .collect::<Vec<_>>(),
+        evidence
+            .predecessor_packages
+            .iter()
+            .map(|package| format!("{}@{}", package.package_id, package.package_version))
+            .collect::<Vec<_>>()
     );
     ensure!(
         read_upgrade_privileges(tx, &evidence.schemas).await? == evidence.predecessor_privileges,
@@ -458,15 +467,18 @@ fn require_prefix(evidence: &UpgradeQualification) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Record accepted evidence, keyed by the candidate's package artifact digest,
+/// the predecessor release digest and the evidence digest (§10.2).
 pub(crate) async fn persist(
     tx: &Transaction<'_>,
     accepted: &AcceptedUpgrade,
+    package_artifact_digest: &str,
 ) -> anyhow::Result<()> {
     let evidence = &accepted.evidence;
     tx.execute(
         "INSERT INTO catalog.package_upgrade_qualifications \
           (tenant_id, package_id, candidate_package_version, canonical_bytes, result_sha256, \
-           predecessor_manifest_digest) VALUES ($1,$2,$3,$4,$5,$6)",
+           predecessor_manifest_digest, package_artifact_digest) VALUES ($1,$2,$3,$4,$5,$6,$7)",
         &[
             &evidence.tenant,
             &evidence.candidate_package.package_id,
@@ -474,6 +486,7 @@ pub(crate) async fn persist(
             &accepted.bytes,
             &accepted.sha256,
             &evidence.predecessor_manifest_digest,
+            &package_artifact_digest,
         ],
     )
     .await

@@ -57,10 +57,10 @@ async fn carrier_shape(client: &Client, table: &str) -> Vec<String> {
 const INSERT_EVIDENCE: &str = "\
 INSERT INTO catalog.package_upgrade_qualifications \
     (tenant_id, package_id, candidate_package_version, canonical_bytes, result_sha256, \
-     predecessor_manifest_digest) \
+     predecessor_manifest_digest, package_artifact_digest) \
 VALUES ('upgrade-live', 'platform_fixture', '2.1.0', 'proof'::bytea, \
         'sha256:' || encode(sha256('proof'::bytea), 'hex'), \
-        'sha256:' || encode(sha256('{}'::bytea), 'hex'))";
+        'sha256:' || encode(sha256('{}'::bytea), 'hex'), 'sha256:' || repeat('a', 64))";
 
 #[tokio::test]
 async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {

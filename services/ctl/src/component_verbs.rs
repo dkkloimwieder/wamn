@@ -228,7 +228,15 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
         environment: args.environment,
         instance_id: args.instance_id,
         requirement_type: args.requirement_type.requirement_type(),
-        definition: args.definition,
+        definition: serde_json::from_slice(&std::fs::read(&args.definition).with_context(
+            || {
+                format!(
+                    "read the generation definition {}",
+                    args.definition.display()
+                )
+            },
+        )?)
+        .with_context(|| format!("{} is not JSON", args.definition.display()))?,
         credential_handle: args.credential_handle,
         manifest_digest: args.release_digest,
         component_digest: args.component_digest,

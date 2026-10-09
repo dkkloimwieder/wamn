@@ -102,6 +102,7 @@ fn input(env: &str) -> ValuesInput {
             },
         ],
         drain_bound_seconds: 300,
+        actor: "render".into(),
         host_group: group,
     }
 }

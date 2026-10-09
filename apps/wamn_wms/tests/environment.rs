@@ -147,7 +147,7 @@ pub async fn provision_project(
         org: identity().org.clone(),
         project: identity().project.clone(),
         env: identity().environment.clone(),
-        tenant: Some(identity().tenant.clone()),
+        policy: None,
         disposable: false,
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
@@ -631,13 +631,7 @@ pub async fn publish(
         let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
         candidate.assert_manifest(&manifest)?;
     }
-    let definition = evidence.join("labels-store.definition.json");
-    fs::write(
-        &definition,
-        serde_json::to_vec_pretty(
-            &json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"}),
-        )?,
-    )?;
+    let definition = json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"});
     bind_connection::bind(&BindConnectionRequest {
         database_url: route.database_url.clone(),
         tenant: identity().tenant.clone(),

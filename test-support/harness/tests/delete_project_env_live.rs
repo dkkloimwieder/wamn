@@ -145,7 +145,7 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> (String, S
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENV.into(),
-        tenant: Some(TENANT.into()),
+        policy: None,
         disposable: false,
         system_database_url: Some(system_url.into()),
         cluster: Some(CLUSTER.into()),

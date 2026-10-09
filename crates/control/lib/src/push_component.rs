@@ -613,7 +613,7 @@ pub async fn push_component(
 /// This is the single place a declared alias becomes connection SEMANTICS. The
 /// descriptor is minted from the platform's own constructor, never authored, so
 /// field ownership and credential injection cannot be widened by a declaration.
-fn portable_requirement(
+pub(crate) fn portable_requirement(
     component_digest: &str,
     connection: &ComponentConnection,
 ) -> ComponentConnectionRequirement {
