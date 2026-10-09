@@ -24,7 +24,14 @@ import { QueryTable, type QueryTableDefinition } from "@wamn/ui";
 import { type JsonValue, type OperationRoute, type Outcome, type Transport } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
-import { WIDGET_RECORD_BATCH_ROUTE, type WidgetQueryRow } from "../fixture/widget.js";
+import {
+  WIDGET_LIST_ROUTE,
+  WIDGET_QUERY_ROUTE,
+  WIDGET_RECORD_BATCH_ROUTE,
+  WIDGET_UPDATE_ROUTE,
+  type WidgetQueryRow,
+} from "../fixture/widget.js";
+import { WIDGET_MAKER_GET_ROUTE, WIDGET_MAKER_QUERY_ROUTE } from "../fixture/widget_maker.js";
 
 /** One widget as the stub stores it, in wire spelling. */
 interface StoredWidget {
@@ -164,7 +171,7 @@ export function actionStub(size: number) {
     invoke: async (request) => {
       const item = request.items[0] as { [name: string]: JsonValue } | undefined;
       switch (request.operation) {
-        case "platform-fixture:widget/query@2.0.0": {
+        case WIDGET_QUERY_ROUTE.operation: {
           const limit = (item?.["limit"] as number | undefined) ?? 100;
           const codes = (item?.["filter"] as { code?: string[] } | undefined)?.code;
           const kept = codes === undefined ? widgets : widgets.filter((widget) => codes.includes(widget.code));
@@ -173,7 +180,7 @@ export function actionStub(size: number) {
             next_cursor: kept.length > limit ? "more" : null,
           });
         }
-        case "platform-fixture:widget/update@2.0.0": {
+        case WIDGET_UPDATE_ROUTE.operation: {
           const widget = find(item?.["id"]);
           if (widget === undefined) {
             return refused("not_found", { field: "id", id: item?.["id"] ?? null });
@@ -194,11 +201,11 @@ export function actionStub(size: number) {
           }
           return completed({ ...widget });
         }
-        case "platform-fixture:widget-maker/query@2.0.0":
+        case WIDGET_MAKER_QUERY_ROUTE.operation:
           return completed({ item: [MAKER], next_cursor: null });
-        case "platform-fixture:widget-maker/get@2.0.0":
+        case WIDGET_MAKER_GET_ROUTE.operation:
           return completed(MAKER);
-        case "platform-fixture:widget/list@2.0.0":
+        case WIDGET_LIST_ROUTE.operation:
           return completed({ rows: [] });
         case EVENT_QUERY_ROUTE.operation: {
           const scope = (item?.["filter"] as { widget_id?: string[] } | undefined)?.widget_id ?? [];

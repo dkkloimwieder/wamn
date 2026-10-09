@@ -13,6 +13,8 @@ import type { Transport } from "@wamn/web-runtime";
 
 import { WIDGET_QUERY_TABLE } from "../fixture/components/widget.js";
 import {
+  WIDGET_ARCHIVE_ROUTE,
+  WIDGET_GET_ROUTE,
   WIDGET_QUERY_REQUEST_FIELDS,
   WIDGET_QUERY_RESULT_FIELDS,
   WIDGET_QUERY_ROUTE,
@@ -70,7 +72,7 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
   },
   actions: [
     {
-      operation: "platform-fixture:widget/get@2.0.0",
+      operation: WIDGET_GET_ROUTE.operation,
       reference: "platform-fixture:widget/get",
       label: "get",
       many: false,
@@ -78,7 +80,7 @@ const WIDGETS: QueryTableDefinition<WidgetQueryRow> = {
       fill: [],
     },
     {
-      operation: "platform-fixture:widget/archive@2.0.0",
+      operation: WIDGET_ARCHIVE_ROUTE.operation,
       reference: "platform-fixture:widget/archive",
       label: "archive",
       many: false,
