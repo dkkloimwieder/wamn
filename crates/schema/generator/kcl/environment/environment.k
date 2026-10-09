@@ -17,7 +17,7 @@ schema Environment:
     org: str
     project: str
     env: str
-    # A published, qualified release by digest or unique digest prefix, or "none".
+    # A published, qualified release by its full digest, or "none".
     release: str
     route_host: str
     # A policy of registry.env_policies, by name.
@@ -27,4 +27,4 @@ schema Environment:
     floors: {str:str} = {}
 
     check:
-        release == "none" or regex.match(release, r"^sha256:[0-9a-f]{1,64}$"), "release is a sha256: digest or prefix, or none"
+        release == "none" or regex.match(release, r"^sha256:[0-9a-f]{64}$"), "release is a full sha256: digest, or none"

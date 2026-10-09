@@ -148,7 +148,7 @@ pub async fn analyse(
                 &document.project,
                 &document.env,
             );
-            Some(read_release(platform, &system, declared, &tenant, project.as_ref()).await?)
+            Some(read_release(platform, &system, declared, &tenant).await?)
         }
     };
     let revision = read_revision(platform, &release_name).await?;
@@ -380,18 +380,9 @@ pub(crate) async fn read_project(
 async fn read_release(
     platform: &Platform,
     system: &Client,
-    declared: &str,
+    digest: &str,
     tenant: &str,
-    project: Option<&ProjectState>,
 ) -> anyhow::Result<ReleaseFacts> {
-    let digest = if DeclaredRelease::Digest(declared.to_owned()).is_complete() {
-        declared.to_owned()
-    } else {
-        project.with_context(|| {
-            format!("release {declared} is a prefix; a new environment names the whole digest")
-        })?;
-        resolve_prefix(system, tenant, declared).await?
-    };
     let source = ReleaseManifestSource::new(
         &platform.release_artifact_base,
         false,
@@ -401,7 +392,7 @@ async fn read_release(
     .with_ca_paths(&platform.oci_ca_paths)
     .context("read the registry CA")?;
     let bytes = source
-        .pull_verified(&digest)
+        .pull_verified(digest)
         .await
         .with_context(|| format!("pull release manifest {digest}"))?;
     let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)
@@ -447,37 +438,12 @@ async fn read_release(
         .map(|row| row.get(0))
         .collect();
     Ok(ReleaseFacts {
-        digest,
+        digest: digest.to_owned(),
         manifest,
         image_set,
         qualification,
         required_connections,
     })
-}
-
-async fn resolve_prefix(system: &Client, tenant: &str, prefix: &str) -> anyhow::Result<String> {
-    system
-        .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
-        .await
-        .context("claim the tenant")?;
-    let matches: BTreeSet<String> = system
-        .query(
-            "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
-              WHERE starts_with(deployed_manifest_hash, $1)",
-            &[&prefix],
-        )
-        .await
-        .context("resolve the release prefix")?
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect();
-    match matches.len() {
-        1 => Ok(matches.into_iter().next().expect("one match")),
-        0 => bail!("refused: no published release starts with {prefix}"),
-        count => bail!(
-            "refused: {count} published releases start with {prefix}; name more of the digest"
-        ),
-    }
 }
 
 /// Run `helm` with the platform's kubeconfig and context.

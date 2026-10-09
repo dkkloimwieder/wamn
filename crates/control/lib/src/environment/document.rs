@@ -24,7 +24,7 @@ pub struct EnvironmentDocument {
     pub org: String,
     pub project: String,
     pub env: String,
-    /// `none`, or a `sha256:` digest or unique digest prefix.
+    /// `none`, or a full `sha256:` digest.
     pub release: DeclaredRelease,
     pub route_host: String,
     /// A policy of `registry.env_policies`, by name.
@@ -46,13 +46,12 @@ pub struct ConnectionDefinition {
     pub definition: Value,
 }
 
-/// The `release` field: a digest, a unique digest prefix, or `none`.
+/// The `release` field: a full digest or `none`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeclaredRelease {
     /// Installed but not serving: `apply` uninstalls the release chart.
     None,
-    /// `sha256:` and 1 to 64 lowercase hex characters. Analysis resolves a
-    /// prefix to the one digest it names.
+    /// `sha256:` and 64 lowercase hex characters.
     Digest(String),
 }
 
@@ -65,18 +64,13 @@ impl DeclaredRelease {
             .strip_prefix("sha256:")
             .with_context(|| format!("release {text:?} is neither none nor a sha256: digest"))?;
         ensure!(
-            (1..=64).contains(&hex.len())
+            hex.len() == 64
                 && hex
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-            "release {text:?} is not sha256: and 1 to 64 lowercase hex characters"
+            "release {text:?} is not sha256: and 64 lowercase hex characters"
         );
         Ok(Self::Digest(text.to_owned()))
-    }
-
-    /// Whether the value is a complete digest, not a prefix.
-    pub fn is_complete(&self) -> bool {
-        matches!(self, Self::Digest(digest) if digest.len() == "sha256:".len() + 64)
     }
 }
 
@@ -245,7 +239,10 @@ mod tests {
     fn reads_a_document_and_refuses_an_unknown_field() {
         let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes())
             .expect("a valid document");
-        assert!(parsed.release.is_complete());
+        assert_eq!(
+            parsed.release,
+            DeclaredRelease::Digest(format!("sha256:{}", "a".repeat(64)))
+        );
         assert_eq!(parsed.triple().to_string(), "acme/wms/prod");
         let mut unknown = document();
         unknown["image"] = json!("host@sha256:00");
@@ -258,14 +255,24 @@ mod tests {
     }
 
     #[test]
-    fn reads_none_and_a_prefix_and_refuses_another_value() {
+    fn reads_none_and_a_full_digest_and_refuses_another_value() {
         assert_eq!(
             DeclaredRelease::parse("none").unwrap(),
             DeclaredRelease::None
         );
-        let prefix = DeclaredRelease::parse("sha256:3f9c").unwrap();
-        assert!(!prefix.is_complete());
-        for refused in ["latest", "sha256:", "sha256:3F9C", "sha512:00"] {
+        let digest = format!("sha256:{}", "3f9c".repeat(16));
+        assert_eq!(
+            DeclaredRelease::parse(&digest).unwrap(),
+            DeclaredRelease::Digest(digest.clone())
+        );
+        for refused in [
+            "latest",
+            "sha256:",
+            "sha256:3f9c",
+            &digest[..digest.len() - 1],
+            "sha256:3F9C",
+            "sha512:00",
+        ] {
             assert!(DeclaredRelease::parse(refused).is_err(), "{refused}");
         }
     }
