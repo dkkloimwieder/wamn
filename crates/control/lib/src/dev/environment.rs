@@ -461,7 +461,10 @@ async fn prepare_route_database(
         .await
         .context("ensure the catalog author role")?;
     admin
-        .batch_execute(&provision_sql::create_database_named_sql(&database))
+        .batch_execute(&format!(
+            "{} OWNER wamn_db_owner",
+            provision_sql::create_database_named_sql(&database)
+        ))
         .await
         .context("stand in for the emitted Database CR")?;
     admin
