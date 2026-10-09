@@ -308,8 +308,8 @@ const ROOT_SQL: &str = "INSERT INTO app_system.permissions \
 const DROP_ROOT_SQL: &str = "DELETE FROM app_system.permissions \
     WHERE tenant_id = $1 AND role_name = $2 AND permission = $3 AND required_by = $3";
 
-const REQUIRED_BY_SQL: &str = "SELECT required_by FROM app_system.permissions \
-    WHERE tenant_id = $1 AND role_name = $2 AND permission = $3 ORDER BY required_by";
+const ROLE_ROOTS_SQL: &str = "SELECT permission FROM app_system.permissions \
+    WHERE tenant_id = $1 AND role_name = $2 AND permission = required_by ORDER BY permission";
 
 // The writes below run in a transaction that the caller prepared: it holds
 // the tenant's operation grant lock and binds the actor of the writes.
@@ -402,15 +402,18 @@ pub async fn grant_permission(
     })
 }
 
-/// Remove the selection of `reference` from `role` and every permission that
-/// the selection required. A permission another selected root still requires
-/// stays, and the outcome names those roots. A reference that the role holds
-/// only because another root requires it refuses and names those roots.
+/// Remove the root `reference` from `role`. The outcome names the other
+/// roots of the role that still require `reference`, and a reference that
+/// the role holds only because another root requires it refuses and names
+/// those roots. `requires(root)` answers whether the closure of `root`, in
+/// the release the caller loaded, holds `reference` (platform-deploy.md R18).
+/// A caller that loads no release answers `false` for every root.
 pub async fn revoke_permission(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     role: &str,
     reference: &str,
+    requires: impl Fn(&str) -> bool,
 ) -> Result<PermissionRevokeOutcome, AdministrationError> {
     require_role(client, tenant, role).await?;
     let removed = client
@@ -418,11 +421,12 @@ pub async fn revoke_permission(
         .await
         .map_err(|error| database_error(&error))?;
     let still_required_by: Vec<String> = client
-        .query(REQUIRED_BY_SQL, &[&tenant, &role, &reference])
+        .query(ROLE_ROOTS_SQL, &[&tenant, &role])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| row.get(0))
+        .map(|row| row.get::<_, String>(0))
+        .filter(|root| root != reference && requires(root))
         .collect();
     if removed == 0 {
         return Err(if still_required_by.is_empty() {

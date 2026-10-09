@@ -174,11 +174,12 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     identity_reader
         .batch_execute("SET ROLE host_route_identity_reader")
         .await?;
+    let release = load_release()?;
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
         &login(admin_url, &administration)?,
+        &release,
     )?;
-    let release = load_release()?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
@@ -403,7 +404,8 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         json!({"code": "invalid_input", "detail": {"field": "role"}})
     );
 
-    // Permissions: a grant writes the closure of the loaded release.
+    // Permissions: a grant stores the root, and answers its closure in the
+    // loaded release (platform-deploy.md R18).
     let read = "session-test:purchase/read";
     let write = "session-test:purchase/write";
     assert_eq!(
@@ -412,7 +414,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": write})
         )
         .await,
-        json!({"rows_added": 2, "closure": [read, write]})
+        json!({"rows_added": 1, "closure": [read, write]})
     );
     assert_eq!(
         answer(
@@ -423,12 +425,13 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         json!({"rows_added": 1, "closure": [read]})
     );
     assert_eq!(
-        refusal(
+        answer(
             "wamn-control:permission/grant",
             json!({"role": "clerk", "operation": "session-test:purchase/archive"})
         )
         .await,
-        json!({"code": "operation_not_served", "detail": {"field": "operation"}})
+        json!({"rows_added": 1, "closure": []}),
+        "a root the loaded release does not serve is stored and expands to nothing"
     );
     assert_eq!(
         refusal(
@@ -438,29 +441,6 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         .await,
         json!({"code": "operation_not_grantable", "detail": {"field": "operation"}})
     );
-    // A host whose release is no longer the head writes no closure.
-    admin
-        .execute(
-            "UPDATE catalog.effective_release_heads SET effective_release_id = 2 \
-             WHERE tenant_id = $1 AND environment = 'dev'",
-            &[&TENANT],
-        )
-        .await?;
-    assert_eq!(
-        refusal(
-            "wamn-control:permission/grant",
-            json!({"role": "clerk", "operation": write})
-        )
-        .await,
-        json!({"code": "release_not_current", "detail": {"field": "operation"}})
-    );
-    admin
-        .execute(
-            "UPDATE catalog.effective_release_heads SET effective_release_id = 1 \
-             WHERE tenant_id = $1 AND environment = 'dev'",
-            &[&TENANT],
-        )
-        .await?;
     let listed = answer("wamn-control:permission/list", json!({"role": "clerk"})).await;
     let entry = |operation: &str| {
         listed["operations"]

@@ -160,6 +160,7 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
 pub(super) fn credentials(
     admitter: &str,
     administration: &str,
+    release: &LoadedRelease,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
@@ -174,9 +175,10 @@ pub(super) fn credentials(
         (AuthorityClass::Administration.as_str()): administration,
     }}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
-    Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
-        StaticCredentialProvider::new(projects, None),
-    ))))
+    Ok(Arc::new(
+        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)))
+            .with_release_closures(release),
+    ))
 }
 
 /// A release of one component with two registered operations that serves
@@ -254,11 +256,12 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
             .await?;
         Ok(Arc::new(client))
     };
+    let release = load_release()?;
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
         &login(admin_url, &administration)?,
+        &release,
     )?;
-    let release = load_release()?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
             PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(

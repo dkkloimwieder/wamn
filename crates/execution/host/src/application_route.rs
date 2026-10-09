@@ -192,10 +192,20 @@ impl ApplicationRoutes<'_> {
             }
             HostHandler::PermissionRevoke => {
                 let request: PermissionRequest = parse(payload)?;
+                let closures = ReleaseClosures::from_manifest(self.release.manifest());
                 self.run(attachment, principal, true, async |client| {
-                    let outcome =
-                        revoke_permission(client, tenant, &request.role, &request.operation)
-                            .await?;
+                    let outcome = revoke_permission(
+                        client,
+                        tenant,
+                        &request.role,
+                        &request.operation,
+                        |root| {
+                            closures
+                                .closure(root)
+                                .is_some_and(|closure| closure.contains(&request.operation))
+                        },
+                    )
+                    .await?;
                     Ok(json!({ "still_required_by": outcome.still_required_by }))
                 })
                 .await

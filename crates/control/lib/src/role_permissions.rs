@@ -67,7 +67,7 @@ pub async fn revoke_permission(
     reference: &str,
 ) -> anyhow::Result<PermissionRevokeOutcome> {
     prepare(tx, tenant).await?;
-    Ok(application::revoke_permission(tx, tenant, role, reference).await?)
+    Ok(application::revoke_permission(tx, tenant, role, reference, |_| false).await?)
 }
 
 /// Create the empty authored role `role`. A second create changes nothing.
