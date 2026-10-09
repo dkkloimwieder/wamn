@@ -282,8 +282,12 @@ pub(super) fn assert_no_component_trace(spans: &[SpanData], trace_id: &str) {
     );
 }
 
+/// The Postgres plugin of the journey host. Like the production host, it
+/// expands each caller's permission roots through the closures of the loaded
+/// release (platform-deploy.md R18).
 pub(super) fn journey_postgres(
     credentials: &JourneyCredentials,
+    release: &LoadedRelease,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
@@ -306,7 +310,9 @@ pub(super) fn journey_postgres(
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
     let provider: Arc<dyn CredentialProvider> =
         Arc::new(StaticCredentialProvider::new(projects, None));
-    Ok(Arc::new(WamnPostgres::with_provider(provider)))
+    Ok(Arc::new(
+        WamnPostgres::with_provider(provider).with_release_closures(release),
+    ))
 }
 
 pub(super) async fn build_journey_runtime(
@@ -333,7 +339,7 @@ pub(super) async fn build_journey_runtime(
             .is_none(),
         "Receiving journey compilation cache must be empty before runtime construction"
     );
-    let postgres = journey_postgres(credentials)?;
+    let postgres = journey_postgres(credentials, &release)?;
     let source = ComponentArtifactSource::new(
         ComponentArtifactSourceConfig::new(
             &inputs.component_artifact_base,
