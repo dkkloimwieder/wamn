@@ -1242,7 +1242,10 @@ fn constraint_error(kind: &ConstraintType) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::check_value_set;
+    use super::{
+        Column, ColumnType, Constraint, GenerateErrorType, ModelDeclaration, Table,
+        check_value_set, model_enum_fields,
+    };
 
     #[test]
     fn only_the_stored_in_form_is_a_value_set() {
@@ -1265,5 +1268,40 @@ mod tests {
         ] {
             assert_eq!(check_value_set(other), None, "{other}");
         }
+    }
+
+    #[test]
+    fn a_quoted_check_of_another_form_refuses_with_its_name() {
+        let table = Table::new(
+            "application",
+            "widget",
+            vec![Column::new("status", ColumnType::Text, false, None, None)],
+            vec![
+                Constraint::check(
+                    "widget_status_check",
+                    "((status = 'open'::text) OR (status = 'complete'::text))",
+                )
+                .expect("construct check"),
+            ],
+            Vec::new(),
+        );
+        let model: ModelDeclaration = serde_json::from_value(serde_json::json!({
+            "schema": "application",
+            "table": "widget",
+            "owner": "widgets",
+            "operations": {},
+        }))
+        .expect("model");
+        let error = model_enum_fields("widget", &model, &table).expect_err("refused");
+        assert_eq!(error.error_type(), GenerateErrorType::InvalidModel);
+        assert_eq!(
+            error.object(),
+            Some("application.widget.widget_status_check")
+        );
+        assert!(
+            error.context().contains("CHECK widget_status_check"),
+            "{}",
+            error.context()
+        );
     }
 }
