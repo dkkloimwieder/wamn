@@ -197,8 +197,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     }});
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
-        "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": "dev",
-            "packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
+        "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "session_test", "component": "purchase", "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": operations}],
         "routes": [
@@ -219,6 +218,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "session route test",
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev"),
     )?))
 }
 

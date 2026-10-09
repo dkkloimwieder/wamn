@@ -1804,8 +1804,6 @@ mod tests {
                 "materializer_component": "/tmp/materializer.wasm"
             },
             "package_sources": [],
-            "effective_release_id": 1,
-            "tenant": "00000000-0000-0000-0000-000000000001",
             "catalog": "default",
             "environment": "fixture-dev",
             "org": "example",
@@ -1822,7 +1820,7 @@ mod tests {
 
     fn identity() -> DevActivationIdentity {
         DevActivationIdentity {
-            tenant: "00000000-0000-0000-0000-000000000001".to_owned(),
+            tenant: "example--fixture--fixture-dev".to_owned(),
             catalog: "default".to_owned(),
             environment: "fixture-dev".to_owned(),
             org: "example".to_owned(),

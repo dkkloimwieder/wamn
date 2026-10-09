@@ -108,8 +108,8 @@ use runtime::{
 use sessions::{assert_operation_refusal, nested_receipt_state};
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{
-    DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, JourneyScope, ORG, PROJECT, RELEASE_ID,
-    TENANT, connect, install_journey_platform_floor, prepare_journey_credentials,
+    DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, JourneyScope, ORG, PROJECT, TENANT,
+    connect, install_journey_platform_floor, prepare_journey_credentials,
     provision_journey_control, provision_route, reconcile_journey_run_plane,
     spawn_journey_management_gate, write_dev_config,
 };
@@ -218,7 +218,6 @@ fn identity() -> &'static ReleaseIdentity {
                 project: PROJECT.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 tenant: TENANT.to_owned(),
-                effective_release_id: RELEASE_ID,
                 route_host: "receiving.localhost".to_owned(),
                 packages: JOURNEY_PACKAGES
                     .iter()
@@ -474,30 +473,36 @@ const SCENARIO_WORKER_BIN_ENV: &str = "WAMN_JOURNEY_SCENARIO_WORKER_BIN";
 /// Fixed nameable port for `[RECEIVING-ROUTE-JOURNEY]`'s spawned Gate.
 const ROUTE_JOURNEY_GATE_BIND: &str = "127.0.0.1:18089";
 
-/// The manifest digest of the installed release whose manifest names
-/// `release_id`. A release is its digest; the fixture still numbers its
-/// releases in the manifest (wamn-snz0.5 phase A).
-async fn release_digest(
-    project: &tokio_postgres::Client,
-    release_id: u32,
-) -> anyhow::Result<String> {
+/// The ordinal of the first release the journey publishes. The journey
+/// publishes its releases in order, and a release is its manifest digest, so
+/// the fixture names a release by the order the database recorded it in.
+const FIRST_RELEASE: i64 = 1;
+
+/// The tenant and environment of the journey's host, from its coordinate.
+fn release_scope() -> wamn_engine::release_manifest::ReleaseScope {
+    wamn_engine::release_manifest::ReleaseScope::new(
+        identity().tenant.as_str(),
+        identity().environment.as_str(),
+    )
+}
+
+/// The manifest digest of the `ordinal`th release the journey recorded.
+async fn release_digest(project: &tokio_postgres::Client, ordinal: i64) -> anyhow::Result<String> {
     Ok(project
         .query_one(
-            "SELECT manifest_digest FROM catalog.releases \
-             WHERE tenant_id = $1 \
-               AND convert_from(canonical_bytes, 'UTF8')::jsonb \
-                     #>> '{release,effective-release-id}' = $2::text",
-            &[&identity().tenant.as_str(), &release_id.to_string()],
+            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1 \
+             ORDER BY recorded_at, manifest_digest OFFSET $2 - 1 LIMIT 1",
+            &[&identity().tenant.as_str(), &ordinal],
         )
         .await
-        .with_context(|| format!("read the digest of release {release_id}"))?
+        .with_context(|| format!("read the digest of release {ordinal}"))?
         .get(0))
 }
 
 /// [`release_digest`] in the project database at `database_url`.
-async fn release_digest_at(database_url: &str, release_id: u32) -> anyhow::Result<String> {
+async fn release_digest_at(database_url: &str, ordinal: i64) -> anyhow::Result<String> {
     let (project, task) = wamn_control::dev::environment::connect(database_url).await?;
-    let digest = release_digest(project.as_ref(), release_id).await;
+    let digest = release_digest(project.as_ref(), ordinal).await;
     task.abort();
     digest
 }

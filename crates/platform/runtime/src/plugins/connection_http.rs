@@ -342,7 +342,7 @@ impl ConnectionHttp {
         {
             (ConnectionExecutionClosure::Released, Some(release)) => {
                 let manifest = release.manifest();
-                if manifest.release.tenant_id != self.tenant.as_ref()
+                if release.scope().tenant_id != self.tenant.as_ref()
                     || !manifest
                         .release
                         .packages
@@ -353,7 +353,7 @@ impl ConnectionHttp {
                 }
                 (
                     release.release().manifest_digest.as_str(),
-                    manifest.release.environment.as_str(),
+                    release.scope().environment.as_str(),
                     None,
                 )
             }
@@ -1116,7 +1116,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        EffectiveReleaseId, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
         ServingComponentOperation, ServingRelease, ServingRoute,
     };
 
@@ -1252,9 +1252,6 @@ mod tests {
         ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                tenant_id: "tenant-a".to_string(),
-                effective_release_id: EffectiveReleaseId::new(4).unwrap(),
-                environment: "prod".to_string(),
                 packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
             },
             components: BTreeSet::from([ServingComponent {

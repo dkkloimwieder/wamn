@@ -5,8 +5,12 @@
 //! `ReleaseManifestSource`,
 //! or an immutable digest-named ConfigMap projected at
 //! [`RELEASE_MANIFEST_MOUNT_PATH`]. Either way the bytes are the *sole* carrier
-//! of release identity. Loading derives the `(effective release id, manifest digest)`
-//! pair from the verified content. The process keeps the parsed document for its lifetime.
+//! of release identity. Loading derives the manifest digest from the verified
+//! content. The process keeps the parsed document for its lifetime.
+//!
+//! The manifest names no tenant or environment (R1): one release serves every
+//! environment it is published for. The host takes its [`ReleaseScope`] from
+//! its own configuration and the loaded release carries it beside the bytes.
 //!
 //! # Process lifetime
 //!
@@ -80,7 +84,6 @@ pub enum ReleaseLoadErrorType {
     /// The manifest file is missing or unreadable.
     ManifestUnreadable,
     /// The manifest bytes failed parsing, validation, or canonicality.
-    /// This also includes an effective release id that the run plane cannot record.
     /// Loading preserves every refusal from [`ServingManifest::from_canonical_bytes`].
     ManifestRejected,
 }
@@ -127,11 +130,35 @@ pub struct CarriedRelease {
     pub manifest_digest: ManifestDigest,
 }
 
+/// The tenant and environment a host serves, from the host configuration.
+///
+/// The serving manifest carries neither (R1). The host derives the tenant from
+/// its `(org, project, environment)` coordinate and every reader takes both
+/// values from here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseScope {
+    /// The tenant of the project environment.
+    pub tenant_id: String,
+    /// The environment name.
+    pub environment: String,
+}
+
+impl ReleaseScope {
+    /// A scope of one tenant and environment.
+    pub fn new(tenant_id: impl Into<String>, environment: impl Into<String>) -> Self {
+        Self {
+            tenant_id: tenant_id.into(),
+            environment: environment.into(),
+        }
+    }
+}
+
 /// The one loaded, verified serving manifest a pod resolves against.
 #[derive(Debug)]
 pub struct LoadedRelease {
     release: CarriedRelease,
     manifest: ServingManifest,
+    scope: ReleaseScope,
 }
 
 impl LoadedRelease {
@@ -139,8 +166,8 @@ impl LoadedRelease {
     ///
     /// A pod whose manifest is absent, unreadable, unparseable or non-canonical
     /// must not serve, so every failure here is fatal to host construction.
-    pub fn load() -> Result<Self, ReleaseLoadError> {
-        Self::load_from(Path::new(RELEASE_MANIFEST_MOUNT_PATH))
+    pub fn load(scope: ReleaseScope) -> Result<Self, ReleaseLoadError> {
+        Self::load_from(Path::new(RELEASE_MANIFEST_MOUNT_PATH), scope)
     }
 
     /// Load and verify from an explicit mount root.
@@ -148,7 +175,7 @@ impl LoadedRelease {
     /// Reads are blocking `std::fs`: this runs exactly once during host
     /// construction, before the pod serves anything, and never on a request
     /// path.
-    pub fn load_from(manifest_root: &Path) -> Result<Self, ReleaseLoadError> {
+    pub fn load_from(manifest_root: &Path, scope: ReleaseScope) -> Result<Self, ReleaseLoadError> {
         // ConfigMap projections are byte-exact, and `from_canonical_bytes` admits
         // only the canonical encoding — so these bytes are used as read, with no
         // trimming. A trailing newline is a different document.
@@ -159,7 +186,7 @@ impl LoadedRelease {
                 format!("read serving manifest {}: {error}", manifest_path.display()),
             )
         })?;
-        Self::load_canonical_bytes(&bytes, &manifest_path.display().to_string())
+        Self::load_canonical_bytes(&bytes, &manifest_path.display().to_string(), scope)
     }
 
     /// Load and verify bytes a carrier has already delivered whole.
@@ -169,7 +196,11 @@ impl LoadedRelease {
     /// `ReleaseManifestSource`
     /// checked the bytes against. It takes no part in verification: identity
     /// still comes only out of the bytes.
-    pub fn load_canonical_bytes(bytes: &[u8], origin: &str) -> Result<Self, ReleaseLoadError> {
+    pub fn load_canonical_bytes(
+        bytes: &[u8],
+        origin: &str,
+        scope: ReleaseScope,
+    ) -> Result<Self, ReleaseLoadError> {
         let (manifest, manifest_digest) =
             ServingManifest::from_canonical_bytes(bytes).map_err(|error| {
                 ReleaseLoadError::new(
@@ -181,21 +212,18 @@ impl LoadedRelease {
         Ok(Self {
             release: CarriedRelease { manifest_digest },
             manifest,
+            scope,
         })
     }
 
     /// The control serving root (docs/plan/platform-ui.md §4.2). It is built
     /// with the platform and serves only the control host routes: it has no
-    /// package, component, route, attachment or database. Its release names
-    /// no real tenant or environment, and a control host reads neither.
+    /// package, component, route, attachment or database. Its fixed scope
+    /// names no real tenant or environment, and a control host reads neither.
     pub fn control_root() -> Self {
         let manifest = ServingManifest {
             format_version: wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
             release: wamn_catalog::ServingRelease {
-                tenant_id: wamn_catalog::host_route_package().to_owned(),
-                effective_release_id: wamn_catalog::EffectiveReleaseId::new(1)
-                    .expect("one is a release id"),
-                environment: "control".to_owned(),
                 packages: std::collections::BTreeSet::default(),
             },
             components: std::collections::BTreeSet::default(),
@@ -209,6 +237,7 @@ impl LoadedRelease {
                 manifest_digest: manifest.digest(),
             },
             manifest,
+            scope: ReleaseScope::new(wamn_catalog::host_route_package(), "control"),
         }
     }
 
@@ -220,6 +249,11 @@ impl LoadedRelease {
     /// The verified manifest. Every reader takes it from here.
     pub fn manifest(&self) -> &ServingManifest {
         &self.manifest
+    }
+
+    /// The tenant and environment this host serves, from its configuration.
+    pub fn scope(&self) -> &ReleaseScope {
+        &self.scope
     }
 }
 
@@ -239,7 +273,7 @@ pub fn validate_component_in_release(
         .find(|package| package.package_id() == component.scope.package_id)
         .map(wamn_catalog::PackageCoordinate::package_version);
     anyhow::ensure!(
-        component.scope.tenant_id == manifest.release.tenant_id
+        component.scope.tenant_id == release.scope().tenant_id
             && package_version == Some(component.scope.package_version.as_str()),
         "release-component-scope-mismatch"
     );
@@ -289,9 +323,8 @@ mod tests {
     use std::path::PathBuf;
 
     use wamn_catalog::{
-        DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingComponent,
-        ServingComponentOperation, ServingRelease, ServingWiring,
-        UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+        DefinitionHash, PackageCoordinate, ServingComponent, ServingComponentOperation,
+        ServingRelease, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
 
     use super::*;
@@ -299,14 +332,10 @@ mod tests {
     const COMPONENT: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const EFFECTIVE_RELEASE_ID: u32 = 7;
 
     fn fixture() -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
-                tenant_id: "t1".into(),
-                effective_release_id: EffectiveReleaseId::new(EFFECTIVE_RELEASE_ID).unwrap(),
-                environment: "prod".into(),
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::from([ServingComponent {
@@ -341,6 +370,10 @@ mod tests {
         .expect("fixture manifest is valid")
     }
 
+    fn scope() -> ReleaseScope {
+        ReleaseScope::new("t1", "prod")
+    }
+
     /// A private scratch mount, named for its test so runs cannot collide.
     struct Mounts {
         root: PathBuf,
@@ -366,7 +399,7 @@ mod tests {
         }
 
         fn load(&self) -> Result<LoadedRelease, ReleaseLoadError> {
-            LoadedRelease::load_from(&self.manifest_dir())
+            LoadedRelease::load_from(&self.manifest_dir(), scope())
         }
     }
 
@@ -460,7 +493,7 @@ mod tests {
     fn an_unsupported_format_refuses_with_the_frozen_literal() {
         let mounts = Mounts::new("unsupported-format");
         mounts.write_manifest_bytes(
-            br#"{"attachments":{},"components":[],"format-version":0,"registrations":{},"release":{"effective-release-id":1,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#,
+            br#"{"attachments":{},"components":[],"format-version":0,"registrations":{},"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"wirings":[]}"#,
         );
 
         let error = mounts
@@ -549,8 +582,9 @@ mod tests {
 
     #[test]
     fn an_admitted_component_the_release_does_not_carry_is_refused() {
-        let release = LoadedRelease::load_canonical_bytes(&fixture().canonical_bytes(), "fixture")
-            .expect("the fixture loads");
+        let release =
+            LoadedRelease::load_canonical_bytes(&fixture().canonical_bytes(), "fixture", scope())
+                .expect("the fixture loads");
         validate_component_in_release(&release, &carried_fact()).expect("the carried fact passes");
 
         let mutations: [(&str, Mutation); 5] = [

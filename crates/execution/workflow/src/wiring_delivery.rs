@@ -70,7 +70,7 @@ impl WiringDelivery for RouterDriver {
                 )
                 .await;
         }
-        let release = &bridge.release().manifest().release;
+        let release = bridge.release().scope();
         let request = RouterDriverRequest {
             tenant_id: release.tenant_id.clone(),
             package_id: package_id.to_owned(),
@@ -167,7 +167,7 @@ impl RouterDriver {
                 &EventRunAdmission {
                     package_id: call.package_id,
                     manifest_digest: bridge.release().release().manifest_digest.as_str(),
-                    environment: &manifest.release.environment,
+                    environment: &bridge.release().scope().environment,
                     wiring_id: call.wiring_id,
                     wiring_version,
                     wiring_hash: wiring.graph_hash.as_str(),

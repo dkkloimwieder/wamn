@@ -127,9 +127,6 @@ mod tests {
             .expect("fixture definition hash");
         let manifest = wamn_catalog::ServingManifest::new(
             wamn_catalog::ServingRelease {
-                tenant_id: "tenant".into(),
-                effective_release_id: wamn_catalog::EffectiveReleaseId::new(1).unwrap(),
-                environment: "test".into(),
                 packages: BTreeSet::from([
                     wamn_catalog::PackageCoordinate::new("app", "1.0.0").unwrap()
                 ]),
@@ -160,8 +157,12 @@ mod tests {
             BTreeMap::new(),
         )
         .expect("fixture manifest");
-        LoadedRelease::load_canonical_bytes(&manifest.canonical_bytes(), "expected-router-test")
-            .expect("fixture release passes the production reader")
+        LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "expected-router-test",
+            crate::release_manifest::ReleaseScope::new("tenant", "test"),
+        )
+        .expect("fixture release passes the production reader")
     }
 
     async fn request(

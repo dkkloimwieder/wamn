@@ -1,6 +1,13 @@
 # The wamn-edge configuration. Run `wamn-edge --config <path>`, or set
-# WAMN_EDGE_CONFIG to the path. Each key has one WAMN_EDGE_* variable that
-# replaces it, named in services/edge/src/config.rs.
+# WAMN_EDGE_CONFIG to the path. Each key has one variable that replaces it,
+# named in services/edge/src/config.rs.
+
+[scope]
+# The environment coordinate of the box. The tenant is <org>--<project>--<environment>.
+# The variables are WAMN_ORG, WAMN_PROJECT and WASMCLOUD_HOST_ENVIRONMENT.
+org = "org-a"
+project = "plant"
+environment = "edge"
 
 [release]
 # The release bundle directory, and the pinned digest of its edge-release.json.

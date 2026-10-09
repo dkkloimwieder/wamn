@@ -159,7 +159,6 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
         operations,
     });
     let mut release = base.manifest.release.clone();
-    release.effective_release_id = EffectiveReleaseId::new(2).unwrap();
     release
         .packages
         .insert(PackageCoordinate::new(OVERLAY, PREDECESSOR_VERSION).unwrap());
@@ -577,9 +576,13 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     );
     assert_eq!(state(&mut fixture.base.source).await, reconciled);
     let mut tx = fixture.base.source.transaction().await.unwrap();
-    crate::package_upgrade::require_compatible_schema(&mut tx, &fixture.base.manifest)
-        .await
-        .unwrap();
+    crate::package_upgrade::require_compatible_schema(
+        &mut tx,
+        &fixture.base.manifest,
+        &wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
+    )
+    .await
+    .unwrap();
     tx.rollback().await.unwrap();
     let tx = fixture.base.source.transaction().await.unwrap();
     tx.batch_execute("SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), set_config('app.operation', 'admin:constraint-proof', true)").await.unwrap();
@@ -998,7 +1001,6 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         operations,
     });
     let mut release = fixture.base.manifest.release.clone();
-    release.effective_release_id = EffectiveReleaseId::new(3).unwrap();
     release
         .packages
         .insert(PackageCoordinate::new(SECOND, PREDECESSOR_VERSION).unwrap());

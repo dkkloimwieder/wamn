@@ -180,9 +180,13 @@ fn compile_cache_dir(db: &Path) -> anyhow::Result<PathBuf> {
 /// the configuration names a device.
 pub async fn serve(config: EdgeConfig) -> anyhow::Result<EdgeHost> {
     let release = Arc::new(
-        EdgeRelease::load(&config.release.dir, &config.release.digest)
-            .await
-            .context("load the release bundle")?,
+        EdgeRelease::load(
+            &config.release.dir,
+            &config.release.digest,
+            config.scope.release_scope(),
+        )
+        .await
+        .context("load the release bundle")?,
     );
     let engine = Arc::new(edge_engine(&release, &config.store.db).context("build the engine")?);
     let keys = FileKeys::load(&config.session.keys, &config.session.issuer)
@@ -310,11 +314,10 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
     handler
         .config
         .insert("host".to_owned(), route_host.to_owned());
-    let manifest = release.release().manifest();
     WorkloadStartRequest {
         workload_id: INGRESS_WORKLOAD.to_owned(),
         workload: Workload {
-            namespace: manifest.release.environment.clone(),
+            namespace: release.release().scope().environment.clone(),
             name: INGRESS_WORKLOAD.to_owned(),
             annotations: HashMap::new(),
             service: None,

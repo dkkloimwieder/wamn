@@ -43,7 +43,6 @@ use wash_runtime::wasmtime::component::Component;
 
 use super::{LocalApplicationConfig, LocalApplicationRuntime, PreparedLocalApplication};
 
-const RELEASE_ID: i32 = 1;
 const PASSWORD: &str = "local-application-test-only";
 const VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
@@ -265,11 +264,12 @@ pub(super) async fn assemble(
 
     let attachments = selected_attachments(&input, &roots)?;
     let routes = attachment_routes(&attachments, &roots)?;
-    let manifest = serving_manifest(&input, &admitted, &wirings, &routes, &attachments)?;
+    let manifest = serving_manifest(&admitted, &wirings, &routes, &attachments)?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "local application",
+        wamn_engine::release_manifest::ReleaseScope::new(input.tenant, input.environment),
     )?);
     project.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.tenant,&release.release().manifest_digest.as_str(),&canonical]).await?;
 
@@ -462,7 +462,6 @@ async fn insert_wiring(
 }
 
 fn serving_manifest(
-    input: &LocalApplicationConfig<'_>,
     components: &[(String, wamn_catalog::AdmittedComponent)],
     wirings: &[(String, WiringDocument)],
     routes: &BTreeSet<ServingRoute>,
@@ -491,7 +490,7 @@ fn serving_manifest(
     let wirings=wirings.iter().map(|(id,w)|json!({"package-id":id,"wiring-id":w.wiring_id,"wiring-version":w.version,"graph-hash":w.wiring_hash().as_str()})).collect::<Vec<_>>();
     let (attachments, workflow_attachments) = ServingAttachment::split(attachments.clone());
     Ok(serde_json::from_value(
-        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"tenant-id":input.tenant,"effective-release-id":RELEASE_ID,"environment":input.environment,"packages":packages},"components":components,"routes":routes,"attachments":attachments,"workflow":{"wirings":wirings,"attachments":workflow_attachments}}),
+        json!({"format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,"release":{"packages":packages},"components":components,"routes":routes,"attachments":attachments,"workflow":{"wirings":wirings,"attachments":workflow_attachments}}),
     )?)
 }
 

@@ -370,9 +370,9 @@ impl RouterDriver {
         let mut components = None;
         for (package_id, wiring_id, wiring_version) in &targets {
             let request = RouterDriverRequest {
-                tenant_id: manifest.release.tenant_id.clone(),
+                tenant_id: self.release.scope().tenant_id.clone(),
                 package_id: package_id.clone(),
-                environment: manifest.release.environment.clone(),
+                environment: self.release.scope().environment.clone(),
                 wiring_id: wiring_id.clone(),
                 wiring_version: *wiring_version,
                 delivery_id: format!("preload:{wiring_id}:{wiring_version}"),
@@ -822,10 +822,11 @@ impl RouterDriver {
 
     fn validate_request_scope(&self, request: &RouterDriverRequest) -> anyhow::Result<()> {
         let release = &self.release.manifest().release;
+        let scope = self.release.scope();
         anyhow::ensure!(request.wiring_version > 0, "wiring-version-zero");
         anyhow::ensure!(
-            release.tenant_id == request.tenant_id
-                && release.environment == request.environment
+            scope.tenant_id == request.tenant_id
+                && scope.environment == request.environment
                 && release
                     .packages
                     .iter()
@@ -846,8 +847,9 @@ impl RouterDriver {
                 "candidate-wiring-coordinate-incomplete",
             ));
         }
-        if release.tenant_id != target.tenant_id
-            || release.environment != target.environment
+        let scope = self.release.scope();
+        if scope.tenant_id != target.tenant_id
+            || scope.environment != target.environment
             || !release
                 .packages
                 .iter()
@@ -1102,8 +1104,8 @@ mod tests {
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
     use tracing_subscriber::layer::SubscriberExt as _;
     use wamn_catalog::{
-        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
-        ServingRegistration, ServingRegistrationInput, ServingRelease,
+        PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingRegistration,
+        ServingRegistrationInput, ServingRelease,
     };
 
     use super::*;
@@ -1479,9 +1481,6 @@ mod tests {
         let manifest = ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                tenant_id: "tenant-a".to_owned(),
-                effective_release_id: EffectiveReleaseId::new(7).unwrap(),
-                environment: "prod".to_owned(),
                 packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
             },
             components: BTreeSet::new(),

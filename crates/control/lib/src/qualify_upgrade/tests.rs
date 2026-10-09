@@ -1,9 +1,7 @@
 //! Installed-data qualification without a Kubernetes deployment journey.
 
 use super::*;
-use wamn_catalog::{
-    ArtifactHash, EffectiveReleaseId, ServingComponent, ServingComponentOperation, ServingRelease,
-};
+use wamn_catalog::{ArtifactHash, ServingComponent, ServingComponentOperation, ServingRelease};
 use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
 mod overlay;
@@ -161,9 +159,6 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
         .collect();
     ServingManifest::new(
         ServingRelease {
-            tenant_id: TENANT.to_owned(),
-            effective_release_id: EffectiveReleaseId::new(1).unwrap(),
-            environment: ENVIRONMENT.to_owned(),
             packages: BTreeSet::from([PackageCoordinate::new(
                 "platform_fixture",
                 PREDECESSOR_VERSION,

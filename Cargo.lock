@@ -6007,6 +6007,7 @@ dependencies = [
  "uuid",
  "wamn-catalog",
  "wamn-control",
+ "wamn-control-registry",
  "wamn-engine",
  "wamn-run-state",
  "wamn-run-state-sqlite",

@@ -106,10 +106,14 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 
 #[test]
 fn pulled_bytes_load_the_release_naming_their_carrier() {
-    let canonical = br#"{"attachments":{},"components":[],"format-version":4,"release":{"effective-release-id":7,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"routes":[]}"#;
+    let canonical = br#"{"attachments":{},"components":[],"format-version":5,"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"routes":[]}"#;
 
-    let loaded_release = LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE)
-        .expect("verified canonical bytes load without a mount");
+    let loaded_release = LoadedRelease::load_canonical_bytes(
+        canonical,
+        ARTIFACT_BASE,
+        wamn_engine::release_manifest::ReleaseScope::new("t1", "prod"),
+    )
+    .expect("verified canonical bytes load without a mount");
     assert_eq!(
         loaded_release.release().manifest_digest.as_str(),
         component_digest(canonical)
@@ -117,8 +121,12 @@ fn pulled_bytes_load_the_release_naming_their_carrier() {
 
     let mut trailing = canonical.to_vec();
     trailing.push(b'\n');
-    let error = LoadedRelease::load_canonical_bytes(&trailing, ARTIFACT_BASE)
-        .expect_err("a non-canonical body refuses");
+    let error = LoadedRelease::load_canonical_bytes(
+        &trailing,
+        ARTIFACT_BASE,
+        wamn_engine::release_manifest::ReleaseScope::new("t1", "prod"),
+    )
+    .expect_err("a non-canonical body refuses");
     assert!(
         error.to_string().contains(ARTIFACT_BASE),
         "the refusal must name the carrier it came from: {error}"
@@ -235,8 +243,12 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     assert_eq!(component_digest(&canonical_bytes), manifest_digest);
 
     let origin = format!("{artifact_base}@{manifest_digest}");
-    let loaded_release = LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin)
-        .expect("the pulled bytes load the release");
+    let loaded_release = LoadedRelease::load_canonical_bytes(
+        &canonical_bytes,
+        &origin,
+        wamn_engine::release_manifest::ReleaseScope::new("t1", "prod"),
+    )
+    .expect("the pulled bytes load the release");
 
     // The identity comes out of the transferred content, and it agrees with
     // the name the pod template gave — the check the mount carrier cannot

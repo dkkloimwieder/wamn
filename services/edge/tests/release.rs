@@ -10,10 +10,11 @@ use wamn_catalog::edge_bundle::{
 };
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, ComponentPackageScope,
-    EffectiveReleaseId, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingRelease,
+    PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingComponentOperation,
+    ServingManifest, ServingRelease,
 };
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
+use wamn_engine::release_manifest::ReleaseScope;
 
 const TENANT: &str = "t1";
 const PACKAGE: &str = "scale";
@@ -28,9 +29,6 @@ const INGRESS: &[u8] = b"the route guest bytes";
 fn manifest() -> ServingManifest {
     ServingManifest::new(
         ServingRelease {
-            tenant_id: TENANT.into(),
-            effective_release_id: EffectiveReleaseId::new(7).expect("release id"),
-            environment: "edge".into(),
             packages: BTreeSet::from([PackageCoordinate::new(PACKAGE, VERSION).expect("package")]),
         },
         BTreeSet::from([ServingComponent {
@@ -145,7 +143,7 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
 }
 
 async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
-    EdgeRelease::load(directory, digest)
+    EdgeRelease::load(directory, digest, ReleaseScope::new(TENANT, "edge"))
         .await
         .expect_err("the bundle is refused")
         .error_type()
@@ -154,7 +152,9 @@ async fn refusal(directory: &Path, digest: &str) -> EdgeReleaseErrorType {
 #[tokio::test]
 async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
     let (directory, digest) = Bundle::valid().write();
-    let release = EdgeRelease::load(&directory, &digest).await.expect("load");
+    let release = EdgeRelease::load(&directory, &digest, ReleaseScope::new(TENANT, "edge"))
+        .await
+        .expect("load");
     assert_eq!(release.bundle_digest(), digest);
     assert_eq!(
         release.release().release().manifest_digest,

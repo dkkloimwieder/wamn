@@ -16,6 +16,8 @@ wamn-run-state-sqlite = { workspace = true }
 wamn-session = { workspace = true }
 # The admitted component facts and the serving manifest of a release bundle.
 wamn-catalog = { workspace = true }
+# The tenant of the box's environment coordinate (R1).
+wamn-control-registry = { workspace = true }
 # The plain host, its ingress and the route guest's workload. No `oci`.
 wash-runtime = { workspace = true }
 # The samples table lives in the run-state file beside the intents.

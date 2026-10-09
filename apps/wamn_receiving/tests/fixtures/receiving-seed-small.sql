@@ -32,7 +32,7 @@ SET row_security = off;
 -- The record history trigger requires an actor, and a dump carries none.
 -- These two settings hold for the whole session that applies this file.
 SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false),
-       set_config('app.tenant_id', 'receiving-route-auth', false),
+       set_config('app.tenant_id', 'acme--receiving--dev', false),
        set_config('app.operation', 'admin:seed-receiving-fixture', false);
 
 --

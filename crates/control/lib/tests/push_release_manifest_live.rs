@@ -19,7 +19,7 @@ fn release_digest() -> String {
         .to_owned()
 }
 
-const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":4,"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 
 /// A port with no listener: connecting to it is refused.
 fn closed_port() -> u16 {
@@ -50,6 +50,7 @@ fn request(registry: &str, control_database_url: String) -> PushReleaseManifestR
         database_url: format!("postgresql://postgres@127.0.0.1:{}/release", closed_port()),
         org: "acme".to_owned(),
         project: "billing".to_owned(),
+        environment: "prod".to_owned(),
         tenant: "tenant-a".to_owned(),
         manifest_digest: release_digest(),
         artifact_base: format!("{registry}/wamn/releases"),

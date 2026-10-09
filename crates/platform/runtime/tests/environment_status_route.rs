@@ -50,8 +50,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
         "definition": definition, "auth-policy": {"modes": ["none"]}});
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
-        "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": "dev",
-            "packages": [{"package-id": "status_test", "package-version": "1.0.0"}]},
+        "release": {"packages": [{"package-id": "status_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "status_test", "component": "purchase",
             "interface-version": "0.1.0", "digest": format!("sha256:{}", "a".repeat(64)),
             "operations": {READ: {"registered-operation": READ, "permissions": [READ]}}}],
@@ -70,6 +69,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "environment status test",
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev"),
     )?))
 }
 

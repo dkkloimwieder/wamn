@@ -42,7 +42,7 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::release_manifest::LoadedRelease;
+use crate::release_manifest::{LoadedRelease, ReleaseScope};
 use crate::route_bindings::wamn::flow_http_routing::routing::{
     self, Cardinality, Mapping, MappingSource, RouteDefinition,
 };
@@ -524,6 +524,8 @@ pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
 pub struct AuthenticationRequest<'a> {
     /// The loaded release that carries the attachment.
     pub manifest: &'a ServingManifest,
+    /// The tenant and environment of the host that serves the route.
+    pub scope: &'a ReleaseScope,
     pub attachment_id: &'a str,
     pub attachment: ServedAttachment<'a>,
     /// The attachment's parsed policy. It is never `none`.
@@ -674,7 +676,7 @@ impl FlowHttpRouting {
         let manifest = loaded_release.manifest();
         if let Some(environment) = &self.environment {
             let inactive = environment
-                .inactive(&manifest.release.tenant_id)
+                .inactive(&loaded_release.scope().tenant_id)
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "environment status unavailable");
@@ -707,6 +709,7 @@ impl FlowHttpRouting {
         authenticator
             .authenticate(AuthenticationRequest {
                 manifest,
+                scope: loaded_release.scope(),
                 attachment_id,
                 attachment,
                 policy,
@@ -1294,9 +1297,9 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
-        RELEASE_MANIFEST_FILE_NAME, ServingAttachment, ServingComponent, ServingComponentOperation,
-        ServingRelease, ServingRoute, ServingWiring,
+        ArtifactHash, DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME,
+        ServingAttachment, ServingComponent, ServingComponentOperation, ServingRelease,
+        ServingRoute, ServingWiring,
     };
 
     use super::*;
@@ -1306,7 +1309,6 @@ mod tests {
     const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const DEFINITION_HASH: &str =
         "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    const EFFECTIVE_RELEASE_ID: u32 = 7;
 
     fn components() -> BTreeSet<ServingComponent> {
         BTreeSet::from([ServingComponent {
@@ -1380,9 +1382,6 @@ mod tests {
     ) -> ServingManifest {
         ServingManifest::new(
             ServingRelease {
-                tenant_id: "tenant-a".into(),
-                effective_release_id: EffectiveReleaseId::new(EFFECTIVE_RELEASE_ID).unwrap(),
-                environment: "prod".into(),
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             components(),
@@ -1453,7 +1452,13 @@ mod tests {
         }
 
         fn load_release(&self) -> Arc<LoadedRelease> {
-            Arc::new(LoadedRelease::load_from(&self.root).expect("fixture mount loads"))
+            Arc::new(
+                LoadedRelease::load_from(
+                    &self.root,
+                    crate::release_manifest::ReleaseScope::new("tenant-a", "prod"),
+                )
+                .expect("fixture mount loads"),
+            )
         }
     }
 

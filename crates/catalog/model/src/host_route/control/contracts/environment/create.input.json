@@ -21,13 +21,6 @@
       "label": "Environment"
     },
     {
-      "path": "value.tenant",
-      "type": "text",
-      "nullable": false,
-      "values": [],
-      "label": "Tenant"
-    },
-    {
       "path": "value.route_host",
       "type": "text",
       "nullable": false,

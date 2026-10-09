@@ -992,7 +992,6 @@ impl ProductionDevStageRunner {
             org: identity.org.clone(),
             project: identity.project.clone(),
             tenant: identity.tenant.clone(),
-            effective_release_id: self.config.effective_release_id(),
             environment: identity.environment.clone(),
             verified_publisher_principal: principal,
             run_schema: RUN_SCHEMA.to_owned(),
@@ -1032,10 +1031,14 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("validate local connection selections", source)
             })?;
-        wamn_runtime::local_application::validate_local_facts(&local_facts, &published.manifest)
-            .map_err(|source| {
-                ProductionDevStageError::owner("validate complete local application", source)
-            })?;
+        wamn_runtime::local_application::validate_local_facts(
+            &local_facts,
+            &published.manifest,
+            &identity.tenant,
+        )
+        .map_err(|source| {
+            ProductionDevStageError::owner("validate complete local application", source)
+        })?;
         fs::create_dir_all(&local.directory).map_err(|source| {
             ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;

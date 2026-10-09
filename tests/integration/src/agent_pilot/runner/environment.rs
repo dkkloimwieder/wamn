@@ -134,7 +134,7 @@ impl Run {
             ("org", "acme"),
             ("project", "receiving"),
             ("env", "dev"),
-            ("tenant", "receiving-route-auth"),
+            ("tenant", "acme--receiving--dev"),
         ] {
             let named = text(&self.task["identity"][field]);
             anyhow::ensure!(

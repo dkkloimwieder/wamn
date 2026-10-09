@@ -46,6 +46,8 @@ runtime:
       value: dkk
     - name: WAMN_PROJECT
       value: receiving
+    - name: WASMCLOUD_HOST_ENVIRONMENT
+      value: dev
     - name: WAMN_SCHEMA
       value: receiving
     - name: WAMN_SYSTEM_URL
@@ -188,6 +190,8 @@ runtime:
       value: dkk
     - name: WAMN_PROJECT
       value: wms
+    - name: WASMCLOUD_HOST_ENVIRONMENT
+      value: dev
     - name: WAMN_SCHEMA
       value: wms
     - name: WAMN_SYSTEM_URL

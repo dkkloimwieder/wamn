@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
 use wamn_catalog::ServingManifest;
+use wamn_engine::release_manifest::ReleaseScope;
 use wamn_schema_control::{PackageDirectory, PackageMigrationPlan};
 
 use crate::qualify_upgrade::{
@@ -595,6 +596,7 @@ pub(crate) async fn require_reconciled_privileges(
 pub(crate) async fn require_compatible_schema(
     tx: &mut Transaction<'_>,
     manifest: &ServingManifest,
+    scope: &ReleaseScope,
 ) -> anyhow::Result<()> {
     tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
         .await?;
@@ -603,11 +605,11 @@ pub(crate) async fn require_compatible_schema(
     for package in &release.packages {
         tx.query_one(
             crate::apply_package::LOCK_PACKAGE_SQL,
-            &[&release.tenant_id, &package.package_id()],
+            &[&scope.tenant_id, &package.package_id()],
         )
         .await?;
     }
-    let installed = read_current_packages(tx, &release.tenant_id).await?;
+    let installed = read_current_packages(tx, &scope.tenant_id).await?;
     for package in &release.packages {
         let leaf = installed
             .iter()
@@ -615,7 +617,7 @@ pub(crate) async fn require_compatible_schema(
             .context("the target lacks the selected package")?;
         let selected = crate::apply_package::load_applied_package(
             tx,
-            &release.tenant_id,
+            &scope.tenant_id,
             package.package_id(),
             package.package_version(),
         )
@@ -633,12 +635,12 @@ pub(crate) async fn require_compatible_schema(
         if selected_migrations == leaf.migrations {
             continue;
         }
-        let accepted = read_accepted(tx, &release.tenant_id, &leaf.package_id, &leaf.package_version)
+        let accepted = read_accepted(tx, &scope.tenant_id, &leaf.package_id, &leaf.package_version)
             .await?.context("schema-changing release selection requires persisted immediate-predecessor upgrade evidence")?;
         let evidence = &accepted.evidence;
         require_prefix(evidence)?;
         ensure!(
-            evidence.environment == release.environment
+            evidence.environment == scope.environment
                 && evidence.predecessor_manifest_digest == manifest.digest().as_str()
                 && evidence.predecessor_package.package_id == package.package_id()
                 && evidence.predecessor_package.package_version == package.package_version()

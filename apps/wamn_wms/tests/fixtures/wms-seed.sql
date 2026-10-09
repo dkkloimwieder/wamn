@@ -37,7 +37,7 @@ BEGIN;
 
 -- The record history trigger requires an actor.
 SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true),
-       set_config('app.tenant_id', 'wms-route-auth', true),
+       set_config('app.tenant_id', 'acme--wms--dev', true),
        set_config('app.operation', 'admin:seed-wms-fixture', true);
 
 \if :{?reset}

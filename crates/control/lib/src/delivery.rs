@@ -27,7 +27,9 @@ pub struct PrepareReleaseRequest {
     pub org: String,
     /// Project of the published release, which its manifest does not name.
     pub project: String,
-    /// Tenant claim carried by the published release.
+    /// Environment of the published release, which its manifest does not name.
+    pub environment: String,
+    /// Tenant that holds the published release, which its manifest does not name.
     pub tenant: String,
     /// The published release, as its manifest digest.
     pub manifest_digest: String,
@@ -64,6 +66,8 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
     let candidate = Candidate {
         org: request.org,
         project: request.project,
+        environment: request.environment,
+        tenant: request.tenant,
         manifest_path: request.manifest_output,
         target_directory: fs::canonicalize(request.target_directory)?,
         host_image: request.host_image,
@@ -93,7 +97,6 @@ pub struct ReleaseIdentity {
     pub project: String,
     pub environment: String,
     pub tenant: String,
-    pub effective_release_id: u32,
     pub route_host: String,
     pub packages: BTreeSet<PackageCoordinate>,
 }
@@ -106,6 +109,10 @@ pub struct Candidate {
     pub org: String,
     /// Project of the release. The manifest does not name it.
     pub project: String,
+    /// Environment of the release. The manifest does not name it (R1).
+    pub environment: String,
+    /// Tenant of the release. The manifest does not name it (R1).
+    pub tenant: String,
     pub manifest_path: PathBuf,
     pub target_directory: PathBuf,
     pub host_image: String,
@@ -192,8 +199,9 @@ impl Candidate {
         ServingManifest::from_canonical_bytes(&bytes).context("admit candidate serving manifest")
     }
 
-    /// The release inputs that a fixture provisions and publishes: the org and the
-    /// project of the candidate, and the rest from its manifest.
+    /// The release inputs that a fixture provisions and publishes: the org, the
+    /// project, the environment and the tenant of the candidate, and the rest
+    /// from its manifest.
     pub fn identity(&self) -> anyhow::Result<ReleaseIdentity> {
         let (manifest, _) = self.manifest()?;
         // The publish writes one deployment route host into every routed
@@ -222,9 +230,8 @@ impl Candidate {
         Ok(ReleaseIdentity {
             org: self.org.clone(),
             project: self.project.clone(),
-            environment: manifest.release.environment.clone(),
-            tenant: manifest.release.tenant_id.clone(),
-            effective_release_id: manifest.release.effective_release_id.get(),
+            environment: self.environment.clone(),
+            tenant: self.tenant.clone(),
             route_host: route_host.to_owned(),
             packages: manifest.release.packages,
         })
@@ -453,6 +460,8 @@ mod tests {
         let mut candidate = super::Candidate {
             org: "acme".into(),
             project: "unused".into(),
+            environment: "unused".into(),
+            tenant: "unused".into(),
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: format!("localhost:5000/host@sha256:{}", "a".repeat(64)),

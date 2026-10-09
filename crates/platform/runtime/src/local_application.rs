@@ -9,6 +9,7 @@ use wamn_catalog::{
     AdmittedComponent, ComponentConnectionRequirement, ComponentPackageScope, ManifestDigest,
     ServingManifest, WiringDocument,
 };
+use wamn_engine::release_manifest::ReleaseScope;
 
 fn deserialize_manifest_digest<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -50,6 +51,7 @@ pub struct LocalBindingFacts {
 #[derive(Clone, Debug)]
 pub struct LocalApplication {
     pub(crate) manifest: ServingManifest,
+    pub(crate) scope: ReleaseScope,
     pub(crate) facts: LocalApplicationFacts,
     instance: u32,
 }
@@ -58,18 +60,15 @@ pub struct LocalApplication {
 pub async fn load_local_application(
     directory: &Path,
     manifest: &ServingManifest,
+    scope: ReleaseScope,
     database_url: &str,
     admission_digest: &str,
 ) -> anyhow::Result<LocalApplication> {
-    let instance = read_local_target(
-        database_url,
-        &manifest.release.tenant_id,
-        &manifest.release.environment,
-    )
-    .await?;
-    let facts = load_local_facts(directory, manifest, admission_digest)?;
+    let instance = read_local_target(database_url, &scope.tenant_id, &scope.environment).await?;
+    let facts = load_local_facts(directory, manifest, &scope.tenant_id, admission_digest)?;
     Ok(LocalApplication {
         manifest: manifest.clone(),
+        scope,
         facts,
         instance,
     })
@@ -111,8 +110,8 @@ impl LocalApplication {
             }
             let current = read_local_binding(
                 client,
-                &self.manifest.release.tenant_id,
-                &self.manifest.release.environment,
+                &self.scope.tenant_id,
+                &self.scope.environment,
                 &binding.requirement,
                 &binding.selection.instance_id,
             )
@@ -132,8 +131,8 @@ impl LocalApplication {
     ) -> anyhow::Result<Option<crate::plugins::wamn_postgres::ConnectionEffectSnapshot>> {
         self.require_instance(client).await?;
         anyhow::ensure!(
-            tenant == self.manifest.release.tenant_id
-                && lookup.environment == self.manifest.release.environment
+            tenant == self.scope.tenant_id
+                && lookup.environment == self.scope.environment
                 && lookup.manifest_digest == self.facts.manifest_digest.as_str(),
             "local connection release scope mismatch"
         );
@@ -332,6 +331,7 @@ pub const LOCAL_FACTS_FILE: &str = "local-admission.json";
 pub fn load_local_facts(
     directory: &Path,
     manifest: &ServingManifest,
+    tenant_id: &str,
     admission_digest: &str,
 ) -> anyhow::Result<LocalApplicationFacts> {
     let bytes =
@@ -342,14 +342,17 @@ pub fn load_local_facts(
     );
     let facts: LocalApplicationFacts =
         serde_json::from_slice(&bytes).context("parse local admission facts")?;
-    validate_local_facts(&facts, manifest)?;
+    validate_local_facts(&facts, manifest, tenant_id)?;
     Ok(facts)
 }
 
 /// Refuse missing, additional, or mismatched facts before a native host starts.
+///
+/// `tenant_id` is the tenant of the host scope: the manifest names none.
 pub fn validate_local_facts(
     facts: &LocalApplicationFacts,
     manifest: &ServingManifest,
+    tenant_id: &str,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         facts.manifest_digest == manifest.digest(),
@@ -370,7 +373,7 @@ pub fn validate_local_facts(
             "local component is repeated"
         );
         anyhow::ensure!(
-            fact.scope.tenant_id == manifest.release.tenant_id
+            fact.scope.tenant_id == tenant_id
                 && manifest
                     .release
                     .packages
@@ -422,7 +425,7 @@ pub fn validate_local_facts(
             "local wiring is repeated"
         );
         anyhow::ensure!(
-            fact.scope.tenant_id == manifest.release.tenant_id
+            fact.scope.tenant_id == tenant_id
                 && manifest
                     .release
                     .packages
@@ -626,9 +629,8 @@ mod tests {
     fn fixture() -> (super::LocalApplicationFacts, wamn_catalog::ServingManifest) {
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{
-            ArtifactHash, EffectiveReleaseId, PackageCoordinate, ServingComponent,
-            ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring,
-            WiringDocument,
+            ArtifactHash, PackageCoordinate, ServingComponent, ServingComponentOperation,
+            ServingManifest, ServingRelease, ServingWiring, WiringDocument,
         };
         let component = wamn_catalog::normalize_component_fact(serde_json::from_value(serde_json::json!({
             "scope": {"tenant-id": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
@@ -636,9 +638,6 @@ mod tests {
         let document = WiringDocument::parse(&serde_json::json!({"format-version": "0.1", "wiring-id": "run", "version": 1, "entry": "node", "nodes": {"node": {"component": "transform", "interface-version": "0.1.0", "operation": "run"}}})).unwrap();
         let manifest = ServingManifest::new(
             ServingRelease {
-                tenant_id: "tenant-a".to_owned(),
-                effective_release_id: EffectiveReleaseId::new(7).unwrap(),
-                environment: "dev".to_owned(),
                 packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
             },
             BTreeSet::from([ServingComponent {
@@ -752,19 +751,19 @@ mod tests {
         let (facts, manifest) = fixture();
         let bytes = serde_json::to_vec(&facts).unwrap();
         let round_trip = serde_json::from_slice(&bytes).unwrap();
-        super::validate_local_facts(&round_trip, &manifest).unwrap();
+        super::validate_local_facts(&round_trip, &manifest, "tenant-a").unwrap();
         let mut missing = facts.clone();
         missing.components.clear();
-        assert!(super::validate_local_facts(&missing, &manifest).is_err());
+        assert!(super::validate_local_facts(&missing, &manifest, "tenant-a").is_err());
         let mut duplicate = facts.clone();
         duplicate.components.push(facts.components[0].clone());
-        assert!(super::validate_local_facts(&duplicate, &manifest).is_err());
+        assert!(super::validate_local_facts(&duplicate, &manifest, "tenant-a").is_err());
         let mut removed = facts.clone();
         removed.components[0].operations.clear();
-        assert!(super::validate_local_facts(&removed, &manifest).is_err());
+        assert!(super::validate_local_facts(&removed, &manifest, "tenant-a").is_err());
         let mut stale = facts;
         stale.wirings[0].document.version += 1;
-        assert!(super::validate_local_facts(&stale, &manifest).is_err());
+        assert!(super::validate_local_facts(&stale, &manifest, "tenant-a").is_err());
     }
 
     #[test]
@@ -778,7 +777,7 @@ mod tests {
                 wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
             ));
         assert!(
-            super::validate_local_facts(&facts, &manifest)
+            super::validate_local_facts(&facts, &manifest, "tenant-a")
                 .unwrap_err()
                 .to_string()
                 .contains("selection is missing")
@@ -817,20 +816,20 @@ mod tests {
         let bytes = serde_json::to_vec(&facts).unwrap();
         let digest = wamn_engine::component_admission::component_digest(&bytes);
         std::fs::write(&path, &bytes).unwrap();
-        super::load_local_facts(&directory, &manifest, &digest).unwrap();
+        super::load_local_facts(&directory, &manifest, "tenant-a", &digest).unwrap();
         let mut changed = serde_json::to_value(&facts).unwrap();
         changed["bindings"] = serde_json::json!([]);
         changed["requirements"] = serde_json::json!([]);
         // Even a semantically valid rewrite must match the coordinator's exact bytes.
         std::fs::write(&path, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
         assert!(
-            super::load_local_facts(&directory, &manifest, &digest)
+            super::load_local_facts(&directory, &manifest, "tenant-a", &digest)
                 .unwrap_err()
                 .to_string()
                 .contains("bytes changed")
         );
         std::fs::remove_file(path).unwrap();
-        assert!(super::load_local_facts(&directory, &manifest, &digest).is_err());
+        assert!(super::load_local_facts(&directory, &manifest, "tenant-a", &digest).is_err());
         std::fs::remove_dir(directory).unwrap();
     }
 
@@ -842,7 +841,7 @@ mod tests {
         assert!(serde_json::from_value::<super::LocalApplicationFacts>(value.clone()).is_err());
         value["manifest-digest"] = serde_json::json!(format!("sha256:{}", "0".repeat(64)));
         let foreign = serde_json::from_value(value).unwrap();
-        assert!(super::validate_local_facts(&foreign, &manifest).is_err());
+        assert!(super::validate_local_facts(&foreign, &manifest, "tenant-a").is_err());
     }
 
     #[test]

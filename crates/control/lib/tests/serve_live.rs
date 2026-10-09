@@ -44,7 +44,8 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 const ORG: &str = "acme";
 const PROJECT: &str = "wms";
 const ENVIRONMENT: &str = "dev";
-const TENANT: &str = "wms";
+/// The tenant the saga derives from the coordinate.
+const TENANT: &str = "acme--wms--dev";
 const PLATFORM_DOMAIN: &str = "wamn.example.test";
 const UI_BUCKET: &str = "wamn-ui";
 const MINIO_USER: &str = "wamn-serve-live";
@@ -385,7 +386,6 @@ async fn a_create_environment_saga_runs_all_fifteen_steps() -> anyhow::Result<()
     let request = EnvironmentRequest {
         project: PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
-        tenant: TENANT.to_owned(),
         route_host: "wms.example.test".to_owned(),
         packages: vec![PackageReference {
             package_id: package_id.to_owned(),

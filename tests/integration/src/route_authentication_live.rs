@@ -247,9 +247,6 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     let manifest = serde_json::json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
-            "tenant-id": TENANT,
-            "effective-release-id": 1,
-            "environment": ENVIRONMENT,
             "packages": [{"package-id": FIXTURE_PACKAGE_ID, "package-version": FIXTURE_PACKAGE_VERSION}]
         },
         "components": [{
@@ -292,6 +289,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &bytes,
         "route-authentication-live fixture",
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
     )?))
 }
 

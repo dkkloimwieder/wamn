@@ -6,7 +6,6 @@
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -52,8 +51,6 @@ const ROUTE_HOST: &str = "route_host";
 const PLATFORM_DOMAIN: &str = "platform_domain";
 const LOCAL_ARTIFACTS: &str = "local_artifacts";
 const PACKAGE_SOURCES: &str = "package_sources";
-const EFFECTIVE_RELEASE_ID: &str = "effective_release_id";
-const TENANT: &str = "tenant";
 const CATALOG: &str = "catalog";
 const ENVIRONMENT: &str = "environment";
 const ORG: &str = "org";
@@ -160,8 +157,6 @@ struct DevConfigDocument {
     platform_domain: String,
     local_artifacts: LocalArtifacts,
     package_sources: Vec<PathBuf>,
-    effective_release_id: NonZeroU32,
-    tenant: String,
     catalog: String,
     environment: String,
     org: String,
@@ -595,7 +590,6 @@ pub struct DevConfig {
     route_host: Box<str>,
     platform_domain: Box<str>,
     package_sources: Box<[PathBuf]>,
-    effective_release_id: NonZeroU32,
     activation_identity: DevActivationIdentity,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
@@ -663,7 +657,6 @@ impl fmt::Debug for DevConfig {
             .field(ROUTE_HOST, &self.route_host)
             .field(PLATFORM_DOMAIN, &self.platform_domain)
             .field(PACKAGE_SOURCES, &self.package_sources)
-            .field(EFFECTIVE_RELEASE_ID, &self.effective_release_id)
             .field("activation_identity", &self.activation_identity)
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
@@ -835,11 +828,6 @@ impl DevConfig {
         &self.package_sources
     }
 
-    /// Positive deployment-owned identity for the effective release published by this loop.
-    pub const fn effective_release_id(&self) -> u32 {
-        self.effective_release_id.get()
-    }
-
     /// Deployment identity passed unchanged to local activation.
     pub const fn activation_identity(&self) -> &DevActivationIdentity {
         &self.activation_identity
@@ -938,8 +926,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         route_host,
         platform_domain,
         package_sources,
-        effective_release_id,
-        tenant,
         catalog,
         environment,
         org,
@@ -1043,7 +1029,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         .collect::<Result<Vec<_>, _>>()?
         .into_boxed_slice();
     for (key, value) in [
-        (TENANT, tenant.as_str()),
         (CATALOG, catalog.as_str()),
         (ENVIRONMENT, environment.as_str()),
         (ORG, org.as_str()),
@@ -1055,8 +1040,10 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     ] {
         validate_nonempty_string(value, key)?;
     }
+    // The tenant is the environment coordinate's (owner ruling of 2026-10-09
+    // on `wamn-snz0`): the host derives the same value from its own scope.
     let activation_identity = DevActivationIdentity {
-        tenant,
+        tenant: wamn_control_registry::project_env_tenant(&org, &project, &environment),
         catalog,
         environment,
         org,
@@ -1230,7 +1217,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         route_host,
         platform_domain: platform_domain.into_boxed_str(),
         package_sources,
-        effective_release_id,
         activation_identity,
         host_binary,
         wasmtime_cache_dir,
@@ -1815,8 +1801,6 @@ pub(crate) mod tests {
                 "flow_http_component": "/tmp/wamn-flow-http.wasm",
                 "materializer_component": "/tmp/wamn-materializer.wasm"},
             (PACKAGE_SOURCES): [],
-            (EFFECTIVE_RELEASE_ID): 1,
-            (TENANT): "00000000-0000-0000-0000-000000000001",
             (CATALOG): "default",
             (ENVIRONMENT): "fixture-dev",
             (ORG): "acme",
@@ -1886,7 +1870,6 @@ pub(crate) mod tests {
             (STREAM_REPLICAS, json!(0)),
             (STREAM_REPLICAS, json!(6)),
             (DUP_WINDOW_SECS, json!(0)),
-            (EFFECTIVE_RELEASE_ID, json!(u64::from(u32::MAX) + 1)),
         ] {
             let mut invalid = document.clone();
             invalid[key] = value;
@@ -1998,14 +1981,13 @@ pub(crate) mod tests {
         .expect("complete config parses");
         assert_eq!(
             config.activation_identity().tenant,
-            "00000000-0000-0000-0000-000000000001"
+            "acme--fixture--fixture-dev"
         );
         assert_eq!(config.host_binary(), Path::new("/opt/wamn/bin/wamn-host"));
         assert_eq!(
             config.wasmtime_cache_dir(),
             Path::new("/tmp/wamn-dev-cache")
         );
-        assert_eq!(config.effective_release_id(), 1);
         assert_eq!(config.platform_domain(), "example.invalid");
         assert_eq!(config.tempo_query_url(), format!("http://{}", addresses[9]));
         assert_eq!(
@@ -2013,7 +1995,7 @@ pub(crate) mod tests {
             format!("http://{}", addresses[10])
         );
 
-        for key in [TENANT, PLATFORM_DOMAIN, HOST_BINARY, WASMTIME_CACHE_DIR] {
+        for key in [PLATFORM_DOMAIN, HOST_BINARY, WASMTIME_CACHE_DIR] {
             let mut missing = complete_document(&addresses);
             missing.as_object_mut().expect("fixture object").remove(key);
             let error = parse_config(
@@ -2032,15 +2014,6 @@ pub(crate) mod tests {
         .expect_err("the platform domain must be a domain name");
         assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), PLATFORM_DOMAIN);
-
-        let mut zero_release = complete_document(&addresses);
-        zero_release[EFFECTIVE_RELEASE_ID] = json!(0);
-        let error = parse_config(
-            &serde_json::to_vec(&zero_release).expect("serialize zero release identity"),
-        )
-        .expect_err("effective release identity must be positive");
-        assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
-        assert_eq!(error.key(), EFFECTIVE_RELEASE_ID);
     }
 
     #[test]

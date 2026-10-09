@@ -29,7 +29,7 @@ use wamn_catalog::edge_bundle::{
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
 use wamn_engine::operation::native_workload::NativeComponent;
-use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, validate_component_in_release};
 
 use crate::grants::Grants;
 
@@ -65,8 +65,13 @@ impl fmt::Debug for EdgeRelease {
 
 impl EdgeRelease {
     /// Load the bundle in `directory` whose `edge-release.json` has
-    /// `bundle_digest`, and read every component body once.
-    pub async fn load(directory: &Path, bundle_digest: &str) -> Result<Self, EdgeReleaseError> {
+    /// `bundle_digest`, and read every component body once. `scope` is the
+    /// tenant and environment of the box, from its configuration.
+    pub async fn load(
+        directory: &Path,
+        bundle_digest: &str,
+        scope: ReleaseScope,
+    ) -> Result<Self, EdgeReleaseError> {
         let bundle_bytes = read_pinned(directory, BUNDLE_FILE_NAME, bundle_digest)?;
         let bundle: EdgeBundle = serde_json::from_slice(&bundle_bytes)
             .map_err(|error| rejected(format!("{BUNDLE_FILE_NAME} is not a bundle: {error}")))?;
@@ -79,7 +84,7 @@ impl EdgeRelease {
 
         let manifest_bytes = read_pinned(directory, RELEASE_MANIFEST_FILE_NAME, &bundle.manifest)?;
         let release =
-            LoadedRelease::load_canonical_bytes(&manifest_bytes, RELEASE_MANIFEST_FILE_NAME)
+            LoadedRelease::load_canonical_bytes(&manifest_bytes, RELEASE_MANIFEST_FILE_NAME, scope)
                 .map_err(|error| rejected(error.to_string()))?;
 
         let components_bytes = read_pinned(directory, COMPONENTS_FILE_NAME, &bundle.components)?;

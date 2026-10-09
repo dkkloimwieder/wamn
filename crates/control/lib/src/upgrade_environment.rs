@@ -43,9 +43,6 @@ const TAP_JOB: &str = "evt-nats-tap-stream";
 const TAP_CHECK_POD: &str = "evt-nats-check";
 const TAP_PRESENT: &str = r#""config":{"name":"WAMN_TAP""#;
 const COMMAND_TIMEOUT: Duration = Duration::from_hours(3);
-/// The release id the manifest still names. A release is its manifest
-/// digest, so every publish names the same id (wamn-snz0.5).
-const MANIFEST_RELEASE_ID: u32 = 1;
 
 #[derive(Clone, Debug)]
 pub struct UpgradeEnvironmentRequest {
@@ -976,7 +973,6 @@ impl Run {
                 org: self.arguments.org.clone(),
                 project: self.arguments.project.clone(),
                 tenant: tenant.clone(),
-                effective_release_id: MANIFEST_RELEASE_ID,
                 environment: self.arguments.environment.clone(),
                 verified_publisher_principal: format!(
                     "wamn-management-author-{}--{}--{}",
@@ -1036,6 +1032,7 @@ impl Run {
             database_url: databases.project_url(),
             org: self.arguments.org.clone(),
             project: self.arguments.project.clone(),
+            environment: self.arguments.environment.clone(),
             tenant: databases.tenant.clone(),
             manifest_digest,
             artifact_base: format!("{}/releases", environment.registry),
@@ -1090,6 +1087,7 @@ impl Run {
             database_url: databases.project_url(),
             org: self.arguments.org.clone(),
             project: self.arguments.project.clone(),
+            environment: self.arguments.environment.clone(),
             tenant: databases.tenant.clone(),
             manifest_digest: Self::release_digest(record)?,
             artifact_base: format!("{}/releases", environment.registry),

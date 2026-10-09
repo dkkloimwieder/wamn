@@ -309,7 +309,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         request: AuthenticationRequest<'_>,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let AuthenticationRequest {
-            manifest,
+            scope,
             attachment_id,
             headers,
             ..
@@ -320,8 +320,8 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     attachment_id,
                     token,
                     csrf.map(|required| (headers, required)),
-                    &manifest.release.tenant_id,
-                    &manifest.release.environment,
+                    &scope.tenant_id,
+                    &scope.environment,
                 )
                 .await;
         }
@@ -343,7 +343,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     token,
                     &authentication.org,
                     &authentication.project,
-                    &manifest.release.environment,
+                    &scope.environment,
                     &[ADMIN_ROLE],
                 )
                 .instrument(tracing::info_span!("wamn.auth.identity"))
@@ -369,7 +369,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .postgres
                 .user_operation_permissions(
                     &authentication.project,
-                    &manifest.release.tenant_id,
+                    &scope.tenant_id,
                     principal.id(),
                 )
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
@@ -481,9 +481,9 @@ mod tests {
 
     use serde_json::{Value, json};
     use wamn_catalog::{
-        ArtifactHash, AttachmentTarget, AttachmentType, DefinitionHash, EffectiveReleaseId,
-        PAT_AUTHENTICATION_MODE, PackageCoordinate, ServingAttachment, ServingComponent,
-        ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring,
+        ArtifactHash, AttachmentTarget, AttachmentType, DefinitionHash, PAT_AUTHENTICATION_MODE,
+        PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
+        ServingManifest, ServingRelease, ServingWiring,
     };
     use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
     use wamn_engine::release_manifest::LoadedRelease;
@@ -498,9 +498,6 @@ mod tests {
         let digest = |hex: char| format!("sha256:{}", hex.to_string().repeat(64));
         let manifest = ServingManifest::new(
             ServingRelease {
-                tenant_id: "tenant-a".into(),
-                effective_release_id: EffectiveReleaseId::new(7).unwrap(),
-                environment: "prod".into(),
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::from([ServingComponent {
@@ -548,8 +545,12 @@ mod tests {
             BTreeMap::new(),
         )
         .expect("fixture manifest is valid");
-        let release = LoadedRelease::load_canonical_bytes(&manifest.canonical_bytes(), "fixture")
-            .expect("fixture manifest loads");
+        let release = LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "fixture",
+            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "prod"),
+        )
+        .expect("fixture manifest loads");
         FlowHttpRouting::new(Some(Arc::new(release)), RouteInFlightLimit::default())
             .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
     }

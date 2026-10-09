@@ -233,11 +233,8 @@ mod tests {
             None,
         )
         .unwrap();
-        let mut renamed = manifest.clone();
-        renamed.release.environment = "another-environment".to_owned();
-        renamed.release.tenant_id = "another-tenant".to_owned();
         let other = QualificationKey::new(
-            &renamed,
+            &manifest,
             &format!("two.example/other/host@sha256:{digest}"),
             None,
             None,

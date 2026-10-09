@@ -40,16 +40,16 @@ Capture the published manifest and explicit artifact locations:
 ```bash
 wamn-ctl prepare-release \
   --database-url "$DELIVERY_DATABASE_URL" --org "$DELIVERY_ORG" --project "$DELIVERY_PROJECT" \
-  --tenant "$DELIVERY_TENANT" \
-  --effective-release-id "$DELIVERY_RELEASE_ID" --artifact-base "$DELIVERY_ARTIFACT_BASE" \
+  --environment "$DELIVERY_ENVIRONMENT" --tenant "$DELIVERY_TENANT" \
+  --release-digest "$DELIVERY_RELEASE_DIGEST" --artifact-base "$DELIVERY_ARTIFACT_BASE" \
   --target-directory "$DELIVERY_TARGET" \
   --host-image "$DELIVERY_HOST_IMAGE" \
   --manifest-output "$DELIVERY_MANIFEST" --candidate-output "$DELIVERY_CANDIDATE"
 ```
 
 Use unused absolute paths for both output files.
-The candidate records the org and the project, because the manifest does not name them.
-The qualification fixtures take the org, the project, the tenant, the environment, the release id, the route host and the packages from the candidate.
+The candidate records the org, the project, the environment and the tenant, because the manifest does not name them.
+The qualification fixtures take the org, the project, the tenant, the environment, the route host and the packages from the candidate.
 Add each deployment document, application request, and expected response with `--deployment-file` before qualification.
 For an owned registry reached through another address inside kind, add `--native-registry-endpoint HOST:PORT`.
 If that endpoint uses HTTP, also add `--native-registry-insecure`.
@@ -127,8 +127,9 @@ release_args=(
   --control-database-url "$DELIVERY_CONTROL_DATABASE_URL"
   --org "$DELIVERY_ORG"
   --project "$DELIVERY_PROJECT"
+  --environment "$DELIVERY_ENVIRONMENT"
   --tenant "$DELIVERY_TENANT"
-  --effective-release-id "$DELIVERY_RELEASE_ID"
+  --release-digest "$DELIVERY_RELEASE_DIGEST"
   --artifact-base "$DELIVERY_ARTIFACT_BASE"
   --registry-auth-file "$DELIVERY_REGISTRY_AUTH_FILE"
 )

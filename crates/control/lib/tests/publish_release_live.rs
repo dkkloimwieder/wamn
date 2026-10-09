@@ -1,10 +1,9 @@
 //! Disposable-PostgreSQL tests for package sealing at release publication.
 
-use std::collections::BTreeSet;
 use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{EffectiveReleaseId, ManifestDigest, PackageCoordinate, ServingRelease};
+use wamn_catalog::ManifestDigest;
 use wamn_control::publish_release::{
     DeploymentCoordinate, attest_deployment, project_release_identity,
 };
@@ -239,13 +238,8 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
     assert_package_seal(&project, Store::Project).await;
     assert_package_seal(url, Store::Control).await;
 
-    let release = ServingRelease {
-        tenant_id: TENANT.to_owned(),
-        effective_release_id: EffectiveReleaseId::new(1).unwrap(),
-        environment: "dev".to_owned(),
-        packages: BTreeSet::from([PackageCoordinate::new("inventory", "1.0.0").unwrap()]),
-    };
-    let coordinate = DeploymentCoordinate::new("demo", "inventory", &release, &digest('1'));
+    let scope = wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev");
+    let coordinate = DeploymentCoordinate::new("demo", "inventory", &scope, &digest('1'));
     let (first, second) = tokio::join!(
         attest_deployment(url, &coordinate, Some("0123456789abcdef")),
         attest_deployment(url, &coordinate, Some("0123456789abcdef"))

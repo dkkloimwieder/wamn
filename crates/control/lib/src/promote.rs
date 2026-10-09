@@ -17,6 +17,7 @@ use wamn_catalog::{
     validate_wiring_activation, validate_wiring_compatibility,
 };
 use wamn_engine::artifact_source::ArtifactSource as _;
+use wamn_engine::release_manifest::ReleaseScope;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -284,15 +285,14 @@ pub async fn promote(args: PromoteRequest) -> anyhow::Result<PromoteOutcome> {
         promote_target(&mut target, &artifact_source, &release, &args, &run_schema).await;
     let (target_digest, activated) = finish_connection(target, target_task, promoted).await?;
 
-    let target_release = wamn_catalog::ServingRelease {
-        tenant_id: args.tenant.clone(),
-        effective_release_id: release.manifest.release.effective_release_id,
-        environment: args.target_environment.clone(),
-        packages: release.manifest.release.packages.clone(),
-    };
     let digest = wamn_catalog::ManifestDigest::parse(target_digest.clone())
         .expect("the release publish returned a canonical digest");
-    let coordinate = DeploymentCoordinate::new(&args.org, &args.project, &target_release, &digest);
+    let coordinate = DeploymentCoordinate::new(
+        &args.org,
+        &args.project,
+        &ReleaseScope::new(args.tenant.as_str(), args.target_environment.as_str()),
+        &digest,
+    );
     report_deployment_coordinate(&coordinate);
     project_release_identity(&args.control_database_url, &coordinate).await?;
     Ok(PromoteOutcome {
@@ -377,11 +377,6 @@ async fn load_source_release(
     ensure!(
         stored_digest == derived_digest.as_str(),
         "source snapshot digest mismatch"
-    );
-    ensure!(
-        manifest.release.tenant_id == args.tenant
-            && manifest.release.environment == args.source_environment,
-        "source serving-manifest coordinate mismatch"
     );
     let release_packages = manifest.release.packages.clone();
 
@@ -681,8 +676,6 @@ async fn promote_target(
         &tx,
         &PublishReleaseManifest {
             tenant_id: &args.tenant,
-            effective_release_id: i32::try_from(source.manifest.release.effective_release_id.get())
-                .context("the source release id exceeds PostgreSQL integer")?,
             environment: &args.target_environment,
             verified_publisher_principal: &args.principal,
             packages: &packages,
@@ -696,9 +689,13 @@ async fn promote_target(
         &source.manifest.routes,
     )
     .await
-    .context("publish target format-4 release snapshot")?;
+    .context("publish target format-5 release snapshot")?;
     let expected = read_expected_environment(&tx, run_schema, &args.tenant).await?;
-    verify_provisioned_environment(expected.as_deref(), &published.manifest.release, run_schema)?;
+    verify_provisioned_environment(
+        expected.as_deref(),
+        &ReleaseScope::new(args.tenant.as_str(), args.target_environment.as_str()),
+        run_schema,
+    )?;
     tx.execute(
         UPSERT_HEAD_SQL,
         &[

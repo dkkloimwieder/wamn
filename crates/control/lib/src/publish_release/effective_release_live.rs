@@ -21,7 +21,6 @@ use crate::push_component::{admitted_projection_hash, append_or_verify_admitted_
 const TENANT: &str = "effective-release-poc";
 const ENVIRONMENT: &str = "dev";
 const PUBLISHER: &str = "effective-release-poc-publisher";
-const RELEASE_ID: i32 = 1;
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -426,7 +425,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
             .expect("bind the deployment-owned route hostname");
     let request = PublishReleaseManifest {
         tenant_id: TENANT,
-        effective_release_id: RELEASE_ID,
         environment: ENVIRONMENT,
         verified_publisher_principal: PUBLISHER,
         packages: &packages,
@@ -514,10 +512,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     let transaction = project.transaction().await.expect("begin refused publish");
     let refusal = publish_release_with_package_manifests(
         &transaction,
-        &PublishReleaseManifest {
-            effective_release_id: RELEASE_ID + 1,
-            ..request
-        },
+        &request,
         &manifests,
         &drifted_hashes,
         &kinds,
@@ -546,7 +541,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     let refusal = publish_release_with_package_manifests(
         &transaction,
         &PublishReleaseManifest {
-            effective_release_id: RELEASE_ID + 2,
             wirings: &one_node,
             ..request
         },

@@ -82,7 +82,7 @@ impl QueueService {
             .filter(|ttl| *ttl > 0)
             .context("queue lease TTL must be a positive signed 64-bit integer")?;
         let scope = QueueScope {
-            tenant_id: release.manifest().release.tenant_id.clone(),
+            tenant_id: release.scope().tenant_id.clone(),
             project: config.project.clone(),
             package_ids: release
                 .manifest()
@@ -91,7 +91,7 @@ impl QueueService {
                 .iter()
                 .map(|package| package.package_id().to_owned())
                 .collect(),
-            environment: release.manifest().release.environment.clone(),
+            environment: release.scope().environment.clone(),
         };
         postgres
             .bind_session_claims(

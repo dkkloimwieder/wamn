@@ -279,11 +279,8 @@ fn release_lines(snapshot: &DevSnapshot) -> Vec<String> {
             lines.push(String::new());
             lines.push("RELEASE".to_owned());
             lines.push(format!(
-                "format-version={} tenant-id={} effective-release-id={} environment={}",
-                release.manifest().format_version,
-                release.manifest().release.tenant_id,
-                release.manifest().release.effective_release_id.get(),
-                release.manifest().release.environment,
+                "format-version={}",
+                release.manifest().format_version
             ));
         }
         None => lines.push("awaiting release".to_owned()),
@@ -537,7 +534,7 @@ mod tests {
     use serde_json::json;
     use wamn_authoring_model::{GateRefusal, GateResult, ValidatedDraftRef};
     use wamn_catalog::{
-        ArtifactHash, AttachmentType, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
+        ArtifactHash, AttachmentType, DefinitionHash, PackageCoordinate,
         SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
         ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring, WorkflowSection,
     };
@@ -667,8 +664,6 @@ mod tests {
             text.contains(&format!("manifest-digest={manifest_digest}")),
             "{text}"
         );
-        assert!(text.contains("tenant-id=tenant-a"), "{text}");
-        assert!(text.contains("effective-release-id=7"), "{text}");
         assert!(
             text.contains("package-id=platform_fixture package-version=1.0.0"),
             "{text}"
@@ -945,9 +940,6 @@ mod tests {
         ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                tenant_id: "tenant-a".to_owned(),
-                effective_release_id: EffectiveReleaseId::new(7).expect("valid release"),
-                environment: "dev".to_owned(),
                 packages: BTreeSet::from([package]),
             },
             components: BTreeSet::from([component]),

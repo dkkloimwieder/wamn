@@ -60,8 +60,7 @@ fn grant_release() -> anyhow::Result<LoadedRelease> {
         |reference: &str| json!({"registered-operation": reference, "permissions": [reference]});
     let manifest = json!({
         "format-version": super::SERVING_MANIFEST_FORMAT_VERSION,
-        "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": ENVIRONMENT,
-            "packages": [{"package-id": "child", "package-version": "1.0.0"},
+        "release": {"packages": [{"package-id": "child", "package-version": "1.0.0"},
                          {"package-id": "root", "package-version": "1.0.0"}]},
         "components": [
             {"package-id": "child", "component": "node", "interface-version": "0.1.0",
@@ -76,6 +75,7 @@ fn grant_release() -> anyhow::Result<LoadedRelease> {
     Ok(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "native grant closures",
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
     )?)
 }
 
@@ -271,8 +271,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     }});
     let manifest = json!({
         "format-version": super::SERVING_MANIFEST_FORMAT_VERSION,
-        "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": ENVIRONMENT,
-            "packages": [{"package-id": "root", "package-version": "1.0.0"}]},
+        "release": {"packages": [{"package-id": "root", "package-version": "1.0.0"}]},
         "components": [{"package-id": "root", "component": "node", "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
                 ROOT: {"registered-operation": ROOT, "permissions": [ROOT]}
@@ -290,6 +289,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "native session route test",
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
     )?);
     let route = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
@@ -1196,6 +1196,7 @@ async fn pat_caller(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "warm PAT test",
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
     )?);
     let routing = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(

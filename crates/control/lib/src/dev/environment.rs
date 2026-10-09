@@ -254,9 +254,9 @@ pub const PROJECT: &str = "receiving";
 
 pub const ENVIRONMENT: &str = "dev";
 
-pub const TENANT: &str = "receiving-route-auth";
-
-pub const RELEASE_ID: u32 = 1;
+/// The tenant of the coordinate, as `project_env_tenant(ORG, PROJECT, ENVIRONMENT)`
+/// derives it.
+pub const TENANT: &str = "acme--receiving--dev";
 
 /// The org, project, environment and tenant that one journey provisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1072,8 +1072,6 @@ pub fn write_dev_config(
         "operator_bearer_token": route.token.as_str(),
         "route_host": inputs.route_host.as_str(),
         "package_sources": inputs.package_sources.as_slice(),
-        "effective_release_id": RELEASE_ID,
-        "tenant": identity.tenant.as_str(),
         "catalog": identity.catalog.as_str(),
         "environment": identity.environment.as_str(),
         "org": identity.org.as_str(),
@@ -1114,5 +1112,13 @@ mod tests {
         let identity =
             dev_activation_identity(&[fixture]).expect("the fixture declares one schema");
         assert_eq!(identity.schema, "inventory");
+    }
+
+    #[test]
+    fn the_journey_tenant_is_the_coordinate_tenant() {
+        assert_eq!(
+            TENANT,
+            wamn_control_registry::project_env_tenant(ORG, PROJECT, ENVIRONMENT)
+        );
     }
 }

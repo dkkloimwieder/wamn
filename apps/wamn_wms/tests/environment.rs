@@ -56,8 +56,7 @@ pub(crate) fn identity() -> &'static ReleaseIdentity {
                 org: "acme".to_owned(),
                 project: "wms".to_owned(),
                 environment: "dev".to_owned(),
-                tenant: "wms-route-auth".to_owned(),
-                effective_release_id: 1,
+                tenant: "acme--wms--dev".to_owned(),
                 route_host: "wms.localhost".to_owned(),
                 packages: BTreeSet::from([
                     package_coordinate().expect("read the WMS package coordinate")
@@ -605,7 +604,6 @@ pub async fn publish(
         org: identity().org.clone(),
         project: identity().project.clone(),
         tenant: identity().tenant.clone(),
-        effective_release_id: identity().effective_release_id,
         environment: identity().environment.clone(),
         verified_publisher_principal: route
             .management_principal_subject
@@ -661,6 +659,7 @@ pub async fn publish(
                 control_database_url: inputs.system_pg_url.clone(),
                 org: identity().org.clone(),
                 project: identity().project.clone(),
+                environment: identity().environment.clone(),
                 tenant: identity().tenant.clone(),
                 manifest_digest: release_digest.clone(),
                 artifact_base: inputs.release_artifact_base.clone(),

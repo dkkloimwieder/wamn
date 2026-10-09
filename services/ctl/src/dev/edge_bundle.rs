@@ -21,10 +21,16 @@ pub fn run(args: &DevEdgeBundleArgs) -> anyhow::Result<()> {
         std::fs::read(&args.config).with_context(|| format!("read {}", args.config.display()))?;
     let config = wamn_control::dev::config::parse_config(&bytes)?;
     let local = config.local_artifacts();
+    let identity = config.activation_identity();
     let digest = wamn_control::dev::edge_bundle::write(
         &local.directory,
         &local.flow_http_component,
         &args.out,
+        wamn_control::dev::edge_bundle::EdgeScope {
+            org: &identity.org,
+            project: &identity.project,
+            environment: &identity.environment,
+        },
     )?;
     println!("edge bundle {} digest={digest}", args.out.display());
     Ok(())

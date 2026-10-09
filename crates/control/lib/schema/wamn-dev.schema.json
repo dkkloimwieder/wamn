@@ -120,11 +120,6 @@
       "minimum": 0.0,
       "type": "integer"
     },
-    "effective_release_id": {
-      "format": "uint32",
-      "minimum": 1.0,
-      "type": "integer"
-    },
     "environment": {
       "type": "string"
     },
@@ -239,9 +234,6 @@
     "tempo_query_url": {
       "type": "string"
     },
-    "tenant": {
-      "type": "string"
-    },
     "wasmtime_cache_dir": {
       "type": "string"
     }
@@ -250,7 +242,6 @@
     "administration_database_url",
     "catalog",
     "dup_window_secs",
-    "effective_release_id",
     "environment",
     "event_materializer_database_url",
     "event_nats_password_file",
@@ -282,7 +273,6 @@
     "target_privileges_file",
     "target_template_database",
     "tempo_query_url",
-    "tenant",
     "wasmtime_cache_dir"
   ],
   "title": "DevConfigDocument",

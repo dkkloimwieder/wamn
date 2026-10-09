@@ -2,8 +2,10 @@
 //! each key.
 //!
 //! `wamn-edge --config <path>` or `WAMN_EDGE_CONFIG` names the file. Each key
-//! has one `WAMN_EDGE_*` variable ([`OVERRIDES`]), which replaces the file's
-//! value or supplies a key that the file leaves out. With no file, every key
+//! has one variable ([`OVERRIDES`]), which replaces the file's value or
+//! supplies a key that the file leaves out. The `[scope]` keys take the
+//! variables of the cloud host: `WAMN_ORG`, `WAMN_PROJECT` and
+//! `WASMCLOUD_HOST_ENVIRONMENT`. Every other key has a `WAMN_EDGE_*` variable. With no file, every key
 //! comes from its variable. An unknown key is refused.
 //! `services/edge/edge.example.toml` shows every key.
 
@@ -13,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::Deserialize;
+use wamn_control_registry::project_env_tenant;
+use wamn_engine::release_manifest::ReleaseScope;
 
 /// The variable that names the configuration file.
 pub const CONFIG_VARIABLE: &str = "WAMN_EDGE_CONFIG";
@@ -26,6 +30,13 @@ enum Shape {
 
 /// Each key's override variable, its path in the file, and its shape.
 const OVERRIDES: &[(&str, &[&str], Shape)] = &[
+    ("WAMN_ORG", &["scope", "org"], Shape::Text),
+    ("WAMN_PROJECT", &["scope", "project"], Shape::Text),
+    (
+        "WASMCLOUD_HOST_ENVIRONMENT",
+        &["scope", "environment"],
+        Shape::Text,
+    ),
     ("WAMN_EDGE_BUNDLE_DIR", &["release", "dir"], Shape::Text),
     (
         "WAMN_EDGE_BUNDLE_DIGEST",
@@ -100,6 +111,7 @@ const OVERRIDES: &[(&str, &[&str], Shape)] = &[
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EdgeConfig {
+    pub scope: ScopeConfig,
     pub release: ReleaseConfig,
     pub session: SessionConfig,
     pub store: StoreConfig,
@@ -111,6 +123,27 @@ pub struct EdgeConfig {
     /// the store.
     #[serde(default)]
     pub forward: Option<ForwardConfig>,
+}
+
+/// The environment coordinate of the box. The release names no tenant or
+/// environment (R1), so the edge takes both from here, as the cloud host does.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopeConfig {
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+}
+
+impl ScopeConfig {
+    /// The tenant and environment of the release, with the tenant derived
+    /// from the coordinate.
+    pub fn release_scope(&self) -> ReleaseScope {
+        ReleaseScope::new(
+            project_env_tenant(&self.org, &self.project, &self.environment),
+            self.environment.clone(),
+        )
+    }
 }
 
 /// The release bundle that the box serves.
@@ -257,6 +290,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::EdgeConfig;
+    use wamn_engine::release_manifest::ReleaseScope;
 
     const EXAMPLE: &str = include_str!("../edge.example.toml");
 
@@ -294,6 +328,9 @@ mod tests {
         let from_variables = parse(
             "",
             &[
+                ("WAMN_ORG", "org-a"),
+                ("WAMN_PROJECT", "plant"),
+                ("WASMCLOUD_HOST_ENVIRONMENT", "edge"),
                 ("WAMN_EDGE_BUNDLE_DIR", "/bundle"),
                 ("WAMN_EDGE_BUNDLE_DIGEST", "sha256:00"),
                 ("WAMN_EDGE_SESSION_KEYS", "/keys.json"),
@@ -307,6 +344,10 @@ mod tests {
         )
         .expect("the variables alone are a configuration");
         assert!(from_variables.device.is_none(), "no device, no loop");
+        assert_eq!(
+            from_variables.scope.release_scope(),
+            ReleaseScope::new("org-a--plant--edge", "edge")
+        );
     }
 
     #[test]

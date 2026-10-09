@@ -196,7 +196,6 @@ describe("the project screen", () => {
     const type = (label: string, text: string, scope: HTMLElement = form) =>
       fireEvent.input(within(scope).getByLabelText(label), { target: { value: text } });
     type("environment name", "test");
-    type("tenant", "billing-test");
     type("route host", "billing.example.test");
     await pick("version of wamn_receiving", "1.1.0");
     fireEvent.click(within(form).getByRole("button", { name: "add connection" }));
@@ -211,7 +210,6 @@ describe("the project screen", () => {
     expect(written(sent, "environment/create")).toEqual({
       project: "billing",
       env: "test",
-      tenant: "billing-test",
       route_host: "billing.example.test",
       packages: [{ package_id: "wamn_receiving", version: "1.1.0" }],
       connections: [
@@ -265,7 +263,6 @@ describe("the project screen", () => {
       fireEvent.input(within(scope).getByLabelText(label), { target: { value: text } });
     await pick("source environment", "dev");
     type("new environment name", "test");
-    type("new tenant", "billing-test");
     type("new route host", "billing.example.test");
     fireEvent.click(within(form).getByRole("button", { name: "add replacement" }));
     const replacement = await waitFor(() => form.querySelector("[data-replacement]") as HTMLElement);
@@ -279,7 +276,6 @@ describe("the project screen", () => {
       project: "billing",
       source_env: "dev",
       env: "test",
-      tenant: "billing-test",
       route_host: "billing.example.test",
       connections: [{ instance_id: "labels", definition: { provider: "gcs", container: "c", prefix: "p" } }],
     });

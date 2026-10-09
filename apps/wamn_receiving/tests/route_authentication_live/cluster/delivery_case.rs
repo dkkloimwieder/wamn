@@ -92,8 +92,7 @@ async fn exercise(
     let carrier = wamn_control::print_release_env::lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),
-        &super::super::release_digest_at(&route.database_url, identity().effective_release_id)
-            .await?,
+        &super::super::release_digest_at(&route.database_url, super::super::FIRST_RELEASE).await?,
         &cluster.inputs.release_artifact_base,
     )
     .await?;
@@ -228,6 +227,8 @@ async fn exercise(
             identity().org.as_str(),
             "--project",
             identity().project.as_str(),
+            "--environment",
+            identity().environment.as_str(),
             "--tenant",
             identity().tenant.as_str(),
             "--release-digest",
@@ -303,6 +304,8 @@ async fn exercise(
         identity().org.as_str(),
         "--project",
         identity().project.as_str(),
+        "--environment",
+        identity().environment.as_str(),
         "--tenant",
         identity().tenant.as_str(),
         "--release-digest",

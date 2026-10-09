@@ -63,7 +63,6 @@ pub const TENANT: &str = "tenant-a";
 pub const PACKAGE: &str = "orders";
 pub const ENVIRONMENT: &str = "prod";
 pub const PACKAGE_VERSION: &str = "1.0.0";
-pub const EFFECTIVE_RELEASE_ID: i32 = 1;
 pub const WIRING_ID: &str = "hot-route";
 pub const WIRING_VERSION: u32 = 1;
 pub const NODE_ID: &str = "call-upstream";
@@ -187,6 +186,7 @@ async fn build_with_credentials(
                 &wiring_hash,
             )),
             "trusted-http-route fixture",
+            wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
         )
         .context("load the fixture serving manifest")?,
     );
@@ -343,9 +343,6 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
     serde_json::json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {
-            "tenant-id": TENANT,
-            "effective-release-id": EFFECTIVE_RELEASE_ID,
-            "environment": ENVIRONMENT,
             "packages": [{
                 "package-id": PACKAGE,
                 "package-version": PACKAGE_VERSION,

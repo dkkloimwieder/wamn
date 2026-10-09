@@ -76,7 +76,6 @@ pub const STEPS: [&str; 15] = [
 pub struct EnvironmentRequest {
     pub project: String,
     pub env: String,
-    pub tenant: String,
     /// The hostname applied to every HTTP route of the release.
     pub route_host: String,
     /// Package artifacts that `push-package` pushed.
@@ -138,7 +137,6 @@ pub struct CopyRequest {
     /// The environment of the same project that the copy reads.
     pub source_env: String,
     pub env: String,
-    pub tenant: String,
     /// The hostname applied to every HTTP route of the release.
     pub route_host: String,
     /// The new definitions. A source connection that this list does not
@@ -173,7 +171,6 @@ impl CopyRequest {
         EnvironmentRequest {
             project: self.project.clone(),
             env: self.env.clone(),
-            tenant: self.tenant.clone(),
             route_host: self.route_host.clone(),
             packages: read.packages,
             connections: read.connections,

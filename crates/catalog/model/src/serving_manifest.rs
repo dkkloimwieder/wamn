@@ -1,6 +1,6 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 4 closes over exact package membership, component digests, routes,
+//! Format 5 closes over exact package membership, component digests, routes,
 //! the permissions and SQL statements of each export's call graph, and route
 //! attachments. Publish folds each call graph, because an application's
 //! components compose at build into one component. A route calls one component
@@ -11,6 +11,11 @@
 //! catalog records; this model intentionally provides no legacy-plan
 //! conversion. Attachment authentication uses a closed modes list, without a
 //! scalar-mode fallback.
+//!
+//! The manifest names no tenant, environment, org, project, route host or
+//! integer id, so one release hashes identically in every environment
+//! (docs/plan/platform-deploy.md R1). A serving process takes its tenant and
+//! environment from its own configuration.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
 //! maps make each collection's order deterministic, while
@@ -25,13 +30,12 @@ use serde_json::Value;
 use crate::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
     CatalogIdentityError, ComponentOperationDependency, ComponentSqlStatement, DefinitionHash,
-    EffectiveReleaseId, HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest,
-    PackageCoordinate, package::validate_canonical_operation_for_package, validate_digest,
-    validate_text,
+    HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest, PackageCoordinate,
+    package::validate_canonical_operation_for_package, validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 4;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 5;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -124,13 +128,10 @@ pub fn release_manifest_configmap_name(
     Ok(format!("{RELEASE_MANIFEST_CONFIGMAP_PREFIX}{hex}"))
 }
 
-/// The release coordinate and environment this manifest projects.
+/// The exact package membership of the release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingRelease {
-    pub tenant_id: String,
-    pub effective_release_id: EffectiveReleaseId,
-    pub environment: String,
     pub packages: BTreeSet<PackageCoordinate>,
 }
 
@@ -1111,9 +1112,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-4 bytes.
+    /// Parse, validate, and admit only canonical format-5 bytes.
     ///
-    /// The version is classified before the format-4 schema is decoded. This is
+    /// The version is classified before the format-5 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1150,8 +1151,6 @@ impl ServingManifest {
                 requested: self.format_version.to_string(),
             });
         }
-        validate_text(&self.release.tenant_id, "tenant-id")?;
-        validate_text(&self.release.environment, "environment")?;
         if self.release.packages.is_empty() {
             return invalid("an effective release must contain at least one exact package pair");
         }
@@ -1593,9 +1592,6 @@ mod tests {
 
     fn release() -> ServingRelease {
         ServingRelease {
-            tenant_id: "t1".into(),
-            effective_release_id: EffectiveReleaseId::new(7).unwrap(),
-            environment: "prod".into(),
             packages: BTreeSet::from([
                 PackageCoordinate::new("base", "1.0.0").unwrap(),
                 PackageCoordinate::new("overlay", "3.0.0").unwrap(),
@@ -2038,7 +2034,7 @@ mod tests {
     }
 
     #[test]
-    fn only_canonical_format_four_bytes_are_admitted() {
+    fn only_canonical_format_five_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -2143,14 +2139,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 5] {
+        for version in [0, 1, 2, 3, 4, 6] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format four may enter the decoder");
+                .expect_err("only format five may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {

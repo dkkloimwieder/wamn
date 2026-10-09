@@ -116,11 +116,10 @@ impl HostRouteDelivery {
                     postgres, project, ..
                 },
             ) => {
-                let manifest = self.release.manifest();
                 let held = postgres
                     .held_operation_grants(
                         project,
-                        &manifest.release.tenant_id,
+                        &self.release.scope().tenant_id,
                         &principal,
                         &attachment.operation,
                     )

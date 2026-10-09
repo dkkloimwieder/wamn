@@ -217,7 +217,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         &[&TENANT,&serde_json::to_string(&document)?,&graph_hash.as_str()]).await?;
     let manifest: ServingManifest = serde_json::from_value(json!({
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
-        "release":{"tenant-id":TENANT,"effective-release-id":1,"environment":"test","packages":[{"package-id":"automation","package-version":"1.0.0"}]},
+        "release":{"packages":[{"package-id":"automation","package-version":"1.0.0"}]},
         "components":[{"package-id":"automation","component":component,"interface-version":"0.1.0","digest":admitted.component_digest,
           "operations":{(node.operation.clone()):node.serving}}],
         "routes":[],"attachments":{},"workflow":{"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}]}
@@ -226,6 +226,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "automation-live",
+        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "test"),
     )?);
     admin.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT,&release.release().manifest_digest.as_str(),&canonical]).await?;

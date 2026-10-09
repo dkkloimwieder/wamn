@@ -12,6 +12,7 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{ServingManifest, ServingRelease, WiringActivationFacts};
+use wamn_engine::release_manifest::ReleaseScope;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::selection::{self, QualificationSource};
@@ -105,7 +106,7 @@ async fn record_selection(
             ),
             None => (None, "environment-creation"),
         };
-        claim(&control, &snapshot.manifest.release).await?;
+        claim(&control, &release.tenant).await?;
         control
             .execute(
                 "INSERT INTO catalog.release_selections \
@@ -113,7 +114,7 @@ async fn record_selection(
                  VALUES ($1, $2, $3, $4, $5)",
                 &[
                     &release.tenant,
-                    &snapshot.manifest.release.environment,
+                    &release.environment,
                     &snapshot.carrier.manifest_digest.as_str(),
                     &qualification_sha256,
                     &reason,
@@ -141,15 +142,15 @@ async fn select_head(
     let connection = tokio::spawn(connection);
     let result = async {
         let mut transaction = client.transaction().await?;
-        claim(&transaction, &snapshot.manifest.release).await?;
-        require_compatible_schema(&mut transaction, &snapshot.manifest).await?;
+        claim(&transaction, &release.tenant).await?;
+        require_compatible_schema(&mut transaction, &snapshot.manifest, release).await?;
         // This existing row also serializes an older promote command's upsert.
         transaction
             .execute(
                 SELECT_RELEASE,
                 &[
                     &release.tenant,
-                    &snapshot.manifest.release.environment,
+                    &release.environment,
                     &snapshot.carrier.manifest_digest.as_str(),
                 ],
             )
@@ -268,6 +269,7 @@ pub async fn deploy_release(
                 &mut client,
                 &qualification,
                 &snapshot,
+                release,
                 request,
                 DeploymentPayload {
                     documents: &documents,
@@ -297,6 +299,7 @@ async fn deploy(
     client: &mut Client,
     qualification: &Qualification,
     snapshot: &ReleaseSnapshot,
+    release: &PushReleaseManifestRequest,
     args: &DeployRequest,
     payload: DeploymentPayload<'_>,
 ) -> anyhow::Result<DeployedRelease> {
@@ -308,9 +311,9 @@ async fn deploy(
         token,
     } = payload;
     let mut transaction = client.transaction().await?;
-    claim(&transaction, &snapshot.manifest.release).await?;
-    require_compatible_schema(&mut transaction, &snapshot.manifest).await?;
-    require_selected(&transaction, snapshot).await?;
+    claim(&transaction, &release.tenant).await?;
+    require_compatible_schema(&mut transaction, &snapshot.manifest, release).await?;
+    require_selected(&transaction, snapshot, release).await?;
     qualification.assert_artifacts()?;
     // Keep the selection row locked through workload readiness, authenticated
     // execution, and the catalog activation commit. No task reselects itself.
@@ -374,8 +377,8 @@ async fn deploy(
     )
     .await?;
     qualification.assert_artifacts()?;
-    require_selected(&transaction, snapshot).await?;
-    activate(&transaction, &snapshot.manifest, &args.principal).await?;
+    require_selected(&transaction, snapshot, release).await?;
+    activate(&transaction, &snapshot.manifest, release, &args.principal).await?;
     transaction.commit().await?;
     Ok(DeployedRelease {
         source_commit: qualification.source_commit.clone(),
@@ -498,12 +501,9 @@ fn ready_http_backends(service: &Value, slices: &Value) -> Vec<Value> {
     selected
 }
 
-async fn claim(transaction: &Transaction<'_>, release: &ServingRelease) -> anyhow::Result<()> {
+async fn claim(transaction: &Transaction<'_>, tenant: &str) -> anyhow::Result<()> {
     transaction
-        .query_one(
-            "SELECT set_config('app.tenant', $1, true)",
-            &[&release.tenant_id],
-        )
+        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
         .await?;
     Ok(())
 }
@@ -511,10 +511,10 @@ async fn claim(transaction: &Transaction<'_>, release: &ServingRelease) -> anyho
 async fn require_selected(
     transaction: &Transaction<'_>,
     snapshot: &ReleaseSnapshot,
+    release: &PushReleaseManifestRequest,
 ) -> anyhow::Result<()> {
-    let release = &snapshot.manifest.release;
     let row = transaction
-        .query_opt(SELECT_HEAD, &[&release.tenant_id, &release.environment])
+        .query_opt(SELECT_HEAD, &[&release.tenant, &release.environment])
         .await?
         .context("the environment has no selected release")?;
     ensure!(
@@ -527,18 +527,25 @@ async fn require_selected(
 async fn require_compatible_schema(
     transaction: &mut Transaction<'_>,
     manifest: &ServingManifest,
+    release: &PushReleaseManifestRequest,
 ) -> anyhow::Result<()> {
-    crate::package_upgrade::require_compatible_schema(transaction, manifest).await
+    crate::package_upgrade::require_compatible_schema(
+        transaction,
+        manifest,
+        &ReleaseScope::new(release.tenant.as_str(), release.environment.as_str()),
+    )
+    .await
 }
 
 async fn activate(
     transaction: &Transaction<'_>,
     manifest: &ServingManifest,
+    release: &PushReleaseManifestRequest,
     principal: &str,
 ) -> anyhow::Result<()> {
     for wiring in &manifest.workflow.wirings {
-        let environment = &manifest.release.environment;
-        let current = transaction.query_opt("SELECT confirmed_definition_hash, enabled FROM catalog.wiring_activation WHERE tenant_id = $1 AND package_id = $2 AND environment = $3 AND wiring_id = $4 FOR UPDATE", &[&manifest.release.tenant_id, &wiring.package_id, &environment, &wiring.wiring_id]).await?;
+        let environment = &release.environment;
+        let current = transaction.query_opt("SELECT confirmed_definition_hash, enabled FROM catalog.wiring_activation WHERE tenant_id = $1 AND package_id = $2 AND environment = $3 AND wiring_id = $4 FOR UPDATE", &[&release.tenant, &wiring.package_id, &environment, &wiring.wiring_id]).await?;
         if current.is_some_and(|row| {
             row.get::<_, String>(0) == wiring.graph_hash.as_str() && row.get::<_, bool>(1)
         }) {

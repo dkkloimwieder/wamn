@@ -1081,9 +1081,7 @@ pub(crate) async fn read_selected_manifest(
     let bytes: Vec<u8> = row.get(1);
     let (manifest, observed) = ServingManifest::from_canonical_bytes(&bytes)?;
     ensure!(
-        observed.as_str() == digest
-            && manifest.release.tenant_id == tenant
-            && manifest.release.environment == environment,
+        observed.as_str() == digest,
         "selected serving manifest differs from its stored release identity"
     );
     Ok((manifest, digest))

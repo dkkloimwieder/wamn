@@ -158,43 +158,10 @@ impl PackageCoordinate {
     }
 }
 
-/// The environment-local integer identity of an effective release.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(transparent)]
-pub struct EffectiveReleaseId(u32);
-
-impl EffectiveReleaseId {
-    /// Construct a non-zero effective-release identity.
-    pub fn new(value: u32) -> Result<Self, CatalogIdentityError> {
-        if value == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "effective-release-id",
-            });
-        }
-        Ok(Self(value))
-    }
-
-    /// Integer database carrier.
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for EffectiveReleaseId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = u32::deserialize(deserializer)?;
-        Self::new(value).map_err(serde::de::Error::custom)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        EffectiveReleaseId, PackageCoordinate, validate_canonical_operation,
-        validate_canonical_operation_for_package,
+        PackageCoordinate, validate_canonical_operation, validate_canonical_operation_for_package,
     };
 
     #[test]
@@ -216,7 +183,6 @@ mod tests {
             });
             assert!(serde_json::from_value::<PackageCoordinate>(wire).is_err());
         }
-        assert!(serde_json::from_str::<EffectiveReleaseId>("0").is_err());
     }
 
     #[test]

@@ -68,6 +68,10 @@ runtime:
         - { name: WAMN_EVT_DUP_WINDOW_SECS, value: "120" }
         - { name: WAMN_ORG, value: acme }
         - { name: WAMN_PROJECT, value: receiving }
+        # The operator chart sets this to the pod namespace. The host derives
+        # its tenant from WAMN_ORG, WAMN_PROJECT and this name (R1), so it
+        # names the real environment and replaces the chart's value.
+        - { name: WASMCLOUD_HOST_ENVIRONMENT, value: dev }
         - { name: WAMN_SCHEMA, value: receiving }
         - name: WAMN_SYSTEM_URL
           valueFrom:

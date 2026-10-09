@@ -11,6 +11,8 @@ wamn-edge --config <path>
 ```
 
 Without `--config`, `WAMN_EDGE_CONFIG` names the file. [`edge.example.toml`](../../services/edge/edge.example.toml) shows every key.
+The `[scope]` keys name the org, the project and the environment of the box, with the variables `WAMN_ORG`, `WAMN_PROJECT` and `WASMCLOUD_HOST_ENVIRONMENT` that the cloud host also reads.
+The release names no tenant, so the edge takes the tenant `<org>--<project>--<environment>` of that coordinate.
 
 ## Read the status of a running edge
 

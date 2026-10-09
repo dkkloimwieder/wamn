@@ -23,7 +23,7 @@ use wash_runtime::washlet::ClusterHostBuilder;
 
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
-use wamn_control_registry::Triple;
+use wamn_control_registry::{Triple, project_env_tenant};
 use wamn_engine::artifact_source::{ArtifactSource, LocalComponentSource};
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
@@ -32,7 +32,7 @@ use wamn_engine::engine::{
 use wamn_engine::flow_http_routing::{
     FlowHttpRouting, requires_pat_route_authentication, requires_session_route_authentication,
 };
-use wamn_engine::release_manifest::{LoadedRelease, release_label};
+use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, release_label};
 use wamn_engine::router_delivery::{ROUTER_DELIVERY_ID, RouterDelivery};
 use wamn_execution_host::{
     HostRouteDelivery, HostRouteHandlers, OperationHost, OperationScope, RouterDeliveryBridge,
@@ -492,10 +492,12 @@ async fn load_release(
     registry_auth_file: Option<&Path>,
     registry_token_metadata: bool,
     ca_paths: &[PathBuf],
+    scope: anyhow::Result<ReleaseScope>,
 ) -> anyhow::Result<Option<Arc<LoadedRelease>>> {
     let (Some(artifact_base), Some(manifest_digest)) = (artifact_base, manifest_digest) else {
         return Ok(None);
     };
+    let scope = scope?;
     let source = match RegistryPullCredential::select(registry_auth_file, registry_token_metadata)?
     {
         RegistryPullCredential::AuthFile(path) => {
@@ -513,8 +515,8 @@ async fn load_release(
         .await
         .context("pull the serving release manifest")?;
     let origin = format!("{artifact_base}@{manifest_digest}");
-    let loaded_release =
-        LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
+    let loaded_release = LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin, scope)
+        .map_err(|error| {
             anyhow::anyhow!(
                 "serving release manifest {origin} is unusable ({:?}): {error}",
                 error.error_type()
@@ -524,6 +526,32 @@ async fn load_release(
     // plugin and the router driver are `Arc`-owned, so none can hold a lifetime
     // tied to `run`'s stack. One allocation remains the process's only manifest.
     Ok(Some(Arc::new(loaded_release)))
+}
+
+/// The tenant and environment this host serves (R1). The manifest names
+/// neither, so both come from `--org`, `--project` and `--environment`, and the
+/// tenant is [`project_env_tenant`] of the three.
+fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
+    let org = args
+        .org
+        .as_deref()
+        .filter(|org| !org.is_empty())
+        .context("a host that serves a release requires --org/WAMN_ORG")?;
+    anyhow::ensure!(
+        !args.project.is_empty(),
+        "a host that serves a release requires a nonempty --project/WAMN_PROJECT"
+    );
+    let environment = args
+        .environment
+        .as_deref()
+        .filter(|environment| !environment.is_empty())
+        .context(
+            "a host that serves a release requires --environment/WASMCLOUD_HOST_ENVIRONMENT",
+        )?;
+    Ok(ReleaseScope::new(
+        project_env_tenant(org, &args.project, environment),
+        environment,
+    ))
 }
 
 /// Declare the platform binding through the native host configuration policy.
@@ -872,7 +900,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let release = if args.control {
         Some(Arc::new(LoadedRelease::control_root()))
     } else if let Some(directory) = args.local_application.as_deref() {
-        let loaded = LoadedRelease::load_from(directory)?;
+        let scope = release_scope(&args)?;
+        let loaded = LoadedRelease::load_from(directory, scope)?;
         anyhow::ensure!(
             Some(loaded.release().manifest_digest.as_str())
                 == args.local_application_digest.as_deref(),
@@ -881,6 +910,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         wamn_runtime::local_application::load_local_facts(
             directory,
             loaded.manifest(),
+            &loaded.scope().tenant_id,
             args.local_admission_digest
                 .as_deref()
                 .context("local admission digest is required")?,
@@ -889,8 +919,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .context("local application requires WAMN_EXECUTOR_PLATFORM_PG_URL")?;
         wamn_runtime::local_application::require_local_target(
             &target_url,
-            &loaded.manifest().release.tenant_id,
-            &loaded.manifest().release.environment,
+            &loaded.scope().tenant_id,
+            &loaded.scope().environment,
         )
         .await?;
         Some(Arc::new(loaded))
@@ -902,6 +932,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             args.registry_auth_file.as_deref(),
             args.registry_token_metadata,
             &args.oci_ca_paths,
+            release_scope(&args),
         )
         .await?
     };
@@ -929,7 +960,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .expect("a session route belongs to a loaded release");
         Some(session_verifier(
             &args,
-            &loaded_release.manifest().release.environment,
+            &loaded_release.scope().environment,
             http_admitter_url
                 .as_deref()
                 .context("a session route requires WAMN_HTTP_ADMITTER_PG_URL")?,
@@ -962,15 +993,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             http_admitter_url
                 .as_deref()
                 .context("an authenticated route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-            let subject =
-                operator_subject(org, project, &loaded_release.manifest().release.environment)
-                    .context("derive the scoped operator subject")?;
+            let subject = operator_subject(org, project, &loaded_release.scope().environment)
+                .context("derive the scoped operator subject")?;
             parse_system_reader_url(
                 SystemReader::Identity,
                 &system_url,
                 org,
                 project,
-                &loaded_release.manifest().release.environment,
+                &loaded_release.scope().environment,
             )?;
             let (client, connection) = tokio_postgres::connect(&system_url, NoTls)
                 .await
@@ -1088,6 +1118,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let local = wamn_runtime::local_application::load_local_application(
             directory,
             release.manifest(),
+            release.scope().clone(),
             &database_url,
             args.local_admission_digest
                 .as_deref()
@@ -2678,9 +2709,17 @@ mod tests {
     /// a release, so there is nothing to pull and nothing to refuse.
     #[tokio::test]
     async fn a_host_given_no_release_pair_carries_no_release() {
-        let release = load_release(None, None, false, None, false, &[])
-            .await
-            .expect("no release pair is not a failure");
+        let release = load_release(
+            None,
+            None,
+            false,
+            None,
+            false,
+            &[],
+            Ok(ReleaseScope::new("tenant", "test")),
+        )
+        .await
+        .expect("no release pair is not a failure");
         assert!(
             release.is_none(),
             "a host with no release pair must carry no release rather than \
@@ -2703,6 +2742,7 @@ mod tests {
             Some(auth_file),
             false,
             &[],
+            Ok(ReleaseScope::new("tenant", "test")),
         )
         .await
         .expect_err("an unusable release pair must refuse");

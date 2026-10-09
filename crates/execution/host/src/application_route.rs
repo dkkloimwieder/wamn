@@ -106,7 +106,7 @@ impl ApplicationRoutes<'_> {
         principal: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
-        let tenant = self.release.manifest().release.tenant_id.as_str();
+        let tenant = self.release.scope().tenant_id.as_str();
         match attachment.route.handler {
             HostHandler::ApplicationUserList => {
                 let Empty {} = parse(payload)?;
@@ -268,7 +268,7 @@ impl ApplicationRoutes<'_> {
         lock: bool,
         work: impl AsyncFnOnce(&Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
-        let tenant = self.release.manifest().release.tenant_id.as_str();
+        let tenant = self.release.scope().tenant_id.as_str();
         self.postgres
             .administration_transaction(
                 self.project,

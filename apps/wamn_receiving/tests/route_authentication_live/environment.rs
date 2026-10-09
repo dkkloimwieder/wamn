@@ -561,7 +561,6 @@ pub(super) struct JourneyReleaseTarget<'a> {
     pub(super) publisher: &'a str,
     pub(super) project: &'a Client,
     pub(super) control: &'a Client,
-    pub(super) release_id: u32,
     pub(super) attachments: Vec<PathBuf>,
 }
 
@@ -575,7 +574,6 @@ pub(super) async fn publish_journey_release(
         publisher,
         project,
         control,
-        release_id,
         attachments,
     } = target;
     let wirings = released_journey_packages()
@@ -593,7 +591,6 @@ pub(super) async fn publish_journey_release(
         org: identity().org.clone(),
         project: identity().project.clone(),
         tenant: identity().tenant.clone(),
-        effective_release_id: release_id,
         environment: identity().environment.clone(),
         verified_publisher_principal: publisher.to_owned(),
         run_schema: "wamn_run".to_owned(),
@@ -658,6 +655,7 @@ pub(super) async fn publish_and_push_journey_release(
             database_url: project_url.to_owned(),
             org: identity().org.clone(),
             project: identity().project.clone(),
+            environment: identity().environment.clone(),
             tenant: identity().tenant.clone(),
             manifest_digest: digest.clone(),
             artifact_base: inputs.release_artifact_base.clone(),
@@ -702,7 +700,7 @@ pub(super) async fn publish_and_push_journey_release(
         .context("pull the exact released manifest")?;
     let origin = format!("{}@{digest}", inputs.release_artifact_base);
     let release = Arc::new(
-        LoadedRelease::load_canonical_bytes(&bytes, &origin)
+        LoadedRelease::load_canonical_bytes(&bytes, &origin, release_scope())
             .context("load the pulled Receiving release")?,
     );
     Ok((digest, release))

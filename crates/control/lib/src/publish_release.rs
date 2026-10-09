@@ -14,12 +14,13 @@ use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, AttachmentTarget,
-    ComponentPackageScope, EffectiveReleaseId, ManifestDigest, OperationType, PackageCoordinate,
-    RouteCanonicalization, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
-    ServingManifest, ServingRegistration, ServingRelation, ServingRelease, ServingRoute,
-    ServingWiring, WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
+    ComponentPackageScope, ManifestDigest, OperationType, PackageCoordinate, RouteCanonicalization,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
+    ServingRegistration, ServingRelation, ServingRelease, ServingRoute, ServingWiring,
+    WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
+use wamn_engine::release_manifest::ReleaseScope;
 use wamn_schema_control::{
     BareSchemaName, HttpRoute as AuthoredHttpRoute, canonical_http_route_template,
     normalize_http_route,
@@ -138,7 +139,6 @@ fn ensure_token(value: &str, name: &str) -> Result<(), String> {
 #[derive(Debug)]
 pub struct PublishReleaseManifest<'a> {
     pub tenant_id: &'a str,
-    pub effective_release_id: i32,
     pub environment: &'a str,
     pub verified_publisher_principal: &'a str,
     pub packages: &'a BTreeSet<PackageCoordinate>,
@@ -185,7 +185,10 @@ impl DependencyDigestRule {
     }
 }
 
-/// The deployment-attestation key derived from mounted release bytes.
+/// The deployment-attestation key of one release in one environment.
+///
+/// The release bytes name no scope (R1), so the tenant and environment come
+/// from the request that publishes or pushes the release.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeploymentCoordinate {
     pub triple: Triple,
@@ -198,12 +201,12 @@ impl DeploymentCoordinate {
     pub fn new(
         org: &str,
         project: &str,
-        release: &ServingRelease,
+        scope: &ReleaseScope,
         manifest_digest: &ManifestDigest,
     ) -> Self {
         Self {
-            triple: Triple::new(org, project, release.environment.as_str()),
-            tenant_id: release.tenant_id.clone(),
+            triple: Triple::new(org, project, scope.environment.as_str()),
+            tenant_id: scope.tenant_id.clone(),
             manifest_digest: manifest_digest.clone(),
         }
     }
@@ -365,8 +368,6 @@ pub struct PublishReleaseRequest {
     pub project: String,
     /// Tenant owning the release.
     pub tenant: String,
-    /// Integer identity of the release.
-    pub effective_release_id: u32,
     /// Environment the release is published for.
     pub environment: String,
     /// Principal already authenticated by the publication boundary.
@@ -394,12 +395,12 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
 }
 
 impl PublishReleaseRequest {
-    fn deployment_coordinate(
-        &self,
-        release: &ServingRelease,
-        manifest_digest: &ManifestDigest,
-    ) -> DeploymentCoordinate {
-        DeploymentCoordinate::new(&self.org, &self.project, release, manifest_digest)
+    fn scope(&self) -> ReleaseScope {
+        ReleaseScope::new(self.tenant.as_str(), self.environment.as_str())
+    }
+
+    fn deployment_coordinate(&self, manifest_digest: &ManifestDigest) -> DeploymentCoordinate {
+        DeploymentCoordinate::new(&self.org, &self.project, &self.scope(), manifest_digest)
     }
 
     fn verified_run_schema(&self) -> anyhow::Result<BareSchemaName> {
@@ -411,7 +412,7 @@ impl PublishReleaseRequest {
 /// Publish one effective release, project its identity, and return its manifest digest.
 pub async fn publish_release(request: PublishReleaseRequest) -> anyhow::Result<ManifestDigest> {
     let published = publish_candidate(&request, false).await?;
-    let coordinate = request.deployment_coordinate(&published.manifest.release, &published.digest);
+    let coordinate = request.deployment_coordinate(&published.digest);
     report_deployment_coordinate(&coordinate);
     project_release_identity(&request.control_database_url, &coordinate).await?;
     Ok(published.digest)
@@ -453,12 +454,7 @@ pub async fn publish_local(
     .await?;
     let projected =
         read_projected_environment_policy(&transaction, &run_schema, &args.tenant).await?;
-    verify_projected_environment_policy(
-        projected.as_ref(),
-        &policy,
-        &assembled.published.manifest.release,
-        &run_schema,
-    )?;
+    verify_projected_environment_policy(projected.as_ref(), &policy, &args.scope(), &run_schema)?;
     // A run admitted under the candidate pins its digest, and the run-plane
     // foreign key needs the release row.
     record_release(
@@ -503,7 +499,6 @@ pub fn assemble_local_release(
     );
     let request = PublishReleaseManifest {
         tenant_id: &args.tenant,
-        effective_release_id: i32::try_from(args.effective_release_id)?,
         environment: &args.environment,
         verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
@@ -598,9 +593,6 @@ pub fn assemble_local_release(
     let manifest = ServingManifest {
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
-            tenant_id: args.tenant.clone(),
-            effective_release_id: EffectiveReleaseId::new(args.effective_release_id)?,
-            environment: args.environment.clone(),
             packages: packages.clone(),
         },
         components,
@@ -661,10 +653,6 @@ async fn publish_candidate(
     local: bool,
 ) -> anyhow::Result<PublishedRelease> {
     ensure!(
-        args.effective_release_id > 0,
-        "effective-release-id must be greater than zero"
-    );
-    ensure!(
         !args.environment.is_empty(),
         "environment must not be empty"
     );
@@ -715,8 +703,6 @@ async fn publish_candidate(
         wirings.len() == args.wirings.len(),
         "effective release repeats a wiring target"
     );
-    let release_id = i32::try_from(args.effective_release_id)
-        .context("effective-release-id exceeds PostgreSQL integer")?;
     let environment_is_disposable =
         read_projected_environment_disposable(&args.control_database_url, &args.tenant)
             .await
@@ -727,7 +713,6 @@ async fn publish_candidate(
     );
     let request = PublishReleaseManifest {
         tenant_id: &args.tenant,
-        effective_release_id: release_id,
         environment: &args.environment,
         verified_publisher_principal: &args.verified_publisher_principal,
         packages: &packages,
@@ -801,7 +786,7 @@ async fn publish_in_transaction(
     verify_projected_environment_policy(
         projected.as_ref(),
         source_policy,
-        &published.manifest.release,
+        &ReleaseScope::new(request.tenant_id, request.environment),
         run_schema,
     )?;
     transaction
@@ -850,25 +835,25 @@ pub(crate) async fn read_expected_environment(
 
 pub(crate) fn verify_provisioned_environment(
     expected_environment: Option<&str>,
-    release: &ServingRelease,
+    scope: &ReleaseScope,
     run_schema: &BareSchemaName,
 ) -> Result<(), PublishManifestError> {
     let Some(expected_environment) = expected_environment else {
-        return Err(environment_policy_absent(release, run_schema));
+        return Err(environment_policy_absent(scope, run_schema));
     };
-    verify_environment_name(expected_environment, release)
+    verify_environment_name(expected_environment, scope)
 }
 
 pub(crate) fn verify_projected_environment_policy(
     projected: Option<&ProjectedEnvironmentPolicy>,
     source_policy: &AuthoritativeEnvironmentPolicy,
-    release: &ServingRelease,
+    scope: &ReleaseScope,
     run_schema: &BareSchemaName,
 ) -> Result<(), PublishManifestError> {
     let Some(projected) = projected else {
-        return Err(environment_policy_absent(release, run_schema));
+        return Err(environment_policy_absent(scope, run_schema));
     };
-    verify_environment_name(&projected.expected_environment, release)?;
+    verify_environment_name(&projected.expected_environment, scope)?;
     if projected.source_policy_org.as_deref() != Some(source_policy.source_policy_org.as_ref())
         || projected.source_policy_hash.as_deref()
             != Some(source_policy.source_policy_hash.as_ref())
@@ -877,7 +862,7 @@ pub(crate) fn verify_projected_environment_policy(
             PublishManifestErrorType::EnvironmentPolicySourceMismatch,
             format!(
                 "environment {:?} policy source differs: projected-org={:?}, authoritative-org={:?}, projected-hash={:?}, authoritative-hash={:?}; rerun the verification policy projection",
-                release.environment,
+                scope.environment,
                 projected.source_policy_org.as_deref().unwrap_or("<absent>"),
                 source_policy.source_policy_org,
                 projected
@@ -892,14 +877,14 @@ pub(crate) fn verify_projected_environment_policy(
 }
 
 fn environment_policy_absent(
-    release: &ServingRelease,
+    scope: &ReleaseScope,
     run_schema: &BareSchemaName,
 ) -> PublishManifestError {
     PublishManifestError::new(
         PublishManifestErrorType::EnvironmentPolicyAbsent,
         format!(
             "tenant {:?} has no row in {}.environment_policies; run reconcile-run-plane",
-            release.tenant_id,
+            scope.tenant_id,
             run_schema.as_str()
         ),
     )
@@ -907,14 +892,14 @@ fn environment_policy_absent(
 
 fn verify_environment_name(
     expected_environment: &str,
-    release: &ServingRelease,
+    scope: &ReleaseScope,
 ) -> Result<(), PublishManifestError> {
-    if expected_environment != release.environment {
+    if expected_environment != scope.environment {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::EnvironmentPolicyMismatch,
             format!(
                 "release environment {:?} differs from provisioned environment {:?}",
-                release.environment, expected_environment
+                scope.environment, expected_environment
             ),
         ));
     }
@@ -1293,16 +1278,9 @@ async fn publish_release_from_sources(
     let (route_attachments, wiring_attachments) =
         ServingAttachment::split(request.attachments.clone());
 
-    let release_id = EffectiveReleaseId::new(
-        u32::try_from(request.effective_release_id).expect("validate_request checked release id"),
-    )
-    .expect("validate_request checked release id");
     let projected = ServingManifest {
         format_version: SERVING_MANIFEST_FORMAT_VERSION,
         release: ServingRelease {
-            tenant_id: request.tenant_id.to_owned(),
-            effective_release_id: release_id,
-            environment: request.environment.to_owned(),
             packages: request.packages.clone(),
         },
         components,
@@ -1322,10 +1300,7 @@ async fn publish_release_from_sources(
         ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
-                format!(
-                    "effective release {} does not project a deliverable format-4 manifest",
-                    request.effective_release_id
-                ),
+                "the release does not project a deliverable format-5 manifest",
                 error,
             )
         })?;
@@ -1338,13 +1313,10 @@ async fn publish_release_from_sources(
 }
 
 fn validate_request(request: &PublishReleaseManifest<'_>) -> Result<(), PublishManifestError> {
-    if request.effective_release_id <= 0
-        || request.environment.is_empty()
-        || request.verified_publisher_principal.is_empty()
-    {
+    if request.environment.is_empty() || request.verified_publisher_principal.is_empty() {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::Release,
-            "effective release id, environment, and publisher principal are required",
+            "environment and publisher principal are required",
         ));
     }
     if request.packages.is_empty() {
@@ -3428,12 +3400,7 @@ mod tests {
             policy: wamn_control_registry::EnvPolicy::prod(),
             source_policy_hash: authoritative_hash.clone().into_boxed_str(),
         };
-        let release = ServingRelease {
-            tenant_id: "tenant-a".to_owned(),
-            effective_release_id: EffectiveReleaseId::new(1).unwrap(),
-            environment: "prod".to_owned(),
-            packages: BTreeSet::from([PackageCoordinate::new("app", "1.0.0").unwrap()]),
-        };
+        let release = ReleaseScope::new("tenant-a", "prod");
         let schema = BareSchemaName::new("wamn_run").unwrap();
         assert_eq!(
             verify_projected_environment_policy(None, &source_policy, &release, &schema)

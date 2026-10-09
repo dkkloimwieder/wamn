@@ -395,6 +395,14 @@ impl Triple {
     }
 }
 
+/// The tenant of a project environment: `<org>--<project>--<env>` (owner
+/// ruling of 2026-10-09 on `wamn-snz0`). The first apply, the analysis of
+/// `env apply` and the host scope all derive it here, so neither the
+/// environment document nor the serving manifest carries a tenant.
+pub fn project_env_tenant(org: &str, project: &str, env: &str) -> String {
+    format!("{org}--{project}--{env}")
+}
+
 impl std::fmt::Display for Triple {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}/{}", self.org, self.project, self.env)

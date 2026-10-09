@@ -44,6 +44,10 @@ pub struct PushReleaseManifestArgs {
     #[arg(long)]
     pub project: String,
 
+    /// Environment the release is deployed into. The manifest names none.
+    #[arg(long)]
+    pub environment: String,
+
     /// Tenant claim carried by the published release snapshot.
     #[arg(long)]
     pub tenant: String,
@@ -87,6 +91,7 @@ impl PushReleaseManifestArgs {
             database_url: self.database_url,
             org: self.org,
             project: self.project,
+            environment: self.environment,
             tenant: self.tenant,
             manifest_digest: self.release_digest,
             artifact_base: self.artifact_base,
@@ -129,6 +134,9 @@ pub struct PrepareReleaseArgs {
     /// Project of the published release, written into the candidate.
     #[arg(long)]
     pub project: String,
+    /// Environment of the published release, written into the candidate.
+    #[arg(long)]
+    pub environment: String,
     #[arg(long)]
     pub target_directory: PathBuf,
     #[arg(long)]
@@ -286,6 +294,7 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
         database_url: args.release.database_url,
         org: args.org,
         project: args.project,
+        environment: args.environment,
         tenant: args.release.tenant,
         manifest_digest: args.release.release_digest,
         artifact_base: args.release.artifact_base,
@@ -505,7 +514,14 @@ mod tests {
     /// The published release the fixture coordinates name.
     const RELEASE: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 
-    const PLACEMENT: [&str; 4] = ["--org", "fixture", "--project", "billing"];
+    const PLACEMENT: [&str; 6] = [
+        "--org",
+        "fixture",
+        "--project",
+        "billing",
+        "--environment",
+        "prod",
+    ];
 
     const COORDINATE: [&str; 8] = [
         "--database-url",
@@ -518,7 +534,7 @@ mod tests {
         "registry.example/wamn/releases",
     ];
 
-    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":4,"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 
     fn parse(source: &[&str]) -> Result<PushReleaseManifestArgs, clap::Error> {
         let mut argv = vec!["push-release-manifest"];
@@ -594,11 +610,9 @@ mod tests {
             RELEASE,
         ])
         .expect("the published snapshot source parses");
-        let (manifest, manifest_digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-1 bytes");
-        let coordinate = args
-            .into_request()
-            .deployment_coordinate(&manifest.release, &manifest_digest);
+        let (_, manifest_digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
+            .expect("the fixture is canonical format-5 bytes");
+        let coordinate = args.into_request().deployment_coordinate(&manifest_digest);
 
         assert_eq!(coordinate.triple.org, "fixture");
         assert_eq!(coordinate.triple.project, "billing");

@@ -1136,7 +1136,6 @@ async fn environment_create_writes_one_saga_that_environment_list_shows() -> any
         json!({
             "project": project,
             "env": env,
-            "tenant": "billing-test",
             "route_host": "billing.example.test",
             "packages": [{"package_id": "wamn_receiving", "version": "1.0.0"}],
             "connections": [{
@@ -1464,7 +1463,6 @@ async fn environment_copy_writes_one_copy_saga_that_environment_list_shows() -> 
             "project": project,
             "source_env": source_env,
             "env": env,
-            "tenant": "billing-test",
             "route_host": "billing.example.test",
             "connections": [{
                 "instance_id": "labels",

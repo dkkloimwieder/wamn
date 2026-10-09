@@ -29,7 +29,9 @@ use tokio::sync::Notify;
 use tokio_rustls::TlsAcceptor;
 use wamn_edge::{refusals, status};
 
-use support::{ATTACHMENT, AUDIENCE, HOST, ISSUER, ORG, PRINCIPAL, ROLE, bundle, key};
+use support::{
+    ATTACHMENT, AUDIENCE, ENVIRONMENT, HOST, ISSUER, ORG, PRINCIPAL, PROJECT, ROLE, bundle, key,
+};
 
 const TOKEN: &str = "wamn_pat_edge_forward_test";
 /// A PAT that the platform does not accept.
@@ -253,6 +255,11 @@ fn configuration(
         .expect("write the token file");
     let text = format!(
         r#"
+[scope]
+org = "{ORG}"
+project = "{PROJECT}"
+environment = "{ENVIRONMENT}"
+
 [release]
 dir = "{dir}"
 digest = "{digest}"

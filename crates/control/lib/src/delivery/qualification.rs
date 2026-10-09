@@ -815,6 +815,8 @@ mod tests {
         let candidate = Candidate {
             org: "acme".into(),
             project: "billing".into(),
+            environment: "prod".into(),
+            tenant: "tenant-a".into(),
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: pinned("host"),

@@ -21,6 +21,7 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
+use wamn_engine::release_manifest::ReleaseScope;
 use wamn_runtime::component_artifact_source::read_ca_bundles;
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_push_credentials};
 use wamn_runtime::release_manifest_artifact::{
@@ -154,7 +155,10 @@ pub struct PushReleaseManifestRequest {
     /// Registry project the release is deployed into.
     pub project: String,
 
-    /// Tenant claim carried by the published release.
+    /// Environment the release is deployed into. The manifest names none (R1).
+    pub environment: String,
+
+    /// Tenant that holds the published release.
     pub tenant: String,
 
     /// The published release, as its manifest digest.
@@ -184,12 +188,13 @@ pub struct PushReleaseManifestRequest {
 
 impl PushReleaseManifestRequest {
     /// Key the pushed bytes for attestation under this invocation's placement.
-    pub fn deployment_coordinate(
-        &self,
-        release: &ServingRelease,
-        manifest_digest: &ManifestDigest,
-    ) -> DeploymentCoordinate {
-        DeploymentCoordinate::new(&self.org, &self.project, release, manifest_digest)
+    pub fn deployment_coordinate(&self, manifest_digest: &ManifestDigest) -> DeploymentCoordinate {
+        DeploymentCoordinate::new(
+            &self.org,
+            &self.project,
+            &ReleaseScope::new(self.tenant.as_str(), self.environment.as_str()),
+            manifest_digest,
+        )
     }
 }
 
@@ -226,9 +231,9 @@ pub async fn push_and_attest(
     canonical_bytes: &[u8],
     source_commit: Option<&str>,
 ) -> anyhow::Result<PushedReleaseManifest> {
-    let (manifest, digest) = ServingManifest::from_canonical_bytes(canonical_bytes)
+    let (_, digest) = ServingManifest::from_canonical_bytes(canonical_bytes)
         .context("read the release that the published bytes name")?;
-    let coordinate = request.deployment_coordinate(&manifest.release, &digest);
+    let coordinate = request.deployment_coordinate(&digest);
     let known = control
         .query_opt(
             "SELECT 1 FROM catalog.effective_releases \
@@ -573,7 +578,7 @@ mod tests {
 
     use super::*;
 
-    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":4,"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 
     fn fixture_reference() -> Reference {
         Reference::with_tag(
@@ -585,12 +590,17 @@ mod tests {
 
     #[test]
     fn pushed_bytes_carry_their_own_half_of_the_attestation_key() {
-        let (manifest, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-4 bytes");
-        let coordinate = DeploymentCoordinate::new("acme", "billing", &manifest.release, &digest);
+        let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
+            .expect("the fixture is canonical format-5 bytes");
+        let coordinate = DeploymentCoordinate::new(
+            "acme",
+            "billing",
+            &ReleaseScope::new("tenant-a", "prod"),
+            &digest,
+        );
 
-        // The environment is whatever the pushed bytes were projected for, read
-        // out of those exact bytes rather than defaulted or re-typed by hand.
+        // The bytes name no scope (R1): the environment and tenant are the
+        // request's, and the digest is the bytes'.
         assert_eq!(coordinate.triple.env.as_str(), "prod");
         assert_eq!(coordinate.tenant_id, "tenant-a");
         assert_eq!(coordinate.manifest_digest, digest);
@@ -621,9 +631,9 @@ mod tests {
     fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
         let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
             .expect("fixture is UTF-8")
-            .replacen("\"format-version\":4", "\"format-version\":5", 1);
+            .replacen("\"format-version\":5", "\"format-version\":4", 1);
         let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
-            .expect_err("format five refuses");
+            .expect_err("format four refuses");
         assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));
 
         let mut indented = CANONICAL_MANIFEST.to_vec();

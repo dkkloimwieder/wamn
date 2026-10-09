@@ -61,8 +61,6 @@ pub struct PublishReleaseArgs {
     #[arg(long)]
     pub tenant: String,
     #[arg(long)]
-    pub effective_release_id: u32,
-    #[arg(long)]
     pub environment: String,
     /// Principal already authenticated by the publication boundary.
     #[arg(long)]
@@ -221,7 +219,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         org: args.org,
         project: args.project,
         tenant: args.tenant,
-        effective_release_id: args.effective_release_id,
         environment: args.environment,
         verified_publisher_principal: args.verified_publisher_principal,
         run_schema: args.run_schema,

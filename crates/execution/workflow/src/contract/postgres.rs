@@ -73,7 +73,8 @@ impl PostgresWorkflows {
         &self.environment
     }
 
-    /// The published release of the request, in this tenant and environment.
+    /// The published release of the request, in this tenant. The manifest
+    /// names no tenant or environment (R1): the row's tenant is the scope.
     async fn release(
         &self,
         transaction: &Transaction<'_>,
@@ -98,14 +99,6 @@ impl PostgresWorkflows {
                 error,
             )
         })?;
-        if manifest.release.tenant_id != self.tenant()
-            || manifest.release.environment != self.environment()
-        {
-            return Err(WorkflowError::new(
-                WorkflowErrorType::Refused,
-                format!("release {manifest_digest} belongs to another tenant or environment"),
-            ));
-        }
         Ok(manifest)
     }
 

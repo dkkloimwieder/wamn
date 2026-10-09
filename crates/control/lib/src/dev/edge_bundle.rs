@@ -21,6 +21,7 @@ use wamn_catalog::edge_bundle::{
     GRANTS_FILE_NAME, INGRESS_FILE_NAME, file_digest,
 };
 use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
+use wamn_control_registry::project_env_tenant;
 use wamn_engine::artifact_source::local_component_path;
 use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
@@ -32,13 +33,33 @@ use crate::component_declaration::{authored_base_digests, render_declaration_doc
 use crate::publish_release::{PublishReleaseRequest, assemble_local_release};
 use crate::push_component::{AdmitComponentRequest, admit_component};
 
+/// The environment coordinate of the box: the edge configuration's `[scope]`.
+/// The tenant of the release is [`project_env_tenant`] of the three.
+#[derive(Debug, Clone, Copy)]
+pub struct EdgeScope<'a> {
+    pub org: &'a str,
+    pub project: &'a str,
+    pub environment: &'a str,
+}
+
+impl EdgeScope<'_> {
+    fn tenant(&self) -> String {
+        project_env_tenant(self.org, self.project, self.environment)
+    }
+}
+
 /// Write the bundle of the local release in `release` into the new directory
 /// `out`, with the ingress guest at `ingress`, and return the digest of
-/// `edge-release.json`.
+/// `edge-release.json`. `scope` is the coordinate the edge configuration names.
 ///
 /// Refuses an existing `out`, a release with a wiring, and component bytes
 /// that do not match their admitted digest.
-pub fn write(release: &Path, ingress: &Path, out: &Path) -> anyhow::Result<String> {
+pub fn write(
+    release: &Path,
+    ingress: &Path,
+    out: &Path,
+    scope: EdgeScope<'_>,
+) -> anyhow::Result<String> {
     let manifest_bytes = fs::read(release.join(RELEASE_MANIFEST_FILE_NAME))
         .with_context(|| format!("read the release manifest in {}", release.display()))?;
     let facts: LocalApplicationFacts = serde_json::from_slice(
@@ -48,6 +69,7 @@ pub fn write(release: &Path, ingress: &Path, out: &Path) -> anyhow::Result<Strin
     write_bundle(
         &manifest_bytes,
         &facts,
+        &scope.tenant(),
         |digest| {
             fs::read(local_component_path(release, digest)?)
                 .with_context(|| format!("read component {digest}"))
@@ -60,8 +82,7 @@ pub fn write(release: &Path, ingress: &Path, out: &Path) -> anyhow::Result<Strin
 /// The release identity of a bundle that [`write_package`] writes.
 #[derive(Debug)]
 pub struct PackageRelease<'a> {
-    pub tenant: &'a str,
-    pub environment: &'a str,
+    pub scope: EdgeScope<'a>,
     pub publisher: &'a str,
     pub route_host: &'a str,
 }
@@ -84,8 +105,9 @@ pub fn write_package(
     let template = package
         .join(PACKAGE_COMPONENTS)
         .join(format!("{component}.json.in"));
+    let tenant = release.scope.tenant();
     let document =
-        render_declaration_document(&template, release.tenant, &authored_base_digests(package)?)?;
+        render_declaration_document(&template, &tenant, &authored_base_digests(package)?)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
     let admission = admit_component(AdmitComponentRequest {
         package: package.to_owned(),
@@ -101,9 +123,8 @@ pub fn write_package(
         control_database_url: String::new(),
         org: String::new(),
         project: String::new(),
-        tenant: release.tenant.to_owned(),
-        effective_release_id: 1,
-        environment: release.environment.to_owned(),
+        tenant: tenant.clone(),
+        environment: release.scope.environment.to_owned(),
         verified_publisher_principal: release.publisher.to_owned(),
         run_schema: String::new(),
         packages: vec![PackageCoordinate::new(
@@ -119,6 +140,7 @@ pub fn write_package(
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.facts,
+        &tenant,
         |digest| {
             ensure!(
                 digest == admission.component_digest(),
@@ -134,6 +156,7 @@ pub fn write_package(
 fn write_bundle(
     manifest_bytes: &[u8],
     facts: &LocalApplicationFacts,
+    tenant: &str,
     read_component: impl Fn(&str) -> anyhow::Result<Vec<u8>>,
     ingress: &Path,
     out: &Path,
@@ -144,7 +167,7 @@ fn write_bundle(
         manifest.workflow.is_empty(),
         "the release carries wirings, and an edge box runs no wiring"
     );
-    wamn_runtime::local_application::validate_local_facts(facts, &manifest)?;
+    wamn_runtime::local_application::validate_local_facts(facts, &manifest, tenant)?;
 
     let mut permissions = BTreeSet::new();
     for (id, attachment) in &manifest.attachments {

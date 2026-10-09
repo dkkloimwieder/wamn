@@ -44,6 +44,6 @@ pub use template::Template;
 pub use types::{
     ClusterRef, DEFAULT_PG_IMAGE, DurabilityClass, Env, EnvPolicy, EventReader, Org, OrgEnvPolicy,
     OrgId, Placement, Project, ProjectEnv, ProjectId, RecoveryDomain, Registry, SCHEMA_VERSION,
-    SecretRef, Triple, cluster_of,
+    SecretRef, Triple, cluster_of, project_env_tenant,
 };
 pub use validate::{Issue, Severity, validate, validate_org_id};

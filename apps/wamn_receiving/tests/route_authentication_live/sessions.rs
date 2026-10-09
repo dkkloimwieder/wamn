@@ -10,7 +10,6 @@ pub(super) async fn prepare_session_host_fixture(
     const SESSION_ATTACHMENT: &str = "purchase-order-get-http";
     const SESSION_ROLE: &str = "session-host-reader";
     const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
-    let session_release_id = identity().effective_release_id + 1;
 
     anyhow::ensure!(
         output.is_absolute() && !output.exists(),
@@ -52,12 +51,15 @@ pub(super) async fn prepare_session_host_fixture(
     let mut project_url = reqwest::Url::parse(&inputs.system_pg_url)?;
     project_url.set_path(&format!("/{database}"));
     let (project, project_task) = connect(project_url.as_str()).await?;
-    let previous_bytes = release_bytes(project.as_ref(), identity().effective_release_id)
+    let previous_bytes = release_bytes(project.as_ref(), FIRST_RELEASE)
         .await
         .context("read the completed PAT journey release")?;
     let publisher = journey_publisher();
-    let previous_release =
-        LoadedRelease::load_canonical_bytes(&previous_bytes, "completed PAT journey release")?;
+    let previous_release = LoadedRelease::load_canonical_bytes(
+        &previous_bytes,
+        "completed PAT journey release",
+        release_scope(),
+    )?;
     let mut attachments = Vec::with_capacity(JOURNEY_PACKAGES.len());
     let mut changed = 0;
     for package in JOURNEY_PACKAGES {
@@ -98,14 +100,12 @@ pub(super) async fn prepare_session_host_fixture(
             publisher: &publisher,
             project: project.as_ref(),
             control: admin.as_ref(),
-            release_id: session_release_id,
             attachments,
         },
     )
     .await?;
     anyhow::ensure!(
-        release.manifest().release.effective_release_id.get() == 2
-            && release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
+        release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "session test must publish the current format as release 2"
     );
     let mut expected_attachments = previous_release.manifest().attachments.clone();
@@ -318,8 +318,9 @@ pub(super) async fn assert_nested_session(
     let (project, project_task) = connect(project_url.as_str()).await?;
     let publisher = journey_publisher();
     let previous = LoadedRelease::load_canonical_bytes(
-        &release_bytes(project.as_ref(), 1).await?,
+        &release_bytes(project.as_ref(), FIRST_RELEASE).await?,
         "original Receiving PAT release",
+        release_scope(),
     )?;
     let operation_freshness = |operation: &str| {
         previous
@@ -384,7 +385,6 @@ pub(super) async fn assert_nested_session(
             publisher: &publisher,
             project: project.as_ref(),
             control: admin.as_ref(),
-            release_id: 3,
             attachments,
         },
     )
@@ -398,7 +398,6 @@ pub(super) async fn assert_nested_session(
     }
     anyhow::ensure!(
         release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION
-            && release.manifest().release.effective_release_id.get() == 3
             && release.manifest().attachments == expected
             && release.manifest().components == previous.manifest().components
             && release.manifest().workflow == previous.manifest().workflow,
@@ -1012,15 +1011,13 @@ pub(super) async fn nested_receipt_state(project: &Client) -> anyhow::Result<Val
     ).await.context("read committed Receipt state independently")?.get(0))
 }
 
-/// The canonical bytes of the installed release whose manifest names `id`.
-async fn release_bytes(project: &Client, id: u32) -> anyhow::Result<Vec<u8>> {
+/// The canonical bytes of the `ordinal`th release the journey recorded.
+async fn release_bytes(project: &Client, ordinal: i64) -> anyhow::Result<Vec<u8>> {
     Ok(project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.releases \
-             WHERE tenant_id = $1 \
-               AND convert_from(canonical_bytes, 'UTF8')::jsonb \
-                     #>> '{release,effective-release-id}' = $2::text",
-            &[&identity().tenant.as_str(), &id.to_string()],
+            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 \
+             ORDER BY recorded_at, manifest_digest OFFSET $2 - 1 LIMIT 1",
+            &[&identity().tenant.as_str(), &ordinal],
         )
         .await?
         .get(0))

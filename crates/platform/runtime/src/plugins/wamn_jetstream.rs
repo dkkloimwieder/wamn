@@ -23,7 +23,7 @@ use futures_util::StreamExt as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
-use wamn_catalog::{AttachmentTarget, ServingManifest};
+use wamn_catalog::AttachmentTarget;
 use wamn_control_provision::events::{
     advisory_stream_config, consumer_config_matches, materializer_consumer_config,
     source_stream_config, stream_config_matches,
@@ -960,11 +960,6 @@ impl WamnJetstream {
         self
     }
 
-    /// The serving release's manifest, or `None` on a release-less process.
-    fn serving_manifest(&self) -> Option<&ServingManifest> {
-        self.release.as_deref().map(LoadedRelease::manifest)
-    }
-
     /// Register a component's bind-time scope claim. All values come from the
     /// trusted workload config. Generic guest operations use them only for
     /// enrichment; the native derived publisher separately requires a complete
@@ -1358,14 +1353,14 @@ fn subject_source(subject: &str) -> Option<(&str, &str)> {
 }
 
 fn require_registration(
-    release: Option<&ServingManifest>,
+    release: Option<&LoadedRelease>,
     coordinates: &EventCoordinates,
     stream: &str,
     package_id: &str,
     registration_id: &str,
     filter_subject: &str,
 ) -> Result<(), String> {
-    let manifest = release.ok_or_else(|| {
+    let release = release.ok_or_else(|| {
         format!(
             "{UNREGISTERED_SOURCE}: this host carries no release, so registration \
             {registration_id:?} cannot be resolved"
@@ -1376,7 +1371,8 @@ fn require_registration(
         "evt.{}.{}.{}.",
         coordinates.org, coordinates.project, coordinates.environment,
     );
-    if manifest.release.environment.as_str() != coordinates.environment.as_ref()
+    let manifest = release.manifest();
+    if release.scope().environment.as_str() != coordinates.environment.as_ref()
         || stream
             != stream_name(
                 &coordinates.org,
@@ -1438,7 +1434,7 @@ async fn prepare_consumer(
     registration_id: &str,
 ) -> Result<(), JsError> {
     require_registration(
-        plugin.serving_manifest(),
+        plugin.release.as_deref(),
         &plugin.event_coordinates,
         &config.stream_name,
         package_id,
@@ -1514,7 +1510,7 @@ mod tests {
     use std::path::Path;
 
     use wamn_catalog::{
-        DefinitionHash, EffectiveReleaseId, PackageCoordinate, ServingRegistration,
+        DefinitionHash, PackageCoordinate, ServingManifest, ServingRegistration,
         ServingRegistrationInput, ServingRelease, ServingWiring,
     };
 
@@ -1861,9 +1857,6 @@ mod tests {
         };
         ServingManifest::new(
             ServingRelease {
-                tenant_id: "t1".into(),
-                effective_release_id: EffectiveReleaseId::new(7).unwrap(),
-                environment: "prod".into(),
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::new(),
@@ -1885,7 +1878,12 @@ mod tests {
 
     #[test]
     fn registration_preparation_requires_the_exact_release_source() {
-        let manifest = release_registering("widgets", &["insert"]);
+        let manifest = LoadedRelease::load_canonical_bytes(
+            &release_registering("widgets", &["insert"]).canonical_bytes(),
+            "fixture",
+            wamn_engine::release_manifest::ReleaseScope::new("tenant", "prod"),
+        )
+        .expect("the fixture release loads");
         let coordinates = EventCoordinates {
             org: "fixture".into(),
             project: "proj".into(),

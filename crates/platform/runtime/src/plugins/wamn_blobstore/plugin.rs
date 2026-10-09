@@ -25,6 +25,7 @@ use crate::plugins::effect_span::{EffectIdentity, effect_span, record_wiring};
 use super::binding::{self, BindingError};
 use super::store::BoundContainer;
 use wamn_catalog::ServingManifest;
+use wamn_engine::release_manifest::ReleaseScope;
 
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, authorize_candidate_closure,
@@ -73,7 +74,7 @@ pub struct WamnBlobstore {
 /// effect can be asserted without a database or an object store.
 fn release_coordinates(
     invocation: &ConnectionInvocation,
-    release: Option<(&ServingManifest, &str)>,
+    release: Option<(&ServingManifest, &str, &ReleaseScope)>,
     tenant: &str,
 ) -> Result<(String, String), BindingError> {
     match (&invocation.closure, release) {
@@ -85,8 +86,8 @@ fn release_coordinates(
             },
             None,
         ) => Ok((manifest_digest.clone(), environment.clone())),
-        (ConnectionExecutionClosure::Released, Some((manifest, manifest_digest))) => {
-            if manifest.release.tenant_id != tenant
+        (ConnectionExecutionClosure::Released, Some((manifest, manifest_digest, scope))) => {
+            if scope.tenant_id != tenant
                 || !manifest
                     .release
                     .packages
@@ -95,10 +96,7 @@ fn release_coordinates(
             {
                 return Err(BindingError::Unauthorized);
             }
-            Ok((
-                manifest_digest.to_owned(),
-                manifest.release.environment.clone(),
-            ))
+            Ok((manifest_digest.to_owned(), scope.environment.clone()))
         }
         // A released closure with no mounted manifest, or a candidate handed
         // one, is a caller mismatch rather than a policy question. It refuses
@@ -268,6 +266,7 @@ impl WamnBlobstore {
                 (
                     release.manifest(),
                     release.release().manifest_digest.as_str(),
+                    release.scope(),
                 )
             }),
             &self.tenant,
@@ -474,9 +473,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
-        SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingComponentOperation,
-        ServingRelease, ServingWiring,
+        ArtifactHash, DefinitionHash, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        ServingComponent, ServingComponentOperation, ServingRelease, ServingWiring,
     };
 
     use super::*;
@@ -540,13 +538,10 @@ mod tests {
     const MOUNTED_RELEASE: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
-    fn manifest(tenant: &str, package: &str) -> ServingManifest {
-        ServingManifest {
+    fn manifest(tenant: &str, package: &str) -> (ServingManifest, ReleaseScope) {
+        let manifest = ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                tenant_id: tenant.to_string(),
-                effective_release_id: EffectiveReleaseId::new(4).expect("a positive release id"),
-                environment: "warehouse-eu-3".to_string(),
                 packages: BTreeSet::from([
                     PackageCoordinate::new(package, "1.0.0").expect("a canonical coordinate")
                 ]),
@@ -556,7 +551,8 @@ mod tests {
             attachments: BTreeMap::new(),
             workflow: wamn_catalog::WorkflowSection::default(),
             host_routes: BTreeSet::new(),
-        }
+        };
+        (manifest, ReleaseScope::new(tenant, "warehouse-eu-3"))
     }
 
     /// A candidate closure states its own coordinates and needs no manifest.
@@ -580,10 +576,13 @@ mod tests {
     /// value was changed — the distinguishing-step law in miniature.
     #[test]
     fn a_released_closure_resolves_through_the_mounted_manifest() {
-        let manifest = manifest("tenant-a", "package_a");
-        let coordinates =
-            release_coordinates(&released(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a")
-                .expect("a released closure resolves");
+        let (manifest, scope) = manifest("tenant-a", "package_a");
+        let coordinates = release_coordinates(
+            &released(),
+            Some((&manifest, MOUNTED_RELEASE, &scope)),
+            "tenant-a",
+        )
+        .expect("a released closure resolves");
         assert_eq!(
             coordinates,
             (MOUNTED_RELEASE.to_string(), "warehouse-eu-3".to_string())
@@ -595,9 +594,13 @@ mod tests {
     /// binding authorizes — a cross-tenant reach wearing a mounted file.
     #[test]
     fn a_manifest_for_another_tenant_refuses() {
-        let manifest = manifest("tenant-b", "package_a");
+        let (manifest, scope) = manifest("tenant-b", "package_a");
         assert_eq!(
-            release_coordinates(&released(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a"),
+            release_coordinates(
+                &released(),
+                Some((&manifest, MOUNTED_RELEASE, &scope)),
+                "tenant-a"
+            ),
             Err(BindingError::Unauthorized)
         );
     }
@@ -606,9 +609,13 @@ mod tests {
     /// for it.
     #[test]
     fn a_manifest_without_the_invoked_package_refuses() {
-        let manifest = manifest("tenant-a", "package_b");
+        let (manifest, scope) = manifest("tenant-a", "package_b");
         assert_eq!(
-            release_coordinates(&released(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a"),
+            release_coordinates(
+                &released(),
+                Some((&manifest, MOUNTED_RELEASE, &scope)),
+                "tenant-a"
+            ),
             Err(BindingError::Unauthorized)
         );
     }
@@ -629,9 +636,13 @@ mod tests {
     /// closer, because guessing here decides which binding authorizes.
     #[test]
     fn a_candidate_closure_handed_a_manifest_refuses() {
-        let manifest = manifest("tenant-a", "package_a");
+        let (manifest, scope) = manifest("tenant-a", "package_a");
         assert_eq!(
-            release_coordinates(&candidate(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a"),
+            release_coordinates(
+                &candidate(),
+                Some((&manifest, MOUNTED_RELEASE, &scope)),
+                "tenant-a"
+            ),
             Err(BindingError::Unauthorized)
         );
     }
@@ -699,7 +710,7 @@ mod tests {
     /// the tests cover both admission and refusal in the released case.
     fn carrying_manifest(snapshot: &ConnectionEffectSnapshot) -> ServingManifest {
         let invocation = released();
-        let mut manifest = manifest("tenant-a", "package_a");
+        let (mut manifest, _scope) = manifest("tenant-a", "package_a");
         manifest.components = BTreeSet::from([ServingComponent {
             package_id: invocation.package_id.clone(),
             component: snapshot
@@ -886,7 +897,7 @@ mod tests {
     fn a_released_closure_the_manifest_does_not_carry_refuses() {
         let world = frozen_world();
         let snapshot = matching_snapshot(frozen_binding(&world));
-        let manifest = manifest("tenant-a", "package_a");
+        let (manifest, _scope) = manifest("tenant-a", "package_a");
 
         assert_eq!(
             authorize_closure(&released(), Some(&manifest), None, &snapshot),

@@ -117,7 +117,6 @@ function CreateEnvironmentForm(props: {
     return [...byPackage.entries()];
   };
   const [env, setEnv] = createSignal("");
-  const [tenant, setTenant] = createSignal("");
   const [routeHost, setRouteHost] = createSignal("");
   const [chosen, setChosen] = createSignal<Record<string, string>>({});
   const [connections, setConnections] = createSignal<ConnectionDraft[]>([]);
@@ -144,7 +143,6 @@ function CreateEnvironmentForm(props: {
     const value = {
       project: props.project,
       env: env(),
-      tenant: tenant(),
       routeHost: routeHost(),
       packages: Object.entries(chosen())
         .filter(([, version]) => version !== "")
@@ -160,7 +158,6 @@ function CreateEnvironmentForm(props: {
     await props.settle(outcome, "environment create");
     if (outcome.status === "completed") {
       setEnv("");
-      setTenant("");
       setRouteHost("");
       setChosen({});
       setConnections([]);
@@ -171,7 +168,6 @@ function CreateEnvironmentForm(props: {
     <section class="flex max-w-md flex-col gap-3" data-slot="project-create-environment">
       <p class="text-sm font-semibold uppercase">create an environment</p>
       <TextField label="environment name" type="text" value={env()} onInput={setEnv} />
-      <TextField label="tenant" type="text" value={tenant()} onInput={setTenant} />
       <TextField label="route host" type="text" value={routeHost()} onInput={setRouteHost} />
       <For each={versions()}>
         {([packageId, list]) => (
@@ -271,7 +267,6 @@ function CopyEnvironmentForm(props: {
 }): JSX.Element {
   const [sourceEnv, setSourceEnv] = createSignal<string | null>(null);
   const [env, setEnv] = createSignal("");
-  const [tenant, setTenant] = createSignal("");
   const [routeHost, setRouteHost] = createSignal("");
   const [replacements, setReplacements] = createSignal<ReplacementDraft[]>([]);
   let nextKey = 0;
@@ -302,7 +297,6 @@ function CopyEnvironmentForm(props: {
       project: props.project,
       sourceEnv: source,
       env: env(),
-      tenant: tenant(),
       routeHost: routeHost(),
       connections,
     };
@@ -311,7 +305,6 @@ function CopyEnvironmentForm(props: {
     if (outcome.status === "completed") {
       setSourceEnv(null);
       setEnv("");
-      setTenant("");
       setRouteHost("");
       setReplacements([]);
     }
@@ -328,7 +321,6 @@ function CopyEnvironmentForm(props: {
         onChange={(each) => setSourceEnv(each === "" ? null : each)}
       />
       <TextField label="new environment name" type="text" value={env()} onInput={setEnv} />
-      <TextField label="new tenant" type="text" value={tenant()} onInput={setTenant} />
       <TextField label="new route host" type="text" value={routeHost()} onInput={setRouteHost} />
       <Index each={replacements()}>
         {(draft) => {

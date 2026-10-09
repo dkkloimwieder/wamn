@@ -131,8 +131,7 @@ Add one `--wiring` argument for each wiring that the release keeps. Receiving ha
 wamn-ctl publish-release \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
   --org "$ORG" --project "$PROJECT" \
-  --tenant "$TENANT" --effective-release-id "$EFFECTIVE_RELEASE_ID" \
-  --environment "$ENVIRONMENT" \
+  --tenant "$TENANT" --environment "$ENVIRONMENT" \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
@@ -143,17 +142,20 @@ wamn-ctl publish-release \
 wamn-ctl publish-qualified-release \
   --qualification "$DELIVERY_QUALIFICATION" \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
-  --tenant "$TENANT" --effective-release-id "$EFFECTIVE_RELEASE_ID" \
-  --org "$ORG" --project "$PROJECT" \
+  --tenant "$TENANT" --release-digest "$RELEASE_DIGEST" \
+  --org "$ORG" --project "$PROJECT" --environment "$ENVIRONMENT" \
   --artifact-base "$PUSH_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
 
 wamn-ctl print-release-env \
   --database-url "$OWNER_URL" --tenant "$TENANT" \
-  --effective-release-id "$EFFECTIVE_RELEASE_ID" \
+  --release-digest "$RELEASE_DIGEST" \
   --artifact-base "$PULL_BASE"
 ```
 
-Publication freezes the effective release and its canonical manifest digest.
+`publish-release` records the release by its canonical manifest digest and prints that digest.
+Set `RELEASE_DIGEST` to it.
+The manifest names no tenant and no environment, so one release has one digest in every environment.
+The tenant of an environment is `<org>--<project>--<environment>`.
 [Qualify the exact candidate](delivery.md#candidate-qualification) before publication.
 The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
 It takes the same `--oci-ca-path` input as `push-component`.

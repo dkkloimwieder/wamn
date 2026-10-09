@@ -142,6 +142,13 @@ impl RoleName {
     }
 }
 
+/// The host variables that carry the environment coordinate (R1). The host
+/// derives its tenant from them, because the manifest names no scope. The
+/// operator chart sets `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace
+/// first, and this later entry replaces it, because the namespace is shared
+/// by every environment (R6).
+const SCOPE_VARIABLES: [&str; 3] = ["WAMN_ORG", "WAMN_PROJECT", "WASMCLOUD_HOST_ENVIRONMENT"];
+
 /// The inputs of one environment's install values.
 #[derive(Debug, Clone)]
 pub struct ValuesInput {
@@ -173,6 +180,29 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     let environment = format!("{}/{}/{}", input.org, input.project, input.env);
     let mut group = input.host_group.clone();
     group.insert("name".into(), name.into());
+    let variables = group
+        .entry("env".into())
+        .or_insert_with(|| Value::Sequence(Vec::new()))
+        .as_sequence_mut()
+        .context("the host group body's `env` is not a list")?;
+    ensure!(
+        !variables.iter().any(|variable| {
+            variable["name"]
+                .as_str()
+                .is_some_and(|name| SCOPE_VARIABLES.contains(&name))
+        }),
+        "the host group body sets a scope variable, which the release chart derives"
+    );
+    for (variable, value) in
+        SCOPE_VARIABLES
+            .into_iter()
+            .zip([&input.org, &input.project, &input.env])
+    {
+        variables.push(mapping([
+            ("name", variable.to_owned()),
+            ("value", value.clone()),
+        ]));
+    }
     group.insert(
         "extraArgs".into(),
         Value::Sequence(vec![
@@ -423,6 +453,14 @@ mod tests {
         assert_eq!(group["name"].as_str(), Some(name.as_str()));
         assert_eq!(group["replicas"].as_u64(), Some(3));
         assert_eq!(
+            group["env"],
+            serde_yaml::from_str::<Value>(
+                "[{name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
+                 {name: WASMCLOUD_HOST_ENVIRONMENT, value: prod}]"
+            )
+            .expect("yaml")
+        );
+        assert_eq!(
             group["extraArgs"],
             serde_yaml::from_str::<Value>(&format!(
                 "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}]"
@@ -449,6 +487,12 @@ mod tests {
         let mut input = input();
         input.manifest_digest = "e3b0".into();
         assert!(values(&input).is_err());
+        let mut input = super::tests::input();
+        input.host_group.insert(
+            "env".into(),
+            serde_yaml::from_str("[{name: WAMN_ORG, value: other}]").expect("yaml"),
+        );
+        assert!(values(&input).is_err(), "a scope variable is refused");
     }
 
     #[test]

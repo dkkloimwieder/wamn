@@ -279,7 +279,6 @@ async fn receiving_release_journey(
             .context("project provisioning emitted no management-author principal")?,
         project: project.as_ref(),
         control: admin.as_ref(),
-        release_id: identity().effective_release_id,
         attachments: released_journey_packages()
             .map(|package| journey_publication_root(package, Some(inputs)).join("attachments.json"))
             .collect(),

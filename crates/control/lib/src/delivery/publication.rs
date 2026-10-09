@@ -31,7 +31,8 @@ pub(super) async fn checked_snapshot(
     qualification.require_pass()?;
     let (expected, expected_digest) = qualification.candidate.manifest()?;
     ensure!(
-        expected.release.tenant_id == args.tenant
+        qualification.candidate.tenant == args.tenant
+            && qualification.candidate.environment == args.environment
             && expected_digest.as_str() == args.manifest_digest,
         "publication scope differs from the qualified release"
     );
@@ -105,7 +106,7 @@ pub(super) async fn require_published(
                     &snapshot.carrier.manifest_digest.as_str(),
                     &args.org,
                     &args.project,
-                    &snapshot.manifest.release.environment,
+                    &args.environment,
                 ],
             )
             .await?
@@ -146,7 +147,10 @@ mod tests {
         assert_eq!(digest.as_str(), vector::DIGEST);
         require_same_manifest(&expected, &expected).unwrap();
         let mut changed = expected.clone();
-        changed.release.environment = "another-environment".to_owned();
+        changed
+            .release
+            .packages
+            .insert(wamn_catalog::PackageCoordinate::new("another_package", "1.0.0").unwrap());
         assert!(require_same_manifest(&expected, &changed).is_err());
     }
 

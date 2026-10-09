@@ -21,8 +21,10 @@ use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::json;
 use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, file_digest};
 use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
-use wamn_control::dev::edge_bundle::{PackageRelease, write_package};
-use wamn_edge::config::{EdgeConfig, HttpConfig, ReleaseConfig, SessionConfig, StoreConfig};
+use wamn_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
+use wamn_edge::config::{
+    EdgeConfig, HttpConfig, ReleaseConfig, ScopeConfig, SessionConfig, StoreConfig,
+};
 use wamn_edge::serve::{EdgeHost, serve};
 use wamn_session::keys::PublicSessionKey;
 use wamn_session::token::{SessionAuthority, SessionClaims, SessionHeader};
@@ -41,8 +43,8 @@ pub const ORG: &str = "org-a";
 pub const AUDIENCE: &str = "tenant-a/edge";
 pub const PRINCIPAL: &str = "0b5c7f3e-9a41-4d2e-8f6a-1c2d3e4f5a6b";
 /// The tenant and environment of the release.
-const TENANT: &str = "tenant-a";
-const ENVIRONMENT: &str = "edge";
+pub const PROJECT: &str = "plant";
+pub const ENVIRONMENT: &str = "edge";
 
 /// A key pair from a fixed seed, and its public JWK under `kid`.
 pub fn key(kid: &str, seed: u8) -> (Ed25519KeyPair, PublicSessionKey) {
@@ -143,8 +145,11 @@ fn build_bundle() -> PathBuf {
         &repository.join("apps/target/virtualized/std-empty-environment/device.wasm"),
         &ingress,
         &PackageRelease {
-            tenant: TENANT,
-            environment: ENVIRONMENT,
+            scope: EdgeScope {
+                org: ORG,
+                project: PROJECT,
+                environment: ENVIRONMENT,
+            },
             publisher: PRINCIPAL,
             route_host: HOST,
         },
@@ -180,6 +185,11 @@ pub fn release(directory: &Path) -> String {
 /// device.
 pub fn config(directory: &Path, digest: String) -> EdgeConfig {
     EdgeConfig {
+        scope: ScopeConfig {
+            org: ORG.into(),
+            project: PROJECT.into(),
+            environment: ENVIRONMENT.into(),
+        },
         release: ReleaseConfig {
             dir: directory.to_owned(),
             digest,

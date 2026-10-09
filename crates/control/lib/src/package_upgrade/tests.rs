@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{ComponentSqlStatement, EffectiveReleaseId, PackageCoordinate, ServingManifest};
+use wamn_catalog::{ComponentSqlStatement, PackageCoordinate, ServingManifest};
+use wamn_engine::release_manifest::ReleaseScope;
 
 use super::{
     AcceptedUpgrade, matching_reconciliation_evidence, persist, read_accepted,
@@ -23,13 +24,15 @@ mod vector {
     ));
 }
 
+/// The tenant and environment of every selection in these tests.
+fn scope() -> ReleaseScope {
+    ReleaseScope::new("upgrade-test", "test")
+}
+
 fn predecessor_manifest() -> ServingManifest {
     let (mut manifest, digest) =
         ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
     assert_eq!(digest.as_str(), vector::DIGEST);
-    manifest.release.tenant_id = "upgrade-test".to_owned();
-    manifest.release.environment = "test".to_owned();
-    manifest.release.effective_release_id = EffectiveReleaseId::new(1).unwrap();
     manifest.release.packages =
         [PackageCoordinate::new("platform_fixture", "2.0.0").unwrap()].into();
     let mut component = manifest.components.iter().next().unwrap().clone();
@@ -225,7 +228,7 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
     assert_complete_world_selection(&accepted);
 
     let mut tx = client.transaction().await.unwrap();
-    let refusal = require_compatible_schema(&mut tx, &manifest)
+    let refusal = require_compatible_schema(&mut tx, &manifest, &scope())
         .await
         .unwrap_err();
     assert!(
@@ -245,7 +248,7 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
             .is_none()
     );
     persist(&tx, &accepted).await.unwrap();
-    require_compatible_schema(&mut tx, &manifest)
+    require_compatible_schema(&mut tx, &manifest, &scope())
         .await
         .expect("persisted proof admits its immediate predecessor");
     let role: String = tx
@@ -259,11 +262,13 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
     );
     tx.commit().await.unwrap();
 
+    // Another release of the same packages has another digest, so the
+    // persisted evidence of the first does not admit it.
     let mut changed_release = manifest.clone();
-    changed_release.release.effective_release_id = EffectiveReleaseId::new(2).unwrap();
+    changed_release.host_routes = [wamn_catalog::HostRouteSet::Control].into();
     let mut tx = client.transaction().await.unwrap();
     assert!(
-        require_compatible_schema(&mut tx, &changed_release)
+        require_compatible_schema(&mut tx, &changed_release, &scope())
             .await
             .is_err()
     );
@@ -281,7 +286,7 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
         .unwrap();
     let mut tx = client.transaction().await.unwrap();
     assert!(
-        require_compatible_schema(&mut tx, &manifest)
+        require_compatible_schema(&mut tx, &manifest, &scope())
             .await
             .unwrap_err()
             .to_string()
@@ -296,7 +301,7 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
             .unwrap(),
         accepted.evidence.post_privileges
     );
-    let refusal = require_compatible_schema(&mut tx, &manifest)
+    let refusal = require_compatible_schema(&mut tx, &manifest, &scope())
         .await
         .unwrap_err();
     assert!(

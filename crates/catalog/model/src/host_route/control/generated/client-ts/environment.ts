@@ -192,8 +192,6 @@ export interface EnvironmentCopyRequestValue {
   routeHost: string;
   /** `text` */
   sourceEnv: string;
-  /** `text` */
-  tenant: string;
 }
 
 export interface EnvironmentCopyRequestValueConnections {
@@ -220,7 +218,6 @@ export const ENVIRONMENT_COPY_REQUEST_FIELDS: FieldMap = {
       "project": "project",
       "route_host": "routeHost",
       "source_env": "sourceEnv",
-      "tenant": "tenant",
     },
   },
 };
@@ -299,8 +296,6 @@ export interface EnvironmentCreateRequestValue {
   project: string;
   /** `text` */
   routeHost: string;
-  /** `text` */
-  tenant: string;
 }
 
 export interface EnvironmentCreateRequestValueConnections {
@@ -346,7 +341,6 @@ export const ENVIRONMENT_CREATE_REQUEST_FIELDS: FieldMap = {
       },
       "project": "project",
       "route_host": "routeHost",
-      "tenant": "tenant",
     },
   },
 };

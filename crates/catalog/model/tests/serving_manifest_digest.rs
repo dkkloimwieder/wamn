@@ -1,14 +1,13 @@
-//! Digest and closed-shape tests for serving-manifest format 4.
+//! Digest and closed-shape tests for serving-manifest format 5.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
     ArtifactHash, AttachmentAuthPolicy, AttachmentTarget, AttachmentType, CatalogIdentityError,
-    DefinitionHash, EffectiveReleaseId, OperationType, PackageCoordinate, ServingAttachment,
-    ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring,
-    parse_attachment_auth_policy,
+    DefinitionHash, OperationType, PackageCoordinate, ServingAttachment, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRegistrationInput,
+    ServingRelease, ServingRoute, ServingWiring, parse_attachment_auth_policy,
 };
 
 mod publish_vector {
@@ -35,9 +34,6 @@ fn definition_hash(value: &str) -> DefinitionHash {
 
 fn release() -> ServingRelease {
     ServingRelease {
-        tenant_id: "manifest-mint-tenant".into(),
-        effective_release_id: EffectiveReleaseId::new(3).expect("non-zero release"),
-        environment: "prod".into(),
         packages: BTreeSet::from([
             PackageCoordinate::new("platform_fixture", "1.0.0").unwrap(),
             PackageCoordinate::new("platform_fixture_overlay", "3.0.0").unwrap(),
@@ -179,7 +175,7 @@ fn manifest() -> ServingManifest {
             },
         )]),
     )
-    .expect("the format-four fixture is valid")
+    .expect("the format-five fixture is valid")
 }
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -194,13 +190,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_four_preimage_and_digest_are_pinned() {
+fn the_format_five_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
-        .expect("the format-four vector is admitted by the reader");
+        .expect("the format-five vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), publish_vector::DIGEST);
 
@@ -224,7 +220,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
     });
     assert_eq!(format!("sha256:{hex}"), format_three_vector::DIGEST);
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
-        .expect_err("format 4 refuses the frozen format-3 bytes");
+        .expect_err("format 5 refuses the frozen format-3 bytes");
     assert!(
         matches!(
             &error,
@@ -236,7 +232,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
 }
 
 #[test]
-fn fresh_only_is_digest_bound_without_changing_format_four_default_bytes() {
+fn fresh_only_is_digest_bound_without_changing_format_five_default_bytes() {
     let baseline = manifest();
     let mut fresh = baseline.clone();
     fresh.components = fresh
@@ -252,9 +248,9 @@ fn fresh_only_is_digest_bound_without_changing_format_four_default_bytes() {
         })
         .collect();
     let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
-        .expect("format-four reader admits registered fresh-only operations");
+        .expect("format-five reader admits registered fresh-only operations");
     assert_eq!(admitted, fresh);
-    assert_eq!(admitted.format_version, 4);
+    assert_eq!(admitted.format_version, 5);
     assert_ne!(digest, baseline.digest());
     assert_eq!(baseline.canonical_bytes(), publish_vector::CANONICAL_BYTES);
 }
@@ -412,9 +408,6 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
     };
     ServingManifest::new(
         ServingRelease {
-            tenant_id: "provider-tenant".into(),
-            effective_release_id: EffectiveReleaseId::new(1).expect("nonzero release"),
-            environment: "test".into(),
             packages: BTreeSet::from([
                 PackageCoordinate::new(package, version).unwrap(),
                 PackageCoordinate::new("consumer", "1.0.0").unwrap(),

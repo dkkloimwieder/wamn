@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::route_authentication_live::{identity, scope};
+use crate::route_authentication_live::{identity, release_scope, scope};
 use anyhow::Context as _;
 use bytes::Bytes;
 use serde_json::{Value, json};
@@ -86,7 +86,8 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         snapshots.len() == 3,
         "prior-commit fixture requires releases 1 through 3"
     );
-    let previous = LoadedRelease::load_canonical_bytes(&snapshots[2].1, "release 3")?;
+    let previous =
+        LoadedRelease::load_canonical_bytes(&snapshots[2].1, "release 3", release_scope())?;
     let base = previous
         .manifest()
         .components
@@ -269,7 +270,6 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         org: identity().org.clone(),
         project: identity().project.clone(),
         tenant: identity().tenant.clone(),
-        effective_release_id: 4,
         environment: identity().environment.clone(),
         verified_publisher_principal: test.publisher.to_owned(),
         run_schema: "wamn_run".to_owned(),
@@ -290,6 +290,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             database_url: test.project_url.to_owned(),
             org: identity().org.clone(),
             project: identity().project.clone(),
+            environment: identity().environment.clone(),
             tenant: identity().tenant.clone(),
             manifest_digest: digest.clone(),
             artifact_base: test.inputs.release_artifact_base.clone(),
@@ -330,10 +331,10 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &released_bytes,
         &format!("{}@{digest}", test.inputs.release_artifact_base),
+        release_scope(),
     )?);
     anyhow::ensure!(
         release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION
-            && release.manifest().release.effective_release_id.get() == 4
             && release.manifest().release.packages.len() == 2
             && release.manifest().components.len() == 2
             && release.manifest().workflow.wirings.len() == 1

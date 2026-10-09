@@ -419,8 +419,8 @@ impl WamnPostgres {
             async {
                 local.require_instance(&connection).await?;
                 anyhow::ensure!(
-                    local.manifest.release.tenant_id == tenant_id
-                        && local.manifest.release.environment == environment
+                    local.scope.tenant_id == tenant_id
+                        && local.scope.environment == environment
                         && local.facts.manifest_digest.as_str() == manifest_digest,
                     "local release scope mismatch"
                 );
@@ -515,8 +515,8 @@ impl WamnPostgres {
             async {
                 local.require_instance(&connection).await?;
                 anyhow::ensure!(
-                    local.manifest.release.tenant_id == tenant_id
-                        && local.manifest.release.environment == environment
+                    local.scope.tenant_id == tenant_id
+                        && local.scope.environment == environment
                         && local.facts.manifest_digest.as_str() == manifest_digest,
                     "local release scope mismatch"
                 );
@@ -724,8 +724,8 @@ impl WamnPostgres {
             &component_digests,
         ];
         let result = if let Some(local) = &self.local_application {
-            if local.manifest.release.tenant_id != tenant_id
-                || local.manifest.release.environment != environment
+            if local.scope.tenant_id != tenant_id
+                || local.scope.environment != environment
                 || local.facts.manifest_digest.as_str() != manifest_digest
             {
                 Err(anyhow::anyhow!("local readiness release scope mismatch"))

@@ -249,11 +249,7 @@ async fn require_local_facts(
         root.join("local-artifacts")
             .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
     )?;
-    let (manifest, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    ensure!(
-        manifest.release.tenant_id == identity().tenant.as_str(),
-        "the local manifest names another tenant"
-    );
+    let (_, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_type='publish'", &[&identity().tenant.as_str()]).await?.get(0);
     let attestations: i64 = control
         .query_one(

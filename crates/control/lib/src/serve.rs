@@ -57,8 +57,6 @@ const HOSTS_NAMESPACE: &str = "hosts";
 const IDENTITY_NAMESPACE: &str = "identity";
 /// The run-plane schema of every environment.
 const RUN_SCHEMA: &str = "wamn_run";
-/// The release that a new environment publishes (owner ruling of 2026-10-02).
-const RELEASE_ID: u32 = 1;
 /// The bead that a request with more than one package schema waits for.
 const MULTI_SCHEMA_BEAD: &str = "wamn-64iw";
 /// How long the worker waits for a CR to report `status.applied`.
@@ -331,6 +329,16 @@ impl SagaRun<'_> {
         )
     }
 
+    /// The tenant of the environment, derived from its coordinate (owner
+    /// ruling of 2026-10-09 on `wamn-snz0`). The request names none.
+    fn tenant(&self) -> String {
+        wamn_control_registry::project_env_tenant(
+            &self.org,
+            &self.request.project,
+            &self.request.env,
+        )
+    }
+
     fn system_url(&self) -> &str {
         &self.config.system_database_url
     }
@@ -367,7 +375,7 @@ impl SagaRun<'_> {
             .await?
             .query(
                 "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-                &[&self.request.tenant],
+                &[&self.tenant()],
             )
             .await
             .context("read the published release")?;
@@ -431,7 +439,7 @@ impl SagaRun<'_> {
             org: self.org.clone(),
             project: self.request.project.clone(),
             env: self.request.env.clone(),
-            tenant: Some(self.request.tenant.clone()),
+            tenant: Some(self.tenant()),
             system_database_url: Some(self.config.system_database_url.clone()),
             target_admin_database_url: target,
             cluster: None,
@@ -459,7 +467,7 @@ impl SagaRun<'_> {
             org: self.org.clone(),
             project: self.request.project.clone(),
             env: self.request.env.clone(),
-            tenant: Some(self.request.tenant.clone()),
+            tenant: Some(self.tenant()),
             disposable: false,
             system_database_url: Some(self.config.system_database_url.clone()),
             cluster: None,
@@ -503,7 +511,7 @@ impl SagaRun<'_> {
                 admin_database_url: self.project_url().await?,
                 org: self.org.clone(),
                 project: self.request.project.clone(),
-                tenant: self.request.tenant.clone(),
+                tenant: self.tenant(),
                 env: self.request.env.clone(),
                 schema: RUN_SCHEMA.to_owned(),
                 dry_run: false,
@@ -586,7 +594,7 @@ impl SagaRun<'_> {
             crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
                 package: root,
                 database_url: project_url.clone(),
-                tenant: self.request.tenant.clone(),
+                tenant: self.tenant(),
             })
             .await?;
         }
@@ -599,7 +607,7 @@ impl SagaRun<'_> {
             crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
                 packages: self.roots().await?,
                 database_url: self.project_url().await?,
-                tenant: self.request.tenant.clone(),
+                tenant: self.tenant(),
             },
         )
         .await?;
@@ -610,7 +618,7 @@ impl SagaRun<'_> {
     /// `Publication` CR and the replication Secret.
     async fn enable_cdc(&mut self) -> anyhow::Result<()> {
         let triple = self.triple();
-        let tenant = self.request.tenant.clone();
+        let tenant = self.tenant();
         let packages = self.packages().await?;
         let schemas: BTreeSet<&str> = packages
             .iter()
@@ -692,7 +700,7 @@ impl SagaRun<'_> {
             render_palette_declaration,
         };
         let project_url = self.project_url().await?;
-        let tenant = self.request.tenant.clone();
+        let tenant = self.tenant();
         let config = self.config;
         let packages = self.packages().await?;
         let inputs: Vec<PackageInput> = packages.iter().map(Package::input).collect();
@@ -800,7 +808,7 @@ impl SagaRun<'_> {
             self.org.clone(),
             self.request.project.clone(),
             self.request.env.clone(),
-            self.request.tenant.clone(),
+            self.tenant(),
         );
         let route_host = self.request.route_host.clone();
         let config = self.config;
@@ -844,7 +852,6 @@ impl SagaRun<'_> {
             org,
             project,
             tenant,
-            effective_release_id: RELEASE_ID,
             environment: env,
             verified_publisher_principal: publisher,
             run_schema: RUN_SCHEMA.to_owned(),
@@ -896,7 +903,7 @@ impl SagaRun<'_> {
     async fn bind_connections(&mut self) -> anyhow::Result<()> {
         let project_url = self.project_url().await?;
         let release = self.published_release(&project_url).await?;
-        let (tenant, env) = (self.request.tenant.clone(), self.request.env.clone());
+        let (tenant, env) = (self.tenant(), self.request.env.clone());
         let connections = self.request.connections.clone();
         let packages = self.packages().await?;
         let inputs: Vec<PackageInput> = packages.iter().map(Package::input).collect();
@@ -949,7 +956,8 @@ impl SagaRun<'_> {
             database_url: project_url,
             org: self.org.clone(),
             project: self.request.project.clone(),
-            tenant: self.request.tenant.clone(),
+            environment: self.request.env.clone(),
+            tenant: self.tenant(),
             manifest_digest,
             artifact_base: self.config.release_artifact_base.clone(),
             registry_auth_file: self.config.registry_auth_file.clone(),
@@ -976,7 +984,7 @@ impl SagaRun<'_> {
         use crate::delivery::selection::package_set;
         use crate::print_release_env::lookup_release_snapshot;
         let project_url = self.project_url().await?;
-        let head = head_release(&project_url, &self.request.tenant, &self.request.env).await?;
+        let head = head_release(&project_url, &self.tenant(), &self.request.env).await?;
         let request = self.release_request(project_url).await?;
         if let Some(head) = head {
             let mut sets = Vec::new();
@@ -1050,7 +1058,7 @@ impl SagaRun<'_> {
             .query_one(
                 "SELECT manifest_digest FROM catalog.effective_release_heads \
                   WHERE tenant_id = $1 AND environment = $2",
-                &[&self.request.tenant, &self.request.env],
+                &[&self.tenant(), &self.request.env],
             )
             .await
             .context("read the manifest digest of the head release")?
@@ -1113,11 +1121,11 @@ impl SagaRun<'_> {
     /// Step 15: the commands that the operator runs. The saga never restarts
     /// the broker, identity or a host.
     fn operator_commands(&self) -> Value {
-        let (org, project, env, tenant) = (
+        let tenant = self.tenant();
+        let (org, project, env) = (
             self.org.as_str(),
             self.request.project.as_str(),
             self.request.env.as_str(),
-            self.request.tenant.as_str(),
         );
         let secret =
             |family| wamn_control_provision::workload_secret_name(family, org, project, env);

@@ -19,7 +19,7 @@ Then submit an input file:
 ```bash
 wamn-ctl workflow start \
   --tenant acme --environment dev --package-id orders \
-  --effective-release-id 1 --wiring-id process-orders --wiring-version 1 \
+  --release-digest "$RELEASE_DIGEST" --wiring-id process-orders --wiring-version 1 \
   --service-principal-id "$SERVICE_PRINCIPAL_ID" \
   --idempotency-key batch-42 --input /tmp/orders-input.json
 ```

@@ -3,9 +3,10 @@ use std::time::Duration;
 use serde_json::json;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{EffectiveReleaseId, PackageCoordinate, ServingManifest};
+use wamn_catalog::{PackageCoordinate, ServingManifest};
 
 use crate::print_release_env::{ReleaseCarrier, ReleaseSnapshot};
+use crate::push_release_manifest::PushReleaseManifestRequest;
 
 use super::{
     SELECT_RELEASE, activate, argument, authenticated_interaction, claim,
@@ -190,12 +191,25 @@ async fn seed_package(
         &[&version, &format!("sha256:{}", wiring.to_string().repeat(64))]).await.unwrap();
 }
 
-async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> ReleaseSnapshot {
+/// The tenant and environment every selection in these tests names.
+fn release_request() -> PushReleaseManifestRequest {
+    PushReleaseManifestRequest {
+        database_url: String::new(),
+        org: String::new(),
+        project: String::new(),
+        environment: "test".to_owned(),
+        tenant: "delivery".to_owned(),
+        manifest_digest: String::new(),
+        artifact_base: String::new(),
+        registry_auth_file: std::path::PathBuf::new(),
+        insecure_registry: false,
+        oci_ca_paths: Vec::new(),
+        control_database_url: String::new(),
+    }
+}
+
+async fn seed_release(client: &Client, version: &str, hash: char) -> ReleaseSnapshot {
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
-    manifest.release.tenant_id = "delivery".to_owned();
-    manifest.release.environment = "test".to_owned();
-    manifest.release.effective_release_id =
-        EffectiveReleaseId::new(u32::try_from(id).unwrap()).unwrap();
     manifest.release.packages = [PackageCoordinate::new("inventory", version).unwrap()].into();
     let mut wiring = manifest.workflow.wirings.iter().next().unwrap().clone();
     wiring.package_id = "inventory".to_owned();
@@ -246,11 +260,11 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
         .await
         .unwrap();
     seed_package(&first, "0.1.0", None, 'd', 'd').await;
-    seed_release(&first, 7, "0.1.0", 'd').await;
+    seed_release(&first, "0.1.0", 'd').await;
     seed_package(&first, "1.0.0", Some("0.1.0"), 'a', 'b').await;
     seed_package(&first, "2.0.0", Some("1.0.0"), 'a', 'c').await;
-    let previous = seed_release(&first, 100, "1.0.0", 'b').await;
-    let selected = seed_release(&first, 1, "2.0.0", 'c').await;
+    let previous = seed_release(&first, "1.0.0", 'b').await;
+    let selected = seed_release(&first, "2.0.0", 'c').await;
     first
         .execute(
             SELECT_RELEASE,
@@ -262,14 +276,15 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
         )
         .await
         .unwrap();
+    let release = release_request();
     let mut transaction = first.transaction().await.unwrap();
-    claim(&transaction, &previous.manifest.release)
+    claim(&transaction, &release.tenant).await.unwrap();
+    require_selected(&transaction, &previous, &release)
         .await
         .unwrap();
-    require_selected(&transaction, &previous).await.unwrap();
     // Different historical migrations do not matter when the installed leaf
     // and requested package have exactly the same applied migration stream.
-    require_compatible_schema(&mut transaction, &previous.manifest)
+    require_compatible_schema(&mut transaction, &previous.manifest, &release)
         .await
         .unwrap();
     let second_pid: i32 = second
@@ -305,20 +320,18 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
     .await
     .expect("the concurrent selection waits on the real head row lock");
     assert!(!selection.is_finished());
-    activate(&transaction, &previous.manifest, "delivery-test")
+    activate(&transaction, &previous.manifest, &release, "delivery-test")
         .await
         .unwrap();
-    activate(&transaction, &previous.manifest, "delivery-test")
+    activate(&transaction, &previous.manifest, &release, "delivery-test")
         .await
         .unwrap();
     transaction.commit().await.unwrap();
     selection.await.unwrap();
     let transaction = first.transaction().await.unwrap();
-    claim(&transaction, &previous.manifest.release)
-        .await
-        .unwrap();
+    claim(&transaction, &release.tenant).await.unwrap();
     assert!(
-        require_selected(&transaction, &previous)
+        require_selected(&transaction, &previous, &release)
             .await
             .unwrap_err()
             .to_string()
@@ -336,12 +349,12 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
     );
     seed_package(&first, "3.0.0", Some("2.0.0"), 'e', 'e').await;
     let mut transaction = first.transaction().await.unwrap();
-    claim(&transaction, &selected.manifest.release)
+    claim(&transaction, &release.tenant).await.unwrap();
+    require_selected(&transaction, &selected, &release)
         .await
         .unwrap();
-    require_selected(&transaction, &selected).await.unwrap();
     assert!(
-        require_compatible_schema(&mut transaction, &selected.manifest)
+        require_compatible_schema(&mut transaction, &selected.manifest, &release)
             .await
             .unwrap_err()
             .to_string()

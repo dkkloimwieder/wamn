@@ -390,7 +390,7 @@ impl OperationHost {
                 native_policy::participation_intent(&self.release, component, participant)
             })
             .transpose()?;
-        let tenant = manifest.release.tenant_id.clone();
+        let tenant = self.release.scope().tenant_id.clone();
         Ok(Some(CallIntents {
             store: WriteLogStore::new(
                 Arc::clone(&self.postgres),
@@ -411,12 +411,11 @@ impl OperationHost {
     pub async fn release_components(&self) -> anyhow::Result<Arc<[AdmittedComponent]>> {
         self.components
             .get_or_try_init(|| async {
-                let manifest = self.release.manifest();
                 self.postgres
                     .resolve_release_components(
                         &self.project,
-                        &manifest.release.tenant_id,
-                        &manifest.release.environment,
+                        &self.release.scope().tenant_id,
+                        &self.release.scope().environment,
                         self.release.release().manifest_digest.as_str(),
                     )
                     .await
@@ -504,7 +503,7 @@ impl OperationHost {
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.http_transport),
                     Arc::clone(&self.credentials),
-                    self.release.manifest().release.tenant_id.as_str(),
+                    self.release.scope().tenant_id.as_str(),
                     self.project.as_str(),
                     Arc::clone(&self.allowed_hosts),
                     Some(Arc::clone(&self.release)),
@@ -512,7 +511,7 @@ impl OperationHost {
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.credentials),
-                    self.release.manifest().release.tenant_id.as_str(),
+                    self.release.scope().tenant_id.as_str(),
                     self.project.as_str(),
                     Some(Arc::clone(&self.release)),
                 )),

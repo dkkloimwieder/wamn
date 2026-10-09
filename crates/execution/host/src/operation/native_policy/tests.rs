@@ -13,8 +13,8 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentOperationDependency,
     ComponentPackageScope, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
-    EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
-    ServingManifest, ServingRelease,
+    PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest,
+    ServingRelease,
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -633,9 +633,6 @@ impl Fixture {
         let manifest = ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                tenant_id: "tenant-a".into(),
-                effective_release_id: EffectiveReleaseId::new(1).expect("nonzero release"),
-                environment: "test".into(),
                 packages: facts
                     .iter()
                     .chain(&callees)
@@ -655,6 +652,7 @@ impl Fixture {
             LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "native policy fixture",
+                wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test"),
             )
             .expect("admit the exact release manifest"),
         );

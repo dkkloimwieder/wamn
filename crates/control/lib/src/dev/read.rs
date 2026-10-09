@@ -567,8 +567,7 @@ mod tests {
     use serde_json::json;
     use wamn_authoring_model::ValidatedDraftRef;
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, EffectiveReleaseId, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingRelease,
+        ArtifactHash, DefinitionHash, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease,
     };
 
     use super::*;
@@ -828,9 +827,6 @@ mod tests {
         ServingManifest {
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
             release: ServingRelease {
-                tenant_id: "tenant-a".to_owned(),
-                effective_release_id: EffectiveReleaseId::new(1).expect("valid release"),
-                environment: "dev".to_owned(),
                 packages: BTreeSet::from([package]),
             },
             components: BTreeSet::from([component]),

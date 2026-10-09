@@ -30,7 +30,6 @@ fn request(env: &str) -> EnvironmentRequest {
     EnvironmentRequest {
         project: "receiving".to_owned(),
         env: env.to_owned(),
-        tenant: "dev".to_owned(),
         route_host: "receiving.example.test".to_owned(),
         packages: vec![PackageReference {
             package_id: "wamn_receiving".to_owned(),

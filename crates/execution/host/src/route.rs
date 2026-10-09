@@ -79,7 +79,7 @@ async fn call_route(
 ) -> anyhow::Result<RouteReturn> {
     let components = host.release_components().await?;
     let component = authorized_component(&components, &route)?;
-    let release = &host.release.manifest().release;
+    let release = host.release.scope();
     let span = invocation_span(
         &InvocationSite {
             tenant_id: &release.tenant_id,

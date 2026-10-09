@@ -14,7 +14,6 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::ServingManifest;
-use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::Platform;
@@ -144,7 +143,12 @@ pub async fn analyse(
     let release = match &document.release {
         DeclaredRelease::None => None,
         DeclaredRelease::Digest(declared) => {
-            Some(read_release(platform, &system, declared, project.as_ref()).await?)
+            let tenant = wamn_control_provision::project_env_tenant(
+                &document.org,
+                &document.project,
+                &document.env,
+            );
+            Some(read_release(platform, &system, declared, &tenant, project.as_ref()).await?)
         }
     };
     let revision = read_revision(platform, &release_name).await?;
@@ -377,16 +381,15 @@ async fn read_release(
     platform: &Platform,
     system: &Client,
     declared: &str,
+    tenant: &str,
     project: Option<&ProjectState>,
 ) -> anyhow::Result<ReleaseFacts> {
     let digest = if DeclaredRelease::Digest(declared.to_owned()).is_complete() {
         declared.to_owned()
     } else {
-        let tenant = project
-            .map(|project| project.tenant.as_str())
-            .with_context(|| {
-                format!("release {declared} is a prefix; a new environment names the whole digest")
-            })?;
+        project.with_context(|| {
+            format!("release {declared} is a prefix; a new environment names the whole digest")
+        })?;
         resolve_prefix(system, tenant, declared).await?
     };
     let source = ReleaseManifestSource::new(
@@ -401,12 +404,9 @@ async fn read_release(
         .pull_verified(&digest)
         .await
         .with_context(|| format!("pull release manifest {digest}"))?;
-    let manifest = LoadedRelease::load_canonical_bytes(&bytes, &digest)
-        .with_context(|| format!("read release manifest {digest}"))?
-        .manifest()
-        .clone();
+    let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)
+        .with_context(|| format!("read release manifest {digest}"))?;
     let image_set = release_chart::image_set(&platform.chart).await?;
-    let tenant = manifest.release.tenant_id.clone();
     system
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
         .await
@@ -689,14 +689,6 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
         }
     }
     if let Some(release) = &authorities.release {
-        if let Some(project) = &authorities.project
-            && release.manifest.release.tenant_id != project.tenant
-        {
-            refusals.push(format!(
-                "release {} belongs to tenant {}, and the environment holds tenant {}",
-                release.digest, release.manifest.release.tenant_id, project.tenant
-            ));
-        }
         for package in &release.manifest.release.packages {
             let (id, version) = (package.package_id(), package.package_version());
             if let Some(installed) = project.installed.get(id) {
