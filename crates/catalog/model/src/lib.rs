@@ -19,7 +19,6 @@ mod release_closures;
 mod route_identity;
 mod serving_manifest;
 mod wiring;
-mod wiring_activation;
 mod wiring_compatibility;
 
 /// Test databases with the tenant catalog floor.
@@ -66,11 +65,6 @@ pub use serving_manifest::{
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
     WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
-};
-pub use wiring_activation::{
-    WiringActivationError, WiringActivationErrorType, WiringActivationFacts, activation_facts,
-    flip_activation, previous_confirmed_definition, record_activation_event,
-    validate_wiring_activation,
 };
 pub use wiring_compatibility::{
     WiringCompatibilityError, WiringCompatibilityErrorType, validate_resolved_wiring_compatibility,

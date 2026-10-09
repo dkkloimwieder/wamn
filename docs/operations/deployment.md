@@ -187,15 +187,9 @@ A ready Pod does not establish successful authenticated application execution.
 Exercise a meaningful operation and inspect its expected state or outcome before reporting deployment success.
 Record the selected source, artifact identity, release identity, command exits, and actual observed outcome in one run directory.
 
-An operator runs `wamn-ctl promote` by hand.
-No deploy manifest runs it, and that is deliberate.
 The verbs that manifests run are `wamn-ctl-ops prune-record-history`, `wamn-ctl-ops prune-run-history`, and `wamn-ctl reconcile-run-plane`.
 
-`wamn-ctl promote` copies portable release facts only after the target's package and migration records match exactly.
-It pulls each component artifact of the source release from the registry and verifies its bytes.
-If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
-It does not apply migrations to the target.
-The [repository delivery commands](delivery.md) serialize activation against the existing selected release.
+The [repository delivery commands](delivery.md) serialize deployment against the existing selected release.
 A CI completion order does not set deployment precedence.
 
 ## Web client files
@@ -315,13 +309,13 @@ wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin
   --operation <package>:<interface>/<operation>
 ```
 
-The operation must be served by the current serving release of the environment, which `select-release` or `promote` sets.
+The operation must be served by the current serving release of the environment, which `select-release` sets.
 The grant also writes each operation that the selected operation requires in that release, and it prints them.
 `wamn-ctl revoke-permission` removes the selection and the operations that it required.
 An operation that another selected operation of the role requires stays effective, and the verb names that operation.
 The verb refuses an operation that the role holds only because another selected operation requires it.
 
-Before a release becomes current, `promote`, `select-release`, and the dev loop update these rows from the new release.
+Before a release becomes current, `select-release` and the dev loop update these rows from the new release.
 A selection that the new release does not serve is removed.
 
 ## Mailbox-loss recovery

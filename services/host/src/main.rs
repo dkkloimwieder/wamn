@@ -6,7 +6,7 @@
 //! The runtime-operator controls ClusterHost over NATS. Identity and CDC
 //! remain separate services.
 //!
-//! The one-shot control-plane verbs (provision*, apply-package, publish/promote,
+//! The one-shot control-plane verbs (provision*, apply-package, publish-release,
 //! dump/restore/copy-project-env, enable-cdc-project-env) live in `wamn-ctl`
 //! (SR9); this artifact ships none of them.
 //!

@@ -208,7 +208,7 @@ The command requires an HTTP success response and an exact JSON result.
 It refuses redirects and does not repeat the application request automatically.
 
 Deployment pulls the published manifest by digest and uses the supplied immutable images without rebuilding.
-It holds the existing selection row lock through workload readiness, the authenticated operation, and the activation commit.
+It holds the existing selection row lock through workload readiness, the authenticated operation, and the commit.
 It also holds the package owner's lineage locks while comparing the selected and installed migration sequences.
 Identical applied migrations permit code replacement across package versions.
 A different sequence requires persisted upgrade evidence for the exact immediate predecessor release and unchanged relevant installed state.
@@ -216,7 +216,7 @@ Selection and deployment share this compatibility rule. Other mismatches refuse 
 See [retained-schema rollback](deployment.md#rollback-and-maintenance).
 
 The command bounds deployment to 15 minutes and each Kubernetes rollout wait to 5 minutes.
-Failure or interruption leaves the activation transaction uncommitted and reports failure.
+Failure or interruption leaves the deployment transaction uncommitted and reports failure.
 Workload changes and an application mutation can already exist when failure occurs.
 Inspect that state before another authorized attempt because the command does not reset the database or roll back workloads automatically.
 The deployment pull uses the same `--oci-ca-path` roots from `release_args`.

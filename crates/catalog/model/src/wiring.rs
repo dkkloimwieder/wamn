@@ -5,8 +5,8 @@
 //! from the palette, edges connect declared ports, node parameters bind
 //! declared params, and the in-draft `cases` array rides the document. It is
 //! *data, not code* — versioned, gated against one environment effective
-//! release, and activated by a pointer flip — so its storage is
-//! `catalog.wirings` / `catalog.wiring_activation` rather than an OCI artifact.
+//! release, and resolved from the loaded release — so its storage is
+//! `catalog.wirings` rather than an OCI artifact.
 //!
 //! # The cases array attaches here (wamn-0h0g.18.4)
 //!
@@ -38,8 +38,7 @@
 //! canonical JSON, taken through the workspace's single canonicalizer
 //! ([`wamn_execution_contract::canonical_json_sha256`]) exactly as
 //! [`ServingManifest`](crate::ServingManifest) does. It is the value stored in
-//! `catalog.wirings.wiring_hash` and confirmed by
-//! `catalog.wiring_activation.confirmed_definition_hash`.
+//! `catalog.wirings.wiring_hash`.
 //!
 //! Nodes are a `BTreeMap` keyed by node id, so map order cannot reach the
 //! digest and a duplicate id is not a representable state. Edges are a `Vec`
@@ -190,10 +189,7 @@ pub struct WiringDocument {
     /// The document format version. A foreign version fails closed at
     /// [`WiringDocument::parse`] rather than being partially understood.
     pub format_version: String,
-    /// Stable identifier shared across every version of this wiring. It is the
-    /// activation pointer's own key: `catalog.wiring_activation` is keyed by
-    /// `(tenant, catalog, environment, wiring_id)`, which is what makes "exactly
-    /// one enabled definition hash" structural.
+    /// Stable identifier shared across every version of this wiring.
     pub wiring_id: String,
     /// Monotonic version of this wiring — `catalog.wirings.version`, the row a
     /// rollback flips back to.

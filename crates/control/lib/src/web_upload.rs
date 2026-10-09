@@ -20,7 +20,7 @@ const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
 /// The index names the current files, so a browser asks again at every load.
 const INDEX_CACHE: &str = "no-cache";
 /// The manifest digest of the release each environment head of the database
-/// names. `select-release` and `promote` write the head.
+/// names. `select-release` writes the head.
 const SELECT_HEADS: &str = "SELECT manifest_digest FROM catalog.effective_release_heads";
 
 /// What a write does when its object exists.

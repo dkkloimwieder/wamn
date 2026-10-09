@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use tokio_postgres::{Client, NoTls, Transaction};
-use wamn_catalog::{ServingManifest, ServingRelease, WiringActivationFacts};
+use wamn_catalog::{ServingManifest, ServingRelease};
 use wamn_engine::release_manifest::ReleaseScope;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
@@ -144,7 +144,6 @@ async fn select_head(
         let mut transaction = client.transaction().await?;
         claim(&transaction, &release.tenant).await?;
         require_compatible_schema(&mut transaction, &snapshot.manifest, release).await?;
-        // This existing row also serializes an older promote command's upsert.
         transaction
             .execute(
                 SELECT_RELEASE,
@@ -378,7 +377,6 @@ async fn deploy(
     .await?;
     qualification.assert_artifacts()?;
     require_selected(&transaction, snapshot, release).await?;
-    activate(&transaction, &snapshot.manifest, release, &args.principal).await?;
     transaction.commit().await?;
     Ok(DeployedRelease {
         source_commit: qualification.source_commit.clone(),
@@ -535,72 +533,6 @@ async fn require_compatible_schema(
         &ReleaseScope::new(release.tenant.as_str(), release.environment.as_str()),
     )
     .await
-}
-
-async fn activate(
-    transaction: &Transaction<'_>,
-    manifest: &ServingManifest,
-    release: &PushReleaseManifestRequest,
-    principal: &str,
-) -> anyhow::Result<()> {
-    for wiring in &manifest.workflow.wirings {
-        let environment = &release.environment;
-        let current = transaction.query_opt("SELECT confirmed_definition_hash, enabled FROM catalog.wiring_activation WHERE tenant_id = $1 AND package_id = $2 AND environment = $3 AND wiring_id = $4 FOR UPDATE", &[&release.tenant, &wiring.package_id, &environment, &wiring.wiring_id]).await?;
-        if current.is_some_and(|row| {
-            row.get::<_, String>(0) == wiring.graph_hash.as_str() && row.get::<_, bool>(1)
-        }) {
-            continue;
-        }
-        let facts = transaction
-            .query_one(
-                wamn_catalog::activation_facts(),
-                &[
-                    &wiring.package_id,
-                    &environment,
-                    &wiring.wiring_id,
-                    &wiring.graph_hash.as_str(),
-                ],
-            )
-            .await?;
-        wamn_catalog::validate_wiring_activation(
-            &wiring.package_id,
-            environment,
-            &wiring.wiring_id,
-            true,
-            WiringActivationFacts {
-                tombstoned: facts.get("tombstoned"),
-                definition_in_release: facts.get("definition_in_release"),
-            },
-        )?;
-        transaction
-            .execute(
-                wamn_catalog::flip_activation(),
-                &[
-                    &wiring.package_id,
-                    &environment,
-                    &wiring.wiring_id,
-                    &wiring.graph_hash.as_str(),
-                    &true,
-                ],
-            )
-            .await?;
-        transaction
-            .query_one(
-                wamn_catalog::record_activation_event(),
-                &[
-                    &wiring.package_id,
-                    &environment,
-                    &wiring.wiring_id,
-                    &true,
-                    &wiring.graph_hash.as_str(),
-                    &Option::<String>::None,
-                    &principal,
-                    &"deploy-qualified-release",
-                ],
-            )
-            .await?;
-    }
-    Ok(())
 }
 
 fn pinned_bytes(qualification: &Qualification, path: &Path) -> anyhow::Result<Vec<u8>> {

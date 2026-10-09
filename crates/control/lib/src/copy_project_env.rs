@@ -5,7 +5,6 @@
 //! the connections and executes each [`CopyStep`] by composing the shipped
 //! machinery.
 //!
-//! Definition promotion now has one production owner, `wamn-ctl promote`.
 //! This operations verb retains only `pg_restore --data-only
 //! --disable-triggers` from a fresh `pg_dump -Fd` snapshot. The driver records
 //! that snapshot in `provisioning.dumps`.

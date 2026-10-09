@@ -73,13 +73,6 @@ const INSERT_RELEASE_SQL: &str = "\
 INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
      VALUES ($1, $2, $3) ON CONFLICT DO NOTHING";
 
-fn expected_environment_sql(run_schema: &BareSchemaName) -> String {
-    format!(
-        "SELECT expected_environment FROM {}.environment_policies WHERE tenant_id = $1",
-        run_schema.quoted()
-    )
-}
-
 fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
     format!(
         "SELECT expected_environment, source_policy_org, source_policy_hash \
@@ -812,29 +805,6 @@ pub(crate) async fn read_projected_environment_policy(
         .map_err(|error| storage("read the provisioned environment policy", error))
 }
 
-pub(crate) async fn read_expected_environment(
-    transaction: &Transaction<'_>,
-    run_schema: &BareSchemaName,
-    tenant_id: &str,
-) -> Result<Option<String>, PublishManifestError> {
-    transaction
-        .query_opt(&expected_environment_sql(run_schema), &[&tenant_id])
-        .await
-        .map(|row| row.map(|row| row.get(0)))
-        .map_err(|error| storage("read the provisioned environment policy", error))
-}
-
-pub(crate) fn verify_provisioned_environment(
-    expected_environment: Option<&str>,
-    scope: &ReleaseScope,
-    run_schema: &BareSchemaName,
-) -> Result<(), PublishManifestError> {
-    let Some(expected_environment) = expected_environment else {
-        return Err(environment_policy_absent(scope, run_schema));
-    };
-    verify_environment_name(expected_environment, scope)
-}
-
 pub(crate) fn verify_projected_environment_policy(
     projected: Option<&ProjectedEnvironmentPolicy>,
     source_policy: &AuthoritativeEnvironmentPolicy,
@@ -1122,45 +1092,6 @@ fn sha256(bytes: &[u8]) -> String {
         "sha256:{}",
         hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
     )
-}
-
-/// Publish a release promoted from a published one.
-///
-/// The source manifest is the authority once published, so its registrations
-/// and the contract facts of its routes carry over. Promotion never reads a
-/// package folder.
-pub async fn publish_promoted_release_manifest(
-    transaction: &Transaction<'_>,
-    request: &PublishReleaseManifest<'_>,
-    registrations: &BTreeMap<String, ServingRegistration>,
-    routes: &BTreeSet<ServingRoute>,
-) -> Result<PublishedRelease, PublishManifestError> {
-    let package_manifests = BTreeMap::new();
-    let route_contracts = routes
-        .iter()
-        .map(|route| {
-            (
-                (route.package_id.clone(), route.operation.clone()),
-                RouteContract {
-                    kind: route.type_,
-                    reads: route.reads.clone(),
-                    revision: route.revision.clone(),
-                    idempotency: route.idempotency.clone(),
-                    canonicalization: route.canonicalization.clone(),
-                    claim_operation: route.claim_operation.clone(),
-                },
-            )
-        })
-        .collect();
-    publish_release_from_sources(
-        transaction,
-        request,
-        &package_manifests,
-        None,
-        &route_contracts,
-        Some(registrations),
-    )
-    .await
 }
 
 async fn publish_release_with_package_manifests(

@@ -9,8 +9,8 @@ use crate::print_release_env::{ReleaseCarrier, ReleaseSnapshot};
 use crate::push_release_manifest::PushReleaseManifestRequest;
 
 use super::{
-    SELECT_RELEASE, activate, argument, authenticated_interaction, claim,
-    require_compatible_schema, require_released_route, require_selected, require_supplied_fields,
+    SELECT_RELEASE, argument, authenticated_interaction, claim, require_compatible_schema,
+    require_released_route, require_selected, require_supplied_fields,
 };
 
 mod vector {
@@ -320,12 +320,6 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
     .await
     .expect("the concurrent selection waits on the real head row lock");
     assert!(!selection.is_finished());
-    activate(&transaction, &previous.manifest, &release, "delivery-test")
-        .await
-        .unwrap();
-    activate(&transaction, &previous.manifest, &release, "delivery-test")
-        .await
-        .unwrap();
     transaction.commit().await.unwrap();
     selection.await.unwrap();
     let transaction = first.transaction().await.unwrap();
@@ -338,15 +332,6 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
             .contains("superseded")
     );
     transaction.rollback().await.unwrap();
-    let count: i64 = first
-        .query_one("SELECT count(*) FROM catalog.wiring_activation_events", &[])
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(
-        count, 1,
-        "late selection and exact retry add no activation events"
-    );
     seed_package(&first, "3.0.0", Some("2.0.0"), 'e', 'e').await;
     let mut transaction = first.transaction().await.unwrap();
     claim(&transaction, &release.tenant).await.unwrap();

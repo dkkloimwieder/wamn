@@ -167,8 +167,7 @@ pub struct EnvPolicy {
     pub name: Env,
     /// Whether this env owns its cluster or shares another env's recovery domain.
     pub recovery_domain: RecoveryDomain,
-    /// Ordering for promotion (`dev` < `prod`); the `promote` env-order check
-    /// reads this instead of the retired `Env::ALL`.
+    /// Ordering for promotion (`dev` < `prod`).
     pub promotion_rank: i32,
     /// HA / replica count for the cluster sized by this env.
     pub instances: i32,

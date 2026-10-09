@@ -34,7 +34,7 @@ use tokio_postgres::NoTls;
 use wamn_catalog::{
     AdmittedComponent, ComponentDeclaration, ConnectionTypeDescriptor,
     SERVING_MANIFEST_FORMAT_VERSION, ServingComponentOperation, WiringDocument, WiringNode,
-    WiringTerminal, flip_activation,
+    WiringTerminal,
 };
 use wamn_control::push_component::admitted_projection_hash;
 use wamn_control_provision::{
@@ -707,13 +707,6 @@ async fn seed_with_client(
         )
         .await
         .context("select the effective release")?;
-    client
-        .execute(
-            flip_activation(),
-            &[&PACKAGE, &ENVIRONMENT, &WIRING_ID, &wiring_hash, &true],
-        )
-        .await
-        .context("activate the wiring")?;
 
     let config: tokio_postgres::Config = options
         .database_url

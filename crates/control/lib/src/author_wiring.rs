@@ -50,8 +50,7 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 /// `wamn_run.gate_reports` is FORCE-RLS, so an unclaimed session reads zero rows
 /// and would refuse every authorship as ungated. The control read runs outside
 /// any explicit transaction, where the local form would expire with the
-/// statement that set it, so the claim is session-scoped here — the same shape
-/// [`crate::promote`] uses for a connection it opened for one tenant's work.
+/// statement that set it, so the claim is session-scoped here.
 const CLAIM_CONTROL_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, false)";
 
 /// Read the gate verdict recorded for exactly one document's hash.

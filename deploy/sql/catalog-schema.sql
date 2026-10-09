@@ -355,34 +355,6 @@ CREATE TABLE catalog.wiring_tombstones (
         PRIMARY KEY (tenant_id, package_id, environment, wiring_id)
 );
 
-CREATE TABLE catalog.wiring_activation (
-    tenant_id                  text        NOT NULL CHECK (tenant_id <> ''),
-    package_id                 text        NOT NULL CHECK (package_id <> ''),
-    environment                text        NOT NULL CHECK (environment <> ''),
-    wiring_id                  text        NOT NULL CHECK (wiring_id <> ''),
-    confirmed_definition_hash  text        NOT NULL
-        CHECK (confirmed_definition_hash ~ '^sha256:[0-9a-f]{64}$'),
-    enabled                    boolean     NOT NULL,
-    changed_at                 timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT wiring_activation_pkey
-        PRIMARY KEY (tenant_id, package_id, environment, wiring_id)
-);
-
-CREATE TABLE catalog.wiring_activation_events (
-    event_seq                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant_id                  text        NOT NULL CHECK (tenant_id <> ''),
-    package_id                 text        NOT NULL CHECK (package_id <> ''),
-    environment                text        NOT NULL CHECK (environment <> ''),
-    wiring_id                  text        NOT NULL CHECK (wiring_id <> ''),
-    enabled                    boolean     NOT NULL,
-    confirmed_definition_hash  text        NOT NULL
-        CHECK (confirmed_definition_hash ~ '^sha256:[0-9a-f]{64}$'),
-    source_environment         text,
-    changed_by                 text        NOT NULL CHECK (changed_by <> ''),
-    reason                     text        NOT NULL CHECK (reason <> ''),
-    changed_at                 timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE catalog.package_upgrade_qualifications (
     tenant_id                   text        NOT NULL CHECK (tenant_id <> ''),
     package_id                  text        NOT NULL CHECK (package_id <> ''),
@@ -477,7 +449,7 @@ BEGIN
         'component_digest_owners', 'component_library', 'connection_requirements',
         'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
-        'wiring_tombstones', 'wiring_activation', 'wiring_activation_events',
+        'wiring_tombstones',
         'package_upgrade_qualifications',
         'event_registrations', 'package_upgrade_stages'
     ] LOOP
@@ -499,8 +471,8 @@ BEGIN
 END
 $tenant_floors$;
 
--- Immutable facts reject both mutation and removal. Heads, activation pointers,
--- and connection instances are the deliberately mutable control rows.
+-- Immutable facts reject both mutation and removal. Heads and connection
+-- instances are the deliberately mutable control rows.
 DO $immutable_facts$
 DECLARE
     relation_name text;
@@ -510,7 +482,7 @@ BEGIN
         'releases', 'component_digest_owners', 'component_library',
         'connection_requirements', 'connection_generations',
         'connection_bindings', 'wirings', 'wiring_tombstones',
-        'wiring_activation_events', 'package_upgrade_qualifications'
+        'package_upgrade_qualifications'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
@@ -531,8 +503,6 @@ GRANT SELECT ON catalog.packages,
     catalog.connection_bindings,
     catalog.wirings,
     catalog.wiring_tombstones,
-    catalog.wiring_activation,
-    catalog.wiring_activation_events,
     catalog.event_registrations
 TO wamn_app;
 

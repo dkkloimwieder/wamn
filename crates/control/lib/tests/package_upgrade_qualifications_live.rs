@@ -99,7 +99,8 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     // and names its releases by integer id: the release tables, the head, the
     // connection bindings and the run pin that migration 0012 converts.
     // Only this registry projection is needed to register the disposable target,
-    // with the permission rows that migration 0011 prunes.
+    // with the permission rows that migration 0011 prunes and the wiring
+    // activation tables that migration 0013 drops.
     client
         .batch_execute(
             "DROP TABLE catalog.package_upgrade_qualifications; \
@@ -186,6 +187,8 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
                DROP CONSTRAINT package_definition_owners_definition_type_check, \
                ADD CONSTRAINT package_definition_owners_definition_type_check \
                  CHECK (definition_type IN ('relation', 'field', 'constraint')); \
+             CREATE TABLE catalog.wiring_activation (tenant_id text); \
+             CREATE TABLE catalog.wiring_activation_events (tenant_id text); \
              CREATE SCHEMA app_system; \
              CREATE TABLE app_system.permissions (permission text, required_by text); \
              CREATE SCHEMA registry; \
@@ -222,7 +225,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(migrations, 12);
+    assert_eq!(migrations, 13);
     // Migration 0012 keyed the release rows by their digest: the snapshot became
     // the cached release, the head took its digest, and each run took the digest
     // of its frozen release or, with no frozen release, no pin.

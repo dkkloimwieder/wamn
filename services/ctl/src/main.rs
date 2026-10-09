@@ -107,8 +107,6 @@ enum Command {
     PrintReleaseEnv(delivery_verbs::PrintReleaseEnvArgs),
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
-    /// Promote one verified format-1 release into a target environment
-    Promote(release_verbs::PromoteArgs),
     /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
     ReconcileReplicaIdentity(package_verbs::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
@@ -184,7 +182,6 @@ async fn main() -> anyhow::Result<()> {
         Command::PublishRelease(args) => release_verbs::publish(args).await,
         Command::PrintReleaseEnv(args) => delivery_verbs::print_release_env(args).await,
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),
-        Command::Promote(args) => release_verbs::promote(args).await,
         Command::ReconcileReplicaIdentity(args) => {
             package_verbs::reconcile_replica_identity(args).await
         }

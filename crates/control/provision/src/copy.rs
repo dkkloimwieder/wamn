@@ -1,8 +1,7 @@
 //! The env-symmetric **data copy** plan (wamn-8df.5, D18 §4).
 //!
 //! One operation over arbitrary `(org, project, env)` triples — same-org or
-//! cross-org. `wamn-ctl promote` owns definition promotion. This plan copies
-//! data only.
+//! cross-org. This plan copies data only.
 //!
 //! This module is **pure** (SR3 / house rule 1): the request/step model, the
 //! plan derivation ([`plan_copy`]), and the quiesce/verify SQL + argv builders.

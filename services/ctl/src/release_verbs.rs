@@ -1,4 +1,4 @@
-//! Arguments and output of the `author-wiring`, `publish-release`, `promote`,
+//! Arguments and output of the `author-wiring`, `publish-release`,
 //! `reconcile-run-plane`, and `terminalize-effect-uncertain` verbs.
 
 use std::path::PathBuf;
@@ -6,14 +6,12 @@ use std::path::PathBuf;
 use clap::Args;
 use wamn_catalog::PackageCoordinate;
 use wamn_control::author_wiring::{self, AuthorWiringDocumentRequest};
-use wamn_control::promote::{self, PromoteRequest};
 use wamn_control::publish_release::{
     self, PublishReleaseRequest, ReleaseWiringTarget, parse_package,
 };
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneOutcome, ReconcileRunPlaneRequest};
 use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
 use wamn_run_state::operator_action::OperatorActionBasis;
-use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Arguments for the wiring-authorship verb.
 #[derive(Debug, Args)]
@@ -80,45 +78,6 @@ pub struct PublishReleaseArgs {
     /// Exact `wamn.json` for every package in the release.
     #[arg(long = "package-manifest", value_name = "PATH", required = true)]
     pub package_manifests: Vec<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-pub struct PromoteArgs {
-    #[arg(long)]
-    pub source_database_url: String,
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub target_database_url: String,
-    #[arg(long)]
-    pub control_database_url: String,
-    #[arg(long)]
-    pub org: String,
-    #[arg(long)]
-    pub project: String,
-    #[arg(long)]
-    pub tenant: String,
-    /// The source release, as its manifest digest.
-    #[arg(long)]
-    pub source_release_digest: String,
-    #[arg(long)]
-    pub source_environment: String,
-    #[arg(long)]
-    pub target_environment: String,
-    #[arg(long)]
-    pub run_schema: String,
-    #[arg(long)]
-    pub artifact_base: String,
-    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
-    pub registry_auth_file: PathBuf,
-    #[arg(long, default_value_t = false)]
-    pub insecure_registry: bool,
-    /// PEM CA bundle trusted for the registry, on top of the compiled-in
-    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
-    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
-    pub oci_ca_paths: Vec<PathBuf>,
-    #[arg(long)]
-    pub principal: String,
-    #[arg(long, default_value = "promote-release")]
-    pub reason: String,
 }
 
 #[derive(Debug, Args)]
@@ -226,39 +185,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     })
     .await?;
     println!("{digest}");
-    Ok(())
-}
-
-/// Promote one verified release and print the promotion line.
-pub async fn promote(args: PromoteArgs) -> anyhow::Result<()> {
-    let source = format!("{}:{}", args.source_environment, args.source_release_digest);
-    let target = args.target_environment.clone();
-    let outcome = promote::promote(PromoteRequest {
-        source_database_url: args.source_database_url,
-        target_database_url: args.target_database_url,
-        control_database_url: args.control_database_url,
-        org: args.org,
-        project: args.project,
-        tenant: args.tenant,
-        source_manifest_digest: args.source_release_digest,
-        source_environment: args.source_environment,
-        target_environment: args.target_environment,
-        run_schema: args.run_schema,
-        artifact_base: args.artifact_base,
-        registry_auth_file: args.registry_auth_file,
-        insecure_registry: args.insecure_registry,
-        oci_ca_paths: args.oci_ca_paths,
-        principal: args.principal,
-        reason: args.reason,
-    })
-    .await?;
-    println!(
-        "promoted {} from {source} to {target} as {} ({} component artifact(s) verified, {} pointer flip(s))",
-        outcome.source_manifest_digest,
-        outcome.target_manifest_digest,
-        outcome.verified_components,
-        outcome.activated_wirings,
-    );
     Ok(())
 }
 
