@@ -166,6 +166,9 @@ pub struct ValuesInput {
     pub artifact_base: String,
     pub route_host: String,
     pub roles: Vec<Role>,
+    /// The drain bound of the environment policy, rendered as the host pods'
+    /// `terminationGracePeriodSeconds` (R20).
+    pub drain_bound_seconds: u32,
     /// The body of the one host group entry: env, volumes, volumeMounts,
     /// replicas, http, resources, ociCaPaths. The name, namespace, service and
     /// release arguments are this module's and are refused here.
@@ -230,6 +233,10 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         })
         .collect();
     let mut runtime = Mapping::new();
+    runtime.insert(
+        "terminationGracePeriodSeconds".into(),
+        input.drain_bound_seconds.into(),
+    );
     runtime.insert("podLabels".into(), mapping([("wamn.release", label)]));
     runtime.insert(
         "podAnnotations".into(),
@@ -403,6 +410,7 @@ mod tests {
                 config: Mapping::new(),
                 environment: None,
             }],
+            drain_bound_seconds: 300,
             host_group: group,
         }
     }
@@ -443,6 +451,7 @@ mod tests {
         let label = release_label(DIGEST).expect("digest");
         assert!(values.get("releaseLabel").is_none());
         let runtime = &values["runtime-operator"]["runtime"];
+        assert_eq!(runtime["terminationGracePeriodSeconds"].as_u64(), Some(300));
         assert_eq!(
             runtime["podLabels"]["wamn.release"].as_str(),
             Some(label.as_str())

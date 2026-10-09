@@ -32,7 +32,10 @@ runtime-operator:
       repository: ""
       tag: ""
       pull_policy: IfNotPresent
-    terminationGracePeriodSeconds: 70
+    # The drain bound of the environment policy, which
+    # `wamn_control::release_chart::values` writes (R20). Null removes the
+    # subchart's default, so the chart does not render without it.
+    terminationGracePeriodSeconds: null
     drainDelaySeconds: 5
     natsConnectTimeoutSeconds: 60
     probes:

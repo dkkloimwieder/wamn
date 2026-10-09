@@ -101,6 +101,7 @@ fn input(env: &str) -> ValuesInput {
                 environment: Some(environment),
             },
         ],
+        drain_bound_seconds: 300,
         host_group: group,
     }
 }
@@ -209,6 +210,11 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     assert_eq!(
         pod["metadata"]["annotations"]["wamn.environment"].as_str(),
         Some("acme/wms/prod")
+    );
+    // R20: the policy's drain bound is the pod's grace period.
+    assert_eq!(
+        pod["spec"]["terminationGracePeriodSeconds"].as_u64(),
+        Some(300)
     );
     let containers = pod["spec"]["containers"].as_sequence().expect("containers");
     assert_eq!(containers.len(), 1);

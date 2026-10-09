@@ -657,6 +657,7 @@ async fn run(smoke: &mut Smoke, repository: &Path, host_image: &str) -> anyhow::
         // No role: `helm --wait` would wait on a role workload whose component
         // is not in the registry. The probes below select the host instead.
         roles: Vec::new(),
+        drain_bound_seconds: 70,
         host_group,
     })?;
     std::fs::write(work.join("values.yaml"), serde_yaml::to_string(&rendered)?)?;
