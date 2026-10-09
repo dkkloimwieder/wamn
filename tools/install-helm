@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Install the exact upstream Helm 4 CLI. `release_chart::upgrade` passes
+# `--rollback-on-failure`, which Helm 4 has and Helm 3 does not.
+set -euo pipefail
+
+readonly version=4.2.2
+readonly archive_digest=9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6
+readonly digest=9dc598ed93d4a45352d2c4a3258b6ccabb6213bd3817f0ed5aacc8c428a4ff0d
+readonly asset=helm-v$version-linux-amd64.tar.gz
+readonly repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly install_dir="$repo_root/.tools/helm/$version"
+readonly binary="$install_dir/helm"
+
+if [[ "$(uname -s)/$(uname -m)" != Linux/x86_64 ]]; then
+  echo 'install-helm: the pinned artifact requires Linux x86_64' >&2
+  exit 2
+fi
+
+matches_digest() {
+  printf '%s  %s\n' "$1" "$2" | sha256sum --status --check
+}
+
+if [[ -x "$binary" ]] && matches_digest "$digest" "$binary"; then
+  printf '%s\n' "$binary"
+  exit 0
+fi
+
+mkdir -p -- "$install_dir"
+install_temp=$(mktemp -d "$install_dir/.helm.XXXXXXXX")
+trap 'rm -rf -- "$install_temp"' EXIT
+curl --fail --silent --show-error --location --retry 2 \
+  "https://get.helm.sh/$asset" \
+  --output "$install_temp/$asset"
+if ! matches_digest "$archive_digest" "$install_temp/$asset"; then
+  echo 'install-helm: downloaded bytes do not match the pinned SHA-256' >&2
+  exit 1
+fi
+tar -xzf "$install_temp/$asset" -C "$install_temp" --strip-components=1 linux-amd64/helm
+if ! matches_digest "$digest" "$install_temp/helm"; then
+  echo 'install-helm: the extracted helm does not match the pinned SHA-256' >&2
+  exit 1
+fi
+chmod 755 -- "$install_temp/helm"
+mv -f -- "$install_temp/helm" "$binary"
+printf '%s\n' "$binary"
