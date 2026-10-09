@@ -1016,7 +1016,7 @@ async fn release_bytes(project: &Client, ordinal: i64) -> anyhow::Result<Vec<u8>
     Ok(project
         .query_one(
             "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 \
-             ORDER BY recorded_at, manifest_digest OFFSET $2 - 1 LIMIT 1",
+             ORDER BY recorded_at, manifest_digest OFFSET $2::int8 - 1 LIMIT 1",
             &[&identity().tenant.as_str(), &ordinal],
         )
         .await?
