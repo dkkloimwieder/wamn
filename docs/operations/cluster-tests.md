@@ -144,6 +144,21 @@ A passing case first prints the route and the caller token file.
 Without the variable, the case does not hold.
 The startup case records requests, traces, recovery, and cache identity without asserting an overhead ratio.
 
+### Release chart smoke
+
+The smoke installs the `release` chart on its own kind cluster with one host and no role.
+It checks the host heartbeat labels, placement by `hostSelector`, the operator release, and a clean uninstall.
+It also starts a registry and a stand-in Postgres, and it removes them and the cluster at the end.
+Build `wamn-identity`, then run the smoke with a local host image:
+
+```bash
+cargo build -p wamn-identity
+WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> \
+  cargo test -p wamn-control --test release_chart_smoke -- --ignored --nocapture
+```
+
+The test prints its work directory. `report.json` in that directory records each check with its command, output, and result.
+
 ### Native RC
 
 Build `wamn-gates`, then inspect its plan before creating the declared cluster:
