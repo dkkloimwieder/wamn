@@ -187,6 +187,13 @@ CREATE TABLE registry.env_policies (
     durability_class text NOT NULL DEFAULT 'standard'
         CONSTRAINT env_policies_durability_class_check
         CHECK (durability_class IN ('standard', 'durable')),
+    -- The readiness budget and drain bound of `env apply`, and whether an
+    -- apply needs approval (docs/plan/platform-deploy.md §10.1).
+    readiness_budget_seconds int NOT NULL DEFAULT 600
+        CONSTRAINT env_policies_readiness_budget_check CHECK (readiness_budget_seconds > 0),
+    drain_bound_seconds int NOT NULL DEFAULT 300
+        CONSTRAINT env_policies_drain_bound_check CHECK (drain_bound_seconds > 0),
+    approval_required boolean NOT NULL DEFAULT false,
     PRIMARY KEY (org, name),
     -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
     -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
@@ -610,6 +617,10 @@ CREATE TABLE registry.project_envs (
     instance_suffix  text NOT NULL,
     disposable       boolean NOT NULL DEFAULT false,
     status           text NOT NULL DEFAULT 'active',
+    -- The route host the environment document declares (docs/plan/platform-deploy.md §10.1).
+    route_host       text
+        CONSTRAINT project_envs_route_host_check
+        CHECK (route_host IS NULL OR route_host ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
     PRIMARY KEY (org, project, env),
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)

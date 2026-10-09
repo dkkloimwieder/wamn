@@ -162,6 +162,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0016_copy_environment.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0016_copy_environment.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0017_environment_apply.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0017_environment_apply.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

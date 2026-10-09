@@ -6,7 +6,7 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    component_verbs, delivery_verbs, identity_verbs, package_verbs, provisioning_verbs,
+    component_verbs, delivery_verbs, env_verbs, identity_verbs, package_verbs, provisioning_verbs,
     release_verbs, role_verbs, saga_verbs, workflow_verbs,
 };
 
@@ -124,6 +124,9 @@ enum Command {
     /// Start, park, release, and list workflow runs.
     #[command(subcommand)]
     Workflow(workflow_verbs::WorkflowCommand),
+    /// Apply, show and dry-run one environment document.
+    #[command(subcommand)]
+    Env(env_verbs::EnvCommand),
 }
 
 #[tokio::main]
@@ -191,6 +194,7 @@ async fn main() -> anyhow::Result<()> {
         Command::SagaResume(args) => saga_verbs::resume(args).await,
         Command::SagaAbandon(args) => saga_verbs::abandon(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
+        Command::Env(command) => env_verbs::run(command).await,
     }
 }
 

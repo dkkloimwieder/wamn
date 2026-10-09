@@ -43,8 +43,8 @@ mod sqlx_metadata;
 mod upgrade_stage;
 
 pub use authoring::{
-    AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, check_compiled_manifest, compile_manifest,
-    is_authored, is_package_root, manifest_package_root, package_manifest_path,
+    AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, check_compiled_manifest, compile_environment,
+    compile_manifest, is_authored, is_package_root, manifest_package_root, package_manifest_path,
     write_compiled_manifest,
 };
 /// The write log's three fixed statements.

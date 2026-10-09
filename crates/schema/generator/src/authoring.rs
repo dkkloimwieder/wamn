@@ -29,6 +29,8 @@ pub const KCL_ENV: &str = "WAMN_KCL";
 
 const SCHEMA_MODULE: &str = include_str!("../kcl/manifest/manifest.k");
 const SCHEMA_MODULE_DECLARATION: &str = include_str!("../kcl/manifest/kcl.mod");
+const ENVIRONMENT_MODULE: &str = include_str!("../kcl/environment/environment.k");
+const ENVIRONMENT_MODULE_DECLARATION: &str = include_str!("../kcl/environment/kcl.mod");
 
 /// Whether the package authors its manifest in `wamn.k`.
 #[must_use]
@@ -89,27 +91,8 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
         "{}: the manifest is authored in wamn.k; wamn.json is generated",
         package_root.display()
     );
-    let kcl = kcl_binary()?;
-    let module = SchemaModule::write()?;
-    // A private package cache: kcl prints "waiting for package-cache lock..."
-    // to stdout while another run holds the shared one.
-    let output = Command::new(&kcl)
-        .env("KCL_PKG_PATH", module.0.join("packages"))
-        .args(["run", AUTHORED_MANIFEST, "-E"])
-        .arg(format!("manifest={}", module.0.join("manifest").display()))
-        .args(["--format", "json", "--disable_none"])
-        .current_dir(package_root)
-        .output()
-        .with_context(|| format!("run {}", kcl.display()))?;
-    if !output.status.success() {
-        bail!(
-            "compile {}:\n{}",
-            package_root.join(AUTHORED_MANIFEST).display(),
-            without_terminal_colors(&String::from_utf8_lossy(&output.stderr)).trim_end()
-        );
-    }
-    let json = String::from_utf8(output.stdout).context("kcl wrote JSON that is not UTF-8")?;
-    let bytes = two_space_indent(&json).into_bytes();
+    let module = SchemaModule::write("manifest", SCHEMA_MODULE_DECLARATION, SCHEMA_MODULE)?;
+    let bytes = run_kcl(&module, package_root, Path::new(AUTHORED_MANIFEST))?;
     PackageManifest::from_slice(&bytes).with_context(|| {
         format!(
             "the compiled {} is not a valid manifest",
@@ -196,6 +179,65 @@ fn first_difference(at: &str, expected: &Value, actual: &Value) -> Option<String
     }
 }
 
+/// Compile an environment document (docs/plan/platform-deploy.md §10.1) to JSON.
+///
+/// The file imports the `environment` schema module that ships in this crate.
+/// The bytes are 2-space indented JSON with the keys in schema order. The
+/// caller parses them into its own type.
+///
+/// # Errors
+///
+/// When no `kcl` runs, or when KCL refuses the file (the error names its path
+/// and line).
+pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
+    let directory = file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    let name = file
+        .file_name()
+        .with_context(|| format!("{} names no file", file.display()))?;
+    let module = SchemaModule::write(
+        "environment",
+        ENVIRONMENT_MODULE_DECLARATION,
+        ENVIRONMENT_MODULE,
+    )?;
+    run_kcl(
+        &module,
+        directory.unwrap_or_else(|| Path::new(".")),
+        Path::new(name),
+    )
+}
+
+/// Run `kcl` on one file in `directory` against one schema module.
+fn run_kcl(module: &SchemaModule, directory: &Path, file: &Path) -> Result<Vec<u8>> {
+    let kcl = kcl_binary()?;
+    // A private package cache: kcl prints "waiting for package-cache lock..."
+    // to stdout while another run holds the shared one.
+    let output = Command::new(&kcl)
+        .env("KCL_PKG_PATH", module.root.join("packages"))
+        .arg("run")
+        .arg(file)
+        .arg("-E")
+        .arg(format!(
+            "{}={}",
+            module.name,
+            module.root.join(module.name).display()
+        ))
+        .args(["--format", "json", "--disable_none"])
+        .current_dir(directory)
+        .output()
+        .with_context(|| format!("run {}", kcl.display()))?;
+    if !output.status.success() {
+        bail!(
+            "compile {}:\n{}",
+            directory.join(file).display(),
+            without_terminal_colors(&String::from_utf8_lossy(&output.stderr)).trim_end()
+        );
+    }
+    let json = String::from_utf8(output.stdout).context("kcl wrote JSON that is not UTF-8")?;
+    Ok(two_space_indent(&json).into_bytes())
+}
+
 /// The `kcl` binary: `$WAMN_KCL`, or the one `tools/install-kcl` installs.
 fn kcl_binary() -> Result<PathBuf> {
     if let Some(path) = std::env::var_os(KCL_ENV) {
@@ -219,31 +261,35 @@ fn kcl_binary() -> Result<PathBuf> {
     Ok(PathBuf::from(path.trim_end()))
 }
 
-/// The schema module and a package cache, in a private directory for one compile.
-struct SchemaModule(PathBuf);
+/// A schema module and a package cache, in a private directory for one compile.
+struct SchemaModule {
+    root: PathBuf,
+    name: &'static str,
+}
 
 impl SchemaModule {
-    fn write() -> Result<Self> {
+    fn write(name: &'static str, declaration: &str, source: &str) -> Result<Self> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "wamn-kcl-manifest-{}-{}",
+            "wamn-kcl-{name}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        let module = Self(root);
-        let manifest = module.0.join("manifest");
-        fs::create_dir_all(&manifest).with_context(|| format!("create {}", manifest.display()))?;
-        fs::write(manifest.join("kcl.mod"), SCHEMA_MODULE_DECLARATION)
-            .context("write the manifest schema module")?;
-        fs::write(manifest.join("manifest.k"), SCHEMA_MODULE)
-            .context("write the manifest schema module")?;
+        let module = Self { root, name };
+        let directory = module.root.join(name);
+        fs::create_dir_all(&directory)
+            .with_context(|| format!("create {}", directory.display()))?;
+        fs::write(directory.join("kcl.mod"), declaration)
+            .with_context(|| format!("write the {name} schema module"))?;
+        fs::write(directory.join(format!("{name}.k")), source)
+            .with_context(|| format!("write the {name} schema module"))?;
         Ok(module)
     }
 }
 
 impl Drop for SchemaModule {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 

@@ -21,6 +21,7 @@ pub mod delivery;
 pub mod dev;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
+pub mod environment;
 pub mod environment_copy;
 pub mod environment_saga;
 #[cfg(feature = "ops")]

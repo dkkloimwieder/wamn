@@ -194,10 +194,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         })
         .collect();
     let mut runtime = Mapping::new();
-    runtime.insert(
-        "podLabels".into(),
-        mapping([("wamn.release", label)]),
-    );
+    runtime.insert("podLabels".into(), mapping([("wamn.release", label)]));
     runtime.insert(
         "podAnnotations".into(),
         mapping([
