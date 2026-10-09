@@ -35,7 +35,7 @@ pub struct Policy {
 pub struct EnvironmentRow {
     pub instance_suffix: String,
     pub route_host: Option<String>,
-    pub policy_name: Option<String>,
+    pub policy_name: String,
 }
 
 /// One installed package in the project database.
@@ -727,7 +727,7 @@ fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String
         Some(_) => {}
     }
     if let Some(row) = &authorities.row
-        && row.policy_name.as_deref() != Some(document.policy.as_str())
+        && row.policy_name != document.policy
     {
         plan.push(format!("set the policy to {}", document.policy));
     }

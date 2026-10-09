@@ -451,10 +451,10 @@ async fn assert_user_environment_membership(
          INSERT INTO registry.env_policies \
            (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
          VALUES ('other-org', 'dev', '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
-         INSERT INTO registry.project_envs (org, project, env, secret_name, secret_namespace, instance_suffix) \
-         VALUES ('acme', 'receiving', 'prod', 'membership-prod', 'wamn-system', 'member01'), \
-                ('other-org', 'receiving', 'dev', 'membership-other', 'wamn-system', 'member02'), \
-                ('acme', 'other', 'dev', 'membership-project', 'wamn-system', 'member03');"
+         INSERT INTO registry.project_envs (org, project, env, secret_name, secret_namespace, instance_suffix, policy_name) \
+         VALUES ('acme', 'receiving', 'prod', 'membership-prod', 'wamn-system', 'member01', 'prod'), \
+                ('other-org', 'receiving', 'dev', 'membership-other', 'wamn-system', 'member02', 'dev'), \
+                ('acme', 'other', 'dev', 'membership-project', 'wamn-system', 'member03', 'dev');"
     ).await?;
     project
         .execute(

@@ -23,9 +23,9 @@ const SEED_SQL: &str = "\
       ('other', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
     INSERT INTO registry.projects (org, id) VALUES \
       ('acme', 'billing'), ('acme', 'shop'), ('other', 'billing'); \
-    INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix) VALUES \
-      ('acme', 'billing', 'dev', 's1', 'aaaaaaa1'), ('acme', 'billing', 'prod', 's2', 'aaaaaaa2'), \
-      ('acme', 'shop', 'dev', 's3', 'aaaaaaa3'), ('other', 'billing', 'dev', 's4', 'aaaaaaa4');";
+    INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) VALUES \
+      ('acme', 'billing', 'dev', 's1', 'aaaaaaa1', 'dev'), ('acme', 'billing', 'prod', 's2', 'aaaaaaa2', 'prod'), \
+      ('acme', 'shop', 'dev', 's3', 'aaaaaaa3', 'dev'), ('other', 'billing', 'dev', 's4', 'aaaaaaa4', 'dev');";
 
 /// The org roles, project roles and memberships of one principal, one row per
 /// line.
@@ -156,8 +156,8 @@ async fn org_grants_write_their_rows_and_refuse_outside_the_org() {
                (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
                VALUES ('acme', 'test', '\"own\"', 2, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
              INSERT INTO registry.projects (org, id) VALUES ('acme', 'store'); \
-             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix) VALUES \
-               ('acme', 'store', 'dev', 's5', 'aaaaaaa5'), ('acme', 'billing', 'test', 's6', 'aaaaaaa6');",
+             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) VALUES \
+               ('acme', 'store', 'dev', 's5', 'aaaaaaa5', 'dev'), ('acme', 'billing', 'test', 's6', 'aaaaaaa6', 'test');",
         )
         .await
         .expect("add a project and an environment");

@@ -562,9 +562,10 @@ CREATE TABLE identity.session_signing_state (
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)
 -- database, keyed by the identity triple, with a REFERENCE to its credential
--- Secret. `env` is a validated slug; the composite FK to
--- `registry.env_policies (org, name)` enforces that it names a policy in ITS
--- ORG's set (D18 + 8df.4 — referential integrity replaces the retired
+-- Secret. `env` is a validated slug. `policy_name` is the policy its document
+-- names, and its composite FK to `registry.env_policies (org, name)` enforces
+-- that it names a policy in ITS ORG's set; provisioning records the env
+-- name (D18 + 8df.4 — referential integrity replaces the retired
 -- `env IN ('dev','canary','prod')` CHECK; another org's policy never
 -- satisfies it). The policy FK is deliberately NOT a CASCADE: a policy in use
 -- by a provisioned env cannot be dropped (a cascade would silently erase the
@@ -618,15 +619,13 @@ CREATE TABLE registry.project_envs (
     disposable       boolean NOT NULL DEFAULT false,
     status           text NOT NULL DEFAULT 'active',
     -- The policy name the environment document declares (docs/plan/platform-deploy.md R2, R21).
-    policy_name      text,
+    policy_name      text NOT NULL,
     -- The route host the environment document declares (docs/plan/platform-deploy.md §10.1).
     route_host       text
         CONSTRAINT project_envs_route_host_check
         CHECK (route_host IS NULL OR route_host ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
     PRIMARY KEY (org, project, env),
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
-    FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)
-        DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT project_envs_policy_name_fkey
         FOREIGN KEY (org, policy_name) REFERENCES registry.env_policies (org, name)
         DEFERRABLE INITIALLY IMMEDIATE,

@@ -156,9 +156,9 @@ async fn reset_cluster(catalog: &Client, database: &str, roles: &[&str]) {
              ON CONFLICT (org, name) DO NOTHING; \
              INSERT INTO registry.projects (org, id) VALUES ('{ORG}', '{PROJECT}') \
              ON CONFLICT (org, id) DO NOTHING; \
-             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix) \
+             INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) \
              VALUES ('{ORG}', '{PROJECT}', '{ENVIRONMENT}', \
-                     'wamn-db-{ORG}--{PROJECT}--{ENVIRONMENT}', '{INSTANCE}') \
+                     'wamn-db-{ORG}--{PROJECT}--{ENVIRONMENT}', '{INSTANCE}', '{ENVIRONMENT}') \
              ON CONFLICT (org, project, env) DO UPDATE SET instance_suffix = EXCLUDED.instance_suffix;"
         ))
         .await

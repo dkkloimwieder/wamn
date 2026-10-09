@@ -257,8 +257,8 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image)
           VALUES ('{ORG}','{ENVIRONMENT}','"own"',0,1,'1Gi','1','1Gi','postgres:18');
         INSERT INTO registry.projects (org,id) VALUES ('{ORG}','{PROJECT}');
-        INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix)
-          VALUES ('{ORG}','{PROJECT}','{ENVIRONMENT}','fixture-db','{INSTANCE}');
+        INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix,policy_name)
+          VALUES ('{ORG}','{PROJECT}','{ENVIRONMENT}','fixture-db','{INSTANCE}','{ENVIRONMENT}');
     "#)).await?;
     for instance in [INSTANCE, OTHER_INSTANCE] {
         admin

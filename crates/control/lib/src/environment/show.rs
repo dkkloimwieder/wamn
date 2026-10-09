@@ -42,10 +42,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         .await?
         .with_context(|| format!("environment {triple} has no row"))?;
     document.route_host = row.route_host.clone().unwrap_or_default();
-    document.policy = row
-        .policy_name
-        .clone()
-        .with_context(|| format!("environment {triple} has no policy name; apply its document"))?;
+    document.policy = row.policy_name.clone();
     let name = release_chart::release_name(&document.org, &document.project, &document.env)?;
     if let Some(digest) = read_revision(platform, &name)
         .await?

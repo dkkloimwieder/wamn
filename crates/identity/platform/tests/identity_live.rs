@@ -255,8 +255,8 @@ async fn project_environment_membership_round_trip(
              SELECT id, env, '\"own\"'::jsonb, 1, 1, '1Gi', '1', '1Gi', 'postgres:17' \
              FROM registry.orgs CROSS JOIN (VALUES ('dev'), ('prod')) AS envs(env); \
              INSERT INTO registry.project_envs \
-               (org, project, env, secret_name, instance_suffix) \
-             SELECT p.org, p.id, e.name, 'membership-test-secret', 'a1b2c3d4' \
+               (org, project, env, secret_name, instance_suffix, policy_name) \
+             SELECT p.org, p.id, e.name, 'membership-test-secret', 'a1b2c3d4', e.name \
              FROM registry.projects p JOIN registry.env_policies e ON p.org = e.org;",
         )
         .await
@@ -442,8 +442,8 @@ async fn project_environment_membership_round_trip(
             "DELETE FROM registry.project_envs \
              WHERE org = 'demo' AND project = 'widgets' AND env = 'dev'; \
              INSERT INTO registry.project_envs \
-               (org, project, env, secret_name, instance_suffix) \
-             VALUES ('demo', 'widgets', 'dev', 'replacement-secret', 'e5f6g7h8');",
+               (org, project, env, secret_name, instance_suffix, policy_name) \
+             VALUES ('demo', 'widgets', 'dev', 'replacement-secret', 'e5f6g7h8', 'dev');",
         )
         .await
         .expect("replace the provisioned environment");

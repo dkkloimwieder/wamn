@@ -507,9 +507,9 @@ DO $$ BEGIN
   EXCEPTION WHEN check_violation THEN NULL; END;
 END $$;
 INSERT INTO registry.projects (org, id) VALUES ('acme','billing'),('try','demo');
-INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix)
-  VALUES ('acme','billing','prod','wamn-db-acme-prod','k3m9x2p7'),
-         ('acme','billing','dev','wamn-db-acme-dev','q80zdw41');
+INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
+  VALUES ('acme','billing','prod','wamn-db-acme-prod','k3m9x2p7','prod'),
+         ('acme','billing','dev','wamn-db-acme-dev','q80zdw41','dev');
 
 -- A policy row under an unregistered org is rejected (FK to orgs).
 DO $$ BEGIN BEGIN
@@ -519,13 +519,13 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'a policy under an unknown org must be rejected';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
--- ORG-SCOPING (8df.4): another org's policy never satisfies this org's env FK.
+-- ORG-SCOPING (8df.4): another org's policy never satisfies this org's policy FK.
 -- 'try' has no policies, so a try project-env is rejected even though 'acme'
--- has a 'dev' policy — the composite (org, env) FK is what keeps a T2 and a T4
+-- has a 'dev' policy — the composite (org, policy_name) FK is what keeps a T2 and a T4
 -- org's identically-named envs independent.
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix)
-    VALUES ('try','demo','dev','s','aaaaaaaa');
+  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
+    VALUES ('try','demo','dev','s','aaaaaaaa','dev');
   ASSERT false, 'an env with no policy in ITS org must be rejected (composite FK)';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
@@ -544,23 +544,23 @@ EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
 -- A project-env under an unregistered project is rejected (FK).
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix)
-    VALUES ('acme','ghost','prod','s','bbbbbbbb');
+  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
+    VALUES ('acme','ghost','prod','s','bbbbbbbb','prod');
   ASSERT false, 'a project-env under an unknown project must be rejected';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
 -- D18: an env that names no policy in ITS org's set is rejected (the composite
--- env FK — the retired env CHECK's replacement). 'staging' is not stamped.
+-- policy_name FK — the retired env CHECK's replacement). 'staging' is not stamped.
 DO $$ BEGIN BEGIN
-  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix)
-    VALUES ('acme','billing','staging','s','cccccccc');
-  ASSERT false, 'an env naming no policy must be rejected (env FK)';
+  INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
+    VALUES ('acme','billing','staging','s','cccccccc','staging');
+  ASSERT false, 'an env naming no policy must be rejected (policy_name FK)';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 -- ...but adding the ORG's policy first lets it in (env is data, not a closed CHECK).
 INSERT INTO registry.env_policies (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
   VALUES ('acme', 'staging', '"own"'::jsonb, 20, 1, '2Gi', '200m', '256Mi', 'ghcr.io/cloudnative-pg/postgresql:18');
-INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix)
-  VALUES ('acme','billing','staging','wamn-db-acme-staging','dddddddd');
+INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name)
+  VALUES ('acme','billing','staging','wamn-db-acme-staging','dddddddd','staging');
 DO $$ BEGIN ASSERT (SELECT count(*) FROM registry.project_envs
     WHERE org='acme' AND project='billing' AND env='staging')=1,
   'a project-env in a newly-added env resolves (env is data)'; END $$;

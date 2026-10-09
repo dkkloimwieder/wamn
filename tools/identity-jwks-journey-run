@@ -430,7 +430,7 @@ session_journey() {
     "INSERT INTO registry.orgs (id,placement_type,pool_cluster) VALUES ('acme','pooled','fixture'),('other','pooled','fixture');" \
     "INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18'),('acme','prod','\"own\"',1,1,'1Gi','1','1Gi','postgres:18'),('other','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18');" \
     "INSERT INTO registry.projects (org,id) VALUES ('acme','shared'),('other','shared');" \
-    "INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix) VALUES ('acme','shared','dev','fixture-acme-dev','k3m9x2p7'),('acme','shared','prod','fixture-acme-prod','p7x2m9k3'),('other','shared','dev','fixture-other-dev','q2n5r8t4');" \
+    "INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','shared','dev','fixture-acme-dev','k3m9x2p7','dev'),('acme','shared','prod','fixture-acme-prod','p7x2m9k3','prod'),('other','shared','dev','fixture-other-dev','q2n5r8t4','dev');" \
     >"$evidence_dir/session-registry.sql"
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
     <"$evidence_dir/session-registry.sql" >"$evidence_dir/session-registry.log" 2>&1
