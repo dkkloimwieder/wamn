@@ -39,7 +39,7 @@ use wamn_test_infrastructure::rendering::{
 };
 use wamn_test_infrastructure::secrets::{HostSecretsInput, derive_host_secrets};
 
-use super::{connect, identity, repository_root, routes};
+use super::{FIRST_RELEASE, connect, identity, release_digest_at, repository_root, routes};
 use build::Artifacts;
 use resources::{Resources, checked, write_private};
 use wamn_control_provision::events::{
