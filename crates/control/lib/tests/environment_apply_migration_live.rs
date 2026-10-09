@@ -77,7 +77,6 @@ async fn the_migration_adds_the_apply_columns_as_a_fresh_install_has_them() {
     for column in [
         "registry.env_policies column readiness_budget_seconds integer true 600",
         "registry.env_policies column drain_bound_seconds integer true 300",
-        "registry.env_policies column approval_required boolean true false",
         "registry.project_envs column route_host text false ",
         "registry.project_envs column policy_name text true ",
     ] {
@@ -96,7 +95,7 @@ async fn the_migration_adds_the_apply_columns_as_a_fresh_install_has_them() {
     client
         .batch_execute(
             "ALTER TABLE registry.env_policies DROP COLUMN readiness_budget_seconds, \
-               DROP COLUMN drain_bound_seconds, DROP COLUMN approval_required; \
+               DROP COLUMN drain_bound_seconds; \
              ALTER TABLE registry.project_envs DROP COLUMN route_host, DROP COLUMN policy_name, \
                ADD CONSTRAINT project_envs_org_env_fkey FOREIGN KEY (org, env) \
                  REFERENCES registry.env_policies (org, name) DEFERRABLE INITIALLY IMMEDIATE",

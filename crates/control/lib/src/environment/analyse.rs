@@ -27,7 +27,6 @@ pub struct Policy {
     pub name: String,
     pub readiness_budget_seconds: i32,
     pub drain_bound_seconds: i32,
-    pub approval_required: bool,
 }
 
 /// The environment row of the system database.
@@ -163,14 +162,7 @@ pub async fn analyse(
         live,
     };
     let actor = actor();
-    let mut refusals = refusals(document, &authorities);
-    if authorities.policy.approval_required {
-        refusals.push(format!(
-            "policy {} requires approval, and approval needs an identity principal; \
-             this CLI authenticates as none, so the actor is the OS user {actor}",
-            authorities.policy.name
-        ));
-    }
+    let refusals = refusals(document, &authorities);
     if !refusals.is_empty() {
         bail!("refused:\n- {}", refusals.join("\n- "));
     }
@@ -201,7 +193,7 @@ pub(crate) async fn connect(url: &str) -> anyhow::Result<Client> {
 pub(crate) async fn read_policy(system: &Client, org: &str, name: &str) -> anyhow::Result<Policy> {
     let row = system
         .query_opt(
-            "SELECT readiness_budget_seconds, drain_bound_seconds, approval_required \
+            "SELECT readiness_budget_seconds, drain_bound_seconds \
                FROM registry.env_policies WHERE org = $1 AND name = $2",
             &[&org, &name],
         )
@@ -212,7 +204,6 @@ pub(crate) async fn read_policy(system: &Client, org: &str, name: &str) -> anyho
         name: name.to_owned(),
         readiness_budget_seconds: row.get(0),
         drain_bound_seconds: row.get(1),
-        approval_required: row.get(2),
     })
 }
 
@@ -830,7 +821,6 @@ mod tests {
                 name: "prod".to_owned(),
                 readiness_budget_seconds: 600,
                 drain_bound_seconds: 300,
-                approval_required: false,
             },
             row: None,
             project: Some(ProjectState {

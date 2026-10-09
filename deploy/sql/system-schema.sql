@@ -187,13 +187,12 @@ CREATE TABLE registry.env_policies (
     durability_class text NOT NULL DEFAULT 'standard'
         CONSTRAINT env_policies_durability_class_check
         CHECK (durability_class IN ('standard', 'durable')),
-    -- The readiness budget and drain bound of `env apply`, and whether an
-    -- apply needs approval (docs/plan/platform-deploy.md §10.1).
+    -- The readiness budget and drain bound of `env apply`
+    -- (docs/plan/platform-deploy.md §10.1).
     readiness_budget_seconds int NOT NULL DEFAULT 600
         CONSTRAINT env_policies_readiness_budget_check CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300
         CONSTRAINT env_policies_drain_bound_check CHECK (drain_bound_seconds > 0),
-    approval_required boolean NOT NULL DEFAULT false,
     PRIMARY KEY (org, name),
     -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
     -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
