@@ -617,6 +617,8 @@ CREATE TABLE registry.project_envs (
     instance_suffix  text NOT NULL,
     disposable       boolean NOT NULL DEFAULT false,
     status           text NOT NULL DEFAULT 'active',
+    -- The policy name the environment document declares (docs/plan/platform-deploy.md R2, R21).
+    policy_name      text,
     -- The route host the environment document declares (docs/plan/platform-deploy.md §10.1).
     route_host       text
         CONSTRAINT project_envs_route_host_check
@@ -624,6 +626,9 @@ CREATE TABLE registry.project_envs (
     PRIMARY KEY (org, project, env),
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)
+        DEFERRABLE INITIALLY IMMEDIATE,
+    CONSTRAINT project_envs_policy_name_fkey
+        FOREIGN KEY (org, policy_name) REFERENCES registry.env_policies (org, name)
         DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT project_envs_instance_suffix_check
         CHECK (instance_suffix ~ '^[a-z0-9]{8}$'),

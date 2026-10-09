@@ -197,6 +197,14 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
     project_env_database_stem(org, project, env)
 }
 
+/// The tenant of a project environment: `<org>--<project>--<env>`, the form
+/// [`workload_secret_name`] uses (owner ruling of 2026-10-09 on `wamn-snz0`).
+/// The first apply and the analysis of `env apply` both derive it here, so
+/// the environment document carries no tenant.
+pub fn project_env_tenant(org: &str, project: &str, env: &str) -> String {
+    format!("{org}--{project}--{env}")
+}
+
 /// ONE workload credential Secret name, for any family (`wamn-0h0g.22.16`).
 ///
 /// Replaces the four copy-pasted per-family helpers. The name is

@@ -36,6 +36,7 @@ pub struct Policy {
 pub struct EnvironmentRow {
     pub instance_suffix: String,
     pub route_host: Option<String>,
+    pub policy_name: Option<String>,
 }
 
 /// One installed package in the project database.
@@ -217,7 +218,7 @@ pub(crate) async fn read_row(
 ) -> anyhow::Result<Option<EnvironmentRow>> {
     Ok(system
         .query_opt(
-            "SELECT instance_suffix, route_host FROM registry.project_envs \
+            "SELECT instance_suffix, route_host, policy_name FROM registry.project_envs \
               WHERE org = $1 AND project = $2 AND env = $3",
             &[&document.org, &document.project, &document.env],
         )
@@ -226,6 +227,7 @@ pub(crate) async fn read_row(
         .map(|row| EnvironmentRow {
             instance_suffix: row.get(0),
             route_host: row.get(1),
+            policy_name: row.get(2),
         }))
 }
 
@@ -256,17 +258,8 @@ pub(crate) async fn read_project(
     let Ok(mut client) = connect(&project_url(platform, document, row)?).await else {
         return Ok(None);
     };
-    let tenant: Option<String> = client
-        .query_opt(
-            "SELECT tenant_id FROM wamn_run.environment_policies WHERE expected_environment = $1",
-            &[&document.env],
-        )
-        .await
-        .context("read the project database's tenant")?
-        .map(|row| row.get(0));
-    let Some(tenant) = tenant else {
-        return Ok(None);
-    };
+    let tenant =
+        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
     let transaction = client
         .transaction()
         .await
@@ -658,12 +651,6 @@ pub fn package_compatible(installed: &Installed, version: &str) -> Result<(), St
 /// Every reason the document is refused against the authorities (§10.1 step 3).
 pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
     let mut refusals = Vec::new();
-    if document.policy != document.env {
-        refusals.push(format!(
-            "policy {} differs from env {}: registry.project_envs names its policy by the env",
-            document.policy, document.env
-        ));
-    }
     let empty = ProjectState::default();
     let project = authorities.project.as_ref().unwrap_or(&empty);
     for (package, recorded) in &project.floors {
@@ -746,6 +733,11 @@ fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String
             plan.push(format!("set the route host to {}", document.route_host));
         }
         Some(_) => {}
+    }
+    if let Some(row) = &authorities.row
+        && row.policy_name.as_deref() != Some(document.policy.as_str())
+    {
+        plan.push(format!("set the policy to {}", document.policy));
     }
     let instances = authorities
         .project

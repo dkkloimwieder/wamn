@@ -2,8 +2,7 @@
 //! (docs/plan/platform-deploy.md §10.1, R21 (3)).
 //!
 //! The release is the digest of the newest successful Helm revision, or
-//! `none`. The route host comes from the environment row. The policy is the
-//! env name, because `registry.project_envs` names its policy by the env.
+//! `none`. The route host and the policy name come from the environment row.
 //! The connections are the enabled instances of the project database, and the
 //! floors are the recorded floors. `show` takes no lock.
 
@@ -24,14 +23,13 @@ use crate::release_chart;
 ///
 /// When the environment has no row, or an authority cannot be read.
 pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<EnvironmentDocument> {
-    let env = triple.env.as_str().to_owned();
     let mut document = EnvironmentDocument {
         org: triple.org.clone(),
         project: triple.project.clone(),
-        env: env.clone(),
+        env: triple.env.as_str().to_owned(),
         release: DeclaredRelease::None,
         route_host: String::new(),
-        policy: env,
+        policy: String::new(),
         connections: BTreeMap::new(),
         floors: BTreeMap::new(),
     };
@@ -44,6 +42,10 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         .await?
         .with_context(|| format!("environment {triple} has no row"))?;
     document.route_host = row.route_host.clone().unwrap_or_default();
+    document.policy = row
+        .policy_name
+        .clone()
+        .with_context(|| format!("environment {triple} has no policy name; apply its document"))?;
     let name = release_chart::release_name(&document.org, &document.project, &document.env)?;
     if let Some(digest) = read_revision(platform, &name)
         .await?

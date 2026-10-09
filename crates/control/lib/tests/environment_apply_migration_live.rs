@@ -1,5 +1,6 @@
-//! Live test of `system/0017_environment_apply.sql` (wamn-snz0.1): on a
-//! control database installed before it, the migration gives
+//! Live test of `system/0017_environment_apply.sql` and
+//! `system/0018_environment_policy_name.sql` (wamn-snz0.1): on a control
+//! database installed before them, the migrations give
 //! `registry.env_policies` and `registry.project_envs` the columns of
 //! `env apply` as a fresh install has them. The test holds the process lock of
 //! its server, because the installer creates cluster-wide roles.
@@ -8,8 +9,10 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_test_infrastructure::locked_database;
 
-const MIGRATION: &str =
-    include_str!("../../../../deploy/sql/migrations/system/0017_environment_apply.sql");
+const MIGRATIONS: [&str; 2] = [
+    include_str!("../../../../deploy/sql/migrations/system/0017_environment_apply.sql"),
+    include_str!("../../../../deploy/sql/migrations/system/0018_environment_policy_name.sql"),
+];
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -76,6 +79,7 @@ async fn the_migration_adds_the_apply_columns_as_a_fresh_install_has_them() {
         "registry.env_policies column drain_bound_seconds integer true 300",
         "registry.env_policies column approval_required boolean true false",
         "registry.project_envs column route_host text false ",
+        "registry.project_envs column policy_name text false ",
     ] {
         assert!(
             fresh.iter().any(|entry| entry == column),
@@ -87,16 +91,17 @@ async fn the_migration_adds_the_apply_columns_as_a_fresh_install_has_them() {
         .batch_execute(
             "ALTER TABLE registry.env_policies DROP COLUMN readiness_budget_seconds, \
                DROP COLUMN drain_bound_seconds, DROP COLUMN approval_required; \
-             ALTER TABLE registry.project_envs DROP COLUMN route_host",
+             ALTER TABLE registry.project_envs DROP COLUMN route_host, DROP COLUMN policy_name",
         )
         .await
         .expect("make the tables as 0016 left them");
     client
         .batch_execute(&format!(
-            "BEGIN; SET LOCAL ROLE wamn_system; {MIGRATION} COMMIT;"
+            "BEGIN; SET LOCAL ROLE wamn_system; {} {} COMMIT;",
+            MIGRATIONS[0], MIGRATIONS[1]
         ))
         .await
-        .expect("apply system/0017 as wamn_system");
+        .expect("apply system/0017 and 0018 as wamn_system");
     assert_eq!(
         definition(&client).await,
         fresh,
