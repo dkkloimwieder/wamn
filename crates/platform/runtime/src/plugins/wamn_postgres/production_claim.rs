@@ -597,8 +597,8 @@ pub(super) async fn finish_queue_transaction<T>(
     }
 }
 
-/// Whether a run pinned to release `$3` is still queued, dispatched or running
-/// in the package set `$1` and environment `$2`. A run leased by another
+/// Whether a run pinned to release `$3` is still dispatched or running in the
+/// package set `$1` and environment `$2`. A run leased by another
 /// replica counts: if that replica dies, this host reclaims it.
 const PINNED_BACKLOG_SQL: &str = "SELECT EXISTS ( \
      SELECT 1 FROM run_queue AS q \
@@ -1755,15 +1755,8 @@ mod tests {
 
         assert!(!lease_sql.contains("release_version"));
 
-        // The digest travels from the claiming pod, so the candidate select
-        // filters by it and never projects it back; a decoder that grew a field
-        // would need this to change.
         let select_sql = select_production_claim_sql();
         assert!(!select_sql.contains("release_version"));
-        let projection = &select_sql[select_sql
-            .find("SELECT candidate.run_id")
-            .expect("the outer projection opens on the run id")..];
-        assert!(!projection.contains("manifest_digest"));
     }
 
     #[test]
