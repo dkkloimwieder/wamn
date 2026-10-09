@@ -416,7 +416,6 @@ pub(crate) fn participation_intent(
     };
     Ok(serde_json::to_string(&serde_json::json!({
         "participant": participant,
-        "release": release.manifest().release.effective_release_id,
         "manifest": release.release().manifest_digest.as_str(),
     }))?)
 }

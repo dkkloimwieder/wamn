@@ -19,8 +19,7 @@ fn args(url: &str) -> PromoteRequest {
         org: "org".to_owned(),
         project: "project".to_owned(),
         tenant: "t1".to_owned(),
-        source_effective_release_id: 1,
-        target_effective_release_id: 1,
+        source_manifest_digest: hash('f'),
         source_environment: "stage".to_owned(),
         target_environment: "prod".to_owned(),
         run_schema: "unused".to_owned(),
@@ -47,14 +46,11 @@ async fn seed_catalog(client: &Client) {
             "SET app.tenant = 't1';
          INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256)
            VALUES ('t1','shop','1.0.0','{a}'), ('t1','shop','2.0.0','{b}');
-         INSERT INTO catalog.effective_releases
-           (tenant_id, effective_release_id, environment, verified_publisher_principal)
-           VALUES ('t1',1,'prod','spiffe://wamn.test/publisher');
-         INSERT INTO catalog.effective_release_packages
-           (tenant_id, effective_release_id, package_id, package_version)
-           VALUES ('t1',1,'shop','1.0.0');
-         INSERT INTO catalog.effective_release_heads
-           (tenant_id, environment, effective_release_id) VALUES ('t1','prod',1);
+         INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes)
+           SELECT 't1', 'sha256:' || encode(sha256(bytes), 'hex'), bytes
+             FROM (SELECT convert_to('{{\"release\":{{\"packages\":[{{\"package-id\":\"shop\",\"package-version\":\"1.0.0\"}}]}}}}', 'UTF8') AS bytes) AS release;
+         INSERT INTO catalog.effective_release_heads (tenant_id, environment, manifest_digest)
+           SELECT 't1', 'prod', manifest_digest FROM catalog.releases;
          INSERT INTO catalog.wirings
            (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash)
            VALUES ('t1','shop','1.0.0','orders-create',1,'{{}}','{a}'),
@@ -212,13 +208,11 @@ async fn concurrent_changes_keep_serializable_refusal(client: &mut Client, url: 
     // The second test environment has no retirement record.
     client
         .batch_execute(
-            "INSERT INTO catalog.effective_releases
-        (tenant_id,effective_release_id,environment,verified_publisher_principal)
-        VALUES ('t1',2,'test','spiffe://wamn.test/publisher');
-        INSERT INTO catalog.effective_release_packages
-        (tenant_id,effective_release_id,package_id,package_version) VALUES ('t1',2,'shop','1.0.0');
-        INSERT INTO catalog.effective_release_heads
-        (tenant_id,environment,effective_release_id) VALUES ('t1','test',2);",
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes)
+        SELECT 't1', 'sha256:' || encode(sha256(bytes), 'hex'), bytes
+          FROM (SELECT convert_to('{\"release\":{\"packages\":[{\"package-id\":\"shop\",\"package-version\":\"1.0.0\"}]},\"n\":2}', 'UTF8') AS bytes) AS release;
+        INSERT INTO catalog.effective_release_heads (tenant_id, environment, manifest_digest)
+        SELECT 't1', 'test', 'sha256:' || encode(sha256(convert_to('{\"release\":{\"packages\":[{\"package-id\":\"shop\",\"package-version\":\"1.0.0\"}]},\"n\":2}', 'UTF8')), 'hex');",
         )
         .await
         .expect("seed second environment head");

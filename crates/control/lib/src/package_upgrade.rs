@@ -243,7 +243,7 @@ async fn read_accepted(
     version: &str,
 ) -> anyhow::Result<Option<AcceptedUpgrade>> {
     let Some(row) = tx.query_opt(
-        "SELECT canonical_bytes, result_sha256, predecessor_release_id, predecessor_manifest_digest \
+        "SELECT canonical_bytes, result_sha256, predecessor_manifest_digest \
          FROM catalog.package_upgrade_qualifications \
          WHERE tenant_id = $1 AND package_id = $2 AND candidate_package_version = $3",
         &[&tenant, &package, &version],
@@ -263,8 +263,7 @@ async fn read_accepted(
             && evidence.tenant == tenant
             && evidence.candidate_package.package_id == package
             && evidence.candidate_package.package_version == version
-            && evidence.predecessor_release_id == row.get::<_, i32>(2)
-            && evidence.predecessor_manifest_digest == row.get::<_, String>(3),
+            && evidence.predecessor_manifest_digest == row.get::<_, String>(2),
         "persisted upgrade qualification differs from its immutable carrier"
     );
     Ok(Some(AcceptedUpgrade {
@@ -404,14 +403,14 @@ pub(crate) async fn require_application(
     );
     let head = tx
         .query_opt(
-            "SELECT effective_release_id FROM catalog.effective_release_heads \
+            "SELECT manifest_digest FROM catalog.effective_release_heads \
          WHERE tenant_id = $1 AND environment = $2 FOR UPDATE",
             &[&tenant, &evidence.environment],
         )
         .await?
         .context("qualified predecessor release is no longer selected")?;
     ensure!(
-        head.get::<_, i32>(0) == evidence.predecessor_release_id,
+        head.get::<_, String>(0) == evidence.predecessor_manifest_digest,
         "qualified predecessor head changed"
     );
     let (_, digest) = read_selected_manifest(tx, tenant, &evidence.environment).await?;
@@ -505,14 +504,13 @@ pub(crate) async fn persist(
     tx.execute(
         "INSERT INTO catalog.package_upgrade_qualifications \
           (tenant_id, package_id, candidate_package_version, canonical_bytes, result_sha256, \
-           predecessor_release_id, predecessor_manifest_digest) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+           predecessor_manifest_digest) VALUES ($1,$2,$3,$4,$5,$6)",
         &[
             &evidence.tenant,
             &evidence.candidate_package.package_id,
             &evidence.candidate_package.package_version,
             &accepted.bytes,
             &accepted.sha256,
-            &evidence.predecessor_release_id,
             &evidence.predecessor_manifest_digest,
         ],
     )
@@ -641,8 +639,6 @@ pub(crate) async fn require_compatible_schema(
         require_prefix(evidence)?;
         ensure!(
             evidence.environment == release.environment
-                && evidence.predecessor_release_id
-                    == i32::try_from(release.effective_release_id.get())?
                 && evidence.predecessor_manifest_digest == manifest.digest().as_str()
                 && evidence.predecessor_package.package_id == package.package_id()
                 && evidence.predecessor_package.package_version == package.package_version()

@@ -28,17 +28,17 @@ use crate::{RunStatus, sql as run_sql};
 /// the router, the durability class it gates the rest of the turn on, and the
 /// immutable wiring pair admission froze, plus the existing trigger-source
 /// classification that tells the router whether a caller is waiting, and the
-/// selected row's package id. The effective release identity is already
-/// admission-pinned; the verified manifest digest the claim records comes from
-/// the claiming pod.
+/// selected row's package id. The release is admission-pinned by its manifest
+/// digest, which the grant compares with the claiming pod's digest.
 /// `$1` is the exact package-id set in the mounted release and `$2` is the
 /// environment scope. One set-valued predicate preserves the tenant's single
 /// global FIFO; an executor never leases a package outside its release merely
 /// because the tenant shares a project database.
 ///
-/// `$3` is the claiming host's effective release id, or NULL for a host that
+/// `$3` is the claiming host's release manifest digest, or NULL for a host that
 /// carries none. A run executes only on hosts of the release it was admitted
-/// under, so the candidate select skips a run pinned to another release
+/// under, so the candidate select skips a run pinned to another release. A
+/// candidate run carries no pin and any host of the environment may take it
 /// instead of locking it as the head: while two releases coexist, FIFO is per
 /// release and a draining host claims only its own backlog
 /// (platform-deploy.md R20). [`grant_production_claim_sql`] rechecks the pin.
@@ -54,7 +54,8 @@ pub fn select_production_claim_sql() -> String {
               WHERE q.tenant_id = current_setting('app.tenant', true) \
                 AND selected_run.package_id = ANY($1::text[]) \
                 AND selected_run.environment = $2 \
-                AND ($3::int IS NULL OR selected_run.effective_release_id = $3) \
+                AND ($3::text IS NULL OR selected_run.manifest_digest IS NULL \
+                     OR selected_run.manifest_digest = $3) \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
                 AND ( \
@@ -81,7 +82,7 @@ pub fn select_production_claim_sql() -> String {
                 ) AS router_caller_attached, \
                 COALESCE(r.trigger_source IN ('http','internal','studio'), false) \
                     AS durable_caller_attached, \
-                r.flow_id, r.flow_version, r.effective_release_id, \
+                r.flow_id, r.flow_version, \
                 r.wiring_hash, r.binding_world_json::text, r.package_id, \
                 r.service_principal_id::text \
            FROM candidate \
@@ -125,18 +126,13 @@ pub fn serialize_effect_intent_sql() -> String {
 
 /// Replace the abandoned attempt's run-level state. `$1` is the selected run id.
 ///
-/// `state_json` and the claim-time manifest record are the only run columns
-/// changed; immutable tables and the already-materialized resolution map are
-/// preserved. The manifest digest is projection of the DEAD attempt, so it
-/// joins that replacement set (wamn-0h0g.15.55): this clears it in the same
-/// transaction that re-opens the run, and the grant below records the
-/// reclaiming pod's own manifest fresh. The immutable effective release id is
-/// admission identity and is never cleared. Only pre-effect reclaims reach this
-/// statement, so no effect was ever attributed to the digest being cleared.
+/// `state_json` is the only run column changed; immutable tables and the
+/// already-materialized resolution map are preserved. The release digest is
+/// admission identity and is never cleared.
 ///
 pub fn clear_pre_effect_state_sql() -> String {
     "UPDATE runs \
-        SET state_json = NULL, manifest_digest = NULL \
+        SET state_json = NULL \
       WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
       RETURNING run_id"
         .to_string()
@@ -165,19 +161,15 @@ pub fn advance_claim_attempts_sql() -> String {
         .to_string()
 }
 
-/// Grant a lease, verify the claiming release, and record its manifest digest.
+/// Grant a lease and verify the claiming release.
 ///
 /// Params: run id, host-injected lease owner, TTL milliseconds, the pod's
-/// effective release id, the pod's manifest digest. The crash-evidence attempt count
-/// is NOT advanced here — [`advance_claim_attempts_sql`] owns it, outside this
-/// statement's abort scope.
+/// manifest digest. The crash-evidence attempt count is NOT advanced here —
+/// [`advance_claim_attempts_sql`] owns it, outside this statement's abort scope.
 ///
-/// The effective release id was pinned at admission. The claim verifies the
-/// pod carries that same release and records only its verified manifest digest
-/// on the write that already marks the run running. The digest is write-once
-/// per claim attempt; a pre-effect reclaim clears only the abandoned digest via
-/// [`clear_pre_effect_state_sql`]. A pod with no injected release identity binds
-/// NULL for both and records no digest.
+/// The release digest was pinned at admission. The claim verifies the pod
+/// carries that same release on the write that marks the run running. A pod
+/// with no injected release identity binds NULL and verifies nothing.
 /// The status predicate widened from `dispatched` to the two runnable states the
 /// composer already validates, because a re-claim of a `running` row must reach
 /// the record too; `dispatched` still becomes `running` and `running` stays put.
@@ -195,13 +187,11 @@ pub fn grant_production_claim_sql() -> String {
          ), \
          marked AS ( \
              UPDATE runs AS r \
-                SET status = '{running}', \
-                    manifest_digest = $5 \
+                SET status = '{running}' \
                FROM leased \
               WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
                 AND r.status IN ('{dispatched}', '{running}') \
-                AND (($4::int IS NULL AND $5::text IS NULL) \
-                     OR (r.effective_release_id = $4 AND $5 IS NOT NULL)) \
+                AND ($4::text IS NULL OR r.manifest_digest = $4) \
               RETURNING r.run_id \
          ) \
          SELECT leased.lease_generation \
@@ -386,7 +376,7 @@ mod tests {
     fn production_turns_filter_one_global_fifo_by_the_release_package_set() {
         let claim = select_production_claim_sql();
         assert!(claim.contains("selected_run.package_id = ANY($1::text[])"));
-        assert!(claim.contains("selected_run.effective_release_id = $3"));
+        assert!(claim.contains("selected_run.manifest_digest = $3"));
         assert!(claim.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
         assert_eq!(claim.matches("LIMIT 1").count(), 1);
 

@@ -15,10 +15,18 @@ const INSERT_MIGRATION_SQL: &str = "\
 INSERT INTO catalog.package_migrations (\
        tenant_id, package_id, package_version, ordinal, relative_path, sha256\
      ) VALUES ($1, $2, $3, $4, $5, $6)";
-const INSERT_MEMBERSHIP_SQL: &str = "\
+/// The project database records a release as its manifest bytes, and its
+/// package membership is read from them.
+const INSERT_PROJECT_MEMBERSHIP_SQL: &str = "\
+INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+SELECT $1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2::bytea";
+const PROJECT_MANIFEST: &[u8] =
+    br#"{"release":{"packages":[{"package-id":"inventory","package-version":"1.0.0"}]}}"#;
+/// The control database keeps the membership rows of a release digest.
+const INSERT_CONTROL_MEMBERSHIP_SQL: &str = "\
 INSERT INTO catalog.effective_release_packages (\
-       tenant_id, effective_release_id, package_id, package_version\
-     ) VALUES ($1, $2, $3, $4)";
+       tenant_id, manifest_digest, package_id, package_version\
+     ) VALUES ($1, 'sha256:' || repeat('1', 64), $2, $3)";
 
 #[derive(Clone, Copy)]
 enum Store {
@@ -36,7 +44,7 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-async fn seed_package_and_release(client: &Client) {
+async fn seed_package_and_release(client: &Client, store: Store) {
     client
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
@@ -73,16 +81,18 @@ async fn seed_package_and_release(client: &Client) {
         )
         .await
         .expect("record the migration that precedes release membership");
-    client
-        .execute(
-            "INSERT INTO catalog.effective_releases (\
-                   tenant_id, effective_release_id, environment, \
-                   verified_publisher_principal\
-                 ) VALUES ($1, 1, 'dev', 'publisher')",
-            &[&TENANT],
-        )
-        .await
-        .expect("register release identities");
+    if matches!(store, Store::Control) {
+        client
+            .execute(
+                "INSERT INTO catalog.effective_releases (\
+                       tenant_id, manifest_digest, environment, \
+                       verified_publisher_principal\
+                     ) VALUES ($1, 'sha256:' || repeat('1', 64), 'dev', 'publisher')",
+                &[&TENANT],
+            )
+            .await
+            .expect("register release identities");
+    }
 }
 
 async fn assert_immutable_rows(client: &Client, store: Store) {
@@ -128,7 +138,7 @@ async fn assert_immutable_rows(client: &Client, store: Store) {
 
 async fn assert_package_seal(url: &str, store: Store) {
     let installer = connect(url).await;
-    seed_package_and_release(&installer).await;
+    seed_package_and_release(&installer, store).await;
     assert_immutable_rows(&installer, store).await;
 
     let mut publisher = connect(url).await;
@@ -145,13 +155,17 @@ async fn assert_package_seal(url: &str, store: Store) {
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
         .await
         .expect("claim the publication tenant");
-    publication
-        .execute(
-            INSERT_MEMBERSHIP_SQL,
-            &[&TENANT, &1_i32, &"inventory", &"1.0.0"],
-        )
-        .await
-        .expect("insert the first membership while holding the package row");
+    match store {
+        Store::Project => {
+            publication.execute(INSERT_PROJECT_MEMBERSHIP_SQL, &[&TENANT, &PROJECT_MANIFEST])
+        }
+        Store::Control => publication.execute(
+            INSERT_CONTROL_MEMBERSHIP_SQL,
+            &[&TENANT, &"inventory", &"1.0.0"],
+        ),
+    }
+    .await
+    .expect("insert the first membership while holding the package row");
 
     let late_hash = format!("sha256:{}", "c".repeat(64));
     let late_ordinal = 2_i32;
@@ -231,11 +245,10 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
         environment: "dev".to_owned(),
         packages: BTreeSet::from([PackageCoordinate::new("inventory", "1.0.0").unwrap()]),
     };
-    let coordinate = DeploymentCoordinate::new("demo", "inventory", &release);
-    let digest = ManifestDigest::parse(format!("sha256:{}", "f".repeat(64))).unwrap();
+    let coordinate = DeploymentCoordinate::new("demo", "inventory", &release, &digest('1'));
     let (first, second) = tokio::join!(
-        attest_deployment(url, &coordinate, &digest, Some("0123456789abcdef")),
-        attest_deployment(url, &coordinate, &digest, Some("0123456789abcdef"))
+        attest_deployment(url, &coordinate, Some("0123456789abcdef")),
+        attest_deployment(url, &coordinate, Some("0123456789abcdef"))
     );
     assert_eq!(
         first.expect("first identical attestation succeeds"),
@@ -243,14 +256,20 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
     );
 }
 
+/// A manifest digest whose 64 hex digits are all `byte`.
+fn digest(byte: char) -> ManifestDigest {
+    ManifestDigest::parse(format!("sha256:{}", byte.to_string().repeat(64))).unwrap()
+}
+
 #[tokio::test]
 async fn release_identity_and_attestation_decisions_preserve_concurrent_winners() {
     use wamn_schema_control::attestation::{AttestationError, AttestationErrorType};
     let url = locked_database::database(wamn_control_provision::test_database::system);
     let inspector = connect(&url).await;
+    let release = digest('7');
     let coordinate = DeploymentCoordinate {
         tenant_id: TENANT.to_owned(),
-        effective_release_id: 7,
+        manifest_digest: release.clone(),
         triple: wamn_control_registry::Triple::new("demo", "billing", "prod"),
     };
     let (first, second) = tokio::join!(
@@ -259,10 +278,22 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     );
     first.expect("first identity projection");
     second.expect("identical concurrent identity projection");
-    let initial = inspector.query_one("SELECT created_at FROM catalog.effective_releases WHERE tenant_id = $1 AND effective_release_id = 7", &[&TENANT]).await.unwrap();
+    let created_at = "SELECT created_at FROM catalog.effective_releases \
+                      WHERE tenant_id = $1 AND manifest_digest = $2";
+    let initial = inspector
+        .query_one(created_at, &[&TENANT, &release.as_str()])
+        .await
+        .unwrap();
     let initial_at: chrono::DateTime<chrono::Utc> = initial.get(0);
     project_release_identity(&url, &coordinate).await.unwrap();
-    assert_eq!(initial_at, inspector.query_one("SELECT created_at FROM catalog.effective_releases WHERE tenant_id = $1 AND effective_release_id = 7", &[&TENANT]).await.unwrap().get::<_, chrono::DateTime<chrono::Utc>>(0));
+    assert_eq!(
+        initial_at,
+        inspector
+            .query_one(created_at, &[&TENANT, &release.as_str()])
+            .await
+            .unwrap()
+            .get::<_, chrono::DateTime<chrono::Utc>>(0)
+    );
     let mut changed = coordinate.clone();
     changed.triple.env = "dev".into();
     let error = project_release_identity(&url, &changed).await.unwrap_err();
@@ -278,11 +309,20 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
             .to_string()
             .starts_with("effective-release-identity-projection-content-conflict:")
     );
-    assert_eq!(inspector.query_one("SELECT environment FROM catalog.effective_releases WHERE tenant_id = $1 AND effective_release_id = 7", &[&TENANT]).await.unwrap().get::<_, String>(0), "prod");
+    let environment = "SELECT environment FROM catalog.effective_releases \
+                       WHERE tenant_id = $1 AND manifest_digest = $2";
+    assert_eq!(
+        inspector
+            .query_one(environment, &[&TENANT, &release.as_str()])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "prod"
+    );
 
     let mut raced = coordinate.clone();
-    raced.effective_release_id = 8;
-    changed.effective_release_id = 8;
+    raced.manifest_digest = digest('8');
+    changed.manifest_digest = digest('8');
     let (first, second) = tokio::join!(
         project_release_identity(&url, &raced),
         project_release_identity(&url, &changed)
@@ -300,14 +340,25 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
             .error_type(),
         AttestationErrorType::IdentityProjectionConflict
     );
-    let winner_env: String = inspector.query_one("SELECT environment FROM catalog.effective_releases WHERE tenant_id = $1 AND effective_release_id = 8", &[&TENANT]).await.unwrap().get(0);
+    let winner_env: String = inspector
+        .query_one(environment, &[&TENANT, &digest('8').as_str()])
+        .await
+        .unwrap()
+        .get(0);
     assert!(["prod", "dev"].contains(&winner_env.as_str()));
     // A competing insert must wait, then compare the committed winner.
     let mut held = connect(&url).await;
     let transaction = held.transaction().await.unwrap();
-    transaction.execute("INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment) VALUES ($1,9,'prod')", &[&TENANT]).await.unwrap();
+    transaction
+        .execute(
+            "INSERT INTO catalog.effective_releases (tenant_id,manifest_digest,environment) \
+             VALUES ($1,$2,'prod')",
+            &[&TENANT, &digest('9').as_str()],
+        )
+        .await
+        .unwrap();
     let mut waiting_coordinate = changed.clone();
-    waiting_coordinate.effective_release_id = 9;
+    waiting_coordinate.manifest_digest = digest('9');
     let waiting = project_release_identity(&url, &waiting_coordinate);
     tokio::pin!(waiting);
     assert!(
@@ -330,20 +381,16 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
         .await
         .expect("a different tenant owns its release identity");
 
-    let hash = ManifestDigest::parse(format!("sha256:{}", "a".repeat(64))).unwrap();
-    let other_hash = ManifestDigest::parse(format!("sha256:{}", "b".repeat(64))).unwrap();
+    // The deployed manifest is the release, so an attestation can differ from
+    // the recorded one only by its source commit.
     let (first, second) = tokio::join!(
-        attest_deployment(&url, &coordinate, &hash, Some("0123456789abcdef")),
-        attest_deployment(&url, &coordinate, &hash, Some("0123456789abcdef"))
+        attest_deployment(&url, &coordinate, Some("0123456789abcdef")),
+        attest_deployment(&url, &coordinate, Some("0123456789abcdef"))
     );
     let first_at = first.unwrap();
     assert_eq!(first_at, second.unwrap());
-    for (digest, source) in [
-        (&other_hash, Some("0123456789abcdef")),
-        (&hash, Some("fedcba9876543210")),
-        (&hash, None),
-    ] {
-        let error = attest_deployment(&url, &coordinate, digest, source)
+    for source in [Some("fedcba9876543210"), None] {
+        let error = attest_deployment(&url, &coordinate, source)
             .await
             .unwrap_err();
         assert_eq!(
@@ -359,8 +406,16 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
                 .starts_with("deployment-attestation-content-conflict:")
         );
     }
-    let row = inspector.query_one("SELECT deployed_manifest_hash, source_commit, attested_at FROM catalog.deployment_attestations WHERE tenant_id=$1 AND environment_instance='' AND effective_release_id=7", &[&TENANT]).await.unwrap();
-    assert_eq!(row.get::<_, String>(0), hash.as_str());
+    let row = inspector
+        .query_one(
+            "SELECT deployed_manifest_hash, source_commit, attested_at \
+               FROM catalog.deployment_attestations \
+              WHERE tenant_id=$1 AND environment_instance='' AND manifest_digest=$2",
+            &[&TENANT, &release.as_str()],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, String>(0), release.as_str());
     assert_eq!(
         row.get::<_, Option<String>>(1).as_deref(),
         Some("0123456789abcdef")
@@ -373,7 +428,7 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
 
     // The marker alone cannot replace the old deployment.
     inspector.execute("INSERT INTO catalog.tenant_environments (tenant_id,org,project,env,instance_suffix,disposable,environment_instance) VALUES ($1,'demo','billing','prod','abcd1234',true,'')", &[&TENANT]).await.unwrap();
-    let error = attest_deployment(&url, &coordinate, &other_hash, None)
+    let error = attest_deployment(&url, &coordinate, None)
         .await
         .unwrap_err();
     assert_eq!(
@@ -384,17 +439,13 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
         AttestationErrorType::ContentConflict
     );
     inspector.execute("UPDATE catalog.tenant_environments SET environment_instance='16384' WHERE tenant_id=$1", &[&TENANT]).await.unwrap();
-    let instance_at = attest_deployment(&url, &coordinate, &other_hash, None)
-        .await
-        .unwrap();
+    let instance_at = attest_deployment(&url, &coordinate, None).await.unwrap();
     assert_eq!(
         instance_at,
-        attest_deployment(&url, &coordinate, &other_hash, None)
-            .await
-            .unwrap()
+        attest_deployment(&url, &coordinate, None).await.unwrap()
     );
     for source in [Some("0123456789abcdef"), Some("")] {
-        let error = attest_deployment(&url, &coordinate, &other_hash, source)
+        let error = attest_deployment(&url, &coordinate, source)
             .await
             .unwrap_err();
         let kind = error
@@ -410,16 +461,6 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
             }
         );
     }
-    let error = attest_deployment(&url, &coordinate, &hash, None)
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error
-            .downcast_ref::<AttestationError>()
-            .unwrap()
-            .error_type(),
-        AttestationErrorType::ContentConflict
-    );
     assert_eq!(
         inspector
             .query_one(
@@ -431,20 +472,19 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
             .get::<_, i64>(0),
         2
     );
-    assert_eq!(inspector.query_one("SELECT deployed_manifest_hash FROM catalog.deployment_attestations WHERE tenant_id=$1 AND environment_instance=''", &[&TENANT]).await.unwrap().get::<_, String>(0), hash.as_str());
 
     let mut content_race = coordinate.clone();
     content_race.triple.project = "other-project".into();
     let (first, second) = tokio::join!(
-        attest_deployment(&url, &content_race, &hash, None),
-        attest_deployment(&url, &content_race, &other_hash, None)
+        attest_deployment(&url, &content_race, Some("0123456789abcdef")),
+        attest_deployment(&url, &content_race, None)
     );
     assert_ne!(
         first.is_ok(),
         second.is_ok(),
         "only one differing attestation wins"
     );
-    let (winning_at, expected_hash) = match (first, second) {
+    let (winning_at, expected_source) = match (first, second) {
         (Ok(at), Err(error)) => {
             assert_eq!(
                 error
@@ -453,7 +493,7 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
                     .error_type(),
                 AttestationErrorType::ContentConflict
             );
-            (at, hash.as_str())
+            (at, Some("0123456789abcdef".to_owned()))
         }
         (Err(error), Ok(at)) => {
             assert_eq!(
@@ -463,12 +503,12 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
                     .error_type(),
                 AttestationErrorType::ContentConflict
             );
-            (at, other_hash.as_str())
+            (at, None)
         }
         other => panic!("unexpected concurrent attestation results: {other:?}"),
     };
-    let row = inspector.query_one("SELECT deployed_manifest_hash, attested_at FROM catalog.deployment_attestations WHERE tenant_id=$1 AND environment_instance='16384' AND project_id='other-project'", &[&TENANT]).await.unwrap();
-    assert_eq!(row.get::<_, String>(0), expected_hash);
+    let row = inspector.query_one("SELECT source_commit, attested_at FROM catalog.deployment_attestations WHERE tenant_id=$1 AND environment_instance='16384' AND project_id='other-project'", &[&TENANT]).await.unwrap();
+    assert_eq!(row.get::<_, Option<String>>(0), expected_source);
     assert_eq!(
         row.get::<_, chrono::DateTime<chrono::Utc>>(1)
             .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
@@ -477,10 +517,10 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
 
     // A rolled-back first insert leaves the waiting native writer free to win.
     let transaction = held.transaction().await.unwrap();
-    transaction.execute("INSERT INTO catalog.deployment_attestations (tenant_id,environment_instance,effective_release_id,org_id,project_id,environment,deployed_manifest_hash,source_commit,attested_at) VALUES ($1,'16384',7,'demo','rollback','prod',$2,NULL,'2026-08-15T12:00:00Z')", &[&TENANT, &hash.as_str()]).await.unwrap();
+    transaction.execute("INSERT INTO catalog.deployment_attestations (tenant_id,environment_instance,manifest_digest,org_id,project_id,environment,deployed_manifest_hash,source_commit,attested_at) VALUES ($1,'16384',$2,'demo','rollback','prod',$2,'0123456789abcdef','2026-08-15T12:00:00Z')", &[&TENANT, &release.as_str()]).await.unwrap();
     let mut rollback_coordinate = coordinate.clone();
     rollback_coordinate.triple.project = "rollback".into();
-    let waiting = attest_deployment(&url, &rollback_coordinate, &other_hash, None);
+    let waiting = attest_deployment(&url, &rollback_coordinate, None);
     tokio::pin!(waiting);
     assert!(
         tokio::time::timeout(Duration::from_millis(150), &mut waiting)
@@ -489,8 +529,8 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
     );
     transaction.rollback().await.unwrap();
     let recorded = waiting.await.unwrap();
-    let row = inspector.query_one("SELECT deployed_manifest_hash,attested_at FROM catalog.deployment_attestations WHERE tenant_id=$1 AND project_id='rollback'", &[&TENANT]).await.unwrap();
-    assert_eq!(row.get::<_, String>(0), other_hash.as_str());
+    let row = inspector.query_one("SELECT source_commit,attested_at FROM catalog.deployment_attestations WHERE tenant_id=$1 AND project_id='rollback'", &[&TENANT]).await.unwrap();
+    assert_eq!(row.get::<_, Option<String>>(0), None);
     assert_eq!(
         row.get::<_, chrono::DateTime<chrono::Utc>>(1)
             .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
@@ -499,8 +539,8 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
 
     // An invalid foreign key rolls the write back without adding a row.
     let mut missing_release = coordinate.clone();
-    missing_release.effective_release_id = 99;
-    let error = attest_deployment(&url, &missing_release, &hash, None)
+    missing_release.manifest_digest = digest('e');
+    let error = attest_deployment(&url, &missing_release, None)
         .await
         .unwrap_err();
     assert_eq!(
@@ -510,7 +550,17 @@ async fn release_identity_and_attestation_decisions_preserve_concurrent_winners(
             .error_type(),
         AttestationErrorType::Storage
     );
-    assert_eq!(inspector.query_one("SELECT count(*) FROM catalog.deployment_attestations WHERE effective_release_id=99", &[]).await.unwrap().get::<_, i64>(0), 0);
+    assert_eq!(
+        inspector
+            .query_one(
+                "SELECT count(*) FROM catalog.deployment_attestations WHERE manifest_digest=$1",
+                &[&digest('e').as_str()]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
 
     // The owner role still reads only its claimed tenant.
     inspector

@@ -221,14 +221,13 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          CREATE SCHEMA catalog;\n\
-         CREATE TABLE catalog.effective_releases (\n\
-           tenant_id text NOT NULL, effective_release_id int NOT NULL,\n\
-           environment text NOT NULL, verified_publisher_principal text NOT NULL,\n\
-           PRIMARY KEY (tenant_id, effective_release_id)\n\
+         CREATE TABLE catalog.releases (\n\
+           tenant_id text NOT NULL, manifest_digest text NOT NULL,\n\
+           PRIMARY KEY (tenant_id, manifest_digest)\n\
          );\n\
-         INSERT INTO catalog.effective_releases VALUES\n\
-           ('t1',1,'test','test-publisher'), ('t2',1,'test','test-publisher'),\n\
-           ('t3',1,'test','test-publisher');"
+         INSERT INTO catalog.releases VALUES\n\
+           ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
+           ('t3','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), ('t3','sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');"
     )
     .expect("writing to a String cannot fail");
     script.push_str(&ddl);
@@ -243,12 +242,12 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     // Seed two tenants as the superuser (bypasses RLS): each has one run.
     script.push_str(
         "INSERT INTO wamn_run.runs (\
-           tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,\
+           tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, status, idempotency_key\
          ) VALUES\
-           ('t1','run-a','f',1,'run-state-fixture',1,'test',\
+           ('t1','run-a','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
             'fixture-wiring',1,'running','k-a'),\
-           ('t2','run-b','f',1,'run-state-fixture',1,'test',\
+           ('t2','run-b','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
             'fixture-wiring',1,'running','k-b');\n",
     );
     // The generation's `current_user` derives tenant t1 and sees only that
@@ -277,17 +276,17 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         "DO $$ BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs (\
-               tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,\
+               tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
                wiring_id, wiring_version, idempotency_key\
-             ) VALUES ('t1','run-a2','f',1,'run-state-fixture',1,'test',\
+             ) VALUES ('t1','run-a2','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
                'fixture-wiring',1,'k-a'); \
              ASSERT false, 'duplicate idempotency key must be rejected'; \
            EXCEPTION WHEN unique_violation THEN NULL; END; \
          END $$;\n\
          INSERT INTO wamn_run.runs (\
-           tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,\
+           tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, idempotency_key\
-         ) VALUES ('t3','run-c','f',1,'run-state-fixture',1,'test',\
+         ) VALUES ('t3','run-c','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
            'fixture-wiring',1,'k-a');\n",
     );
     // Ask the INSTALLED status CHECK its own answer, twice over, instead of pinning the
@@ -313,9 +312,9 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
              ordinal := ordinal + 1;\n\
              BEGIN\n\
                INSERT INTO wamn_run.runs (\
-                 tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id,\
+                 tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest,\
                  environment, wiring_id, wiring_version, status, idempotency_key\
-               ) VALUES ('t3', 'status-probe-' || ordinal, 'f', 1, 'run-state-fixture', 1,\
+               ) VALUES ('t3', 'status-probe-' || ordinal, 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
                  'test', 'fixture-wiring', 1, candidate, 'status-probe-' || ordinal);\n\
                INSERT INTO status_probe VALUES (candidate, 'admitted');\n\
              EXCEPTION WHEN others THEN\n\
@@ -483,12 +482,9 @@ DO $$ BEGIN
            WHERE attrelid = 'wamn_run.runs'::regclass AND NOT attisdropped
              AND attname IN ('event_source_run_id', 'event_root_run_id', 'event_depth',
                              'effective_release_id', 'manifest_digest'))
-       = 'effective_release_id:integer event_depth:integer event_root_run_id:text '
+       = 'event_depth:integer event_root_run_id:text '
          'event_source_run_id:text manifest_digest:text',
-    'runs carries the causation and release record carriers';
-  ASSERT (SELECT attnotnull FROM pg_attribute
-           WHERE attrelid = 'wamn_run.runs'::regclass AND attname = 'effective_release_id'),
-    'every run pins its effective release';
+    'runs carries the causation and release pin carriers, and no integer release id';
 END $$;
 
 -- One effect attempt per frame node occurrence.
@@ -507,9 +503,9 @@ END $$;
 -- An admitted run defaults to no capture and the standard class, and refuses
 -- a class or capture outside its vocabulary.
 INSERT INTO wamn_run.runs (
-  tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,
+  tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
   wiring_id, wiring_version, status, idempotency_key
-) VALUES ('t3', 'record-probe', 'f', 1, 'run-state-fixture', 1, 'test',
+) VALUES ('t3', 'record-probe', 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
           'fixture-wiring', 1, 'running', 'record-probe');
 DO $$ BEGIN
   ASSERT (SELECT capture_mode || '/' || durability_class FROM wamn_run.runs
@@ -527,9 +523,9 @@ BEGIN
     BEGIN
       EXECUTE format(
         'INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, package_id, '
-        'effective_release_id, environment, wiring_id, wiring_version, idempotency_key, '
+        'manifest_digest, environment, wiring_id, wiring_version, idempotency_key, '
         'capture_mode, durability_class) VALUES (''t3'', ''record-refused'', ''f'', 1, '
-        '''run-state-fixture'', 1, ''test'', ''fixture-wiring'', 1, ''record-refused'', %s, %s)',
+        '''run-state-fixture'', ''sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'', ''test'', ''fixture-wiring'', 1, ''record-refused'', %s, %s)',
         CASE WHEN refused LIKE 'capture_mode%' THEN split_part(refused, ' = ', 2) ELSE '''off''' END,
         CASE WHEN refused LIKE 'durability_class%' THEN split_part(refused, ' = ', 2) ELSE '''standard''' END);
       ASSERT false, format('a run with %s must be refused', refused);
@@ -543,7 +539,8 @@ DECLARE assignment text; refusal text;
 BEGIN
   FOREACH assignment IN ARRAY ARRAY[
     'flow_id = ''g''', 'flow_version = 2', 'package_id = ''other''',
-    'effective_release_id = 2', 'environment = ''other''', 'capture_mode = ''full''',
+    'manifest_digest = ''sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855''', 'manifest_digest = NULL',
+    'environment = ''other''', 'capture_mode = ''full''',
     'durability_class = ''durable''', 'wiring_id = ''other''', 'wiring_version = 2',
     'wiring_hash = ''other''', 'binding_world_json = ''{}''::jsonb',
     'service_principal_id = ''00000000-0000-4000-8000-000000000001''::uuid'
@@ -578,9 +575,9 @@ DECLARE terminal text;
 BEGIN
   FOREACH terminal IN ARRAY ARRAY['completed', 'failed', 'infrastructure-failure'] LOOP
     INSERT INTO wamn_run.runs (
-      tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment,
+      tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
       wiring_id, wiring_version, status, idempotency_key
-    ) VALUES ('t3', 'terminal-' || terminal, 'f', 1, 'run-state-fixture', 1, 'test',
+    ) VALUES ('t3', 'terminal-' || terminal, 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
               'fixture-wiring', 1, terminal, 'terminal-' || terminal);
     DELETE FROM wamn_run.runs WHERE tenant_id = 't3' AND run_id = 'terminal-' || terminal;
   END LOOP;

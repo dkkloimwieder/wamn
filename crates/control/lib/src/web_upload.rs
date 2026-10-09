@@ -21,9 +21,7 @@ const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
 const INDEX_CACHE: &str = "no-cache";
 /// The manifest digest of the release each environment head of the database
 /// names. `select-release` and `promote` write the head.
-const SELECT_HEADS: &str = "SELECT s.manifest_digest \
-     FROM catalog.effective_release_heads AS h \
-     JOIN catalog.release_manifest_snapshots AS s USING (tenant_id, effective_release_id)";
+const SELECT_HEADS: &str = "SELECT manifest_digest FROM catalog.effective_release_heads";
 
 /// What a write does when its object exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,9 +301,9 @@ mod tests {
     #[tokio::test]
     async fn a_stale_release_is_refused_before_the_build() {
         let database = wamn_catalog::test_database::tenant();
-        // The digest check of the snapshot table holds, so the head row names
+        // The digest check of the release table holds, so the head row names
         // the digest of these bytes.
-        let bytes = "head";
+        let bytes = "{}";
         let head = format!(
             "sha256:{}",
             database
@@ -315,13 +313,10 @@ mod tests {
         );
         database
             .execute(&[&format!(
-                "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
-                 VALUES ('t', 1, 'dev'); \
-                 INSERT INTO catalog.release_manifest_snapshots \
-                 (tenant_id, effective_release_id, manifest_digest, canonical_bytes) \
-                 VALUES ('t', 1, '{head}', '{bytes}'::bytea); \
-                 INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) \
-                 VALUES ('t', 'dev', 1);"
+                "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+                 VALUES ('t', '{head}', '{bytes}'::bytea); \
+                 INSERT INTO catalog.effective_release_heads (tenant_id, environment, manifest_digest) \
+                 VALUES ('t', 'dev', '{head}');"
             )])
             .expect("seed one head");
         require_head(database.url(), &head)

@@ -236,14 +236,14 @@ DO $immutable$ BEGIN
 END
 $immutable$;
 
-INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) VALUES ('tenant-a', 1, 'dev') ON CONFLICT (tenant_id, effective_release_id) DO NOTHING;
-INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) VALUES ('tenant-a', 1, 'dev') ON CONFLICT (tenant_id, effective_release_id) DO NOTHING;
+INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
+INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
 INSERT INTO catalog.effective_release_packages
-  (tenant_id, effective_release_id, package_id, package_version)
-VALUES ('tenant-a', 1, 'widgets', '1.0.0');
+  (tenant_id, manifest_digest, package_id, package_version)
+VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'widgets', '1.0.0');
 INSERT INTO catalog.effective_release_heads
-  (tenant_id, environment, effective_release_id)
-VALUES ('tenant-a', 'dev', 1);
+  (tenant_id, environment, manifest_digest)
+VALUES ('tenant-a', 'dev', 'sha256:' || repeat('7', 64));
 
 
 
@@ -397,22 +397,23 @@ INSERT INTO wamn_authority.author_login_tenants
   (login_identity, tenant_id, org_id, project_id, environment)
 VALUES ('{author_a}', 'tenant-a', 'acme', 'widgets', 'dev'),
        ('{author_b}', 'tenant-b', 'acme', 'shipping', 'dev');
-DO $seed$ DECLARE tenant text; package text; release int; BEGIN
+DO $seed$ DECLARE tenant text; package text; release text; BEGIN
   FOR tenant, package, release IN
     SELECT * FROM (VALUES
-      ('tenant-a', 'widgets', 1), ('tenant-b', 'shipping', 2)
+      ('tenant-a', 'widgets', 'sha256:' || repeat('1', 64)),
+      ('tenant-b', 'shipping', 'sha256:' || repeat('2', 64))
     ) AS seed(tenant, package, release)
   LOOP
     PERFORM set_config('app.tenant', tenant, false);
     INSERT INTO catalog.packages
       (tenant_id, package_id, package_version, manifest_sha256, predecessor_version)
     VALUES (tenant, package, '1.0.0', 'sha256:' || repeat('a', 64), NULL);
-    INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) VALUES (tenant, release, 'dev');
+    INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES (tenant, release, 'dev');
     INSERT INTO catalog.effective_release_packages
-      (tenant_id, effective_release_id, package_id, package_version)
+      (tenant_id, manifest_digest, package_id, package_version)
     VALUES (tenant, release, package, '1.0.0');
     INSERT INTO catalog.effective_release_heads
-      (tenant_id, environment, effective_release_id)
+      (tenant_id, environment, manifest_digest)
     VALUES (tenant, 'dev', release);
     INSERT INTO catalog.component_digest_owners
       (tenant_id, environment_instance, component_digest, package_id)
@@ -499,7 +500,7 @@ DO $denied$ BEGIN
   BEGIN PERFORM 1 FROM catalog.deployment_attestations;
     ASSERT false, 'the author read deployment attestations';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  BEGIN UPDATE catalog.effective_release_heads SET effective_release_id = 2;
+  BEGIN UPDATE catalog.effective_release_heads SET manifest_digest = 'sha256:' || repeat('2', 64);
     ASSERT false, 'the author moved an effective release head';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM 1 FROM wamn_authority.author_login_tenants;
@@ -599,15 +600,16 @@ fn deployment_attestation_rust_binding_holds_on_postgres() {
     let url = test_database.url().to_owned();
     reset_and_apply(&url, "");
     let hash = format!("sha256:{}", "a".repeat(64));
+    let release = format!("sha256:{}", "7".repeat(64));
     let identity = wamn_schema_control::attestation::EffectiveReleaseIdentity {
         tenant_id: "tenant-a",
-        effective_release_id: 7,
+        manifest_digest: &release,
         environment: "prod",
     };
     let attestation = wamn_schema_control::attestation::Attestation {
         tenant_id: "tenant-a",
         environment_instance: "",
-        effective_release_id: 7,
+        manifest_digest: &release,
         org_id: "acme",
         project_id: "billing",
         environment: "prod",
@@ -629,7 +631,7 @@ PREPARE wamn_rust_attestation AS {prepared};
 DO $types$ DECLARE found text[]; BEGIN
   SELECT parameter_types::text[] INTO found
     FROM pg_prepared_statements WHERE name = 'wamn_rust_attestation';
-  ASSERT found = ARRAY['text','text','integer','text','text','text','text','text','text']::text[],
+  ASSERT found = ARRAY['text','text','text','text','text','text','text','text','text']::text[],
     format('PostgreSQL types the Rust binding as %s', found);
 END $types$;
 DEALLOCATE wamn_rust_attestation;
@@ -640,7 +642,7 @@ DO $binding$ BEGIN
   ASSERT EXISTS (
     SELECT 1 FROM catalog.deployment_attestations
      WHERE tenant_id = 'tenant-a' AND environment_instance = ''
-       AND effective_release_id = 7 AND org_id = 'acme' AND project_id = 'billing'
+       AND manifest_digest = '{release}' AND org_id = 'acme' AND project_id = 'billing'
        AND environment = 'prod' AND deployed_manifest_hash = '{hash}'
        AND source_commit = '0123456789abcdef'
        AND attested_at = '2026-08-15T12:00:00Z'::timestamptz

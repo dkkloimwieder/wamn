@@ -47,32 +47,34 @@ CREATE TABLE catalog.package_migrations (
         REFERENCES catalog.packages (tenant_id, package_id, package_version)
 );
 
+-- A release is named by its manifest digest (docs/plan/platform-deploy.md R1).
 CREATE TABLE catalog.effective_releases (
     tenant_id                    text        NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id         int         NOT NULL CHECK (effective_release_id > 0),
+    manifest_digest              text        NOT NULL
+        CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     environment                  text        NOT NULL CHECK (environment <> ''),
     verified_publisher_principal text CHECK (
         verified_publisher_principal IS NULL OR verified_publisher_principal <> ''
     ),
     created_at                   timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT effective_releases_pkey
-        PRIMARY KEY (tenant_id, effective_release_id),
+        PRIMARY KEY (tenant_id, manifest_digest),
     CONSTRAINT effective_releases_environment_key
-        UNIQUE (tenant_id, effective_release_id, environment)
+        UNIQUE (tenant_id, manifest_digest, environment)
 );
 
 CREATE TABLE catalog.effective_release_packages (
     tenant_id            text NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id int  NOT NULL CHECK (effective_release_id > 0),
+    manifest_digest      text NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id           text NOT NULL CHECK (package_id <> ''),
     package_version      text NOT NULL CHECK (package_version <> ''),
     CONSTRAINT effective_release_packages_pkey
-        PRIMARY KEY (tenant_id, effective_release_id, package_id),
+        PRIMARY KEY (tenant_id, manifest_digest, package_id),
     CONSTRAINT effective_release_packages_exact_pair_key
-        UNIQUE (tenant_id, effective_release_id, package_id, package_version),
+        UNIQUE (tenant_id, manifest_digest, package_id, package_version),
     CONSTRAINT effective_release_packages_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id)
-        REFERENCES catalog.effective_releases (tenant_id, effective_release_id),
+        FOREIGN KEY (tenant_id, manifest_digest)
+        REFERENCES catalog.effective_releases (tenant_id, manifest_digest),
     CONSTRAINT effective_release_packages_package_fkey
         FOREIGN KEY (tenant_id, package_id, package_version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version)
@@ -142,16 +144,16 @@ CREATE TRIGGER package_migrations_release_seal
     EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
 CREATE TABLE catalog.effective_release_heads (
-    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
-    environment          text        NOT NULL CHECK (environment <> ''),
-    effective_release_id int         NOT NULL CHECK (effective_release_id > 0),
-    updated_at           timestamptz NOT NULL DEFAULT now(),
+    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
+    environment     text        NOT NULL CHECK (environment <> ''),
+    manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT effective_release_heads_pkey
         PRIMARY KEY (tenant_id, environment),
     CONSTRAINT effective_release_heads_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id, environment)
+        FOREIGN KEY (tenant_id, manifest_digest, environment)
         REFERENCES catalog.effective_releases
-            (tenant_id, effective_release_id, environment)
+            (tenant_id, manifest_digest, environment)
 );
 
 -- `environment_instance` names WHICH CREATION of the project database this fact
@@ -325,14 +327,14 @@ CREATE TABLE wamn_run.gate_reports (
 );
 
 -- The attestation's coordinate carries the environment instance for the same
--- reason the component fact does (wamn-10yt.52). A disposable environment's
--- effective release id is fixed, so a second run deploys a different manifest
--- under the same name; keyed by the instance, that is a different coordinate
--- rather than a conflict with a row whose database no longer exists.
+-- reason the component fact does (wamn-10yt.52): keyed by the instance, a
+-- recreated database is a different coordinate rather than a conflict with a
+-- row whose database no longer exists.
 CREATE TABLE catalog.deployment_attestations (
     tenant_id              text        NOT NULL CHECK (tenant_id <> ''),
     environment_instance   text        NOT NULL,
-    effective_release_id   int         NOT NULL CHECK (effective_release_id > 0),
+    manifest_digest        text        NOT NULL
+        CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     org_id                 text        NOT NULL CHECK (org_id <> ''),
     project_id             text        NOT NULL CHECK (project_id <> ''),
     environment            text        NOT NULL CHECK (environment <> ''),
@@ -341,13 +343,13 @@ CREATE TABLE catalog.deployment_attestations (
     source_commit          text        CHECK (source_commit IS NULL OR source_commit <> ''),
     attested_at            timestamptz NOT NULL,
     CONSTRAINT deployment_attestations_coordinate UNIQUE (
-        tenant_id, environment_instance, effective_release_id, org_id, project_id,
+        tenant_id, environment_instance, manifest_digest, org_id, project_id,
         environment
     ),
     CONSTRAINT deployment_attestations_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id, environment)
+        FOREIGN KEY (tenant_id, manifest_digest, environment)
         REFERENCES catalog.effective_releases
-            (tenant_id, effective_release_id, environment)
+            (tenant_id, manifest_digest, environment)
 );
 
 -- One row per package artifact that `push-package` pushed (wamn-zua8.3). A
@@ -388,7 +390,7 @@ CREATE POLICY qualifications_all ON catalog.qualifications
 CREATE TABLE catalog.release_selections (
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
     environment          text        NOT NULL CHECK (environment <> ''),
-    effective_release_id int         NOT NULL CHECK (effective_release_id > 0),
+    manifest_digest      text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     qualification_sha256 text,
     reason               text        NOT NULL
         CHECK (reason IN ('qualification', 'environment-creation')),
@@ -398,9 +400,9 @@ CREATE TABLE catalog.release_selections (
     CONSTRAINT release_selections_pkey
         PRIMARY KEY (tenant_id, environment, selected_at),
     CONSTRAINT release_selections_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id, environment)
+        FOREIGN KEY (tenant_id, manifest_digest, environment)
         REFERENCES catalog.effective_releases
-            (tenant_id, effective_release_id, environment),
+            (tenant_id, manifest_digest, environment),
     CONSTRAINT release_selections_qualification_fkey
         FOREIGN KEY (qualification_sha256)
         REFERENCES catalog.qualifications (qualification_sha256)

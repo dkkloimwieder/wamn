@@ -22,7 +22,8 @@ use crate::plugins::wamn_postgres::AuthorityClass;
 #[derive(Debug, Clone, Copy)]
 pub struct EventRunAdmission<'a> {
     pub package_id: &'a str,
-    pub effective_release_id: i32,
+    /// The release that declares the workflow, as its manifest digest.
+    pub manifest_digest: &'a str,
     pub environment: &'a str,
     pub wiring_id: &'a str,
     pub wiring_version: i32,
@@ -118,7 +119,7 @@ impl WamnPostgres {
             let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 10] = [
                 &tenant,
                 &admission.package_id,
-                &admission.effective_release_id,
+                &admission.manifest_digest,
                 &admission.environment,
                 &admission.wiring_id,
                 &admission.wiring_version,

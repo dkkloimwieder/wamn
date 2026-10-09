@@ -54,9 +54,11 @@ pub enum ProductionClaimResult {
 }
 
 /// Candidate-only authority frozen on the durable run at admission.
+///
+/// A candidate run carries no release pin; it resolves under the release the
+/// claiming pod carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionCandidate {
-    pub effective_release_id: i32,
     pub wiring_hash: String,
     pub binding_world: CandidateBindingWorld,
 }
@@ -126,10 +128,9 @@ impl RunStore for WamnPostgres {
     /// returned only after COMMIT, so router execution never starts under an
     /// uncommitted lease.
     ///
-    /// The lease grant verifies the pod's effective release matches the
-    /// admission-pinned release and records its manifest digest, write-once per
-    /// claim attempt. A component with no injected release identity records no
-    /// digest. The caller passes the mounted release's exact package-id set;
+    /// The lease grant verifies the pod's release digest matches the
+    /// admission-pinned digest. A component with no injected release identity
+    /// verifies nothing. The caller passes the mounted release's exact package-id set;
     /// selection remains one ordered SQL turn across that whole set.
     async fn claim_next(
         &self,
@@ -605,7 +606,7 @@ const PINNED_BACKLOG_SQL: &str = "SELECT EXISTS ( \
       WHERE q.tenant_id = current_setting('app.tenant', true) \
         AND r.package_id = ANY($1::text[]) \
         AND r.environment = $2 \
-        AND r.effective_release_id = $3 \
+        AND r.manifest_digest = $3 \
         AND r.status IN ('dispatched', 'running'))";
 
 impl WamnPostgres {
@@ -683,7 +684,11 @@ impl WamnPostgres {
             let row = connection
                 .query_one(
                     PINNED_BACKLOG_SQL,
-                    &[&package_ids, &environment, &release.effective_release_id()],
+                    &[
+                        &package_ids,
+                        &environment,
+                        &release.manifest_digest().as_str(),
+                    ],
                 )
                 .await
                 .map_err(|error| storage("read pinned backlog", &error))?;
@@ -957,9 +962,9 @@ async fn claim_in_transaction(
         .map_err(|error| storage("prepare production candidate", &error))?;
     // The select skips runs pinned to another release, so their head never
     // blocks this host's own backlog (R20). The grant below rechecks the pin.
-    let host_release_id: Option<i32> = release.map(ReleaseIdentity::effective_release_id);
+    let host_release: Option<&str> = release.map(|identity| identity.manifest_digest().as_str());
     let Some(row) = connection
-        .query_opt(&select, &[&package_ids, &environment, &host_release_id])
+        .query_opt(&select, &[&package_ids, &environment, &host_release])
         .await
         .map_err(|error| storage("select production candidate", &error))?
     else {
@@ -1047,11 +1052,9 @@ async fn claim_in_transaction(
         .prepare_cached(&grant_sql)
         .await
         .map_err(|error| storage("prepare production lease grant", &error))?;
-    // The pod's own release identity, or NULL for both when it carries none.
-    // PostgreSQL compares the effective release id to the immutable admission
-    // pin and records only the digest.
+    // The pod's own release digest, or NULL when it carries none. PostgreSQL
+    // compares it to the immutable admission pin.
     let release = release.filter(|_| selected.candidate.is_none());
-    let effective_release_id: Option<i32> = release.map(ReleaseIdentity::effective_release_id);
     let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest().as_str());
     // The grant is the one abortable write left in this transaction, so it runs
     // in its own subtransaction: a database refusal rolls back to the savepoint
@@ -1063,13 +1066,7 @@ async fn claim_in_transaction(
     let granted = connection
         .query_opt(
             &grant,
-            &[
-                &selected.run_id,
-                &runner,
-                &lease_ttl_ms,
-                &effective_release_id,
-                &manifest_digest,
-            ],
+            &[&selected.run_id, &runner, &lease_ttl_ms, &manifest_digest],
         )
         .await;
     let granted = match granted {
@@ -1089,7 +1086,7 @@ async fn claim_in_transaction(
         ProductionClaimError::new(
             ProductionClaimErrorType::Contract,
             "grant production lease",
-            "claiming effective release does not match the run admission pin",
+            "claiming release digest does not match the run admission pin",
         )
     })?;
     let lease_generation = row_value(&row, 0, "lease generation")?;
@@ -1370,9 +1367,8 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     let durable_caller_attached: bool = row_value(row, 8, "durable caller attachment")?;
     let flow_id: Option<String> = row_value(row, 9, "legacy flow id")?;
     let flow_version: Option<i32> = row_value(row, 10, "legacy flow version")?;
-    let effective_release_id: i32 = row_value(row, 11, "effective release id")?;
-    let wiring_hash: Option<String> = row_value(row, 12, "candidate wiring hash")?;
-    let binding_world: Option<String> = row_value(row, 13, "candidate binding world")?;
+    let wiring_hash: Option<String> = row_value(row, 11, "candidate wiring hash")?;
+    let binding_world: Option<String> = row_value(row, 12, "candidate binding world")?;
     let payload_text: String = row_value(row, 3, "authoritative input")?;
     let payload = serde_json::from_str(&payload_text).map_err(|error| {
         ProductionClaimError::new(
@@ -1382,7 +1378,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         )
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
-    let service_principal_id: Option<String> = row_value(row, 15, "service principal")?;
+    let service_principal_id: Option<String> = row_value(row, 14, "service principal")?;
     let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
         // A released wiring: an automation run under its service principal,
         // or an event run with no caller. The grain check tells them apart.
@@ -1392,9 +1388,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         {
             None
         }
-        (None, None, Some(wiring_hash), Some(binding_world))
-            if effective_release_id > 0 && !wiring_hash.is_empty() =>
-        {
+        (None, None, Some(wiring_hash), Some(binding_world)) if !wiring_hash.is_empty() => {
             let binding_world = serde_json::from_str(&binding_world)
                 .map_err(|error| {
                     ProductionClaimError::new(
@@ -1413,7 +1407,6 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
                     })
                 })?;
             Some(ProductionCandidate {
-                effective_release_id,
                 wiring_hash,
                 binding_world,
             })
@@ -1435,7 +1428,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     }
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
-        package_id: row_value(row, 14, "package id")?,
+        package_id: row_value(row, 13, "package id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
         status,
         payload,
@@ -1744,12 +1737,11 @@ mod tests {
     }
 
     #[test]
-    fn lease_grant_verifies_release_and_mints_manifest_on_the_existing_write() {
+    fn lease_grant_verifies_the_release_digest_on_the_existing_write() {
         let lease_sql = grant_production_claim_sql();
         for required in [
             "SET status = 'running'",
-            "manifest_digest = $5",
-            "r.effective_release_id = $4",
+            "r.manifest_digest = $4",
             "r.status IN ('dispatched', 'running')",
             "FROM leased JOIN marked",
         ] {
@@ -1758,17 +1750,20 @@ mod tests {
         assert_eq!(
             lease_sql.matches("UPDATE runs").count(),
             1,
-            "the record is minted on the existing claim write, not a second one"
+            "the release is verified on the existing claim write, not a second one"
         );
 
         assert!(!lease_sql.contains("release_version"));
 
         // The digest travels from the claiming pod, so the candidate select
-        // never reads it back; a decoder that grew a field would need this to
-        // change.
+        // filters by it and never projects it back; a decoder that grew a field
+        // would need this to change.
         let select_sql = select_production_claim_sql();
         assert!(!select_sql.contains("release_version"));
-        assert!(!select_sql.contains("manifest_digest"));
+        let projection = &select_sql[select_sql
+            .find("SELECT candidate.run_id")
+            .expect("the outer projection opens on the run id")..];
+        assert!(!projection.contains("manifest_digest"));
     }
 
     #[test]
@@ -1778,7 +1773,7 @@ mod tests {
             "q.tenant_id = current_setting('app.tenant', true)",
             "r.package_id = ANY($1::text[])",
             "r.environment = $2",
-            "r.effective_release_id = $3",
+            "r.manifest_digest = $3",
         ] {
             assert!(
                 PINNED_BACKLOG_SQL.contains(required),
@@ -1812,7 +1807,6 @@ mod tests {
             "AS durable_caller_attached",
             "r.flow_id",
             "r.flow_version",
-            "r.effective_release_id",
             "r.wiring_hash",
             "r.binding_world_json::text",
             "r.package_id",

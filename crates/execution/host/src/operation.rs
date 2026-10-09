@@ -417,7 +417,6 @@ impl OperationHost {
                         &self.project,
                         &manifest.release.tenant_id,
                         &manifest.release.environment,
-                        manifest.release.effective_release_id.get(),
                         self.release.release().manifest_digest.as_str(),
                     )
                     .await

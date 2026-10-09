@@ -97,13 +97,16 @@ pub fn activation_facts() -> &'static str {
         SELECT 1 FROM catalog.wirings AS wiring
           JOIN catalog.effective_release_heads AS head
             ON head.tenant_id = wiring.tenant_id AND head.environment = $2
-          JOIN catalog.effective_release_packages AS member
-            ON member.tenant_id = head.tenant_id
-           AND member.effective_release_id = head.effective_release_id
-           AND member.package_id = wiring.package_id
-           AND member.package_version = wiring.package_version
+          JOIN catalog.releases AS release
+            ON release.tenant_id = head.tenant_id
+           AND release.manifest_digest = head.manifest_digest
+         CROSS JOIN LATERAL jsonb_array_elements(
+               convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}'
+           ) AS member(value)
          WHERE wiring.tenant_id = NULLIF(current_setting('app.tenant', true), '')
            AND wiring.package_id = $1 AND wiring.wiring_id = $3 AND wiring.wiring_hash = $4
+           AND member.value ->> 'package-id' = wiring.package_id
+           AND member.value ->> 'package-version' = wiring.package_version
     ) AS definition_in_release"
 }
 

@@ -134,8 +134,7 @@ impl LocalApplication {
         anyhow::ensure!(
             tenant == self.manifest.release.tenant_id
                 && lookup.environment == self.manifest.release.environment
-                && u32::try_from(lookup.effective_release_id)?
-                    == self.manifest.release.effective_release_id.get(),
+                && lookup.manifest_digest == self.facts.manifest_digest.as_str(),
             "local connection release scope mismatch"
         );
         let Some((wiring_hash, entry_permitted)) = entry_facts(&self.manifest, &self.facts, lookup)
@@ -705,7 +704,7 @@ mod tests {
             origin_operation: "run",
             package_id: "orders",
             operation: "run",
-            effective_release_id: 7,
+            manifest_digest: facts.manifest_digest.as_str(),
             environment: "dev",
             component_digest: &digest,
             store_alias: "store",

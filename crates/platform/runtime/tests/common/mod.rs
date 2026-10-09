@@ -26,16 +26,18 @@ pub const TENANT: &str = "claim-live";
 pub const COMPONENT: &str = "claim-live-runner";
 pub const PACKAGE_ID: &str = "cat_main";
 pub const ENVIRONMENT: &str = "test";
-/// A second pod carrying a different effective release — the mismatch case.
+/// A second pod carrying a different release — the mismatch case.
 pub const ROLLED_COMPONENT: &str = "claim-live-runner-next";
 pub const SCHEMA: &str = "wamn_run";
-/// The exact effective release pinned on every ordinarily seeded run.
-pub const POD_EFFECTIVE_RELEASE_ID: i32 = 1;
+/// The release pinned on every ordinarily seeded run: the digest of
+/// [`POD_MANIFEST_BYTES`].
 pub const POD_MANIFEST_DIGEST: &str =
-    "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-pub const ROLLED_EFFECTIVE_RELEASE_ID: i32 = 2;
+    "sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394";
+pub const POD_MANIFEST_BYTES: &str = r#"{"release":1}"#;
+/// The rolled pod's release: the digest of [`ROLLED_MANIFEST_BYTES`].
 pub const ROLLED_MANIFEST_DIGEST: &str =
-    "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    "sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0";
+pub const ROLLED_MANIFEST_BYTES: &str = r#"{"release":2}"#;
 pub const WIRING_ID: &str = "claim-live-wiring";
 pub const WIRING_VERSION: i32 = 1;
 pub const EMPTY_HASH: &str =
@@ -82,16 +84,16 @@ pub async fn insert_effect_attempt(
 const RUN_STATE_SQL: &str = include_str!("../../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../../deploy/sql/run-queue.sql");
 
-/// Apply the run plane of record on the tenant floor, with the two effective
-/// releases the pods mount.
+/// Apply the run plane of record on the tenant floor, with the two releases
+/// the pods mount.
 pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
     client.batch_execute(RUN_STATE_SQL).await?;
     client.batch_execute(RUN_QUEUE_SQL).await?;
     client
         .batch_execute(&format!(
-            "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
-             VALUES ('{TENANT}', {POD_EFFECTIVE_RELEASE_ID}, '{ENVIRONMENT}'), \
-                    ('{TENANT}', {ROLLED_EFFECTIVE_RELEASE_ID}, '{ENVIRONMENT}');"
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             VALUES ('{TENANT}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
+                    ('{TENANT}', '{ROLLED_MANIFEST_DIGEST}', '{ROLLED_MANIFEST_BYTES}');"
         ))
         .await?;
     Ok(())
@@ -217,10 +219,10 @@ async fn seed_run_of_class(
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, \
                     durability_class) \
-                 VALUES ($1,$2,'root',1,'dispatched',$3,1,'test',$4,$5, \
+                 VALUES ($1,$2,'root',1,'dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
                          '{{\"input\":true}}','http',$6)"
             ),
             &[
@@ -353,21 +355,18 @@ pub async fn queue_attempts(client: &Client, run_id: &str) -> anyhow::Result<i32
         .get(0))
 }
 
-/// The admission-pinned effective release and claim-time manifest digest a run carries.
-pub async fn release_record(
-    client: &Client,
-    run_id: &str,
-) -> anyhow::Result<(i32, Option<String>)> {
+/// The admission-pinned release digest a run carries.
+pub async fn release_record(client: &Client, run_id: &str) -> anyhow::Result<Option<String>> {
     let row = client
         .query_one(
             &format!(
-                "SELECT effective_release_id, manifest_digest \
+                "SELECT manifest_digest \
                    FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id=$2"
             ),
             &[&TENANT, &run_id],
         )
         .await?;
-    Ok((row.get(0), row.get(1)))
+    Ok(row.get(0))
 }
 
 pub async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Value> {
@@ -488,20 +487,14 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     plugin.set_runner(COMPONENT, COMPONENT)?;
     plugin.set_release_identity(
         COMPONENT,
-        ReleaseIdentity::for_test(
-            POD_EFFECTIVE_RELEASE_ID,
-            wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?,
-        ),
+        ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?),
     )?;
     plugin.set_tenant(ROLLED_COMPONENT, TENANT)?;
     plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(
         ROLLED_COMPONENT,
-        ReleaseIdentity::for_test(
-            ROLLED_EFFECTIVE_RELEASE_ID,
-            wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?,
-        ),
+        ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?),
     )?;
 
     Ok(LiveFixture {

@@ -141,14 +141,16 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
          INSERT INTO catalog.package_migrations (tenant_id,package_id,package_version,ordinal,relative_path,sha256) VALUES \
            ('upgrade-test','platform_fixture','2.0.0',1,'migrations/0001_initial.sql','sha256:' || repeat('c',64)), \
            ('upgrade-test','platform_fixture','2.1.0',1,'migrations/0001_initial.sql','sha256:' || repeat('c',64)), \
-           ('upgrade-test','platform_fixture','2.1.0',2,'migrations/0002_successor.sql','sha256:' || repeat('d',64)); \
-         INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment) VALUES ('upgrade-test',1,'test');",
+           ('upgrade-test','platform_fixture','2.1.0',2,'migrations/0002_successor.sql','sha256:' || repeat('d',64));",
     ).await.unwrap();
-    client.execute(
-        "INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) \
-         VALUES ('upgrade-test',1,$1,$2)",
-        &[&manifest.digest().as_str(), &manifest.canonical_bytes()],
-    ).await.unwrap();
+    client
+        .execute(
+            "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+         VALUES ('upgrade-test',$1,$2)",
+            &[&manifest.digest().as_str(), &manifest.canonical_bytes()],
+        )
+        .await
+        .unwrap();
     let tx = client.transaction().await.unwrap();
     let candidate = read_current_packages(&tx, "upgrade-test")
         .await
@@ -170,7 +172,6 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
         format_version: 1,
         tenant: "upgrade-test".to_owned(),
         environment: "test".to_owned(),
-        predecessor_release_id: 1,
         predecessor_manifest_digest: manifest.digest().as_str().to_owned(),
         predecessor_package: predecessor.clone(),
         candidate_package: candidate.clone(),

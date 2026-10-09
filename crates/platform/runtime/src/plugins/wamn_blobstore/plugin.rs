@@ -57,11 +57,11 @@ pub struct WamnBlobstore {
     invocations: RwLock<HashMap<String, ConnectionInvocation>>,
 }
 
-/// The effective release and environment one invocation authorizes under.
+/// The release digest and environment one invocation authorizes under.
 ///
 /// A CANDIDATE closure states them itself. A RELEASED one takes them from the
-/// mounted serving manifest, after TWO CHECKS — because a mounted manifest is
-/// an input like any other:
+/// mounted serving manifest and its digest, after TWO CHECKS — because a
+/// mounted manifest is an input like any other:
 ///
 /// - it must belong to THIS tenant, or a manifest served for another one would
 ///   hand a guest an effective release under which some other tenant's binding
@@ -73,22 +73,19 @@ pub struct WamnBlobstore {
 /// effect can be asserted without a database or an object store.
 fn release_coordinates(
     invocation: &ConnectionInvocation,
-    manifest: Option<&ServingManifest>,
+    release: Option<(&ServingManifest, &str)>,
     tenant: &str,
-) -> Result<(i32, String), BindingError> {
-    match (&invocation.closure, manifest) {
+) -> Result<(String, String), BindingError> {
+    match (&invocation.closure, release) {
         (
             ConnectionExecutionClosure::Candidate {
-                effective_release_id,
+                manifest_digest,
                 environment,
                 ..
             },
             None,
-        ) => Ok((
-            i32::try_from(*effective_release_id).map_err(|_| BindingError::Unauthorized)?,
-            environment.clone(),
-        )),
-        (ConnectionExecutionClosure::Released, Some(manifest)) => {
+        ) => Ok((manifest_digest.clone(), environment.clone())),
+        (ConnectionExecutionClosure::Released, Some((manifest, manifest_digest))) => {
             if manifest.release.tenant_id != tenant
                 || !manifest
                     .release
@@ -99,8 +96,7 @@ fn release_coordinates(
                 return Err(BindingError::Unauthorized);
             }
             Ok((
-                i32::try_from(manifest.release.effective_release_id.get())
-                    .map_err(|_| BindingError::Unauthorized)?,
+                manifest_digest.to_owned(),
                 manifest.release.environment.clone(),
             ))
         }
@@ -244,15 +240,15 @@ impl WamnBlobstore {
             .ok_or_else(|| refused("no invocation is registered for the component"))?;
         let entry = entry_lookup(&invocation)
             .map_err(|_| refused("wiring version does not fit the authority's column"))?;
-        let released_manifest = match &invocation.closure {
-            ConnectionExecutionClosure::Released => Some(
-                self.release
-                    .as_deref()
-                    .ok_or_else(|| refused("a released closure with no release manifest mounted"))?
-                    .manifest(),
-            ),
+        let released = match &invocation.closure {
+            ConnectionExecutionClosure::Released => {
+                Some(self.release.as_deref().ok_or_else(|| {
+                    refused("a released closure with no release manifest mounted")
+                })?)
+            }
             ConnectionExecutionClosure::Candidate { .. } => None,
         };
+        let released_manifest = released.map(LoadedRelease::manifest);
         // The binding frozen at candidate admission for exactly this component
         // and alias. The authority query is narrowed to it, and the snapshot is
         // compared against it once the row comes back. A candidate closure
@@ -266,9 +262,14 @@ impl WamnBlobstore {
                     .ok_or_else(|| refused("the frozen world holds no binding for this alias"))?,
             ),
         };
-        let (effective_release_id, environment) = release_coordinates(
+        let (manifest_digest, environment) = release_coordinates(
             &invocation,
-            released_manifest,
+            released.map(|release| {
+                (
+                    release.manifest(),
+                    release.release().manifest_digest.as_str(),
+                )
+            }),
             &self.tenant,
         )
         .map_err(|_| {
@@ -291,7 +292,7 @@ impl WamnBlobstore {
                     origin_interface_version: &invocation.origin.interface_version,
                     origin_operation: &invocation.origin.operation,
                     operation: &invocation.operation,
-                    effective_release_id,
+                    manifest_digest: &manifest_digest,
                     environment: &environment,
                     component_digest: &invocation.component_digest,
                     store_alias,
@@ -309,7 +310,7 @@ impl WamnBlobstore {
                     store_alias,
                     component_id,
                     package_id = %invocation.package_id,
-                    effective_release_id,
+                    manifest_digest = %manifest_digest,
                     environment = %environment,
                     wiring_id = wiring.wiring_id,
                     wiring_version = wiring.wiring_version,
@@ -513,7 +514,7 @@ mod tests {
     fn candidate_with(binding_world: Arc<CandidateBindingWorld>) -> ConnectionInvocation {
         ConnectionInvocation {
             closure: ConnectionExecutionClosure::Candidate {
-                effective_release_id: 9,
+                manifest_digest: CANDIDATE_RELEASE.to_string(),
                 environment: "staging".to_string(),
                 wiring_hash: format!("sha256:{}", "b".repeat(64)),
                 component: "archiver".to_string(),
@@ -530,6 +531,14 @@ mod tests {
                 .expect("an empty candidate binding world decodes"),
         ))
     }
+
+    /// The release digest a candidate closure states.
+    const CANDIDATE_RELEASE: &str =
+        "sha256:9999999999999999999999999999999999999999999999999999999999999999";
+
+    /// The digest of the mounted release a released closure resolves through.
+    const MOUNTED_RELEASE: &str =
+        "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
     fn manifest(tenant: &str, package: &str) -> ServingManifest {
         ServingManifest {
@@ -555,7 +564,10 @@ mod tests {
     fn a_candidate_closure_carries_its_own_coordinates() {
         let coordinates =
             release_coordinates(&candidate(), None, "tenant-a").expect("a candidate resolves");
-        assert_eq!(coordinates, (9, "staging".to_string()));
+        assert_eq!(
+            coordinates,
+            (CANDIDATE_RELEASE.to_string(), "staging".to_string())
+        );
     }
 
     /// EXIT GATE: a released closure resolves through the mounted manifest,
@@ -569,9 +581,13 @@ mod tests {
     #[test]
     fn a_released_closure_resolves_through_the_mounted_manifest() {
         let manifest = manifest("tenant-a", "package_a");
-        let coordinates = release_coordinates(&released(), Some(&manifest), "tenant-a")
-            .expect("a released closure resolves");
-        assert_eq!(coordinates, (4, "warehouse-eu-3".to_string()));
+        let coordinates =
+            release_coordinates(&released(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a")
+                .expect("a released closure resolves");
+        assert_eq!(
+            coordinates,
+            (MOUNTED_RELEASE.to_string(), "warehouse-eu-3".to_string())
+        );
     }
 
     /// A manifest for ANOTHER tenant must not supply coordinates: it would
@@ -581,7 +597,7 @@ mod tests {
     fn a_manifest_for_another_tenant_refuses() {
         let manifest = manifest("tenant-b", "package_a");
         assert_eq!(
-            release_coordinates(&released(), Some(&manifest), "tenant-a"),
+            release_coordinates(&released(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a"),
             Err(BindingError::Unauthorized)
         );
     }
@@ -592,7 +608,7 @@ mod tests {
     fn a_manifest_without_the_invoked_package_refuses() {
         let manifest = manifest("tenant-a", "package_b");
         assert_eq!(
-            release_coordinates(&released(), Some(&manifest), "tenant-a"),
+            release_coordinates(&released(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a"),
             Err(BindingError::Unauthorized)
         );
     }
@@ -615,7 +631,7 @@ mod tests {
     fn a_candidate_closure_handed_a_manifest_refuses() {
         let manifest = manifest("tenant-a", "package_a");
         assert_eq!(
-            release_coordinates(&candidate(), Some(&manifest), "tenant-a"),
+            release_coordinates(&candidate(), Some((&manifest, MOUNTED_RELEASE)), "tenant-a"),
             Err(BindingError::Unauthorized)
         );
     }

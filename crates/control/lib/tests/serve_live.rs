@@ -509,10 +509,18 @@ async fn a_create_environment_saga_runs_all_fifteen_steps() -> anyhow::Result<()
         &worker_url,
         &wamn_control_provision::project_env_database_name(ORG, PROJECT, ENVIRONMENT, &instance),
     )?;
+    let release: String = connect(&source_url)
+        .await?
+        .query_one(
+            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
+            &[&TENANT],
+        )
+        .await?
+        .get(0);
     let snapshot = wamn_control::print_release_env::lookup_release_snapshot(
         &source_url,
         TENANT,
-        1,
+        &release,
         &config.release_artifact_base,
     )
     .await?;
@@ -520,7 +528,7 @@ async fn a_create_environment_saga_runs_all_fifteen_steps() -> anyhow::Result<()
     let root = closures
         .roots()
         .next()
-        .context("release 1 serves an operation")?
+        .context("the published release serves an operation")?
         .to_owned();
     let mut source = connect(&source_url).await?;
     let transaction = source.transaction().await?;
@@ -547,7 +555,7 @@ async fn a_create_environment_saga_runs_all_fifteen_steps() -> anyhow::Result<()
     assert_eq!(
         read,
         SourceRead {
-            release: 1,
+            manifest_digest: release.clone(),
             packages: request.packages.clone(),
             connections: vec![ConnectionRequest {
                 definition: replacement,

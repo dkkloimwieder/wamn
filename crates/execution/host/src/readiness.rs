@@ -57,7 +57,7 @@ async fn prepare_synchronous_release(
         .release_component_bindings_ready(
             &operations.project,
             &manifest.release.tenant_id,
-            manifest.release.effective_release_id.get(),
+            operations.release.release().manifest_digest.as_str(),
             &manifest.release.environment,
             &digests,
         )

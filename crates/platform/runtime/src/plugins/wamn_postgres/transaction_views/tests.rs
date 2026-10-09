@@ -468,7 +468,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
             .await
             .expect("claims bind");
         postgres
-            .set_release_identity(scope, ReleaseIdentity::for_test(1, release.clone()))
+            .set_release_identity(scope, ReleaseIdentity::for_test(release.clone()))
             .expect("release binds");
         postgres
             .bind_invocation(scope, invocation(operation, package))
@@ -697,7 +697,7 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
             .await
             .unwrap();
         postgres
-            .set_release_identity(scope, ReleaseIdentity::for_test(1, release.clone()))
+            .set_release_identity(scope, ReleaseIdentity::for_test(release.clone()))
             .unwrap();
         postgres
             .bind_invocation(scope, invocation(operation, package))
@@ -970,7 +970,7 @@ async fn the_host_owns_the_operation_transaction_and_the_participant_works_in_it
         .await
         .expect("claims bind");
     postgres
-        .set_release_identity(OPERATION_OWNER, ReleaseIdentity::for_test(1, release))
+        .set_release_identity(OPERATION_OWNER, ReleaseIdentity::for_test(release))
         .expect("release binds");
     postgres
         .bind_invocation(OPERATION_OWNER, invocation(OWNER_OPERATION, "base"))

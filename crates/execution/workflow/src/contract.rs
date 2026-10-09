@@ -49,8 +49,9 @@ pub enum Trigger {
 /// One run to admit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StartRequest {
-    /// The published release whose wiring the run executes.
-    pub effective_release_id: u32,
+    /// The installed release whose wiring the run executes, as its manifest
+    /// digest.
+    pub manifest_digest: String,
     pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,

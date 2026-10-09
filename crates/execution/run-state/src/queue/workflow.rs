@@ -18,13 +18,13 @@ const PARKED_AT: &str = "'infinity'::timestamptz";
 /// returns no row for a repeated key, and the caller then reads the first run
 /// with [`select_automation_run_sql`].
 ///
-/// Binds: `$1` tenant, `$2` package, `$3` effective release, `$4` environment,
+/// Binds: `$1` tenant, `$2` package, `$3` release manifest digest, `$4` environment,
 /// `$5` wiring id, `$6` wiring version, `$7` wiring hash, `$8` service
 /// principal, `$9` idempotency key, `$10` input JSON text, `$11` durability
 /// class.
 pub fn insert_automation_run_sql() -> String {
     format!(
-        "INSERT INTO runs (tenant_id, package_id, effective_release_id, environment, \
+        "INSERT INTO runs (tenant_id, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, service_principal_id, \
              idempotency_key, input_json, status, durability_class) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'automation', $8::text::uuid, $9, \
@@ -42,7 +42,7 @@ pub fn insert_automation_run_sql() -> String {
 /// class.
 pub fn select_automation_run_sql() -> &'static str {
     "SELECT run_id FROM runs WHERE tenant_id = $1 AND package_id = $2 \
-        AND effective_release_id = $3 AND environment = $4 AND wiring_id = $5 \
+        AND manifest_digest = $3 AND environment = $4 AND wiring_id = $5 \
         AND wiring_version = $6 AND wiring_hash = $7 AND trigger_source = 'automation' \
         AND service_principal_id = $8::text::uuid AND idempotency_key = $9 \
         AND input_json = $10::text::jsonb"
@@ -53,7 +53,7 @@ pub fn select_automation_run_sql() -> &'static str {
 /// with the registration id as `$8`.
 pub fn insert_event_run_sql() -> String {
     format!(
-        "INSERT INTO runs (tenant_id, package_id, effective_release_id, environment, \
+        "INSERT INTO runs (tenant_id, package_id, manifest_digest, environment, \
              wiring_id, wiring_version, wiring_hash, trigger_source, registration_id, \
              idempotency_key, input_json, status, durability_class) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'event', $8, $9, \
@@ -68,7 +68,7 @@ pub fn insert_event_run_sql() -> String {
 /// [`select_automation_run_sql`], with the registration id as `$8`.
 pub fn select_event_run_sql() -> &'static str {
     "SELECT run_id FROM runs WHERE tenant_id = $1 AND package_id = $2 \
-        AND effective_release_id = $3 AND environment = $4 AND wiring_id = $5 \
+        AND manifest_digest = $3 AND environment = $4 AND wiring_id = $5 \
         AND wiring_version = $6 AND wiring_hash = $7 AND trigger_source = 'event' \
         AND registration_id = $8 AND idempotency_key = $9 \
         AND input_json = $10::text::jsonb"

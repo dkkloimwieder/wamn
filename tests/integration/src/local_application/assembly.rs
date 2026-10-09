@@ -201,12 +201,6 @@ pub(super) async fn assemble(
         credentials = credentials.with_class(class, generation_url(input.database_url, &role)?);
     }
     let engine = Arc::new(build_engine(&[])?);
-    project
-        .execute(
-            "INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment,verified_publisher_principal) VALUES ($1,$2,$3,$4)",
-            &[&input.tenant, &RELEASE_ID, &input.environment, &subject],
-        )
-        .await?;
     let mut component_digests = HashMap::new();
     let mut admitted = Vec::new();
     let mut wirings = Vec::new();
@@ -237,7 +231,6 @@ pub(super) async fn assemble(
         })?;
         project_admitted_component_for_verification(&admission, input.database_url).await?;
         let facts = admission.facts().clone();
-        project.execute("INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ($1,$2,$3,$4)", &[&input.tenant,&RELEASE_ID,&applied.package_id,&applied.package_version]).await?;
         std::fs::write(
             local_component_path(input.scratch, &facts.component_digest)?,
             std::fs::read(component_path)?,
@@ -250,7 +243,6 @@ pub(super) async fn assemble(
                 &applied.package_id,
                 &applied.package_version,
                 document,
-                &facts,
             )
             .await?;
             wirings.push((applied.package_id.clone(), document.clone()));
@@ -279,7 +271,7 @@ pub(super) async fn assemble(
         &canonical,
         "local application",
     )?);
-    project.execute("INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3,$4)", &[&input.tenant,&RELEASE_ID,&release.release().manifest_digest.as_str(),&canonical]).await?;
+    project.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.tenant,&release.release().manifest_digest.as_str(),&canonical]).await?;
 
     let project_config = ProjectConfig {
         credentials,
@@ -463,15 +455,9 @@ async fn insert_wiring(
     package: &str,
     version: &str,
     document: &WiringDocument,
-    component: &wamn_catalog::AdmittedComponent,
 ) -> anyhow::Result<()> {
     let graph_hash = document.wiring_hash();
     client.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ($1,$2,$3,$4,$5,$6::text::jsonb,$7)",&[&tenant,&package,&version,&document.wiring_id,&i32::try_from(document.version)?,&serde_json::to_string(document)?,&graph_hash.as_str()]).await?;
-    for (node_id, node) in &document.nodes {
-        if node.component == component.component {
-            client.execute("INSERT INTO catalog.release_components (tenant_id,effective_release_id,wiring_package_id,wiring_package_version,wiring_id,wiring_version,node_id,package_id,package_version,component_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",&[&tenant,&RELEASE_ID,&package,&version,&document.wiring_id,&i32::try_from(document.version)?,node_id,&component.scope.package_id,&component.scope.package_version,&component.component_digest]).await?;
-        }
-    }
     Ok(())
 }
 

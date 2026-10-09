@@ -178,12 +178,8 @@ fn run_state_live() {
                (tenant_id,package_id,package_version,manifest_sha256) \
              VALUES ('t1','cat','1.0.0', \
                'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
-             INSERT INTO catalog.effective_releases \
-               (tenant_id,effective_release_id,environment,verified_publisher_principal) \
-             VALUES ('t1',1,'prod','test-publisher'); \
-             INSERT INTO catalog.effective_release_packages \
-               (tenant_id,effective_release_id,package_id,package_version) \
-             VALUES ('t1',1,'cat','1.0.0'); \
+             INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+             VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              GRANT wamn_platform TO wamn_executor_platform \
                WITH INHERIT TRUE, SET FALSE, ADMIN FALSE; \
              {executor_generation}"
@@ -294,9 +290,9 @@ fn run_state_live() {
            (tenant_id,expected_environment,durability_class) \
          VALUES ('t1','prod','standard'); \
          INSERT INTO wamn_run.runs \
-           (tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, environment, \
+           (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
             wiring_id, wiring_version, attachment_id, status) \
-         VALUES ('t1', 'release-1', 'f', 1, 'cat', 1, 'prod', \
+         VALUES ('t1', 'release-1', 'f', 1, 'cat', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'prod', \
            'fixture-wiring', 1, 'http-a', 'running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, lease_owner, lease_expires_at, lease_generation) \
@@ -363,20 +359,20 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source) VALUES \
-           ('t1','terminal-cron','f',1,'cat',1,'prod', \
+           ('t1','terminal-cron','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'cron-a','running','cron'), \
-           ('t1','terminal-event','f',1,'cat',1,'prod', \
+           ('t1','terminal-event','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'event-a','running','event'), \
-           ('t1','terminal-http-open','f',1,'cat',1,'prod', \
+           ('t1','terminal-http-open','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'http-open','running','http'); \
          INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source, \
             caller_outcome_type,caller_outcome_json,caller_http_status,caller_release_node_id, \
             caller_outcome_hash,caller_released_at) VALUES \
-           ('t1','terminal-http-released','f',1,'cat',1,'prod', \
+           ('t1','terminal-http-released','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'http-released','running','http', \
             'responded','{}',200,'respond','sha256:released',now()); \
          INSERT INTO wamn_run.run_queue \
@@ -452,9 +448,9 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','race-1','f',1,'cat',1,'prod', \
+         VALUES ('t1','race-1','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-race','running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
@@ -498,9 +494,9 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','fault-1','f',1,'cat',1,'prod', \
+         VALUES ('t1','fault-1','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-fault','running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
@@ -539,216 +535,79 @@ fn run_state_live() {
          END $$;",
     );
 
-    // The claim-time release record (wamn-0h0g.15.23). The effective release is
-    // already an immutable admission pin; the claiming pod shows that identity
-    // and records only its verified manifest digest on the EXISTING claim write.
-    // The digest is not blanket write-once: NULL -> value is the claim, value ->
-    // NULL is how a runnable, effect-free run reopens its claimability (the queue
-    // park, wamn-0h0g.15.82), and value -> value' is refused on every path.
-    // Covered here against the INSTALLED DDL, which is the guard the composed
-    // statements actually meet.
+    // The admission pin is the release's manifest digest (platform-deploy.md
+    // R1). A claim verifies that the claiming pod carries the pinned release,
+    // on the EXISTING claim write, and never writes the pin. Covered here
+    // against the INSTALLED DDL, which is the guard the composed statements
+    // actually meet.
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,status,durability_class) VALUES \
-           ('t1','record-claim','f',1,'cat',1,'prod', \
+           ('t1','record-claim','f',1,'cat', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'dispatched','standard'), \
-           ('t1','record-invalid-digest','f',1,'cat',1,'prod', \
+           ('t1','record-foreign','f',1,'cat', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
+            'fixture-wiring',1,'dispatched','standard'), \
+           ('t1','record-standard-effect','f',1,'cat', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'running','standard'); \
-         UPDATE wamn_run.environment_policies SET durability_class='durable' \
-          WHERE tenant_id='t1'; \
-         INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
-            wiring_id,wiring_version,status,durability_class) VALUES \
-           ('t1','record-effect','f',1,'cat',1,'prod', \
-            'fixture-wiring',1,'dispatched','durable'); \
-         UPDATE wamn_run.environment_policies SET durability_class='standard' \
-          WHERE tenant_id='t1'; \
          INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES \
-           ('t1','record-claim'),('t1','record-effect');",
+           ('t1','record-claim'),('t1','record-foreign');",
     );
 
     let claim = grant_production_claim_sql();
     let record_script = format!(
-        "{} PREPARE claim_stmt (text,text,bigint,int,text) AS {}; \
-         EXECUTE claim_stmt('record-claim','worker-record',30000,1, \
-           'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); \
-         EXECUTE claim_stmt('record-effect','worker-effect',30000,1, \
+        "{} PREPARE claim_stmt (text,text,bigint,text) AS {}; \
+         EXECUTE claim_stmt('record-claim','worker-record',30000, \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
+         EXECUTE claim_stmt('record-foreign','worker-foreign',30000, \
            'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); \
          DO $$ BEGIN \
-           ASSERT (SELECT effective_release_id FROM runs WHERE run_id='record-claim') = 1, \
-                  'the claim preserves the admitted effective release'; \
            ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-claim') \
-                  = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
-                  'the claim records the claiming manifest digest'; \
+                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                  'the claim preserves the admission pin'; \
            ASSERT (SELECT status FROM runs WHERE run_id='record-claim') = 'running', \
-                  'the record rides the claim write, not a second statement'; \
+                  'the claim marks the run on its one write'; \
            ASSERT (SELECT lease_generation FROM run_queue WHERE run_id='record-claim') = 1, \
-                  'the recording claim is the one that took the lease'; \
-           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-effect') \
-                  = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
-                  'each claim records its own manifest digest'; \
+                  'the verifying claim is the one that took the lease'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='record-foreign') = 'dispatched', \
+                  'a pod of another release claimed the run'; \
          END $$; COMMIT;",
         executor_preamble(),
         claim
     );
     success(&url, &record_script);
 
-    // The admission trigger protects the effective-release pin independently of
-    // the executor's column grant, so exercise it as the throwaway superuser.
+    // The admission trigger protects the pin independently of the executor's
+    // column grant, so exercise it as the throwaway superuser.
     success(
         &url,
         "DO $$ DECLARE refusal text; BEGIN \
            BEGIN \
-             UPDATE wamn_run.runs SET effective_release_id = 2 \
+             UPDATE wamn_run.runs SET manifest_digest = NULL \
               WHERE run_id = 'record-claim'; \
-             ASSERT false, 'the admitted effective release was rewritten in place'; \
+             ASSERT false, 'the admitted release was erased'; \
            EXCEPTION WHEN object_not_in_prerequisite_state THEN \
              GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
              ASSERT refusal = 'run-admission-pin-immutable', refusal; \
            END; \
-           ASSERT (SELECT effective_release_id FROM wamn_run.runs \
-                    WHERE run_id='record-claim') = 1, \
-                  'the refused rewrite left the admitted release intact'; \
+           BEGIN \
+             UPDATE wamn_run.runs SET manifest_digest = \
+               'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
+              WHERE run_id = 'record-claim'; \
+             ASSERT false, 'the admitted release was rewritten in place'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'run-admission-pin-immutable', refusal; \
+           END; \
+           ASSERT (SELECT manifest_digest FROM wamn_run.runs WHERE run_id='record-claim') \
+                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                  'the refused rewrites left the admitted release intact'; \
          END $$;",
     );
-
-    // The executor may write the per-claim digest, but cannot rewrite one already recorded.
-    let refusal_script = format!(
-        "{} \
-         DO $$ DECLARE refusal text; BEGIN \
-           BEGIN \
-             UPDATE runs SET manifest_digest = \
-               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
-              WHERE run_id = 'record-claim'; \
-             ASSERT false, 'a recorded manifest digest was rewritten in place'; \
-           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
-             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
-             ASSERT refusal = 'run-release-record-immutable', refusal; \
-           END; \
-           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-claim') \
-                  = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
-                  'the refused rewrites left the recorded digest exactly as claimed'; \
-         END $$; COMMIT;",
-        executor_preamble()
-    );
-    success(&url, &refusal_script);
-
-    // Erasure is the park/wake arm, and it is conditional: a runnable, effect-free
-    // run may reopen its claimability, but a terminal run keeps the audit link to
-    // the release closure it executed.
-    let erasure_script = format!(
-        "{} \
-         UPDATE runs SET manifest_digest = NULL \
-          WHERE run_id = 'record-claim'; \
-         DO $$ BEGIN \
-           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-claim') IS NULL, \
-                  'a runnable, effect-free run may reopen its claimability'; \
-         END $$; \
-         UPDATE runs SET manifest_digest = \
-                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
-          WHERE run_id = 'record-claim'; \
-         UPDATE runs SET status = 'completed' WHERE run_id = 'record-claim'; \
-         DO $$ DECLARE refusal text; BEGIN \
-           BEGIN \
-             UPDATE runs SET manifest_digest = NULL \
-              WHERE run_id = 'record-claim'; \
-             ASSERT false, 'a terminal run erased the release it executed under'; \
-           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
-             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
-             ASSERT refusal = 'run-release-record-immutable', refusal; \
-           END; \
-           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-claim') \
-                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-                  'the re-recorded digest survives the refused erasure'; \
-         END $$; COMMIT;",
-        executor_preamble()
-    );
-    success(&url, &erasure_script);
-
-    // The other erasure precondition: an attributed effect names the release that
-    // fired it, and that link is never rewritten out from under it. `record-effect`
-    // is still `running`, so only the effect evidence can refuse here.
-    //
-    // THIS LEG IS A PREMIUM-TIER TEST (wamn-0h0g.20.2). The guard's
-    // effect-attempt arm is class-gated, so `record-effect` is admitted
-    // `durable` above; on the default `standard` class the same run erases its
-    // record freely, which is what the leg below asserts and what keeps the
-    // queue park from ever aborting on the guard. The split into
-    // surviving-spine and shelved-floor suites is wamn-0h0g.20.4's.
-    success(
-        &url,
-        "INSERT INTO wamn_run.effect_attempts \
-           (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
-            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
-            attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','record-effect', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',0, \
-           'effect-node', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'manager',0,1,'not-required','2099-01-01T00:00:00Z','record-effect-input');",
-    );
-    let effect_script = format!(
-        "{} \
-         DO $$ DECLARE refusal text; BEGIN \
-           BEGIN \
-             UPDATE runs SET manifest_digest = NULL \
-              WHERE run_id = 'record-effect'; \
-             ASSERT false, 'an attributed effect lost the release that fired it'; \
-           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
-             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
-             ASSERT refusal = 'run-release-record-immutable', refusal; \
-           END; \
-           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-effect') \
-                  = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
-                  'the manifest the effect fired under is intact'; \
-         END $$; COMMIT;",
-        executor_preamble()
-    );
-    success(&url, &effect_script);
-
-    // THE COMPLEMENT, AND THE HALF THE CLASS GATE MAKES LOAD-BEARING
-    // (wamn-0h0g.20.2). The identical run on the DEFAULT class erases its
-    // record freely even while carrying an attributed effect. If this leg ever
-    // reds, `park_sql` — which carries the same class predicate on the same
-    // `EXISTS` — aborts on this guard for every standard run that ever reached
-    // the effect table, and the run plane loses the arm that reopens
-    // claimability (wamn-0h0g.15.82).
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
-            wiring_id,wiring_version,status,durability_class) VALUES \
-           ('t1','record-standard-effect','f',1,'cat',1,'prod', \
-            'fixture-wiring',1,'running','standard'); \
-         UPDATE wamn_run.runs SET manifest_digest = \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
-          WHERE run_id = 'record-standard-effect'; \
-         INSERT INTO wamn_run.effect_attempts \
-           (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
-            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
-            attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','record-standard-effect', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',0, \
-           'effect-node', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'manager',0,1,'not-required','2099-01-01T00:00:00Z','standard-effect-input');",
-    );
-    let standard_class_script = format!(
-        "{} \
-         UPDATE runs SET manifest_digest = NULL \
-          WHERE run_id = 'record-standard-effect'; \
-         DO $$ BEGIN \
-           ASSERT (SELECT manifest_digest FROM runs \
-                    WHERE run_id='record-standard-effect') IS NULL, \
-                  'the default class could not clear a record the park must clear'; \
-         END $$; COMMIT;",
-        executor_preamble()
-    );
-    success(&url, &standard_class_script);
 
     // The class is defended TWICE, and the two guards are independent.
     //
@@ -805,9 +664,9 @@ fn run_state_live() {
                   'the standard policy did not select the cheap tier'; \
            BEGIN \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest, \
                 environment,wiring_id,wiring_version,status,durability_class) \
-             VALUES ('t1','record-unruled-class','f',1,'cat',1,'prod', \
+             VALUES ('t1','record-unruled-class','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
                'fixture-wiring',1,'running','premium'); \
              ASSERT false, 'the class CHECK admitted an unruled literal'; \
            EXCEPTION WHEN check_violation THEN NULL; \
@@ -847,23 +706,19 @@ fn run_state_live() {
            (tenant_id,package_id,package_version,manifest_sha256) \
          VALUES ('t2','cat','1.0.0', \
            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
-         INSERT INTO catalog.effective_releases \
-           (tenant_id,effective_release_id,environment,verified_publisher_principal) \
-         VALUES ('t2',1,'prod','test-publisher'); \
-         INSERT INTO catalog.effective_release_packages \
-           (tenant_id,effective_release_id,package_id,package_version) \
-         VALUES ('t2',1,'cat','1.0.0'); \
+         INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+         VALUES ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}'); \
          INSERT INTO wamn_run.environment_policies \
            (tenant_id,expected_environment,durability_class) \
          VALUES ('t2','prod','standard'); \
          INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json) VALUES \
-           ('t1','renew-live','f',1,'cat',1,'prod','fixture-wiring',1,'http-renew', \
+           ('t1','renew-live','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew', \
             'running','{}'), \
-           ('t1','renew-expired','f',1,'cat',1,'prod','fixture-wiring',1,'http-renew-dead', \
+           ('t1','renew-expired','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-dead', \
             'running','{}'), \
-           ('t2','renew-other-tenant','f',1,'cat',1,'prod','fixture-wiring',1,'http-renew-t2', \
+           ('t2','renew-other-tenant','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-t2', \
             'running','{}'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
@@ -933,23 +788,22 @@ fn run_state_live() {
     // The pre-effect reclaim. `advance_claim_attempts_sql` is deliberately its
     // own statement OUTSIDE the grant's abort scope (wamn-0h0g.15.69), and
     // `clear_pre_effect_state_sql` reopens claimability by erasing exactly the
-    // dead attempt's projection — `state_json` and the manifest digest — and
-    // nothing else. `max_attempts` defaults to 20 here, so neither reclaim row
+    // dead attempt's projection — `state_json` — and nothing else. `max_attempts` defaults to 20 here, so neither reclaim row
     // is a janitor candidate and the reap leg below cannot select one.
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json,state_json, \
             manifest_digest) VALUES \
-           ('t1','reclaim-dead','f',1,'cat',1,'prod','fixture-wiring',1,'http-reclaim', \
+           ('t1','reclaim-dead','f',1,'cat','prod','fixture-wiring',1,'http-reclaim', \
             'running','{\"input\":7}','{\"cursor\":9}', \
-            'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'), \
-           ('t1','reclaim-fresh','f',1,'cat',1,'prod','fixture-wiring',1,'http-reclaim-new', \
-            'dispatched','{}',NULL,NULL), \
-           ('t2','reclaim-other-tenant','f',1,'cat',1,'prod','fixture-wiring',1, \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+           ('t1','reclaim-fresh','f',1,'cat','prod','fixture-wiring',1,'http-reclaim-new', \
+            'dispatched','{}',NULL,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+           ('t2','reclaim-other-tenant','f',1,'cat','prod','fixture-wiring',1, \
             'http-reclaim-t2','running','{}','{\"cursor\":9}', \
-            'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation,attempts) VALUES \
            ('t1','reclaim-dead','dead-worker',now()-interval '1 minute',5,1), \
@@ -983,7 +837,7 @@ fn run_state_live() {
            ASSERT (SELECT r.state_json FROM runs AS r WHERE r.run_id='reclaim-dead') IS NULL, \
                   'the reclaim kept the dead attempt state'; \
            ASSERT (SELECT r.manifest_digest FROM runs AS r WHERE r.run_id='reclaim-dead') \
-                  IS NULL, 'the reclaim kept the dead attempt manifest digest'; \
+                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'the reclaim erased the admission pin'; \
            ASSERT (SELECT r.input_json FROM runs AS r WHERE r.run_id='reclaim-dead') \
                   = '{{\"input\":7}}'::jsonb, 'the reclaim erased more than the dead attempt'; \
            ASSERT (SELECT r.status FROM runs AS r WHERE r.run_id='reclaim-dead') = 'running', \
@@ -1009,8 +863,8 @@ fn run_state_live() {
                   'the executor erased another tenant attempt state'; \
            ASSERT (SELECT r.manifest_digest FROM wamn_run.runs AS r \
                     WHERE r.tenant_id='t2' AND r.run_id='reclaim-other-tenant') \
-                  = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
-                  'the executor erased another tenant release record'; \
+                  = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                  'the executor erased another tenant release pin'; \
          END $$;",
     );
 
@@ -1021,9 +875,9 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source,input_json) VALUES \
-           ('t1','reap-exhausted','f',1,'cat',1,'prod','fixture-wiring',1,'http-reap', \
+           ('t1','reap-exhausted','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-reap', \
             'running','http','{}'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
@@ -1093,9 +947,9 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
-         VALUES ('t1','clock-skew','f',1,'cat',1,'prod', \
+         VALUES ('t1','clock-skew','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-skew','running');",
     );
     let clock_skew_script = format!(
@@ -1123,26 +977,23 @@ fn run_state_live() {
     );
     success(&url, &clock_skew_script);
 
-    // A malformed digest reaches the named CHECK while the old value is NULL;
-    // the immutable-record guard owns only rewrites of a digest already recorded.
-    // This leg is last so every behavioral arm above shows out before a malformed
-    // release record can abort the suite.
-    let digest_shape_script = format!(
-        "{} \
-         DO $$ DECLARE refusal text; BEGIN \
+    // A malformed digest reaches the named CHECK at admission. This leg is last
+    // so every behavioral arm above shows out before a malformed release pin
+    // can abort the suite.
+    success(
+        &url,
+        "DO $$ DECLARE refusal text; BEGIN \
            BEGIN \
-             UPDATE runs SET manifest_digest = 'sha256:not-a-digest' \
-              WHERE run_id = 'record-invalid-digest'; \
+             INSERT INTO wamn_run.runs \
+               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest, \
+                environment,wiring_id,wiring_version,status) \
+             VALUES ('t1','record-invalid-digest','f',1,'cat','sha256:not-a-digest', \
+               'prod','fixture-wiring',1,'running'); \
              ASSERT false, 'runs_release_record_check admitted a malformed digest'; \
            EXCEPTION WHEN check_violation THEN \
              GET STACKED DIAGNOSTICS refusal = CONSTRAINT_NAME; \
              ASSERT refusal = 'runs_release_record_check', refusal; \
            END; \
-           ASSERT (SELECT manifest_digest FROM runs \
-                    WHERE run_id='record-invalid-digest') IS NULL, \
-                  'the unclaimed run carries no release record'; \
-         END $$; COMMIT;",
-        executor_preamble()
+         END $$;",
     );
-    success(&url, &digest_shape_script);
 }

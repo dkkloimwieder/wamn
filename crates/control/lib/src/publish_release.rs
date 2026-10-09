@@ -1,10 +1,10 @@
-//! Publish one immutable format-1 effective-release closure.
+//! Publish one immutable release.
 //!
-//! A release is an independent integer identity plus exact package membership.
-//! The publisher resolves every wiring and component from those package pairs,
-//! freezes the relational closure and canonical manifest in one transaction,
-//! then projects only the release identity to the control plane so a later
-//! deployment attestation can reference it.
+//! A release is its manifest digest (docs/plan/platform-deploy.md R1). The
+//! publisher resolves every wiring and component from the exact package pairs,
+//! records the canonical manifest bytes under their digest in
+//! `catalog.releases`, then projects only the release identity to the control
+//! plane so a later deployment attestation can reference it.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -49,23 +49,6 @@ use attachments::merge_package_attachment_documents;
 use package_sources::validate_package_metadata;
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
-const INSERT_RELEASE_SQL: &str = "\
-INSERT INTO catalog.effective_releases (\
-       tenant_id, effective_release_id, environment, verified_publisher_principal\
-     ) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING";
-const LOCK_RELEASE_SQL: &str = "\
-SELECT environment, verified_publisher_principal \
-  FROM catalog.effective_releases \
- WHERE tenant_id = $1 AND effective_release_id = $2 FOR UPDATE";
-const INSERT_PACKAGE_SQL: &str = "\
-INSERT INTO catalog.effective_release_packages (\
-       tenant_id, effective_release_id, package_id, package_version\
-     ) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING";
-const SELECT_PACKAGES_SQL: &str = "\
-SELECT package_id, package_version \
-  FROM catalog.effective_release_packages \
- WHERE tenant_id = $1 AND effective_release_id = $2 \
- ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\" FOR SHARE";
 const SELECT_APPLIED_PACKAGE_MANIFEST_SQL: &str = "\
 SELECT manifest_sha256 FROM catalog.packages \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 FOR SHARE";
@@ -80,28 +63,14 @@ SELECT wiring_hash, graph_json::text \
   FROM catalog.wirings \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
    AND wiring_id = $4 AND version = $5 FOR SHARE";
-const SELECT_RELEASE_COMPONENTS_SQL: &str = "\
-SELECT wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id, \
-       package_id, package_version, component_digest, route_component, route_operation \
-  FROM catalog.release_components \
- WHERE tenant_id = $1 AND effective_release_id = $2 FOR SHARE";
-const INSERT_RELEASE_COMPONENT_SQL: &str = "\
-INSERT INTO catalog.release_components (\
-       tenant_id, effective_release_id, wiring_package_id, wiring_package_version, \
-       wiring_id, wiring_version, node_id, package_id, package_version, component_digest, \
-       route_component, route_operation\
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)";
-const SELECT_RELEASE_SNAPSHOT_SQL: &str = "\
-SELECT manifest_digest, canonical_bytes \
-  FROM catalog.release_manifest_snapshots \
- WHERE tenant_id = $1 AND effective_release_id = $2 FOR SHARE";
-const READ_RELEASE_SNAPSHOT_SQL: &str = "\
-SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
- WHERE tenant_id = $1 AND effective_release_id = $2";
-const INSERT_RELEASE_SNAPSHOT_SQL: &str = "\
-INSERT INTO catalog.release_manifest_snapshots (\
-       tenant_id, effective_release_id, manifest_digest, canonical_bytes\
-     ) VALUES ($1, $2, $3, $4)";
+const READ_RELEASE_SQL: &str = "\
+SELECT canonical_bytes FROM catalog.releases \
+ WHERE tenant_id = $1 AND manifest_digest = $2";
+/// The release cache row is immutable and its bytes hash to its key, so a
+/// conflict is the same release recorded before.
+const INSERT_RELEASE_SQL: &str = "\
+INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+     VALUES ($1, $2, $3) ON CONFLICT DO NOTHING";
 
 fn expected_environment_sql(run_schema: &BareSchemaName) -> String {
     format!(
@@ -221,15 +190,21 @@ impl DependencyDigestRule {
 pub struct DeploymentCoordinate {
     pub triple: Triple,
     pub tenant_id: String,
-    pub effective_release_id: u32,
+    /// The release.
+    pub manifest_digest: ManifestDigest,
 }
 
 impl DeploymentCoordinate {
-    pub fn new(org: &str, project: &str, release: &ServingRelease) -> Self {
+    pub fn new(
+        org: &str,
+        project: &str,
+        release: &ServingRelease,
+        manifest_digest: &ManifestDigest,
+    ) -> Self {
         Self {
             triple: Triple::new(org, project, release.environment.as_str()),
             tenant_id: release.tenant_id.clone(),
-            effective_release_id: release.effective_release_id.get(),
+            manifest_digest: manifest_digest.clone(),
         }
     }
 }
@@ -377,30 +352,6 @@ impl From<OperationType> for RouteContract {
     }
 }
 
-/// What one release component member binds: a wiring node or a route.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum MemberBinding {
-    Wiring {
-        package_id: String,
-        package_version: String,
-        wiring_id: String,
-        wiring_version: u32,
-        node_id: String,
-    },
-    Route {
-        component: String,
-        operation: String,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct ReleaseComponentMembership {
-    binding: MemberBinding,
-    package_id: String,
-    package_version: String,
-    component_digest: String,
-}
-
 /// Inputs of one effective-release publication.
 #[derive(Debug)]
 pub struct PublishReleaseRequest {
@@ -443,8 +394,12 @@ pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
 }
 
 impl PublishReleaseRequest {
-    fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
-        DeploymentCoordinate::new(&self.org, &self.project, release)
+    fn deployment_coordinate(
+        &self,
+        release: &ServingRelease,
+        manifest_digest: &ManifestDigest,
+    ) -> DeploymentCoordinate {
+        DeploymentCoordinate::new(&self.org, &self.project, release, manifest_digest)
     }
 
     fn verified_run_schema(&self) -> anyhow::Result<BareSchemaName> {
@@ -456,15 +411,15 @@ impl PublishReleaseRequest {
 /// Publish one effective release, project its identity, and return its manifest digest.
 pub async fn publish_release(request: PublishReleaseRequest) -> anyhow::Result<ManifestDigest> {
     let published = publish_candidate(&request, false).await?;
-    let coordinate = request.deployment_coordinate(&published.manifest.release);
-    report_deployment_coordinate(&coordinate, &published.digest);
+    let coordinate = request.deployment_coordinate(&published.manifest.release, &published.digest);
+    report_deployment_coordinate(&coordinate);
     project_release_identity(&request.control_database_url, &coordinate).await?;
     Ok(published.digest)
 }
 
 /// Assemble a candidate only in a provisioned disposable target, without publication.
 pub async fn publish_local(
-    mut args: PublishReleaseRequest,
+    args: PublishReleaseRequest,
     admissions: &[crate::push_component::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
@@ -487,19 +442,7 @@ pub async fn publish_local(
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&args.tenant])
         .await?;
-    let latest: Option<i32> = transaction
-        .query_one(
-            "SELECT max(effective_release_id) FROM catalog.effective_releases WHERE tenant_id = $1",
-            &[&args.tenant],
-        )
-        .await?
-        .try_get(0)?;
-    args.effective_release_id = u32::try_from(latest.unwrap_or(0))?
-        .checked_add(1)
-        .context("local release identity exhausted")?
-        .max(args.effective_release_id);
     let assembled = assemble_local_release(&args, admissions, documents)?;
-    let request = assembled.request(&args);
     let run_schema = args.verified_run_schema()?;
     let policy = crate::verification_policy::read_authoritative_environment_policy(
         &args.control_database_url,
@@ -516,9 +459,15 @@ pub async fn publish_local(
         &assembled.published.manifest.release,
         &run_schema,
     )?;
-    // The retained run-plane FK needs only this session-local identity and
-    // package membership. No immutable component slots or publication facts.
-    establish_release(&transaction, &request).await?;
+    // A run admitted under the candidate pins its digest, and the run-plane
+    // foreign key needs the release row.
+    record_release(
+        &transaction,
+        &args.tenant,
+        &assembled.published.digest,
+        &assembled.published.canonical_bytes,
+    )
+    .await?;
     transaction.commit().await?;
     drop(client);
     driver.abort();
@@ -530,32 +479,12 @@ pub async fn publish_local(
 pub struct AssembledLocalRelease {
     pub published: PublishedRelease,
     pub facts: wamn_runtime::local_application::LocalApplicationFacts,
-    effective_release_id: i32,
-    packages: BTreeSet<PackageCoordinate>,
-    wirings: BTreeSet<ReleaseWiringTarget>,
-    attachments: BTreeMap<String, ServingAttachment>,
-}
-
-impl AssembledLocalRelease {
-    /// The identity that [`publish_local`] records for this release.
-    fn request<'a>(&'a self, args: &'a PublishReleaseRequest) -> PublishReleaseManifest<'a> {
-        PublishReleaseManifest {
-            tenant_id: &args.tenant,
-            effective_release_id: self.effective_release_id,
-            environment: &args.environment,
-            verified_publisher_principal: &args.verified_publisher_principal,
-            packages: &self.packages,
-            wirings: &self.wirings,
-            attachments: &self.attachments,
-            environment_is_disposable: true,
-        }
-    }
 }
 
 /// Assemble the manifest and local facts of a local release from its package
-/// files and admitted components, as [`publish_local`] does once it holds the
-/// release identity. It reads no database, so the two database URLs of `args`
-/// go unused.
+/// files and admitted components, as [`publish_local`] does before it records
+/// the release. It reads no database, so the two database URLs of `args` go
+/// unused.
 pub fn assemble_local_release(
     args: &PublishReleaseRequest,
     admissions: &[crate::push_component::ComponentAdmission],
@@ -611,7 +540,6 @@ pub fn assemble_local_release(
     }
     let mut components = BTreeSet::new();
     let mut wirings = BTreeSet::new();
-    let mut membership = BTreeSet::new();
     let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
     let mut one_node = Vec::new();
     let mut local_wirings = Vec::new();
@@ -639,7 +567,6 @@ pub fn assemble_local_release(
             &package_manifests,
             &mut components,
             &mut wirings,
-            &mut membership,
             &mut one_node,
         )?;
         let node_components = resolve_wiring_components(
@@ -664,7 +591,6 @@ pub fn assemble_local_release(
         &route_contracts,
         &component_facts,
         &mut components,
-        &mut membership,
     )?;
     let registrations = derive_serving_registrations(&package_manifests, &entry_targets)?;
     refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
@@ -727,10 +653,6 @@ pub fn assemble_local_release(
             canonical_bytes,
         },
         facts,
-        effective_release_id: i32::try_from(args.effective_release_id)?,
-        packages,
-        wirings: targets,
-        attachments,
     })
 }
 
@@ -999,17 +921,13 @@ fn verify_environment_name(
     Ok(())
 }
 
-pub fn report_deployment_coordinate(
-    coordinate: &DeploymentCoordinate,
-    manifest_hash: &ManifestDigest,
-) {
+pub fn report_deployment_coordinate(coordinate: &DeploymentCoordinate) {
     tracing::info!(
         org = %coordinate.triple.org,
         project = %coordinate.triple.project,
         environment = %coordinate.triple.env,
         tenant = %coordinate.tenant_id,
-        effective_release_id = coordinate.effective_release_id,
-        manifest_hash = %manifest_hash,
+        manifest_hash = %coordinate.manifest_digest,
         "release carries a complete deployment attestation coordinate"
     );
 }
@@ -1084,11 +1002,9 @@ pub async fn project_release_identity(
     control_database_url: &str,
     coordinate: &DeploymentCoordinate,
 ) -> anyhow::Result<()> {
-    let effective_release_id = i32::try_from(coordinate.effective_release_id)
-        .context("effective-release-id exceeds PostgreSQL integer")?;
     let identity = wamn_schema_control::attestation::EffectiveReleaseIdentity {
         tenant_id: &coordinate.tenant_id,
-        effective_release_id,
+        manifest_digest: coordinate.manifest_digest.as_str(),
         environment: coordinate.triple.env.as_str(),
     };
     let statement = wamn_schema_control::attestation::project_effective_release_identity(&identity);
@@ -1115,7 +1031,7 @@ pub async fn project_release_identity(
         let winner = transaction
             .query_one(
                 wamn_schema_control::attestation::read_effective_release_identity_sql(),
-                &[&identity.tenant_id, &identity.effective_release_id],
+                &[&identity.tenant_id, &identity.manifest_digest],
             )
             .await
             .map_err(storage)?;
@@ -1128,14 +1044,15 @@ pub async fn project_release_identity(
     .await
 }
 
+/// Attest that the release of `coordinate` deployed. The deployed manifest is
+/// the release itself, so the attestation records the coordinate's digest.
 pub async fn attest_deployment(
     control_database_url: &str,
     coordinate: &DeploymentCoordinate,
-    manifest_hash: &ManifestDigest,
     source_commit: Option<&str>,
 ) -> anyhow::Result<String> {
     on_control_plane(control_database_url, async |control| {
-        attest_deployment_on(control, coordinate, manifest_hash, source_commit).await
+        attest_deployment_on(control, coordinate, source_commit).await
     })
     .await
 }
@@ -1144,11 +1061,8 @@ pub async fn attest_deployment(
 pub(crate) async fn attest_deployment_on(
     control: &mut Client,
     coordinate: &DeploymentCoordinate,
-    manifest_hash: &ManifestDigest,
     source_commit: Option<&str>,
 ) -> anyhow::Result<String> {
-    let effective_release_id = i32::try_from(coordinate.effective_release_id)
-        .context("effective-release-id exceeds PostgreSQL integer")?;
     {
         let proposed_attested_at: String = control
             .query_one("SELECT clock_timestamp()::text", &[])
@@ -1158,11 +1072,11 @@ pub(crate) async fn attest_deployment_on(
         let unresolved = wamn_schema_control::attestation::Attestation {
             tenant_id: &coordinate.tenant_id,
             environment_instance: "",
-            effective_release_id,
+            manifest_digest: coordinate.manifest_digest.as_str(),
             org_id: &coordinate.triple.org,
             project_id: &coordinate.triple.project,
             environment: coordinate.triple.env.as_str(),
-            deployed_manifest_hash: manifest_hash.as_str(),
+            deployed_manifest_hash: coordinate.manifest_digest.as_str(),
             source_commit,
             attested_at: &proposed_attested_at,
         };
@@ -1313,11 +1227,9 @@ async fn publish_release_from_sources(
         )
         .await?;
     }
-    establish_release(transaction, request).await?;
 
     let mut components = BTreeSet::new();
     let mut wirings = BTreeSet::new();
-    let mut membership = BTreeSet::new();
     let mut component_facts = BTreeMap::new();
     let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
     let mut one_node = Vec::new();
@@ -1362,7 +1274,6 @@ async fn publish_release_from_sources(
             package_manifests,
             &mut components,
             &mut wirings,
-            &mut membership,
             &mut one_node,
         )
         .await?;
@@ -1372,13 +1283,7 @@ async fn publish_release_from_sources(
             .push(target.clone());
     }
 
-    let routes = project_routes(
-        request,
-        route_contracts,
-        &component_facts,
-        &mut components,
-        &mut membership,
-    )?;
+    let routes = project_routes(request, route_contracts, &component_facts, &mut components)?;
     let registrations = if let Some(registrations) = promoted_registrations {
         registrations.clone()
     } else {
@@ -1424,7 +1329,7 @@ async fn publish_release_from_sources(
                 error,
             )
         })?;
-    freeze_release(transaction, request, &membership, &digest, &canonical_bytes).await?;
+    record_release(transaction, request.tenant_id, &digest, &canonical_bytes).await?;
     Ok(PublishedRelease {
         manifest,
         digest,
@@ -1567,70 +1472,22 @@ async fn validate_release_package_manifests(
     Ok(())
 }
 
-async fn establish_release(
+/// Record the release under its digest in `catalog.releases`. The row is the
+/// immutable cache of the canonical manifest bytes, so recording the same
+/// release twice changes nothing.
+async fn record_release(
     transaction: &Transaction<'_>,
-    request: &PublishReleaseManifest<'_>,
+    tenant_id: &str,
+    digest: &ManifestDigest,
+    canonical_bytes: &[u8],
 ) -> Result<(), PublishManifestError> {
     transaction
         .execute(
             INSERT_RELEASE_SQL,
-            &[
-                &request.tenant_id,
-                &request.effective_release_id,
-                &request.environment,
-                &request.verified_publisher_principal,
-            ],
+            &[&tenant_id, &digest.as_str(), &canonical_bytes],
         )
         .await
-        .map_err(|error| storage("register the effective release", error))?;
-    let row = transaction
-        .query_one(
-            LOCK_RELEASE_SQL,
-            &[&request.tenant_id, &request.effective_release_id],
-        )
-        .await
-        .map_err(|error| storage("lock the effective release", error))?;
-    let environment: String = row.get(0);
-    let publisher: String = row.get(1);
-    if environment != request.environment || publisher != request.verified_publisher_principal {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::ClosureConflict,
-            "effective release identity already carries other environment or publisher facts",
-        ));
-    }
-    for package in request.packages {
-        transaction
-            .execute(
-                INSERT_PACKAGE_SQL,
-                &[
-                    &request.tenant_id,
-                    &request.effective_release_id,
-                    &package.package_id(),
-                    &package.package_version(),
-                ],
-            )
-            .await
-            .map_err(|error| storage("record exact release package membership", error))?;
-    }
-    let observed = transaction
-        .query(
-            SELECT_PACKAGES_SQL,
-            &[&request.tenant_id, &request.effective_release_id],
-        )
-        .await
-        .map_err(|error| storage("read exact release package membership", error))?
-        .into_iter()
-        .map(|row| {
-            PackageCoordinate::new(row.get::<_, String>(0), row.get::<_, String>(1))
-                .expect("stored package coordinates passed relation checks")
-        })
-        .collect::<BTreeSet<_>>();
-    if observed != *request.packages {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::ClosureConflict,
-            "effective release package membership is already frozen to another exact set",
-        ));
-    }
+        .map_err(|error| storage("record the release", error))?;
     Ok(())
 }
 
@@ -1852,7 +1709,6 @@ async fn resolve_wiring(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
-    membership: &mut BTreeSet<ReleaseComponentMembership>,
     one_node: &mut Vec<ReleaseWiringTarget>,
 ) -> Result<String, PublishManifestError> {
     let version = i32::try_from(target.wiring_version).map_err(|error| {
@@ -1922,7 +1778,6 @@ async fn resolve_wiring(
         package_manifests,
         components,
         wirings,
-        membership,
         one_node,
     )
 }
@@ -1940,7 +1795,6 @@ fn project_wiring_document(
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
-    membership: &mut BTreeSet<ReleaseComponentMembership>,
     one_node: &mut Vec<ReleaseWiringTarget>,
 ) -> Result<String, PublishManifestError> {
     if document.edges.is_empty() {
@@ -1976,25 +1830,10 @@ fn project_wiring_document(
     for fact in resolved.values() {
         components.insert(project_serving_component(fact, component_facts, rule)?);
     }
-    for (node_id, fact) in resolved {
-        membership.insert(ReleaseComponentMembership {
-            binding: MemberBinding::Wiring {
-                package_id: target.package_id.clone(),
-                package_version: target.package_version.clone(),
-                wiring_id: target.wiring_id.clone(),
-                wiring_version: target.wiring_version,
-                node_id,
-            },
-            package_id: fact.scope.package_id.clone(),
-            package_version: fact.scope.package_version.clone(),
-            component_digest: fact.component_digest.clone(),
-        });
-    }
     Ok(entry_operation)
 }
 
-/// Project the route of every route attachment, with its component closure and
-/// its one release component member.
+/// Project the route of every route attachment, with its component closure.
 ///
 /// The kind comes from the generated contract of the operation, or from the
 /// published manifest a promotion copies.
@@ -2003,7 +1842,6 @@ fn project_routes(
     route_contracts: &RouteContracts,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     components: &mut BTreeSet<ServingComponent>,
-    membership: &mut BTreeSet<ReleaseComponentMembership>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
     let mut routes = BTreeSet::new();
@@ -2049,15 +1887,6 @@ fn project_routes(
         let roots = BTreeMap::from([(operation.clone(), fact.clone())]);
         resolve_component_dependency_closure(&roots, component_facts, rule)?;
         components.insert(project_serving_component(fact, component_facts, rule)?);
-        membership.insert(ReleaseComponentMembership {
-            binding: MemberBinding::Route {
-                component: component.clone(),
-                operation: operation.clone(),
-            },
-            package_id: fact.scope.package_id.clone(),
-            package_version: fact.scope.package_version.clone(),
-            component_digest: fact.component_digest.clone(),
-        });
         routes.insert(ServingRoute {
             package_id: attachment.package_id.clone(),
             component: component.clone(),
@@ -2103,173 +1932,21 @@ fn refuse_unregistered_one_node_wirings(
     Ok(())
 }
 
-async fn freeze_release(
-    transaction: &Transaction<'_>,
-    request: &PublishReleaseManifest<'_>,
-    expected: &BTreeSet<ReleaseComponentMembership>,
-    digest: &ManifestDigest,
-    canonical_bytes: &[u8],
-) -> Result<(), PublishManifestError> {
-    let observed = transaction
-        .query(
-            SELECT_RELEASE_COMPONENTS_SQL,
-            &[&request.tenant_id, &request.effective_release_id],
-        )
-        .await
-        .map_err(|error| storage("read the frozen release component closure", error))?
-        .into_iter()
-        .map(|row| {
-            let binding = match (row.get(8), row.get(9)) {
-                (Some(component), Some(operation)) => MemberBinding::Route {
-                    component,
-                    operation,
-                },
-                _ => MemberBinding::Wiring {
-                    package_id: row.get(0),
-                    package_version: row.get(1),
-                    wiring_id: row.get(2),
-                    wiring_version: positive_u32(row.get(3), "wiring-version")?,
-                    node_id: row.get(4),
-                },
-            };
-            Ok(ReleaseComponentMembership {
-                binding,
-                package_id: row.get(5),
-                package_version: row.get(6),
-                component_digest: row.get(7),
-            })
-        })
-        .collect::<Result<BTreeSet<_>, PublishManifestError>>()?;
-    let snapshot = transaction
-        .query_opt(
-            SELECT_RELEASE_SNAPSHOT_SQL,
-            &[&request.tenant_id, &request.effective_release_id],
-        )
-        .await
-        .map_err(|error| storage("read the frozen format-1 snapshot", error))?;
-
-    match (observed.is_empty(), snapshot) {
-        (false, Some(snapshot)) => {
-            let frozen_digest: String = snapshot.get(0);
-            let frozen_bytes: Vec<u8> = snapshot.get(1);
-            if observed != *expected
-                || frozen_digest != digest.as_str()
-                || frozen_bytes != canonical_bytes
-            {
-                return Err(PublishManifestError::new(
-                    PublishManifestErrorType::ClosureConflict,
-                    "effective release is already frozen to another closure",
-                ));
-            }
-            return Ok(());
-        }
-        (true, None) => {}
-        _ => {
-            return Err(PublishManifestError::new(
-                PublishManifestErrorType::ClosureConflict,
-                "release membership and format-1 snapshot are partially frozen",
-            ));
-        }
-    }
-
-    for member in expected {
-        let (wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id) =
-            match &member.binding {
-                MemberBinding::Wiring {
-                    package_id,
-                    package_version,
-                    wiring_id,
-                    wiring_version,
-                    node_id,
-                } => (
-                    Some(package_id),
-                    Some(package_version),
-                    Some(wiring_id),
-                    Some(
-                        i32::try_from(*wiring_version)
-                            .expect("resolved wiring version fits PostgreSQL integer"),
-                    ),
-                    Some(node_id),
-                ),
-                MemberBinding::Route { .. } => (None, None, None, None, None),
-            };
-        let (route_component, route_operation) = match &member.binding {
-            MemberBinding::Route {
-                component,
-                operation,
-            } => (Some(component), Some(operation)),
-            MemberBinding::Wiring { .. } => (None, None),
-        };
-        transaction
-            .execute(
-                INSERT_RELEASE_COMPONENT_SQL,
-                &[
-                    &request.tenant_id,
-                    &request.effective_release_id,
-                    &wiring_package_id,
-                    &wiring_package_version,
-                    &wiring_id,
-                    &wiring_version,
-                    &node_id,
-                    &member.package_id,
-                    &member.package_version,
-                    &member.component_digest,
-                    &route_component,
-                    &route_operation,
-                ],
-            )
-            .await
-            .map_err(|error| storage("freeze a release component member", error))?;
-    }
-    transaction
-        .execute(
-            INSERT_RELEASE_SNAPSHOT_SQL,
-            &[
-                &request.tenant_id,
-                &request.effective_release_id,
-                &digest.as_str(),
-                &canonical_bytes,
-            ],
-        )
-        .await
-        .map_err(|error| storage("freeze the format-1 manifest", error))?;
-    Ok(())
-}
-
-pub async fn read_release_snapshot(
+/// Read the canonical bytes of one installed release by its digest.
+pub async fn read_release(
     transaction: &Transaction<'_>,
     tenant_id: &str,
-    effective_release_id: i32,
+    manifest_digest: &str,
 ) -> Result<Option<Vec<u8>>, PublishManifestError> {
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&tenant_id])
         .await
         .map_err(|error| storage("claim the release tenant", error))?;
     transaction
-        .query_opt(
-            READ_RELEASE_SNAPSHOT_SQL,
-            &[&tenant_id, &effective_release_id],
-        )
+        .query_opt(READ_RELEASE_SQL, &[&tenant_id, &manifest_digest])
         .await
         .map(|row| row.map(|row| row.get(0)))
-        .map_err(|error| storage("read the frozen format-1 snapshot", error))
-}
-
-fn positive_u32(value: i32, field: &'static str) -> Result<u32, PublishManifestError> {
-    let value = u32::try_from(value).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::Release,
-            format!("{field} is outside the serving-manifest width"),
-            error,
-        )
-    })?;
-    if value == 0 {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Release,
-            format!("{field} must be greater than zero"),
-        ));
-    }
-    Ok(value)
+        .map_err(|error| storage("read the release", error))
 }
 
 fn storage(context: &'static str, error: tokio_postgres::Error) -> PublishManifestError {

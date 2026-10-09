@@ -175,24 +175,12 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     let bytes = base.manifest.canonical_bytes();
     let digest = base.manifest.digest().as_str().to_owned();
     base.source.execute(
-        "INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment) VALUES ($1,2,$2)",
-        &[&TENANT, &ENVIRONMENT],
-    ).await.unwrap();
-    base.source.execute(
-        "INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,2,$2,$3)",
+        "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT, &digest, &bytes],
     ).await.unwrap();
     base.source.execute(
-        "INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ($1,2,$2,$3)",
-        &[&TENANT, &OVERLAY, &PREDECESSOR_VERSION],
-    ).await.unwrap();
-    base.source.execute(
-        "INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ($1,2,'platform_fixture',$2)",
-        &[&TENANT, &PREDECESSOR_VERSION],
-    ).await.unwrap();
-    base.source.execute(
-        "UPDATE catalog.effective_release_heads SET effective_release_id = 2 WHERE tenant_id = $1 AND environment = $2",
-        &[&TENANT, &ENVIRONMENT],
+        "UPDATE catalog.effective_release_heads SET manifest_digest = $3 WHERE tenant_id = $1 AND environment = $2",
+        &[&TENANT, &ENVIRONMENT, &digest],
     ).await.unwrap();
     base.serving.manifest_digest = digest;
     base.serving.packages.insert(
@@ -1026,22 +1014,12 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     let bytes = fixture.base.manifest.canonical_bytes();
     let digest = fixture.base.manifest.digest().as_str().to_owned();
     fixture.base.source.execute(
-        "INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment) VALUES ($1,3,$2)",
-        &[&TENANT, &ENVIRONMENT],
-    ).await.unwrap();
-    fixture.base.source.execute(
-        "INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,3,$2,$3)",
+        "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT, &digest, &bytes],
     ).await.unwrap();
-    for package in ["platform_fixture", OVERLAY, SECOND] {
-        fixture.base.source.execute(
-            "INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ($1,3,$2,$3)",
-            &[&TENANT, &package, &PREDECESSOR_VERSION],
-        ).await.unwrap();
-    }
     fixture.base.source.execute(
-        "UPDATE catalog.effective_release_heads SET effective_release_id = 3 WHERE tenant_id = $1 AND environment = $2",
-        &[&TENANT, &ENVIRONMENT],
+        "UPDATE catalog.effective_release_heads SET manifest_digest = $3 WHERE tenant_id = $1 AND environment = $2",
+        &[&TENANT, &ENVIRONMENT, &digest],
     ).await.unwrap();
     fixture.base.serving.manifest_digest = digest;
     fixture.base.serving.packages.insert(

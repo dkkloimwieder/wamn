@@ -1396,9 +1396,8 @@ fn require_registration(
         .get(&qualified_registration_id)
         .ok_or_else(|| {
             format!(
-                "{UNREGISTERED_SOURCE}: effective release {} has no registration \
-                 {qualified_registration_id:?}",
-                manifest.release.effective_release_id.get()
+                "{UNREGISTERED_SOURCE}: the carried release has no registration \
+                 {qualified_registration_id:?}"
             )
         })?;
     let (entity, op) = subject_source(filter_subject).ok_or_else(|| {

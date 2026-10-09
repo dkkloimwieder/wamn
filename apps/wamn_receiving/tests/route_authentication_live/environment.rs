@@ -587,7 +587,7 @@ pub(super) async fn publish_journey_release(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    publish_release::publish_release(PublishReleaseRequest {
+    let digest = publish_release::publish_release(PublishReleaseRequest {
         database_url: project_url.to_owned(),
         control_database_url: system_url.to_owned(),
         org: identity().org.clone(),
@@ -613,15 +613,16 @@ pub(super) async fn publish_journey_release(
             .collect(),
     })
     .await
-    .context("publish the production Receiving release")?;
+    .context("publish the production Receiving release")?
+    .to_string();
     let inactive = control
         .query_opt(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
-             WHERE tenant_id = $1 AND effective_release_id = $2 \
+             WHERE tenant_id = $1 AND manifest_digest = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
             &[
                 &identity().tenant.as_str(),
-                &release_id.cast_signed(),
+                &digest.as_str(),
                 &identity().org.as_str(),
                 &identity().project.as_str(),
                 &identity().environment.as_str(),
@@ -633,19 +634,10 @@ pub(super) async fn publish_journey_release(
         inactive.is_none(),
         "publishing the Receiving release activated it before deployment"
     );
-    let digest: String = project
-        .query_one(
-            "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
-             WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&identity().tenant.as_str(), &release_id.cast_signed()],
-        )
-        .await
-        .context("read the production-published release digest")?
-        .get(0);
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let bytes: Vec<u8> = project.query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&identity().tenant.as_str(), &release_id.cast_signed()],
+            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
+            &[&identity().tenant.as_str(), &digest.as_str()],
         ).await?.get(0);
         let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
         candidate.assert_manifest(&manifest)?;
@@ -660,7 +652,6 @@ pub(super) async fn publish_and_push_journey_release(
     let project_url = target.project_url;
     let system_url = target.system_url;
     let control = target.control;
-    let release_id = target.release_id;
     let digest = publish_journey_release(inputs, target).await?;
     push_release_manifest::push_release_manifest(
         &PushReleaseManifestRequest {
@@ -668,7 +659,7 @@ pub(super) async fn publish_and_push_journey_release(
             org: identity().org.clone(),
             project: identity().project.clone(),
             tenant: identity().tenant.clone(),
-            effective_release_id: release_id,
+            manifest_digest: digest.clone(),
             artifact_base: inputs.release_artifact_base.clone(),
             registry_auth_file: inputs.registry_auth_file.clone(),
             insecure_registry: true,
@@ -682,11 +673,11 @@ pub(super) async fn publish_and_push_journey_release(
     let serving: String = control
         .query_one(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
-             WHERE tenant_id = $1 AND effective_release_id = $2 \
+             WHERE tenant_id = $1 AND manifest_digest = $2 \
                AND org_id = $3 AND project_id = $4 AND environment = $5",
             &[
                 &identity().tenant.as_str(),
-                &release_id.cast_signed(),
+                &digest.as_str(),
                 &identity().org.as_str(),
                 &identity().project.as_str(),
                 &identity().environment.as_str(),

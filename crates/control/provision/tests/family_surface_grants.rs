@@ -377,7 +377,6 @@ fn expected_executor_grants() -> Vec<String> {
         "caller_released_at",
         "deadline_adjustments_json",
         "fail_type",
-        "manifest_digest",
         "result_json",
         "state_json",
         "status",
@@ -398,10 +397,10 @@ fn expected_executor_grants() -> Vec<String> {
     // (owner ruling on wamn-upl3.6): the host admits an event-started run.
     for column in [
         "durability_class",
-        "effective_release_id",
         "environment",
         "idempotency_key",
         "input_json",
+        "manifest_digest",
         "package_id",
         "registration_id",
         "status",
@@ -423,9 +422,7 @@ fn expected_executor_grants() -> Vec<String> {
         "connection_generations",
         "connection_instances",
         "connection_requirements",
-        "effective_release_packages",
-        "release_components",
-        "release_manifest_snapshots",
+        "releases",
         "wirings",
     ] {
         rows.push(format!("relation|catalog|{relation}|SELECT"));
@@ -543,7 +540,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     for relation in [
         "catalog.packages",
         "catalog.package_migrations",
-        "catalog.effective_releases",
         "catalog.effective_release_heads",
         "catalog.wiring_activation",
         "catalog.wiring_tombstones",
@@ -627,7 +623,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "wiring_version",
         "wiring_hash",
         "package_id",
-        "effective_release_id",
+        "manifest_digest",
         "environment",
         "tenant_id",
         "run_id",
@@ -683,17 +679,14 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
             "INSERT INTO catalog.packages \
                (tenant_id, package_id, package_version, manifest_sha256) \
              VALUES ('t1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
-             INSERT INTO catalog.effective_releases \
-               (tenant_id, effective_release_id, environment) \
-             VALUES ('t1', 1, 'dev');\n\
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('t1', 'dev', 'standard');\n\
              INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, package_id, effective_release_id, environment, status, \
+               (tenant_id, run_id, package_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \
                 binding_world_json, input_json) \
-             VALUES ('t1', 'r1', 'widgets', 1, 'dev', 'dispatched', 'internal', \
+             VALUES ('t1', 'r1', 'widgets', 'dev', 'dispatched', 'internal', \
                      'w', 1, 'sha256:{hash}', '[]', '{{\"a\":1}}');\n",
             hash = "c".repeat(64),
             package_hash = "d".repeat(64),
@@ -861,7 +854,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         "catalog.packages",
         "catalog.effective_release_heads",
         "catalog.wiring_activation",
-        "catalog.release_manifest_snapshots",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             writeln!(
@@ -906,12 +898,9 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              INSERT INTO catalog.packages \
                (tenant_id, package_id, package_version, manifest_sha256) \
              VALUES ('tenant-a', 'orders', '1.0.0', '{digest}');\n\
-             INSERT INTO catalog.effective_releases \
-               (tenant_id, effective_release_id, environment) \
-             VALUES ('tenant-a', 1, 'prod');\n\
-             INSERT INTO catalog.effective_release_packages \
-               (tenant_id, effective_release_id, package_id, package_version) \
-             VALUES ('tenant-a', 1, 'orders', '1.0.0');\n\
+             INSERT INTO catalog.releases \
+               (tenant_id, manifest_digest, canonical_bytes) \
+             VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{{}}');\n\
              INSERT INTO catalog.component_digest_owners \
                (tenant_id, component_digest, package_id) \
              VALUES ('tenant-a', '{digest}', 'orders');\n\
@@ -942,10 +931,10 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                 requirement_hash) \
              VALUES ('tenant-a', '{digest}', 'upstream', '{{}}', '{digest}');\n\
              INSERT INTO catalog.connection_bindings \
-               (tenant_id, effective_release_id, component_digest, store_alias, \
+               (tenant_id, manifest_digest, component_digest, store_alias, \
                 environment, instance_id, binding_status, validation_status, \
                 validation_hash) \
-             VALUES ('tenant-a', 1, '{digest}', 'upstream', 'prod', 'upstream', \
+             VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{digest}', 'upstream', 'prod', 'upstream', \
                      'active', 'valid', '{digest}');\n\
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
                     set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\

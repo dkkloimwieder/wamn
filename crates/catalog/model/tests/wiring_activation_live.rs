@@ -117,15 +117,12 @@ fn preamble(database: &str, app_generation: &str) -> String {
          INSERT INTO catalog.packages \
                 (tenant_id, package_id, package_version, manifest_sha256) \
          VALUES ('t1','shop','1.0.0','{a}'), ('t1','shop','2.0.0','{b}');\n\
-         INSERT INTO catalog.effective_releases \
-                (tenant_id, effective_release_id, environment, verified_publisher_principal) \
-         VALUES ('t1',1,'prod','spiffe://wamn.test/publisher');\n\
-         INSERT INTO catalog.effective_release_packages \
-                (tenant_id, effective_release_id, package_id, package_version) \
-         VALUES ('t1',1,'shop','1.0.0');\n\
+         INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+         SELECT 't1', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+           FROM (SELECT convert_to('{{\"release\":{{\"packages\":[{{\"package-id\":\"shop\",\"package-version\":\"1.0.0\"}}]}}}}', 'UTF8') AS bytes) AS release;\n\
          INSERT INTO catalog.effective_release_heads \
-                (tenant_id, environment, effective_release_id) \
-         VALUES ('t1','prod',1);\n\
+                (tenant_id, environment, manifest_digest) \
+         SELECT 't1', 'prod', manifest_digest FROM catalog.releases;\n\
          INSERT INTO catalog.wirings (tenant_id, package_id, package_version, \
                 wiring_id, version, graph_json, wiring_hash) \
          VALUES ('t1','shop','1.0.0','orders-create',1,'{{\"n\":1}}','{a}'), \

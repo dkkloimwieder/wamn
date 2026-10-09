@@ -152,7 +152,7 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 2] = ["wirings", "compon
 /// generation facts. Unlike management admission, it never consults the
 /// environment's mutable effective-release head.
 pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 7] = [
-    "effective_release_packages",
+    "releases",
     "wirings",
     "component_library",
     "connection_requirements",
@@ -205,16 +205,14 @@ pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 7] = [
     "wirings",
     "component_library",
     "connection_requirements",
     "connection_bindings",
     "connection_instances",
     "connection_generations",
-    "effective_release_packages",
-    "release_components",
-    "release_manifest_snapshots",
+    "releases",
 ];
 
 /// Every `runs` column the executor-platform family WRITES, and no other
@@ -224,8 +222,8 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
 /// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`] — the bead's
 /// premise said five, and the sixth is real:
 ///
-/// * `queue::sql::clear_pre_effect_state_sql` — `state_json`, `manifest_digest`
-/// * `queue::sql::grant_production_claim_sql` — `status`, `manifest_digest`
+/// * `queue::sql::clear_pre_effect_state_sql` — `state_json`
+/// * `queue::sql::grant_production_claim_sql` — `status`
 /// * `queue::sql::terminalize_effect_uncertain_claim_sql` — `status`,
 ///   `fail_type`, the caller-outcome family, `updated_at`
 /// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
@@ -242,14 +240,13 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
 /// concession. Confining the WRITE is what a column list can still buy, and it
 /// buys a lot: this family matches the permissive `TO wamn_platform` floor arm,
 /// so a blanket `UPDATE` would let one claim rewrite any tenant's admission pins.
-pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 14] = [
+pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
     "status",
     "terminal_reason",
     "fail_type",
     "result_json",
     "deadline_adjustments_json",
     "state_json",
-    "manifest_digest",
     "caller_outcome_type",
     "caller_outcome_json",
     "caller_http_status",
@@ -292,7 +289,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
 pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 13] = [
     "tenant_id",
     "package_id",
-    "effective_release_id",
+    "manifest_digest",
     "environment",
     "wiring_id",
     "wiring_version",
@@ -1242,8 +1239,7 @@ mod tests {
              REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_cache, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
              GRANT USAGE ON SCHEMA catalog, app_system, wamn_cache TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
-             TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"component_library\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
@@ -1291,18 +1287,14 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"release_components\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"release_manifest_snapshots\" \
-             TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_type\", \"result_json\", \
-             \"deadline_adjustments_json\", \"state_json\", \"manifest_digest\", \"caller_outcome_type\", \
+             \"deadline_adjustments_json\", \"state_json\", \"caller_outcome_type\", \
              \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
              \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
-             GRANT INSERT (\"tenant_id\", \"package_id\", \"effective_release_id\", \
+             GRANT INSERT (\"tenant_id\", \"package_id\", \"manifest_digest\", \
              \"environment\", \"wiring_id\", \"wiring_version\", \"wiring_hash\", \
              \"trigger_source\", \"registration_id\", \"idempotency_key\", \"input_json\", \
              \"status\", \"durability_class\") \

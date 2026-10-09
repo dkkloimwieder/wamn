@@ -473,3 +473,31 @@ const SCENARIO_WORKER_BIN_ENV: &str = "WAMN_JOURNEY_SCENARIO_WORKER_BIN";
 
 /// Fixed nameable port for `[RECEIVING-ROUTE-JOURNEY]`'s spawned Gate.
 const ROUTE_JOURNEY_GATE_BIND: &str = "127.0.0.1:18089";
+
+/// The manifest digest of the installed release whose manifest names
+/// `release_id`. A release is its digest; the fixture still numbers its
+/// releases in the manifest (wamn-snz0.5 phase A).
+async fn release_digest(
+    project: &tokio_postgres::Client,
+    release_id: u32,
+) -> anyhow::Result<String> {
+    Ok(project
+        .query_one(
+            "SELECT manifest_digest FROM catalog.releases \
+             WHERE tenant_id = $1 \
+               AND convert_from(canonical_bytes, 'UTF8')::jsonb \
+                     #>> '{release,effective-release-id}' = $2::text",
+            &[&identity().tenant.as_str(), &release_id.to_string()],
+        )
+        .await
+        .with_context(|| format!("read the digest of release {release_id}"))?
+        .get(0))
+}
+
+/// [`release_digest`] in the project database at `database_url`.
+async fn release_digest_at(database_url: &str, release_id: u32) -> anyhow::Result<String> {
+    let (project, task) = wamn_control::dev::environment::connect(database_url).await?;
+    let digest = release_digest(project.as_ref(), release_id).await;
+    task.abort();
+    digest
+}

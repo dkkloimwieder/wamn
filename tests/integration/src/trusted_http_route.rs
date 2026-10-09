@@ -561,24 +561,18 @@ async fn seed_with_client(
         )
         .await
         .context("seed the exact package coordinate")?;
+    // The release is its manifest bytes under their digest; package and
+    // component membership are read from them.
+    let canonical_release = release.manifest().canonical_bytes();
+    let manifest_digest = release.release().manifest_digest.as_str();
     client
         .execute(
-            "INSERT INTO catalog.effective_releases \
-                    (tenant_id, effective_release_id, environment, verified_publisher_principal) \
-             VALUES ($1, $2, $3, 'trusted-http-route')",
-            &[&TENANT, &EFFECTIVE_RELEASE_ID, &ENVIRONMENT],
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             VALUES ($1, $2, $3)",
+            &[&TENANT, &manifest_digest, &canonical_release],
         )
         .await
-        .context("seed the effective release")?;
-    client
-        .execute(
-            "INSERT INTO catalog.effective_release_packages \
-                    (tenant_id, effective_release_id, package_id, package_version) \
-             VALUES ($1, $2, $3, $4)",
-            &[&TENANT, &EFFECTIVE_RELEASE_ID, &PACKAGE, &PACKAGE_VERSION],
-        )
-        .await
-        .context("pin the package in the effective release")?;
+        .context("record the release")?;
     client
         .execute(
             "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
@@ -629,28 +623,6 @@ async fn seed_with_client(
         .await
         .context("seed the admitted component fact")?;
 
-    client
-        .execute(
-            "INSERT INTO catalog.release_components (\
-                 tenant_id, effective_release_id, wiring_package_id, \
-                 wiring_package_version, wiring_id, wiring_version, node_id, package_id, \
-                 package_version, component_digest\
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-            &[
-                &TENANT,
-                &EFFECTIVE_RELEASE_ID,
-                &PACKAGE,
-                &PACKAGE_VERSION,
-                &WIRING_ID,
-                &wiring_version,
-                &NODE_ID,
-                &PACKAGE,
-                &PACKAGE_VERSION,
-                &component.component_digest,
-            ],
-        )
-        .await
-        .context("seed the released component membership")?;
     client
         .execute(
             "INSERT INTO catalog.connection_requirements (\
@@ -710,12 +682,12 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.connection_bindings (\
-                 tenant_id, effective_release_id, component_digest, store_alias, \
+                 tenant_id, manifest_digest, component_digest, store_alias, \
                  environment, instance_id, binding_status, validation_status, validation_hash\
              ) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'valid', $7)",
             &[
                 &TENANT,
-                &EFFECTIVE_RELEASE_ID,
+                &manifest_digest,
                 &component.component_digest,
                 &STORE_ALIAS,
                 &ENVIRONMENT,
@@ -729,30 +701,12 @@ async fn seed_with_client(
     if let Some((component, documents)) = additional_wiring {
         seed_additional_wirings(client, component, documents).await?;
     }
-    // All component memberships and connection facts exist before the single
-    // immutable snapshot seals this release. No post-seal membership writes.
-    let canonical_release = release.manifest().canonical_bytes();
-    let manifest_digest = release.release().manifest_digest.as_str();
-    client
-        .execute(
-            "INSERT INTO catalog.release_manifest_snapshots (\
-                 tenant_id, effective_release_id, manifest_digest, canonical_bytes\
-             ) VALUES ($1, $2, $3, $4)",
-            &[
-                &TENANT,
-                &EFFECTIVE_RELEASE_ID,
-                &manifest_digest,
-                &canonical_release,
-            ],
-        )
-        .await
-        .context("seal the complete serving-manifest snapshot")?;
     client
         .execute(
             "INSERT INTO catalog.effective_release_heads \
-                    (tenant_id, environment, effective_release_id) \
+                    (tenant_id, environment, manifest_digest) \
              VALUES ($1, $2, $3)",
-            &[&TENANT, &ENVIRONMENT, &EFFECTIVE_RELEASE_ID],
+            &[&TENANT, &ENVIRONMENT, &manifest_digest],
         )
         .await
         .context("select the effective release")?;
@@ -854,11 +808,6 @@ async fn seed_additional_wirings(
             &[&TENANT, package, package_version,
               &wamn_execution_contract::canonical_json_sha256(&manifest)],
         ).await?;
-        client.execute(
-            "INSERT INTO catalog.effective_release_packages \
-             (tenant_id, effective_release_id, package_id, package_version) VALUES ($1, $2, $3, $4)",
-            &[&TENANT, &EFFECTIVE_RELEASE_ID, package, package_version],
-        ).await?;
     }
     let projection_hash = admitted_projection_hash(component, &[])?;
     client
@@ -898,27 +847,6 @@ async fn seed_additional_wirings(
             )
             .await
             .context("seed the additional immutable wiring")?;
-        client
-            .execute(
-                "INSERT INTO catalog.release_components (tenant_id, effective_release_id, \
-             wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id, \
-             package_id, package_version, component_digest) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                &[
-                    &TENANT,
-                    &EFFECTIVE_RELEASE_ID,
-                    &PACKAGE,
-                    &PACKAGE_VERSION,
-                    &document.wiring_id,
-                    &version,
-                    &NODE_ID,
-                    package,
-                    package_version,
-                    &component.component_digest,
-                ],
-            )
-            .await
-            .context("seed the additional component membership before sealing")?;
     }
     Ok(())
 }
@@ -956,9 +884,9 @@ mod tests {
     use wamn_runtime::plugins::wamn_postgres::{CANDIDATE_WIRING_SQL, CandidateBindingWorld};
 
     use super::{
-        CREDENTIAL_HANDLE, EFFECTIVE_RELEASE_ID, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE,
-        PROJECT, RouteOptions, TENANT, TrustedHttpRoute, WIRING_ID, WIRING_VERSION,
-        build_with_credentials, credential_secret,
+        CREDENTIAL_HANDLE, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE, PROJECT, RouteOptions,
+        TENANT, TrustedHttpRoute, WIRING_ID, WIRING_VERSION, build_with_credentials,
+        credential_secret,
     };
 
     const ROTATED_HANDLE: &str = "upstream-v2";
@@ -1105,9 +1033,6 @@ mod tests {
                 tenant_id: request.tenant_id,
                 package_id: request.package_id,
                 environment: request.environment,
-                effective_release_id: EFFECTIVE_RELEASE_ID
-                    .try_into()
-                    .expect("positive fixture release"),
                 wiring_id: request.wiring_id,
                 wiring_version: request.wiring_version,
                 wiring_hash: route.wiring_hash.clone(),
@@ -1127,6 +1052,13 @@ mod tests {
         // Capture the same complete DB projection candidate admission reads,
         // not a hand-authored approximation of the frozen authority facts.
         let wiring_version = i32::try_from(WIRING_VERSION)?;
+        let manifest_digest: String = client
+            .query_one(
+                "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
+                &[&TENANT],
+            )
+            .await?
+            .get(0);
         let row = client
             .query_one(
                 CANDIDATE_WIRING_SQL,
@@ -1136,13 +1068,13 @@ mod tests {
                     &ENVIRONMENT,
                     &WIRING_ID,
                     &wiring_version,
-                    &EFFECTIVE_RELEASE_ID,
+                    &manifest_digest,
                     &route.wiring_hash,
                     &None::<String>,
                 ],
             )
             .await?;
-        let json: String = row.try_get(10)?;
+        let json: String = row.try_get(9)?;
         Ok(Arc::new(CandidateBindingWorld::from_json(
             serde_json::from_str(&json)?,
         )?))

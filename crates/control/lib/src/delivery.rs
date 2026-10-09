@@ -27,10 +27,10 @@ pub struct PrepareReleaseRequest {
     pub org: String,
     /// Project of the published release, which its manifest does not name.
     pub project: String,
-    /// Tenant claim carried by the published release snapshot.
+    /// Tenant claim carried by the published release.
     pub tenant: String,
-    /// Integer identity of the published effective release snapshot.
-    pub effective_release_id: u32,
+    /// The published release, as its manifest digest.
+    pub manifest_digest: String,
     /// The `<registry>/<repository>` the release manifest was pushed to.
     pub artifact_base: String,
     pub target_directory: PathBuf,
@@ -57,7 +57,7 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
     let snapshot = crate::print_release_env::lookup_release_snapshot(
         &request.database_url,
         &request.tenant,
-        request.effective_release_id,
+        &request.manifest_digest,
         &request.artifact_base,
     )
     .await?;

@@ -58,7 +58,6 @@ const TENANT: &str = "t1";
 const PACKAGE_ID: &str = "cat";
 const PACKAGE_VERSION: &str = "1.0.0";
 const ENVIRONMENT: &str = "prod";
-const EFFECTIVE_RELEASE_ID: i32 = 1;
 const WIRING_ID: &str = "wiring-a";
 const WIRING_VERSION: i32 = 1;
 
@@ -255,27 +254,16 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let requirement_hash = digest("1");
     let definition_hash = digest("2");
     let validation_hash = digest("3");
-    let manifest_body = concat!(
-        "{\"attachments\":{},\"components\":[],\"format-version\":1,",
-        "\"registrations\":{},\"release\":{\"effective-release-id\":1,",
-        "\"environment\":\"prod\",\"packages\":[{\"package-id\":\"cat\",",
-        "\"package-version\":\"1.0.0\",\"tenant-id\":\"t1\"}],",
-        "\"tenant-id\":\"t1\"},\"wirings\":[]}"
+    // The release facts the runtime reads from the bytes: package membership,
+    // the wiring membership and the component closure.
+    let manifest_body = format!(
+        r#"{{"components":[{{"component":"entity","digest":"{component_digest}","interface-version":"0.1","package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}},"workflow":{{"wirings":[{{"graph-hash":"{wiring_hash}","package-id":"{PACKAGE_ID}","wiring-id":"{WIRING_ID}","wiring-version":{WIRING_VERSION}}}]}}}}"#
     );
     admin
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
                (tenant_id,package_id,package_version,manifest_sha256) \
              VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{manifest_sha256}'); \
-             INSERT INTO catalog.effective_releases \
-               (tenant_id,effective_release_id,environment,verified_publisher_principal) \
-             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{ENVIRONMENT}','test-publisher'); \
-             INSERT INTO catalog.effective_release_packages \
-               (tenant_id,effective_release_id,package_id,package_version) \
-             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{PACKAGE_ID}','{PACKAGE_VERSION}'); \
-             INSERT INTO catalog.effective_release_heads \
-               (tenant_id,environment,effective_release_id) \
-             VALUES ('{TENANT}','{ENVIRONMENT}',{EFFECTIVE_RELEASE_ID}); \
              INSERT INTO catalog.component_digest_owners (tenant_id,component_digest,package_id) \
              VALUES ('{TENANT}','{component_digest}','{PACKAGE_ID}'); \
              INSERT INTO catalog.component_library \
@@ -289,17 +277,13 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                 graph_json,wiring_hash) VALUES \
                ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{WIRING_ID}',{WIRING_VERSION}, \
                 '{live_graph}','{wiring_hash}'); \
-             INSERT INTO catalog.release_components \
-               (tenant_id,effective_release_id,wiring_package_id,wiring_package_version, \
-                wiring_id,wiring_version,node_id,package_id,package_version,component_digest) \
-             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{PACKAGE_ID}','{PACKAGE_VERSION}', \
-                     '{WIRING_ID}',{WIRING_VERSION},'node','{PACKAGE_ID}','{PACKAGE_VERSION}', \
-                     '{component_digest}'); \
-             INSERT INTO catalog.release_manifest_snapshots \
-               (tenant_id,effective_release_id,manifest_digest,canonical_bytes) \
-             SELECT '{TENANT}',{EFFECTIVE_RELEASE_ID}, \
-                    'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+             INSERT INTO catalog.releases \
+               (tenant_id,manifest_digest,canonical_bytes) \
+             SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{manifest_body}', 'UTF8') AS bytes) AS frozen; \
+             INSERT INTO catalog.effective_release_heads \
+               (tenant_id,environment,manifest_digest) \
+             SELECT '{TENANT}','{ENVIRONMENT}',manifest_digest FROM catalog.releases; \
              INSERT INTO catalog.connection_requirements \
                (tenant_id,component_digest,store_alias,requirement_json,requirement_hash) \
              VALUES ('{TENANT}','{component_digest}','a-store', \
@@ -318,18 +302,19 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                     updated_at=clock_timestamp()+interval '1 second' \
               WHERE tenant_id='{TENANT}' AND environment='{ENVIRONMENT}'; \
              INSERT INTO catalog.connection_bindings \
-               (tenant_id,effective_release_id,component_digest,store_alias, \
+               (tenant_id,manifest_digest,component_digest,store_alias, \
                 environment,instance_id,binding_status,validation_status,validation_hash) \
-             VALUES ('{TENANT}',{EFFECTIVE_RELEASE_ID},'{component_digest}','a-store', \
-                     '{ENVIRONMENT}','instance-a','active','valid','{validation_hash}'); \
+             SELECT '{TENANT}',manifest_digest,'{component_digest}','a-store', \
+                    '{ENVIRONMENT}','instance-a','active','valid','{validation_hash}' \
+               FROM catalog.releases; \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id,expected_environment,durability_class) \
              VALUES ('{TENANT}','{ENVIRONMENT}','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,input_json) \
-             VALUES ('{TENANT}','run-1','f',1,'{PACKAGE_ID}',{EFFECTIVE_RELEASE_ID},'{ENVIRONMENT}', \
-                     '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}'); \
+             SELECT '{TENANT}','run-1','f',1,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
+                    '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}' FROM catalog.releases; \
              INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('{TENANT}','run-1');",
             live_graph = graph(WIRING_ID),
         ))
@@ -343,9 +328,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     let manifest_digest: String = admin
         .query_one(
-            "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
-              WHERE tenant_id=$1 AND effective_release_id=$2",
-            &[&TENANT, &EFFECTIVE_RELEASE_ID],
+            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id=$1",
+            &[&TENANT],
         )
         .await?
         .get(0);
@@ -355,10 +339,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             &[
                 &TENANT,
                 &PACKAGE_ID,
-                &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &EFFECTIVE_RELEASE_ID,
                 &manifest_digest,
             ],
         )
@@ -370,18 +352,16 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         "the frozen release version resolved to no row under the executor credential"
     );
     assert_eq!(release[0].get::<_, i32>(0), WIRING_VERSION);
-    assert_eq!(release[0].get::<_, i32>(1), EFFECTIVE_RELEASE_ID);
-    assert_eq!(release[0].get::<_, String>(2), PACKAGE_VERSION);
-    assert_eq!(release[0].get::<_, String>(4), wiring_hash);
-    let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(5))?;
+    assert_eq!(release[0].get::<_, String>(1), PACKAGE_VERSION);
+    assert_eq!(release[0].get::<_, String>(3), wiring_hash);
+    let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(4))?;
     assert_eq!(
         release_components.as_array().map(Vec::len),
         Some(1),
         "release membership produced no component closure"
     );
-    assert_eq!(release_components[0]["node-id"], "node");
     assert_eq!(
-        release_components[0]["component"],
+        release_components[0],
         serde_json::json!({
             "scope": {
                 "tenant-id": TENANT, "package-id": PACKAGE_ID,
@@ -399,25 +379,17 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     // A route reads the same release component list with no wiring.
     let route_components = generation
-        .query_one(
-            RELEASE_COMPONENTS_SQL,
-            &[
-                &TENANT,
-                &ENVIRONMENT,
-                &EFFECTIVE_RELEASE_ID,
-                &manifest_digest,
-            ],
-        )
+        .query_one(RELEASE_COMPONENTS_SQL, &[&TENANT, &manifest_digest])
         .await
         .context("the release-components snapshot must execute under the credential")?;
     assert_eq!(
         route_components.get::<_, String>(0),
-        release[0].get::<_, String>(6),
+        release[0].get::<_, String>(4),
         "a route must load the same release component list as a wiring"
     );
     assert_eq!(
         route_components.get::<_, i32>(1),
-        release[0].get::<_, i32>(7)
+        release[0].get::<_, i32>(5)
     );
 
     // The release path's own legitimate zero: the same coordinates under a
@@ -428,10 +400,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             &[
                 &TENANT,
                 &PACKAGE_ID,
-                &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &EFFECTIVE_RELEASE_ID,
                 &digest("e"),
             ],
         )
@@ -450,7 +420,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                 &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &EFFECTIVE_RELEASE_ID,
+                &manifest_digest,
                 &wiring_hash,
                 &None::<String>,
             ],
@@ -463,16 +433,16 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         "the frozen candidate resolved to no row under the executor credential"
     );
     assert_eq!(
-        (candidate[0].get::<_, i64>(6), candidate[0].get::<_, i64>(7)),
+        (candidate[0].get::<_, i64>(5), candidate[0].get::<_, i64>(6)),
         (1, 0),
         "the candidate node summary is wrong"
     );
     assert_eq!(
-        (candidate[0].get::<_, i64>(8), candidate[0].get::<_, i64>(9)),
+        (candidate[0].get::<_, i64>(7), candidate[0].get::<_, i64>(8)),
         (1, 1),
         "the requirement did not resolve to one usable binding"
     );
-    let binding_world: Value = serde_json::from_str(&candidate[0].get::<_, String>(10))?;
+    let binding_world: Value = serde_json::from_str(&candidate[0].get::<_, String>(9))?;
     assert_eq!(
         binding_world,
         serde_json::json!([{
@@ -497,7 +467,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                 &ENVIRONMENT,
                 &WIRING_ID,
                 &WIRING_VERSION,
-                &EFFECTIVE_RELEASE_ID,
+                &manifest_digest,
                 &dead_wiring_hash,
                 &None::<String>,
             ],

@@ -245,10 +245,11 @@ async fn require_local_facts(
     control: &tokio_postgres::Client,
     target_url: &str,
 ) -> anyhow::Result<()> {
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&fs::read(
+    let bytes = fs::read(
         root.join("local-artifacts")
             .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
-    )?)?;
+    )?;
+    let (manifest, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     ensure!(
         manifest.release.tenant_id == identity().tenant.as_str(),
         "the local manifest names another tenant"
@@ -265,54 +266,32 @@ async fn require_local_facts(
     let publications = target
         .query_one(
             "SELECT \
-             (SELECT count(*) FROM catalog.release_manifest_snapshots WHERE tenant_id=$1), \
              (SELECT count(*) FROM catalog.component_library WHERE tenant_id=$1), \
-             (SELECT count(*) FROM catalog.wirings WHERE tenant_id=$1), \
-             (SELECT count(*) FROM catalog.release_components WHERE tenant_id=$1)",
+             (SELECT count(*) FROM catalog.wirings WHERE tenant_id=$1)",
             &[&identity().tenant.as_str()],
         )
         .await?;
-    // The local run plane needs a disposable release FK and package membership,
-    // while the manifest and component/wiring facts remain local files.
-    let release_id = i32::try_from(manifest.release.effective_release_id.get())?;
-    let environment: String = target
-        .query_one(
-            "SELECT environment FROM catalog.effective_releases \
-             WHERE tenant_id=$1 AND effective_release_id=$2",
-            &[&identity().tenant.as_str(), &release_id],
-        )
-        .await?
-        .get(0);
-    let packages = target
+    // The local run plane needs the release row its runs pin, and nothing
+    // else: the component and wiring facts remain local files.
+    let releases = target
         .query(
-            "SELECT package_id, package_version FROM catalog.effective_release_packages \
-             WHERE tenant_id=$1 AND effective_release_id=$2",
-            &[&identity().tenant.as_str(), &release_id],
+            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE tenant_id=$1",
+            &[&identity().tenant.as_str()],
         )
         .await?
         .into_iter()
-        .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-        .collect::<BTreeSet<_>>();
+        .map(|row| (row.get::<_, String>(0), row.get::<_, Vec<u8>>(1)))
+        .collect::<Vec<_>>();
     task.abort();
     ensure!(
         published == 0
             && attestations == 0
-            && (0..4_usize).all(|column| publications.get::<_, i64>(column) == 0),
+            && (0..2_usize).all(|column| publications.get::<_, i64>(column) == 0),
         "local execution wrote permanent publication facts"
     );
     ensure!(
-        environment == manifest.release.environment
-            && packages
-                == manifest
-                    .release
-                    .packages
-                    .iter()
-                    .map(|package| (
-                        package.package_id().to_owned(),
-                        package.package_version().to_owned(),
-                    ))
-                    .collect::<BTreeSet<_>>(),
-        "the disposable run-plane identity differs from the local manifest"
+        releases == [(digest.as_str().to_owned(), bytes)],
+        "the disposable run-plane release differs from the local manifest"
     );
     Ok(())
 }

@@ -13,7 +13,8 @@ pub struct AdmittedPrincipal {
     tenant_id: String,
     environment: String,
     package_id: String,
-    effective_release_id: i32,
+    /// The release, as its manifest digest.
+    manifest_digest: String,
     run_id: String,
     flow_id: String,
     flow_version: u32,
@@ -30,7 +31,7 @@ impl AdmittedPrincipal {
         tenant_id: impl Into<String>,
         environment: impl Into<String>,
         package_id: impl Into<String>,
-        effective_release_id: i32,
+        manifest_digest: impl Into<String>,
         run_id: impl Into<String>,
         flow_id: impl Into<String>,
         flow_version: u32,
@@ -40,7 +41,7 @@ impl AdmittedPrincipal {
             tenant_id: tenant_id.into(),
             environment: environment.into(),
             package_id: package_id.into(),
-            effective_release_id,
+            manifest_digest: manifest_digest.into(),
             run_id: run_id.into(),
             flow_id: flow_id.into(),
             flow_version,
@@ -62,8 +63,8 @@ impl AdmittedPrincipal {
         &self.package_id
     }
 
-    pub fn effective_release_id(&self) -> i32 {
-        self.effective_release_id
+    pub fn manifest_digest(&self) -> &str {
+        &self.manifest_digest
     }
 
     pub fn run_id(&self) -> &str {
@@ -89,7 +90,7 @@ impl AdmittedPrincipal {
             || self.run_id.is_empty()
             || self.flow_id.is_empty()
             || self.artifact_digest.is_empty()
-            || self.effective_release_id <= 0
+            || self.manifest_digest.is_empty()
             || self.flow_version == 0
         {
             return Err(InvocationContextError::InvalidPrincipal);
@@ -293,7 +294,7 @@ mod tests {
             "tenant-a",
             "prod",
             "package_a",
-            7,
+            "sha256:release",
             "run-a",
             "flow-a",
             3,

@@ -316,7 +316,8 @@ async fn attach(evidence: &Path, startup_burst: bool) -> anyhow::Result<(Receivi
     let carrier = lookup_release_carrier(
         &kept.route_database_url,
         identity().tenant.as_str(),
-        identity().effective_release_id,
+        &super::super::release_digest_at(&kept.route_database_url, identity().effective_release_id)
+            .await?,
         &inputs.release_artifact_base,
     )
     .await?;

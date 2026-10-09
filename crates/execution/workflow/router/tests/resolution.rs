@@ -10,7 +10,7 @@ use wamn_router::{CacheInsert, VersionKey, Wiring, WiringCache, WiringNode};
 const TENANT: &str = "t1";
 const PACKAGE: &str = "shop";
 const ENV: &str = "prod";
-const RELEASE: u32 = 7;
+const RELEASE: &str = "sha256:release";
 
 fn cache(max_entries: usize) -> WiringCache {
     WiringCache::new(NonZeroUsize::new(max_entries).expect("fixture bound is non-zero"))
@@ -46,7 +46,7 @@ fn graph_hash(wiring_id: &str, version: u32) -> String {
 fn resolve(
     cache: &WiringCache,
     environment: &str,
-    effective_release_id: u32,
+    manifest_digest: &str,
     wiring_id: &str,
     version: u32,
     graph: Wiring,
@@ -56,7 +56,7 @@ fn resolve(
             tenant_id: TENANT,
             package_id: PACKAGE,
             environment,
-            effective_release_id,
+            manifest_digest,
             wiring_id,
             version,
         },

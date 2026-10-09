@@ -475,20 +475,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         )),
         Some(OperationType::Command)
     );
-    let route_members: i64 = project
-        .query_one(
-            "SELECT count(*) FROM catalog.release_components \
-             WHERE tenant_id = $1 AND effective_release_id = $2 \
-               AND route_operation IS NOT NULL AND wiring_id IS NULL",
-            &[&TENANT, &RELEASE_ID],
-        )
-        .await
-        .expect("count the route members")
-        .get(0);
-    assert_eq!(
-        usize::try_from(route_members).unwrap(),
-        first.manifest.routes.len()
-    );
     for component in &first.manifest.components {
         assert_eq!(
             component.digest.as_str(),
@@ -501,9 +487,9 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
 
     let stored: Vec<u8> = project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
-             WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &RELEASE_ID],
+            "SELECT canonical_bytes FROM catalog.releases \
+             WHERE tenant_id = $1 AND manifest_digest = $2",
+            &[&TENANT, &first.digest.as_str()],
         )
         .await
         .expect("read the frozen release artifact")
@@ -511,7 +497,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     assert_eq!(stored, first.canonical_bytes);
     let snapshot_count: i64 = project
         .query_one(
-            "SELECT count(*) FROM catalog.release_manifest_snapshots \
+            "SELECT count(*) FROM catalog.releases \
              WHERE tenant_id = $1",
             &[&TENANT],
         )

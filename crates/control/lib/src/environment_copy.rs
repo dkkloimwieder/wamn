@@ -33,10 +33,10 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 
 /// The tenant and head release of `environment`, the one environment of its
 /// project database.
-async fn source_head(client: &Client, environment: &str) -> anyhow::Result<(String, i32)> {
+async fn source_head(client: &Client, environment: &str) -> anyhow::Result<(String, String)> {
     let rows = client
         .query(
-            "SELECT tenant_id, effective_release_id FROM catalog.effective_release_heads \
+            "SELECT tenant_id, manifest_digest FROM catalog.effective_release_heads \
               WHERE environment = $1",
             &[&environment],
         )
@@ -63,8 +63,13 @@ pub async fn read_source(
     let (tenant, release) = source_head(&client, source_env).await?;
     let packages = client
         .query(
-            "SELECT package_id, package_version FROM catalog.effective_release_packages \
-              WHERE tenant_id = $1 AND effective_release_id = $2 ORDER BY package_id",
+            "SELECT package.value ->> 'package-id', package.value ->> 'package-version' \
+               FROM catalog.releases AS release \
+              CROSS JOIN LATERAL jsonb_array_elements( \
+                    convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}' \
+                ) AS package(value) \
+              WHERE release.tenant_id = $1 AND release.manifest_digest = $2 \
+              ORDER BY 1",
             &[&tenant, &release],
         )
         .await
@@ -86,7 +91,7 @@ pub async fn read_source(
                JOIN catalog.connection_generations g \
                  ON g.tenant_id = i.tenant_id AND g.environment = i.environment \
                 AND g.instance_id = i.instance_id AND g.generation = i.active_generation \
-              WHERE b.tenant_id = $1 AND b.effective_release_id = $2 \
+              WHERE b.tenant_id = $1 AND b.manifest_digest = $2 \
                 AND b.binding_status = 'active' \
               ORDER BY b.instance_id, b.store_alias",
             &[&tenant, &release],
@@ -116,7 +121,7 @@ pub async fn read_source(
         });
     }
     Ok(SourceRead {
-        release,
+        manifest_digest: release,
         packages,
         connections: apply_replacements(source, replacements)?,
     })

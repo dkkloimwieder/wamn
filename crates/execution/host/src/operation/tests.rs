@@ -162,7 +162,6 @@ fn acquisition_binds_its_executing_principal_and_operation() {
             user_id: Some("user-a".to_owned()),
             operation: None,
             release: Some(ReleaseIdentity::for_test(
-                7,
                 wamn_catalog::ManifestDigest::parse(
                     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 )

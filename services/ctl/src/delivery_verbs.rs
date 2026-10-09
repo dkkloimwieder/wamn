@@ -48,9 +48,9 @@ pub struct PushReleaseManifestArgs {
     #[arg(long)]
     pub tenant: String,
 
-    /// Integer identity of the published effective release snapshot.
+    /// The published release, as its manifest digest.
     #[arg(long)]
-    pub effective_release_id: u32,
+    pub release_digest: String,
 
     /// Explicit `<registry>/<repository>` base for release manifests.
     #[arg(long)]
@@ -88,7 +88,7 @@ impl PushReleaseManifestArgs {
             org: self.org,
             project: self.project,
             tenant: self.tenant,
-            effective_release_id: self.effective_release_id,
+            manifest_digest: self.release_digest,
             artifact_base: self.artifact_base,
             registry_auth_file: self.registry_auth_file,
             insecure_registry: self.insecure_registry,
@@ -109,9 +109,9 @@ pub struct PrintReleaseEnvArgs {
     #[arg(long)]
     pub tenant: String,
 
-    /// Integer identity of the published effective release snapshot.
+    /// The published release, as its manifest digest.
     #[arg(long)]
-    pub effective_release_id: u32,
+    pub release_digest: String,
 
     /// The `<registry>/<repository>` the release manifest was pushed to.
     #[arg(long)]
@@ -259,7 +259,7 @@ pub async fn print_release_env(args: PrintReleaseEnvArgs) -> anyhow::Result<()> 
     let carrier = lookup_release_carrier(
         &args.database_url,
         &args.tenant,
-        args.effective_release_id,
+        &args.release_digest,
         &args.artifact_base,
     )
     .await?;
@@ -287,7 +287,7 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
         org: args.org,
         project: args.project,
         tenant: args.release.tenant,
-        effective_release_id: args.release.effective_release_id,
+        manifest_digest: args.release.release_digest,
         artifact_base: args.release.artifact_base,
         target_directory: args.target_directory,
         manifest_output: args.manifest_output,
@@ -502,6 +502,9 @@ mod tests {
         "postgres://control.invalid/store",
     ];
 
+    /// The published release the fixture coordinates name.
+    const RELEASE: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+
     const PLACEMENT: [&str; 4] = ["--org", "fixture", "--project", "billing"];
 
     const COORDINATE: [&str; 8] = [
@@ -509,8 +512,8 @@ mod tests {
         "postgres://release.invalid/env",
         "--tenant",
         "tenant-a",
-        "--effective-release-id",
-        "3",
+        "--release-digest",
+        RELEASE,
         "--artifact-base",
         "registry.example/wamn/releases",
     ];
@@ -537,8 +540,8 @@ mod tests {
             "postgres://release.invalid/env",
             "--tenant",
             "tenant-a",
-            "--effective-release-id",
-            "3",
+            "--release-digest",
+            RELEASE,
         ];
         for placement in [
             vec!["--org", "fixture"],
@@ -587,13 +590,15 @@ mod tests {
             "postgres://release.invalid/env",
             "--tenant",
             "tenant-a",
-            "--effective-release-id",
-            "3",
+            "--release-digest",
+            RELEASE,
         ])
         .expect("the published snapshot source parses");
-        let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
+        let (manifest, manifest_digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
             .expect("the fixture is canonical format-1 bytes");
-        let coordinate = args.into_request().deployment_coordinate(&manifest.release);
+        let coordinate = args
+            .into_request()
+            .deployment_coordinate(&manifest.release, &manifest_digest);
 
         assert_eq!(coordinate.triple.org, "fixture");
         assert_eq!(coordinate.triple.project, "billing");
@@ -608,13 +613,13 @@ mod tests {
             "postgres://release.invalid/env",
             "--tenant",
             "tenant-a",
-            "--effective-release-id",
-            "3",
+            "--release-digest",
+            RELEASE,
         ])
         .expect("the published-snapshot source parses");
         assert_eq!(snapshot.database_url, "postgres://release.invalid/env");
         assert_eq!(snapshot.tenant, "tenant-a");
-        assert_eq!(snapshot.effective_release_id, 3);
+        assert_eq!(snapshot.release_digest, RELEASE);
 
         assert!(
             parse(&["--manifest", "manifest.json"]).is_err(),
@@ -632,7 +637,7 @@ mod tests {
                 "--tenant",
                 "tenant-a",
             ],
-            vec!["--tenant", "tenant-a", "--effective-release-id", "3"],
+            vec!["--tenant", "tenant-a", "--release-digest", RELEASE],
         ];
         for refused in refusals {
             assert!(parse(&refused).is_err(), "accepted {refused:?}");
@@ -663,13 +668,13 @@ mod tests {
             PrintProbe::try_parse_from(std::iter::once("print-release-env").chain(COORDINATE))
                 .expect("the complete coordinate parses")
                 .args;
-        assert_eq!(complete.effective_release_id, 3);
+        assert_eq!(complete.release_digest, RELEASE);
         assert_eq!(complete.artifact_base, "registry.example/wamn/releases");
 
         for omitted in [
             "--database-url",
             "--tenant",
-            "--effective-release-id",
+            "--release-digest",
             "--artifact-base",
         ] {
             let mut argv = vec!["print-release-env"];

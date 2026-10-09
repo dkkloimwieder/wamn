@@ -89,7 +89,6 @@ pub(crate) struct UpgradeQualification {
     pub(crate) format_version: u32,
     pub(crate) tenant: String,
     pub(crate) environment: String,
-    pub(crate) predecessor_release_id: i32,
     pub(crate) predecessor_manifest_digest: String,
     pub(crate) predecessor_package: PackageIdentity,
     pub(crate) candidate_package: PackageIdentity,
@@ -533,7 +532,6 @@ async fn copy_predecessor(
         upgrade_stage: candidate.manifest.upgrade_stage.clone(),
         tenant: request.tenant.clone(),
         environment: request.environment.clone(),
-        predecessor_release_id: i32::try_from(manifest.release.effective_release_id.get())?,
         predecessor_manifest_digest: manifest_digest,
         predecessor_package: predecessor.clone(),
         candidate_package: candidate.identity.clone(),
@@ -1073,21 +1071,19 @@ pub(crate) async fn read_selected_manifest(
     environment: &str,
 ) -> anyhow::Result<(ServingManifest, String)> {
     let row = tx.query_opt(
-        "SELECT head.effective_release_id, snapshot.manifest_digest, snapshot.canonical_bytes \
+        "SELECT release.manifest_digest, release.canonical_bytes \
            FROM catalog.effective_release_heads head \
-           JOIN catalog.release_manifest_snapshots snapshot \
-             ON snapshot.tenant_id = head.tenant_id AND snapshot.effective_release_id = head.effective_release_id \
+           JOIN catalog.releases release \
+             ON release.tenant_id = head.tenant_id AND release.manifest_digest = head.manifest_digest \
           WHERE head.tenant_id = $1 AND head.environment = $2", &[&tenant, &environment],
     ).await.context("read selected predecessor serving manifest")?.context("environment has no selected canonical serving manifest")?;
-    let release_id: i32 = row.get(0);
-    let digest: String = row.get(1);
-    let bytes: Vec<u8> = row.get(2);
+    let digest: String = row.get(0);
+    let bytes: Vec<u8> = row.get(1);
     let (manifest, observed) = ServingManifest::from_canonical_bytes(&bytes)?;
     ensure!(
         observed.as_str() == digest
             && manifest.release.tenant_id == tenant
-            && manifest.release.environment == environment
-            && i32::try_from(manifest.release.effective_release_id.get())? == release_id,
+            && manifest.release.environment == environment,
         "selected serving manifest differs from its stored release identity"
     );
     Ok((manifest, digest))

@@ -172,6 +172,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0018_environment_policy_name.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0019_release_digest.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0019_release_digest.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -231,6 +235,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
     Migration {
         relative_path: "migrations/project/0011_permission_roots.sql",
         sql: include_str!("../../../../deploy/sql/migrations/project/0011_permission_roots.sql"),
+    },
+    Migration {
+        relative_path: "migrations/project/0012_release_digest.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0012_release_digest.sql"),
     },
 ];
 

@@ -522,7 +522,6 @@ async fn seed_run_admission_facts(
     su: &Client,
     tenant_id: &str,
     package_id: &str,
-    effective_release_id: i32,
     environment: &str,
     durability_class: &str,
 ) {
@@ -544,22 +543,6 @@ async fn seed_run_admission_facts(
     )
     .await
     .expect("seed run-pin package");
-    su.execute(
-        "INSERT INTO catalog.effective_releases \
-           (tenant_id,effective_release_id,environment,verified_publisher_principal) \
-         VALUES ($1,$2,$3,'run-plane-live')",
-        &[&tenant_id, &effective_release_id, &environment],
-    )
-    .await
-    .expect("seed run-pin effective release");
-    su.execute(
-        "INSERT INTO catalog.effective_release_packages \
-           (tenant_id,effective_release_id,package_id,package_version) \
-         VALUES ($1,$2,$3,'1.0.0')",
-        &[&tenant_id, &effective_release_id, &package_id],
-    )
-    .await
-    .expect("seed run-pin package membership");
 }
 
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
@@ -977,7 +960,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     ))
     .await
     .expect("build the v1-era queue + outbox era");
-    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "durable").await;
+    seed_run_admission_facts(su, "t1", "cat", "dev", "durable").await;
     su.execute(
         "INSERT INTO catalog.event_registrations \
            (tenant_id, package_id, registration_id, entity_id, registration) \
@@ -990,9 +973,9 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     // A pre-existing queue row: the ADD COLUMN defaults must land on it.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+             (tenant_id,run_id,flow_id,flow_version,package_id, \
               environment) \
-             VALUES ('t1','r-old','f',1,'cat',1,'dev'); \
+             VALUES ('t1','r-old','f',1,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r-old');"
     ))
     .await
@@ -1063,9 +1046,9 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     assert_eq!(projected, "durable");
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+           (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment,durability_class) \
-         VALUES ('t1','r-policy-durable','f',1,'cat',1,'dev','durable')"
+         VALUES ('t1','r-policy-durable','f',1,'cat','dev','durable')"
     ))
     .await
     .expect("seed an explicitly durable run");
@@ -1118,9 +1101,9 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     stale_user_leg(su, system_su, system_url, target_url).await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+           (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment,durability_class) \
-         VALUES ('t1','r-policy-standard','f',1,'cat',1,'dev','standard')"
+         VALUES ('t1','r-policy-standard','f',1,'cat','dev','standard')"
     ))
     .await
     .expect("seed an explicitly standard run");
@@ -1271,12 +1254,12 @@ async fn queue_missing_leg(su: &Client) {
     assert!(!table_exists(su, SCHEMA, "partition_owner").await);
     assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
     // The FK to runs resolves: a run then its queue row insert cleanly.
-    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+             (tenant_id,run_id,flow_id,flow_version,package_id, \
               environment) \
-             VALUES ('t1','r1','f',1,'cat',1,'dev'); \
+             VALUES ('t1','r1','f',1,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
@@ -1437,14 +1420,14 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // and read 0 where it demanded 1. The login name is DERIVED by the
     // production builder, never spelled, so the digest under test is the digest
     // `provision-project-env` would mint.
-    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
-    seed_run_admission_facts(su, "t2", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "cat", "dev", "standard").await;
+    seed_run_admission_facts(su, "t2", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+             (tenant_id,run_id,flow_id,flow_version,package_id, \
               environment) \
-             VALUES ('t1','r1','f',1,'cat',1,'dev'), \
-                    ('t2','r2','f',1,'cat',1,'dev'); \
+             VALUES ('t1','r1','f',1,'cat','dev'), \
+                    ('t2','r2','f',1,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
@@ -1460,8 +1443,8 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     for refused in [
         format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment) \
-             VALUES ('t1','r3','f',1,'cat',1,'dev')"
+               (tenant_id,run_id,flow_id,flow_version,package_id,environment) \
+             VALUES ('t1','r3','f',1,'cat','dev')"
         ),
         format!("INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1','r3')"),
     ] {

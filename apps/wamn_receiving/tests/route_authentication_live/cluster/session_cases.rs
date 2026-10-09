@@ -53,7 +53,11 @@ async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow:
         let carrier = lookup_release_carrier(
             &route.database_url,
             super::super::identity().tenant.as_str(),
-            super::super::identity().effective_release_id + 1,
+            &super::super::release_digest_at(
+                &route.database_url,
+                super::super::identity().effective_release_id + 1,
+            )
+            .await?,
             &cluster.inputs.release_artifact_base,
         )
         .await?;

@@ -29,16 +29,16 @@ pub(super) async fn checked_snapshot(
     args: &PushReleaseManifestRequest,
 ) -> anyhow::Result<ReleaseSnapshot> {
     qualification.require_pass()?;
-    let (expected, _) = qualification.candidate.manifest()?;
+    let (expected, expected_digest) = qualification.candidate.manifest()?;
     ensure!(
         expected.release.tenant_id == args.tenant
-            && expected.release.effective_release_id.get() == args.effective_release_id,
+            && expected_digest.as_str() == args.manifest_digest,
         "publication scope differs from the qualified release"
     );
     let snapshot = lookup_release_snapshot(
         &args.database_url,
         &args.tenant,
-        args.effective_release_id,
+        &args.manifest_digest,
         &args.artifact_base,
     )
     .await?;
@@ -96,14 +96,13 @@ pub(super) async fn require_published(
             .await?
             .map(|row| row.get::<_, String>(0))
             .unwrap_or_default();
-        let release_id = i32::try_from(args.effective_release_id)?;
         let record = transaction
             .query_opt(
                 wamn_schema_control::attestation::read_attestation_sql(),
                 &[
                     &args.tenant,
                     &instance,
-                    &release_id,
+                    &snapshot.carrier.manifest_digest.as_str(),
                     &args.org,
                     &args.project,
                     &snapshot.manifest.release.environment,
@@ -148,9 +147,6 @@ mod tests {
         require_same_manifest(&expected, &expected).unwrap();
         let mut changed = expected.clone();
         changed.release.environment = "another-environment".to_owned();
-        assert!(require_same_manifest(&expected, &changed).is_err());
-        changed = expected.clone();
-        changed.release.effective_release_id = wamn_catalog::EffectiveReleaseId::new(4).unwrap();
         assert!(require_same_manifest(&expected, &changed).is_err());
     }
 

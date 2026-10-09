@@ -207,9 +207,9 @@ pub struct BindConnectionArgs {
     #[arg(long)]
     pub credential_handle: Option<String>,
 
-    /// The release whose component is being bound.
+    /// The release whose component is being bound, as its manifest digest.
     #[arg(long)]
-    pub effective_release_id: u32,
+    pub release_digest: String,
 
     /// The admitted component's digest, as push-component printed it.
     #[arg(long)]
@@ -230,7 +230,7 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
         requirement_type: args.requirement_type.requirement_type(),
         definition: args.definition,
         credential_handle: args.credential_handle,
-        effective_release_id: args.effective_release_id,
+        manifest_digest: args.release_digest,
         component_digest: args.component_digest,
         store_alias: args.store_alias,
     };
@@ -244,7 +244,7 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
             .previous_generation
             .map_or_else(|| "none".to_owned(), |generation| generation.to_string()),
         bound.generation,
-        request.effective_release_id,
+        request.manifest_digest,
         bound.definition_hash,
         bound.validation_hash
     );

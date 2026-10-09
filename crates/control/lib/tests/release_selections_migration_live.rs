@@ -10,6 +10,55 @@ use wamn_test_infrastructure::locked_database;
 
 const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0011_release_selections.sql");
+/// `system/0019` keys the selection by the release digest (wamn-snz0.5).
+const DIGEST_MIGRATION: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0019_release_digest.sql");
+
+/// The release tables that 0011 refers to, keyed by the integer id as 0010
+/// left them.
+const RELEASES_BY_ID_SQL: &str = "
+ALTER TABLE catalog.deployment_attestations
+    DROP CONSTRAINT deployment_attestations_release_fkey,
+    DROP CONSTRAINT deployment_attestations_coordinate,
+    DROP COLUMN manifest_digest,
+    ADD COLUMN effective_release_id int NOT NULL CHECK (effective_release_id > 0),
+    ADD CONSTRAINT deployment_attestations_coordinate UNIQUE (
+        tenant_id, environment_instance, effective_release_id, org_id, project_id, environment);
+ALTER TABLE catalog.effective_release_heads
+    DROP CONSTRAINT effective_release_heads_release_fkey,
+    DROP COLUMN manifest_digest,
+    ADD COLUMN effective_release_id int NOT NULL CHECK (effective_release_id > 0);
+ALTER TABLE catalog.effective_release_packages
+    DROP CONSTRAINT effective_release_packages_release_fkey,
+    DROP CONSTRAINT effective_release_packages_pkey,
+    DROP CONSTRAINT effective_release_packages_exact_pair_key,
+    DROP COLUMN manifest_digest,
+    ADD COLUMN effective_release_id int NOT NULL CHECK (effective_release_id > 0),
+    ADD CONSTRAINT effective_release_packages_pkey
+        PRIMARY KEY (tenant_id, effective_release_id, package_id),
+    ADD CONSTRAINT effective_release_packages_exact_pair_key
+        UNIQUE (tenant_id, effective_release_id, package_id, package_version);
+ALTER TABLE catalog.effective_releases
+    DROP CONSTRAINT effective_releases_pkey,
+    DROP CONSTRAINT effective_releases_environment_key,
+    DROP COLUMN manifest_digest,
+    ADD COLUMN effective_release_id int NOT NULL CHECK (effective_release_id > 0),
+    ADD CONSTRAINT effective_releases_pkey PRIMARY KEY (tenant_id, effective_release_id),
+    ADD CONSTRAINT effective_releases_environment_key
+        UNIQUE (tenant_id, effective_release_id, environment);
+ALTER TABLE catalog.effective_release_packages
+    ADD CONSTRAINT effective_release_packages_release_fkey
+        FOREIGN KEY (tenant_id, effective_release_id)
+        REFERENCES catalog.effective_releases (tenant_id, effective_release_id);
+ALTER TABLE catalog.effective_release_heads
+    ADD CONSTRAINT effective_release_heads_release_fkey
+        FOREIGN KEY (tenant_id, effective_release_id, environment)
+        REFERENCES catalog.effective_releases (tenant_id, effective_release_id, environment);
+ALTER TABLE catalog.deployment_attestations
+    ADD CONSTRAINT deployment_attestations_release_fkey
+        FOREIGN KEY (tenant_id, effective_release_id, environment)
+        REFERENCES catalog.effective_releases (tenant_id, effective_release_id, environment);
+";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -99,15 +148,17 @@ async fn the_migration_creates_the_selection_tables_as_a_fresh_install_has_them(
     );
 
     client
-        .batch_execute("DROP TABLE catalog.release_selections, catalog.qualifications")
+        .batch_execute(&format!(
+            "DROP TABLE catalog.release_selections, catalog.qualifications; {RELEASES_BY_ID_SQL}"
+        ))
         .await
         .expect("make the catalog as 0010 left it");
     client
         .batch_execute(&format!(
-            "BEGIN; SET LOCAL ROLE wamn_system; {MIGRATION} COMMIT;"
+            "BEGIN; SET LOCAL ROLE wamn_system; {MIGRATION} {DIGEST_MIGRATION} COMMIT;"
         ))
         .await
-        .expect("apply system/0011 as wamn_system");
+        .expect("apply system/0011 and 0019 as wamn_system");
     assert_eq!(
         definition(&client).await,
         fresh,

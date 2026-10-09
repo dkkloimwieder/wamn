@@ -156,7 +156,10 @@ async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
     let (directory, digest) = Bundle::valid().write();
     let release = EdgeRelease::load(&directory, &digest).await.expect("load");
     assert_eq!(release.bundle_digest(), digest);
-    assert_eq!(release.release().release().effective_release_id, 7);
+    assert_eq!(
+        release.release().release().manifest_digest,
+        release.release().manifest().digest()
+    );
     assert_eq!(release.components(), [fact()]);
     assert_eq!(release.ingress(), INGRESS);
     assert_eq!(

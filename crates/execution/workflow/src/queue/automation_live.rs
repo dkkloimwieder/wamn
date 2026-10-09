@@ -180,9 +180,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
       INSERT INTO app_system.permissions (tenant_id,role_name,permission,required_by) VALUES ('{TENANT}','automation','{REFERENCE}','{REFERENCE}');
       INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('{TENANT}','test','standard');
-      INSERT INTO catalog.packages (tenant_id,package_id,package_version,manifest_sha256) VALUES ('{TENANT}','automation','1.0.0','{HASH}');
-      INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment,verified_publisher_principal) VALUES ('{TENANT}',1,'test','automation-fixture');
-      INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ('{TENANT}',1,'automation','1.0.0');")).await?;
+      INSERT INTO catalog.packages (tenant_id,package_id,package_version,manifest_sha256) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
     let node = match &mode {
         Mode::Admission => Node::echo(component_bytes()),
@@ -217,7 +215,6 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     transaction.commit().await?;
     admin.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ($1,'automation','1.0.0','echo',1,$2::text::jsonb,$3)",
         &[&TENANT,&serde_json::to_string(&document)?,&graph_hash.as_str()]).await?;
-    admin.execute("INSERT INTO catalog.release_components (tenant_id,effective_release_id,wiring_package_id,wiring_package_version,wiring_id,wiring_version,node_id,package_id,package_version,component_digest) VALUES ($1,1,'automation','1.0.0','echo',1,'echo','automation','1.0.0',$2)", &[&TENANT,&admitted.component_digest]).await?;
     let manifest: ServingManifest = serde_json::from_value(json!({
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"tenant-id":TENANT,"effective-release-id":1,"environment":"test","packages":[{"package-id":"automation","package-version":"1.0.0"}]},
@@ -230,7 +227,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         &canonical,
         "automation-live",
     )?);
-    admin.execute("INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,1,$2,$3)",
+    admin.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT,&release.release().manifest_digest.as_str(),&canonical]).await?;
     let mut credentials = ClassCredentials::default();
     let db_name: String = admin
@@ -304,7 +301,6 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
                 user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
                 operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
                 release: Some(ReleaseIdentity::for_test(
-                    1,
                     release.release().manifest_digest.clone(),
                 )),
                 ..SessionClaims::default()
@@ -353,7 +349,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     tokio::spawn(connection);
     let workflows = PostgresWorkflows::new(client, schema.as_str(), TENANT, "test");
     let mut request = StartRequest {
-        effective_release_id: 1,
+        manifest_digest: release.release().manifest_digest.as_str().to_owned(),
         package_id: "automation".to_owned(),
         wiring_id: "echo".to_owned(),
         wiring_version: 1,

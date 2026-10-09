@@ -65,8 +65,8 @@ pub struct ProjectState {
     pub tenant: String,
     pub installed: BTreeMap<String, Installed>,
     pub instances: BTreeMap<String, Instance>,
-    /// `(effective_release_id, component_digest, store_alias, instance_id)`.
-    pub bindings: BTreeSet<(i32, String, String, String)>,
+    /// `(manifest_digest, component_digest, store_alias, instance_id)`.
+    pub bindings: BTreeSet<(String, String, String, String)>,
     /// Package id to recorded floor version.
     pub floors: BTreeMap<String, String>,
 }
@@ -332,7 +332,7 @@ pub(crate) async fn read_project(
     }
     let bindings = transaction
         .query(
-            "SELECT effective_release_id, component_digest, store_alias, instance_id \
+            "SELECT manifest_digest, component_digest, store_alias, instance_id \
                FROM catalog.connection_bindings WHERE tenant_id = $1 AND environment = $2",
             &[&tenant, &document.env],
         )

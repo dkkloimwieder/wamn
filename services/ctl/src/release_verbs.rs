@@ -101,10 +101,9 @@ pub struct PromoteArgs {
     pub project: String,
     #[arg(long)]
     pub tenant: String,
+    /// The source release, as its manifest digest.
     #[arg(long)]
-    pub source_effective_release_id: u32,
-    #[arg(long)]
-    pub target_effective_release_id: u32,
+    pub source_release_digest: String,
     #[arg(long)]
     pub source_environment: String,
     #[arg(long)]
@@ -239,14 +238,8 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
 
 /// Promote one verified release and print the promotion line.
 pub async fn promote(args: PromoteArgs) -> anyhow::Result<()> {
-    let source = format!(
-        "{}:{}",
-        args.source_environment, args.source_effective_release_id
-    );
-    let target = format!(
-        "{}:{}",
-        args.target_environment, args.target_effective_release_id
-    );
+    let source = format!("{}:{}", args.source_environment, args.source_release_digest);
+    let target = args.target_environment.clone();
     let outcome = promote::promote(PromoteRequest {
         source_database_url: args.source_database_url,
         target_database_url: args.target_database_url,
@@ -254,8 +247,7 @@ pub async fn promote(args: PromoteArgs) -> anyhow::Result<()> {
         org: args.org,
         project: args.project,
         tenant: args.tenant,
-        source_effective_release_id: args.source_effective_release_id,
-        target_effective_release_id: args.target_effective_release_id,
+        source_manifest_digest: args.source_release_digest,
         source_environment: args.source_environment,
         target_environment: args.target_environment,
         run_schema: args.run_schema,

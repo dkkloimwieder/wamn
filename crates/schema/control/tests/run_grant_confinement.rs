@@ -22,7 +22,6 @@ const CANONICAL_RUN_COLUMNS: &[&str] = &[
     "flow_id",
     "flow_version",
     "package_id",
-    "effective_release_id",
     "environment",
     "attachment_id",
     "registration_id",

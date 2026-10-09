@@ -110,7 +110,6 @@ fn pulled_bytes_load_the_release_naming_their_carrier() {
 
     let loaded_release = LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE)
         .expect("verified canonical bytes load without a mount");
-    assert_eq!(loaded_release.release().effective_release_id, 7);
     assert_eq!(
         loaded_release.release().manifest_digest.as_str(),
         component_digest(canonical)
@@ -193,13 +192,12 @@ fn live_env(name: &str, expectation: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires: WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE, WAMN_RELEASE_MANIFEST_DIGEST, WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID"]
+#[ignore = "requires: WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE, WAMN_RELEASE_MANIFEST_DIGEST"]
 async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_names() {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
         "WAMN_REGISTRY_AUTH_FILE",
         "WAMN_RELEASE_MANIFEST_DIGEST",
-        "WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID",
     ]);
     let artifact_base = live_env(
         "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
@@ -218,12 +216,6 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
         "WAMN_RELEASE_MANIFEST_DIGEST",
         "the published manifest digest, sha256:<64 lowercase hex>",
     );
-    let effective_release_id: i32 = live_env(
-        "WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID",
-        "the environment-local effective release id the publish froze into that manifest",
-    )
-    .parse()
-    .expect("WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID is an i32");
 
     // The exact pair of calls both service `load_release` functions make, in
     // that order and with that spelling. This shows the mechanism where it
@@ -246,17 +238,12 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     let loaded_release = LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin)
         .expect("the pulled bytes load the release");
 
-    // Both identity halves come out of the transferred content, and they agree
-    // with the name the pod template gave — the check the mount carrier cannot
+    // The identity comes out of the transferred content, and it agrees with
+    // the name the pod template gave — the check the mount carrier cannot
     // make, made here against a third party that stored the bytes.
     assert_eq!(
         loaded_release.release().manifest_digest.as_str(),
         manifest_digest
-    );
-    assert_eq!(
-        loaded_release.release().effective_release_id,
-        effective_release_id,
-        "the carried effective release id must be the identity the publish froze"
     );
     // Nothing was dropped on the way through the parse: the loaded document
     // re-encodes to the exact bytes the registry served.

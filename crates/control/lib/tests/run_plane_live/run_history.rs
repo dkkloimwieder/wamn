@@ -48,15 +48,15 @@ async fn install_legacy_failure_detail(su: &Client) {
 }
 
 async fn seed_failure_detail_run(su: &Client, run_id: &str) {
-    seed_run_admission_facts(su, "failure-detail", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "failure-detail", "cat", "dev", "standard").await;
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+               (tenant_id,run_id,flow_id,flow_version,package_id, \
                 environment,status,fail_type,terminal_reason, \
                 caller_outcome_type,caller_outcome_json,caller_http_status, \
                 caller_released_at,fail_node,fail_reason) \
-             VALUES ('failure-detail',$1,'f',1,'cat',1,'dev','failed','terminal', \
+             VALUES ('failure-detail',$1,'f',1,'cat','dev','failed','terminal', \
                      'typed-caller-failure','failed', \
                      '{{\"class\":\"terminal\",\"detail\":\"typed-caller\"}}'::jsonb,500, \
                      now(),'deleted-plan-node','obsolete coordinate detail')"
@@ -335,13 +335,13 @@ pub(super) async fn child_run_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
     install_legacy_child_run_state(su).await;
-    seed_run_admission_facts(su, "child-cutover", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "child-cutover", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+           (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment,trigger_source, \
             event_source_run_id,event_root_run_id,event_depth) \
-         VALUES ('child-cutover','retained-run','f',1,'cat',1,'dev', \
+         VALUES ('child-cutover','retained-run','f',1,'cat','dev', \
                  'event','source-run','event-root',3);"
     ))
     .await
@@ -482,17 +482,17 @@ pub(super) async fn child_run_cutover_leg(su: &Client) {
 pub(super) async fn rerun_lineage_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
-    seed_run_admission_facts(su, "rerun-cutover", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "rerun-cutover", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.runs \
            ADD COLUMN replay_of text, ADD COLUMN root_run_id text; \
          CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,root_run_id) \
            WHERE root_run_id IS NOT NULL; \
          INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+           (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment,trigger_source,input_json,state_json,replay_of,root_run_id, \
             event_source_run_id,event_root_run_id,event_depth) \
-         VALUES ('rerun-cutover','retained-run','f',1,'cat',1,'dev', \
+         VALUES ('rerun-cutover','retained-run','f',1,'cat','dev', \
                  'event','{{\"payload\":7}}','{{\"cursor\":9}}', \
                  'legacy-parent','legacy-root','event-source','event-root',4);"
     ))
@@ -839,12 +839,12 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
     .await
     .expect("regress the persisted failure vocabulary");
     // A run whose runaway verdict we will try to record.
-    seed_run_admission_facts(su, "t1", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+             (tenant_id,run_id,flow_id,flow_version,package_id, \
               environment) \
-             VALUES ('t1','r-budget','f',1,'cat',1,'dev');"
+             VALUES ('t1','r-budget','f',1,'cat','dev');"
     ))
     .await
     .expect("seed a run");

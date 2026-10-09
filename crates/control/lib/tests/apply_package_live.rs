@@ -1320,19 +1320,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("remove server-refused migration");
     client
         .execute(
-            "INSERT INTO catalog.effective_releases \
-                 (tenant_id, effective_release_id, environment) \
-             VALUES ($1, $2, $3)",
-            &[&TENANT, &1_i32, &"development"],
-        )
-        .await
-        .expect("seed an effective release");
-    client
-        .execute(
-            "INSERT INTO catalog.effective_release_packages \
-                 (tenant_id, effective_release_id, package_id, package_version) \
-             VALUES ($1, $2, $3, $4)",
-            &[&TENANT, &1_i32, &"wamn_inventory", &"1.0.0"],
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+               FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release",
+            &[&TENANT, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
         )
         .await
         .expect("seal the applied package coordinate through release membership");
@@ -2167,19 +2158,10 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
 
     client
         .execute(
-            "INSERT INTO catalog.effective_releases \
-                 (tenant_id, effective_release_id, environment) \
-             VALUES ($1, 1, $2)",
-            &[&TENANT, &ENVIRONMENT],
-        )
-        .await
-        .expect("seed a local effective release");
-    client
-        .execute(
-            "INSERT INTO catalog.effective_release_packages \
-                 (tenant_id, effective_release_id, package_id, package_version) \
-             VALUES ($1, 1, 'wamn_inventory', '1.0.0')",
-            &[&TENANT],
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+               FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release",
+            &[&TENANT, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
         )
         .await
         .expect("seal the coordinate through local release membership");

@@ -161,8 +161,8 @@ pub struct ConnectionReplacement {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceRead {
-    /// The head release of the source environment.
-    pub release: i32,
+    /// The head release of the source environment, as its manifest digest.
+    pub manifest_digest: String,
     pub packages: Vec<PackageReference>,
     pub connections: Vec<ConnectionRequest>,
 }

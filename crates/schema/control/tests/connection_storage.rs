@@ -31,11 +31,11 @@ fn component_requirement_identity_is_environment_independent() {
 }
 
 #[test]
-fn component_storage_sql_uses_component_and_effective_release_grains() {
+fn component_storage_sql_uses_component_and_release_digest_grains() {
     assert!(insert_component_connection_requirement_sql().contains("component_digest"));
     assert!(exact_component_connection_requirement_sql().contains("store_alias"));
     let binding = insert_component_connection_binding_sql();
-    assert!(binding.contains("effective_release_id"));
+    assert!(binding.contains("manifest_digest"));
     assert!(!binding.contains("catalog_"));
 }
 

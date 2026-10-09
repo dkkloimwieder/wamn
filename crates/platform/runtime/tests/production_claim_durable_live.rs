@@ -30,12 +30,11 @@ use wamn_runtime::plugins::wamn_postgres::{ProductionClaimResult, ProductionReap
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_EFFECTIVE_RELEASE_ID, POD_MANIFEST_DIGEST,
-    RUNTIME_APPLICATION_NAME, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION,
-    assert_callerless_terminal, assert_prior_winner_terminal, connect, expire_effect_run,
-    insert_effect_attempt, install_fixture, install_prior_caller_winner, make_callerless,
-    ready_run, release_record, seed_durable_run, seed_live_effect_run, teardown,
-    wait_for_advisory_wait,
+    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, RUNTIME_APPLICATION_NAME,
+    SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
+    assert_prior_winner_terminal, connect, expire_effect_run, insert_effect_attempt,
+    install_fixture, install_prior_caller_winner, make_callerless, ready_run, release_record,
+    seed_durable_run, seed_live_effect_run, teardown, wait_for_advisory_wait,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -63,10 +62,11 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, \
                     durability_class) \
-                 VALUES ($1,'effect-race','root',1,'running',$2,1,'test',$3,$4, \
+                 VALUES ($1,'effect-race','root',1,'running',$2,'{POD_MANIFEST_DIGEST}', \
+                         'test',$3,$4, \
                          '{{\"input\":true}}','http','durable')"
             ),
             &[&TENANT, &PACKAGE_ID, &WIRING_ID, &WIRING_VERSION],
@@ -205,10 +205,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         ),
         "effect-pin"
     );
-    let recorded = (
-        POD_EFFECTIVE_RELEASE_ID,
-        Some(POD_MANIFEST_DIGEST.to_string()),
-    );
+    let recorded = Some(POD_MANIFEST_DIGEST.to_string());
     assert_eq!(release_record(admin, "effect-pin").await?, recorded);
     admin
         .execute(
@@ -238,7 +235,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
             .as_db_error()
             .expect("guard refusal is a db error")
             .message(),
-        "run-release-record-immutable"
+        "run-admission-pin-immutable"
     );
     assert_eq!(release_record(admin, "effect-pin").await?, recorded);
 

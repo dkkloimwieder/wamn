@@ -187,11 +187,9 @@ BEGIN
 END
 $$;
 
--- Admission pins, including `effective_release_id`, never change. The claiming
--- pod shows it carries that release and records only its verified manifest
--- digest. That digest is write-once per claim attempt: a runnable pre-effect
--- reclaim may clear it; a terminal run or durable run with immutable effect
--- evidence may not. The next claim then records the digest afresh.
+-- Admission pins, including the release's `manifest_digest`, never change
+-- (docs/plan/platform-deploy.md R1). A claiming pod shows it carries that
+-- release by its digest. A candidate run carries no release pin.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -200,7 +198,6 @@ BEGIN
     IF NEW.flow_id IS DISTINCT FROM OLD.flow_id
        OR NEW.flow_version IS DISTINCT FROM OLD.flow_version
        OR NEW.package_id IS DISTINCT FROM OLD.package_id
-       OR NEW.effective_release_id IS DISTINCT FROM OLD.effective_release_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode
        OR NEW.durability_class IS DISTINCT FROM OLD.durability_class
@@ -208,27 +205,11 @@ BEGIN
        OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version
        OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash
        OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json
+       OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest
        OR NEW.service_principal_id IS DISTINCT FROM OLD.service_principal_id THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
-    END IF;
-    IF OLD.manifest_digest IS NOT NULL THEN
-        IF NEW.manifest_digest IS NULL THEN
-            IF NEW.status NOT IN ('dispatched', 'running')
-               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
-                           WHERE effect.tenant_id = OLD.tenant_id
-                             AND effect.run_id = OLD.run_id
-                             AND OLD.durability_class = 'durable') THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '55000',
-                    MESSAGE = 'run-release-record-immutable';
-            END IF;
-        ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '55000',
-                MESSAGE = 'run-release-record-immutable';
-        END IF;
     END IF;
     RETURN NEW;
 END
@@ -316,7 +297,6 @@ CREATE TABLE wamn_run.runs (
     flow_id         text,
     flow_version    int,
     package_id      text NOT NULL,
-    effective_release_id int NOT NULL,
     environment     text NOT NULL,
     attachment_id   text,
     registration_id text,
@@ -361,9 +341,9 @@ CREATE TABLE wamn_run.runs (
     -- derived by private management admission. Array order is
     -- (component-digest, store-alias); callers never author this value.
     binding_world_json jsonb,
-    -- Admission pins the exact effective release. At claim, the worker shows
-    -- its mounted release has that identity and records the RFC 8785 digest of
-    -- its component/interface/wiring serving closure, once per claim attempt.
+    -- Admission pins the exact release by its manifest digest, the SHA-256 of
+    -- its RFC 8785 canonical manifest. At claim, the worker shows its mounted
+    -- release has that digest. A candidate run carries no pin.
     manifest_digest text,
     input_json      jsonb,
     result_json     jsonb,
@@ -392,7 +372,6 @@ CREATE TABLE wamn_run.runs (
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
     CHECK (package_id <> ''
-           AND effective_release_id > 0
            AND environment <> ''),
     CHECK (jsonb_typeof(invocation_context) = 'object'
            AND octet_length(invocation_context::text) <= 16384),
@@ -477,15 +456,14 @@ CREATE TABLE wamn_run.runs (
     ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
-        FOREIGN KEY (tenant_id, effective_release_id)
-        REFERENCES catalog.effective_releases (tenant_id, effective_release_id)
+        FOREIGN KEY (tenant_id, manifest_digest)
+        REFERENCES catalog.releases (tenant_id, manifest_digest)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
-CREATE INDEX runs_release ON wamn_run.runs (tenant_id, effective_release_id);
 CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
 CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadline_at)
@@ -515,7 +493,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- The guard is column-scoped, so the claim-time record columns must be named
 -- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF flow_id, flow_version, package_id, effective_release_id, environment,
+BEFORE UPDATE OF flow_id, flow_version, package_id, environment,
                  capture_mode, durability_class, wiring_id, wiring_version,
                  wiring_hash, binding_world_json, manifest_digest, service_principal_id
 ON wamn_run.runs

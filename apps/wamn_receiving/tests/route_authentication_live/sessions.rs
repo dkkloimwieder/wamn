@@ -52,22 +52,10 @@ pub(super) async fn prepare_session_host_fixture(
     let mut project_url = reqwest::Url::parse(&inputs.system_pg_url)?;
     project_url.set_path(&format!("/{database}"));
     let (project, project_task) = connect(project_url.as_str()).await?;
-    let previous = project
-        .query_one(
-            "SELECT releases.verified_publisher_principal, snapshots.canonical_bytes \
-             FROM catalog.effective_releases AS releases \
-             JOIN catalog.release_manifest_snapshots AS snapshots \
-               USING (tenant_id, effective_release_id) \
-             WHERE releases.tenant_id = $1 AND releases.effective_release_id = $2",
-            &[
-                &identity().tenant.as_str(),
-                &identity().effective_release_id.cast_signed(),
-            ],
-        )
+    let previous_bytes = release_bytes(project.as_ref(), identity().effective_release_id)
         .await
         .context("read the completed PAT journey release")?;
-    let publisher: String = previous.get(0);
-    let previous_bytes: Vec<u8> = previous.get(1);
+    let publisher = journey_publisher();
     let previous_release =
         LoadedRelease::load_canonical_bytes(&previous_bytes, "completed PAT journey release")?;
     let mut attachments = Vec::with_capacity(JOURNEY_PACKAGES.len());
@@ -116,7 +104,7 @@ pub(super) async fn prepare_session_host_fixture(
     )
     .await?;
     anyhow::ensure!(
-        release.release().effective_release_id == 2
+        release.manifest().release.effective_release_id.get() == 2
             && release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "session test must publish the current format as release 2"
     );
@@ -328,16 +316,9 @@ pub(super) async fn assert_nested_session(
         )
     ));
     let (project, project_task) = connect(project_url.as_str()).await?;
-    let previous = project.query_one(
-        "SELECT releases.verified_publisher_principal, snapshots.canonical_bytes \
-         FROM catalog.effective_releases AS releases \
-         JOIN catalog.release_manifest_snapshots AS snapshots USING (tenant_id, effective_release_id) \
-         WHERE releases.tenant_id = $1 AND releases.effective_release_id = 1",
-        &[&identity().tenant.as_str()],
-    ).await?;
-    let publisher: String = previous.get(0);
+    let publisher = journey_publisher();
     let previous = LoadedRelease::load_canonical_bytes(
-        &previous.get::<_, Vec<u8>>(1),
+        &release_bytes(project.as_ref(), 1).await?,
         "original Receiving PAT release",
     )?;
     let operation_freshness = |operation: &str| {
@@ -354,14 +335,7 @@ pub(super) async fn assert_nested_session(
         "nested test requires the admitted base freshness, folded into the overlay entry"
     );
     let digests = released_component_digests(&previous, &inputs.route_host)?;
-    let deployed_bytes: Vec<u8> = project
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
-         WHERE tenant_id = $1 AND effective_release_id = 2",
-            &[&identity().tenant.as_str()],
-        )
-        .await?
-        .get(0);
+    let deployed_bytes = release_bytes(project.as_ref(), 2).await?;
     // The frozen driver checks the registered digest, so this is an actual
     // disposable release 3, not an unregistered in-memory manifest alteration.
     let auth_policy = if fresh_only {
@@ -424,20 +398,13 @@ pub(super) async fn assert_nested_session(
     }
     anyhow::ensure!(
         release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION
-            && release.release().effective_release_id == 3
+            && release.manifest().release.effective_release_id.get() == 3
             && release.manifest().attachments == expected
             && release.manifest().components == previous.manifest().components
             && release.manifest().workflow == previous.manifest().workflow,
         "caller test changed facts beyond its release ID and selected route policies"
     );
-    let after: Vec<u8> = project
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
-         WHERE tenant_id = $1 AND effective_release_id = 2",
-            &[&identity().tenant.as_str()],
-        )
-        .await?
-        .get(0);
+    let after = release_bytes(project.as_ref(), 2).await?;
     anyhow::ensure!(
         after == deployed_bytes,
         "nested fixture changed the deployed release 2"
@@ -1043,4 +1010,29 @@ pub(super) async fn nested_receipt_state(project: &Client) -> anyhow::Result<Val
            'order_lines', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.purchase_order_line AS row))",
         &[],
     ).await.context("read committed Receipt state independently")?.get(0))
+}
+
+/// The canonical bytes of the installed release whose manifest names `id`.
+async fn release_bytes(project: &Client, id: u32) -> anyhow::Result<Vec<u8>> {
+    Ok(project
+        .query_one(
+            "SELECT canonical_bytes FROM catalog.releases \
+             WHERE tenant_id = $1 \
+               AND convert_from(canonical_bytes, 'UTF8')::jsonb \
+                     #>> '{release,effective-release-id}' = $2::text",
+            &[&identity().tenant.as_str(), &id.to_string()],
+        )
+        .await?
+        .get(0))
+}
+
+/// The publisher principal the fixture releases name. A release records no
+/// publisher, so any authenticated principal of the environment serves.
+fn journey_publisher() -> String {
+    format!(
+        "wamn-management-author-{}--{}--{}",
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str()
+    )
 }

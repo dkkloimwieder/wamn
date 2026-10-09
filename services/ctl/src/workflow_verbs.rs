@@ -40,8 +40,9 @@ pub struct WorkflowScope {
 pub struct StartArgs {
     #[command(flatten)]
     pub scope: WorkflowScope,
+    /// The installed release, as its manifest digest.
     #[arg(long)]
-    pub effective_release_id: u32,
+    pub release_digest: String,
     #[arg(long)]
     pub package_id: String,
     #[arg(long)]
@@ -99,7 +100,7 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
             let run_id = workflows(&args.scope)
                 .await?
                 .start(&StartRequest {
-                    effective_release_id: args.effective_release_id,
+                    manifest_digest: args.release_digest,
                     package_id: args.package_id,
                     wiring_id: args.wiring_id,
                     wiring_version: args.wiring_version,

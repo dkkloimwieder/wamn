@@ -22,10 +22,10 @@ struct QueueState {
     leased: bool,
 }
 
-/// The release a start reads its wiring from: the snapshot publish wrote.
-const READ_RELEASE_SNAPSHOT_SQL: &str = "\
-SELECT canonical_bytes FROM catalog.release_manifest_snapshots \
- WHERE tenant_id = $1 AND effective_release_id = $2";
+/// The release a start reads its wiring from, by its manifest digest.
+const READ_RELEASE_SQL: &str = "\
+SELECT canonical_bytes FROM catalog.releases \
+ WHERE tenant_id = $1 AND manifest_digest = $2";
 
 /// The workflow contract over one tenant and environment.
 ///
@@ -77,16 +77,16 @@ impl PostgresWorkflows {
     async fn release(
         &self,
         transaction: &Transaction<'_>,
-        release_id: i32,
+        manifest_digest: &str,
     ) -> Result<ServingManifest, WorkflowError> {
         let bytes: Vec<u8> = transaction
-            .query_opt(READ_RELEASE_SNAPSHOT_SQL, &[&self.tenant(), &release_id])
+            .query_opt(READ_RELEASE_SQL, &[&self.tenant(), &manifest_digest])
             .await
-            .map_err(|error| WorkflowError::storage("read the release snapshot", error))?
+            .map_err(|error| WorkflowError::storage("read the release", error))?
             .ok_or_else(|| {
                 WorkflowError::new(
                     WorkflowErrorType::Refused,
-                    format!("release {release_id} has no published snapshot"),
+                    format!("release {manifest_digest} is not installed"),
                 )
             })?
             .try_get(0)
@@ -103,7 +103,7 @@ impl PostgresWorkflows {
         {
             return Err(WorkflowError::new(
                 WorkflowErrorType::Refused,
-                format!("release {release_id} belongs to another tenant or environment"),
+                format!("release {manifest_digest} belongs to another tenant or environment"),
             ));
         }
         Ok(manifest)
@@ -126,11 +126,10 @@ impl PostgresWorkflows {
     async fn admit(
         &self,
         transaction: &Transaction<'_>,
-        release_id: i32,
         request: &StartRequest,
     ) -> Result<(String, String), WorkflowError> {
         let refused = |message: String| WorkflowError::new(WorkflowErrorType::Refused, message);
-        let release = self.release(transaction, release_id).await?;
+        let release = self.release(transaction, &request.manifest_digest).await?;
         let wiring = release
             .workflow
             .wirings
@@ -249,12 +248,6 @@ impl Workflows for PostgresWorkflows {
         let Trigger::Automation {
             service_principal_id,
         } = &request.trigger;
-        let release_id = i32::try_from(request.effective_release_id).map_err(|_| {
-            WorkflowError::new(
-                WorkflowErrorType::Refused,
-                "the effective release id does not fit",
-            )
-        })?;
         let version = i32::try_from(request.wiring_version).map_err(|_| {
             WorkflowError::new(
                 WorkflowErrorType::Refused,
@@ -269,7 +262,7 @@ impl Workflows for PostgresWorkflows {
             .await
             .map_err(|error| WorkflowError::storage("begin the start", error))?;
         self.scope(&transaction).await?;
-        let (wiring_hash, durability) = self.admit(&transaction, release_id, request).await?;
+        let (wiring_hash, durability) = self.admit(&transaction, request).await?;
         let caller = queued_service_caller(&transaction, self.tenant(), service_principal_id)
             .await
             .map_err(|error| {
@@ -286,7 +279,7 @@ impl Workflows for PostgresWorkflows {
                 &[
                     &self.tenant(),
                     &request.package_id,
-                    &release_id,
+                    &request.manifest_digest,
                     &self.environment(),
                     &request.wiring_id,
                     &version,
@@ -315,7 +308,7 @@ impl Workflows for PostgresWorkflows {
                     &[
                         &self.tenant(),
                         &request.package_id,
-                        &release_id,
+                        &request.manifest_digest,
                         &self.environment(),
                         &request.wiring_id,
                         &version,

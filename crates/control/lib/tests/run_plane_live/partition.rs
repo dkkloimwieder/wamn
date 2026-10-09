@@ -181,12 +181,12 @@ pub(super) async fn partition_plane_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
     install_legacy_partition_plane(su).await;
-    seed_run_admission_facts(su, "partition", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "partition", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+           (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment) \
-         VALUES ('partition','retained-run','f',1,'cat',1,'dev'); \
+         VALUES ('partition','retained-run','f',1,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_queue \
            (tenant_id,run_id,partition_key,partition_policy,stream_seq) \
          VALUES ('partition','retained-run','serial','blocking',7);"
@@ -293,12 +293,12 @@ pub(super) async fn partition_plane_active_lease_refusal_leg(su: &Client) {
             .expect("install later authority-repair sentinel");
         match lease_source {
             "run_queue" => {
-                seed_run_admission_facts(su, "leased", "cat", 1, "dev", "standard").await;
+                seed_run_admission_facts(su, "leased", "cat", "dev", "standard").await;
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
-                       (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+                       (tenant_id,run_id,flow_id,flow_version,package_id, \
                         environment) \
-                     VALUES ('leased','active-run','f',1,'cat',1,'dev'); \
+                     VALUES ('leased','active-run','f',1,'cat','dev'); \
                      INSERT INTO {SCHEMA}.run_queue \
                        (tenant_id,run_id,lease_owner,lease_expires_at) \
                      VALUES ('leased','active-run','worker','infinity');"
@@ -366,12 +366,12 @@ pub(super) async fn partition_plane_unobservable_lease_refusal_leg(su: &Client) 
         install_legacy_partition_plane(su).await;
         let expected_message = match lease_source {
             "run_queue" => {
-                seed_run_admission_facts(su, "ambiguous", "cat", 1, "dev", "standard").await;
+                seed_run_admission_facts(su, "ambiguous", "cat", "dev", "standard").await;
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.runs \
-                       (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+                       (tenant_id,run_id,flow_id,flow_version,package_id, \
                         environment) \
-                     VALUES ('ambiguous','queue-run','f',1,'cat',1,'dev'); \
+                     VALUES ('ambiguous','queue-run','f',1,'cat','dev'); \
                      INSERT INTO {SCHEMA}.run_queue (tenant_id,run_id,partition_key) \
                      VALUES ('ambiguous','queue-run','serial'); \
                      ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner;"
@@ -430,12 +430,12 @@ pub(super) async fn partition_plane_dead_letter_refusal_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
     install_legacy_partition_plane(su).await;
-    seed_run_admission_facts(su, "dead-letter", "cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "dead-letter", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
+           (tenant_id,run_id,flow_id,flow_version,package_id, \
             environment) \
-         VALUES ('dead-letter','failed-run','f',1,'cat',1,'dev'); \
+         VALUES ('dead-letter','failed-run','f',1,'cat','dev'); \
          INSERT INTO {SCHEMA}.run_dead_letters \
            (tenant_id,run_id,partition_key,flow_id,reason) \
          VALUES ('dead-letter','failed-run','serial','f','legacy-history'); \

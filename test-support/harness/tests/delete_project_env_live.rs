@@ -250,13 +250,14 @@ async fn seed_control_rows(system_url: &str) {
                      '{{\"op\": {{}}}}', '{SHA_B}', '{SHA_A}', '[]', '{SHA_A}', '[]');
              INSERT INTO catalog.connection_requirements VALUES
                ('{TENANT}', 'fixture', '{SHA_B}', 'main', '{{}}', '{SHA_A}');
-             INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment)
-               VALUES ('{TENANT}', 1, '{ENV}');
-             INSERT INTO catalog.effective_release_packages VALUES ('{TENANT}', 1, 'td0pkg', '1.0.0');
-             INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id)
-               VALUES ('{TENANT}', '{ENV}', 1);
+             INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment)
+               VALUES ('{TENANT}', '{SHA_A}', '{ENV}');
+             INSERT INTO catalog.effective_release_packages
+               VALUES ('{TENANT}', '{SHA_A}', 'td0pkg', '1.0.0');
+             INSERT INTO catalog.effective_release_heads (tenant_id, environment, manifest_digest)
+               VALUES ('{TENANT}', '{ENV}', '{SHA_A}');
              INSERT INTO catalog.deployment_attestations VALUES
-               ('{TENANT}', 'fixture', 1, '{ORG}', '{PROJECT}', '{ENV}', '{SHA_A}', NULL, now());
+               ('{TENANT}', 'fixture', '{SHA_A}', '{ORG}', '{PROJECT}', '{ENV}', '{SHA_A}', NULL, now());
              INSERT INTO catalog.authoring_command_audit
                (tenant_id, command_id, command_type, principal_id, principal_type,
                 principal_subject, effective_role, org, project, environment, target_ref,

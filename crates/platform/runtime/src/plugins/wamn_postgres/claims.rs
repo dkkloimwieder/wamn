@@ -164,10 +164,10 @@ pub struct WamnPostgres {
     /// of a write. Absent (the default) binds the empty string. Modified
     /// application SQL can forge it, as it can forge `app.user_id`.
     operations: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `(effective release id, manifest digest)` this pod carries.
-    /// Absent (the default) ⇒ the production claim records nothing, so every
+    /// component id → the release digest this pod carries.
+    /// Absent (the default) ⇒ the production claim verifies nothing, so every
     /// path that never mounted a release identity is byte-unchanged. When set,
-    /// the claim writes the pair onto the run it leases, write-once.
+    /// the claim leases only a run admitted under that digest.
     release_identities: std::sync::RwLock<HashMap<String, ReleaseIdentity>>,
     /// component id → the causation context {run, root, depth} of the run the
     /// caller is currently driving (l5i9.12.2). Declared through
@@ -208,20 +208,18 @@ pub struct WamnPostgres {
     pub(super) bind_counters: super::BindCounters,
 }
 
-/// The release a pod carries — the `(effective release id, manifest digest)` pair
-/// derived from the verified content of its mounted serving manifest
+/// The release a pod carries — the manifest digest derived from the verified
+/// content of its mounted serving manifest
 /// ([`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease)).
 ///
-/// Admission pins the effective release. The production claim verifies that
-/// pin and records the claiming pod's manifest digest. Both values are
-/// host-injected identity, never guest-supplied.
+/// Admission pins the release digest. The production claim verifies that pin
+/// against the claiming pod's digest. The value is host-injected identity,
+/// never guest-supplied.
 ///
-/// The fields are private, so production code builds the value only from a
+/// The field is private, so production code builds the value only from a
 /// loaded release (wamn-p77b).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseIdentity {
-    /// The release identity — `runs.effective_release_id`.
-    effective_release_id: i32,
     /// The serving manifest's digest — `runs.manifest_digest`. The
     /// `sha256:<64 lowercase hex>` shape the run plane's
     /// `runs_release_record_check` admits is carried by the type, so there is no
@@ -233,23 +231,14 @@ impl ReleaseIdentity {
     /// The identity of the release a pod loaded.
     pub fn from_loaded(release: &LoadedRelease) -> Self {
         Self {
-            effective_release_id: release.release().effective_release_id,
             manifest_digest: release.release().manifest_digest.clone(),
         }
     }
 
     /// An identity with no loaded release, for tests whose rows name it.
     #[cfg(feature = "test-util")]
-    pub fn for_test(effective_release_id: i32, manifest_digest: ManifestDigest) -> Self {
-        Self {
-            effective_release_id,
-            manifest_digest,
-        }
-    }
-
-    /// `runs.effective_release_id`.
-    pub fn effective_release_id(&self) -> i32 {
-        self.effective_release_id
+    pub fn for_test(manifest_digest: ManifestDigest) -> Self {
+        Self { manifest_digest }
     }
 
     /// `runs.manifest_digest`.
@@ -290,7 +279,7 @@ pub struct SessionClaims {
     /// `app.operation`: the executing operation token, or `wamn:<component>`
     /// for a platform component outside a registered operation.
     pub operation: Option<String>,
-    /// The `(effective release id, manifest digest)` the claiming pod carries.
+    /// The release digest the claiming pod carries.
     pub release: Option<ReleaseIdentity>,
 }
 
@@ -373,7 +362,8 @@ pub struct ConnectionEffectLookup<'a> {
     pub origin_operation: &'a str,
     pub package_id: &'a str,
     pub operation: &'a str,
-    pub effective_release_id: i32,
+    /// The release the effect runs under, as its manifest digest.
+    pub manifest_digest: &'a str,
     pub environment: &'a str,
     pub component_digest: &'a str,
     pub store_alias: &'a str,
@@ -519,12 +509,20 @@ pub struct ConnectionEffectSnapshot {
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
-WITH member AS MATERIALIZED ( \
+WITH release_member AS MATERIALIZED ( \
+    SELECT release.tenant_id, \
+           package.value ->> 'package-id' AS package_id, \
+           package.value ->> 'package-version' AS package_version \
+      FROM catalog.releases AS release \
+     CROSS JOIN LATERAL jsonb_array_elements( \
+           convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}' \
+       ) AS package(value) \
+     WHERE release.tenant_id = $1 \
+       AND release.manifest_digest = $3 \
+), member AS MATERIALIZED ( \
     SELECT member.tenant_id, member.package_id, member.package_version \
-      FROM catalog.effective_release_packages AS member \
-     WHERE member.tenant_id = $1 \
-       AND member.package_id = $12 \
-       AND member.effective_release_id = $3 \
+      FROM release_member AS member \
+     WHERE member.package_id = $12 \
 ), selected_wiring AS MATERIALIZED ( \
     SELECT wiring.wiring_hash, wiring.graph_json, \
            member.tenant_id, member.package_id, member.package_version \
@@ -565,9 +563,8 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
        generation.credential_set_handle \
   FROM member \
   LEFT JOIN selected_wiring AS wiring ON true \
-  LEFT JOIN catalog.effective_release_packages AS origin_member \
+  LEFT JOIN release_member AS origin_member \
     ON origin_member.tenant_id = member.tenant_id \
-   AND origin_member.effective_release_id = $3 \
    AND origin_member.package_id = $13 \
   LEFT JOIN catalog.component_library AS origin_component \
     ON origin_component.tenant_id = origin_member.tenant_id \
@@ -576,9 +573,8 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
    AND origin_component.component_digest = $14 \
    AND origin_component.component = $15 \
    AND origin_component.interface_version = $16 \
-  LEFT JOIN catalog.effective_release_packages AS executing_member \
+  LEFT JOIN release_member AS executing_member \
     ON executing_member.tenant_id = member.tenant_id \
-   AND executing_member.effective_release_id = $3 \
    AND executing_member.package_id = $2 \
   LEFT JOIN catalog.component_library AS component \
     ON component.tenant_id = executing_member.tenant_id \
@@ -594,7 +590,7 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
    AND requirement.store_alias = $9 \
   LEFT JOIN catalog.connection_bindings AS binding \
     ON binding.tenant_id = $1 \
-   AND binding.effective_release_id = $3 \
+   AND binding.manifest_digest = $3 \
    AND binding.component_digest = $8 \
    AND binding.store_alias = $9 \
    AND binding.environment = $4 \
@@ -1172,35 +1168,26 @@ impl WamnPostgres {
     }
 
     /// Register the release this pod carries for a component id. The production
-    /// claim verifies its effective release against every run it leases and
-    /// records the manifest digest write-once. The bench harness and live tests
-    /// call this directly; the host path feeds it from the loaded
-    /// [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease),
-    /// whose pair is derived from verified manifest content. Absent leaves the
-    /// claim recording nothing.
+    /// claim verifies its digest against the admission pin of every run it
+    /// leases. The bench harness and live tests call this directly; the host
+    /// path feeds it from the loaded
+    /// [`LoadedRelease`](wamn_engine::release_manifest::LoadedRelease), whose
+    /// digest is derived from verified manifest content. Absent leaves the claim
+    /// verifying nothing.
     ///
-    /// The digest arrives as [`ManifestDigest`], so its shape is already validated;
-    /// only the integer release identity still needs a check.
+    /// The digest arrives as [`ManifestDigest`], so its shape is already validated.
     ///
     /// # Why effect authority needs no equality check against this record
     ///
-    /// The pair comes from the same loaded object every reader resolves against,
-    /// so the digest recorded on a run IS the digest of the manifest the recording
-    /// pod loaded — structurally, not because anything compares them (owner ruling
+    /// The digest comes from the same loaded object every reader resolves
+    /// against, so a run leased under it runs the manifest the pod loaded —
+    /// structurally, not because anything compares them (owner ruling
     /// `wamn-0h0g.15.102`, after `wamn-0h0g.15.103` struck the asserted carrier).
-    /// The admission-pinned effective release and write-once digest are what
-    /// make the host-side closure check honest without a second identity
-    /// carrier.
     pub fn set_release_identity(
         &self,
         component_id: &str,
         identity: ReleaseIdentity,
     ) -> anyhow::Result<()> {
-        let effective_release_id = identity.effective_release_id;
-        anyhow::ensure!(
-            effective_release_id > 0,
-            "invalid effective release id {effective_release_id}: a positive value is required"
-        );
         self.release_identities
             .write()
             .expect("release identities lock poisoned")
@@ -1730,7 +1717,7 @@ impl WamnPostgres {
             let params: [&(dyn ToSql + Sync); 18] = [
                 &tenant,
                 &lookup.package_id,
-                &lookup.effective_release_id,
+                &lookup.manifest_digest,
                 &lookup.environment,
                 &wiring_id,
                 &wiring_version,

@@ -398,8 +398,6 @@ async fn drain_one(
                         tenant_id: scope.tenant_id.clone(),
                         package_id: package_id.clone(),
                         environment: scope.environment.clone(),
-                        effective_release_id: u32::try_from(candidate.effective_release_id)
-                            .context("candidate effective release id is not a positive u32")?,
                         wiring_id,
                         wiring_version,
                         wiring_hash: candidate.wiring_hash,

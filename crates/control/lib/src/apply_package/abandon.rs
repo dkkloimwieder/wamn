@@ -208,7 +208,6 @@ mod tests {
             format_version: 3,
             tenant: TENANT.into(),
             environment: "offline".into(),
-            predecessor_release_id: 1,
             predecessor_manifest_digest: format!("sha256:{}", "a".repeat(64)),
             predecessor_package: predecessor.clone(),
             candidate_package: candidate.clone(),

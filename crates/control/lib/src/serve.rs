@@ -359,6 +359,28 @@ impl SagaRun<'_> {
         .await
     }
 
+    /// The manifest digest of the release that `publish-release` recorded. The
+    /// environment is new, so the saga's release is the one release its
+    /// database holds.
+    async fn published_release(&self, project_url: &str) -> anyhow::Result<String> {
+        let rows = connect(project_url)
+            .await?
+            .query(
+                "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
+                &[&self.request.tenant],
+            )
+            .await
+            .context("read the published release")?;
+        match rows.as_slice() {
+            [row] => Ok(row.get(0)),
+            [] => bail!("the environment has no published release"),
+            _ => bail!(
+                "the environment holds {} releases; the saga published one",
+                rows.len()
+            ),
+        }
+    }
+
     fn registry(&self) -> PackageRegistry {
         PackageRegistry {
             artifact_base: self.config.package_artifact_base.clone(),
@@ -869,10 +891,11 @@ impl SagaRun<'_> {
         read_secret_key(HOSTS_NAMESPACE, &name, "url").await
     }
 
-    /// Step 10: each connection of the request bound to release 1, at the
-    /// component that the wiring node with its store alias names.
+    /// Step 10: each connection of the request bound to the published release,
+    /// at the component that the wiring node with its store alias names.
     async fn bind_connections(&mut self) -> anyhow::Result<()> {
         let project_url = self.project_url().await?;
+        let release = self.published_release(&project_url).await?;
         let (tenant, env) = (self.request.tenant.clone(), self.request.env.clone());
         let connections = self.request.connections.clone();
         let packages = self.packages().await?;
@@ -907,7 +930,7 @@ impl SagaRun<'_> {
                 requirement_type: connection.requirement_type,
                 definition,
                 credential_handle: None,
-                effective_release_id: RELEASE_ID,
+                manifest_digest: release.clone(),
                 component_digest: digest.clone(),
                 store_alias: connection.alias.clone(),
             })
@@ -917,58 +940,63 @@ impl SagaRun<'_> {
         Ok(())
     }
 
-    fn release_request(
+    async fn release_request(
         &self,
         project_url: String,
-    ) -> crate::push_release_manifest::PushReleaseManifestRequest {
-        crate::push_release_manifest::PushReleaseManifestRequest {
+    ) -> anyhow::Result<crate::push_release_manifest::PushReleaseManifestRequest> {
+        let manifest_digest = self.published_release(&project_url).await?;
+        Ok(crate::push_release_manifest::PushReleaseManifestRequest {
             database_url: project_url,
             org: self.org.clone(),
             project: self.request.project.clone(),
             tenant: self.request.tenant.clone(),
-            effective_release_id: RELEASE_ID,
+            manifest_digest,
             artifact_base: self.config.release_artifact_base.clone(),
             registry_auth_file: self.config.registry_auth_file.clone(),
             insecure_registry: self.config.insecure_registry,
             oci_ca_paths: self.config.oci_ca_paths.clone(),
             control_database_url: self.config.system_database_url.clone(),
-        }
+        })
     }
 
     /// Step 11: the release manifest pushed and attested.
     async fn push_release_manifest(&mut self) -> anyhow::Result<()> {
-        let request = self.release_request(self.project_url().await?);
+        let request = self.release_request(self.project_url().await?).await?;
         crate::push_release_manifest::push_release_manifest(&request, None).await?;
         Ok(())
     }
 
-    /// Step 12: release 1 selected with no qualification, because the new
-    /// environment has no head. A head that the environment already has
-    /// satisfies the step when its package set and component digests equal
-    /// those of release 1, and the later steps use that head. A head with
-    /// another set fails the step (owner rulings of 2026-10-03).
+    /// Step 12: the published release selected with no qualification,
+    /// because the new environment has no head. A head that the environment
+    /// already has satisfies the step when its package set and component
+    /// digests equal those of the published release, and the later steps use
+    /// that head. A head with another set fails the step (owner rulings of
+    /// 2026-10-03).
     async fn select_release(&mut self) -> anyhow::Result<()> {
         use crate::delivery::selection::package_set;
         use crate::print_release_env::lookup_release_snapshot;
         let project_url = self.project_url().await?;
         let head = head_release(&project_url, &self.request.tenant, &self.request.env).await?;
-        let request = self.release_request(project_url);
+        let request = self.release_request(project_url).await?;
         if let Some(head) = head {
-            let snapshot = |release| {
-                lookup_release_snapshot(
+            let mut sets = Vec::new();
+            for release in [&request.manifest_digest, &head] {
+                let snapshot = lookup_release_snapshot(
                     &request.database_url,
                     &request.tenant,
                     release,
                     &request.artifact_base,
                 )
-            };
-            let published = package_set(&snapshot(RELEASE_ID).await?.manifest)?;
-            let current = package_set(&snapshot(head).await?.manifest)?;
+                .await?;
+                sets.push(package_set(&snapshot.manifest)?);
+            }
+            let (published, current) = (&sets[0], &sets[1]);
             ensure!(
                 published == current,
-                "the head release {head} of {} holds {current:?}, but release {RELEASE_ID} that \
+                "the head release {head} of {} holds {current:?}, but release {} that \
                  the saga published holds {published:?}",
-                self.request.env
+                self.request.env,
+                request.manifest_digest
             );
             return Ok(());
         }
@@ -977,7 +1005,8 @@ impl SagaRun<'_> {
     }
 
     /// `copy-roles` of a copy: the authored roles of the source and their
-    /// directly selected permissions, with each closure from release 1.
+    /// directly selected permissions, with each closure from the published
+    /// release.
     async fn copy_roles(&mut self) -> anyhow::Result<()> {
         let source_env = self
             .source_env
@@ -990,11 +1019,11 @@ impl SagaRun<'_> {
             &source_env,
         )
         .await?;
-        let request = self.release_request(self.project_url().await?);
+        let request = self.release_request(self.project_url().await?).await?;
         let snapshot = crate::print_release_env::lookup_release_snapshot(
             &request.database_url,
             &request.tenant,
-            RELEASE_ID,
+            &request.manifest_digest,
             &request.artifact_base,
         )
         .await?;
@@ -1019,11 +1048,8 @@ impl SagaRun<'_> {
         let release: String = connect(&project_url)
             .await?
             .query_one(
-                "SELECT s.manifest_digest FROM catalog.effective_release_heads h \
-                   JOIN catalog.release_manifest_snapshots s \
-                     ON s.tenant_id = h.tenant_id \
-                    AND s.effective_release_id = h.effective_release_id \
-                  WHERE h.tenant_id = $1 AND h.environment = $2",
+                "SELECT manifest_digest FROM catalog.effective_release_heads \
+                  WHERE tenant_id = $1 AND environment = $2",
                 &[&self.request.tenant, &self.request.env],
             )
             .await
@@ -1478,23 +1504,22 @@ async fn wait_applied(kind: &str, name: &str) -> anyhow::Result<()> {
     .map(|_| ())
 }
 
-/// The head release of `environment`, if it has one.
+/// The manifest digest of the head release of `environment`, if it has one.
 async fn head_release(
     project_url: &str,
     tenant: &str,
     environment: &str,
-) -> anyhow::Result<Option<u32>> {
-    let row = connect(project_url)
+) -> anyhow::Result<Option<String>> {
+    Ok(connect(project_url)
         .await?
         .query_opt(
-            "SELECT effective_release_id FROM catalog.effective_release_heads \
+            "SELECT manifest_digest FROM catalog.effective_release_heads \
               WHERE tenant_id = $1 AND environment = $2",
             &[&tenant, &environment],
         )
         .await
-        .context("read the head release")?;
-    row.map(|row| u32::try_from(row.get::<_, i32>(0)).context("read the head release id"))
-        .transpose()
+        .context("read the head release")?
+        .map(|row| row.get(0)))
 }
 
 /// One key of a Secret, decoded.

@@ -786,7 +786,6 @@ impl Fixture {
                         tenant: "tenant-a".into(),
                         project: Some("test".into()),
                         release: Some(ReleaseIdentity::for_test(
-                            1,
                             self.policy.resources.release.manifest().digest(),
                         )),
                         ..SessionClaims::default()

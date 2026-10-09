@@ -166,7 +166,8 @@ pub enum ConnectionExecutionClosure {
     Released,
     /// Private admission froze an exact candidate wiring and binding world.
     Candidate {
-        effective_release_id: u32,
+        /// The release the candidate resolves under, as its manifest digest.
+        manifest_digest: String,
         environment: String,
         wiring_hash: String,
         component: String,
@@ -266,7 +267,7 @@ impl ConnectionHttp {
             "connection-http-invocation-invalid"
         );
         if let ConnectionExecutionClosure::Candidate {
-            effective_release_id,
+            manifest_digest,
             environment,
             wiring_hash,
             component,
@@ -276,7 +277,7 @@ impl ConnectionHttp {
         {
             let graph = wiring_hash.strip_prefix("sha256:").unwrap_or_default();
             anyhow::ensure!(
-                *effective_release_id > 0
+                !manifest_digest.is_empty()
                     && !environment.is_empty()
                     && !component.is_empty()
                     && !interface_version.is_empty()
@@ -329,54 +330,52 @@ impl ConnectionHttp {
             );
             ConnectionError::AuthorityDenied
         })?;
-        let manifest = match &invocation.closure {
+        let release = match &invocation.closure {
             ConnectionExecutionClosure::Released => Some(
                 self.release
                     .as_deref()
-                    .ok_or(ConnectionError::AttestationInvalid)?
-                    .manifest(),
+                    .ok_or(ConnectionError::AttestationInvalid)?,
             ),
             ConnectionExecutionClosure::Candidate { .. } => None,
         };
-        let (effective_release_id, environment, candidate_binding) =
-            match (&invocation.closure, manifest) {
-                (ConnectionExecutionClosure::Released, Some(manifest)) => {
-                    if manifest.release.tenant_id != self.tenant.as_ref()
-                        || !manifest
-                            .release
-                            .packages
-                            .iter()
-                            .any(|package| package.package_id() == invocation.package_id.as_str())
-                    {
-                        return Err(ConnectionError::AttestationInvalid);
-                    }
-                    (
-                        i32::try_from(manifest.release.effective_release_id.get())
-                            .map_err(|_| ConnectionError::AttestationInvalid)?,
-                        manifest.release.environment.as_str(),
-                        None,
-                    )
+        let (manifest_digest, environment, candidate_binding) = match (&invocation.closure, release)
+        {
+            (ConnectionExecutionClosure::Released, Some(release)) => {
+                let manifest = release.manifest();
+                if manifest.release.tenant_id != self.tenant.as_ref()
+                    || !manifest
+                        .release
+                        .packages
+                        .iter()
+                        .any(|package| package.package_id() == invocation.package_id.as_str())
+                {
+                    return Err(ConnectionError::AttestationInvalid);
                 }
                 (
-                    ConnectionExecutionClosure::Candidate {
-                        effective_release_id,
-                        environment,
-                        binding_world,
-                        ..
-                    },
+                    release.release().manifest_digest.as_str(),
+                    manifest.release.environment.as_str(),
                     None,
-                ) => (
-                    i32::try_from(*effective_release_id)
-                        .map_err(|_| ConnectionError::AttestationInvalid)?,
-                    environment.as_str(),
-                    Some(
-                        binding_world
-                            .binding(&invocation.component_digest, &request.requirement)
-                            .ok_or(ConnectionError::AttestationInvalid)?,
-                    ),
+                )
+            }
+            (
+                ConnectionExecutionClosure::Candidate {
+                    manifest_digest,
+                    environment,
+                    binding_world,
+                    ..
+                },
+                None,
+            ) => (
+                manifest_digest.as_str(),
+                environment.as_str(),
+                Some(
+                    binding_world
+                        .binding(&invocation.component_digest, &request.requirement)
+                        .ok_or(ConnectionError::AttestationInvalid)?,
                 ),
-                _ => return Err(ConnectionError::AttestationInvalid),
-            };
+            ),
+            _ => return Err(ConnectionError::AttestationInvalid),
+        };
         let entry = entry_lookup(&invocation)?;
         let snapshot = self
             .postgres
@@ -393,7 +392,7 @@ impl ConnectionHttp {
                     origin_interface_version: &invocation.origin.interface_version,
                     origin_operation: &invocation.origin.operation,
                     operation: &invocation.operation,
-                    effective_release_id,
+                    manifest_digest,
                     environment,
                     component_digest: &invocation.component_digest,
                     store_alias: &request.requirement,
@@ -409,9 +408,9 @@ impl ConnectionHttp {
                 ConnectionError::Transport(AUTHORITY_SNAPSHOT_UNAVAILABLE.to_string())
             })?
             .ok_or(ConnectionError::AttestationInvalid)?;
-        match (&invocation.closure, manifest) {
-            (ConnectionExecutionClosure::Released, Some(manifest)) => {
-                authorize_release_closure(manifest, &invocation, &snapshot)?;
+        match (&invocation.closure, release) {
+            (ConnectionExecutionClosure::Released, Some(release)) => {
+                authorize_release_closure(release.manifest(), &invocation, &snapshot)?;
             }
             (ConnectionExecutionClosure::Candidate { .. }, None) => {
                 authorize_candidate_closure(
@@ -1369,7 +1368,7 @@ mod tests {
             .expect("a released route binds");
 
         route.closure = ConnectionExecutionClosure::Candidate {
-            effective_release_id: 4,
+            manifest_digest: digest('c'),
             environment: "prod".to_string(),
             wiring_hash: digest('b'),
             component: "notifier".to_string(),

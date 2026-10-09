@@ -35,7 +35,9 @@ const TENANT: &str = "run-retention-t";
 /// refusal could not be told from a match of nothing.
 const OTHER_TENANT: &str = "run-retention-other";
 const PACKAGE_ID: &str = "run_retention_fixture";
-const EFFECTIVE_RELEASE_ID: i32 = 1;
+/// The release every seeded run pins: the digest of the bytes `{}`.
+const RELEASE_DIGEST: &str =
+    "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 const RETENTION_DAYS: &str = "30";
 const GENERATION_PASSWORD: &str = "run-retention-test-generation";
 const APP_PASSWORD: &str = "run-retention-test-app";
@@ -62,12 +64,12 @@ async fn provision(admin: &Client) {
         .expect("apply run-queue.sql");
     admin
         .batch_execute(&format!(
-            "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
-             VALUES ('{TENANT}', {EFFECTIVE_RELEASE_ID}, 'test'), \
-                    ('{OTHER_TENANT}', {EFFECTIVE_RELEASE_ID}, 'test');"
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             VALUES ('{TENANT}', '{RELEASE_DIGEST}', '{{}}'), \
+                    ('{OTHER_TENANT}', '{RELEASE_DIGEST}', '{{}}');"
         ))
         .await
-        .expect("seed the effective releases");
+        .expect("seed the releases");
 }
 
 async fn drop_generation_role(admin: &Client, role: &str) {
@@ -126,9 +128,9 @@ async fn seed_run(admin: &Client, tenant: &str, run_id: &str, status: &str, age_
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs ( \
-                   tenant_id, run_id, flow_id, flow_version, package_id, effective_release_id, \
+                   tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, \
                    environment, status, input_json, created_at \
-                 ) VALUES ($1, $2, 'f', 1, '{PACKAGE_ID}', {EFFECTIVE_RELEASE_ID}, 'test', $3, \
+                 ) VALUES ($1, $2, 'f', 1, '{PACKAGE_ID}', '{RELEASE_DIGEST}', 'test', $3, \
                            jsonb_build_object('payload', $1::text), \
                            now() - ($4::bigint * interval '1 day'))"
             ),

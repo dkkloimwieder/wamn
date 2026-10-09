@@ -243,7 +243,8 @@ fn global_fifo_uses_available_stream_run_tie_break() {
     assert!(sql.contains("selected_run.package_id = ANY($1::text[])"));
     assert!(sql.contains("selected_run.environment = $2"));
     // R20 (1): FIFO is per release while two releases coexist.
-    assert!(sql.contains("AND ($3::int IS NULL OR selected_run.effective_release_id = $3)"));
+    assert!(sql.contains("AND ($3::text IS NULL OR selected_run.manifest_digest IS NULL"));
+    assert!(sql.contains("OR selected_run.manifest_digest = $3)"));
     assert!(sql.contains("AS router_caller_attached"));
     assert!(sql.contains("AS durable_caller_attached"));
     assert!(sql.contains("r.flow_id IS NULL AND r.flow_version IS NULL"));
@@ -281,16 +282,12 @@ fn production_lease_uses_a_fresh_post_fence_clock() {
 fn app_pre_effect_step_clears_only_abandoned_run_state() {
     let sql = clear_pre_effect_state_sql();
     assert!(sql.contains("SET state_json = NULL"));
-    // The abandoned attempt's manifest record is projection of that attempt and
-    // joins the replacement set, so the next claim records afresh
-    // (wamn-0h0g.15.55).
-    assert!(sql.contains("manifest_digest = NULL"));
     assert!(!sql.contains("release_version"));
     for preserved in [
         "input_json =",
         "invocation_context =",
         "package_id =",
-        "effective_release_id =",
+        "manifest_digest =",
         "updated_at =",
         "DELETE FROM effect_attempts",
     ] {

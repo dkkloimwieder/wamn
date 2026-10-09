@@ -599,7 +599,7 @@ pub async fn publish(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    publish_release::publish_release(PublishReleaseRequest {
+    let release_digest = publish_release::publish_release(PublishReleaseRequest {
         database_url: route.database_url.clone(),
         control_database_url: inputs.system_pg_url.clone(),
         org: identity().org.clone(),
@@ -618,12 +618,13 @@ pub async fn publish(
         route_host: Some(inputs.route_host.clone()),
         package_manifests: vec![wamn_schema_generator::package_manifest_path(&root)],
     })
-    .await?;
+    .await?
+    .to_string();
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let (project, task) = connect(&route.database_url).await?;
         let snapshot = project.query_one(
-            "SELECT canonical_bytes FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&identity().tenant.as_str(), &identity().effective_release_id.cast_signed()],
+            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
+            &[&identity().tenant.as_str(), &release_digest.as_str()],
         ).await;
         drop(project);
         task.abort();
@@ -648,7 +649,7 @@ pub async fn publish(
         requirement_type: RequirementType::Blobstore,
         definition,
         credential_handle: Some("labels-store".into()),
-        effective_release_id: identity().effective_release_id,
+        manifest_digest: release_digest.clone(),
         component_digest: blob_digest,
         store_alias,
     })
@@ -661,7 +662,7 @@ pub async fn publish(
                 org: identity().org.clone(),
                 project: identity().project.clone(),
                 tenant: identity().tenant.clone(),
-                effective_release_id: identity().effective_release_id,
+                manifest_digest: release_digest.clone(),
                 artifact_base: inputs.release_artifact_base.clone(),
                 registry_auth_file: inputs.registry_auth_file.clone(),
                 insecure_registry: true,
@@ -674,7 +675,7 @@ pub async fn publish(
     print_release_env::lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),
-        identity().effective_release_id,
+        &release_digest,
         &inputs.release_artifact_base,
     )
     .await

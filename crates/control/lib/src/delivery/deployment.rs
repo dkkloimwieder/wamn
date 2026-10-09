@@ -19,8 +19,8 @@ use super::{Qualification, publication};
 use crate::print_release_env::{ReleaseSnapshot, lookup_release_snapshot};
 use crate::push_release_manifest::PushReleaseManifestRequest;
 
-const SELECT_HEAD: &str = "SELECT effective_release_id FROM catalog.effective_release_heads WHERE tenant_id = $1 AND environment = $2 FOR UPDATE";
-const SELECT_RELEASE: &str = "INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, environment) DO UPDATE SET effective_release_id = EXCLUDED.effective_release_id, updated_at = now()";
+const SELECT_HEAD: &str = "SELECT manifest_digest FROM catalog.effective_release_heads WHERE tenant_id = $1 AND environment = $2 FOR UPDATE";
+const SELECT_RELEASE: &str = "INSERT INTO catalog.effective_release_heads (tenant_id, environment, manifest_digest) VALUES ($1, $2, $3) ON CONFLICT (tenant_id, environment) DO UPDATE SET manifest_digest = EXCLUDED.manifest_digest, updated_at = now()";
 const DEPLOYMENT_TIMEOUT: Duration = Duration::from_mins(15);
 
 /// Exact Kubernetes inputs of one deployment into an explicitly named environment.
@@ -91,7 +91,7 @@ async fn record_selection(
     let snapshot = lookup_release_snapshot(
         &release.database_url,
         &release.tenant,
-        release.effective_release_id,
+        &release.manifest_digest,
         &release.artifact_base,
     )
     .await?;
@@ -109,12 +109,12 @@ async fn record_selection(
         control
             .execute(
                 "INSERT INTO catalog.release_selections \
-                   (tenant_id, environment, effective_release_id, qualification_sha256, reason) \
+                   (tenant_id, environment, manifest_digest, qualification_sha256, reason) \
                  VALUES ($1, $2, $3, $4, $5)",
                 &[
                     &release.tenant,
                     &snapshot.manifest.release.environment,
-                    &i32::try_from(release.effective_release_id)?,
+                    &snapshot.carrier.manifest_digest.as_str(),
                     &qualification_sha256,
                     &reason,
                 ],
@@ -150,7 +150,7 @@ async fn select_head(
                 &[
                     &release.tenant,
                     &snapshot.manifest.release.environment,
-                    &i32::try_from(release.effective_release_id)?,
+                    &snapshot.carrier.manifest_digest.as_str(),
                 ],
             )
             .await?;
@@ -310,7 +310,7 @@ async fn deploy(
     let mut transaction = client.transaction().await?;
     claim(&transaction, &snapshot.manifest.release).await?;
     require_compatible_schema(&mut transaction, &snapshot.manifest).await?;
-    require_selected(&transaction, &snapshot.manifest.release).await?;
+    require_selected(&transaction, snapshot).await?;
     qualification.assert_artifacts()?;
     // Keep the selection row locked through workload readiness, authenticated
     // execution, and the catalog activation commit. No task reselects itself.
@@ -374,7 +374,7 @@ async fn deploy(
     )
     .await?;
     qualification.assert_artifacts()?;
-    require_selected(&transaction, &snapshot.manifest.release).await?;
+    require_selected(&transaction, snapshot).await?;
     activate(&transaction, &snapshot.manifest, &args.principal).await?;
     transaction.commit().await?;
     Ok(DeployedRelease {
@@ -510,14 +510,15 @@ async fn claim(transaction: &Transaction<'_>, release: &ServingRelease) -> anyho
 
 async fn require_selected(
     transaction: &Transaction<'_>,
-    release: &ServingRelease,
+    snapshot: &ReleaseSnapshot,
 ) -> anyhow::Result<()> {
+    let release = &snapshot.manifest.release;
     let row = transaction
         .query_opt(SELECT_HEAD, &[&release.tenant_id, &release.environment])
         .await?
         .context("the environment has no selected release")?;
     ensure!(
-        row.get::<_, i32>(0) == i32::try_from(release.effective_release_id.get())?,
+        row.get::<_, String>(0) == snapshot.carrier.manifest_digest.as_str(),
         "the deployment selection was superseded"
     );
     Ok(())

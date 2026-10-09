@@ -48,7 +48,28 @@ const HTTP_SIDECAR: &str =
     "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
-const RELEASE_ID: i32 = 1;
+/// The fixture release: its packages, nested ones included, and the
+/// component digests it serves.
+const RELEASE_BYTES: &str = concat!(
+    r#"{"components":[{"digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},"#,
+    r#"{"digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"}],"#,
+    r#""release":{"packages":[{"package-id":"bind_connection_fixture","package-version":"1.0.0"},"#,
+    r#"{"package-id":"nested_origin","package-version":"1.0.0"},"#,
+    r#"{"package-id":"nested_wiring","package-version":"1.0.0"}]}}"#
+);
+/// A release that serves none of the bound components.
+const OTHER_RELEASE_BYTES: &str = r#"{"components":[]}"#;
+
+/// `sha256:<hex>` of `bytes`, the digest `catalog.releases` keys them by.
+fn digest_of(bytes: &str) -> String {
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            bytes.as_bytes()
+        ))
+    )
+}
 
 async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -234,22 +255,16 @@ async fn provision_project(project: &Client, project_url: &str) {
     .await;
     project
         .execute(
-            "INSERT INTO catalog.effective_releases \
-               (tenant_id, effective_release_id, environment, verified_publisher_principal) \
-             VALUES ($1, $2, $3, 'bind-connection-live')",
-            &[&TENANT, &RELEASE_ID, &ENVIRONMENT],
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             VALUES ($1, $2, $3)",
+            &[
+                &TENANT,
+                &digest_of(RELEASE_BYTES),
+                &RELEASE_BYTES.as_bytes(),
+            ],
         )
         .await
         .expect("publish the fixture release");
-    project
-        .execute(
-            "INSERT INTO catalog.effective_release_packages \
-               (tenant_id, effective_release_id, package_id, package_version) \
-             VALUES ($1, $2, $3, $4)",
-            &[&TENANT, &RELEASE_ID, &PACKAGE, &PACKAGE_VERSION],
-        )
-        .await
-        .expect("scope the fixture release to the package");
 }
 
 async fn provision_control(control: &Client) {
@@ -313,7 +328,7 @@ fn args(
         requirement_type: RequirementType::Blobstore,
         definition,
         credential_handle: Some("labels-store".to_owned()),
-        effective_release_id: RELEASE_ID as u32,
+        manifest_digest: digest_of(RELEASE_BYTES),
         component_digest: digest.to_owned(),
         store_alias: store_alias.to_owned(),
     }
@@ -353,15 +368,6 @@ async fn assert_nested_effect_snapshot(
             )
             .await
             .expect("seed a separate package coordinate for the snapshot test");
-        project
-            .execute(
-                "INSERT INTO catalog.effective_release_packages \
-                   (tenant_id, effective_release_id, package_id, package_version) \
-                 VALUES ($1, $2, $3, $4)",
-                &[&TENANT, &RELEASE_ID, &package_id, &PACKAGE_VERSION],
-            )
-            .await
-            .expect("include the snapshot package in the same release");
     }
     admit_component(
         project,
@@ -549,6 +555,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     postgres
         .set_tenant(COMPONENT_ID, TENANT)
         .expect("register the component's tenant");
+    let release: &'static str = Box::leak(digest_of(RELEASE_BYTES).into_boxed_str());
     let lookup = ConnectionEffectLookup {
         entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
             package_id: PACKAGE,
@@ -565,7 +572,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         origin_operation: "wamn:node/handler@0.1.0",
         package_id: PACKAGE,
         operation: "wamn:node/handler@0.1.0",
-        effective_release_id: RELEASE_ID,
+        manifest_digest: release,
         environment: ENVIRONMENT,
         component_digest: BLOB_PUT,
         store_alias: "labels",
@@ -777,9 +784,20 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     assert_eq!(instance().await, current);
     assert_eq!(rows(&project).await, (1, 1, 1));
 
-    project.execute("INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment,verified_publisher_principal) VALUES ($1,2,$2,'bind-scope-test')", &[&TENANT,&ENVIRONMENT]).await.unwrap();
+    project
+        .execute(
+            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             VALUES ($1, $2, $3)",
+            &[
+                &TENANT,
+                &digest_of(OTHER_RELEASE_BYTES),
+                &OTHER_RELEASE_BYTES.as_bytes(),
+            ],
+        )
+        .await
+        .unwrap();
     let mut wrong_scope = args(&project_url, good.clone(), "labels", BLOB_PUT);
-    wrong_scope.effective_release_id = 2;
+    wrong_scope.manifest_digest = digest_of(OTHER_RELEASE_BYTES);
     bind_connection::bind(&wrong_scope)
         .await
         .expect_err("a release without this component refuses");

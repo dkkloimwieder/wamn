@@ -98,10 +98,8 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
     let manifest = predecessor_manifest(&predecessor);
     let bytes = manifest.canonical_bytes();
     let (_, digest) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
-    source.execute("INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment) VALUES ($1,1,$2)", &[&TENANT, &ENVIRONMENT]).await.unwrap();
-    source.execute("INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ($1,1,'platform_fixture',$2)", &[&TENANT, &PREDECESSOR_VERSION]).await.unwrap();
-    source.execute("INSERT INTO catalog.release_manifest_snapshots (tenant_id,effective_release_id,manifest_digest,canonical_bytes) VALUES ($1,1,$2,$3)", &[&TENANT, &digest.as_str(), &bytes]).await.unwrap();
-    source.execute("INSERT INTO catalog.effective_release_heads (tenant_id,environment,effective_release_id) VALUES ($1,$2,1)", &[&TENANT, &ENVIRONMENT]).await.unwrap();
+    source.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&TENANT, &digest.as_str(), &bytes]).await.unwrap();
+    source.execute("INSERT INTO catalog.effective_release_heads (tenant_id,environment,manifest_digest) VALUES ($1,$2,$3)", &[&TENANT, &ENVIRONMENT, &digest.as_str()]).await.unwrap();
 
     let root = std::env::temp_dir().join(format!("wamn-qualify-{name}-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
@@ -243,7 +241,7 @@ async fn state(client: &mut Client) -> (Vec<String>, UpgradePrivileges) {
         "catalog.package_migrations",
         "catalog.package_definition_owners",
         "catalog.effective_release_heads",
-        "catalog.release_manifest_snapshots",
+        "catalog.releases",
         "catalog.package_upgrade_qualifications",
     ] {
         let records = client

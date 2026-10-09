@@ -156,10 +156,7 @@ impl RouterDriver {
             );
             return Err(DeliveryError::SourceNotFound);
         };
-        let (Ok(effective_release_id), Ok(wiring_version)) = (
-            i32::try_from(manifest.release.effective_release_id.get()),
-            i32::try_from(call.wiring_version),
-        ) else {
+        let Ok(wiring_version) = i32::try_from(call.wiring_version) else {
             return Err(DeliveryError::InvalidRequest);
         };
         let admitted = self
@@ -169,7 +166,7 @@ impl RouterDriver {
                 crate::queue::QUEUE_CLAIM_SCOPE,
                 &EventRunAdmission {
                     package_id: call.package_id,
-                    effective_release_id,
+                    manifest_digest: bridge.release().release().manifest_digest.as_str(),
                     environment: &manifest.release.environment,
                     wiring_id: call.wiring_id,
                     wiring_version,

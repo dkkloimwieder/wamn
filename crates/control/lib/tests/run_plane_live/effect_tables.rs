@@ -152,12 +152,12 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
         su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
             .await
             .expect("apply current run-state for populated frame drift refusal");
-        seed_run_admission_facts(su, "t1", "frame_cat", 1, "dev", "standard").await;
+        seed_run_admission_facts(su, "t1", "frame_cat", "dev", "standard").await;
         su.batch_execute(&format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
                 status) \
-             VALUES ('t1',$${label}$$,'f',1,'frame_cat',1,'dev','running'); \
+             VALUES ('t1',$${label}$$,'f',1,'frame_cat','dev','running'); \
              INSERT INTO {SCHEMA}.effect_attempts \
                (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                 local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
@@ -362,12 +362,12 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
     su.batch_execute(&format!("DROP TABLE {SCHEMA}.effect_attempts CASCADE;"))
         .await
         .expect("remove effect peer");
-    seed_run_admission_facts(su, "t1", "frame_cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "frame_cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
             status) \
-         VALUES ('t1','framed-current','f',1,'frame_cat',1,'dev','running');"
+         VALUES ('t1','framed-current','f',1,'frame_cat','dev','running');"
     ))
     .await
     .expect("seed a current populated run");
@@ -442,12 +442,12 @@ pub(super) async fn effect_table_cutover_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply current run-state for effect-table cutover");
-    seed_run_admission_facts(su, "t1", "writer_cat", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "writer_cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
             status) \
-         VALUES ('t1','writer-projection','f',1,'writer_cat',1,'dev', \
+         VALUES ('t1','writer-projection','f',1,'writer_cat','dev', \
                  'running');"
     ))
     .await

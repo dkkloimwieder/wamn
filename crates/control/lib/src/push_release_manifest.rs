@@ -4,17 +4,15 @@
 //! exact retry pulls and verifies the existing artifact and performs no push.
 //! A tag holding any other layout or bytes refuses instead of being replaced.
 //!
-//! The bytes come only from the `catalog.release_manifest_snapshots` row the
-//! publish froze. The push therefore cannot attest caller-supplied bytes that
-//! were never verified against the release identity.
+//! The bytes come only from the `catalog.releases` row the publish recorded
+//! under their digest. The push therefore cannot attest caller-supplied bytes
+//! that were never verified against the release identity.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::publish_release::{
-    DeploymentCoordinate, read_release_snapshot, report_deployment_coordinate,
-};
+use crate::publish_release::{DeploymentCoordinate, read_release, report_deployment_coordinate};
 use anyhow::Context as _;
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::errors::{OciDistributionError, OciErrorCode};
@@ -145,7 +143,7 @@ pub struct PushedReleaseManifest {
 /// Exact inputs of one release-manifest distribution copy.
 #[derive(Clone, Debug)]
 pub struct PushReleaseManifestRequest {
-    /// Owner URL to the database holding the published release snapshot.
+    /// Owner URL to the database holding the published release.
     pub database_url: String,
 
     /// Registry organization the release is deployed into. Required in both
@@ -156,11 +154,11 @@ pub struct PushReleaseManifestRequest {
     /// Registry project the release is deployed into.
     pub project: String,
 
-    /// Tenant claim carried by the published release snapshot.
+    /// Tenant claim carried by the published release.
     pub tenant: String,
 
-    /// Integer identity of the published effective release snapshot.
-    pub effective_release_id: u32,
+    /// The published release, as its manifest digest.
+    pub manifest_digest: String,
 
     /// Explicit `<registry>/<repository>` base for release manifests.
     pub artifact_base: String,
@@ -186,8 +184,12 @@ pub struct PushReleaseManifestRequest {
 
 impl PushReleaseManifestRequest {
     /// Key the pushed bytes for attestation under this invocation's placement.
-    pub fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
-        DeploymentCoordinate::new(&self.org, &self.project, release)
+    pub fn deployment_coordinate(
+        &self,
+        release: &ServingRelease,
+        manifest_digest: &ManifestDigest,
+    ) -> DeploymentCoordinate {
+        DeploymentCoordinate::new(&self.org, &self.project, release, manifest_digest)
     }
 }
 
@@ -224,18 +226,16 @@ pub async fn push_and_attest(
     canonical_bytes: &[u8],
     source_commit: Option<&str>,
 ) -> anyhow::Result<PushedReleaseManifest> {
-    let (manifest, _) = ServingManifest::from_canonical_bytes(canonical_bytes)
+    let (manifest, digest) = ServingManifest::from_canonical_bytes(canonical_bytes)
         .context("read the release that the published bytes name")?;
-    let coordinate = request.deployment_coordinate(&manifest.release);
-    let effective_release_id = i32::try_from(coordinate.effective_release_id)
-        .context("effective-release-id exceeds PostgreSQL integer")?;
+    let coordinate = request.deployment_coordinate(&manifest.release, &digest);
     let known = control
         .query_opt(
             "SELECT 1 FROM catalog.effective_releases \
-              WHERE tenant_id = $1 AND effective_release_id = $2 AND environment = $3",
+              WHERE tenant_id = $1 AND manifest_digest = $2 AND environment = $3",
             &[
                 &coordinate.tenant_id,
-                &effective_release_id,
+                &coordinate.manifest_digest.as_str(),
                 &coordinate.triple.env.as_str(),
             ],
         )
@@ -243,7 +243,8 @@ pub async fn push_and_attest(
         .context("read the control release before the push")?;
     anyhow::ensure!(
         known.is_some(),
-        "the control database has no release {effective_release_id} of tenant {:?} in environment {}; nothing was pushed",
+        "the control database has no release {} of tenant {:?} in environment {}; nothing was pushed",
+        coordinate.manifest_digest,
         coordinate.tenant_id,
         coordinate.triple.env.as_str()
     );
@@ -255,29 +256,20 @@ pub async fn push_and_attest(
         &request.registry_auth_file,
     )
     .await?;
-    report_deployment_coordinate(&coordinate, &pushed.digest);
+    report_deployment_coordinate(&coordinate);
     // wamn-0h0g.8.27: the OCI push IS the deployment event this attestation
     // records, so the write lands here and on no other verb.
-    crate::publish_release::attest_deployment_on(
-        control,
-        &coordinate,
-        &pushed.digest,
-        source_commit,
-    )
-    .await?;
+    crate::publish_release::attest_deployment_on(control, &coordinate, source_commit).await?;
     Ok(pushed)
 }
 
 /// Read the bytes to push from the release that published them.
 async fn canonical_release_bytes(request: &PushReleaseManifestRequest) -> anyhow::Result<Vec<u8>> {
-    let effective_release_id = i32::try_from(request.effective_release_id)
-        .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
-
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to the release snapshot database")?;
     let connection_task = tokio::spawn(connection);
-    let read = select_snapshot(&mut client, &request.tenant, effective_release_id).await;
+    let read = select_snapshot(&mut client, &request.tenant, &request.manifest_digest).await;
     match read {
         Ok(canonical_bytes) => {
             drop(client);
@@ -301,25 +293,21 @@ async fn canonical_release_bytes(request: &PushReleaseManifestRequest) -> anyhow
 pub(crate) async fn select_snapshot(
     client: &mut PgClient,
     tenant: &str,
-    effective_release_id: i32,
+    manifest_digest: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let transaction = client
         .transaction()
         .await
         .context("begin the release snapshot read")?;
-    let snapshot = read_release_snapshot(&transaction, tenant, effective_release_id)
+    let snapshot = read_release(&transaction, tenant, manifest_digest)
         .await
-        .context("read the published release snapshot")?;
+        .context("read the published release")?;
     transaction
         .commit()
         .await
         .context("close the release snapshot read")?;
-    snapshot.with_context(|| {
-        format!(
-            "tenant {tenant:?} effective release {effective_release_id} \
-             has no published format-1 release snapshot"
-        )
-    })
+    snapshot
+        .with_context(|| format!("tenant {tenant:?} has no published release {manifest_digest}"))
 }
 
 /// Push canonical format-1 bytes or check that their exact artifact already exists.
@@ -597,15 +585,15 @@ mod tests {
 
     #[test]
     fn pushed_bytes_carry_their_own_half_of_the_attestation_key() {
-        let (manifest, _) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
+        let (manifest, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
             .expect("the fixture is canonical format-4 bytes");
-        let coordinate = DeploymentCoordinate::new("acme", "billing", &manifest.release);
+        let coordinate = DeploymentCoordinate::new("acme", "billing", &manifest.release, &digest);
 
         // The environment is whatever the pushed bytes were projected for, read
         // out of those exact bytes rather than defaulted or re-typed by hand.
         assert_eq!(coordinate.triple.env.as_str(), "prod");
         assert_eq!(coordinate.tenant_id, "tenant-a");
-        assert_eq!(coordinate.effective_release_id, 3);
+        assert_eq!(coordinate.manifest_digest, digest);
         assert_eq!(coordinate.triple.org, "acme");
         assert_eq!(coordinate.triple.project, "billing");
     }

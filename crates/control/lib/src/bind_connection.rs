@@ -49,16 +49,12 @@ SELECT requirement.requirement_json::text, requirement.requirement_hash \
  WHERE requirement.tenant_id = $1 AND requirement.component_digest = $2 \
    AND requirement.store_alias = $3 \
    AND EXISTS ( \
-       SELECT 1 FROM catalog.component_library AS component \
-       JOIN catalog.effective_release_packages AS member \
-         ON member.tenant_id = component.tenant_id \
-        AND member.package_id = component.package_id \
-        AND member.package_version = component.package_version \
-       JOIN catalog.effective_releases AS release \
-         ON release.tenant_id = member.tenant_id \
-        AND release.effective_release_id = member.effective_release_id \
-      WHERE component.tenant_id = $1 AND component.component_digest = $2 \
-        AND member.effective_release_id = $4 AND release.environment = $5)";
+       SELECT 1 FROM catalog.releases AS release \
+       CROSS JOIN LATERAL jsonb_array_elements( \
+             convert_from(release.canonical_bytes, 'UTF8')::jsonb -> 'components' \
+         ) AS component(value) \
+      WHERE release.tenant_id = $1 AND release.manifest_digest = $4 \
+        AND component.value ->> 'digest' = $2)";
 const FIRST_GENERATION: i64 = 1;
 
 #[derive(Debug)]
@@ -84,8 +80,8 @@ pub struct BindConnectionRequest {
     /// definition takes none, and every other definition needs one.
     pub credential_handle: Option<String>,
 
-    /// The release whose component is being bound.
-    pub effective_release_id: u32,
+    /// The release whose component is being bound, as its manifest digest.
+    pub manifest_digest: String,
 
     /// The admitted component's digest, as push-component printed it.
     pub component_digest: String,
@@ -164,8 +160,6 @@ async fn bind_in(
         .await
         .context("claim the tenant for the bind-connection transaction")?;
 
-    let release_id = i32::try_from(args.effective_release_id)
-        .context("the effective release id does not fit the catalog's int column")?;
     // The requirement being bound must exist and must be of this type: a
     // binding is a claim about a component's declared alias, and the plugin
     // checks the requirement's own descriptor against the instance's at
@@ -178,8 +172,7 @@ async fn bind_in(
                 &args.tenant,
                 &args.component_digest,
                 &args.store_alias,
-                &release_id,
-                &args.environment,
+                &args.manifest_digest,
             ],
         )
         .await
@@ -223,10 +216,10 @@ async fn bind_in(
         .query_opt(
             "SELECT environment, instance_id, binding_status, validation_status \
            FROM catalog.connection_bindings WHERE tenant_id = $1 \
-            AND effective_release_id = $2 AND component_digest = $3 AND store_alias = $4",
+            AND manifest_digest = $2 AND component_digest = $3 AND store_alias = $4",
             &[
                 &args.tenant,
-                &release_id,
+                &args.manifest_digest,
                 &args.component_digest,
                 &args.store_alias,
             ],
@@ -255,7 +248,7 @@ async fn bind_in(
                 insert_component_connection_binding_sql(),
                 &[
                     &args.tenant,
-                    &release_id,
+                    &args.manifest_digest,
                     &args.component_digest,
                     &args.store_alias,
                     &args.environment,

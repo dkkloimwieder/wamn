@@ -21,7 +21,6 @@
 
 use std::collections::BTreeSet;
 
-use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_run_state::{RunStore as _, queue::select_production_claim_sql};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -31,11 +30,11 @@ use wamn_runtime::plugins::wamn_postgres::{
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_EFFECTIVE_RELEASE_ID, POD_MANIFEST_DIGEST,
-    ROLLED_COMPONENT, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
-    assert_prior_winner_terminal, assert_terminal_status_dequeued, connect, expire_effect_run,
-    install_fixture, install_prior_caller_winner, make_callerless, queue_attempts, quote_literal,
-    ready_run, release_record, seed_exhausted_run, seed_run, teardown,
+    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, ROLLED_COMPONENT, SCHEMA,
+    TENANT, WIRING_ID, WIRING_VERSION, assert_callerless_terminal, assert_prior_winner_terminal,
+    assert_terminal_status_dequeued, connect, expire_effect_run, install_fixture,
+    install_prior_caller_winner, make_callerless, queue_attempts, quote_literal, ready_run,
+    release_record, seed_exhausted_run, seed_run, teardown,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -100,7 +99,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &[
                 &release_package_ids.as_slice(),
                 &ENVIRONMENT,
-                &Some(POD_EFFECTIVE_RELEASE_ID),
+                &Some(POD_MANIFEST_DIGEST),
             ],
         )
         .await?;
@@ -125,20 +124,21 @@ async fn production_claim_live() -> anyhow::Result<()> {
 
     // Expired pre-effect recovery NULLs only state_json; every other admitted
     // or lineage column survives the retry.
-    // `status` and the claim-time release record are excluded from the snapshot
-    // because the retry CLAIM writes them; they are asserted separately below.
+    // `status` is excluded from the snapshot because the retry CLAIM writes it;
+    // the release pin is asserted separately below.
     //
     // This leg is both-tier: a pre-effect reclaim needs no effect table.
     admin
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,state_json,invocation_context, \
                     trigger_source,event_source_run_id,event_root_run_id,event_depth, \
                     admission_context_version,platform_revision,idempotency_key, \
                     response_deadline_at,run_deadline_at) \
-                 VALUES ($1,'pre-effect','root',1,'running','cat_main',1,'test',$2,$3, \
+                 VALUES ($1,'pre-effect','root',1,'running','cat_main','{POD_MANIFEST_DIGEST}', \
+                    'test',$2,$3, \
                     '{{\"input\":7}}','{{\"cursor\":9}}','{{\"source\":{{\"case\":\"a\"}}}}', \
                     'event','source-run','root-run',3,'0.1','platform-a','idem-a', \
                     '2030-01-01','2030-01-02')"
@@ -221,11 +221,8 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(after, before);
     assert_eq!(
         release_record(admin, "pre-effect").await?,
-        (
-            POD_EFFECTIVE_RELEASE_ID,
-            Some(POD_MANIFEST_DIGEST.to_string())
-        ),
-        "the retry claim recorded the claiming pod's release exactly once"
+        Some(POD_MANIFEST_DIGEST.to_string()),
+        "the retry claim kept the admission pin"
     );
     let state: Option<String> = admin
         .query_one(
@@ -245,9 +242,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,package_id,effective_release_id, \
+                   (tenant_id,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,trigger_source) \
-                 VALUES ($1,'janitor','root',1,'running','cat_main',1,'test',$2,$3,'http')"
+                 VALUES ($1,'janitor','root',1,'running','cat_main','{POD_MANIFEST_DIGEST}', \
+                         'test',$2,$3,'http')"
             ),
             &[&TENANT, &WIRING_ID, &WIRING_VERSION],
         )
@@ -437,32 +435,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &[&TENANT, &EMPTY_HASH],
         )
         .await?;
-    // The fixture's release-pin guard shares the class gate: even with an
-    // attributed attempt, this `standard` run may clear a claim-time digest.
-    admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs \
-                    SET manifest_digest=$2 \
-                  WHERE tenant_id=$1 AND run_id='standard-effect'"
-            ),
-            &[&TENANT, &POD_MANIFEST_DIGEST],
-        )
-        .await?;
-    assert_eq!(
-        admin
-            .execute(
-                &format!(
-                    "UPDATE {SCHEMA}.runs \
-                        SET manifest_digest=NULL \
-                      WHERE tenant_id=$1 AND run_id='standard-effect'"
-                ),
-                &[&TENANT],
-            )
-            .await
-            .context("clear a standard run's manifest digest despite attributed effect evidence")?,
-        1
-    );
     assert_eq!(
         plugin
             .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
@@ -481,16 +453,13 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_terminal_status_dequeued(admin, "standard-effect", "infrastructure-failure").await?;
 
-    // ---- the claim-time manifest record (wamn-0h0g.15.11, carrying the two
-    // surviving test legs of the superseded wamn-0h0g.4.14) -----------------
+    // ---- the admission pin (platform-deploy.md R1) ------------------------
     //
-    // Admission pins the effective release. The matching pod records only its
-    // verified manifest digest; it never rewrites that release identity.
+    // Admission pins the release by its manifest digest. A matching pod claims
+    // the run and never writes the pin.
     seed_run(admin, "release-record", PACKAGE_ID, 70).await?;
-    assert_eq!(
-        release_record(admin, "release-record").await?,
-        (POD_EFFECTIVE_RELEASE_ID, None)
-    );
+    let recorded = Some(POD_MANIFEST_DIGEST.to_string());
+    assert_eq!(release_record(admin, "release-record").await?, recorded);
     assert_eq!(
         ready_run(
             plugin
@@ -499,29 +468,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ),
         "release-record"
     );
-    let recorded = (
-        POD_EFFECTIVE_RELEASE_ID,
-        Some(POD_MANIFEST_DIGEST.to_string()),
-    );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
-    assert_eq!(
-        admin
-            .query_one(
-                &format!(
-                    "SELECT effective_release_id FROM {SCHEMA}.runs \
-                      WHERE tenant_id=$1 AND run_id='release-record'"
-                ),
-                &[&TENANT],
-            )
-            .await?
-            .get::<_, i32>(0),
-        1,
-        "claim-time manifest recording must not move the admitted effective release"
-    );
 
-    // SAME-RELEASE RE-CLAIM. The classifier's pre-effect reclaim clears the
-    // abandoned attempt's digest and the grant records this pod's again, so the
-    // observable record is unchanged.
+    // SAME-RELEASE RE-CLAIM. The classifier's pre-effect reclaim keeps the pin.
     expire_effect_run(admin, "release-record").await?;
     assert_eq!(
         ready_run(
@@ -533,17 +482,17 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
 
-    // An effective release is an admission pin, not a claim-time rollout slot.
-    // A pod carrying another release does not select this run at all (R20):
-    // the candidate select filters by the pod's release, and the grant keeps
-    // the recheck.
+    // A release is an admission pin, not a claim-time rollout slot. A pod
+    // carrying another release does not select this run at all (R20): the
+    // candidate select filters by the pod's release, and the grant keeps the
+    // recheck.
     expire_effect_run(admin, "release-record").await?;
     assert_eq!(
         plugin
             .claim_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Empty,
-        "a different effective release must not select an admitted run"
+        "a different release must not select an admitted run"
     );
     assert!(
         plugin
@@ -568,80 +517,24 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
 
-    // The erasure is not a blanket hole. A terminal status still pins the
-    // record here, and an attributed effect pins it on the premium class.
-    // value -> value' is refused on every path and every class.
-    let third_digest = quote_literal(EMPTY_HASH);
-    let rewritten = admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET manifest_digest={third_digest} \
-                  WHERE tenant_id=$1 AND run_id='release-record'"
-            ),
-            &[&TENANT],
-        )
-        .await
-        .expect_err("no path may rewrite a recorded release in place");
-    let db = rewritten
-        .as_db_error()
-        .expect("guard refusal is a db error");
-    assert_eq!(db.code().code(), "55000");
-    assert_eq!(db.message(), "run-release-record-immutable");
-
-    admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET manifest_digest=NULL \
-                  WHERE tenant_id=$1 AND run_id='release-record'"
-            ),
-            &[&TENANT],
-        )
-        .await
-        .expect("a runnable, effect-free run may reopen its claimability");
-    assert_eq!(
-        release_record(admin, "release-record").await?,
-        (POD_EFFECTIVE_RELEASE_ID, None)
-    );
-    admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs \
-                    SET manifest_digest=$2 \
-                  WHERE tenant_id=$1 AND run_id='release-record'"
-            ),
-            &[&TENANT, &POD_MANIFEST_DIGEST],
-        )
-        .await?;
-    assert_eq!(release_record(admin, "release-record").await?, recorded);
-
-    // A TERMINAL STATUS STILL DOES REFUSE IT: a finished run keeps the audit
-    // link to the release closure it ran, on every class.
-    admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET status='completed' \
-                  WHERE tenant_id=$1 AND run_id='release-record'"
-            ),
-            &[&TENANT],
-        )
-        .await?;
-    let terminal = admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET manifest_digest=NULL \
-                  WHERE tenant_id=$1 AND run_id='release-record'"
-            ),
-            &[&TENANT],
-        )
-        .await
-        .expect_err("a terminal run keeps the audit link to its release closure");
-    assert_eq!(
-        terminal
+    // No path rewrites or erases the pin.
+    for assignment in [quote_literal(EMPTY_HASH), "NULL".to_owned()] {
+        let rewritten = admin
+            .execute(
+                &format!(
+                    "UPDATE {SCHEMA}.runs SET manifest_digest={assignment} \
+                      WHERE tenant_id=$1 AND run_id='release-record'"
+                ),
+                &[&TENANT],
+            )
+            .await
+            .expect_err("no path may rewrite an admitted release in place");
+        let db = rewritten
             .as_db_error()
-            .expect("guard refusal is a db error")
-            .message(),
-        "run-release-record-immutable"
-    );
+            .expect("guard refusal is a db error");
+        assert_eq!(db.code().code(), "55000");
+        assert_eq!(db.message(), "run-admission-pin-immutable");
+    }
     assert_eq!(release_record(admin, "release-record").await?, recorded);
     admin
         .execute(

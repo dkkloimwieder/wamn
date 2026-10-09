@@ -312,7 +312,7 @@ async fn provision(
     let carrier = lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),
-        identity().effective_release_id,
+        &release_digest_at(&route.database_url, identity().effective_release_id).await?,
         &inputs.release_artifact_base,
     )
     .await?;
@@ -665,7 +665,11 @@ async fn publish_and_push(
             org: identity().org.clone(),
             project: identity().project.clone(),
             tenant: identity().tenant.clone(),
-            effective_release_id: identity().effective_release_id,
+            manifest_digest: release_digest_at(
+                &route.database_url,
+                identity().effective_release_id,
+            )
+            .await?,
             artifact_base: inputs.release_artifact_base.clone(),
             registry_auth_file: inputs.registry_auth_file.clone(),
             insecure_registry: true,
@@ -679,7 +683,7 @@ async fn publish_and_push(
     let carrier = lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),
-        identity().effective_release_id,
+        &release_digest_at(&route.database_url, identity().effective_release_id).await?,
         &inputs.release_artifact_base,
     )
     .await?;

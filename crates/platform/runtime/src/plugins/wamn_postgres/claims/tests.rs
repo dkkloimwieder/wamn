@@ -443,9 +443,9 @@ fn claim_sql_is_fully_bound_with_no_interpolation() {
 #[test]
 fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
     for required in [
-        "FROM catalog.effective_release_packages AS member",
+        "FROM catalog.releases AS release",
         "JOIN catalog.wirings AS wiring",
-        "member.effective_release_id = $3",
+        "release.manifest_digest = $3",
         "member.package_id = $12",
         "wiring.package_id = member.package_id",
         "wiring.package_version = member.package_version",
@@ -460,7 +460,7 @@ fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
         "wiring.graph_json #> ARRAY['nodes', $7]",
         "requirement.component_digest = $8",
         "requirement.store_alias = $9",
-        "binding.effective_release_id = $3",
+        "binding.manifest_digest = $3",
         "binding.environment = $4",
     ] {
         assert!(
@@ -1419,7 +1419,7 @@ async fn effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim() 
         origin_operation: "operation",
         package_id: "catalog",
         operation: "operation",
-        effective_release_id: 1,
+        manifest_digest: "sha256:release",
         environment: "dev",
         component_digest: "digest",
         store_alias: "manager",
@@ -1499,7 +1499,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_tenant() {
         origin_operation: "operation",
         package_id: "catalog",
         operation: "operation",
-        effective_release_id: 1,
+        manifest_digest: "sha256:release",
         environment: "dev",
         component_digest: "digest",
         store_alias: "manager",
@@ -1626,7 +1626,7 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
         origin_operation: "operation",
         package_id: "catalog",
         operation: "operation",
-        effective_release_id: 1,
+        manifest_digest: "sha256:release",
         environment: "dev",
         component_digest: "digest",
         store_alias: "manager",

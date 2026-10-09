@@ -78,41 +78,25 @@ CREATE UNIQUE INDEX package_definition_owners_synchronization_function
     ON catalog.package_definition_owners (tenant_id, schema_name, definition_name)
     WHERE definition_type = 'synchronization_function';
 
-CREATE TABLE catalog.effective_releases (
-    tenant_id                   text        NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id        int         NOT NULL CHECK (effective_release_id > 0),
-    environment                 text        NOT NULL CHECK (environment <> ''),
-    verified_publisher_principal text CHECK (
-        verified_publisher_principal IS NULL OR verified_publisher_principal <> ''
-    ),
-    created_at                  timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT effective_releases_pkey
-        PRIMARY KEY (tenant_id, effective_release_id),
-    CONSTRAINT effective_releases_environment_key
-        UNIQUE (tenant_id, effective_release_id, environment)
-);
-
-CREATE TABLE catalog.effective_release_packages (
-    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id int  NOT NULL CHECK (effective_release_id > 0),
-    package_id           text NOT NULL CHECK (package_id <> ''),
-    package_version      text NOT NULL CHECK (package_version <> ''),
-    CONSTRAINT effective_release_packages_pkey
-        PRIMARY KEY (tenant_id, effective_release_id, package_id),
-    CONSTRAINT effective_release_packages_exact_pair_key
-        UNIQUE (tenant_id, effective_release_id, package_id, package_version),
-    CONSTRAINT effective_release_packages_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id)
-        REFERENCES catalog.effective_releases (tenant_id, effective_release_id),
-    CONSTRAINT effective_release_packages_package_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version)
+-- One installed release (docs/plan/platform-deploy.md R1). The manifest
+-- digest is the release; this row is an immutable cache of the canonical
+-- manifest bytes, and the bytes must hash to the digest. tenant_id is the RLS
+-- scope of the row, not part of the release identity. Package membership and
+-- the component closure are read from the bytes.
+CREATE TABLE catalog.releases (
+    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
+    manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    canonical_bytes bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
+    recorded_at     timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT releases_pkey PRIMARY KEY (tenant_id, manifest_digest),
+    CONSTRAINT releases_exact_hash
+        CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
 
 -- Immutable release membership is the sole package-coordinate seal. Both the
--- publisher and migration table serialize on the package row, so whichever
--- commits first determines whether one last migration precedes the seal or is
--- refused after it. There is no second seal flag or snapshot of release records.
+-- release writer and the migration table serialize on the package rows, so
+-- whichever commits first determines whether one last migration precedes the
+-- seal or is refused after it. There is no second seal flag.
 -- Local-target exception: wamn.local_target_comment equal to the full database comment lifts it.
 CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership()
 RETURNS trigger
@@ -120,18 +104,21 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     PERFORM 1
-      FROM catalog.packages
-     WHERE tenant_id = NEW.tenant_id
-       AND package_id = NEW.package_id
-       AND package_version = NEW.package_version
-     FOR UPDATE;
+      FROM catalog.packages AS package
+      JOIN jsonb_array_elements(
+               convert_from(NEW.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}'
+           ) AS member(value)
+        ON package.package_id = member.value ->> 'package-id'
+       AND package.package_version = member.value ->> 'package-version'
+     WHERE package.tenant_id = NEW.tenant_id
+     FOR UPDATE OF package;
     RETURN NEW;
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.lock_package_coordinate_for_release_membership() FROM PUBLIC;
 
-CREATE TRIGGER effective_release_packages_seal_coordinate
-    BEFORE INSERT ON catalog.effective_release_packages
+CREATE TRIGGER releases_seal_coordinate
+    BEFORE INSERT ON catalog.releases
     FOR EACH ROW
     EXECUTE FUNCTION catalog.lock_package_coordinate_for_release_membership();
 
@@ -149,10 +136,13 @@ BEGIN
 
     IF EXISTS (
         SELECT 1
-          FROM catalog.effective_release_packages
-         WHERE tenant_id = NEW.tenant_id
-           AND package_id = NEW.package_id
-           AND package_version = NEW.package_version
+          FROM catalog.releases AS release
+          CROSS JOIN LATERAL jsonb_array_elements(
+               convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}'
+          ) AS member(value)
+         WHERE release.tenant_id = NEW.tenant_id
+           AND member.value ->> 'package-id' = NEW.package_id
+           AND member.value ->> 'package-version' = NEW.package_version
     ) AND NOT EXISTS (
         SELECT 1
           FROM pg_catalog.pg_database
@@ -180,16 +170,15 @@ CREATE TRIGGER package_migrations_release_seal
     EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
 CREATE TABLE catalog.effective_release_heads (
-    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
-    environment          text        NOT NULL CHECK (environment <> ''),
-    effective_release_id int         NOT NULL CHECK (effective_release_id > 0),
-    updated_at           timestamptz NOT NULL DEFAULT now(),
+    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
+    environment     text        NOT NULL CHECK (environment <> ''),
+    manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT effective_release_heads_pkey
         PRIMARY KEY (tenant_id, environment),
     CONSTRAINT effective_release_heads_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id, environment)
-        REFERENCES catalog.effective_releases
-            (tenant_id, effective_release_id, environment)
+        FOREIGN KEY (tenant_id, manifest_digest)
+        REFERENCES catalog.releases (tenant_id, manifest_digest)
 );
 
 -- A component digest belongs to one package for life. Each version of that
@@ -286,7 +275,7 @@ ALTER TABLE catalog.connection_instances
 
 CREATE TABLE catalog.connection_bindings (
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id int         NOT NULL CHECK (effective_release_id > 0),
+    manifest_digest      text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     component_digest     text        NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     store_alias          text        NOT NULL CHECK (store_alias <> ''),
     environment          text        NOT NULL CHECK (environment <> ''),
@@ -296,11 +285,10 @@ CREATE TABLE catalog.connection_bindings (
     validation_hash      text        NOT NULL CHECK (validation_hash ~ '^sha256:[0-9a-f]{64}$'),
     bound_at             timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT connection_bindings_pkey
-        PRIMARY KEY (tenant_id, effective_release_id, component_digest, store_alias),
+        PRIMARY KEY (tenant_id, manifest_digest, component_digest, store_alias),
     CONSTRAINT connection_bindings_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id, environment)
-        REFERENCES catalog.effective_releases
-            (tenant_id, effective_release_id, environment),
+        FOREIGN KEY (tenant_id, manifest_digest)
+        REFERENCES catalog.releases (tenant_id, manifest_digest),
     CONSTRAINT connection_bindings_requirement_fkey
         FOREIGN KEY (tenant_id, component_digest, store_alias)
         REFERENCES catalog.connection_requirements
@@ -395,79 +383,12 @@ CREATE TABLE catalog.wiring_activation_events (
     changed_at                 timestamptz NOT NULL DEFAULT now()
 );
 
--- One member binds a component to a wiring node or to a route, never both. A
--- route row names its component and operation in the member's own package.
-CREATE TABLE catalog.release_components (
-    tenant_id             text NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id  int  NOT NULL CHECK (effective_release_id > 0),
-    wiring_package_id     text CHECK (wiring_package_id <> ''),
-    wiring_package_version text CHECK (wiring_package_version <> ''),
-    wiring_id             text CHECK (wiring_id <> ''),
-    wiring_version        int  CHECK (wiring_version > 0),
-    node_id               text CHECK (node_id <> ''),
-    package_id            text NOT NULL CHECK (package_id <> ''),
-    package_version       text NOT NULL CHECK (package_version <> ''),
-    component_digest      text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    route_component       text CHECK (route_component <> ''),
-    route_operation       text CHECK (route_operation <> ''),
-    CONSTRAINT release_components_binding_check CHECK (
-        (wiring_package_id IS NOT NULL AND wiring_package_version IS NOT NULL
-         AND wiring_id IS NOT NULL AND wiring_version IS NOT NULL
-         AND node_id IS NOT NULL
-         AND route_component IS NULL AND route_operation IS NULL)
-        OR (wiring_package_id IS NULL AND wiring_package_version IS NULL
-            AND wiring_id IS NULL AND wiring_version IS NULL AND node_id IS NULL
-            AND route_component IS NOT NULL AND route_operation IS NOT NULL)
-    ),
-    CONSTRAINT release_components_wiring_membership_fkey
-        FOREIGN KEY (tenant_id, effective_release_id, wiring_package_id,
-                     wiring_package_version)
-        REFERENCES catalog.effective_release_packages
-            (tenant_id, effective_release_id, package_id, package_version),
-    CONSTRAINT release_components_component_membership_fkey
-        FOREIGN KEY (tenant_id, effective_release_id, package_id, package_version)
-        REFERENCES catalog.effective_release_packages
-            (tenant_id, effective_release_id, package_id, package_version),
-    CONSTRAINT release_components_wiring_fkey
-        FOREIGN KEY (tenant_id, wiring_package_id, wiring_package_version,
-                     wiring_id, wiring_version)
-        REFERENCES catalog.wirings
-            (tenant_id, package_id, package_version, wiring_id, version),
-    CONSTRAINT release_components_component_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version, component_digest)
-        REFERENCES catalog.component_library
-            (tenant_id, package_id, package_version, component_digest)
-);
-CREATE UNIQUE INDEX release_components_wiring_key
-    ON catalog.release_components (tenant_id, effective_release_id, wiring_package_id,
-                                   wiring_package_version, wiring_id, wiring_version, node_id)
-    WHERE wiring_id IS NOT NULL;
-CREATE UNIQUE INDEX release_components_route_key
-    ON catalog.release_components (tenant_id, effective_release_id, package_id,
-                                   route_component, route_operation)
-    WHERE route_operation IS NOT NULL;
-
-CREATE TABLE catalog.release_manifest_snapshots (
-    tenant_id            text  NOT NULL CHECK (tenant_id <> ''),
-    effective_release_id int   NOT NULL CHECK (effective_release_id > 0),
-    manifest_digest      text  NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    canonical_bytes      bytea NOT NULL CHECK (octet_length(canonical_bytes) > 0),
-    CONSTRAINT release_manifest_snapshots_pkey
-        PRIMARY KEY (tenant_id, effective_release_id),
-    CONSTRAINT release_manifest_snapshots_release_fkey
-        FOREIGN KEY (tenant_id, effective_release_id)
-        REFERENCES catalog.effective_releases (tenant_id, effective_release_id),
-    CONSTRAINT release_manifest_snapshots_exact_hash
-        CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
-);
-
 CREATE TABLE catalog.package_upgrade_qualifications (
     tenant_id                   text        NOT NULL CHECK (tenant_id <> ''),
     package_id                  text        NOT NULL CHECK (package_id <> ''),
     candidate_package_version   text        NOT NULL CHECK (candidate_package_version <> ''),
     canonical_bytes             bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
     result_sha256               text        NOT NULL CHECK (result_sha256 ~ '^sha256:[0-9a-f]{64}$'),
-    predecessor_release_id      int         NOT NULL CHECK (predecessor_release_id > 0),
     predecessor_manifest_digest text        NOT NULL
         CHECK (predecessor_manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     recorded_at                 timestamptz NOT NULL DEFAULT now(),
@@ -477,8 +398,8 @@ CREATE TABLE catalog.package_upgrade_qualifications (
         FOREIGN KEY (tenant_id, package_id, candidate_package_version)
         REFERENCES catalog.packages (tenant_id, package_id, package_version),
     CONSTRAINT package_upgrade_qualifications_predecessor_fkey
-        FOREIGN KEY (tenant_id, predecessor_release_id)
-        REFERENCES catalog.release_manifest_snapshots (tenant_id, effective_release_id),
+        FOREIGN KEY (tenant_id, predecessor_manifest_digest)
+        REFERENCES catalog.releases (tenant_id, manifest_digest),
     CONSTRAINT package_upgrade_qualifications_exact_hash
         CHECK (result_sha256 = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
@@ -532,30 +453,6 @@ CREATE TRIGGER package_upgrade_stages_guard
 REVOKE ALL ON FUNCTION catalog.guard_package_upgrade_stage_change() FROM PUBLIC;
 REVOKE ALL ON catalog.package_upgrade_stages FROM PUBLIC, wamn_app;
 
-CREATE FUNCTION catalog.guard_release_component_insert()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    PERFORM 1 FROM catalog.effective_releases
-     WHERE tenant_id = NEW.tenant_id
-       AND effective_release_id = NEW.effective_release_id
-     FOR UPDATE;
-    IF EXISTS (
-        SELECT 1 FROM catalog.release_manifest_snapshots
-         WHERE tenant_id = NEW.tenant_id
-           AND effective_release_id = NEW.effective_release_id
-    ) THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'effective-release-snapshot-already-sealed';
-    END IF;
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER release_components_snapshot_seal
-    BEFORE INSERT ON catalog.release_components
-    FOR EACH ROW EXECUTE FUNCTION catalog.guard_release_component_insert();
-
 CREATE TABLE catalog.event_registrations (
     tenant_id       text  NOT NULL CHECK (tenant_id <> ''),
     package_id      text  NOT NULL CHECK (package_id <> ''),
@@ -576,13 +473,12 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners',
-        'effective_releases',
-        'effective_release_packages', 'effective_release_heads',
+        'releases', 'effective_release_heads',
         'component_digest_owners', 'component_library', 'connection_requirements',
         'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
         'wiring_tombstones', 'wiring_activation', 'wiring_activation_events',
-        'release_components', 'release_manifest_snapshots', 'package_upgrade_qualifications',
+        'package_upgrade_qualifications',
         'event_registrations', 'package_upgrade_stages'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
@@ -611,12 +507,10 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners',
-        'effective_releases',
-        'effective_release_packages', 'component_digest_owners', 'component_library',
+        'releases', 'component_digest_owners', 'component_library',
         'connection_requirements', 'connection_generations',
         'connection_bindings', 'wirings', 'wiring_tombstones',
-        'wiring_activation_events', 'release_components',
-        'release_manifest_snapshots', 'package_upgrade_qualifications'
+        'wiring_activation_events', 'package_upgrade_qualifications'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',
@@ -627,8 +521,7 @@ END
 $immutable_facts$;
 
 GRANT SELECT ON catalog.packages,
-    catalog.effective_releases,
-    catalog.effective_release_packages,
+    catalog.releases,
     catalog.effective_release_heads,
     catalog.component_digest_owners,
     catalog.component_library,
@@ -640,8 +533,6 @@ GRANT SELECT ON catalog.packages,
     catalog.wiring_tombstones,
     catalog.wiring_activation,
     catalog.wiring_activation_events,
-    catalog.release_components,
-    catalog.release_manifest_snapshots,
     catalog.event_registrations
 TO wamn_app;
 

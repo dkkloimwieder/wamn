@@ -22,21 +22,23 @@ pub const PROJECTION_CONTENT_CONFLICT: &str =
 /// `effective_releases_environment_key` before the primary key, and that
 /// conflict must also leave the winner in place.
 pub fn project_effective_release_identity_sql() -> &'static str {
-    "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
+    "INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) \
      VALUES ($1, $2, $3) ON CONFLICT DO NOTHING"
 }
 
 /// Read the winning identity after the insert finishes.
 pub fn read_effective_release_identity_sql() -> &'static str {
     "SELECT environment FROM catalog.effective_releases \
-     WHERE tenant_id = $1 AND effective_release_id = $2"
+     WHERE tenant_id = $1 AND manifest_digest = $2"
 }
 
-/// One effective release identity as the CONTROL plane records it.
+/// One release identity as the CONTROL plane records it: the release is its
+/// manifest digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectiveReleaseIdentity<'a> {
     pub tenant_id: &'a str,
-    pub effective_release_id: i32,
+    /// `sha256:<64 hex>`.
+    pub manifest_digest: &'a str,
     pub environment: &'a str,
 }
 
@@ -47,12 +49,12 @@ pub fn project_effective_release_identity(identity: &EffectiveReleaseIdentity<'_
     SqlStatement {
         summary: format!(
             "project effective release identity {}/{}",
-            identity.tenant_id, identity.effective_release_id
+            identity.tenant_id, identity.manifest_digest
         ),
         sql: project_effective_release_identity_sql().to_owned(),
         params: vec![
             Value::Text(identity.tenant_id.to_owned()),
-            Value::Int(identity.effective_release_id),
+            Value::Text(identity.manifest_digest.to_owned()),
             Value::Text(identity.environment.to_owned()),
         ],
     }
@@ -89,7 +91,7 @@ pub fn translate_projection_failure(
 fn identity_coordinate(identity: &EffectiveReleaseIdentity<'_>) -> String {
     format!(
         "{}/{} in {:?}",
-        identity.tenant_id, identity.effective_release_id, identity.environment
+        identity.tenant_id, identity.manifest_digest, identity.environment
     )
 }
 
@@ -98,7 +100,8 @@ fn identity_coordinate(identity: &EffectiveReleaseIdentity<'_>) -> String {
 pub struct Attestation<'a> {
     pub tenant_id: &'a str,
     pub environment_instance: &'a str,
-    pub effective_release_id: i32,
+    /// The release, `sha256:<64 hex>`.
+    pub manifest_digest: &'a str,
     pub org_id: &'a str,
     pub project_id: &'a str,
     pub environment: &'a str,
@@ -127,7 +130,7 @@ pub fn register_attestation(attestation: &Attestation<'_>) -> SqlStatement {
         params: vec![
             Value::Text(attestation.tenant_id.to_owned()),
             Value::Text(attestation.environment_instance.to_owned()),
-            Value::Int(attestation.effective_release_id),
+            Value::Text(attestation.manifest_digest.to_owned()),
             Value::Text(attestation.org_id.to_owned()),
             Value::Text(attestation.project_id.to_owned()),
             Value::Text(attestation.environment.to_owned()),
@@ -146,7 +149,7 @@ pub fn read_environment_instance_sql() -> &'static str {
 /// Read the winning row using all six parts of the resolved coordinate.
 pub fn read_attestation_sql() -> &'static str {
     "SELECT deployed_manifest_hash, source_commit, attested_at FROM catalog.deployment_attestations \
-     WHERE tenant_id = $1 AND environment_instance = $2 AND effective_release_id = $3 \
+     WHERE tenant_id = $1 AND environment_instance = $2 AND manifest_digest = $3 \
      AND org_id = $4 AND project_id = $5 AND environment = $6"
 }
 
@@ -246,7 +249,7 @@ fn coordinate(attestation: &Attestation<'_>) -> String {
         "{}/{}/{} -> {}/{}/{}",
         attestation.tenant_id,
         attestation.environment_instance,
-        attestation.effective_release_id,
+        attestation.manifest_digest,
         attestation.org_id,
         attestation.project_id,
         attestation.environment,
@@ -262,7 +265,7 @@ mod tests {
         Attestation {
             tenant_id: "tenant-a",
             environment_instance: "instance-a",
-            effective_release_id: 7,
+            manifest_digest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
             org_id: "acme",
             project_id: "billing",
             environment: "prod",
@@ -281,7 +284,10 @@ mod tests {
             vec![
                 Value::Text("tenant-a".to_owned()),
                 Value::Text("instance-a".to_owned()),
-                Value::Int(7),
+                Value::Text(
+                    "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                        .to_owned()
+                ),
                 Value::Text("acme".to_owned()),
                 Value::Text("billing".to_owned()),
                 Value::Text("prod".to_owned()),
@@ -302,7 +308,7 @@ mod tests {
         assert_eq!(error.error_type(), AttestationErrorType::ContentConflict);
         assert_eq!(
             error.coordinate(),
-            "tenant-a/instance-a/7 -> acme/billing/prod"
+            "tenant-a/instance-a/sha256:1111111111111111111111111111111111111111111111111111111111111111 -> acme/billing/prod"
         );
         // The existing refusal literal remains first.
         assert!(
@@ -344,7 +350,7 @@ mod tests {
     fn identity() -> EffectiveReleaseIdentity<'static> {
         EffectiveReleaseIdentity {
             tenant_id: "tenant-a",
-            effective_release_id: 7,
+            manifest_digest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
             environment: "prod",
         }
     }
@@ -360,7 +366,10 @@ mod tests {
             statement.params,
             vec![
                 Value::Text("tenant-a".to_owned()),
-                Value::Int(7),
+                Value::Text(
+                    "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+                        .to_owned()
+                ),
                 Value::Text("prod".to_owned()),
             ]
         );
@@ -373,7 +382,10 @@ mod tests {
             error.error_type(),
             AttestationErrorType::IdentityProjectionConflict
         );
-        assert_eq!(error.coordinate(), "tenant-a/7 in \"prod\"");
+        assert_eq!(
+            error.coordinate(),
+            "tenant-a/sha256:3333333333333333333333333333333333333333333333333333333333333333 in \"prod\""
+        );
         assert!(
             error
                 .to_string()

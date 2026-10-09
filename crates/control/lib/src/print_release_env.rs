@@ -2,8 +2,8 @@
 //!
 //! The operator path that shipped with `wamn-cdky` is manual: read the digest
 //! off `publish-release` stdout and hand-edit the template. This reader removes
-//! the transcription step and nothing else. It reads the frozen
-//! `catalog.release_manifest_snapshots` row and re-derives release identity
+//! the transcription step and nothing else. It reads the
+//! `catalog.releases` row and re-derives release identity
 //! from those exact bytes. It writes no manifest and mutates
 //! nothing; a pod reading its own digest out of PostgreSQL is explicitly
 //! refused (`wamn-duyl`) because it would roll a release without a rollout.
@@ -36,11 +36,11 @@ pub struct ReleaseSnapshot {
 pub async fn lookup_release_carrier(
     database_url: &str,
     tenant: &str,
-    effective_release_id: u32,
+    manifest_digest: &str,
     artifact_base: &str,
 ) -> anyhow::Result<ReleaseCarrier> {
     Ok(
-        lookup_release_snapshot(database_url, tenant, effective_release_id, artifact_base)
+        lookup_release_snapshot(database_url, tenant, manifest_digest, artifact_base)
             .await?
             .carrier,
     )
@@ -50,16 +50,14 @@ pub async fn lookup_release_carrier(
 pub async fn lookup_release_snapshot(
     database_url: &str,
     tenant: &str,
-    effective_release_id: u32,
+    manifest_digest: &str,
     artifact_base: &str,
 ) -> anyhow::Result<ReleaseSnapshot> {
-    let effective_release_id = i32::try_from(effective_release_id)
-        .context("effective-release-id exceeds the PostgreSQL integer carrier")?;
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to the release snapshot database")?;
     let connection_task = tokio::spawn(connection);
-    let read = select_snapshot(&mut client, tenant, effective_release_id).await;
+    let read = select_snapshot(&mut client, tenant, manifest_digest).await;
     let canonical_bytes = match read {
         Ok(canonical_bytes) => {
             drop(client);

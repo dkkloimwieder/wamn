@@ -10,6 +10,15 @@ use wamn_control::push_release_manifest::{
     PushReleaseManifestRequest, push_and_attest, push_release_manifest,
 };
 
+/// The digest of [`CANONICAL_MANIFEST`]: the release it names.
+fn release_digest() -> String {
+    wamn_catalog::ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
+        .expect("the fixture is canonical")
+        .1
+        .as_str()
+        .to_owned()
+}
+
 const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":4,"release":{"effective-release-id":3,"environment":"prod","packages":[{"package-id":"orders","package-version":"1.0.0"}],"tenant-id":"tenant-a"},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 
 /// A port with no listener: connecting to it is refused.
@@ -42,7 +51,7 @@ fn request(registry: &str, control_database_url: String) -> PushReleaseManifestR
         org: "acme".to_owned(),
         project: "billing".to_owned(),
         tenant: "tenant-a".to_owned(),
-        effective_release_id: 3,
+        manifest_digest: release_digest(),
         artifact_base: format!("{registry}/wamn/releases"),
         registry_auth_file: auth_file(registry),
         insecure_registry: true,
@@ -86,14 +95,15 @@ async fn a_refused_push_writes_no_attestation() {
         let _ = connection.await;
     });
     client
-        .batch_execute(
+        .batch_execute(&format!(
             "SELECT set_config('app.tenant', 'tenant-a', false); \
              INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256) \
                VALUES ('tenant-a', 'orders', '1.0.0', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
              INSERT INTO catalog.effective_releases \
-               (tenant_id, effective_release_id, environment, verified_publisher_principal) \
-               VALUES ('tenant-a', 3, 'prod', 'publisher');",
-        )
+               (tenant_id, manifest_digest, environment, verified_publisher_principal) \
+               VALUES ('tenant-a', '{}', 'prod', 'publisher');",
+            release_digest()
+        ))
         .await
         .expect("register the release that the fixture bytes name");
     // A registry that accepts each connection and closes it at once.

@@ -20,7 +20,7 @@ struct Pointer {
     tenant_id: Arc<str>,
     package_id: Arc<str>,
     environment: Arc<str>,
-    effective_release_id: u32,
+    manifest_digest: Arc<str>,
     wiring_id: Arc<str>,
 }
 
@@ -37,7 +37,8 @@ pub struct VersionKey<'a> {
     pub tenant_id: &'a str,
     pub package_id: &'a str,
     pub environment: &'a str,
-    pub effective_release_id: u32,
+    /// The release, as its manifest digest.
+    pub manifest_digest: &'a str,
     pub wiring_id: &'a str,
     pub version: u32,
 }
@@ -49,7 +50,7 @@ impl VersionKey<'_> {
                 tenant_id: Arc::from(self.tenant_id),
                 package_id: Arc::from(self.package_id),
                 environment: Arc::from(self.environment),
-                effective_release_id: self.effective_release_id,
+                manifest_digest: Arc::from(self.manifest_digest),
                 wiring_id: Arc::from(self.wiring_id),
             },
             version: self.version,
@@ -170,7 +171,7 @@ where
         tenant_id: &str,
         package_id: &str,
         environment: &str,
-        effective_release_id: u32,
+        manifest_digest: &str,
         wiring_id: &str,
         version: u32,
     ) -> Option<ActiveWiring<T>> {
@@ -178,7 +179,7 @@ where
             tenant_id,
             package_id,
             environment,
-            effective_release_id,
+            manifest_digest,
             wiring_id,
             version,
         }
@@ -325,14 +326,14 @@ mod tests {
     }
 
     #[test]
-    fn effective_releases_do_not_share_resolved_facts() {
+    fn releases_do_not_share_resolved_facts() {
         const TENANT: &str = "tenant-a";
         const PACKAGE: &str = "orders";
         const ENVIRONMENT: &str = "prod";
         const WIRING: &str = "create-order";
         let cache = WiringCache::new(NonZeroUsize::new(4).expect("non-zero cache bound"));
 
-        for (release_id, facts) in [(7, "release-7"), (8, "release-8")] {
+        for (release_id, facts) in [("sha256:seven", "release-7"), ("sha256:eight", "release-8")] {
             assert!(
                 cache
                     .get_version(TENANT, PACKAGE, ENVIRONMENT, release_id, WIRING, 1)
@@ -344,7 +345,7 @@ mod tests {
                     tenant_id: TENANT,
                     package_id: PACKAGE,
                     environment: ENVIRONMENT,
-                    effective_release_id: release_id,
+                    manifest_digest: release_id,
                     wiring_id: WIRING,
                     version: 1,
                 },
@@ -356,10 +357,10 @@ mod tests {
         }
 
         let release_7 = cache
-            .get_version(TENANT, PACKAGE, ENVIRONMENT, 7, WIRING, 1)
+            .get_version(TENANT, PACKAGE, ENVIRONMENT, "sha256:seven", WIRING, 1)
             .expect("release 7 remains resident");
         let release_8 = cache
-            .get_version(TENANT, PACKAGE, ENVIRONMENT, 8, WIRING, 1)
+            .get_version(TENANT, PACKAGE, ENVIRONMENT, "sha256:eight", WIRING, 1)
             .expect("release 8 remains resident");
         assert_eq!(*release_7.facts, "release-7");
         assert_eq!(*release_8.facts, "release-8");

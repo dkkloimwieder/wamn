@@ -215,11 +215,7 @@ fn observation_at_record() -> RunPlaneObservation {
             obs.non_nullable_columns.insert(key);
         }
     }
-    for (column, ty) in [
-        ("package_id", "text"),
-        ("effective_release_id", "integer"),
-        ("environment", "text"),
-    ] {
+    for (column, ty) in [("package_id", "text"), ("environment", "text")] {
         let key = ("runs".to_string(), column.to_string());
         obs.non_nullable_columns.insert(key.clone());
         obs.column_types.insert(key, ty.to_string());
@@ -242,10 +238,6 @@ fn observation_at_record() -> RunPlaneObservation {
         obs.column_types
             .insert(("runs".to_string(), column.to_string()), ty.to_string());
     }
-    obs.indexes.insert(
-        "runs_release".to_string(),
-        RUNS_RELEASE_INDEX_DEF.to_string(),
-    );
     obs.foreign_keys.insert(
         ("runs".to_string(), "runs_release_fk".to_string()),
         RUNS_RELEASE_FK_DEF.to_string(),
@@ -1203,7 +1195,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
     obs.authoring_effective_table_privileges
         .entry((
             "catalog".to_string(),
-            "effective_releases".to_string(),
+            "releases".to_string(),
             SCENARIO_AUTHOR_ROLE.to_string(),
         ))
         .or_default()
@@ -1221,7 +1213,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
     for table in [
         "packages",
         "connection_bindings",
-        "effective_releases",
+        "releases",
         "effective_release_heads",
     ] {
         let repair = plan
@@ -3135,7 +3127,7 @@ fn observation_sql_is_pinned() {
         }
     }
     assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
-    assert!(select_authoring_effective_table_privileges_sql().contains("effective_releases"));
+    assert!(select_authoring_effective_table_privileges_sql().contains("'releases'"));
     assert!(select_authoring_table_owners_sql().contains("relation.relowner"));
     assert!(
         select_authoring_effective_column_privileges_sql().contains("has_any_column_privilege")

@@ -86,8 +86,8 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
        FROM information_schema.table_privileges \
       WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
         AND ((table_schema = 'catalog' AND table_name IN \
-              ('packages', 'package_migrations', 'effective_releases', \
-               'effective_release_packages', 'effective_release_heads', \
+              ('packages', 'package_migrations', 'releases', \
+               'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (table_schema = $1 AND table_name IN ('environment_policies', 'runs'))) \
@@ -110,8 +110,8 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('packages', 'package_migrations', 'effective_releases', \
-               'effective_release_packages', 'effective_release_heads', \
+              ('packages', 'package_migrations', 'releases', \
+               'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -135,8 +135,8 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('packages', 'package_migrations', 'effective_releases', \
-               'effective_release_packages', 'effective_release_heads', \
+              ('packages', 'package_migrations', 'releases', \
+               'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \
@@ -157,8 +157,8 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
        JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
       WHERE relation.relkind = 'r' \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('packages', 'package_migrations', 'effective_releases', \
-               'effective_release_packages', 'effective_release_heads', \
+              ('packages', 'package_migrations', 'releases', \
+               'effective_release_heads', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings')) \
           OR (namespace.nspname = $1 \

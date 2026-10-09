@@ -69,7 +69,7 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
     // for any reason at all reads as agreement. Re-open one catalog read plus
     // both retired run-plane reads and require all three repairs.
     su.batch_execute(&format!(
-        "GRANT SELECT ON catalog.effective_releases TO wamn_scenario_author; \
+        "GRANT SELECT ON catalog.releases TO wamn_scenario_author; \
          GRANT SELECT ON {SCHEMA}.environment_policies TO wamn_scenario_author; \
          GRANT SELECT ON {SCHEMA}.runs TO wamn_scenario_author"
     ))
@@ -94,7 +94,7 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
     assert_eq!(
         drifted_repairs,
         vec![
-            "catalog.effective_releases",
+            "catalog.releases",
             "rp_live.environment_policies",
             "runs.capture_mode",
         ],
@@ -105,7 +105,7 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
         .await
         .expect("apply the three author-read repairs");
     for relation in [
-        "catalog.effective_releases",
+        "catalog.releases",
         "rp_live.environment_policies",
         "rp_live.runs",
     ] {
@@ -296,12 +296,12 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
-    seed_run_admission_facts(su, "t1", "capture", 1, "dev", "standard").await;
+    seed_run_admission_facts(su, "t1", "capture", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
             status) \
-         VALUES ('t1','legacy-off','f',1,'capture',1,'dev', \
+         VALUES ('t1','legacy-off','f',1,'capture','dev', \
                  'completed'); \
          DROP TRIGGER runs_admission_pins_immutable ON {SCHEMA}.runs; \
          ALTER TABLE {SCHEMA}.runs \
@@ -339,9 +339,9 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+                   (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
                     status,trigger_source,capture_mode) \
-                 VALUES ('t1','published-full','f',1,'capture',1,'dev', \
+                 VALUES ('t1','published-full','f',1,'capture','dev', \
                          'completed','http','full')"
             ),
             &[],
@@ -352,9 +352,9 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+               (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
                 status,trigger_source,capture_mode) \
-             VALUES ('t1','draft-full','f',1,'capture',1,'dev', \
+             VALUES ('t1','draft-full','f',1,'capture','dev', \
                      'completed','scenario-draft','full')"
         ),
         &[],
@@ -378,9 +378,9 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
             "admission",
             format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+                   (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
                     status,trigger_source) \
-                 VALUES ('t1','app-forged','f',1,'capture',1,'dev','dispatched','test')"
+                 VALUES ('t1','app-forged','f',1,'capture','dev','dispatched','test')"
             ),
         ),
         (
@@ -574,107 +574,4 @@ pub(super) async fn stored_suite_cutover_leg(su: &Client) {
         "stored-suite cutover converged: {:#?}",
         again.actions
     );
-}
-
-/// The columns, constraints and indexes of `catalog.release_components`.
-async fn release_components_shape(su: &Client) -> Vec<String> {
-    su.query(
-        "SELECT 'column ' || attname || ' ' || format_type(atttypid, atttypmod) \
-                || CASE WHEN attnotnull THEN ' not null' ELSE '' END \
-           FROM pg_attribute \
-          WHERE attrelid = 'catalog.release_components'::regclass \
-            AND attnum > 0 AND NOT attisdropped \
-         UNION ALL \
-         SELECT 'constraint ' || conname || ' ' || pg_get_constraintdef(oid, true) \
-           FROM pg_constraint WHERE conrelid = 'catalog.release_components'::regclass \
-         UNION ALL \
-         SELECT 'index ' || indexname || ' ' || indexdef \
-           FROM pg_indexes \
-          WHERE schemaname = 'catalog' AND tablename = 'release_components' \
-         ORDER BY 1",
-        &[],
-    )
-    .await
-    .expect("read the release membership shape")
-    .into_iter()
-    .map(|row| row.get(0))
-    .collect()
-}
-
-/// A catalog provisioned before routes reconciles to the fresh membership
-/// table: a member then binds a route or a wiring node, never both.
-#[tokio::test]
-async fn release_component_routes_live() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let su = connect(&url).await;
-    reset(&su).await;
-    install_current_run_plane(&su).await;
-    let fresh = release_components_shape(&su).await;
-    // The table as it stood before routes: every member binds a wiring node.
-    su.batch_execute(
-        "DROP INDEX catalog.release_components_wiring_key; \
-         DROP INDEX catalog.release_components_route_key; \
-         ALTER TABLE catalog.release_components \
-           DROP CONSTRAINT release_components_binding_check, \
-           DROP COLUMN route_component, \
-           DROP COLUMN route_operation, \
-           ALTER COLUMN wiring_package_id SET NOT NULL, \
-           ALTER COLUMN wiring_package_version SET NOT NULL, \
-           ALTER COLUMN wiring_id SET NOT NULL, \
-           ALTER COLUMN wiring_version SET NOT NULL, \
-           ALTER COLUMN node_id SET NOT NULL, \
-           ADD CONSTRAINT release_components_pkey \
-             PRIMARY KEY (tenant_id, effective_release_id, wiring_package_id, \
-                          wiring_package_version, wiring_id, wiring_version, node_id);",
-    )
-    .await
-    .expect("install the membership table as it stood before routes");
-
-    let binds = |plan: &wamn_schema_control::RunPlanePlan| {
-        plan.actions
-            .iter()
-            .filter(|action| action.kind == RunPlaneActionKind::BindReleaseComponentRoutes)
-            .count()
-    };
-    let plan = reconcile_run_plane::reconcile(&su, &schema(), true)
-        .await
-        .expect("the route binding applies");
-    assert_eq!(binds(&plan), 1, "actions: {:#?}", plan.actions);
-    assert_eq!(release_components_shape(&su).await, fresh);
-    let again = reconcile_run_plane::reconcile(&su, &schema(), true)
-        .await
-        .expect("a second reconcile applies");
-    assert_eq!(binds(&again), 0, "actions: {:#?}", again.actions);
-
-    // Replica mode skips the foreign keys and the seal trigger, and keeps the
-    // CHECK under test.
-    let digest = format!("sha256:{}", "0".repeat(64));
-    su.batch_execute("SET session_replication_role = replica")
-        .await
-        .expect("skip foreign keys");
-    su.execute(
-        "INSERT INTO catalog.release_components \
-           (tenant_id, effective_release_id, package_id, package_version, component_digest, \
-            route_component, route_operation) \
-         VALUES ('acme', 1, 'fixture', '1.0.0', $1, 'fixture', 'fixture:widget/get@1.0.0')",
-        &[&digest],
-    )
-    .await
-    .expect("a route member is accepted");
-    let both = su
-        .execute(
-            "INSERT INTO catalog.release_components \
-               (tenant_id, effective_release_id, wiring_package_id, wiring_package_version, \
-                wiring_id, wiring_version, node_id, package_id, package_version, \
-                component_digest, route_component, route_operation) \
-             VALUES ('acme', 1, 'fixture', '1.0.0', 'widget_get', 1, 'operation', \
-                     'fixture', '1.0.0', $1, 'fixture', 'fixture:widget/get@1.0.0')",
-            &[&digest],
-        )
-        .await
-        .expect_err("a member that binds a route and a wiring is refused");
-    assert_db_code(&both, "23514", "binding check");
-    su.batch_execute("RESET session_replication_role")
-        .await
-        .expect("restore foreign keys");
 }

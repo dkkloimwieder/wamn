@@ -116,16 +116,12 @@ impl std::error::Error for ReleaseLoadError {}
 
 /// The release a pod carries, derived from its verified manifest content.
 ///
-/// This is the `(effective release id, manifest digest)` pair the production
-/// claim uses to verify the run's admission pin and record the digest write-once
-/// (`ReleaseIdentity`). It is
+/// This is the manifest digest the production claim uses to verify the run's
+/// admission pin (`ReleaseIdentity`). It is
 /// host-injected identity, never guest-supplied — and, since it comes out of the
 /// same bytes the readers resolve against, the two cannot disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CarriedRelease {
-    /// The environment-local release identity derived from the manifest's
-    /// canonical preimage.
-    pub effective_release_id: i32,
     /// The serving manifest's digest — `runs.manifest_digest`. Derived from the
     /// manifest's own canonical bytes.
     pub manifest_digest: ManifestDigest,
@@ -182,23 +178,8 @@ impl LoadedRelease {
                 )
             })?;
 
-        let effective_release_id = i32::try_from(manifest.release.effective_release_id.get())
-            .map_err(|error| {
-                ReleaseLoadError::new(
-                    ReleaseLoadErrorType::ManifestRejected,
-                    format!(
-                        "serving manifest {origin} names effective release {} which the run plane \
-                         cannot record: {error}",
-                        manifest.release.effective_release_id.get()
-                    ),
-                )
-            })?;
-
         Ok(Self {
-            release: CarriedRelease {
-                effective_release_id,
-                manifest_digest,
-            },
+            release: CarriedRelease { manifest_digest },
             manifest,
         })
     }
@@ -225,7 +206,6 @@ impl LoadedRelease {
         };
         Self {
             release: CarriedRelease {
-                effective_release_id: 1,
                 manifest_digest: manifest.digest(),
             },
             manifest,
@@ -440,21 +420,15 @@ mod tests {
     }
 
     #[test]
-    fn both_identity_halves_come_from_the_verified_content() {
+    fn the_release_identity_comes_from_the_verified_content() {
         let mounts = Mounts::new("derived-identity");
         let expected = fixture();
         mounts.write_manifest_bytes(&expected.canonical_bytes());
 
         let loaded_release = mounts.load().expect("well-formed mount loads");
 
-        // Neither half is asserted by a carrier. The version is a header field
-        // inside the canonical preimage; the digest is over those same bytes. So
-        // the pair recorded onto a run and the document resolved against are, by
-        // construction, the same fact.
-        assert_eq!(
-            loaded_release.release().effective_release_id,
-            i32::try_from(expected.release.effective_release_id.get()).expect("fixture id fits"),
-        );
+        // No carrier asserts the identity: the digest is over the same bytes the
+        // pod resolves against, so the two are, by construction, the same fact.
         assert_eq!(loaded_release.release().manifest_digest, expected.digest());
     }
 

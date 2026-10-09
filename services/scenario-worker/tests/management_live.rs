@@ -114,8 +114,12 @@ fn candidate_graph(wiring_id: &str, component: &str, operation: &str) -> serde_j
 
 /// The exact package version every seeded candidate is gated against.
 const CANDIDATE_PACKAGE_VERSION: &str = "1.0.0";
-/// The active effective release exercised later by publication and release publishing.
-const CANDIDATE_EFFECTIVE_RELEASE_ID: i32 = 1;
+/// The installed release whose package scope the candidate is admitted under.
+/// The bytes name only its package membership; the digest is derived from them.
+const CANDIDATE_RELEASE_BYTES: &str = concat!(
+    r#"{"release":{"packages":[{"package-id":"candidate_package","#,
+    r#""package-version":"1.0.0"}]}}"#
+);
 /// The identity the SERVER will derive for one submitted document.
 ///
 /// It is derived here the same way and by the same reader (wamn-0h0g.8.28), not
@@ -532,16 +536,13 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
                (tenant_id, package_id, package_version, manifest_sha256) \
              VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
                      '{CANDIDATE_MANIFEST_SHA256}'); \
-             INSERT INTO catalog.effective_releases \
-               (tenant_id, effective_release_id, environment) \
-             VALUES ('{TENANT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}, '{ENVIRONMENT}'); \
-             INSERT INTO catalog.effective_release_packages \
-               (tenant_id, effective_release_id, package_id, package_version) \
-             VALUES ('{TENANT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}, '{CANDIDATE_PACKAGE}', \
-                     '{CANDIDATE_PACKAGE_VERSION}'); \
+             INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+             SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+               FROM (SELECT convert_to('{CANDIDATE_RELEASE_BYTES}', 'UTF8') AS bytes) AS release; \
              INSERT INTO catalog.effective_release_heads \
-               (tenant_id, environment, effective_release_id) \
-             VALUES ('{TENANT}', '{ENVIRONMENT}', {CANDIDATE_EFFECTIVE_RELEASE_ID}); \
+               (tenant_id, environment, manifest_digest) \
+             SELECT '{TENANT}', '{ENVIRONMENT}', manifest_digest FROM catalog.releases \
+              WHERE tenant_id = '{TENANT}'; \
              INSERT INTO catalog.component_digest_owners \
                (tenant_id, component_digest, package_id) \
              VALUES ('{TENANT}', '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PACKAGE}'), \
@@ -724,8 +725,9 @@ async fn stored_wiring(project: &Client) -> Option<(String, u32, String, serde_j
 async fn published_release_snapshot_count(project: &Client) -> i64 {
     project
         .query_one(
-            "SELECT count(*) FROM catalog.release_manifest_snapshots WHERE tenant_id = $1",
-            &[&TENANT],
+            "SELECT count(*) FROM catalog.releases WHERE tenant_id = $1 \
+               AND canonical_bytes <> convert_to($2, 'UTF8')",
+            &[&TENANT, &CANDIDATE_RELEASE_BYTES],
         )
         .await
         .expect("count published release snapshots")
@@ -1062,11 +1064,15 @@ async fn effectful_candidate_runtime_state(project: &Client) -> (bool, bool, boo
                EXISTS (SELECT 1 FROM catalog.connection_requirements \
                         WHERE tenant_id = $1 AND component_digest = $2) AS has_requirement, \
                EXISTS (SELECT 1 FROM catalog.effective_release_heads AS head \
-                         JOIN catalog.effective_release_packages AS member \
-                           ON member.tenant_id = head.tenant_id \
-                          AND member.effective_release_id = head.effective_release_id \
+                         JOIN catalog.releases AS release \
+                           ON release.tenant_id = head.tenant_id \
+                          AND release.manifest_digest = head.manifest_digest \
+                        CROSS JOIN LATERAL jsonb_array_elements( \
+                              convert_from(release.canonical_bytes, 'UTF8')::jsonb \
+                                #> '{release,packages}') AS member(value) \
                         WHERE head.tenant_id = $1 AND head.environment = $3 \
-                          AND member.package_id = $4 AND member.package_version = $5) \
+                          AND member.value ->> 'package-id' = $4 \
+                          AND member.value ->> 'package-version' = $5) \
                  AS has_release_scope, \
                EXISTS (SELECT 1 FROM catalog.connection_bindings \
                         WHERE tenant_id = $1 AND component_digest = $2) AS has_binding",

@@ -227,12 +227,14 @@ fn component_invocation_span(
 }
 
 /// Exact immutable candidate selected by one durable management admission.
+///
+/// A candidate carries no release pin: it resolves under the release this
+/// driver carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CandidateWiringTarget {
     pub tenant_id: String,
     pub package_id: String,
     pub environment: String,
-    pub effective_release_id: u32,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub wiring_hash: String,
@@ -279,7 +281,7 @@ pub struct RouterDriverSnapshot {
 
 #[derive(Debug, PartialEq, Eq)]
 struct CatalogFacts {
-    effective_release_id: u32,
+    manifest_digest: String,
     components: Arc<[AdmittedComponent]>,
     node_components: Arc<BTreeMap<String, AdmittedComponent>>,
     response: Option<Arc<PreparedResponse>>,
@@ -288,7 +290,7 @@ struct CatalogFacts {
 impl CatalogFacts {
     fn from_resolved(resolved: &ResolvedActiveWiring) -> anyhow::Result<Self> {
         Ok(Self {
-            effective_release_id: resolved.effective_release_id,
+            manifest_digest: resolved.manifest_digest.clone(),
             components: Arc::clone(&resolved.components),
             node_components: Arc::clone(&resolved.node_components),
             response: PreparedResponse::from_resolved(resolved)?.map(Arc::new),
@@ -455,7 +457,11 @@ impl RouterDriver {
             .resolve_candidate(&request.target, &request.binding_world)
             .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
-        Self::validate_candidate_closure(&request.target, &active)?;
+        Self::validate_candidate_closure(
+            &request.target,
+            self.release.release().manifest_digest.as_str(),
+            &active,
+        )?;
         let component_bytes = self.fetch_candidate_components(&active).await?;
         let native = active
             .facts
@@ -660,6 +666,7 @@ impl RouterDriver {
         target: &CandidateWiringTarget,
         expected_binding_world: &CandidateBindingWorld,
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
+        let manifest_digest = self.release.release().manifest_digest.as_str();
         let resolved = self
             .operations
             .postgres
@@ -668,7 +675,7 @@ impl RouterDriver {
                 &target.tenant_id,
                 &target.package_id,
                 &target.environment,
-                target.effective_release_id,
+                manifest_digest,
                 &target.wiring_id,
                 target.wiring_version,
                 &target.wiring_hash,
@@ -722,7 +729,7 @@ impl RouterDriver {
             &target.tenant_id,
             &target.package_id,
             &target.environment,
-            target.effective_release_id,
+            manifest_digest,
             &target.wiring_id,
             target.wiring_version,
         ) {
@@ -740,7 +747,7 @@ impl RouterDriver {
                 tenant_id: &target.tenant_id,
                 package_id: &target.package_id,
                 environment: &target.environment,
-                effective_release_id: target.effective_release_id,
+                manifest_digest,
                 wiring_id: &target.wiring_id,
                 version: resolved.version,
             },
@@ -761,12 +768,12 @@ impl RouterDriver {
         &self,
         request: &RouterDriverRequest,
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
-        let effective_release_id = self.release.manifest().release.effective_release_id.get();
+        let manifest_digest = self.release.release().manifest_digest.as_str();
         if let Some(active) = self.cache.get_version(
             &request.tenant_id,
             &request.package_id,
             &request.environment,
-            effective_release_id,
+            manifest_digest,
             &request.wiring_id,
             request.wiring_version,
         ) {
@@ -780,8 +787,7 @@ impl RouterDriver {
                 &request.tenant_id,
                 &request.package_id,
                 &request.environment,
-                effective_release_id,
-                self.release.release().manifest_digest.as_str(),
+                manifest_digest,
                 &request.wiring_id,
                 request.wiring_version,
             )
@@ -799,7 +805,7 @@ impl RouterDriver {
                 tenant_id: &request.tenant_id,
                 package_id: &request.package_id,
                 environment: &request.environment,
-                effective_release_id,
+                manifest_digest,
                 wiring_id: &request.wiring_id,
                 version: resolved.version,
             },
@@ -834,7 +840,7 @@ impl RouterDriver {
         target: &CandidateWiringTarget,
     ) -> Result<(), CandidateExecutionRefusal> {
         let release = &self.release.manifest().release;
-        if target.effective_release_id == 0 || target.wiring_version == 0 {
+        if target.wiring_version == 0 {
             return Err(CandidateExecutionRefusal::new(
                 CandidateExecutionRefusalKind::Identity,
                 "candidate-wiring-coordinate-incomplete",
@@ -863,11 +869,12 @@ impl RouterDriver {
 
     fn validate_candidate_closure(
         target: &CandidateWiringTarget,
+        manifest_digest: &str,
         active: &ActiveWiring<CatalogFacts>,
     ) -> Result<(), CandidateExecutionRefusal> {
         if active.version != target.wiring_version
             || active.graph_hash.as_ref() != target.wiring_hash
-            || active.facts.effective_release_id != target.effective_release_id
+            || active.facts.manifest_digest != manifest_digest
             || active.facts.components.iter().any(|component| {
                 component.scope.tenant_id != target.tenant_id
                     || component.scope.package_id != target.package_id
@@ -925,9 +932,8 @@ impl RouterDriver {
             "wiring-not-in-carried-release"
         );
         anyhow::ensure!(
-            active.facts.effective_release_id
-                == self.release.manifest().release.effective_release_id.get(),
-            "wiring-effective-release-not-carried"
+            active.facts.manifest_digest == self.release.release().manifest_digest.as_str(),
+            "wiring-release-not-carried"
         );
         Ok(())
     }
@@ -971,7 +977,7 @@ impl RouterDriver {
             } => (
                 OperationClosure::Candidate(application),
                 ConnectionExecutionClosure::Candidate {
-                    effective_release_id: target.effective_release_id,
+                    manifest_digest: self.release.release().manifest_digest.as_str().to_owned(),
                     environment: target.environment.clone(),
                     wiring_hash: target.wiring_hash.clone(),
                     component: component.component.clone(),

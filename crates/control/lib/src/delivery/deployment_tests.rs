@@ -5,6 +5,8 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{EffectiveReleaseId, PackageCoordinate, ServingManifest};
 
+use crate::print_release_env::{ReleaseCarrier, ReleaseSnapshot};
+
 use super::{
     SELECT_RELEASE, activate, argument, authenticated_interaction, claim,
     require_compatible_schema, require_released_route, require_selected, require_supplied_fields,
@@ -188,9 +190,7 @@ async fn seed_package(
         &[&version, &format!("sha256:{}", wiring.to_string().repeat(64))]).await.unwrap();
 }
 
-async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> ServingManifest {
-    client.execute("INSERT INTO catalog.effective_releases (tenant_id,effective_release_id,environment) VALUES ('delivery',$1,'test')", &[&id]).await.unwrap();
-    client.execute("INSERT INTO catalog.effective_release_packages (tenant_id,effective_release_id,package_id,package_version) VALUES ('delivery',$1,'inventory',$2)", &[&id, &version]).await.unwrap();
+async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> ReleaseSnapshot {
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
     manifest.release.tenant_id = "delivery".to_owned();
     manifest.release.environment = "test".to_owned();
@@ -204,7 +204,21 @@ async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> Se
         wamn_catalog::DefinitionHash::parse(format!("sha256:{}", hash.to_string().repeat(64)))
             .unwrap();
     manifest.workflow.wirings = [wiring].into();
-    manifest
+    let manifest_digest = manifest.digest();
+    client
+        .execute(
+            "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ('delivery',$1,$2)",
+            &[&manifest_digest.as_str(), &manifest.canonical_bytes()],
+        )
+        .await
+        .unwrap();
+    ReleaseSnapshot {
+        manifest,
+        carrier: ReleaseCarrier {
+            artifact_base: String::new(),
+            manifest_digest,
+        },
+    }
 }
 
 #[tokio::test]
@@ -238,17 +252,24 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
     let previous = seed_release(&first, 100, "1.0.0", 'b').await;
     let selected = seed_release(&first, 1, "2.0.0", 'c').await;
     first
-        .execute(SELECT_RELEASE, &[&"delivery", &"test", &100_i32])
+        .execute(
+            SELECT_RELEASE,
+            &[
+                &"delivery",
+                &"test",
+                &previous.carrier.manifest_digest.as_str(),
+            ],
+        )
         .await
         .unwrap();
     let mut transaction = first.transaction().await.unwrap();
-    claim(&transaction, &previous.release).await.unwrap();
-    require_selected(&transaction, &previous.release)
+    claim(&transaction, &previous.manifest.release)
         .await
         .unwrap();
+    require_selected(&transaction, &previous).await.unwrap();
     // Different historical migrations do not matter when the installed leaf
     // and requested package have exactly the same applied migration stream.
-    require_compatible_schema(&mut transaction, &previous)
+    require_compatible_schema(&mut transaction, &previous.manifest)
         .await
         .unwrap();
     let second_pid: i32 = second
@@ -256,10 +277,11 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
         .await
         .unwrap()
         .get(0);
+    let selected_digest = selected.carrier.manifest_digest.as_str().to_owned();
     let selection = tokio::spawn(async move {
         let transaction = second.transaction().await.unwrap();
         transaction
-            .execute(SELECT_RELEASE, &[&"delivery", &"test", &1_i32])
+            .execute(SELECT_RELEASE, &[&"delivery", &"test", &selected_digest])
             .await
             .unwrap();
         transaction.commit().await.unwrap();
@@ -283,18 +305,20 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
     .await
     .expect("the concurrent selection waits on the real head row lock");
     assert!(!selection.is_finished());
-    activate(&transaction, &previous, "delivery-test")
+    activate(&transaction, &previous.manifest, "delivery-test")
         .await
         .unwrap();
-    activate(&transaction, &previous, "delivery-test")
+    activate(&transaction, &previous.manifest, "delivery-test")
         .await
         .unwrap();
     transaction.commit().await.unwrap();
     selection.await.unwrap();
     let transaction = first.transaction().await.unwrap();
-    claim(&transaction, &previous.release).await.unwrap();
+    claim(&transaction, &previous.manifest.release)
+        .await
+        .unwrap();
     assert!(
-        require_selected(&transaction, &previous.release)
+        require_selected(&transaction, &previous)
             .await
             .unwrap_err()
             .to_string()
@@ -312,12 +336,12 @@ async fn owned_selection_lock_refuses_late_activation_and_changed_installed_sche
     );
     seed_package(&first, "3.0.0", Some("2.0.0"), 'e', 'e').await;
     let mut transaction = first.transaction().await.unwrap();
-    claim(&transaction, &selected.release).await.unwrap();
-    require_selected(&transaction, &selected.release)
+    claim(&transaction, &selected.manifest.release)
         .await
         .unwrap();
+    require_selected(&transaction, &selected).await.unwrap();
     assert!(
-        require_compatible_schema(&mut transaction, &selected)
+        require_compatible_schema(&mut transaction, &selected.manifest)
             .await
             .unwrap_err()
             .to_string()

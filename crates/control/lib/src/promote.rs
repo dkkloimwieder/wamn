@@ -31,12 +31,9 @@ use crate::publish_release::{
 
 const COMPONENT_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
-const SELECT_SOURCE_SNAPSHOT_SQL: &str = "\
-SELECT manifest_digest, canonical_bytes FROM catalog.release_manifest_snapshots \
- WHERE tenant_id = $1 AND effective_release_id = $2";
-const SELECT_RELEASE_PACKAGES_SQL: &str = "\
-SELECT package_id, package_version FROM catalog.effective_release_packages \
- WHERE tenant_id = $1 AND effective_release_id = $2 ORDER BY package_id COLLATE \"C\"";
+const SELECT_SOURCE_RELEASE_SQL: &str = "\
+SELECT manifest_digest, canonical_bytes FROM catalog.releases \
+ WHERE tenant_id = $1 AND manifest_digest = $2";
 const SELECT_PACKAGE_SQL: &str = "\
 SELECT manifest_sha256, predecessor_version FROM catalog.packages \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3";
@@ -79,9 +76,9 @@ SELECT EXISTS (SELECT 1 FROM catalog.connection_requirements \
  WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3 \
    AND requirement_json = $4::text::jsonb AND requirement_hash = $5)";
 const UPSERT_HEAD_SQL: &str = "\
-INSERT INTO catalog.effective_release_heads (tenant_id, environment, effective_release_id) \
+INSERT INTO catalog.effective_release_heads (tenant_id, environment, manifest_digest) \
 VALUES ($1, $2, $3) ON CONFLICT (tenant_id, environment) DO UPDATE \
-SET effective_release_id = EXCLUDED.effective_release_id, updated_at = now()";
+SET manifest_digest = EXCLUDED.manifest_digest, updated_at = now()";
 const LOCK_ACTIVATION_SQL: &str = "\
 SELECT confirmed_definition_hash, enabled FROM catalog.wiring_activation \
  WHERE tenant_id = $1 AND package_id = $2 AND environment = $3 AND wiring_id = $4 FOR UPDATE";
@@ -163,10 +160,8 @@ pub struct PromoteRequest {
     pub project: String,
     /// Tenant owning both releases.
     pub tenant: String,
-    /// Integer identity of the source release.
-    pub source_effective_release_id: u32,
-    /// Integer identity of the promoted target release.
-    pub target_effective_release_id: u32,
+    /// The source release, as its manifest digest.
+    pub source_manifest_digest: String,
     /// Environment the source release was published for.
     pub source_environment: String,
     /// Environment the release is promoted into.
@@ -261,14 +256,11 @@ pub async fn promote(args: PromoteRequest) -> anyhow::Result<PromoteOutcome> {
     validate_args(&args)?;
     let run_schema = BareSchemaName::new(args.run_schema.clone())
         .with_context(|| format!("invalid --run-schema {:?}", args.run_schema))?;
-    let source_release_id = pg_release_id(args.source_effective_release_id, "source")?;
-    let target_release_id = pg_release_id(args.target_effective_release_id, "target")?;
-
     let (mut source, source_connection) = tokio_postgres::connect(&args.source_database_url, NoTls)
         .await
         .context("connect to source project environment")?;
     let source_task = tokio::spawn(source_connection);
-    let release = load_source_release(&mut source, &args, source_release_id).await;
+    let release = load_source_release(&mut source, &args).await;
     let release = finish_connection(source, source_task, release).await?;
 
     let artifact_config = ComponentArtifactSourceConfig::new(
@@ -288,30 +280,20 @@ pub async fn promote(args: PromoteRequest) -> anyhow::Result<PromoteOutcome> {
         .await
         .context("connect to target project environment")?;
     let target_task = tokio::spawn(target_connection);
-    let promoted = promote_target(
-        &mut target,
-        &artifact_source,
-        &release,
-        &args,
-        target_release_id,
-        &run_schema,
-    )
-    .await;
+    let promoted =
+        promote_target(&mut target, &artifact_source, &release, &args, &run_schema).await;
     let (target_digest, activated) = finish_connection(target, target_task, promoted).await?;
 
     let target_release = wamn_catalog::ServingRelease {
         tenant_id: args.tenant.clone(),
-        effective_release_id: wamn_catalog::EffectiveReleaseId::new(
-            args.target_effective_release_id,
-        )
-        .expect("validate_args rejected zero"),
+        effective_release_id: release.manifest.release.effective_release_id,
         environment: args.target_environment.clone(),
         packages: release.manifest.release.packages.clone(),
     };
-    let coordinate = DeploymentCoordinate::new(&args.org, &args.project, &target_release);
     let digest = wamn_catalog::ManifestDigest::parse(target_digest.clone())
         .expect("the release publish returned a canonical digest");
-    report_deployment_coordinate(&coordinate, &digest);
+    let coordinate = DeploymentCoordinate::new(&args.org, &args.project, &target_release, &digest);
+    report_deployment_coordinate(&coordinate);
     project_release_identity(&args.control_database_url, &coordinate).await?;
     Ok(PromoteOutcome {
         verified_components: release.components.len(),
@@ -353,10 +335,8 @@ fn validate_args(args: &PromoteRequest) -> anyhow::Result<()> {
     ] {
         ensure!(!value.is_empty(), "promotion {field} must not be empty");
     }
-    ensure!(
-        args.source_effective_release_id > 0 && args.target_effective_release_id > 0,
-        "effective release ids must be greater than zero"
-    );
+    wamn_catalog::ManifestDigest::parse(args.source_manifest_digest.clone())
+        .context("the source release must be a manifest digest")?;
     ensure!(
         args.source_environment != args.target_environment,
         "source and target environments must differ"
@@ -364,15 +344,9 @@ fn validate_args(args: &PromoteRequest) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn pg_release_id(value: u32, side: &'static str) -> anyhow::Result<i32> {
-    i32::try_from(value)
-        .with_context(|| format!("{side} effective-release-id exceeds PostgreSQL integer"))
-}
-
 async fn load_source_release(
     client: &mut Client,
     args: &PromoteRequest,
-    release_id: i32,
 ) -> anyhow::Result<SourceRelease> {
     let tx = client
         .build_transaction()
@@ -384,13 +358,16 @@ async fn load_source_release(
         .await
         .context("claim source tenant")?;
     let row = tx
-        .query_opt(SELECT_SOURCE_SNAPSHOT_SQL, &[&args.tenant, &release_id])
+        .query_opt(
+            SELECT_SOURCE_RELEASE_SQL,
+            &[&args.tenant, &args.source_manifest_digest],
+        )
         .await
-        .context("read source format-1 release snapshot")?
+        .context("read source release")?
         .with_context(|| {
             format!(
-                "source-release-missing: tenant {:?} effective release {}",
-                args.tenant, args.source_effective_release_id
+                "source-release-missing: tenant {:?} release {}",
+                args.tenant, args.source_manifest_digest
             )
         })?;
     let stored_digest: String = row.get(0);
@@ -403,15 +380,10 @@ async fn load_source_release(
     );
     ensure!(
         manifest.release.tenant_id == args.tenant
-            && manifest.release.effective_release_id.get() == args.source_effective_release_id
             && manifest.release.environment == args.source_environment,
         "source serving-manifest coordinate mismatch"
     );
-    let release_packages = load_release_packages(&tx, &args.tenant, release_id).await?;
-    ensure!(
-        release_packages == manifest.release.packages,
-        "source release membership differs from its frozen manifest"
-    );
+    let release_packages = manifest.release.packages.clone();
 
     let mut packages = Vec::with_capacity(release_packages.len());
     let mut components = Vec::new();
@@ -477,23 +449,6 @@ async fn load_projection_hashes(
         "source component projection hash set is incomplete"
     );
     Ok(hashes)
-}
-
-async fn load_release_packages(
-    client: &impl GenericClient,
-    tenant: &str,
-    release_id: i32,
-) -> anyhow::Result<BTreeSet<PackageCoordinate>> {
-    client
-        .query(SELECT_RELEASE_PACKAGES_SQL, &[&tenant, &release_id])
-        .await
-        .context("read effective release package membership")?
-        .into_iter()
-        .map(|row| {
-            PackageCoordinate::new(row.get::<_, String>(0), row.get::<_, String>(1))
-                .context("stored package coordinate is invalid")
-        })
-        .collect()
 }
 
 async fn load_package_record(
@@ -661,7 +616,6 @@ async fn promote_target(
     artifact_source: &ComponentArtifactSource,
     source: &SourceRelease,
     args: &PromoteRequest,
-    target_release_id: i32,
     run_schema: &BareSchemaName,
 ) -> anyhow::Result<(String, usize)> {
     let preflight = client
@@ -727,7 +681,8 @@ async fn promote_target(
         &tx,
         &PublishReleaseManifest {
             tenant_id: &args.tenant,
-            effective_release_id: target_release_id,
+            effective_release_id: i32::try_from(source.manifest.release.effective_release_id.get())
+                .context("the source release id exceeds PostgreSQL integer")?,
             environment: &args.target_environment,
             verified_publisher_principal: &args.principal,
             packages: &packages,
@@ -746,7 +701,11 @@ async fn promote_target(
     verify_provisioned_environment(expected.as_deref(), &published.manifest.release, run_schema)?;
     tx.execute(
         UPSERT_HEAD_SQL,
-        &[&args.tenant, &args.target_environment, &target_release_id],
+        &[
+            &args.tenant,
+            &args.target_environment,
+            &published.digest.as_str(),
+        ],
     )
     .await
     .context("advance target effective-release head")?;

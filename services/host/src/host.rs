@@ -1454,7 +1454,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             "wamn-host serves the control serving root"
         ),
         Some(loaded_release) => tracing::info!(
-            effective_release_id = loaded_release.release().effective_release_id,
             manifest_digest = %loaded_release.release().manifest_digest,
             "wamn-host loaded its release"
         ),

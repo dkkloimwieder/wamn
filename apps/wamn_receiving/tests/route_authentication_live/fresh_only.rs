@@ -263,7 +263,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         )),
         package.join("wamn.json"),
     ];
-    publish_release::publish_release(PublishReleaseRequest {
+    let digest = publish_release::publish_release(PublishReleaseRequest {
         database_url: test.project_url.to_owned(),
         control_database_url: test.inputs.system_pg_url.clone(),
         org: identity().org.clone(),
@@ -283,14 +283,15 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         route_host: Some(test.inputs.route_host.clone()),
         package_manifests: manifests,
     })
-    .await?;
+    .await?
+    .to_string();
     push_release_manifest::push_release_manifest(
         &PushReleaseManifestRequest {
             database_url: test.project_url.to_owned(),
             org: identity().org.clone(),
             project: identity().project.clone(),
             tenant: identity().tenant.clone(),
-            effective_release_id: 4,
+            manifest_digest: digest.clone(),
             artifact_base: test.inputs.release_artifact_base.clone(),
             registry_auth_file: test.inputs.registry_auth_file.clone(),
             insecure_registry: true,
@@ -300,26 +301,18 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         None,
     )
     .await?;
-    let digest: String = test
-        .project
-        .query_one(
-            "SELECT manifest_digest FROM catalog.release_manifest_snapshots \
-         WHERE tenant_id = $1 AND effective_release_id = 4",
-            &[&identity().tenant.as_str()],
-        )
-        .await?
-        .get(0);
     let attested: String = test
         .control
         .query_one(
             "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
-             WHERE tenant_id = $1 AND effective_release_id = 4 \
+             WHERE tenant_id = $1 AND manifest_digest = $5 \
                AND org_id = $2 AND project_id = $3 AND environment = $4",
             &[
                 &identity().tenant.as_str(),
                 &identity().org.as_str(),
                 &identity().project.as_str(),
                 &identity().environment.as_str(),
+                &digest.as_str(),
             ],
         )
         .await?
@@ -340,7 +333,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     )?);
     anyhow::ensure!(
         release.manifest().format_version == wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION
-            && release.release().effective_release_id == 4
+            && release.manifest().release.effective_release_id.get() == 4
             && release.manifest().release.packages.len() == 2
             && release.manifest().components.len() == 2
             && release.manifest().workflow.wirings.len() == 1
@@ -365,7 +358,12 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         "prior-commit release did not fold the base grant into its parent"
     );
     anyhow::ensure!(
-        release_snapshots(test.project).await? == snapshots,
+        release_snapshots(test.project)
+            .await?
+            .into_iter()
+            .filter(|(release, _)| *release != digest)
+            .collect::<Vec<_>>()
+            == snapshots,
         "prior-commit publication changed an earlier immutable release"
     );
 
@@ -704,12 +702,13 @@ async fn counter(test: &PriorCommitTest<'_>, generated_get: &str) -> anyhow::Res
     result
 }
 
-async fn release_snapshots(project: &Client) -> anyhow::Result<Vec<(i32, Vec<u8>)>> {
+/// The installed releases of the tenant, in the order they were recorded.
+async fn release_snapshots(project: &Client) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
     Ok(project
         .query(
-            "SELECT effective_release_id, canonical_bytes \
-        FROM catalog.release_manifest_snapshots WHERE tenant_id = $1 \
-        AND effective_release_id BETWEEN 1 AND 3 ORDER BY effective_release_id",
+            "SELECT manifest_digest, canonical_bytes \
+        FROM catalog.releases WHERE tenant_id = $1 \
+        ORDER BY recorded_at, manifest_digest",
             &[&identity().tenant.as_str()],
         )
         .await?

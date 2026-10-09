@@ -373,8 +373,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "44",
-        "the sweep must cover exactly the 44 governed relations"
+        governed, "41",
+        "the sweep must cover exactly the 41 governed relations"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
@@ -617,16 +617,13 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
                (tenant_id, package_id, package_version, manifest_sha256) \
              SELECT t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
-             INSERT INTO catalog.effective_releases \
-               (tenant_id, effective_release_id, environment) \
-             SELECT t, 1, 'dev' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              SELECT t, 'dev', 'standard' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, package_id, effective_release_id, environment, \
+               (tenant_id, run_id, package_id, environment, \
                 flow_id, flow_version) \
-             SELECT t, 'r', 'platform_fixture', 1, 'dev', 'f', 1 \
+             SELECT t, 'r', 'platform_fixture', 'dev', 'f', 1 \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n"
         ),
     );

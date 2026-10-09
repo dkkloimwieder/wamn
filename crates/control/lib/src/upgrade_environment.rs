@@ -43,6 +43,9 @@ const TAP_JOB: &str = "evt-nats-tap-stream";
 const TAP_CHECK_POD: &str = "evt-nats-check";
 const TAP_PRESENT: &str = r#""config":{"name":"WAMN_TAP""#;
 const COMMAND_TIMEOUT: Duration = Duration::from_hours(3);
+/// The release id the manifest still names. A release is its manifest
+/// digest, so every publish names the same id (wamn-snz0.5).
+const MANIFEST_RELEASE_ID: u32 = 1;
 
 #[derive(Clone, Debug)]
 pub struct UpgradeEnvironmentRequest {
@@ -429,8 +432,8 @@ impl Run {
         Ok((done(!pushed), outputs))
     }
 
-    /// Stage 5: capacity, broker, `WAMN_TAP` and the next free release id,
-    /// before any change to the environment.
+    /// Stage 5: capacity, broker, `WAMN_TAP` and the attested releases, before
+    /// any change to the environment.
     async fn preflight(&self) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
@@ -455,19 +458,17 @@ impl Run {
         outputs.insert("WAMN_TAP".to_owned(), tap.to_owned());
 
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        let release = next_release(&databases, &self.arguments).await?;
+        let attested = attested_releases(&databases, &self.arguments).await?;
         outputs.insert("tenant".to_owned(), databases.tenant.clone());
         outputs.insert("database".to_owned(), databases.database.clone());
         outputs.insert(
             "attested releases".to_owned(),
-            release
-                .attested
+            attested
                 .iter()
-                .map(|(id, commit)| format!("{id} {commit}"))
+                .map(|(digest, commit)| format!("{digest} {commit}"))
                 .collect::<Vec<_>>()
                 .join(", "),
         );
-        outputs.insert("release id".to_owned(), release.next.to_string());
         Ok((StepResult::Done, outputs))
     }
 
@@ -554,11 +555,9 @@ impl Run {
         ))
     }
 
-    fn release_id(record: &RunRecord) -> anyhow::Result<u32> {
-        record
-            .output(Stage::Preflight, "release id")?
-            .parse()
-            .context("the release id of the preflight")
+    /// The release that stage 7 published, as its manifest digest.
+    fn release_digest(record: &RunRecord) -> anyhow::Result<String> {
+        Ok(record.output(Stage::Packages, "release digest")?.to_owned())
     }
 
     /// Stage 6: every pending system and project migration.
@@ -748,8 +747,8 @@ impl Run {
         .await
     }
 
-    /// Stage 7: packages, components, gated wirings, the release under the
-    /// preflight id, and the bindings of the current release copied to it.
+    /// Stage 7: packages, components, gated wirings, the release, and the
+    /// bindings of the current release copied to it.
     async fn packages(&self, record: &RunRecord) -> Outcome {
         use crate::release_composition::{
             ComponentBuildPlan, PackageInput, load_wirings, select_component_artifacts,
@@ -758,7 +757,6 @@ impl Run {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        let release_id = Self::release_id(record)?;
         let tenant = databases.tenant.clone();
         let project_url = databases.project_url();
         let system_url = databases.system_url();
@@ -978,7 +976,7 @@ impl Run {
                 org: self.arguments.org.clone(),
                 project: self.arguments.project.clone(),
                 tenant: tenant.clone(),
-                effective_release_id: release_id,
+                effective_release_id: MANIFEST_RELEASE_ID,
                 environment: self.arguments.environment.clone(),
                 verified_publisher_principal: format!(
                     "wamn-management-author-{}--{}--{}",
@@ -1008,10 +1006,9 @@ impl Run {
             },
         )
         .await?;
-        outputs.insert("release id".to_owned(), release_id.to_string());
         outputs.insert("release digest".to_owned(), digest.to_string());
 
-        for copied in copy_bindings(self, &databases, release_id, &pushed).await? {
+        for copied in copy_bindings(self, &databases, digest.as_str(), &pushed).await? {
             outputs.insert(format!("binding {}", copied.0), copied.1);
         }
         Ok((StepResult::Done, outputs))
@@ -1024,7 +1021,7 @@ impl Run {
         let kubectl = Kubectl(environment.context.clone());
         self.broker(&kubectl).await?;
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        let release_id = Self::release_id(record)?;
+        let manifest_digest = Self::release_digest(record)?;
         let files = self.release_files();
         private_directory(&files)?;
         let manifest = files.join("manifest.json");
@@ -1040,7 +1037,7 @@ impl Run {
             org: self.arguments.org.clone(),
             project: self.arguments.project.clone(),
             tenant: databases.tenant.clone(),
-            effective_release_id: release_id,
+            manifest_digest,
             artifact_base: format!("{}/releases", environment.registry),
             target_directory: self.delivery(),
             manifest_output: manifest.clone(),
@@ -1094,7 +1091,7 @@ impl Run {
             org: self.arguments.org.clone(),
             project: self.arguments.project.clone(),
             tenant: databases.tenant.clone(),
-            effective_release_id: Self::release_id(record)?,
+            manifest_digest: Self::release_digest(record)?,
             artifact_base: format!("{}/releases", environment.registry),
             registry_auth_file: registry.auth_file(),
             insecure_registry: false,
@@ -2211,25 +2208,25 @@ impl GateService {
 }
 
 /// Copies each active binding of the current release of the environment to
-/// the new release id, with the digest that this run pushed for the same
+/// the new release, with the digest that this run pushed for the same
 /// component (owner ruling of 2026-10-02 on `wamn-m511.5`).
 async fn copy_bindings(
     run: &Run,
     databases: &Databases,
-    release_id: u32,
+    release: &str,
     pushed: &BTreeMap<String, String>,
 ) -> anyhow::Result<Vec<(String, String)>> {
     let client = databases.project().await?;
     let rows = client
         .query(
-            "SELECT b.effective_release_id, b.component_digest, b.store_alias, b.instance_id,
+            "SELECT b.manifest_digest, b.component_digest, b.store_alias, b.instance_id,
                     i.requirement_type, g.definition_json::text, g.credential_set_handle,
                     (SELECT l.component FROM catalog.component_library AS l
                       WHERE l.tenant_id = b.tenant_id AND l.component_digest = b.component_digest
                       ORDER BY l.admitted_at DESC LIMIT 1)
                FROM catalog.effective_release_heads AS h
                JOIN catalog.connection_bindings AS b
-                 ON b.tenant_id = h.tenant_id AND b.effective_release_id = h.effective_release_id
+                 ON b.tenant_id = h.tenant_id AND b.manifest_digest = h.manifest_digest
                JOIN catalog.connection_instances AS i
                  ON i.tenant_id = b.tenant_id AND i.environment = b.environment
                 AND i.instance_id = b.instance_id
@@ -2243,7 +2240,7 @@ async fn copy_bindings(
         .await?;
     let mut copied = Vec::new();
     for row in rows {
-        let current: i32 = row.get(0);
+        let current: String = row.get(0);
         let old_digest: String = row.get(1);
         let store_alias: String = row.get(2);
         let instance_id: String = row.get(3);
@@ -2270,7 +2267,7 @@ async fn copy_bindings(
             requirement_type: serde_json::from_value(Value::String(requirement))?,
             definition: file,
             credential_handle,
-            effective_release_id: release_id,
+            manifest_digest: release.to_owned(),
             component_digest: new_digest.clone(),
             store_alias: store_alias.clone(),
         })
@@ -2278,7 +2275,7 @@ async fn copy_bindings(
         copied.push((
             instance_id,
             format!(
-                "{store_alias}: release {current} {old_digest} to release {release_id} {new_digest}, generation {}",
+                "{store_alias}: release {current} {old_digest} to release {release} {new_digest}, generation {}",
                 bound.generation
             ),
         ));
@@ -3169,47 +3166,26 @@ fn redact(text: &str) -> String {
     text
 }
 
-struct NextRelease {
-    /// Each attested release id with its source commit.
-    attested: Vec<(i32, String)>,
-    next: i32,
-}
-
-/// The attestations and releases of the tenant. The next free id is one
-/// above every release of the tenant.
-async fn next_release(
+/// Each attested release of the tenant, as its manifest digest, with its
+/// source commit. The attestations live in the control store of the system
+/// database (deploy/sql/control-portable-store.sql).
+async fn attested_releases(
     databases: &Databases,
     arguments: &RunArguments,
-) -> anyhow::Result<NextRelease> {
-    // The attestations live in the control store of the system database
-    // (deploy/sql/control-portable-store.sql), the releases in the project database.
-    let attested = databases
+) -> anyhow::Result<Vec<(String, String)>> {
+    Ok(databases
         .system()
         .await?
         .query(
-            "SELECT effective_release_id, coalesce(source_commit, '') FROM catalog.deployment_attestations
+            "SELECT manifest_digest, coalesce(source_commit, '') FROM catalog.deployment_attestations
               WHERE tenant_id = $1 AND org_id = $2 AND project_id = $3 AND environment = $4
-              ORDER BY effective_release_id",
+              ORDER BY attested_at, manifest_digest",
             &[&databases.tenant, &arguments.org, &arguments.project, &arguments.environment],
         )
         .await?
         .iter()
         .map(|row| (row.get(0), row.get(1)))
-        .collect();
-    let highest: i32 = databases
-        .project()
-        .await?
-        .query_one(
-            "SELECT coalesce(max(effective_release_id), 0) FROM catalog.effective_releases
-              WHERE tenant_id = $1",
-            &[&databases.tenant],
-        )
-        .await?
-        .get(0);
-    Ok(NextRelease {
-        attested,
-        next: highest + 1,
-    })
+        .collect())
 }
 
 /// A port-forward to the primary pod of a CloudNativePG cluster, on a free

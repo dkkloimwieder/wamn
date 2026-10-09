@@ -125,7 +125,7 @@ pub fn lock_connection_selection_sql() -> &'static str {
 /// Insert one immutable component release binding to an environment instance.
 pub fn insert_component_connection_binding_sql() -> &'static str {
     "INSERT INTO catalog.connection_bindings \
-       (tenant_id, effective_release_id, component_digest, store_alias, \
+       (tenant_id, manifest_digest, component_digest, store_alias, \
         environment, instance_id, binding_status, validation_status, validation_hash) \
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
 }

@@ -78,7 +78,7 @@ fn runs_only_spec() -> [(&'static str, Need); 6] {
 fn runs_stand_in() -> String {
     "CREATE TABLE wamn_run.runs (\
         tenant_id text NOT NULL, run_id text NOT NULL, flow_id text, \
-        flow_version int, package_id text NOT NULL, effective_release_id int NOT NULL, \
+        flow_version int, package_id text NOT NULL, \
         environment text NOT NULL, \
         attachment_id text, registration_id text, \
         event_source_run_id text, event_root_run_id text, event_depth int, \

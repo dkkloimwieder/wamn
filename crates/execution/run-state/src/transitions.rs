@@ -423,7 +423,7 @@ mod tests {
         let run = include_str!("../../../../deploy/sql/run-state.sql");
         for field in [
             "package_id",
-            "effective_release_id",
+            "manifest_digest",
             "attachment_id",
             "registration_id",
             "event_source_run_id",

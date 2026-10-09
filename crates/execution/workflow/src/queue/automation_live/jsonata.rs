@@ -56,9 +56,16 @@ pub(super) async fn run(
     let row = json!({"event": "insert", "new": {
         "id": "m-1", "idempotency_key": "k-1", "kind": "move", "packaging_id": "p-1",
         "from_location_id": "l-0", "to_location_id": "l-2", "quantity": "4"}});
+    let manifest_digest: String = admin
+        .query_one(
+            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
+            &[&TENANT],
+        )
+        .await?
+        .get(0);
     let run = workflows
         .start(&StartRequest {
-            effective_release_id: 1,
+            manifest_digest: manifest_digest.clone(),
             package_id: "automation".to_owned(),
             wiring_id: "echo".to_owned(),
             wiring_version: 1,
@@ -114,9 +121,16 @@ async fn event_run(
     let row = json!({"event": "insert", "new": {
         "id": "m-2", "idempotency_key": "k-2", "kind": "move", "packaging_id": "p-2",
         "from_location_id": "l-0", "to_location_id": "l-3", "quantity": "1"}});
+    let manifest_digest: String = admin
+        .query_one(
+            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
+            &[&TENANT],
+        )
+        .await?
+        .get(0);
     let mut admission = EventRunAdmission {
         package_id: "automation",
-        effective_release_id: 1,
+        manifest_digest: &manifest_digest,
         environment: "test",
         wiring_id: "echo",
         wiring_version: 1,

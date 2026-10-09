@@ -92,7 +92,8 @@ async fn exercise(
     let carrier = wamn_control::print_release_env::lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),
-        identity().effective_release_id,
+        &super::super::release_digest_at(&route.database_url, identity().effective_release_id)
+            .await?,
         &cluster.inputs.release_artifact_base,
     )
     .await?;
@@ -229,8 +230,8 @@ async fn exercise(
             identity().project.as_str(),
             "--tenant",
             identity().tenant.as_str(),
-            "--effective-release-id",
-            &identity().effective_release_id.to_string(),
+            "--release-digest",
+            carrier.manifest_digest.as_str(),
             "--artifact-base",
             &carrier.artifact_base,
         ])
@@ -304,8 +305,8 @@ async fn exercise(
         identity().project.as_str(),
         "--tenant",
         identity().tenant.as_str(),
-        "--effective-release-id",
-        &identity().effective_release_id.to_string(),
+        "--release-digest",
+        carrier.manifest_digest.as_str(),
         "--artifact-base",
         &carrier.artifact_base,
         "--insecure-registry",

@@ -633,7 +633,7 @@ mod tests {
         let overlay = admitted("overlay", "2.0.0", "overlay:entity/create@2.0.0");
         let resolved = ResolvedActiveWiring {
             version: 3,
-            effective_release_id: 7,
+            manifest_digest: "sha256:release".to_owned(),
             graph_hash: std::sync::Arc::from(document.wiring_hash().as_str()),
             package_version: "2.0.0".to_owned(),
             document,
