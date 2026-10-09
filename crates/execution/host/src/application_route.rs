@@ -8,8 +8,9 @@
 //! role or permission write first takes the tenant lock that `wamn-ctl` and
 //! release reconciliation take. The writes are the functions of
 //! `wamn_platform_identity::application`, which `wamn-ctl` also calls, so no
-//! second writer exists. A grant writes the closure of the loaded release,
-//! and refuses when that release is no longer the head of its environment.
+//! second writer exists. A grant stores the root only; each host expands it
+//! through the release it loaded (platform-deploy.md R18), so a grant works
+//! while two releases serve during a rollout.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,12 +33,6 @@ use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 use crate::control_route::{Refusal, parse};
-
-/// The release that the environment's head names. Release reconciliation
-/// advances it in the transaction that rewrites the closures, under the
-/// tenant lock, so a read under that lock is exact.
-const RELEASE_HEAD_SQL: &str = "SELECT effective_release_id FROM catalog.effective_release_heads \
-    WHERE tenant_id = $1 AND environment = $2";
 
 /// What the application routes of one host use.
 pub(crate) struct ApplicationRoutes<'a> {
@@ -91,7 +86,6 @@ fn declared(refusal: AdministrationRefusal) -> Refusal {
         | AdministrationRefusal::AdminDeleted => ("admin_fixed", "role"),
         AdministrationRefusal::NotRoleName { .. } => ("invalid_input", "role"),
         AdministrationRefusal::RoleNotFound { .. } => ("role_not_found", "role"),
-        AdministrationRefusal::OperationNotServed { .. } => ("operation_not_served", "operation"),
         AdministrationRefusal::NotGrantable { .. } => ("operation_not_grantable", "operation"),
         AdministrationRefusal::NotHeld { .. } => ("permission_not_held", "operation"),
         AdministrationRefusal::NotSelected { .. } => ("permission_not_selected", "operation"),
@@ -181,7 +175,6 @@ impl ApplicationRoutes<'_> {
                 }
                 let closures = ReleaseClosures::from_manifest(self.release.manifest());
                 self.run(attachment, principal, true, async |client| {
-                    self.require_head(client).await?;
                     let outcome = grant_permission(
                         client,
                         tenant,
@@ -284,42 +277,27 @@ impl ApplicationRoutes<'_> {
             .await?
     }
 
-    /// Refuse a grant while the loaded release is not the head, because its
-    /// closures are not the ones that reconciliation wrote.
-    async fn require_head(&self, client: &Client) -> Result<(), Refusal> {
-        let release = &self.release.manifest().release;
-        let head: Option<i32> = client
-            .query_opt(
-                RELEASE_HEAD_SQL,
-                &[&release.tenant_id, &release.environment],
-            )
-            .await?
-            .map(|row| row.get(0));
-        if head.and_then(|head| u32::try_from(head).ok())
-            == Some(release.effective_release_id.get())
-        {
-            return Ok(());
-        }
-        Err(Refusal::Declared {
-            code: "release_not_current",
-            detail: json!({ "field": "operation" }),
-        })
-    }
-
-    /// Each operation the release serves and each stored row of the role:
-    /// whether the role selected it, the roots that require it, and whether
-    /// a role can take it (§4.6).
+    /// Each operation the release serves and each stored root of the role:
+    /// whether the role selected it, the roots that require it under the
+    /// loaded release, and whether a role can take it (§4.6).
     fn permission_list(&self, role: &str, rows: &[(String, String)]) -> Value {
+        let closures = ReleaseClosures::from_manifest(self.release.manifest());
+        let selected: BTreeSet<&str> = rows
+            .iter()
+            .filter(|(permission, root)| permission == root)
+            .map(|(permission, _)| permission.as_str())
+            .collect();
         let mut required: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-        let mut selected: BTreeSet<&str> = BTreeSet::new();
-        for (permission, root) in rows {
-            if permission == root {
-                selected.insert(permission);
-            } else {
-                required.entry(permission).or_default().insert(root);
+        for &root in &selected {
+            for permission in closures.closure(root).into_iter().flatten() {
+                if permission != root {
+                    required
+                        .entry(permission.as_str())
+                        .or_default()
+                        .insert(root);
+                }
             }
         }
-        let closures = ReleaseClosures::from_manifest(self.release.manifest());
         let host: BTreeMap<String, HostRouteAuthority> = self
             .release
             .manifest()

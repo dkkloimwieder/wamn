@@ -35,6 +35,13 @@ use crate::{RunStatus, sql as run_sql};
 /// environment scope. One set-valued predicate preserves the tenant's single
 /// global FIFO; an executor never leases a package outside its release merely
 /// because the tenant shares a project database.
+///
+/// `$3` is the claiming host's effective release id, or NULL for a host that
+/// carries none. A run executes only on hosts of the release it was admitted
+/// under, so the candidate select skips a run pinned to another release
+/// instead of locking it as the head: while two releases coexist, FIFO is per
+/// release and a draining host claims only its own backlog
+/// (platform-deploy.md R20). [`grant_production_claim_sql`] rechecks the pin.
 pub fn select_production_claim_sql() -> String {
     format!(
         "WITH candidate AS MATERIALIZED ( \
@@ -47,6 +54,7 @@ pub fn select_production_claim_sql() -> String {
               WHERE q.tenant_id = current_setting('app.tenant', true) \
                 AND selected_run.package_id = ANY($1::text[]) \
                 AND selected_run.environment = $2 \
+                AND ($3::int IS NULL OR selected_run.effective_release_id = $3) \
                 AND q.available_at <= now() \
                 AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
                 AND ( \
@@ -378,6 +386,7 @@ mod tests {
     fn production_turns_filter_one_global_fifo_by_the_release_package_set() {
         let claim = select_production_claim_sql();
         assert!(claim.contains("selected_run.package_id = ANY($1::text[])"));
+        assert!(claim.contains("selected_run.effective_release_id = $3"));
         assert!(claim.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
         assert_eq!(claim.matches("LIMIT 1").count(), 1);
 

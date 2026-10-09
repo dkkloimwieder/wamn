@@ -282,14 +282,17 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         url.set_password(Some("automation-test-only")).unwrap();
         credentials = credentials.with_class(class, url.to_string());
     }
-    let postgres = Arc::new(WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(credentials),
-        guest_pool_max_size: 2,
-        platform_pool_max_size: 2,
-        wait_timeout_ms: 5000,
-        statement_timeout_ms: 10000,
-        row_limit: 100,
-    })?);
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(credentials),
+            guest_pool_max_size: 2,
+            platform_pool_max_size: 2,
+            wait_timeout_ms: 5000,
+            statement_timeout_ms: 10000,
+            row_limit: 100,
+        })?
+        .with_release_closures(&release),
+    );
     postgres
         .bind_session_claims(
             QUEUE_CLAIM_SCOPE,

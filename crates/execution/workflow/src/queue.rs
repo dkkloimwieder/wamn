@@ -130,18 +130,34 @@ impl QueueService {
         Arc::clone(&self.liveness)
     }
 
+    /// Serve queue turns until `stopping`, then drain the runs pinned to this
+    /// host's release (R20).
     pub async fn serve(&self, stopping: tokio::sync::watch::Receiver<bool>) -> anyhow::Result<()> {
-        serve_queue(stopping, &self.liveness, async || {
-            Box::pin(drain_one(
-                &self.driver,
-                &self.postgres,
-                &self.jetstream,
-                &self.scope,
-                self.lease_ttl_ms,
-                &self.liveness,
-            ))
-            .await
-        })
+        serve_queue(
+            stopping,
+            &self.liveness,
+            async || {
+                Box::pin(drain_one(
+                    &self.driver,
+                    &self.postgres,
+                    &self.jetstream,
+                    &self.scope,
+                    self.lease_ttl_ms,
+                    &self.liveness,
+                ))
+                .await
+            },
+            async || {
+                Ok(self
+                    .postgres
+                    .pinned_backlog(
+                        QUEUE_CLAIM_SCOPE,
+                        &self.scope.package_ids,
+                        &self.scope.environment,
+                    )
+                    .await?)
+            },
+        )
         .await
     }
 
@@ -165,10 +181,16 @@ fn queue_delivery_span(
         wamn.wiring_version = wiring_version,
     )
 }
+/// Take queue turns until `stopping`, then drain: keep taking turns while
+/// `pinned_backlog` reports a run pinned to this host's release that is still
+/// queued, dispatched or running, and return once it reports none
+/// (platform-deploy.md R20). The pod's `terminationGracePeriodSeconds` bounds
+/// the drain. Kubernetes owns that clock, so the loop adds no timer.
 async fn serve_queue(
     mut stopping: tokio::sync::watch::Receiver<bool>,
     liveness: &Liveness,
     mut turn: impl AsyncFnMut() -> anyhow::Result<bool>,
+    mut pinned_backlog: impl AsyncFnMut() -> anyhow::Result<bool>,
 ) -> anyhow::Result<()> {
     while !*stopping.borrow() {
         // Real queue progress, including an empty poll or a retry. Long calls
@@ -182,11 +204,28 @@ async fn serve_queue(
             }
         }
         tokio::select! {
-            _ = stopping.changed() => return Ok(()),
+            _ = stopping.changed() => break,
             () = tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)) => {}
         }
     }
-    Ok(())
+    loop {
+        match pinned_backlog().await {
+            Ok(false) => return Ok(()),
+            Ok(true) => {}
+            Err(error) => {
+                tracing::warn!(error = %error, "executor queue backlog read failed; retrying");
+            }
+        }
+        liveness.beat();
+        match turn().await {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(error = %error, "executor queue drain turn failed; retrying");
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(IDLE_POLL_MS)).await;
+    }
 }
 
 #[cfg(test)]
@@ -202,16 +241,21 @@ mod tests {
         let (entered, entering) = tokio::sync::oneshot::channel();
         let mut entered = Some(entered);
         let (stop, stopping) = tokio::sync::watch::channel(false);
-        let serving = serve_queue(stopping, &liveness, async || {
-            turns.fetch_add(1, Ordering::Relaxed);
-            entered
-                .take()
-                .expect("one turn")
-                .send(())
-                .expect("receiver");
-            release_turn.notified().await;
-            Ok(true)
-        });
+        let serving = serve_queue(
+            stopping,
+            &liveness,
+            async || {
+                turns.fetch_add(1, Ordering::Relaxed);
+                entered
+                    .take()
+                    .expect("one turn")
+                    .send(())
+                    .expect("receiver");
+                release_turn.notified().await;
+                Ok(true)
+            },
+            async || Ok(false),
+        );
         tokio::pin!(serving);
         tokio::select! {
             result = &mut serving => panic!("queue exited during turn: {result:?}"),
@@ -230,12 +274,47 @@ mod tests {
     async fn shutdown_before_first_turn_never_claims() {
         let liveness = Liveness::new(Duration::from_secs(90));
         let (_stop, stopping) = tokio::sync::watch::channel(true);
-        serve_queue(stopping, &liveness, async || {
-            panic!("stopped queue claimed")
-        })
+        serve_queue(
+            stopping,
+            &liveness,
+            async || panic!("stopped queue claimed"),
+            async || Ok(false),
+        )
         .await
         .expect("stopped queue");
         assert_eq!(liveness.silence(), None);
+    }
+
+    /// R20 (2): after stop the queue claims the runs pinned to its release
+    /// until none remains, then exits. A turn that finds nothing claimable,
+    /// because another replica holds the lease, does not end the drain.
+    #[tokio::test]
+    async fn shutdown_claims_the_pinned_backlog_until_it_is_empty() {
+        let liveness = Liveness::new(Duration::from_secs(90));
+        let backlog = AtomicUsize::new(2);
+        let turns = AtomicUsize::new(0);
+        let (_stop, stopping) = tokio::sync::watch::channel(true);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            serve_queue(
+                stopping,
+                &liveness,
+                async || {
+                    // The first turn finds the pinned run leased elsewhere.
+                    if turns.fetch_add(1, Ordering::Relaxed) == 0 {
+                        return Ok(false);
+                    }
+                    backlog.fetch_sub(1, Ordering::Relaxed);
+                    Ok(true)
+                },
+                async || Ok(backlog.load(Ordering::Relaxed) > 0),
+            ),
+        )
+        .await
+        .expect("the drain ends when the pinned backlog is empty")
+        .expect("queue drain");
+        assert_eq!(backlog.load(Ordering::Relaxed), 0);
+        assert_eq!(turns.load(Ordering::Relaxed), 3);
     }
 }
 

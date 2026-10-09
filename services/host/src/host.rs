@@ -1096,6 +1096,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .await?;
         postgres = postgres.with_local_application(local);
     }
+    if let Some(release) = release.as_ref() {
+        // Built once at load. Every caller path expands the caller's
+        // permission roots through it (platform-deploy.md R18).
+        postgres = postgres.with_release_closures(release);
+    }
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
@@ -1875,7 +1880,8 @@ where
         ),
     };
     // This is the single admission cut: readiness drains before either HTTP
-    // cleanup or queue cleanup can wait, and both stop accepting new work.
+    // cleanup or queue cleanup can wait. The expected router reads the same
+    // stop signal and admits no new request; the queue turns to its drain.
     probes.drain();
     let _ = stop_queue.send(true);
     let propagation_delay = if result.is_ok() {
@@ -1884,24 +1890,29 @@ where
         Duration::ZERO
     };
     tracing::info!("shutting down wamn-host");
-    let cleanup_result = wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, async {
-        // Admission closes completely before either execution drain is polled.
-        let ingress_result = stop_ingress.await;
-        let queue_cleanup = async {
-            if !queue_enabled || queue_finished {
-                Ok(())
-            } else {
-                queue_serving.as_mut().await
-            }
+    // Admission closes completely before the queue drains.
+    let ingress_result =
+        wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, stop_ingress).await;
+    let drain_then_cleanup = async {
+        // The queue keeps claiming the runs pinned to this host's release
+        // until none remains, then stops (R20). The pod's
+        // terminationGracePeriodSeconds bounds the drain. Kubernetes owns that
+        // clock, so no host budget applies to it.
+        let queue_result = if !queue_enabled || queue_finished {
+            Ok(())
+        } else {
+            queue_serving.as_mut().await
         };
-        let propagation = tokio::time::sleep(propagation_delay);
-        let (queue_result, native_result, ()) =
-            tokio::join!(queue_cleanup, native_cleanup, propagation);
+        // Native cleanup starts only after the queue stopped.
         let native_result =
-            normalize_explicit_ingress_stop(native_result, had_ingress && ingress_result.is_ok());
-        ingress_result.and(queue_result).and(native_result)
-    })
-    .await;
+            wamn_engine::lifecycle::bounded_cleanup(cleanup_budget, native_cleanup).await;
+        (queue_result, native_result)
+    };
+    let ((queue_result, native_result), ()) =
+        tokio::join!(drain_then_cleanup, tokio::time::sleep(propagation_delay));
+    let native_result =
+        normalize_explicit_ingress_stop(native_result, had_ingress && ingress_result.is_ok());
+    let cleanup_result = ingress_result.and(queue_result).and(native_result);
     if let Err(error) = &cleanup_result {
         tracing::error!(%error, "combined host cleanup failed; durable queue remains fenced for recovery");
     }
@@ -2099,6 +2110,45 @@ mod tests {
         )
         .await
         .expect("combined cleanup");
+    }
+
+    /// R20: HTTP admission closes, the queue drains its pinned backlog with no
+    /// host budget, and native cleanup starts only after the queue stopped.
+    #[tokio::test]
+    async fn shutdown_closes_admission_drains_the_queue_then_cleans_up() {
+        use std::sync::Mutex;
+        let order = Mutex::new(Vec::new());
+        let probes = ProbeState::default();
+        let (stop_queue, mut stopping) = tokio::sync::watch::channel(false);
+        let queue = async {
+            stopping.changed().await.expect("queue stop sender");
+            // The drain outlives the cleanup budget below.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            order.lock().unwrap().push("queue");
+            Ok(())
+        };
+        tokio::pin!(queue);
+        stop_combined_after(
+            async { Ok(()) },
+            async {
+                order.lock().unwrap().push("ingress");
+                Ok(())
+            },
+            false,
+            async {
+                order.lock().unwrap().push("native");
+                Ok(())
+            },
+            queue.as_mut(),
+            true,
+            stop_queue,
+            &probes,
+            Duration::ZERO,
+            Duration::from_millis(100),
+        )
+        .await
+        .expect("combined cleanup");
+        assert_eq!(*order.lock().unwrap(), ["ingress", "queue", "native"]);
     }
 
     #[tokio::test]

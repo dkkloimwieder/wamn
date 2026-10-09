@@ -1,6 +1,7 @@
 //! The permission closures of a serving release (docs/plan/platform-ui.md
-//! §2.3 and §2.4). `wamn-ctl` and the application host routes both read
-//! them, so a grant writes the same rows wherever it runs.
+//! §2.3 and §2.4). A stored permission is a root. The host builds these
+//! closures once from the manifest it loads and expands the caller's roots
+//! through them on every request (platform-deploy.md R18).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -53,17 +54,48 @@ impl ReleaseClosures {
         self.closures.keys().map(String::as_str)
     }
 
-    /// Every `(root, permission)` pair with `permission != root`, as two
-    /// parallel arrays.
-    pub fn required_pairs(&self) -> (Vec<&str>, Vec<&str>) {
-        self.closures
-            .iter()
-            .flat_map(|(root, closure)| {
-                closure
-                    .iter()
-                    .filter(move |permission| *permission != root)
-                    .map(move |permission| (root.as_str(), permission.as_str()))
-            })
-            .unzip()
+    /// The union of the closures of `roots`: the effective permissions of a
+    /// caller who holds them. A root the release does not serve expands to
+    /// nothing.
+    pub fn expand<'a>(&self, roots: impl IntoIterator<Item = &'a str>) -> BTreeSet<String> {
+        roots
+            .into_iter()
+            .filter_map(|root| self.closures.get(root))
+            .flatten()
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_unions_served_roots_and_drops_unserved_ones() {
+        let closures = ReleaseClosures {
+            closures: BTreeMap::from([
+                (
+                    "cat:orders/create".to_owned(),
+                    BTreeSet::from([
+                        "cat:orders/create".to_owned(),
+                        "cat:orders/price".to_owned(),
+                    ]),
+                ),
+                (
+                    "cat:orders/list".to_owned(),
+                    BTreeSet::from(["cat:orders/list".to_owned()]),
+                ),
+            ]),
+        };
+        assert_eq!(
+            closures.expand(["cat:orders/create", "cat:orders/list", "cat:orders/gone"]),
+            BTreeSet::from([
+                "cat:orders/create".to_owned(),
+                "cat:orders/list".to_owned(),
+                "cat:orders/price".to_owned(),
+            ])
+        );
+        assert!(closures.expand(["cat:orders/gone"]).is_empty());
     }
 }

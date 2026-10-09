@@ -13,7 +13,7 @@ use serde::Deserialize;
 use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
 
-use wamn_catalog::ManifestDigest;
+use wamn_catalog::{ManifestDigest, ReleaseClosures};
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
@@ -35,14 +35,15 @@ mod transactions;
 /// tenant floor.
 const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM app_system.environment";
 
-/// Each signed role that the active user still holds, with each stored
-/// permission reference of that role. A role without permission rows, such as
-/// `admin`, yields one row with a null reference.
+/// Each signed role that the active user still holds, with each permission
+/// root of that role (`permission = required_by`). A role without roots, such
+/// as `admin`, yields one row with a null reference.
 const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT r.role_name, p.permission \
     FROM app_system.users u JOIN app_system.user_roles r \
     ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     LEFT JOIN app_system.permissions p \
     ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
+    AND p.permission = p.required_by \
     WHERE u.tenant_id = $1 AND u.id = $3::text::uuid AND u.status = 'active' \
     AND r.role_name = ANY($2::text[])";
 
@@ -54,8 +55,8 @@ const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT r.role_name, p.permissio
 const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM app_system.users \
     WHERE tenant_id = $1 AND id = $2::text::uuid";
 
-/// Each role that the active user holds, with each stored permission
-/// reference of that role, as [`SESSION_OPERATION_PERMISSIONS_SQL`] reads them.
+/// Each role that the active user holds, with each permission root of that
+/// role, as [`SESSION_OPERATION_PERMISSIONS_SQL`] reads them.
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
     FROM app_system.users AS users \
     JOIN app_system.user_roles AS user_roles \
@@ -63,11 +64,12 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permi
     LEFT JOIN app_system.permissions AS permissions \
       ON permissions.tenant_id = user_roles.tenant_id \
       AND permissions.role_name = user_roles.role_name \
+      AND permissions.permission = permissions.required_by \
     WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active'";
 
 /// The application authority a caller holds now: whether it holds `admin`,
-/// and the distinct stable operation references of its other roles
-/// (docs/plan/platform-ui.md §2.3).
+/// and the stable operation references its other roles grant under the loaded
+/// release (docs/plan/platform-ui.md §2.3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HeldOperationGrants {
     pub admin: bool,
@@ -75,18 +77,26 @@ pub struct HeldOperationGrants {
 }
 
 impl HeldOperationGrants {
-    /// Fold rows of `(role_name, permission)`, where a null permission is a
-    /// role without permission rows.
-    pub fn from_rows(rows: &[tokio_postgres::Row]) -> Result<Self, tokio_postgres::Error> {
-        let mut grants = Self::default();
+    /// Fold rows of `(role_name, root)`, where a null root is a role without
+    /// roots, and expand the roots through `closures` (platform-deploy.md
+    /// R18). A root the loaded release does not serve grants nothing.
+    pub fn from_rows(
+        rows: &[tokio_postgres::Row],
+        closures: &ReleaseClosures,
+    ) -> Result<Self, tokio_postgres::Error> {
+        let mut admin = false;
+        let mut roots = BTreeSet::new();
         for row in rows {
             let role: String = row.try_get(0)?;
-            grants.admin |= role == wamn_project_state::ADMIN_ROLE;
-            if let Some(reference) = row.try_get::<_, Option<String>>(1)? {
-                grants.references.insert(reference);
+            admin |= role == wamn_project_state::ADMIN_ROLE;
+            if let Some(root) = row.try_get::<_, Option<String>>(1)? {
+                roots.insert(root);
             }
         }
-        Ok(grants)
+        Ok(Self {
+            admin,
+            references: closures.expand(roots.iter().map(String::as_str)),
+        })
     }
 }
 
@@ -102,6 +112,9 @@ impl std::fmt::Debug for WamnPostgres {
 
 pub struct WamnPostgres {
     pub(super) local_application: Option<Arc<crate::local_application::LocalApplication>>,
+    /// The permission closures of the loaded release, built once at load. Every
+    /// caller path expands the caller's roots through them (R18).
+    release_closures: ReleaseClosures,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
     /// Guest-visible project pools, built lazily and never shared with host-owned
@@ -850,6 +863,15 @@ impl WamnPostgres {
         self
     }
 
+    /// Build the permission closures of the loaded release once, and expand
+    /// every caller's roots through them (R18). Without it, every root expands
+    /// to nothing.
+    #[must_use]
+    pub fn with_release_closures(mut self, release: &LoadedRelease) -> Self {
+        self.release_closures = ReleaseClosures::from_manifest(release.manifest());
+        self
+    }
+
     /// Plugin over a single default database (the [`WamnPostgresConfig`]
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
     /// returns `connection-unavailable`.
@@ -863,6 +885,7 @@ impl WamnPostgres {
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
             local_application: None,
+            release_closures: ReleaseClosures::default(),
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
@@ -1819,7 +1842,8 @@ impl WamnPostgres {
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read session operation permissions")?;
-        HeldOperationGrants::from_rows(&rows).context("decode session operation permission")
+        HeldOperationGrants::from_rows(&rows, &self.release_closures)
+            .context("decode session operation permission")
     }
 
     /// Resolve actors already returned by an authorized record read.
@@ -1920,7 +1944,8 @@ impl WamnPostgres {
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
             .context("read user operation permissions")?;
-        HeldOperationGrants::from_rows(&rows).context("decode user operation permission")
+        HeldOperationGrants::from_rows(&rows, &self.release_closures)
+            .context("decode user operation permission")
     }
 
     /// The application roles and stored permissions a caller holds, read by
@@ -1944,7 +1969,8 @@ impl WamnPostgres {
                     .context("read held operation grants")
             })
             .await??;
-        HeldOperationGrants::from_rows(&rows).context("decode held operation grant")
+        HeldOperationGrants::from_rows(&rows, &self.release_closures)
+            .context("decode held operation grant")
     }
 
     /// Run `work` in a host-owned READ COMMITTED transaction under the
@@ -2029,10 +2055,11 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        crate::plugins::route_authentication::queued_service_caller(
+        crate::plugins::route_authentication::queued_service_caller_in(
             &**connection,
             tenant,
             principal_id,
+            &self.release_closures,
         )
         .await
     }

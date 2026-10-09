@@ -65,17 +65,31 @@ pub(super) async fn run(
     let run = workflows.start(request).await?;
     let liveness = Liveness::new(Duration::from_secs(90));
     let (stop, stopping) = tokio::sync::watch::channel(false);
-    let queue = super::super::serve_queue(stopping, &liveness, async || {
-        Box::pin(super::drain_one(
-            execution.driver,
-            execution.postgres,
-            execution.jetstream,
-            execution.scope,
-            1000,
-            &liveness,
-        ))
-        .await
-    });
+    let queue = super::super::serve_queue(
+        stopping,
+        &liveness,
+        async || {
+            Box::pin(super::drain_one(
+                execution.driver,
+                execution.postgres,
+                execution.jetstream,
+                execution.scope,
+                1000,
+                &liveness,
+            ))
+            .await
+        },
+        async || {
+            Ok(execution
+                .postgres
+                .pinned_backlog(
+                    QUEUE_CLAIM_SCOPE,
+                    &execution.scope.package_ids,
+                    &execution.scope.environment,
+                )
+                .await?)
+        },
+    );
     let mut queue = Box::pin(queue);
     timeout(Duration::from_secs(10), async {
         loop {

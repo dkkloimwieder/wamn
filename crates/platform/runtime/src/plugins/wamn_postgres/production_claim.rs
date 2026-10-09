@@ -596,6 +596,111 @@ pub(super) async fn finish_queue_transaction<T>(
     }
 }
 
+/// Whether a run pinned to release `$3` is still queued, dispatched or running
+/// in the package set `$1` and environment `$2`. A run leased by another
+/// replica counts: if that replica dies, this host reclaims it.
+const PINNED_BACKLOG_SQL: &str = "SELECT EXISTS ( \
+     SELECT 1 FROM run_queue AS q \
+       JOIN runs AS r ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id \
+      WHERE q.tenant_id = current_setting('app.tenant', true) \
+        AND r.package_id = ANY($1::text[]) \
+        AND r.environment = $2 \
+        AND r.effective_release_id = $3 \
+        AND r.status IN ('dispatched', 'running'))";
+
+impl WamnPostgres {
+    /// Whether any run pinned to the release of `component_id` remains in the
+    /// queue. A draining host keeps claiming while this holds (R20). A
+    /// component with no injected release identity pins no run.
+    pub async fn pinned_backlog(
+        &self,
+        component_id: &str,
+        package_ids: &[String],
+        environment: &str,
+    ) -> Result<bool, ProductionClaimError> {
+        if !valid_package_scope(package_ids) || environment.is_empty() {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorType::Contract,
+                "validate backlog scope",
+                "a nonempty canonical package set and environment are required",
+            ));
+        }
+        let Some(release) = self.release_identity_for(component_id) else {
+            return Ok(false);
+        };
+        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorType::Identity,
+                "resolve backlog tenant",
+                "component has no host-injected tenant",
+            )
+        })?;
+        let runner = self.runner_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorType::Identity,
+                "resolve backlog runner",
+                "component has no host-injected runner",
+            )
+        })?;
+        let project = self.project_for(component_id);
+        let schema = self.schema_for(component_id);
+        let user_id = self.user_id_for(component_id);
+        let operation = self.operation_for(component_id);
+        let (connection, policy) = self
+            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorType::Storage,
+                    "checkout backlog connection",
+                    format!("{error:?}"),
+                )
+            })?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &connection,
+                AuthorityClass::ExecutorPlatform,
+                &tenant,
+                schema.as_deref(),
+                Some(&runner),
+                None,
+                user_id.as_deref(),
+                operation.as_deref(),
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(connection);
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorType::Storage,
+                "begin backlog transaction",
+                format!("{error:?}"),
+            ));
+        }
+        let result = async {
+            require_executor_authority(&connection).await?;
+            let row = connection
+                .query_one(
+                    PINNED_BACKLOG_SQL,
+                    &[&package_ids, &environment, &release.effective_release_id()],
+                )
+                .await
+                .map_err(|error| storage("read pinned backlog", &error))?;
+            row_value::<bool>(&row, 0, "pinned backlog")
+        }
+        .await;
+        if let Err(rollback_error) = connection.batch_execute("ROLLBACK").await {
+            tracing::warn!(
+                error = %rollback_error,
+                "pinned backlog rollback failed; destroying connection"
+            );
+            self.destroy(connection);
+        }
+        result
+    }
+}
+
 pub(super) async fn require_executor_authority(
     connection: &Object,
 ) -> Result<(), ProductionClaimError> {
@@ -850,8 +955,11 @@ async fn claim_in_transaction(
         .prepare_cached(&select_sql)
         .await
         .map_err(|error| storage("prepare production candidate", &error))?;
+    // The select skips runs pinned to another release, so their head never
+    // blocks this host's own backlog (R20). The grant below rechecks the pin.
+    let host_release_id: Option<i32> = release.map(ReleaseIdentity::effective_release_id);
     let Some(row) = connection
-        .query_opt(&select, &[&package_ids, &environment])
+        .query_opt(&select, &[&package_ids, &environment, &host_release_id])
         .await
         .map_err(|error| storage("select production candidate", &error))?
     else {
@@ -1661,6 +1769,27 @@ mod tests {
         let select_sql = select_production_claim_sql();
         assert!(!select_sql.contains("release_version"));
         assert!(!select_sql.contains("manifest_digest"));
+    }
+
+    #[test]
+    fn pinned_backlog_reads_the_runnable_queue_of_one_release() {
+        for required in [
+            "FROM run_queue AS q",
+            "q.tenant_id = current_setting('app.tenant', true)",
+            "r.package_id = ANY($1::text[])",
+            "r.environment = $2",
+            "r.effective_release_id = $3",
+        ] {
+            assert!(
+                PINNED_BACKLOG_SQL.contains(required),
+                "pinned backlog omits {required}"
+            );
+        }
+        assert!(PINNED_BACKLOG_SQL.contains(&format!(
+            "r.status IN ('{}', '{}')",
+            RunStatus::Dispatched.as_sql(),
+            RunStatus::Running.as_sql()
+        )));
     }
 
     #[test]

@@ -315,14 +315,14 @@ CREATE INDEX user_roles_tkey
 GRANT SELECT ON app_system.user_roles TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- Permissions — the effective grants of an authored role
--- (docs/plan/platform-ui.md §2.3). `permission` is a stable operation
--- reference `<package>:<interface>/<operation>`, with no package version.
--- `required_by` is the directly selected root that requires it. A row with
--- `permission = required_by` is the direct selection. The other rows are the
--- released call-graph closure of that root, and `permissions_required_by_fkey`
--- removes them with it. Route admission reads the distinct `permission` values.
--- `admin` has no rows. FK to roles ON DELETE CASCADE within the tenant.
+-- Permissions — the permission roots of an authored role
+-- (docs/plan/platform-ui.md §2.3, platform-deploy.md R18). `permission` is a
+-- stable operation reference `<package>:<interface>/<operation>`, with no
+-- package version. Every row is a direct selection, `permission =
+-- required_by`; no row holds a closure derived from a release. Each host
+-- expands the roots through the closures of the release it loaded, on every
+-- request, so a root that release does not serve grants nothing. `admin` has
+-- no rows. FK to roles ON DELETE CASCADE within the tenant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_system.permissions (
     tenant_id   text NOT NULL CHECK (tenant_id <> ''),

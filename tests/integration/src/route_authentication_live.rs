@@ -49,6 +49,8 @@ const OPERATION_REFERENCE: &str = "route-auth-fixture:item/get";
 const ITEM_READER: &str = "item-reader";
 /// A stored reference that the release does not serve.
 const UNSERVED: &str = "route-auth-fixture:obsolete/operation";
+/// A second operation the fixture release serves, held through another role.
+const EXTRA_OPERATION: &str = "route-auth-fixture:item/extra@1.0.0";
 /// The test principal that the project fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
@@ -256,7 +258,11 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
             "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)),
             "operations": {
-                (OPERATION): {"registered-operation": OPERATION, "permissions": [OPERATION]}
+                (OPERATION): {"registered-operation": OPERATION, "permissions": [OPERATION]},
+                (EXTRA_OPERATION): {
+                    "registered-operation": EXTRA_OPERATION,
+                    "permissions": [EXTRA_OPERATION]
+                }
             }
         }],
         "routes": [],
@@ -289,7 +295,13 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     )?))
 }
 
-fn project_postgres(class: AuthorityClass, url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
+/// A project plugin that expands permission roots through the closures of
+/// `release`, the release its host loaded.
+fn project_postgres(
+    class: AuthorityClass,
+    url: &str,
+    release: &LoadedRelease,
+) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
         guest_pool_max_size: 1,
@@ -304,7 +316,9 @@ fn project_postgres(class: AuthorityClass, url: &str) -> anyhow::Result<Arc<Wamn
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
     let provider: Arc<dyn CredentialProvider> =
         Arc::new(StaticCredentialProvider::new(projects, None));
-    Ok(Arc::new(WamnPostgres::with_provider(provider)))
+    Ok(Arc::new(
+        WamnPostgres::with_provider(provider).with_release_closures(release),
+    ))
 }
 
 async fn routing(
@@ -568,7 +582,7 @@ async fn assert_user_environment_membership(
     assert_eq!(caller.principal_id(), user.id().as_str());
     assert!(caller.permits(OPERATION));
     assert!(
-        caller.permits("route-auth-fixture:item/extra@1.0.0"),
+        caller.permits(EXTRA_OPERATION),
         "all of this user's environment roles contribute permissions"
     );
     assert!(
@@ -807,7 +821,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     let loaded_release = load_serving_release().expect("load the canonical serving release");
     let route_auth = routing(
         Arc::clone(&identity_reader),
-        project_postgres(AuthorityClass::CallableHttp, &http_url)
+        project_postgres(AuthorityClass::CallableHttp, &http_url, &loaded_release)
             .expect("build project-specific callable-HTTP provider"),
         Arc::clone(&loaded_release),
     )
@@ -1055,6 +1069,7 @@ async fn production_operator_authentication_and_operation_authorization() {
         project_postgres(
             AuthorityClass::ExecutorPlatform,
             "postgresql://unused.invalid/unused",
+            &loaded_release,
         )
         .expect("build provider missing the callable-HTTP credential"),
         Arc::clone(&loaded_release),
@@ -1255,13 +1270,14 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     user_roles::grant_role(&request("service@example.invalid", "clerk"))
         .await
         .expect("grant the created role");
-    let error = role_permissions::grant_permission_in(&target, "clerk", OPERATION_REFERENCE)
+    // R18 (4): a grant stores the root with no serving release to check.
+    let granted = role_permissions::grant_permission_in(&target, "clerk", OPERATION_REFERENCE)
         .await
-        .expect_err("a grant needs a current serving release");
-    assert!(
-        format!("{error:#}").contains("has no current serving release"),
-        "{error:#}"
-    );
+        .expect("a grant stores the root");
+    assert_eq!(granted.rows_added, 1);
+    role_permissions::revoke_permission_in(&target, "clerk", OPERATION_REFERENCE)
+        .await
+        .expect("revoke the stored root");
     let error = role_permissions::revoke_permission_in(&target, "clerk", OPERATION_REFERENCE)
         .await
         .expect_err("a revoke of an unheld permission refuses");

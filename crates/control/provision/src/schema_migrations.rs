@@ -228,6 +228,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0010_package_upgrade_stages.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0011_permission_roots.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0011_permission_roots.sql"),
+    },
 ];
 
 #[cfg(test)]

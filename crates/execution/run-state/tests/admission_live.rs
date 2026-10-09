@@ -336,8 +336,8 @@ package_id,registration_id,status,tenant_id,trigger_source,wiring_hash,wiring_id
         &format!(
             "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.tenant='t1'; \
              SET LOCAL search_path=wamn_run,catalog,public; \
-             SELECT current_user; PREPARE matrix_claim(text[],text) AS {claim}; \
-             EXECUTE matrix_claim(ARRAY['cat'],'dev'); ROLLBACK;"
+             SELECT current_user; PREPARE matrix_claim(text[],text,int) AS {claim}; \
+             EXECUTE matrix_claim(ARRAY['cat'],'dev',1); ROLLBACK;"
         ),
     );
     assert!(claimed.contains(EXECUTOR_LOGIN));
@@ -398,4 +398,92 @@ package_id,registration_id,status,tenant_id,trigger_source,wiring_hash,wiring_id
             "{denied_role} must not hold executor membership"
         );
     }
+}
+
+/// R20 (1): the candidate select filters by the claiming host's release. The
+/// FIFO head is pinned to release 2, and a host of release 1 claims the
+/// release-1 run queued behind it instead of selecting the head. A host with
+/// no release keeps the global order.
+#[test]
+fn release_scoped_queue_claim_skips_another_releases_head_live() {
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+    let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
+    let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
+        .expect("read run-state DDL");
+    let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
+        .expect("read run-queue DDL");
+    success(
+        &url,
+        &format!(
+            "DO $$ DECLARE role_name text; BEGIN \
+               FOREACH role_name IN ARRAY ARRAY[ \
+                 'wamn_app','wamn_control_author','wamn_scenario_author' \
+               ] LOOP \
+                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=role_name) THEN \
+                   EXECUTE format('CREATE ROLE %I NOLOGIN', role_name); \
+                 END IF; \
+               END LOOP; \
+             END $$; \
+             BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
+             INSERT INTO catalog.packages \
+               (tenant_id,package_id,package_version,manifest_sha256) \
+             VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
+             INSERT INTO catalog.effective_releases \
+               (tenant_id,effective_release_id,environment,verified_publisher_principal) \
+             VALUES ('t1',1,'dev','test-publisher'),('t1',2,'dev','test-publisher'); \
+             INSERT INTO catalog.effective_release_packages \
+               (tenant_id,effective_release_id,package_id,package_version) \
+             VALUES ('t1',1,'cat','1.0.0'),('t1',2,'cat','1.0.0'); \
+             INSERT INTO wamn_run.environment_policies \
+               (tenant_id,expected_environment,durability_class) \
+             VALUES ('t1','dev','standard'); \
+             INSERT INTO wamn_run.runs \
+               (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+                wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
+             VALUES ('t1','run-b','legacy-flow',1,'cat',2,'dev','legacy-wiring',1, \
+                     'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'), \
+                    ('t1','run-a','legacy-flow',1,'cat',1,'dev','legacy-wiring',1, \
+                     'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
+             INSERT INTO wamn_run.run_queue (tenant_id,run_id,available_at) \
+             VALUES ('t1','run-b',now() - interval '2 minutes'), \
+                    ('t1','run-a',now() - interval '1 minute');",
+            manifest_hash = "a".repeat(64),
+        ),
+    );
+    let claim = select_production_claim_sql();
+    let head_for = |release: &str| {
+        let selected = success(
+            &url,
+            &format!(
+                "BEGIN; SET LOCAL app.tenant='t1'; \
+                 SET LOCAL search_path=wamn_run,catalog,public; \
+                 PREPARE release_claim(text[],text,int) AS {claim}; \
+                 EXECUTE release_claim(ARRAY['cat'],'dev',{release}); ROLLBACK;"
+            ),
+        );
+        selected
+            .split('|')
+            .next()
+            .expect("psql prints the selected run first")
+            .to_owned()
+    };
+    assert_eq!(
+        head_for("1"),
+        "run-a",
+        "release 1 claims behind the release-2 head"
+    );
+    assert_eq!(head_for("2"), "run-b", "release 2 claims its own head");
+    assert_eq!(
+        head_for("NULL"),
+        "run-b",
+        "a host with no release keeps the global FIFO"
+    );
+    assert_eq!(
+        head_for("3"),
+        "",
+        "a release with no pinned run claims nothing"
+    );
 }

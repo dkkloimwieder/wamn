@@ -97,7 +97,11 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let locked = first_claimer
         .query_one(
             &select_production_claim_sql(),
-            &[&release_package_ids.as_slice(), &ENVIRONMENT],
+            &[
+                &release_package_ids.as_slice(),
+                &ENVIRONMENT,
+                &Some(POD_EFFECTIVE_RELEASE_ID),
+            ],
         )
         .await?;
     assert_eq!(locked.get::<_, String>(0), "double-a");
@@ -530,17 +534,28 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_eq!(release_record(admin, "release-record").await?, recorded);
 
     // An effective release is an admission pin, not a claim-time rollout slot.
-    // A pod carrying another release cannot claim this run; the transaction
-    // rolls back its pre-effect reset and lease update together.
+    // A pod carrying another release does not select this run at all (R20):
+    // the candidate select filters by the pod's release, and the grant keeps
+    // the recheck.
     expire_effect_run(admin, "release-record").await?;
-    let mismatched = plugin
-        .claim_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
-        .await
-        .expect_err("a different effective release cannot claim an admitted run");
-    assert_eq!(mismatched.error_type(), ProductionClaimErrorType::Contract);
     assert_eq!(
-        mismatched.to_string(),
-        "production claim grant production lease failed: claiming effective release does not match the run admission pin"
+        plugin
+            .claim_next(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
+            .await?,
+        ProductionClaimResult::Empty,
+        "a different effective release must not select an admitted run"
+    );
+    assert!(
+        plugin
+            .pinned_backlog(COMPONENT, &release_package_ids, ENVIRONMENT)
+            .await?,
+        "the expired run is the pinned backlog of its own release"
+    );
+    assert!(
+        !plugin
+            .pinned_backlog(ROLLED_COMPONENT, &release_package_ids, ENVIRONMENT)
+            .await?,
+        "another release has no pinned backlog"
     );
     assert_eq!(release_record(admin, "release-record").await?, recorded);
     assert_eq!(

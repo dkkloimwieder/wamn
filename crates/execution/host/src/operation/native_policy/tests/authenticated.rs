@@ -52,6 +52,33 @@ const TEST_NAME: &str = "native_authenticated_call_graph_grant";
 /// test counts instance starts, and a reclaim during that work adds a start.
 const REUSE_WINDOW_SECONDS: i32 = 600;
 
+/// The release a fixture plugin expands permission roots through (R18). It
+/// serves ROOT, PARTICIPANT and CHILD each as its own root, so a role holds
+/// exactly the operations it stores.
+fn grant_release() -> anyhow::Result<LoadedRelease> {
+    let operation =
+        |reference: &str| json!({"registered-operation": reference, "permissions": [reference]});
+    let manifest = json!({
+        "format-version": super::SERVING_MANIFEST_FORMAT_VERSION,
+        "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": ENVIRONMENT,
+            "packages": [{"package-id": "child", "package-version": "1.0.0"},
+                         {"package-id": "root", "package-version": "1.0.0"}]},
+        "components": [
+            {"package-id": "child", "component": "node", "interface-version": "0.1.0",
+             "digest": format!("sha256:{}", "c".repeat(64)),
+             "operations": {CHILD: operation(CHILD)}},
+            {"package-id": "root", "component": "node", "interface-version": "0.1.0",
+             "digest": format!("sha256:{}", "a".repeat(64)),
+             "operations": {ROOT: operation(ROOT), PARTICIPANT: operation(PARTICIPANT)}}],
+        "routes": [],
+        "attachments": {}
+    });
+    Ok(LoadedRelease::load_canonical_bytes(
+        &wamn_execution_contract::canonical_json_bytes(&manifest),
+        "native grant closures",
+    )?)
+}
+
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
     tokio::spawn(async move { connection.await.expect("owned fixture database connection") });
@@ -189,9 +216,10 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
         (AuthorityClass::CallableHttp.as_str()): scoped_url.as_str()
     }}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
-    let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
-        StaticCredentialProvider::new(projects, None),
-    )));
+    let postgres = Arc::new(
+        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)))
+            .with_release_closures(&grant_release()?),
+    );
     Ok(postgres)
 }
 
@@ -967,7 +995,10 @@ async fn warm_postgres_with_pool(
         enabled: std::sync::atomic::AtomicBool::new(true),
     });
     Ok((
-        Arc::new(WamnPostgres::with_provider(credentials.clone())),
+        Arc::new(
+            WamnPostgres::with_provider(credentials.clone())
+                .with_release_closures(&grant_release()?),
+        ),
         credentials,
     ))
 }

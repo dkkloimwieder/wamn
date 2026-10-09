@@ -44,6 +44,8 @@ const WRITE_ROUTE: &str = "purchase-write-http";
 const READ: &str = "session-test:purchase/read@1.0.0";
 const WRITE: &str = "session-test:purchase/write@1.0.0";
 const OTHER_TENANT: &str = "session-test:secret/read@1.0.0";
+/// An operation the first release does not serve and a later one does.
+const APPROVE: &str = "session-test:purchase/approve@1.0.0";
 const SECOND_PRINCIPAL: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
 const PASSWORD: &str = "session-route-test-only";
 
@@ -145,7 +147,9 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn permission_reader(url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
+/// A permission reader that expands roots through the closures of `release`,
+/// the release its host loaded.
+fn permission_reader(url: &str, release: &LoadedRelease) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
         guest_pool_max_size: 1,
@@ -157,9 +161,10 @@ fn permission_reader(url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     let configuration =
         json!({PROJECT: {"credentials": {(AuthorityClass::CallableHttp.as_str()): url}}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
-    Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
-        StaticCredentialProvider::new(projects, None),
-    ))))
+    Ok(Arc::new(
+        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)))
+            .with_release_closures(release),
+    ))
 }
 
 /// One HTTP attachment that targets the route of `operation` directly.
@@ -173,6 +178,20 @@ fn route_attachment(id: &str, path: &str, operation: &str, modes: &[&str]) -> Va
 }
 
 fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
+    load_release_serving(modes, &[READ, WRITE])
+}
+
+/// The fixture release, whose component registers each of `operations`.
+fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
+    let operations: serde_json::Map<String, Value> = operations
+        .iter()
+        .map(|operation| {
+            (
+                (*operation).to_owned(),
+                json!({"registered-operation": operation, "permissions": [operation]}),
+            )
+        })
+        .collect();
     let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase", "method": "POST"
     }});
@@ -181,10 +200,7 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
         "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": "dev",
             "packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
         "components": [{"package-id": "session_test", "component": "purchase", "interface-version": "0.1.0",
-            "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
-                READ: {"registered-operation": READ, "permissions": [READ]},
-                WRITE: {"registered-operation": WRITE, "permissions": [WRITE]}
-            }}],
+            "digest": format!("sha256:{}", "a".repeat(64)), "operations": operations}],
         "routes": [
             {"package-id": "session_test", "component": "purchase", "operation": READ, "type": "get"},
             {"package-id": "session_test", "component": "purchase", "operation": WRITE, "type": "create"}
@@ -326,7 +342,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     );
     drop(scoped);
 
-    let labels = permission_reader(url.as_str())?;
+    let labels = permission_reader(url.as_str(), &*load_release(&["session"])?)?;
     admin.execute("UPDATE app_system.users SET display_name = 'Alice Operator' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &SECOND_PRINCIPAL]).await?;
     admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES ('tenant-b', $1::text::uuid, 'user', 'other@example.test', 'Other tenant')",
@@ -368,10 +384,11 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     identity_reader
         .batch_execute("SET ROLE session_identity_reader")
         .await?;
+    let identity_reader = Arc::new(identity_reader);
     let authentication = Arc::new(SessionRouteAuthentication::new(
-        verifier,
-        Arc::new(identity_reader),
-        permission_reader(url.as_str())?,
+        verifier.clone(),
+        Arc::clone(&identity_reader),
+        permission_reader(url.as_str(), &*load_release(&["session"])?)?,
         PROJECT,
     ));
     let route = routing(authentication.clone(), &["session"])?;
@@ -406,6 +423,46 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         assert!(!caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_TENANT));
     }
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 5);
+
+    // R18 (4) and (5): a grant stores a root the loaded release does not
+    // serve. It expands to nothing on this host, and it expands on a host
+    // whose release serves it, with no write in between.
+    let granted = wamn_platform_identity::application::grant_permission(
+        &admin,
+        TENANT,
+        "purchase-writer",
+        "session-test:purchase/approve",
+        None,
+    )
+    .await?;
+    assert_eq!(granted.rows_added, 1, "the unserved root is stored");
+    assert!(granted.closure.is_empty());
+    let dormant = accepted(&route, &first).await;
+    assert!(dormant.permits(READ) && dormant.permits(WRITE));
+    assert!(
+        !dormant.permits(APPROVE),
+        "a root the loaded release does not serve expands to nothing"
+    );
+    let serving = load_release_serving(&["session"], &[READ, WRITE, APPROVE])?;
+    let later = FlowHttpRouting::new(Some(Arc::clone(&serving)), RouteInFlightLimit::default())
+        .with_authenticator(Arc::new(
+            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
+                SessionRouteAuthentication::new(
+                    verifier,
+                    identity_reader,
+                    permission_reader(url.as_str(), &serving)?,
+                    PROJECT,
+                ),
+            )),
+        ));
+    assert!(
+        accepted(&later, &first).await.permits(APPROVE),
+        "the stored root expands once a release that serves it loads"
+    );
+    assert!(
+        !accepted(&later, &second).await.permits(APPROVE),
+        "the root expands only for the roles that hold it"
+    );
 
     // A browser sends the signed token in its cookie and the CSRF token in a header.
     // The admitted request reads permissions once, and the refused one reads nothing.

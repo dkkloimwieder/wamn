@@ -143,15 +143,6 @@ async fn select_head(
         let mut transaction = client.transaction().await?;
         claim(&transaction, &snapshot.manifest.release).await?;
         require_compatible_schema(&mut transaction, &snapshot.manifest).await?;
-        // Authored roles take the closures of the candidate before it becomes
-        // the head, so no activated operation calls one its roles were not
-        // granted.
-        crate::role_permissions::reconcile_release_permissions(
-            &transaction,
-            &release.tenant,
-            &crate::role_permissions::ReleaseClosures::from_manifest(&snapshot.manifest),
-        )
-        .await?;
         // This existing row also serializes an older promote command's upsert.
         transaction
             .execute(

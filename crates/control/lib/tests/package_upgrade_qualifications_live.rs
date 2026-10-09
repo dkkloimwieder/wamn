@@ -91,7 +91,8 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     assert!(fresh.iter().any(|fact| fact.contains("_immutable")));
 
     // A pre-change project holds migrations 1–8 without either upgrade carrier.
-    // Only this registry projection is needed to register the disposable target.
+    // Only this registry projection is needed to register the disposable target,
+    // with the permission rows that migration 0011 prunes.
     client
         .batch_execute(
             "DROP TABLE catalog.package_upgrade_qualifications; \
@@ -103,6 +104,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
                ADD CONSTRAINT package_definition_owners_definition_type_check \
                  CHECK (definition_type IN ('relation', 'field', 'constraint')); \
              CREATE SCHEMA app_system; \
+             CREATE TABLE app_system.permissions (permission text, required_by text); \
              CREATE SCHEMA registry; \
              CREATE TABLE registry.project_envs \
                (org text, project text, env text, instance_suffix text); \
@@ -137,7 +139,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(migrations, 10);
+    assert_eq!(migrations, 11);
     upgrade_schema(&UpgradeSchemaRequest {
         baseline: None,
         ..request

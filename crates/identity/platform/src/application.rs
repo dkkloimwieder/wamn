@@ -183,8 +183,6 @@ pub enum AdministrationRefusal {
     NotRoleName { role: String },
     /// The role does not exist in the tenant.
     RoleNotFound { role: String, tenant: String },
-    /// The current serving release does not serve the operation.
-    OperationNotServed { reference: String },
     /// The operation is fixed to `admin` or to every member (§2.5).
     NotGrantable { reference: String },
     /// The tenant has no application user with the id.
@@ -222,10 +220,6 @@ impl fmt::Display for AdministrationRefusal {
             Self::RoleNotFound { role, tenant } => {
                 write!(formatter, "role {role} does not exist in tenant {tenant}")
             }
-            Self::OperationNotServed { reference } => write!(
-                formatter,
-                "the current serving release does not serve the operation {reference}"
-            ),
             Self::NotGrantable { reference } => write!(
                 formatter,
                 "{reference} is fixed to admin or to every member, so no role takes it"
@@ -287,11 +281,11 @@ impl From<AdministrationRefusal> for AdministrationError {
 /// What a permission grant changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionGrantOutcome {
-    /// Rows written: the selected root and each required permission not yet
-    /// held through it. A second grant writes none.
+    /// Rows written: the selected root, or none on a second grant.
     pub rows_added: u64,
-    /// The closure of the root in the current serving release, the root
-    /// included.
+    /// The closure of the root in the release the caller loaded, the root
+    /// included, or empty when that release does not serve it. Nothing stores
+    /// it: each host expands the root through its own release.
     pub closure: BTreeSet<String>,
 }
 
@@ -310,11 +304,6 @@ const DROP_ROLE_SQL: &str = "DELETE FROM app_system.roles WHERE tenant_id = $1 A
 const ROOT_SQL: &str = "INSERT INTO app_system.permissions \
     (tenant_id, role_name, permission, required_by) VALUES ($1, $2, $3, $3) \
     ON CONFLICT DO NOTHING";
-
-const REQUIRED_SQL: &str = "INSERT INTO app_system.permissions \
-    (tenant_id, role_name, permission, required_by) \
-    SELECT $1, $2, permission, $3 FROM unnest($4::text[]) AS permission \
-     WHERE permission <> $3 ON CONFLICT DO NOTHING";
 
 const DROP_ROOT_SQL: &str = "DELETE FROM app_system.permissions \
     WHERE tenant_id = $1 AND role_name = $2 AND permission = $3 AND required_by = $3";
@@ -387,9 +376,11 @@ pub async fn require_role(
     }
 }
 
-/// Select `reference` for the authored `role` and write `closure`, its
-/// closure in the current serving release, root included. `None` means that
-/// the release does not serve the operation.
+/// Select `reference` for the authored `role`: store it as a root
+/// (platform-deploy.md R18). The grant stores any reference that
+/// `permissions_reference_check` accepts, whether a release serves it or not.
+/// `closure` is its closure in the release the caller loaded, or `None` when
+/// that release does not serve it; the outcome reports it and nothing stores it.
 pub async fn grant_permission(
     client: &(impl GenericClient + Sync),
     tenant: &str,
@@ -401,22 +392,13 @@ pub async fn grant_permission(
         return Err(AdministrationRefusal::AdminTakesNoPermission.into());
     }
     require_role(client, tenant, role).await?;
-    let closure = closure.ok_or_else(|| AdministrationRefusal::OperationNotServed {
-        reference: reference.to_owned(),
-    })?;
-    let permissions: Vec<&str> = closure.iter().map(String::as_str).collect();
-    // The root row goes first, because every closure row references it.
-    let mut rows_added = client
+    let rows_added = client
         .execute(ROOT_SQL, &[&tenant, &role, &reference])
-        .await
-        .map_err(|error| database_error(&error))?;
-    rows_added += client
-        .execute(REQUIRED_SQL, &[&tenant, &role, &reference, &permissions])
         .await
         .map_err(|error| database_error(&error))?;
     Ok(PermissionGrantOutcome {
         rows_added,
-        closure: closure.clone(),
+        closure: closure.cloned().unwrap_or_default(),
     })
 }
 
