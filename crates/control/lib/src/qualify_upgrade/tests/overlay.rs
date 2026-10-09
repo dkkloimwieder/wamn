@@ -251,7 +251,7 @@ async fn apply_set(
     fixture: &OverlayFixture,
     evidence: &Path,
 ) -> anyhow::Result<Vec<crate::apply_package::ApplyOutcome>> {
-    crate::apply_package::apply_qualified_package_set_observed(
+    crate::apply_package::apply_qualified_package_set(
         apply_request(
             fixture.base.source_database.url(),
             &fixture.base.root.join("candidate"),
@@ -261,7 +261,6 @@ async fn apply_set(
             fixture.candidate.clone(),
         ],
         evidence,
-        fixture.base.serving.clone(),
     )
     .await
 }
@@ -1111,14 +1110,13 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     .await
     .unwrap();
     assert_eq!(state(&mut fixture.base.source).await, original);
-    let applied = crate::apply_package::apply_qualified_package_set_observed(
+    let applied = crate::apply_package::apply_qualified_package_set(
         apply_request(
             fixture.base.source_database.url(),
             &fixture.base.root.join("candidate"),
         ),
         &successor_roots,
         &result.result,
-        fixture.base.serving.clone(),
     )
     .await
     .unwrap();

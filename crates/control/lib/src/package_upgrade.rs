@@ -24,8 +24,6 @@ pub(crate) struct AcceptedUpgrade {
     evidence: UpgradeQualification,
     bytes: Vec<u8>,
     sha256: String,
-    #[cfg(test)]
-    observed_workloads: Option<qualify_upgrade::workload::ServingWorkloads>,
 }
 
 impl AcceptedUpgrade {
@@ -40,8 +38,6 @@ pub(crate) fn read_evidence(path: &Path) -> anyhow::Result<AcceptedUpgrade> {
         evidence,
         bytes,
         sha256,
-        #[cfg(test)]
-        observed_workloads: None,
     })
 }
 
@@ -209,34 +205,6 @@ fn require_presented_roots(
     Ok(())
 }
 
-#[cfg(test)]
-pub(crate) fn read_evidence_with_observation(
-    path: &Path,
-    observed: qualify_upgrade::workload::ServingWorkloads,
-) -> anyhow::Result<AcceptedUpgrade> {
-    let mut accepted = read_evidence(path)?;
-    accepted.observed_workloads = Some(observed);
-    Ok(accepted)
-}
-
-async fn observe_workloads(
-    accepted: &AcceptedUpgrade,
-) -> anyhow::Result<qualify_upgrade::workload::ServingWorkloads> {
-    #[cfg(test)]
-    if let Some(observed) = &accepted.observed_workloads {
-        return Ok(observed.clone());
-    }
-    let evidence = &accepted.evidence;
-    qualify_upgrade::workload::observe(
-        &evidence.workload_target,
-        &evidence.tenant,
-        &evidence.environment,
-        &evidence.predecessor_manifest_digest,
-    )
-    .await
-    .context("recheck the qualified serving workloads before package mutation")
-}
-
 async fn read_accepted(
     tx: &Transaction<'_>,
     tenant: &str,
@@ -271,8 +239,6 @@ async fn read_accepted(
         evidence,
         bytes,
         sha256,
-        #[cfg(test)]
-        observed_workloads: None,
     }))
 }
 
@@ -422,11 +388,6 @@ pub(crate) async fn require_application(
     ensure!(
         read_upgrade_privileges(tx, &evidence.schemas).await? == evidence.predecessor_privileges,
         "predecessor privileges changed after qualification"
-    );
-    let serving = observe_workloads(accepted).await?;
-    ensure!(
-        serving == evidence.serving_workloads,
-        "serving workloads changed after qualification"
     );
     Ok(Some(accepted.clone()))
 }

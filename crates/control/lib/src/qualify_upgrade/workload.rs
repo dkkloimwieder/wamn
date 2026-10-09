@@ -1,4 +1,4 @@
-//! Read serving Kubernetes resources before a package upgrade and before application.
+//! Read serving Kubernetes resources before a package upgrade.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -20,39 +20,24 @@ pub struct WorkloadTarget {
     pub package_workloads: BTreeMap<String, String>,
 }
 
-/// Stable Kubernetes object identity and its exact deployed specification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ObjectIdentity {
-    pub name: String,
-    pub uid: String,
-    pub generation: u64,
-    pub spec_sha256: String,
-}
-
-/// Live application schema and the resources that supplied its serving replicas.
+/// Live application schema of a package's serving replicas.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackageWorkload {
-    pub deployment: ObjectIdentity,
-    pub replica_set: ObjectIdentity,
-    pub workloads: BTreeMap<String, ObjectIdentity>,
     pub schema: String,
 }
 
-/// Serving identities retained in qualification evidence and compared before apply.
+/// Serving schemas retained in qualification evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServingWorkloads {
-    pub host_deployment: ObjectIdentity,
     pub manifest_digest: String,
     pub packages: BTreeMap<String, PackageWorkload>,
 }
 
 /// Observe a converged host release and each package's actual ready workload schema.
 ///
-/// Reads Kubernetes only. Repeating this observation supplies the pre-apply recheck;
-/// pod replacements do not change its evidence, while changed deployed specs do.
+/// Reads Kubernetes only.
 pub async fn observe(
     target: &WorkloadTarget,
     tenant: &str,
@@ -122,13 +107,7 @@ pub async fn observe(
             packages.insert(package.clone(), observation);
         }
     }
-    let host_deployment = identity(&deployment)?;
-    ensure!(
-        identity(&get(target, &["deployment", &target.host_deployment]).await?)? == host_deployment,
-        "host deployment changed during workload observation"
-    );
     Ok(ServingWorkloads {
-        host_deployment,
         manifest_digest: expected_manifest_digest.to_owned(),
         packages,
     })
@@ -321,7 +300,6 @@ fn validate_package(
         "actual workload replica count differs from the deployment"
     );
     let mut schemas = BTreeSet::new();
-    let mut identities = BTreeMap::new();
     for workload in selected {
         object(workload, "Workload", namespace)?;
         for condition in ["Ready", "Config", "HostSelection", "Placement", "Sync"] {
@@ -374,17 +352,12 @@ fn validate_package(
             "workload native host is not one of the observed ready host pods"
         );
         schemas.insert(workload_schema(workload, tenant, environment, namespace)?);
-        let identity = identity(workload)?;
-        identities.insert(identity.name.clone(), identity);
     }
     ensure!(
         schemas.len() == 1,
         "serving workload replicas disagree on the application schema"
     );
     Ok(PackageWorkload {
-        deployment: identity(deployment)?,
-        replica_set: identity(replica)?,
-        workloads: identities,
         schema: schemas
             .into_iter()
             .next()
@@ -525,21 +498,6 @@ fn require_digest(container: &Value, expected: &str) -> anyhow::Result<()> {
         "serving host release digest differs from the selected release"
     );
     Ok(())
-}
-
-fn identity(value: &Value) -> anyhow::Result<ObjectIdentity> {
-    let generation = count(value, "/metadata/generation")?;
-    ensure!(generation > 0, "observed generation must be positive");
-    let spec = value
-        .get("spec")
-        .filter(|spec| spec.is_object())
-        .context("observed resource has no spec")?;
-    Ok(ObjectIdentity {
-        name: text(value, "/metadata/name")?.to_owned(),
-        uid: text(value, "/metadata/uid")?.to_owned(),
-        generation,
-        spec_sha256: wamn_execution_contract::canonical_json_sha256(spec),
-    })
 }
 
 fn object(value: &Value, kind: &str, namespace: &str) -> anyhow::Result<()> {

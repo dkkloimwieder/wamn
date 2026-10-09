@@ -20,7 +20,7 @@ use wamn_catalog::{PackageCoordinate, ServingManifest};
 use wamn_schema_control::{
     AppliedPackage, PackageDirectory, RecordedMigration, plan_package_migrations,
 };
-use wamn_schema_generator::{MaterializeMode, PackageManifest};
+use wamn_schema_generator::PackageManifest;
 
 use crate::apply_package::{
     ApplyPackageRequest, apply_qualification_package, read_package_directory,
@@ -686,70 +686,6 @@ async fn prove_connected_copy(
     let tx = client.transaction().await?;
     evidence.post_privileges = read_upgrade_privileges(&tx, &evidence.schemas).await?;
     tx.rollback().await?;
-    let installed = packages
-        .iter()
-        .map(|package| package.manifest.clone())
-        .collect::<Vec<_>>();
-    for package in packages {
-        let catalog =
-            wamn_schema_generator::introspect_package(database_url, &package.root).await?;
-        let projected = wamn_schema_generator::project_package_catalog(
-            &catalog,
-            &package.manifest,
-            &installed,
-        )?;
-        let schema = evidence
-            .serving_workloads
-            .packages
-            .get(&package.identity.package_id)
-            .map_or("public", |workload| workload.schema.as_str());
-        wamn_schema_generator::materialize_package_verified_with_existing_grants(
-            MaterializeMode::Check,
-            &projected,
-            database_url,
-            &package.root,
-            schema,
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "check generated candidate artifacts for {}",
-                package.identity.package_id
-            )
-        })?;
-        let statements =
-            crate::push_component::load_package_statement_facts(&package.root, &package.manifest)?;
-        let mut corpus = BTreeMap::new();
-        for (operation, statements) in statements {
-            for (digest, statement) in statements {
-                corpus.insert(
-                    format!(
-                        "candidate/{}/{operation}/{}/{digest}",
-                        package.identity.package_id, statement.path
-                    ),
-                    statement.sql.into_bytes(),
-                );
-            }
-        }
-        if !corpus.is_empty() {
-            let schema = &evidence
-                .serving_workloads
-                .packages
-                .get(&package.identity.package_id)
-                .context("candidate statements have no observed runtime schema")?
-                .schema;
-            wamn_schema_generator::classify_statements_with_existing_grants(
-                client, &corpus, schema,
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "plan candidate statements for {}",
-                    package.identity.package_id
-                )
-            })?;
-        }
-    }
     plan_predecessor(client, manifest, &evidence.serving_workloads)
         .await
         .context("predecessor statements fail under candidate grants")?;

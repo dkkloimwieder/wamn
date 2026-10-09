@@ -9,9 +9,7 @@ use super::{
     AcceptedUpgrade, matching_reconciliation_evidence, persist, read_accepted,
     require_compatible_schema, require_prefix,
 };
-use crate::qualify_upgrade::workload::{
-    ObjectIdentity, PackageWorkload, ServingWorkloads, WorkloadTarget,
-};
+use crate::qualify_upgrade::workload::{PackageWorkload, ServingWorkloads, WorkloadTarget};
 use crate::qualify_upgrade::{
     PackageIdentity, PresentedRootIdentity, UpgradeQualification, read_current_packages,
 };
@@ -50,15 +48,6 @@ fn predecessor_manifest() -> ServingManifest {
     )]);
     manifest.components = [component].into();
     manifest
-}
-
-fn object() -> ObjectIdentity {
-    ObjectIdentity {
-        name: "fixture".to_owned(),
-        uid: "fixture-uid".to_owned(),
-        generation: 1,
-        spec_sha256: format!("sha256:{}", "a".repeat(64)),
-    }
 }
 
 fn root_identity(package: PackageIdentity) -> PresentedRootIdentity {
@@ -193,14 +182,10 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
             package_workloads: BTreeMap::new(),
         },
         serving_workloads: ServingWorkloads {
-            host_deployment: object(),
             manifest_digest: manifest.digest().as_str().to_owned(),
             packages: BTreeMap::from([(
                 "platform_fixture".to_owned(),
                 PackageWorkload {
-                    deployment: object(),
-                    replica_set: object(),
-                    workloads: BTreeMap::new(),
                     schema: "inventory".to_owned(),
                 },
             )]),
@@ -211,7 +196,6 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
         evidence,
         bytes: wamn_execution_contract::canonical_json_bytes(&value),
         sha256: wamn_execution_contract::canonical_json_sha256(&value),
-        observed_workloads: None,
     }
 }
 

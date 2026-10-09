@@ -98,10 +98,9 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     let mut changed = suffix.clone();
     changed.push(b'\n');
     fs::write(&fixture.suffix, changed).unwrap();
-    let error = crate::apply_package::apply_qualified_package_observed(
+    let error = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();
@@ -119,10 +118,9 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
         .await
         .unwrap();
     let drifted = state(&mut fixture.source).await;
-    let error = crate::apply_package::apply_qualified_package_observed(
+    let error = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();
@@ -189,10 +187,9 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
         .unwrap()
         .unwrap();
 
-    let applied = crate::apply_package::apply_qualified_package_observed(
+    let applied = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();
@@ -235,10 +232,9 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     }
     transaction.rollback().await.unwrap();
     let completed = state(&mut fixture.source).await;
-    let repeated = crate::apply_package::apply_qualified_package_observed(
+    let repeated = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();
@@ -282,10 +278,9 @@ async fn whole_row_postcondition_failure_rolls_back_schema_grants_and_evidence()
     ).await.unwrap();
     let before_attempt = state(&mut fixture.source).await;
     let retained = retained_whole_row_data(&fixture.source).await;
-    let error = crate::apply_package::apply_qualified_package_observed(
+    let error = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();

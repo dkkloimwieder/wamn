@@ -149,27 +149,6 @@ pub async fn apply_qualified_package_set(
     crate::package_upgrade::apply_coordinated(request, presented_packages, evidence).await
 }
 
-#[cfg(test)]
-pub(crate) async fn apply_qualified_package_set_observed(
-    request: ApplyPackageRequest,
-    presented_packages: &[PathBuf],
-    evidence_path: &Path,
-    observed: crate::qualify_upgrade::workload::ServingWorkloads,
-) -> anyhow::Result<Vec<ApplyOutcome>> {
-    let evidence = crate::package_upgrade::read_evidence_with_observation(evidence_path, observed)?;
-    crate::package_upgrade::apply_coordinated(request, presented_packages, evidence).await
-}
-
-#[cfg(test)]
-pub(crate) async fn apply_qualified_package_observed(
-    request: ApplyPackageRequest,
-    evidence_path: &Path,
-    observed: crate::qualify_upgrade::workload::ServingWorkloads,
-) -> anyhow::Result<ApplyOutcome> {
-    let evidence = crate::package_upgrade::read_evidence_with_observation(evidence_path, observed)?;
-    apply_request(request, ApplicationMode::Production(Some(&evidence))).await
-}
-
 /// Apply only to the owned disposable database of upgrade qualification.
 pub(crate) async fn apply_qualification_package(
     request: ApplyPackageRequest,

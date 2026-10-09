@@ -56,10 +56,9 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
     assert!(evidence.candidate_suffix.is_empty());
 
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:seed-backfill',true); UPDATE inventory.widget SET note=NULL WHERE code='priority'; COMMIT").await.unwrap();
-    let error = crate::apply_package::apply_qualified_package_observed(
+    let error = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();
@@ -142,10 +141,9 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
     fs::write(&manifest_path, frozen).unwrap();
 
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:correct-backfill',true); UPDATE inventory.widget SET note='retained note' WHERE code='priority'; COMMIT").await.unwrap();
-    let applied = crate::apply_package::apply_qualified_package_observed(
+    let applied = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();
@@ -157,10 +155,9 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
     ).await.unwrap();
     assert_eq!(progress.get::<_, String>(0), "completed");
     assert_eq!(progress.get::<_, i64>(1), 3);
-    let repeated = crate::apply_package::apply_qualified_package_observed(
+    let repeated = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();
@@ -255,29 +252,26 @@ async fn expand_conditions_preserve_rows_stop_on_lock_and_commit_with_evidence()
     lock.batch_execute("LOCK TABLE inventory.widget_maker IN ACCESS EXCLUSIVE MODE")
         .await
         .unwrap();
-    let error = crate::apply_package::apply_qualified_package_observed(
+    let error = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();
     assert!(format!("{error:#}").contains("lock timeout"), "{error:#}");
     lock.rollback().await.unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
-    let applied = crate::apply_package::apply_qualified_package_observed(
+    let applied = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();
     assert!(applied.changed);
     assert_eq!(retained_rows(&fixture.source).await, retained);
-    let repeated = crate::apply_package::apply_qualified_package_observed(
+    let repeated = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();

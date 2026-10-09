@@ -157,7 +157,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::qualify_upgrade::workload::{ObjectIdentity, ServingWorkloads, WorkloadTarget};
+    use crate::qualify_upgrade::workload::{ServingWorkloads, WorkloadTarget};
     use crate::reconcile_package_data_access::upgrade::UpgradePrivileges;
 
     struct Files(PathBuf);
@@ -226,12 +226,6 @@ mod tests {
                 package_workloads: BTreeMap::new(),
             },
             serving_workloads: ServingWorkloads {
-                host_deployment: ObjectIdentity {
-                    name: "unused".into(),
-                    uid: "unused".into(),
-                    generation: 1,
-                    spec_sha256: format!("sha256:{}", "b".repeat(64)),
-                },
                 manifest_digest: format!("sha256:{}", "a".repeat(64)),
                 packages: BTreeMap::new(),
             },

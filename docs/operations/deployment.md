@@ -437,7 +437,6 @@ Migration-specific exceptions, including a whole-row query that loses access to 
 It copies the installed predecessor database, preserves object ownership, restores predecessor grants, and applies the candidate suffix on that copy.
 It plans predecessor SQL under both predecessor grants and the complete candidate grants after reconciliation.
 A failure before reconciliation refuses the upgrade even if candidate grants restore access.
-It also checks candidate generated artifacts and statements against the upgraded copy.
 
 `qualify-release` remains the single release-qualification path defined by [release qualification](../plan/release-qualification.md).
 It proves the exact published release, source, and deployment artifacts after the package upgrade.
@@ -531,7 +530,7 @@ push-component → publish-release → prepare-release → qualify-release
 → optional wamn web upload
 ```
 
-Before mutation, application rechecks the predecessor head, package bytes, privileges, and observed workload identities, specifications, and schemas.
+Before mutation, application rechecks the predecessor head, package bytes, and privileges.
 It stores accepted canonical evidence and its digest in `catalog.package_upgrade_qualifications` within the package application transaction.
 An exact retry changes nothing. Conflicting evidence for the same coordinate refuses.
 Data-access reconciliation consumes the persisted evidence and refuses a changed root set or derived privilege state.

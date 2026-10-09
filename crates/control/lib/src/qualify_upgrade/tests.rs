@@ -2,6 +2,7 @@
 
 use super::*;
 use wamn_catalog::{ArtifactHash, ServingComponent, ServingComponentOperation, ServingRelease};
+use wamn_schema_generator::MaterializeMode;
 use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
 mod overlay;
@@ -181,24 +182,11 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
 }
 
 fn serving(digest: &str) -> workload::ServingWorkloads {
-    let identity = |name: &str| workload::ObjectIdentity {
-        name: name.to_owned(),
-        uid: name.to_owned(),
-        generation: 1,
-        spec_sha256: format!("sha256:{}", "b".repeat(64)),
-    };
     workload::ServingWorkloads {
-        host_deployment: identity("host"),
         manifest_digest: digest.to_owned(),
         packages: BTreeMap::from([(
             "platform_fixture".to_owned(),
             workload::PackageWorkload {
-                deployment: identity("http"),
-                replica_set: identity("http-replica"),
-                workloads: BTreeMap::from([(
-                    "http-workload".to_owned(),
-                    identity("http-workload"),
-                )]),
                 schema: "inventory".to_owned(),
             },
         )]),
@@ -347,23 +335,6 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
     assert!(format!("{error:#}").contains("prefix"), "{error:#}");
     fs::write(&prefix, original_prefix).unwrap();
 
-    let generated = fixture
-        .root
-        .join("candidate/generated/fixture-tui/src/lib.rs");
-    let original_generated = fs::read(&generated).unwrap();
-    fs::write(&generated, "// stale generated artifact\n").unwrap();
-    let error = qualify_upgrade_with_observer(
-        request(&fixture, "stale.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("generated candidate artifacts"),
-        "{error:#}"
-    );
-    fs::write(&generated, original_generated).unwrap();
-
     let mut wrong_schema = fixture.serving.clone();
     wrong_schema
         .packages
@@ -380,36 +351,20 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
         format!("{error:#}").contains("unchanged runtime schema"),
         "{error:#}"
     );
-    for refused in ["prefix.json", "stale.json", "schema.json"] {
+    for refused in ["prefix.json", "schema.json"] {
         assert!(!fixture.root.join(refused).exists());
     }
     assert_eq!(state(&mut fixture.source).await, original);
 
     let candidate = fixture.root.join("candidate");
-    let mut changed_workloads = fixture.serving.clone();
-    changed_workloads.host_deployment.generation += 1;
-    let error = crate::apply_package::apply_qualified_package_observed(
-        apply_request(fixture.source_database.url(), &candidate),
-        &result.result,
-        changed_workloads,
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("serving workloads changed"),
-        "{error:#}"
-    );
-    assert_eq!(state(&mut fixture.source).await, original);
-
     fixture
         .source
         .batch_execute("GRANT SELECT ON inventory.widget_maker TO wamn_app")
         .await
         .unwrap();
-    let error = crate::apply_package::apply_qualified_package_observed(
+    let error = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();
@@ -425,10 +380,9 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
     assert_eq!(state(&mut fixture.source).await, original);
 
     let before_rows = retained_rows(&fixture.source).await;
-    let applied = crate::apply_package::apply_qualified_package_observed(
+    let applied = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &result.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();

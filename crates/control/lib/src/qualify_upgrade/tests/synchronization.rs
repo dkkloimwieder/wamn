@@ -63,10 +63,9 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
     .unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:fail-mirror-postcondition',true); UPDATE inventory.widget_tag SET label='missing second' WHERE label='second tag'; COMMIT").await.unwrap();
-    let failed = crate::apply_package::apply_qualified_package_observed(
+    let failed = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();
@@ -77,10 +76,9 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
     let absent = fixture.source.query_one("SELECT to_regprocedure('inventory.mirror_widget_note()') IS NULL, NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='inventory' AND table_name='widget_tag' AND column_name='mirror_note'), NOT EXISTS (SELECT 1 FROM catalog.package_definition_owners WHERE tenant_id=$1 AND definition_type IN ('synchronization_function','synchronization_trigger'))", &[&TENANT]).await.unwrap();
     assert!(absent.get::<_, bool>(0) && absent.get::<_, bool>(1) && absent.get::<_, bool>(2));
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:restore-mirror-postcondition',true); UPDATE inventory.widget_tag SET label='second tag' WHERE label='missing second'; COMMIT").await.unwrap();
-    let result = crate::apply_package::apply_qualified_package_observed(
+    let result = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();
@@ -127,19 +125,17 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
             .unwrap()
             .get::<_, bool>(0)
     );
-    let repeated = crate::apply_package::apply_qualified_package_observed(
+    let repeated = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap();
     assert!(!repeated.changed);
     fixture.source.batch_execute("CREATE TRIGGER extra_mirror BEFORE INSERT OR UPDATE ON inventory.widget_tag FOR EACH ROW EXECUTE FUNCTION inventory.mirror_widget_note()").await.unwrap();
-    let extra = crate::apply_package::apply_qualified_package_observed(
+    let extra = crate::apply_package::apply_qualified_package(
         apply_request(fixture.source_database.url(), &candidate),
         &qualified.result,
-        fixture.serving.clone(),
     )
     .await
     .unwrap_err();
