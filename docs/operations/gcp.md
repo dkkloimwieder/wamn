@@ -2317,4 +2317,6 @@ This map contains no schema. Qualification reads the schema from the live worklo
 target/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>
 ```
 
+An upgrade of an installed package also needs `--predecessor-release <DIGEST>`, the manifest digest of the release the environment serves.
+
 The verb keeps its work under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-upgrade/<commit>`. That directory holds the checkout, the targets, the command logs and one run record per environment in `runs/`. A second run with the same arguments resumes at the first stage without a finished step. The qualify stage starts kind clusters, so tell the other sessions on the machine before a run.

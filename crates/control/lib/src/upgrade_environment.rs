@@ -52,6 +52,11 @@ pub struct UpgradeEnvironmentRequest {
     /// The parent of the private work directory of each commit.
     pub work_root: PathBuf,
     pub arguments: RunArguments,
+    /// The manifest digest of the release the environment serves now. The
+    /// package stage needs it only to upgrade an installed package, and
+    /// qualification checks it against `catalog.releases` and the installed
+    /// versions (docs/plan/platform-deploy.md §13).
+    pub predecessor_release: Option<String>,
 }
 
 /// Runs every built stage that the run record does not show as finished.
@@ -71,6 +76,7 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
         checkout: work.join("checkout"),
         work,
         arguments: arguments.clone(),
+        predecessor_release: request.predecessor_release.clone(),
     };
     while let Some(stage) = record.next_stage() {
         record.start(&path, stage, run.inputs(stage))?;
@@ -160,6 +166,7 @@ struct Run {
     work: PathBuf,
     checkout: PathBuf,
     arguments: RunArguments,
+    predecessor_release: Option<String>,
 }
 
 impl Run {
@@ -182,6 +189,11 @@ impl Run {
                 .display()
                 .to_string(),
             );
+        }
+        if stage == Stage::Packages
+            && let Some(release) = &self.predecessor_release
+        {
+            inputs.insert("predecessor_release".to_owned(), release.clone());
         }
         inputs
     }
@@ -737,15 +749,8 @@ impl Run {
                     database_url: databases.project_url(),
                     tenant: databases.tenant.clone(),
                     environment: self.arguments.environment.clone(),
-                    predecessor_release: bound_release(
-                        &databases.project().await?,
-                        &databases.tenant,
-                        &self.arguments.environment,
-                        None,
-                    )
-                    .await?
-                    .context(
-                        "no active connection binding names the release the environment serves, so the package upgrade has no predecessor release",
+                    predecessor_release: self.predecessor_release.clone().context(
+                        "an installed package upgrade needs --predecessor-release, the digest of the release the environment serves",
                     )?,
                     package: candidate.root.clone(),
                     presented_packages: roots.clone(),
@@ -3520,6 +3525,7 @@ mod tests {
             checkout: work.join("checkout"),
             work,
             arguments: RunArguments::new("dkk", "receiving", "dev", &commit).unwrap(),
+            predecessor_release: None,
         };
 
         let (first, outputs) = run.source().await.expect("first source");

@@ -461,7 +461,9 @@ The verb fetches each predecessor by its recorded digest and compares its frozen
 It does not rebuild predecessor SQL with the current generator.
 
 The package stage qualifies the complete successor set before application.
-It takes the predecessor release from the active connection bindings of the environment, which must name one release.
+It takes the predecessor release from the `--predecessor-release <DIGEST>` input, the manifest digest of the release the environment serves.
+Qualification refuses the digest unless `catalog.releases` holds it and its package versions equal the installed versions.
+An upgrade of an installed package without this input refuses.
 An additive base upgrade and all affected overlay successors apply in one transaction, with the base first.
 A retry requires the saved qualification to match the exact environment, complete package roots, and selected base component bytes.
 The verb refuses multiple independent base transitions in one run.

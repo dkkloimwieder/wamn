@@ -309,6 +309,10 @@ pub struct UpgradeEnvironmentArgs {
     /// `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-upgrade`.
     #[arg(long)]
     pub work_root: Option<PathBuf>,
+    /// The manifest digest of the release the environment serves now. An
+    /// upgrade of an installed package needs it.
+    #[arg(long, value_name = "DIGEST")]
+    pub predecessor_release: Option<String>,
 }
 
 pub async fn upgrade_environment(args: UpgradeEnvironmentArgs) -> anyhow::Result<()> {
@@ -331,6 +335,7 @@ pub async fn upgrade_environment(args: UpgradeEnvironmentArgs) -> anyhow::Result
             &args.environment,
             &args.commit,
         )?,
+        predecessor_release: args.predecessor_release,
     }))
     .await?;
     println!("{}", serde_json::to_string_pretty(&record)?);

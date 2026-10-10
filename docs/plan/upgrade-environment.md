@@ -4,7 +4,7 @@ Updated through: 2026-10-02, `main` at `d3be6482e`. Accepted by the owner on 202
 
 ## 1. Goal
 
-One verb, `wamn-ctl upgrade-environment --org <org> --project <project> --env <env> --commit <40-hex commit>`, takes one installed environment to the bytes of one commit. It does what B0 to B13 of `docs/plan/kind-to-type.md` §3.2 did by hand on 2026-10-01 and 2026-10-02. It builds and pushes from the pinned commit, upgrades the schemas, publishes, qualifies, selects, deploys and checks. It writes one run record that the operations page cites.
+One verb, `wamn-ctl upgrade-environment --org <org> --project <project> --env <env> --commit <40-hex commit> [--predecessor-release <digest>]`, takes one installed environment to the bytes of one commit. It does what B0 to B13 of `docs/plan/kind-to-type.md` §3.2 did by hand on 2026-10-01 and 2026-10-02. It builds and pushes from the pinned commit, upgrades the schemas, publishes, qualifies, selects, deploys and checks. It writes one run record that the operations page cites.
 
 The cutover took most of two days of wall time for one environment pair (§3.1). Most of its stops had three causes. A person ran the steps by hand in a fixed order. Some tools had never run against a private registry. Some inputs followed the head of `main`. The verb removes those three causes. It adds no new delivery rule: every check it runs exists today in a verb or in the runbook.
 
