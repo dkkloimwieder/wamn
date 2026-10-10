@@ -885,8 +885,8 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         identity.org.clone(),
         "--schema".to_owned(),
         identity.schema.clone(),
-        "--route-host".to_owned(),
-        request.config.route_host().to_owned(),
+        "--drain-bound-seconds".to_owned(),
+        HOST_SHUTDOWN_TIMEOUT.as_secs().to_string(),
     ];
     let mut env = vec![
         (
@@ -2299,8 +2299,8 @@ mod tests {
             "example",
             "--schema",
             "inventory",
-            "--route-host",
-            "fixture.localhost",
+            "--drain-bound-seconds",
+            "70",
         ]
         .map(str::to_owned);
         assert_eq!(&*spec.args, &expected_args);

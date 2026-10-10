@@ -472,6 +472,8 @@ mod tests {
                 .context("bind the production router-delivery bridge")?;
         }
 
+        // The ingress selects the workload by its `config.host` (R2).
+        routing.bind_route_host(workload.workload_id(), ROUTE_AUTHORITY);
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(FLOW_HTTP_ROUTING_ID, routing);
         plugins.insert(ROUTER_DELIVERY_ID, delivery);

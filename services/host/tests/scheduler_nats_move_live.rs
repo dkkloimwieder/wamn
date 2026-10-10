@@ -429,6 +429,8 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
         "count",
         "--drain-delay",
         "5s",
+        "--drain-bound-seconds",
+        "300",
     ])
     .await?;
     let probe_port = published_port(&host, "9090/tcp").await?;

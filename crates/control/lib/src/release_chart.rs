@@ -193,19 +193,19 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
     roles
 }
 
-/// The host variables that carry the environment coordinate and route host
-/// (R1). The host derives its tenant from the coordinate and expects the route
-/// host, because the manifest names neither. The operator chart sets
+/// The host variables that carry the environment coordinate (R1). The host
+/// derives its tenant from the coordinate, because the manifest names none.
+/// The route host is not one of them: it lives only on the http workload's
+/// `config.host` (R2). The operator chart sets
 /// `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace first, and this later
 /// entry replaces it, because the namespace is shared by every environment
 /// (R6). `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one
 /// budget of the host's shutdown sequence, from the same value as the pods'
 /// `terminationGracePeriodSeconds` (R20).
-const HOST_VARIABLES: [&str; 5] = [
+const HOST_VARIABLES: [&str; 4] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WASMCLOUD_HOST_ENVIRONMENT",
-    "WAMN_ROUTE_HOST",
     "WAMN_DRAIN_BOUND_SECONDS",
 ];
 
@@ -263,7 +263,6 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         input.org.clone(),
         input.project.clone(),
         input.env.clone(),
-        input.route_host.clone(),
         input.drain_bound_seconds.to_string(),
     ]) {
         variables.push(mapping([("name", variable.to_owned()), ("value", value)]));
@@ -536,7 +535,6 @@ mod tests {
             serde_yaml::from_str::<Value>(
                 "[{name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
                  {name: WASMCLOUD_HOST_ENVIRONMENT, value: prod}, \
-                 {name: WAMN_ROUTE_HOST, value: wms.acme.example}, \
                  {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}]"
             )
             .expect("yaml")

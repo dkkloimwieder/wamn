@@ -1,9 +1,9 @@
-//! Native HTTP routing with a bounded refusal for the host's route host.
+//! Native HTTP routing with a bounded refusal for an expected route host.
 //!
-//! The release names no route host (R1). The host configuration names it
-//! (`WAMN_ROUTE_HOST`), and the http workload binds it as its `config.host`.
-//! During serving, the configured route host reports unavailable until a
-//! workload binds it.
+//! The release names no route host (R1). The http workload's `config.host`
+//! is its one owner (R2); a host routes by it once the workload binds. The
+//! edge creates its own ingress workload from its configured route host, so it
+//! names that host here, and it reports unavailable until the workload binds.
 //! Shutdown refuses further requests, including on existing connections.
 //! Native parsing, workload selection, and outgoing policy remain unchanged.
 //! Operator-created aliases and wildcard expansion are outside this projection.

@@ -75,8 +75,8 @@ runtime:
         # its tenant from WAMN_ORG, WAMN_PROJECT and this name (R1), so it
         # names the real environment and replaces the chart's value.
         - { name: WASMCLOUD_HOST_ENVIRONMENT, value: dev }
-        # The route host, which the release no longer names (R1).
-        - { name: WAMN_ROUTE_HOST, value: wms.localhost }
+        # The host's drain bound, equal to terminationGracePeriodSeconds (R20).
+        - { name: WAMN_DRAIN_BOUND_SECONDS, value: "70" }
         - { name: WAMN_SCHEMA, value: wms }
         # Host-held connection credentials, by HANDLE (wamn-362o.26). The file
         # is `{ "<project>": { "<handle>": "<secret>" } }`; blob-put's labels

@@ -156,7 +156,8 @@ Set `RELEASE_DIGEST` to it.
 The manifest names no tenant and no environment, so one release has one digest in every environment.
 The tenant of an environment is `<org>--<project>--<environment>`.
 The release also names no route host.
-Set the host variables `WAMN_ORG`, `WAMN_PROJECT`, `WASMCLOUD_HOST_ENVIRONMENT` and `WAMN_ROUTE_HOST` on the host group, and the `host` of the http workload config to the same route host.
+Set the host variables `WAMN_ORG`, `WAMN_PROJECT`, `WASMCLOUD_HOST_ENVIRONMENT` and `WAMN_DRAIN_BOUND_SECONDS` on the host group; a host without a drain bound refuses to start.
+The route host is only the `host` of the http workload config; the router matches routes under it.
 [Qualify the exact candidate](delivery.md#candidate-qualification) before publication.
 The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
 It takes the same `--oci-ca-path` input as `push-component`.

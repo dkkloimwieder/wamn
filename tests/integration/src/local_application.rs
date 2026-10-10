@@ -246,6 +246,17 @@ fn with_host_authority<B>(mut request: Request<B>) -> anyhow::Result<Request<B>>
     Ok(request)
 }
 
+/// The workload id of the shipped flow-http component in [`instantiate`].
+const LOCAL_WORKLOAD_ID: &str = "local-application";
+
+/// Bind the request's host as the workload's `config.host` (R2). The ingress
+/// this harness stands in for delivers only requests to that host.
+fn serve_request_host<B>(routing: &FlowHttpRouting, request: &Request<B>) {
+    if let Some(host) = request.uri().host() {
+        routing.bind_route_host(LOCAL_WORKLOAD_ID, host);
+    }
+}
+
 /// Link, bind and instantiate the shipped flow-http component in a fresh store.
 async fn instantiate(
     engine: &wash_runtime::engine::Engine,
@@ -263,7 +274,7 @@ async fn instantiate(
         wash_runtime::sockets::loopback::Network::default(),
     ));
     let mut workload = WorkloadComponent::new(
-        "local-application",
+        LOCAL_WORKLOAD_ID,
         "local-application",
         "wamn",
         "flow-http",
@@ -342,8 +353,9 @@ where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Into<wasmtime_wasi_http::Error>,
 {
-    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
     let request = with_host_authority(request)?;
+    serve_request_host(&routing, &request);
+    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
     let (request, request_io) =
         wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
     let (head_tx, head_rx) = tokio::sync::oneshot::channel();
@@ -417,8 +429,9 @@ where
     B: hyper::body::Body<Data = Bytes> + Send + 'static,
     B::Error: Into<wasmtime_wasi_http::Error>,
 {
-    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
     let request = with_host_authority(request)?;
+    serve_request_host(&routing, &request);
+    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
     let (request, request_io) =
         wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
     let response = store

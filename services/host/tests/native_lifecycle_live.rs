@@ -253,6 +253,8 @@ fn host_command(
         "count",
         "--drain-delay",
         "5s",
+        "--drain-bound-seconds",
+        "300",
     ]);
     logs(&mut command, evidence, name)?;
     Ok(command)

@@ -23,7 +23,7 @@
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use boon::{Compiler, Draft, ErrorKind, SchemaIndex, Schemas, ValidationError};
 use opentelemetry::KeyValue;
@@ -37,7 +37,7 @@ use wamn_catalog::{
 };
 use wamn_session::PAT_TOKEN_PREFIX;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
-use wash_runtime::engine::workload::WorkloadItem;
+use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
@@ -560,6 +560,9 @@ pub struct FlowHttpRouting {
     /// control host or an edge box.
     environment: Option<Arc<dyn EnvironmentStatus>>,
     limiter: Arc<RouteLimiter>,
+    /// The `config.host` of each bound http workload, lowercase, by workload
+    /// id: the one owner of the route host (R2). A route matches under it.
+    route_hosts: RwLock<HashMap<String, String>>,
 }
 
 /// Hand-written so a debug print names the release rather than dumping the whole
@@ -601,6 +604,7 @@ impl FlowHttpRouting {
             authenticator: None,
             environment: None,
             limiter: RouteLimiter::new(route_in_flight_limit, LimitScope::Route),
+            route_hosts: RwLock::default(),
         }
     }
 
@@ -639,11 +643,41 @@ impl FlowHttpRouting {
         Ok(Self::new(release, limit))
     }
 
-    /// The release names no route host (R1): the workload's `config.host`
-    /// already selected this host, so the authority takes no part here.
-    fn routes(&self, method: &str, _authority: &str) -> Result<Vec<RouteDefinition>, NoRelease> {
+    /// The routes of the release under the calling workload's `config.host`.
+    ///
+    /// The release names no route host (R1), and the workload's `config.host`
+    /// is its one owner (R2). A request whose authority, less its port, is not
+    /// that host matches no route, and neither does a workload with no
+    /// `config.host`.
+    fn routes(
+        &self,
+        workload_id: &str,
+        method: &str,
+        authority: &str,
+    ) -> Result<Vec<RouteDefinition>, NoRelease> {
         let loaded_release = self.release.as_ref().ok_or(NoRelease)?;
+        let route_hosts = self
+            .route_hosts
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        if route_hosts.get(workload_id).map(String::as_str)
+            != Some(authority_host(authority).as_str())
+        {
+            return Ok(Vec::new());
+        }
         Ok(route_definitions(loaded_release.manifest(), method))
+    }
+
+    /// Record the `config.host` the http workload `workload_id` binds.
+    ///
+    /// The runtime calls this when the workload resolves. A harness that runs
+    /// the guest without a resolved workload, and so without the ingress that
+    /// selects it by `config.host`, calls it with the host it serves.
+    pub fn bind_route_host(&self, workload_id: &str, host: &str) {
+        self.route_hosts
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(workload_id.to_owned(), host.to_ascii_lowercase());
     }
 
     fn carries_route(&self, attachment_id: &str) -> Result<bool, NoRelease> {
@@ -750,6 +784,19 @@ impl FlowHttpRouting {
             .await
             .map_err(|rejection| (rejection.status, rejection.code))
     }
+}
+
+/// The host of a request authority, lowercase, without its port.
+fn authority_host(authority: &str) -> String {
+    let host = match authority.rsplit_once(':') {
+        Some((host, port))
+            if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            host
+        }
+        _ => authority,
+    };
+    host.to_ascii_lowercase()
 }
 
 /// Every candidate the adapter could select for this request.
@@ -1132,6 +1179,35 @@ impl HostPlugin for FlowHttpRouting {
         routing::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
         Ok(())
     }
+
+    /// Learn the workload's route host from its http handler's `config.host`.
+    async fn on_workload_resolved(
+        &self,
+        workload: &ResolvedWorkload,
+        _component_id: &str,
+    ) -> anyhow::Result<()> {
+        if let Some(host) = workload
+            .host_interfaces()
+            .iter()
+            .find(|interface| interface.is_incoming_http_handler())
+            .and_then(|interface| interface.config.get("host"))
+        {
+            self.bind_route_host(workload.id(), host);
+        }
+        Ok(())
+    }
+
+    async fn on_workload_unbind(
+        &self,
+        workload_id: &str,
+        _interfaces: WitInterfaces<'_>,
+    ) -> anyhow::Result<()> {
+        self.route_hosts
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(workload_id);
+        Ok(())
+    }
 }
 
 fn plugin_of(ctx: &ActiveCtx<'_>) -> wash_runtime::wasmtime::Result<Arc<FlowHttpRouting>> {
@@ -1186,10 +1262,12 @@ impl routing::Host for ActiveCtx<'_> {
             wamn.method = %method,
         )
         .entered();
-        Ok(plugin.routes(&method, &authority).map_err(|error| {
-            tracing::warn!(method, authority, error = %error, "flow-http route supply refused");
-            error.to_string()
-        }))
+        Ok(plugin
+            .routes(&self.workload_id, &method, &authority)
+            .map_err(|error| {
+                tracing::warn!(method, authority, error = %error, "flow-http route supply refused");
+                error.to_string()
+            }))
     }
 
     async fn validate_input(
@@ -1961,7 +2039,7 @@ mod tests {
 
         assert_eq!(
             plugin
-                .routes("POST", "api.example.test")
+                .routes("http", "POST", "api.example.test")
                 .expect_err("a process carrying no release can answer no route"),
             NoRelease
         );
@@ -1973,12 +2051,32 @@ mod tests {
         let plugin =
             FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
+        plugin.bind_route_host("http", "API.example.test");
         let served = plugin
-            .routes("POST", "api.example.test")
+            .routes("http", "POST", "api.example.test")
             .expect("a loaded release serves its own routes");
 
         // The route came through the canonical round-trip the loaded release performs.
         assert_eq!(served_ids(&served), ["orders"]);
+    }
+
+    /// A route matches under the workload's `config.host` only (R2).
+    #[test]
+    fn a_route_matches_only_under_its_workloads_config_host() {
+        let mount = Mount::holding(&one_http_route(), "config-host");
+        let plugin =
+            FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+        plugin.bind_route_host("http", "api.example.test");
+        let served = |workload: &str, authority: &str| {
+            served_ids(&plugin.routes(workload, "POST", authority).unwrap())
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(served("http", "api.example.test:8443"), ["orders"]);
+        assert_eq!(served("http", "API.EXAMPLE.TEST"), ["orders"]);
+        assert!(served("http", "other.example.test").is_empty());
+        assert!(served("unbound", "api.example.test").is_empty());
     }
 
     #[test]

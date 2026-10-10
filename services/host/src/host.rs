@@ -83,8 +83,9 @@ pub struct HostArgs {
 
     /// The environment policy's drain bound, which the release chart also
     /// renders as the pod's `terminationGracePeriodSeconds` (R20). One budget
-    /// bounds the whole shutdown sequence after SIGTERM.
-    #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS", default_value_t = 300)]
+    /// bounds the whole shutdown sequence after SIGTERM. It has no default: a
+    /// host given none refuses to start.
+    #[arg(long, env = "WAMN_DRAIN_BOUND_SECONDS")]
     pub drain_bound_seconds: u64,
 
     #[arg(long = "scheduler-nats-tls-ca")]
@@ -331,12 +332,6 @@ pub struct HostArgs {
     /// route; it scopes both the operator subject and identity-reader URL.
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
-
-    /// The route host of the environment. The release names none (R1): the
-    /// http workload binds it as its `config.host`, and the ingress reports a
-    /// request to it unavailable until that workload binds.
-    #[arg(long, env = "WAMN_ROUTE_HOST")]
-    pub route_host: Option<String>,
 
     /// Trusted HTTPS issuer for session routes, never discovered from a token.
     #[arg(long, env = "WAMN_SESSION_ISSUER", requires = "session_jwks_ca")]
@@ -1454,10 +1449,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let mut ingress_connections = None;
     let mut ingress_handler = None;
     if let Some(addr) = args.http_addr {
-        let router = wamn_engine::expected_router::expected_host_router(
-            args.route_host.as_deref(),
-            stopping.clone(),
-        );
+        // The route host lives only on the http workload's `config.host`
+        // (R2), so the host expects no host before a workload binds one.
+        let router = wamn_engine::expected_router::expected_host_router(None, stopping.clone());
         let mut ingress = Ingress::builder(router, addr);
         if let Some(max) = args.max_http_ingress_connections {
             ingress = ingress.max_connections(max);
@@ -2033,6 +2027,18 @@ mod tests {
         args: HostArgs,
     }
 
+    /// Parse `arguments` with the required drain bound after the program name.
+    fn parse<I, T>(arguments: I) -> Result<TestCli, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString>,
+    {
+        let mut arguments: Vec<std::ffi::OsString> =
+            arguments.into_iter().map(Into::into).collect();
+        arguments.insert(1.min(arguments.len()), "--drain-bound-seconds=300".into());
+        TestCli::try_parse_from(arguments)
+    }
+
     #[test]
     fn materializer_binding_keeps_credentials_and_grants_host_owned() {
         use plugin::HostPlugin as _;
@@ -2078,11 +2084,17 @@ mod tests {
 
     #[test]
     fn chart_lifecycle_flags_parse_with_native_defaults() {
-        let defaults = TestCli::try_parse_from(["wamn-host"]).unwrap().args;
+        let defaults = parse(["wamn-host"]).unwrap().args;
         assert!(defaults.drain_delay.is_zero());
         assert_eq!(defaults.drain_bound_seconds, 300);
+        let error = TestCli::try_parse_from(["wamn-host"])
+            .expect_err("a host without its drain bound refuses to start");
+        assert!(
+            error.to_string().contains("--drain-bound-seconds"),
+            "{error}"
+        );
         assert!(defaults.nats_connect_timeout.is_zero());
-        let args = TestCli::try_parse_from([
+        let args = parse([
             "wamn-host",
             "--drain-delay=5s",
             "--nats-connect-timeout=60s",
@@ -2681,10 +2693,10 @@ mod tests {
             "--local-admission-digest",
             digest.as_str(),
         ];
-        let cli = TestCli::try_parse_from(local).unwrap();
+        let cli = parse(local).unwrap();
         assert!(cli.args.release_artifact_base.is_none());
         assert!(cli.args.registry_auth_file.is_none());
-        assert!(TestCli::try_parse_from(&local[..3]).is_err());
+        assert!(parse(&local[..3]).is_err());
         for (flag, value) in [
             ("--release-artifact-base", "registry.example/releases"),
             ("--release-manifest-digest", digest.as_str()),
@@ -2693,10 +2705,7 @@ mod tests {
         ] {
             let mut arguments = local.to_vec();
             arguments.extend([flag, value]);
-            assert!(
-                TestCli::try_parse_from(arguments).is_err(),
-                "local input accepted {flag}"
-            );
+            assert!(parse(arguments).is_err(), "local input accepted {flag}");
         }
     }
 
@@ -2704,7 +2713,7 @@ mod tests {
     fn a_release_backed_host_takes_exactly_one_registry_credential() {
         let file = ["host", "--registry-auth-file", "/tmp/registry.json"];
         let metadata = ["host", "--registry-token-metadata"];
-        let parsed = TestCli::try_parse_from(file).unwrap();
+        let parsed = parse(file).unwrap();
         assert!(matches!(
             RegistryPullCredential::select(
                 parsed.args.registry_auth_file.as_deref(),
@@ -2712,7 +2721,7 @@ mod tests {
             ),
             Ok(RegistryPullCredential::AuthFile(_))
         ));
-        let parsed = TestCli::try_parse_from(metadata).unwrap();
+        let parsed = parse(metadata).unwrap();
         assert!(matches!(
             RegistryPullCredential::select(
                 parsed.args.registry_auth_file.as_deref(),
@@ -2727,7 +2736,7 @@ mod tests {
             "/tmp/registry.json",
             "--registry-token-metadata",
         ];
-        assert!(TestCli::try_parse_from(both).is_err());
+        assert!(parse(both).is_err());
         let neither = RegistryPullCredential::select(None, false)
             .err()
             .expect("a host with no registry credential refuses");
@@ -2739,15 +2748,15 @@ mod tests {
 
     #[test]
     fn session_configuration_requires_the_complete_public_trust_binding() {
-        assert!(TestCli::try_parse_from(["host"]).is_ok());
+        assert!(parse(["host"]).is_ok());
         for arguments in [
             vec!["host", "--session-issuer", "https://identity.invalid"],
             vec!["host", "--session-jwks-ca", "/ca.pem"],
             vec!["host", "--session-instance-suffix", "k3m9x2p7"],
         ] {
-            assert!(TestCli::try_parse_from(arguments).is_err());
+            assert!(parse(arguments).is_err());
         }
-        let cli = TestCli::try_parse_from([
+        let cli = parse([
             "host",
             "--org",
             "fixture",
@@ -2856,7 +2865,7 @@ mod tests {
             "--core-instances",
             "7",
         ];
-        let mut cli = TestCli::try_parse_from(arguments).expect("the native memory flags parse");
+        let mut cli = parse(arguments).expect("the native memory flags parse");
         assert_eq!(cli.args.guest_memory_mode, "count");
         for mode in ["enforce", "off"] {
             let invalid = arguments.iter().map(|argument| {
@@ -2866,7 +2875,7 @@ mod tests {
                     (*argument).to_owned()
                 }
             });
-            let error = TestCli::try_parse_from(invalid).unwrap_err();
+            let error = parse(invalid).unwrap_err();
             assert!(error.to_string().contains("--guest-memory-mode"));
         }
         assert_eq!(
@@ -2899,7 +2908,7 @@ mod tests {
     fn the_removed_runtime_flags_are_not_accepted() {
         for flag in ["--pool-slots", "--pool-memory-cap-bytes", "--epoch-tick-ms"] {
             assert!(
-                TestCli::try_parse_from(["wamn-host", flag, "1"]).is_err(),
+                parse(["wamn-host", flag, "1"]).is_err(),
                 "legacy runtime flag {flag} must not remain an accepted contract"
             );
         }
@@ -2914,7 +2923,7 @@ mod tests {
             ["--release-artifact-base", RELEASE_BASE],
             ["--release-manifest-digest", RELEASE_DIGEST],
         ] {
-            let error = TestCli::try_parse_from(["wamn-host", half[0], half[1]])
+            let error = parse(["wamn-host", half[0], half[1]])
                 .expect_err("half a release pair must refuse to parse");
             let message = error.to_string();
             assert!(
@@ -2929,7 +2938,7 @@ mod tests {
     /// not the pair itself.
     #[test]
     fn a_host_given_both_release_halves_parses() {
-        let cli = TestCli::try_parse_from([
+        let cli = parse([
             "wamn-host",
             "--release-artifact-base",
             RELEASE_BASE,

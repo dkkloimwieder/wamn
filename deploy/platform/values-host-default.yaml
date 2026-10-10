@@ -148,6 +148,9 @@ runtime:
         - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
         # Per-host, per-route inline execution ceiling; excess requests shed with 429.
         - { name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT, value: "64" }
+        # The host's drain bound, equal to terminationGracePeriodSeconds (R20).
+        # The host refuses to start without it.
+        - { name: WAMN_DRAIN_BOUND_SECONDS, value: "70" }
         # Pod-private compiled components survive a container restart. This is
         # deliberately outside /oci-cache, whose children the OCI sweeper owns.
         - { name: WAMN_WASMTIME_CACHE_DIR, value: /tmp/wamn-wasmtime-cache }

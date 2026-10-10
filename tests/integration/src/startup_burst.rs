@@ -560,6 +560,8 @@ pub async fn assert_startup(
             "--schema",
             &inputs.schema,
             "--allow-insecure-registries",
+            "--drain-bound-seconds",
+            "300",
         ])
         .arg("--scheduler-nats-tls-ca")
         .arg(&inputs.scheduler_nats_tls_ca)
