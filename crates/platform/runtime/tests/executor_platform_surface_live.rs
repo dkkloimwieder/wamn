@@ -250,7 +250,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let imports_fingerprint = digest("b");
     let wiring_hash = digest("c");
     let dead_wiring_hash = digest("d");
-    let manifest_sha256 = digest("f");
+    let artifact_digest = digest("f");
     let requirement_hash = digest("1");
     let definition_hash = digest("2");
     let validation_hash = digest("3");
@@ -263,8 +263,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,manifest_sha256) \
-             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{manifest_sha256}'); \
+               (tenant_id,package_id,package_version,artifact_digest) \
+             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
              INSERT INTO catalog.wirings \
                (tenant_id,package_id,package_version,wiring_id,version, \
                 graph_json,wiring_hash) VALUES \

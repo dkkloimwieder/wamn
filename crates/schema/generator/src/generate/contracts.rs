@@ -1264,6 +1264,10 @@ fn error_contract(
     json!({"closed": true, "cases": cases})
 }
 
+/// The schema an installed package needs: each relation it reads or writes,
+/// with the fields and named constraints it consumes, written to
+/// [`super::REQUIRED_SCHEMA_CONTRACT_PATH`]. Overlay compatibility evidence
+/// checks a fresh base install against it.
 pub(super) fn required_schema_contract(
     catalog: &CatalogIr,
     manifest: &PackageManifest,

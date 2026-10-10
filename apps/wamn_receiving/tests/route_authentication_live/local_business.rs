@@ -327,10 +327,6 @@ async fn histories(
         source.status.success(),
         "read the Receiving source revision"
     );
-    let package: Value = serde_json::from_slice(&fs::read(
-        wamn_schema_generator::output_root(&repository.join("apps/wamn_receiving"))
-            .join("package-identity.json"),
-    )?)?;
     let path = evidence.join("receiving-correctness.jsonl");
     let inputs = serde_json::from_value(json!({
         "project_pg_url":database_url,"route_endpoint":application.endpoint,
@@ -339,7 +335,7 @@ async fn histories(
         "source_commit":std::str::from_utf8(&source.stdout)?.trim(),
         "component_digests":application.component_digests,
         "packages":super::released_package_roots(),
-        "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,
+        "seed":7701,"cases":16,"history":null,
     }))?;
     let cancellation = pg_walstream::CancellationToken::new();
     let _cancel_on_exit = cancellation.clone().drop_guard();

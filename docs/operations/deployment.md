@@ -49,7 +49,7 @@ wamn-ctl provision-system --system-url "$SYSTEM_ADMIN_URL" --platform-domain "$P
 
 The verb installs the record history, the system schema and the portable store as `wamn_system`, and closes the PUBLIC `CONNECT` and `TEMPORARY` floors.
 It refuses a database that already has the schema `registry`.
-Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-package`.
+Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `push-package`, `apply-package`, `reconcile-package-data-access`.
 
 The control host of an org holds the administration login of each environment of the org ([host-run routes](../architecture/execution.md#host-run-routes)).
 `provision-org --emit-control-administration-secret PATH` writes the empty Secret `wamn-control-administration-<org>`. Apply it before the control host starts, because the host mounts it.
@@ -99,12 +99,14 @@ Its `--dry-run` form prints the proposed changes without applying them.
 The same run installs the catalog schema, which `apply-package` writes into, and then `app-schema.sql` and the tenant identity rows, whose triggers call the record-history functions of the catalog schema.
 For an installed package successor, follow [package upgrades](#package-upgrades) before changing its application schema.
 
-Apply the selected package migrations to a fresh target with `wamn-ctl apply-package`.
+Push the package with `wamn-ctl push-package` first.
+It admits each component, pushes it under its digest, and then pushes the package artifact with the component descriptors.
+Apply the selected package migrations to a fresh target with `wamn-ctl apply-package --package-artifact <package_id>-<version>` and the registry flags of `push-package`.
+apply-package takes only the verified artifact, never a checkout directory, and records its artifact digest in `catalog.packages`.
+A coordinate that `wamn dev` applied from a working tree records no artifact digest, and every release verb refuses it.
 apply-package owns the grants of the `wamn_audit_retention` role on history tables.
 It grants and revokes them in the transaction that writes the log triggers.
-Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access`.
-Push the package with `wamn-ctl push-package` before you gate or submit a wiring.
-It admits each component, pushes it under its digest, and then pushes the package artifact with the component descriptors.
+Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access --package-artifact <package_id>-<version>`, one for each applied package.
 If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
 `author-wiring` and the management gate read the component facts of the package from the descriptors of its verified artifact, the way `publish-release` reads them.
 `author-wiring` takes the same registry arguments as `publish-release`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
@@ -488,13 +490,15 @@ Keep database credentials outside committed files. Retain the qualification resu
 ### Upgrade order
 
 Set the paths and scope below for the chosen environment. `UPGRADE_RESULT` must name a new file.
-For WMS, `CANDIDATE_PACKAGE` is the prepared `wamn_wms@2.1.0` root and `WORKLOAD_DEPLOYMENT` identifies its serving HTTP workload.
+Push the candidate with `push-package` first. For WMS, `CANDIDATE_PACKAGE` is the artifact `wamn_wms-2.1.0` and `WORKLOAD_DEPLOYMENT` identifies its serving HTTP workload.
+`CANDIDATE_ROOT` is its package root, which `reconcile-replica-identity` reads.
+`REGISTRY_FLAGS` holds the registry flags of `push-package`: `--artifact-base`, `--registry-auth-file` and `--control-database-url`.
 Repeat `--presented-package` for every installed lineage and `--package-workload PACKAGE=NAME` for each SQL-bearing package in the proof.
 
 ```bash
 wamn-ctl qualify-upgrade \
   --database-url "$OWNER_URL" --tenant "$TENANT" --environment "$ENVIRONMENT" \
-  --predecessor-release "$PREDECESSOR_RELEASE" \
+  --predecessor-release "$PREDECESSOR_RELEASE" $REGISTRY_FLAGS \
   --package "$CANDIDATE_PACKAGE" --presented-package "$CANDIDATE_PACKAGE" \
   --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
   --host-deployment "$HOST_DEPLOYMENT" \
@@ -502,14 +506,15 @@ wamn-ctl qualify-upgrade \
   --result "$UPGRADE_RESULT"
 
 wamn-ctl apply-package \
-  --database-url "$OWNER_URL" --tenant "$TENANT" \
-  --package "$CANDIDATE_PACKAGE" --upgrade-qualification "$UPGRADE_RESULT"
+  --database-url "$OWNER_URL" --tenant "$TENANT" $REGISTRY_FLAGS \
+  --package-artifact "$CANDIDATE_PACKAGE" --upgrade-qualification "$UPGRADE_RESULT"
 
 wamn-ctl reconcile-package-data-access \
-  --database-url "$OWNER_URL" --tenant "$TENANT" --package "$CANDIDATE_PACKAGE"
+  --database-url "$OWNER_URL" --tenant "$TENANT" $REGISTRY_FLAGS \
+  --package-artifact "$CANDIDATE_PACKAGE"
 
 wamn-ctl reconcile-replica-identity \
-  --admin-database-url "$OWNER_URL" --package "$CANDIDATE_PACKAGE"
+  --admin-database-url "$OWNER_URL" --package "$CANDIDATE_ROOT"
 ```
 
 An expand stage with `whole_row_grants` applies nullable column additions and derived grants in one transaction.
@@ -527,12 +532,12 @@ It does not reverse committed batches. The abandoned stage cannot resume.
 The command refuses a completed stage, changed package bytes, changed qualification bytes, or a changed installed predecessor.
 The current backfill grammar and its limits are in [application declarations](../architecture/data-access.md#application-declarations).
 
-Repeat reconciliation's `--package` arguments for the same complete root set that qualification used.
+Repeat reconciliation's `--package-artifact` arguments for the same complete artifact set that qualification used.
 Run replica-identity reconciliation for each package whose registrations require old-row fields.
 Continue through the existing [release commands](delivery.md) in this order:
 
 ```text
-push-package → publish-release → prepare-release → qualify-release
+publish-release → prepare-release → qualify-release
 → publish-qualified-release → wamn-ctl env apply
 → optional wamn web upload
 ```

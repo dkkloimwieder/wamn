@@ -7,7 +7,7 @@ use anyhow::Context as _;
 use clap::Args;
 use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_control::package_artifact::{
-    self, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
+    self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };
 use wamn_control::qualify_upgrade::{self, QualifyUpgradeRequest, workload::WorkloadTarget};
 use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
@@ -17,26 +17,21 @@ use wamn_control::reconcile_replica_identity::{
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 use wamn_schema_control::{ReplicaIdentity, ReplicaIdentityPlan};
 
-/// Apply the immutable pending suffix from one package directory or artifact.
+/// Apply the immutable pending suffix from one verified package artifact.
+///
+/// No verb applies a checkout directory, so the installed artifact digest is
+/// the digest the registry records (docs/plan/platform-deploy.md R3).
 #[derive(Debug, Args)]
 pub struct ApplyPackageArgs {
-    /// Package root containing strict wamn.json and migrations/.
-    #[arg(
-        long,
-        required_unless_present = "package_artifact",
-        conflicts_with = "package_artifact"
-    )]
-    pub package: Option<PathBuf>,
-
     /// Package artifact `<package_id>-<version>` that `push-package` pushed.
     /// It is fetched only when its digest equals the one in
     /// `catalog.package_artifacts`.
-    #[arg(long, requires_all = ["artifact_base", "registry_auth_file", "control_database_url"])]
-    pub package_artifact: Option<String>,
+    #[arg(long)]
+    pub package_artifact: String,
 
-    /// The registry flags of `push-package`, for `--package-artifact`.
+    /// The registry flags of `push-package`.
     #[command(flatten)]
-    pub registry: OptionalRegistryArgs,
+    pub registry: RegistryArgs,
 
     /// Owner connection to the target project-environment database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
@@ -58,23 +53,27 @@ pub struct ApplyPackageArgs {
     )]
     pub abandon_stage: bool,
 
-    /// Complete successor roots for an overlay upgrade or whole-row grant exception.
+    /// Complete successor artifacts `<package_id>-<version>` for an overlay
+    /// upgrade or whole-row grant exception.
     #[arg(long = "presented-package", requires = "upgrade_qualification")]
-    pub presented_packages: Vec<PathBuf>,
+    pub presented_packages: Vec<String>,
 }
 
 /// Prove one package successor against the installed predecessor snapshot.
 #[derive(Debug, Args)]
 pub struct QualifyUpgradeArgs {
-    /// Candidate package root.
+    /// Candidate package artifact `<package_id>-<version>`.
     #[arg(long)]
-    pub package: PathBuf,
-    /// Complete package roots for the resulting installed environment.
+    pub package: String,
+    /// Complete package artifacts for the resulting installed environment.
     #[arg(long = "presented-package", required = true)]
-    pub presented_packages: Vec<PathBuf>,
-    /// Complete original roots for a coordinated base and overlay upgrade.
+    pub presented_packages: Vec<String>,
+    /// Complete original artifacts for a coordinated base and overlay upgrade.
     #[arg(long = "predecessor-package")]
-    pub predecessor_packages: Vec<PathBuf>,
+    pub predecessor_packages: Vec<String>,
+    /// The registry flags of `push-package`, for every package artifact.
+    #[command(flatten)]
+    pub registry: RegistryArgs,
     /// Exact built base component artifact for a coordinated upgrade.
     #[arg(long)]
     pub base_component: Option<PathBuf>,
@@ -130,14 +129,18 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
             "a package has more than one workload selector"
         );
     }
+    let registry = args.registry.registry();
+    let package = open(&registry, args.package).await?;
+    let presented = open_all(&registry, args.presented_packages).await?;
+    let predecessors = open_all(&registry, args.predecessor_packages).await?;
     let outcome = qualify_upgrade::qualify_upgrade(QualifyUpgradeRequest {
         database_url: args.database_url,
         tenant: args.tenant,
         environment: args.environment,
         predecessor_release: args.predecessor_release,
-        package: args.package,
-        presented_packages: args.presented_packages,
-        predecessor_packages: args.predecessor_packages,
+        package: package.root().to_owned(),
+        presented_packages: roots(&presented),
+        predecessor_packages: roots(&predecessors),
         base_component: args.base_component,
         result: args.result,
         workload: WorkloadTarget {
@@ -159,16 +162,17 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The registry flags of `apply-package --package-artifact`.
+/// The registry flags of `apply-package`, `qualify-upgrade` and
+/// `reconcile-package-data-access`.
 #[derive(Debug, Args)]
-pub struct OptionalRegistryArgs {
+pub struct RegistryArgs {
     /// Explicit `<registry>/<repository>` base for package artifacts.
-    #[arg(long, requires = "package_artifact")]
-    pub artifact_base: Option<String>,
+    #[arg(long)]
+    pub artifact_base: String,
 
     /// `.dockerconfigjson` file carrying the registry credential.
-    #[arg(long, requires = "package_artifact")]
-    pub registry_auth_file: Option<PathBuf>,
+    #[arg(long)]
+    pub registry_auth_file: PathBuf,
 
     /// Use plain HTTP for exactly the registry in `--artifact-base`.
     #[arg(long, default_value_t = false)]
@@ -180,8 +184,48 @@ pub struct OptionalRegistryArgs {
     pub oci_ca_paths: Vec<PathBuf>,
 
     /// Owner URL of the control database that holds `catalog.package_artifacts`.
-    #[arg(long, requires = "package_artifact")]
-    pub control_database_url: Option<String>,
+    #[arg(long)]
+    pub control_database_url: String,
+}
+
+impl RegistryArgs {
+    fn registry(&self) -> PackageRegistry {
+        PackageRegistry {
+            artifact_base: self.artifact_base.clone(),
+            registry_auth_file: self.registry_auth_file.clone(),
+            insecure_registry: self.insecure_registry,
+            oci_ca_paths: self.oci_ca_paths.clone(),
+            control_database_url: self.control_database_url.clone(),
+        }
+    }
+}
+
+/// Open the verified package artifact `tag`.
+async fn open(registry: &PackageRegistry, tag: String) -> anyhow::Result<OpenedPackage> {
+    package_artifact::open_package_source(PackageSource::Artifact {
+        tag,
+        registry: registry.clone(),
+    })
+    .await
+}
+
+/// Open each verified package artifact of `tags`.
+async fn open_all(
+    registry: &PackageRegistry,
+    tags: Vec<String>,
+) -> anyhow::Result<Vec<OpenedPackage>> {
+    let mut opened = Vec::with_capacity(tags.len());
+    for tag in tags {
+        opened.push(open(registry, tag).await?);
+    }
+    Ok(opened)
+}
+
+fn roots(opened: &[OpenedPackage]) -> Vec<PathBuf> {
+    opened
+        .iter()
+        .map(|package| package.root().to_owned())
+        .collect()
 }
 
 /// Push one authored package as a registry artifact.
@@ -252,9 +296,14 @@ pub async fn push(args: PushPackageArgs) -> anyhow::Result<()> {
 /// Post-apply generated ACL reconciliation arguments.
 #[derive(Debug, Args)]
 pub struct ReconcilePackageDataAccessArgs {
-    /// Installed package roots containing wamn.json and generated policy evidence.
-    #[arg(long = "package", required = true)]
-    pub packages: Vec<PathBuf>,
+    /// Installed package artifacts `<package_id>-<version>`, one for each
+    /// applied package.
+    #[arg(long = "package-artifact", required = true)]
+    pub packages: Vec<String>,
+
+    /// The registry flags of `push-package`.
+    #[command(flatten)]
+    pub registry: RegistryArgs,
 
     /// Owner connection to the target project-environment database.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
@@ -281,32 +330,11 @@ pub struct ReconcileReplicaIdentityArgs {
     pub dry_run: bool,
 }
 
-/// Apply one package directory and print the applied line.
+/// Apply one verified package artifact and print the applied line.
 pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
-    let source = match (args.package, args.package_artifact) {
-        (Some(package), None) => PackageSource::Directory(package),
-        (None, Some(tag)) => {
-            let registry = args.registry;
-            PackageSource::Artifact {
-                tag,
-                registry: PackageRegistry {
-                    artifact_base: registry
-                        .artifact_base
-                        .context("--artifact-base is required")?,
-                    registry_auth_file: registry
-                        .registry_auth_file
-                        .context("--registry-auth-file is required")?,
-                    insecure_registry: registry.insecure_registry,
-                    oci_ca_paths: registry.oci_ca_paths,
-                    control_database_url: registry
-                        .control_database_url
-                        .context("--control-database-url is required")?,
-                },
-            }
-        }
-        _ => anyhow::bail!("give one of --package or --package-artifact"),
-    };
-    let opened = package_artifact::open_package_source(source).await?;
+    let registry = args.registry.registry();
+    let opened = open(&registry, args.package_artifact).await?;
+    let presented = open_all(&registry, args.presented_packages).await?;
     let request = ApplyPackageRequest {
         package: opened.root().to_path_buf(),
         database_url: args.database_url,
@@ -326,7 +354,7 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
             outcome.cursor,
             outcome.completed_batches,
         );
-    } else if args.presented_packages.is_empty() {
+    } else if presented.is_empty() {
         let outcome = if let Some(path) = args.upgrade_qualification {
             apply_package::apply_qualified_package(request, &path).await?
         } else {
@@ -338,8 +366,7 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
             anyhow::anyhow!("--presented-package requires --upgrade-qualification")
         })?;
         let outcomes =
-            apply_package::apply_qualified_package_set(request, &args.presented_packages, path)
-                .await?;
+            apply_package::apply_qualified_package_set(request, &roots(&presented), path).await?;
         for outcome in &outcomes {
             print_applied(outcome);
         }
@@ -364,9 +391,10 @@ pub fn print_applied(outcome: &ApplyOutcome) {
 
 /// Reconcile the exact installed set of generated package contributions.
 pub async fn reconcile_data_access(args: ReconcilePackageDataAccessArgs) -> anyhow::Result<()> {
+    let opened = open_all(&args.registry.registry(), args.packages).await?;
     let outcome = reconcile_package_data_access::reconcile_package_data_access(
         ReconcilePackageDataAccessRequest {
-            packages: args.packages,
+            packages: roots(&opened),
             database_url: args.database_url,
             tenant: args.tenant,
         },
@@ -440,7 +468,13 @@ mod tests {
     fn abandonment_requires_qualification_and_refuses_presented_roots() {
         let mut arguments = vec![
             "apply-package",
-            "--package",
+            "--package-artifact",
+            "unused-1.0.0",
+            "--artifact-base",
+            "registry.invalid/wamn/packages",
+            "--registry-auth-file",
+            "config.json",
+            "--control-database-url",
             "unused",
             "--database-url",
             "unused",

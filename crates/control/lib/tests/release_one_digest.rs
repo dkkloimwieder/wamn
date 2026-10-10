@@ -159,6 +159,8 @@ async fn publish_through_publish_release(
 ) -> String {
     let package = repository().join("apps/edge_device");
     let tenant = project_env_tenant(ORG, PROJECT, environment);
+    wamn_control::package_artifact::record_fixture_artifact_digest(&package)
+        .expect("record the fixture artifact digest");
     apply_package(ApplyPackageRequest {
         package: package.clone(),
         database_url: project.to_owned(),

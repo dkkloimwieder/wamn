@@ -13,13 +13,13 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::apply_package::{self, ApplyPackageRequest};
+use crate::component_admission::{AdmitComponentRequest, ComponentAdmission, admit_component};
 use crate::component_declaration::{
     ComponentDeclarationError, ComponentDeclarationErrorType, PACKAGE_MANIFEST,
     authored_base_digests, declared_platform_packages, render_declaration_document,
     render_palette_declaration,
 };
 use crate::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use crate::push_component::{AdmitComponentRequest, ComponentAdmission, admit_component};
 use crate::reconcile_package_data_access;
 use crate::release_composition::{
     ComponentBuildPlan, CompositionError, CompositionErrorKind, PackageInput,
@@ -2373,7 +2373,7 @@ mod tests {
         let applied = AppliedPackage {
             coordinate: plan.coordinate,
             predecessor_version: plan.predecessor_version,
-            manifest_sha256: plan.manifest_sha256,
+            artifact_digest: plan.artifact_digest,
             migrations: plan
                 .pending
                 .into_iter()
@@ -2389,6 +2389,7 @@ mod tests {
             let presented = PackageDirectory {
                 manifest_bytes: serde_json::to_vec(changed).unwrap(),
                 migrations: migrations.migrations.clone(),
+                artifact_digest: migrations.artifact_digest.clone(),
             };
             package_structure_inputs(changed) == package_structure_inputs(&manifest)
                 && apply_package::applied_migration_drift(&presented, &applied)
@@ -2833,7 +2834,6 @@ mod tests {
                 catalog,
                 &bytes,
                 &[],
-                wamn_schema_generator::GenerationProvenance::new("fixture", "fixture"),
                 &transactional,
             ))
             .unwrap()

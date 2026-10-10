@@ -300,6 +300,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0017_remove_component_library.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0018_package_artifact_digest.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0018_package_artifact_digest.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

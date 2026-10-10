@@ -39,7 +39,17 @@ async fn connect(url: &str) -> Client {
     client
 }
 
+/// Record the stand-in artifact digest of each fixture root, as a release
+/// verb presents only verified artifacts.
+fn record_artifacts<'a>(roots: impl IntoIterator<Item = &'a PathBuf>) {
+    for root in roots {
+        crate::package_artifact::record_fixture_artifact_digest(root)
+            .expect("record the fixture artifact digest");
+    }
+}
+
 fn apply_request(database_url: &str, package: &Path) -> ApplyPackageRequest {
+    record_artifacts([&package.to_owned()]);
     ApplyPackageRequest {
         package: package.to_owned(),
         database_url: database_url.to_owned(),
@@ -132,7 +142,8 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
         &fs::read(wamn_schema_generator::package_manifest_path(root)).unwrap(),
     )
     .unwrap();
-    let statements = crate::push_component::load_package_statement_facts(root, &manifest).unwrap();
+    let statements =
+        crate::component_admission::load_package_statement_facts(root, &manifest).unwrap();
     let operations = statements
         .into_iter()
         .map(|(name, statements)| {
@@ -190,6 +201,7 @@ fn serving(digest: &str) -> workload::ServingWorkloads {
 
 fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
     let package = fixture.root.join("candidate");
+    record_artifacts([&package]);
     QualifyUpgradeRequest {
         database_url: fixture.source_database.url().to_owned(),
         tenant: TENANT.to_owned(),
@@ -518,7 +530,7 @@ fn the_predecessor_release_must_name_the_installed_versions() {
         package_id: "platform_fixture".to_owned(),
         package_version: PREDECESSOR_VERSION.to_owned(),
         predecessor_version: None,
-        manifest_sha256: String::new(),
+        artifact_digest: String::new(),
         migrations: Vec::new(),
     }];
     require_installed_release(

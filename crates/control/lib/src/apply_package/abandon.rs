@@ -133,7 +133,7 @@ async fn abandon_existing(
         package_id: candidate.package_id.clone(),
         package_version: candidate.package_version.clone(),
         predecessor_version: installed_version.clone(),
-        package_artifact_digest: crate::package_artifact::package_artifact_digest(&package.root)?,
+        package_artifact_digest: package.artifact_digest()?.to_owned(),
         predecessor_release_digest: evidence.predecessor_manifest_digest.clone(),
         evidence_digest: digest.to_owned(),
     };
@@ -186,6 +186,7 @@ mod tests {
         std::fs::create_dir(files.0.join("migrations")).unwrap();
         let fixture =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+        crate::package_artifact::record_fixture_artifact_digest(&fixture).unwrap();
         let original = super::super::read_package_directory(&fixture).unwrap();
         let predecessor = qualify_upgrade::identity_from_directory(&original).unwrap();
         let mut manifest: Value = serde_json::from_slice(&original.manifest_bytes).unwrap();
@@ -203,10 +204,11 @@ mod tests {
         for migration in &original.migrations {
             std::fs::write(files.0.join(&migration.relative_path), &migration.bytes).unwrap();
         }
+        crate::package_artifact::record_fixture_artifact_digest(&files.0).unwrap();
         let prepared = prepare_package(&files.0).unwrap();
         let candidate = qualify_upgrade::identity_from_directory(&prepared.directory).unwrap();
         let evidence = UpgradeQualification {
-            format_version: 3,
+            format_version: crate::qualify_upgrade::STAGE_FORMAT,
             tenant: TENANT.into(),
             environment: "offline".into(),
             predecessor_manifest_digest: format!("sha256:{}", "a".repeat(64)),
@@ -239,8 +241,7 @@ mod tests {
             package_id: candidate.package_id.clone(),
             package_version: candidate.package_version.clone(),
             predecessor_version: predecessor.package_version.clone(),
-            package_artifact_digest: crate::package_artifact::package_artifact_digest(&files.0)
-                .unwrap(),
+            package_artifact_digest: prepared.artifact_digest().unwrap().to_owned(),
             predecessor_release_digest: evidence.predecessor_manifest_digest.clone(),
             evidence_digest: digest,
         };
@@ -260,8 +261,8 @@ mod tests {
             .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await
             .unwrap();
-        client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version,manifest_sha256) VALUES ($1,$2,$3,$4,$5)",
-            &[&TENANT,&predecessor.package_id,&predecessor.package_version,&predecessor.predecessor_version,&predecessor.manifest_sha256]).await.unwrap();
+        client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version,artifact_digest) VALUES ($1,$2,$3,$4,$5)",
+            &[&TENANT,&predecessor.package_id,&predecessor.package_version,&predecessor.predecessor_version,&predecessor.artifact_digest]).await.unwrap();
         for migration in &predecessor.migrations {
             let ordinal = i32::try_from(migration.ordinal).unwrap();
             client.execute("INSERT INTO catalog.package_migrations (tenant_id,package_id,package_version,ordinal,relative_path,sha256) VALUES ($1,$2,$3,$4,$5,$6)",
@@ -286,6 +287,7 @@ mod tests {
         let mut changed_bytes = manifest_bytes.clone();
         changed_bytes.push(b'\n');
         std::fs::write(files.0.join("wamn.json"), changed_bytes).unwrap();
+        crate::package_artifact::record_fixture_artifact_digest(&files.0).unwrap();
         assert!(
             abandon_stage(request(), &evidence_path)
                 .await
@@ -294,6 +296,7 @@ mod tests {
                 .contains("candidate package or migration bytes mismatch")
         );
         std::fs::write(files.0.join("wamn.json"), &manifest_bytes).unwrap();
+        crate::package_artifact::record_fixture_artifact_digest(&files.0).unwrap();
         let mut changed_evidence = evidence.clone();
         changed_evidence.environment = "other".into();
         write_evidence(&files.0, &changed_evidence);

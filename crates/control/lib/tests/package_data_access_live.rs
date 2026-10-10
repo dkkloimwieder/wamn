@@ -44,6 +44,12 @@ fn generation_url(admin_url: &str, role: &str) -> String {
 }
 
 fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAccessRequest {
+    // A release reconcile presents verified artifacts. Each fixture tree
+    // stands in for one under a digest of its current bytes.
+    for package in &packages {
+        wamn_control::package_artifact::record_fixture_artifact_digest(package)
+            .expect("record the fixture artifact digest");
+    }
     ReconcilePackageDataAccessRequest {
         packages,
         database_url: url.to_owned(),
@@ -199,6 +205,10 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install application authorization floor");
+    wamn_control::package_artifact::record_fixture_artifact_digest(&fixture_package_root())
+        .expect("record the fixture artifact digest");
+    wamn_control::package_artifact::record_fixture_artifact_digest(&overlay_package_root())
+        .expect("record the fixture artifact digest");
     apply_package::apply_package(ApplyPackageRequest {
         package: fixture_package_root(),
         database_url: url.to_string(),
@@ -392,17 +402,23 @@ fn lineage_fixture_directory() -> PathBuf {
     std::env::temp_dir().join("wamn-ctl-package-lineage-live")
 }
 
-fn manifest_sha256(bytes: &[u8]) -> String {
+/// The digest of the `wamn.json` bytes of the tree at `root`, which a local
+/// target comment records.
+fn manifest_digest(root: &Path) -> String {
+    let directory = apply_package::read_package_directory(root).expect("read the staged root");
     format!(
         "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
+        hex::encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            &directory.manifest_bytes
+        ))
     )
 }
 
 /// Stage one package root under the lineage fixture directory.
 ///
-/// This helper copies the shipped root and writes the hash of the staged
-/// manifest, because a `bump` rewrites that manifest and the evidence must
+/// This helper copies the shipped root and returns the digest of the staged
+/// manifest, because a `bump` rewrites its manifest and the evidence must
 /// follow the copy rather than the shipped file. A `bump` also moves the
 /// coordinate, which is how an author recovers from a stage that refused an
 /// already published version.
@@ -440,7 +456,6 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
             wamn_execution_contract::canonical_json_bytes(&manifest)
         }
     };
-    let staged_sha256 = manifest_sha256(&manifest_bytes);
     std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write staged manifest");
 
     let mut overlay: serde_json::Value = serde_json::from_slice(
@@ -464,16 +479,13 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
             serde_json::json!(format!("{package}@{version}")),
         );
     }
-    overlay_object.insert(
-        "manifest_sha256".to_owned(),
-        serde_json::json!(staged_sha256),
-    );
     std::fs::write(
         overlay_evidence_path(&root),
         wamn_execution_contract::canonical_json_bytes(&overlay),
     )
     .expect("write staged evidence");
-    (root, staged_sha256)
+    let staged = manifest_digest(&root);
+    (root, staged)
 }
 
 async fn install_lineage_fixture(url: &str) -> Client {
@@ -522,6 +534,8 @@ async fn install_lineage_fixture(url: &str) -> Client {
 }
 
 async fn apply(url: &str, package: PathBuf) {
+    wamn_control::package_artifact::record_fixture_artifact_digest(&package)
+        .expect("record the fixture artifact digest");
     apply_package::apply_package(ApplyPackageRequest {
         package,
         database_url: url.to_owned(),
@@ -537,7 +551,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
     let admin = install_lineage_fixture(&url).await;
     let (released, _) = stage_package_root(&fixture_package_root(), "fixture", None);
     let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay", None);
-    let (bumped, bumped_sha256) = stage_package_root(
+    let (bumped, bumped_digest) = stage_package_root(
         &fixture_package_root(),
         "fixture-bumped",
         Some(("2.2.0", "2.1.0")),
@@ -596,28 +610,12 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
         .expect("the staged manifest carries a package identity")
         .insert("predecessor_version".to_owned(), serde_json::json!("0.9.0"));
     let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
-    let moved_sha256 = manifest_sha256(&moved_bytes);
-    assert_ne!(
-        moved_sha256, bumped_sha256,
-        "the manifest bytes did not move"
-    );
     std::fs::write(bumped.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
-    let mut evidence: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(overlay_evidence_path(&bumped)).expect("read staged evidence"),
-    )
-    .expect("parse staged evidence");
-    evidence
-        .as_object_mut()
-        .expect("package evidence is an object")
-        .insert(
-            "manifest_sha256".to_owned(),
-            serde_json::json!(moved_sha256),
-        );
-    std::fs::write(
-        overlay_evidence_path(&bumped),
-        wamn_execution_contract::canonical_json_bytes(&evidence),
-    )
-    .expect("regenerate evidence for the moved manifest");
+    assert_ne!(
+        manifest_digest(&bumped),
+        bumped_digest,
+        "the package bytes did not move"
+    );
     let drift = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
         vec![bumped.clone(), overlay.clone()],
@@ -898,7 +896,7 @@ async fn database_comment(client: &Client) -> Option<String> {
         .get(0)
 }
 
-/// The manifest hashes the local target comment records.
+/// The manifest digests the local target comment records.
 async fn recorded_manifests(client: &Client) -> BTreeMap<String, String> {
     let comment = database_comment(client)
         .await
@@ -914,25 +912,11 @@ fn change_manifest_bytes(root: &Path) -> String {
     let mut bytes = std::fs::read(&path).expect("read the staged manifest");
     bytes.push(b'\n');
     std::fs::write(&path, &bytes).expect("write the changed manifest");
-    let changed = manifest_sha256(&bytes);
-    let mut evidence: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(overlay_evidence_path(root)).expect("read staged evidence"),
-    )
-    .expect("parse staged evidence");
-    evidence
-        .as_object_mut()
-        .expect("package evidence is an object")
-        .insert("manifest_sha256".to_owned(), serde_json::json!(changed));
-    std::fs::write(
-        overlay_evidence_path(root),
-        wamn_execution_contract::canonical_json_bytes(&evidence),
-    )
-    .expect("regenerate evidence for the changed manifest");
-    changed
+    manifest_digest(root)
 }
 
 /// Owner ruling 8 of wamn-ri4b: the local grant reconcile at Activate records
-/// the presented manifest hash of each package in the local target comment, and
+/// the presented manifest digest of each package in the local target comment, and
 /// a changed wamn.json at an applied coordinate no longer refuses there.
 #[tokio::test]
 async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
@@ -940,7 +924,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
     let (fixture, first) = stage_package_root(&fixture_package_root(), "fixture-local", None);
-    let (overlay, overlay_sha256) =
+    let (overlay, overlay_digest) =
         stage_package_root(&overlay_package_root(), "overlay-local", None);
     apply(&url, fixture.clone()).await;
     apply(&url, overlay.clone()).await;
@@ -993,13 +977,16 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         recorded_manifests(&admin).await,
         BTreeMap::from([
             ("platform_fixture@2.1.0".to_owned(), first.clone()),
-            ("platform_fixture_overlay@2.1.0".to_owned(), overlay_sha256),
+            ("platform_fixture_overlay@2.1.0".to_owned(), overlay_digest),
         ]),
         "the comment does not name the presented manifest of each package"
     );
 
     // An operations-only wamn.json edit at an applied coordinate reconciles
     // with no Migrate, and the comment follows the presented manifest.
+    let installed = wamn_control::package_artifact::recorded_artifact_digest(&fixture)
+        .expect("read the recorded fixture artifact digest")
+        .expect("the release apply recorded a fixture artifact digest");
     let second = change_manifest_bytes(&fixture);
     assert_ne!(second, first, "the manifest bytes did not move");
     reconcile(true)
@@ -1010,21 +997,21 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
             .await
             .get("platform_fixture@2.1.0"),
         Some(&second),
-        "the comment kept a manifest hash the application no longer came from"
+        "the comment kept a digest the application no longer came from"
     );
     assert_eq!(
         admin
             .query_one(
-                "SELECT manifest_sha256 FROM catalog.packages \
+                "SELECT artifact_digest FROM catalog.packages \
                   WHERE tenant_id = $1 AND package_id = 'platform_fixture' \
                     AND package_version = '2.1.0'",
                 &[&TENANT],
             )
             .await
             .expect("read the immutable package row")
-            .get::<_, String>(0),
-        first,
-        "catalog.packages keeps the first recorded manifest hash"
+            .get::<_, Option<String>>(0),
+        Some(installed),
+        "catalog.packages keeps the artifact digest the release apply recorded"
     );
 
     // The production path still refuses the same moved bytes.

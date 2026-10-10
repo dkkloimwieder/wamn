@@ -106,11 +106,18 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     // package floors, which migration 0015 creates. The application schema
     // carries the permission rows that migration 0011 prunes and the
     // administration tables that migration 0016 grants. The component library
-    // tables are the ones that migration 0017 drops.
+    // tables are the ones that migration 0017 drops. catalog.packages has the
+    // manifest_sha256 column that migration 0018 replaces, and no rows: 0018
+    // refuses rows that predate the artifact digest (greenfield).
     client
         .batch_execute(
             "DROP TABLE catalog.package_upgrade_qualifications; \
              DROP TABLE catalog.package_floors; \
+             ALTER TABLE catalog.packages \
+               DROP COLUMN artifact_digest, \
+               ADD COLUMN manifest_sha256 text NOT NULL \
+                 CONSTRAINT packages_manifest_sha256_check \
+                 CHECK (manifest_sha256 ~ '^sha256:[0-9a-f]{64}$'); \
              CREATE TABLE catalog.component_digest_owners ( \
                tenant_id text NOT NULL, component_digest text NOT NULL, \
                PRIMARY KEY (tenant_id, component_digest)); \
@@ -184,9 +191,6 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
                LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; \
              CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE ON wamn_run.runs \
                FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable(); \
-             INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, manifest_sha256) \
-             VALUES ('upgrade-live', 'platform_fixture', '2.0.0', 'sha256:' || repeat('b', 64)); \
              INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
              VALUES ('upgrade-live', 1, 'test'), ('upgrade-live', 2, 'test'); \
              INSERT INTO catalog.release_manifest_snapshots \
@@ -220,6 +224,29 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install the application schema");
+    // Migration 0018 refuses a package row that predates the artifact digest.
+    let refused = client.transaction().await.unwrap();
+    refused
+        .batch_execute(
+            "INSERT INTO catalog.packages \
+               (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES ('upgrade-live', 'platform_fixture', '2.0.0', 'sha256:' || repeat('b', 64));",
+        )
+        .await
+        .expect("seed a package row that predates the artifact digest");
+    let error = refused
+        .batch_execute(include_str!(
+            "../../../../deploy/sql/migrations/project/0018_package_artifact_digest.sql"
+        ))
+        .await
+        .expect_err("migration 0018 refuses existing package rows");
+    assert_eq!(
+        error
+            .as_db_error()
+            .map(tokio_postgres::error::DbError::message),
+        Some("package-artifact-digest-migration-unconvertible")
+    );
+    refused.rollback().await.unwrap();
     let request = UpgradeSchemaRequest {
         system_database_url: coordinate.url().to_owned(),
         admin_database_url: Some(coordinate.url().to_owned()),
@@ -246,7 +273,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(migrations, 17);
+    assert_eq!(migrations, 18);
     // Migration 0012 keyed the release rows by their digest: the snapshot became
     // the cached release, and each run took the digest of its frozen release or,
     // with no frozen release, no pin. The head it converted is gone with the
@@ -276,7 +303,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     client
         .batch_execute(
             "INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, manifest_sha256) \
+               (tenant_id, package_id, package_version, artifact_digest) \
              VALUES ('upgrade-live', 'platform_fixture', '2.1.0', 'sha256:' || repeat('a', 64)); \
              INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
              VALUES ('upgrade-live', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea);",

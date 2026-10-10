@@ -175,7 +175,7 @@ fn run_state_live() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              {catalog} {run_state} {run_queue} \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,manifest_sha256) \
+               (tenant_id,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0', \
                'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
              INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
@@ -703,7 +703,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO catalog.packages \
-           (tenant_id,package_id,package_version,manifest_sha256) \
+           (tenant_id,package_id,package_version,artifact_digest) \
          VALUES ('t2','cat','1.0.0', \
            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
          INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \

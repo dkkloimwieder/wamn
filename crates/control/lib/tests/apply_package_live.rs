@@ -401,11 +401,30 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<apply_package::Apply
     apply_for_tenant(url, package, TENANT).await
 }
 
+/// Apply the tree at `package` under a digest the test names, not one of its
+/// current bytes.
+async fn apply_as(
+    url: &str,
+    package: &Path,
+    digest: &str,
+) -> anyhow::Result<apply_package::ApplyOutcome> {
+    wamn_control::package_artifact::record_artifact_digest(package, digest)?;
+    apply_package::apply_package(ApplyPackageRequest {
+        package: package.to_path_buf(),
+        database_url: url.to_owned(),
+        tenant: TENANT.to_owned(),
+    })
+    .await
+}
+
 async fn apply_for_tenant(
     url: &str,
     package: &Path,
     tenant: &str,
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
+    // A release apply takes a verified artifact. The fixture tree stands in
+    // for one under a digest of its own bytes.
+    wamn_control::package_artifact::record_fixture_artifact_digest(package)?;
     apply_package::apply_package(ApplyPackageRequest {
         package: package.to_path_buf(),
         database_url: url.to_owned(),
@@ -1255,12 +1274,25 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         1
     );
 
+    // Changed bytes are another artifact, which the digest refuses first. The
+    // steps below keep the installed digest, so the planner's own byte checks,
+    // the suffix rollback and the release seal answer.
+    let installed = wamn_control::package_artifact::recorded_artifact_digest(&package)
+        .expect("read the installed fixture digest")
+        .expect("the apply recorded a fixture digest");
     let migration = package.join("migrations/0001_initial.sql");
     let original = std::fs::read(&migration).expect("read copied initial migration");
     let mut edited = original.clone();
     edited.extend_from_slice(b"\n");
     std::fs::write(&migration, edited).expect("edit applied migration bytes");
-    let drift = apply(&url, &package)
+    let conflict = apply(&url, &package)
+        .await
+        .expect_err("another artifact under the applied coordinate must refuse");
+    assert_eq!(
+        package_migration_error(&conflict),
+        wamn_schema_control::PackageMigrationErrorType::CoordinateContentConflict
+    );
+    let drift = apply_as(&url, &package, &installed)
         .await
         .expect_err("edited applied bytes must refuse");
     let drift = format!("{drift:#}");
@@ -1281,7 +1313,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
            ADD COLUMN rollback_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write the server-refused migration after it");
-    apply(&url, &package)
+    apply_as(&url, &package, &installed)
         .await
         .expect_err("a failing later statement must roll back the whole suffix");
     assert!(
@@ -1329,7 +1361,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
            ADD COLUMN sealed_probe text NOT NULL DEFAULT 'not_required';",
     )
     .expect("write a migration after the package coordinate was sealed");
-    let sealed = apply(&url, &package)
+    let sealed = apply_as(&url, &package, &installed)
         .await
         .expect_err("a sealed package version refuses an additional migration");
     let sealed = sealed
@@ -1978,12 +2010,17 @@ async fn set_database_comment(client: &Client, comment: Option<&str>) {
         .expect("write the database comment");
 }
 
-fn manifest_sha256(package: &Path) -> String {
+/// The digest of the `wamn.json` bytes, which the local target comment records.
+fn manifest_digest(package: &Path) -> String {
     let directory =
         apply_package::read_package_directory(package).expect("read local target package");
-    wamn_schema_control::plan_package_migrations(&directory, None)
-        .expect("plan local target package")
-        .manifest_sha256
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            &directory.manifest_bytes
+        ))
+    )
 }
 
 fn package_migration_error(
@@ -2052,7 +2089,8 @@ fn is_sealed(error: &tokio_postgres::Error) -> bool {
 
 /// Owner rulings 1, 2, and 4 of wamn-ri4b: only a marked local target takes a
 /// changed wamn.json and an appended migration at an applied coordinate, also
-/// after release membership, and its comment records the current manifest hash.
+/// after release membership. It records no artifact digest, and its comment
+/// records the digest of the current wamn.json.
 #[tokio::test]
 async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     const ENVIRONMENT: &str = "development";
@@ -2095,7 +2133,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     apply_local()
         .await
         .expect("apply the package to the local target");
-    let first = manifest_sha256(&package);
+    let first = manifest_digest(&package);
     assert_eq!(
         database_comment(&client).await,
         Some(recorded_comment(&first))
@@ -2110,16 +2148,16 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     .expect("append the column migration");
     let refused = apply(&url, &package)
         .await
-        .expect_err("plain apply-package refuses the changed manifest on a marked target");
+        .expect_err("a release apply refuses the working-tree coordinate on a marked target");
     assert_eq!(
         package_migration_error(&refused),
-        wamn_schema_control::PackageMigrationErrorType::ManifestDrift
+        wamn_schema_control::PackageMigrationErrorType::CoordinateWithoutArtifact
     );
     let outcome = apply_local()
         .await
         .expect("the local target takes the appended migration and the changed manifest");
     assert_eq!(outcome.migrations_applied, 1);
-    let second = manifest_sha256(&package);
+    let second = manifest_digest(&package);
     assert_ne!(second, first);
     assert_eq!(
         database_comment(&client).await,
@@ -2140,16 +2178,16 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     assert_eq!(
         client
             .query_one(
-                "SELECT manifest_sha256 FROM catalog.packages \
+                "SELECT artifact_digest FROM catalog.packages \
                   WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.0'",
                 &[&TENANT],
             )
             .await
             .expect("read the immutable package row")
-            .get::<_, String>(0),
-        first,
-        "catalog.packages keeps the first recorded manifest hash"
+            .get::<_, Option<String>>(0),
+        None,
+        "a working-tree install records no artifact digest"
     );
 
     client
@@ -2191,15 +2229,13 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         "ALTER TABLE inventory.dock ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
     )
     .expect("append a migration after the seal");
+    // A release apply refuses the working-tree coordinate before the seal.
     let sealed = apply(&url, &first_bytes_package)
         .await
-        .expect_err("plain apply-package keeps the seal on a marked target");
+        .expect_err("a release apply refuses the working-tree coordinate after the seal");
     assert_eq!(
-        sealed
-            .downcast_ref::<apply_package::ApplyPackageError>()
-            .expect("the seal is translated at the apply-package boundary")
-            .error_type(),
-        apply_package::ApplyPackageErrorType::PackageVersionSealed
+        package_migration_error(&sealed),
+        wamn_schema_control::PackageMigrationErrorType::CoordinateWithoutArtifact
     );
     std::fs::remove_dir_all(&first_bytes_package).expect("remove first-bytes fixture");
 
@@ -2215,7 +2251,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     apply_local()
         .await
         .expect("the local target records an appended migration after the seal");
-    let third = manifest_sha256(&package);
+    let third = manifest_digest(&package);
     assert_eq!(
         database_comment(&client).await,
         Some(recorded_comment(&third))
@@ -2269,10 +2305,10 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
             .expect_err("the local apply requires the full marker");
         let unmarked = apply(&url, &package)
             .await
-            .expect_err("an unmarked target refuses the changed manifest");
+            .expect_err("an unmarked target refuses the working-tree coordinate");
         assert_eq!(
             package_migration_error(&unmarked),
-            wamn_schema_control::PackageMigrationErrorType::ManifestDrift
+            wamn_schema_control::PackageMigrationErrorType::CoordinateWithoutArtifact
         );
     }
     assert!(!inventory_column_present(&client, "dock", "code").await);

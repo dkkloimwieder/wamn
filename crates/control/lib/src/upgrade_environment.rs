@@ -626,14 +626,13 @@ impl Run {
         packages: &[crate::release_composition::PackageInput],
         artifacts: &[crate::release_composition::SelectedComponentArtifact],
         registry: &Registry,
-    ) -> anyhow::Result<Vec<crate::apply_package::ApplyOutcome>> {
+    ) -> anyhow::Result<(
+        Vec<crate::apply_package::ApplyOutcome>,
+        Vec<crate::package_artifact::OpenedPackage>,
+    )> {
         use crate::apply_package::{ApplyPackageRequest, apply_package};
         use crate::qualify_upgrade::{presented_root_identity, read_current_packages};
 
-        let roots = packages
-            .iter()
-            .map(|package| package.root.clone())
-            .collect::<Vec<_>>();
         let request = |root: &Path| ApplyPackageRequest {
             package: root.to_owned(),
             database_url: databases.project_url(),
@@ -647,11 +646,6 @@ impl Run {
             control_database_url: databases.system_url(),
         };
         let evidence_path = self.release_files().join("package-upgrade.json");
-        let mut presented = roots
-            .iter()
-            .map(|root| presented_root_identity(root))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
         let mut client = databases.project().await?;
         let tx = client.build_transaction().read_only(true).start().await?;
         let installed = read_current_packages(&tx, &databases.tenant).await?;
@@ -683,6 +677,51 @@ impl Run {
                 )
                 .await?;
             }
+        }
+        // Everything applies and qualifies the verified artifact, so the
+        // installed artifact digest is the one the registry records (R3).
+        let mut opened = Vec::new();
+        for package in packages {
+            opened.push(
+                crate::package_artifact::open_package_source(
+                    crate::package_artifact::PackageSource::Artifact {
+                        tag: format!(
+                            "{}-{}",
+                            package.manifest.package.id, package.manifest.package.version
+                        ),
+                        registry: package_registry.clone(),
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "open the package artifact {}@{}",
+                        package.manifest.package.id, package.manifest.package.version
+                    )
+                })?,
+            );
+        }
+        let packages = packages
+            .iter()
+            .zip(&opened)
+            .map(
+                |(package, opened)| crate::release_composition::PackageInput {
+                    root: opened.root().to_owned(),
+                    manifest: package.manifest.clone(),
+                },
+            )
+            .collect::<Vec<_>>();
+        let roots = packages
+            .iter()
+            .map(|package| package.root.clone())
+            .collect::<Vec<_>>();
+        let mut presented = roots
+            .iter()
+            .map(|root| presented_root_identity(root))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+
+        if !evidence_path.exists() {
             let changed = packages
                 .iter()
                 .filter(|package| {
@@ -697,7 +736,7 @@ impl Run {
                 for root in &roots {
                     outcomes.push(apply_package(request(root)).await?);
                 }
-                return Ok(outcomes);
+                return Ok((outcomes, opened));
             }
             ensure!(
                 installed.len() == presented.len()
@@ -775,14 +814,15 @@ impl Run {
             .await?;
         }
 
-        apply_environment_package_qualification(
+        let outcomes = apply_environment_package_qualification(
             request(&self.checkout),
             &self.arguments.environment,
-            packages,
+            &packages,
             artifacts,
             &evidence_path,
         )
-        .await
+        .await?;
+        Ok((outcomes, opened))
     }
 
     /// Stage 7: packages, components, gated wirings, the release, and the
@@ -829,11 +869,11 @@ impl Run {
         let wirings = load_wirings(&packages)?;
 
         let registry = Registry::login(&environment.registry, &self.work).await?;
-        for applied in self
+        let (applied, opened) = self
             .apply_environment_packages(&environment, &databases, &packages, &artifacts, &registry)
             .await
-            .context(StopRun("package qualification or application refused"))?
-        {
+            .context(StopRun("package qualification or application refused"))?;
+        for applied in applied {
             outputs.insert(
                 format!("package {}", applied.package_id),
                 format!(
@@ -844,7 +884,10 @@ impl Run {
         }
         crate::reconcile_package_data_access::reconcile_package_data_access(
             crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-                packages: roots.clone(),
+                packages: opened
+                    .iter()
+                    .map(|package| package.root().to_owned())
+                    .collect(),
                 database_url: project_url.clone(),
                 tenant: tenant.clone(),
             },

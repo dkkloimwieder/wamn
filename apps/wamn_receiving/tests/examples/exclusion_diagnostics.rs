@@ -7,8 +7,7 @@ use std::process::Command;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_schema_generator::{
-    AuthoredSql, GenerationInput, GenerationProvenance, StatementTransactionality, generate,
-    introspect_package,
+    AuthoredSql, GenerationInput, StatementTransactionality, generate, introspect_package,
 };
 use wamn_test_infrastructure::{postgres, scratch::ScratchRoot};
 
@@ -73,7 +72,6 @@ async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
         &catalog,
         &manifest_bytes,
         &authored,
-        GenerationProvenance::new("exclusion-test", "repository-toolchain"),
         &StatementTransactionality::unclassified(),
     ))?;
     // A generated file's logical path starts with `generated/`, and the file

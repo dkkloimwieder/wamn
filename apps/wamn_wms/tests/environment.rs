@@ -15,6 +15,7 @@ use wamn_catalog::{ComponentPackageScope, PackageCoordinate, RequirementType};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring;
 use wamn_control::bind_connection::{self, BindConnectionRequest};
+use wamn_control::component_admission::AdmitComponentRequest;
 use wamn_control::component_declaration::declared_platform_packages;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{JourneyCredentials, connect};
@@ -28,7 +29,6 @@ use wamn_control::provision_project_env::{
     secret_value,
 };
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_component::AdmitComponentRequest;
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
@@ -292,6 +292,7 @@ pub async fn prepare_project(
     ] {
         private_file(&path)?;
     }
+    wamn_control::package_artifact::record_fixture_artifact_digest(&package_root())?;
     apply_package::apply_package(ApplyPackageRequest {
         package: package_root(),
         database_url: route.database_url.clone(),

@@ -213,7 +213,7 @@ fn surviving_authority_matrix_live() {
              {executor_surface} \
              GRANT USAGE ON SCHEMA wamn_run TO wamn_control_author; \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,manifest_sha256) \
+               (tenant_id,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
              INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
@@ -424,7 +424,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
              END $$; \
              BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,manifest_sha256) \
+               (tenant_id,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
              INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394','{{\"release\":1}}'), \

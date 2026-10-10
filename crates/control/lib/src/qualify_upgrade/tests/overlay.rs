@@ -42,18 +42,14 @@ fn frozen_predecessor(source: &Path, target: &Path) {
     ] {
         copy_tree(&output(source, directory), &output(target, directory));
     }
-    for relative in [
-        "wamn.k",
-        "generated/wamn.json",
-        "generated/package-identity.json",
-    ] {
+    for relative in ["wamn.k", "generated/wamn.json"] {
         fs::copy(output(source, relative), output(target, relative)).unwrap();
     }
     let manifest = PackageManifest::from_slice(
         &fs::read(wamn_schema_generator::package_manifest_path(source)).unwrap(),
     )
     .unwrap();
-    for statements in crate::push_component::load_package_statement_facts(source, &manifest)
+    for statements in crate::component_admission::load_package_statement_facts(source, &manifest)
         .unwrap()
         .values()
     {
@@ -63,6 +59,8 @@ fn frozen_predecessor(source: &Path, target: &Path) {
             fs::copy(output(source, &statement.path), path).unwrap();
         }
     }
+    // The frozen copy is the artifact of the installed version.
+    record_artifacts([&target.to_owned()]);
 }
 
 async fn overlay_fixture(name: &str) -> OverlayFixture {
@@ -121,7 +119,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     .await
     .unwrap();
     let operations =
-        crate::push_component::load_package_statement_facts(&predecessor, &overlay_manifest)
+        crate::component_admission::load_package_statement_facts(&predecessor, &overlay_manifest)
             .unwrap()
             .into_iter()
             .map(|(name, statements)| {
@@ -225,6 +223,12 @@ fn overlay_request(fixture: &OverlayFixture, result: &str) -> QualifyUpgradeRequ
     ];
     request.presented_packages.push(fixture.candidate.clone());
     request.base_component = Some(fixture.component.clone());
+    record_artifacts(
+        request
+            .predecessor_packages
+            .iter()
+            .chain(&request.presented_packages),
+    );
     request
         .workload
         .package_workloads
@@ -364,12 +368,6 @@ async fn qualification_refuses_input_changes_before_publication() {
     let candidate_contract =
         wamn_schema_generator::output_root(&fixture.base.root.join("candidate"))
             .join("contracts/widget/archive.input.json");
-    let identity =
-        wamn_schema_generator::output_root(&fixture.predecessor).join("package-identity.json");
-    let mut metadata: serde_json::Value =
-        serde_json::from_slice(&fs::read(&identity).unwrap()).unwrap();
-    metadata["verified_schema_state_id"] = serde_json::json!(format!("sha256:{}", "0".repeat(64)));
-    let changed_identity = wamn_execution_contract::canonical_json_bytes(&metadata);
     let migration = fs::read_dir(fixture.predecessor.join("migrations"))
         .unwrap()
         .next()
@@ -388,11 +386,6 @@ async fn qualification_refuses_input_changes_before_publication() {
             "migration",
             vec![append(migration)],
             "presented package changed during qualification",
-        ),
-        (
-            "identity",
-            vec![(identity, changed_identity)],
-            "presented generated or SQL bytes changed during qualification",
         ),
         (
             "sql",
@@ -628,7 +621,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     .await
     .unwrap_err();
     assert!(
-        format!("{error:#}").contains("manifest identity mismatch")
+        format!("{error:#}").contains("predecessor artifact digest mismatch")
             && format!("{error:#}").contains(OVERLAY),
         "{error:#}"
     );
@@ -649,10 +642,10 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     )
     .await
     .unwrap_err();
+    // Changed migration bytes are another artifact, so the digest refuses first.
     assert!(
-        format!("{error:#}").contains("migration identity mismatch")
-            && format!("{error:#}").contains(OVERLAY)
-            && format!("{error:#}").contains(migration.file_name().unwrap().to_str().unwrap()),
+        format!("{error:#}").contains("predecessor artifact digest mismatch")
+            && format!("{error:#}").contains(OVERLAY),
         "{error:#}"
     );
     fs::write(&migration, migration_bytes).unwrap();
@@ -675,32 +668,18 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         wamn_schema_generator::output_root(&fixture.predecessor).join("sql/widget/get.sql");
     let contract_path = wamn_schema_generator::output_root(&fixture.predecessor)
         .join("contracts/widget/get.operation.json");
-    let identity_path =
-        wamn_schema_generator::output_root(&fixture.predecessor).join("package-identity.json");
     let sql = fs::read(&sql_path).unwrap();
     let contract = fs::read(&contract_path).unwrap();
-    let identity_bytes = fs::read(&identity_path).unwrap();
     let mut changed_sql = sql.clone();
     changed_sql.extend_from_slice(b"\n-- different carried predecessor statement\n");
     let mut changed_contract: serde_json::Value = serde_json::from_slice(&contract).unwrap();
     changed_contract["statements"][0]["digest"] = serde_json::json!(
         wamn_engine::component_admission::component_digest(&changed_sql)
     );
-    let mut changed_identity: serde_json::Value = serde_json::from_slice(&identity_bytes).unwrap();
-    changed_identity["application_sql_corpus_identity"] =
-        serde_json::json!(wamn_schema_generator::corpus_sha256([(
-            "generated/sql/widget/get.sql",
-            changed_sql.as_slice()
-        )]));
     fs::write(&sql_path, changed_sql).unwrap();
     fs::write(
         &contract_path,
         serde_json::to_vec(&changed_contract).unwrap(),
-    )
-    .unwrap();
-    fs::write(
-        &identity_path,
-        serde_json::to_vec(&changed_identity).unwrap(),
     )
     .unwrap();
     let manifest = PackageManifest::from_slice(
@@ -710,7 +689,8 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         .unwrap(),
     )
     .unwrap();
-    crate::push_component::load_package_statement_facts(&fixture.predecessor, &manifest).unwrap();
+    crate::component_admission::load_package_statement_facts(&fixture.predecessor, &manifest)
+        .unwrap();
     let error = qualify_upgrade_with_observer(
         overlay_request(&fixture, "original-serving-sql-mismatch.json"),
         WorkloadObserver::Captured(fixture.base.serving.clone()),
@@ -724,7 +704,6 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     );
     fs::write(sql_path, sql).unwrap();
     fs::write(contract_path, contract).unwrap();
-    fs::write(identity_path, identity_bytes).unwrap();
     assert!(
         !fixture
             .base
@@ -943,24 +922,25 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         &fs::read(wamn_schema_generator::package_manifest_path(&predecessor)).unwrap(),
     )
     .unwrap();
-    let operations = crate::push_component::load_package_statement_facts(&predecessor, &manifest)
-        .unwrap()
-        .into_iter()
-        .map(|(name, statements)| {
-            (
-                name.clone(),
-                ServingComponentOperation {
-                    pre_commit: None,
-                    registered_operation: Some(name.clone()),
-                    permissions: BTreeSet::from([name]),
-                    fresh_only: false,
-                    committed_result_schema: None,
-                    participant: None,
-                    statements,
-                },
-            )
-        })
-        .collect();
+    let operations =
+        crate::component_admission::load_package_statement_facts(&predecessor, &manifest)
+            .unwrap()
+            .into_iter()
+            .map(|(name, statements)| {
+                (
+                    name.clone(),
+                    ServingComponentOperation {
+                        pre_commit: None,
+                        registered_operation: Some(name.clone()),
+                        permissions: BTreeSet::from([name]),
+                        fresh_only: false,
+                        committed_result_schema: None,
+                        participant: None,
+                        statements,
+                    },
+                )
+            })
+            .collect();
     let mut components = fixture.base.manifest.components.clone();
     components.insert(ServingComponent {
         package_id: SECOND.to_owned(),

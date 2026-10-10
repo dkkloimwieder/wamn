@@ -333,7 +333,7 @@ mod tests {
             .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await
             .unwrap();
-        client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false); INSERT INTO catalog.packages (tenant_id,package_id,package_version,manifest_sha256) VALUES ('stage-test','fixture','1.0.0','sha256:' || repeat('c',64));").await.unwrap();
+        client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false); INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('stage-test','fixture','1.0.0','sha256:' || repeat('c',64));").await.unwrap();
         let identity = identity("2.0.0");
         let tx = client.transaction().await.unwrap();
         let initial = open(&tx, &identity, &Value::Null).await.unwrap();

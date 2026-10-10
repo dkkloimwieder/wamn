@@ -79,20 +79,15 @@ pub(super) async fn after_install(
     project_url: &str,
     component_directory: &Path,
 ) -> anyhow::Result<()> {
-    let overlay = super::overlay_package_root();
-    let metadata: Value = serde_json::from_slice(&std::fs::read(
-        wamn_schema_generator::output_root(&overlay).join("package-identity.json"),
-    )?)?;
+    let required = required_schema_contract(&super::overlay_package_root())?;
     let (project, connection_task) = super::connect(project_url).await?;
-    let observation =
-        observe_installed_contract(&project, &metadata["required_schema_contract"]).await;
+    let observation = observe_installed_contract(&project, &required).await;
     drop(project);
     connection_task
         .await
         .context("join installed schema observer")?;
     let observed = observation?;
-    let requirements =
-        required_contract_observation(&metadata["required_schema_contract"], &observed)?;
+    let requirements = required_contract_observation(&required, &observed)?;
     let purchase_order = observed["tables"]
         .as_array()
         .context("catalog tables must be an array")?
@@ -122,7 +117,7 @@ pub(super) async fn after_install(
     evidence["overlay_component_sha256"] = json!(digest_file(
         &component_directory.join(format!("{OVERLAY_COMPONENT}.wasm"))
     )?);
-    evidence["required_schema_contract"] = metadata["required_schema_contract"].clone();
+    evidence["required_schema_contract"] = required;
     evidence["schema_admission_claim"] = json!(false);
     write_evidence(phase, &evidence)
 }
@@ -396,9 +391,15 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
     let result = async {
         project.batch_execute("SET statement_timeout = '20s'; SET lock_timeout = '10s'").await?;
         super::install_journey_platform_floor(project.as_ref(), identity().tenant.as_str(), super::PLATFORM_DOMAIN).await?;
-        let apply = |package: PathBuf| apply_package::apply_package(ApplyPackageRequest {
-            package,database_url:database_url.to_owned(),tenant:identity().tenant.clone(),
-        });
+        let apply = |package: PathBuf| {
+            let recorded = wamn_control::package_artifact::record_fixture_artifact_digest(&package);
+            async move {
+                recorded?;
+                apply_package::apply_package(ApplyPackageRequest {
+                    package,database_url:database_url.to_owned(),tenant:identity().tenant.clone(),
+                }).await
+            }
+        };
         apply(base.to_owned()).await.context("apply the breaking base through the production boundary")?;
         let before = project.query_one("SELECT count(*) FROM catalog.packages WHERE tenant_id = $1", &[&identity().tenant.as_str()]).await?.get::<_, i64>(0);
         let error = apply(super::overlay_package_root()).await.err().context("unchanged overlay must refuse a base-owned field collision")?;
@@ -425,6 +426,16 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
         .await
         .context("join breaking database observer")?;
     result
+}
+
+/// The schema the package at `root` needs, as its build wrote it.
+fn required_schema_contract(root: &Path) -> anyhow::Result<Value> {
+    let relative = Path::new(wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH)
+        .strip_prefix("generated")?;
+    let path = wamn_schema_generator::output_root(root).join(relative);
+    Ok(serde_json::from_slice(
+        &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+    )?)
 }
 
 fn digest_file(path: &Path) -> anyhow::Result<String> {
@@ -573,6 +584,7 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     )
     .await?;
     for package in [super::package_root(), super::overlay_package_root()] {
+        wamn_control::package_artifact::record_fixture_artifact_digest(&package)?;
         apply_package::apply_package(ApplyPackageRequest {
             package,
             database_url: url.clone(),
@@ -596,11 +608,7 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         .await?
         .get::<_, Option<String>>(0)
         .context("production install must retain an explicit schema ACL")?;
-    let metadata: Value = serde_json::from_slice(&std::fs::read(
-        wamn_schema_generator::output_root(&super::overlay_package_root())
-            .join("package-identity.json"),
-    )?)?;
-    let required = &metadata["required_schema_contract"];
+    let required = &required_schema_contract(&super::overlay_package_root())?;
     let baseline = observe_installed_contract(&project, required).await?;
     let positive = required_contract_observation(required, &baseline)?;
     project

@@ -23,7 +23,7 @@ use crate::client_rust::emit_rust_client;
 use crate::client_ts::{emit_ts_client, emit_ts_package_json};
 use crate::generate::GeneratedFile;
 use crate::{
-    AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
+    AuthoredSql, GeneratedPackage, GenerationInput, PackageManifest,
     data_access::{
         DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationFields,
         application_schemas, derive_effective_data_access, render_effective_data_access_sql,
@@ -502,7 +502,6 @@ pub(crate) fn generate_from_manifest(
         catalog,
         manifest_bytes,
         &authored_sql,
-        GenerationProvenance::new(GENERATOR_ID, TOOLCHAIN_ID),
         transactional,
     ))
     .context("generate package artifacts")

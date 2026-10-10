@@ -231,7 +231,7 @@ async fn expand_conditions_preserve_rows_stop_on_lock_and_commit_with_evidence()
     .await
     .unwrap();
     let (evidence, _, _) = read_qualification(&result.result).unwrap();
-    assert_eq!(evidence.format_version, 3);
+    assert_eq!(evidence.format_version, STAGE_FORMAT);
     assert!(evidence.upgrade_stage.is_some());
     assert_eq!(state(&mut fixture.source).await, original);
     let retained = retained_rows(&fixture.source).await;
@@ -279,7 +279,7 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
     .await
     .unwrap();
     let (mut evidence, additive_bytes, _) = read_qualification(&result.result).unwrap();
-    assert_eq!(evidence.format_version, 1);
+    assert_eq!(evidence.format_version, PLAIN_FORMAT);
     assert!(evidence.upgrade_stage.is_none());
     let additive_value: serde_json::Value = serde_json::from_slice(&additive_bytes).unwrap();
     assert!(additive_value.get("upgrade_stage").is_none());
@@ -294,7 +294,7 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
             "initial_cursor": null
         }
     });
-    evidence.format_version = 3;
+    evidence.format_version = STAGE_FORMAT;
     evidence.upgrade_stage = Some(serde_json::from_value(declaration.clone()).unwrap());
     let staged = serde_json::to_value(&evidence).unwrap();
     let stage_bytes = wamn_execution_contract::canonical_json_bytes(&staged);
@@ -302,7 +302,7 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
     assert_ne!(bytes_digest(&stage_bytes), bytes_digest(&additive_bytes));
 
     for (path, replacement) in [
-        ("/format_version", json!(1)),
+        ("/format_version", json!(PLAIN_FORMAT)),
         ("/upgrade_stage/phase", json!("manual")),
         ("/upgrade_stage/backfill/batch_size", json!(0)),
         ("/upgrade_stage/preconditions", json!({})),
@@ -332,10 +332,11 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
         serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
     manifest["upgrade_stage"] = declaration;
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    record_artifacts([&candidate]);
     let declared = identity_from_directory(&read_package_directory(&candidate).unwrap()).unwrap();
     assert_ne!(
-        declared.manifest_sha256,
-        evidence.candidate_package.manifest_sha256
+        declared.artifact_digest,
+        evidence.candidate_package.artifact_digest
     );
 
     let refused = request(&fixture, "stage.json");

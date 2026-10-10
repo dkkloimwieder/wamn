@@ -76,14 +76,18 @@ fn build_is_a_verb_of_the_developer_binary_only() {
 }
 
 #[test]
-fn package_apply_has_one_exact_directory_and_no_destructive_override() {
+fn package_apply_takes_one_exact_artifact_and_no_destructive_override() {
     let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "apply-package");
-    for flag in ["--confirm-with-backup", "--acknowledge-impact"] {
+    for flag in [
+        "--confirm-with-backup",
+        "--acknowledge-impact",
+        "--package <",
+    ] {
         assert!(!output.contains(flag), "package apply exposed {flag}");
     }
     assert!(
-        output.contains("--package <PACKAGE>"),
-        "package apply omitted its exact directory"
+        output.contains("--package-artifact <PACKAGE_ARTIFACT>"),
+        "package apply omitted its exact artifact"
     );
 }
 

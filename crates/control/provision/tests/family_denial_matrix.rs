@@ -586,7 +586,7 @@ const SEED: &str = "\
 DO $seed$ DECLARE t text; a uuid; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.packages
-    (tenant_id, package_id, package_version, manifest_sha256)
+    (tenant_id, package_id, package_version, artifact_digest)
     VALUES (t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
   INSERT INTO catalog.releases
     (tenant_id, manifest_digest, canonical_bytes)

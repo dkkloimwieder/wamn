@@ -27,9 +27,9 @@ use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 
 use super::coordinator::{NODE_CAPABILITY, PACKAGE_COMPONENTS, POSTGRES_CAPABILITY, TemporaryFile};
+use crate::component_admission::{AdmitComponentRequest, admit_component};
 use crate::component_declaration::{authored_base_digests, render_declaration_document};
 use crate::publish_release::{PublishReleaseRequest, assemble_local_release};
-use crate::push_component::{AdmitComponentRequest, admit_component};
 
 /// The environment coordinate of the box: the edge configuration's `[scope]`.
 /// The tenant of the release is [`project_env_tenant`] of the three.

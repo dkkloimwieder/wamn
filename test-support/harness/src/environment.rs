@@ -4,11 +4,11 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Client;
+use wamn_control::component_admission::{self, AdmitComponentRequest};
 use wamn_control::enable_cdc_project_env::{self, EnableCdcProjectEnvRequest};
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, read_json, secret_value,
 };
-use wamn_control::push_component::{self, AdmitComponentRequest};
 use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_control_provision::{project_env_database_name, sql, validate_instance_suffix};
 
@@ -132,7 +132,7 @@ pub async fn reconcile_package_data_access(
 /// admitted digest for the application's connection binding. push-package
 /// pushes the component with the package artifact.
 pub fn admit_component_digest(admit: AdmitComponentRequest) -> anyhow::Result<String> {
-    Ok(push_component::admit_component(admit)?
+    Ok(component_admission::admit_component(admit)?
         .component_digest()
         .to_owned())
 }

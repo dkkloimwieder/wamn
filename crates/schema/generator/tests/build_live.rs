@@ -157,7 +157,11 @@ async fn two_builds_give_identical_outputs_and_receipts_without_a_verifier() {
     let digest = receipt_first.outputs.manifest.clone();
     let data_access: Value =
         serde_json::from_slice(&files[Path::new("platform-policy/data-access.json")]).unwrap();
-    assert_eq!(data_access["manifest_sha256"], digest.as_str());
+    assert_eq!(
+        data_access.as_object().unwrap().keys().collect::<Vec<_>>(),
+        ["contract", "package", "relations", "role", "schemas"],
+        "the data-access overlay carries no package identity"
+    );
     assert_eq!(
         receipt_first.outputs.files.len(),
         files.len() - 1,

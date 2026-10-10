@@ -420,39 +420,6 @@ fn load_package_statements(
         all_statements.insert(operation.clone(), operation_statements);
     }
 
-    let metadata_path = "generated/package-identity.json";
-    let metadata_bytes = read_package_owned_file(
-        package_root,
-        &canonical_root,
-        "package contract",
-        metadata_path,
-        "json",
-    )?;
-    let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(&metadata_bytes)
-        .map_err(|error| {
-            ComponentProjectionError::new(
-                ComponentProjectionErrorType::StatementCorpusMismatch,
-                format!(
-                    "generated package contract {} is invalid: {error}",
-                    package_root.join(metadata_path).display()
-                ),
-            )
-        })?;
-    let observed_corpus = wamn_schema_generator::corpus_sha256(
-        corpus
-            .iter()
-            .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
-    );
-    if observed_corpus != metadata.application_sql_corpus_identity() {
-        return Err(ComponentProjectionError::new(
-            ComponentProjectionErrorType::StatementCorpusMismatch,
-            format!(
-                "generated statement corpus is {observed_corpus}, but package contract records {}",
-                metadata.application_sql_corpus_identity()
-            ),
-        ));
-    }
-
     let Some(expected_component_operations) = expected_component_operations else {
         return Ok(all_statements);
     };

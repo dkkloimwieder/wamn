@@ -46,11 +46,11 @@ use tracing_subscriber::layer::SubscriberExt;
 use wamn_catalog::{AdmittedComponent, AttachmentType, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring;
+use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::dev::watch::GitSource;
 use wamn_control::git_source::GitSourceState;
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_component::{AdmitComponentRequest, admit_component};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_engine::engine::{

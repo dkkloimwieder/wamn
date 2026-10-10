@@ -23,10 +23,11 @@ pub use exposure::{ExposureError, HttpRoute, canonical_http_route_template, norm
 pub use model::{SqlStatement, Value};
 pub use package_migrations::{
     AppliedPackage, CdcExcludedRelation, ManagedModel, MigrationSource,
-    PACKAGE_MANIFEST_DRIFT_REFUSAL, PACKAGE_MANIFEST_PATH, PACKAGE_MIGRATION_DRIFT_REFUSAL,
-    PACKAGE_MIGRATION_DUPLICATE_REFUSAL, PACKAGE_MIGRATION_GAP_REFUSAL, PackageDirectory,
-    PackageMigrationError, PackageMigrationErrorType, PackageMigrationPlan, PendingMigration,
-    RecordedMigration, plan_package_migrations, plan_package_registration,
+    PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL, PACKAGE_MANIFEST_PATH,
+    PACKAGE_MIGRATION_DRIFT_REFUSAL, PACKAGE_MIGRATION_DUPLICATE_REFUSAL,
+    PACKAGE_MIGRATION_GAP_REFUSAL, PackageDirectory, PackageMigrationError,
+    PackageMigrationErrorType, PackageMigrationPlan, PendingMigration, RecordedMigration,
+    plan_package_migrations, plan_package_registration,
 };
 pub use replica_identity::{
     ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, UnreadableRegistrations,

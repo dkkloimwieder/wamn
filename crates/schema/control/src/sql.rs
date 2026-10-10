@@ -2,7 +2,7 @@
 
 /// Read the immutable package root at one exact coordinate.
 pub fn select_package_sql() -> &'static str {
-    "SELECT manifest_sha256, predecessor_version FROM catalog.packages \
+    "SELECT artifact_digest, predecessor_version FROM catalog.packages \
      WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3"
 }
 

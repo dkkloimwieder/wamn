@@ -16,10 +16,10 @@ use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring;
+use wamn_control::component_admission::{self, AdmitComponentRequest};
 use wamn_control::dev::environment::{JourneyCredentials, connect, spawn_journey_management_gate};
 use wamn_control::provision_project_env::secret_value;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_component::{self, AdmitComponentRequest};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_platform_identity::{PrincipalType, issue_pat, resolve_subject, revoke_pat};
@@ -108,6 +108,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
          id uuid CONSTRAINT counter_id_pkey PRIMARY KEY,\n\
          tenant_id text NOT NULL, count bigint NOT NULL);\n",
     )?;
+    wamn_control::package_artifact::record_fixture_artifact_digest(&package)?;
     apply_package::apply_package(ApplyPackageRequest {
         package: package.clone(),
         database_url: test.project_url.to_owned(),
@@ -200,7 +201,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     std::fs::write(&component_path, bytes)?;
     // Admission checks the composed parent against its declaration.
     // push-package pushes the components of the package artifact.
-    push_component::admit_component(AdmitComponentRequest {
+    component_admission::admit_component(AdmitComponentRequest {
         package: package.clone(),
         component_bytes: component_path,
         declaration: declaration_path,

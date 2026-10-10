@@ -18,11 +18,11 @@ use crate::connections::prefixed_sha256;
 use crate::{SqlStatement, Value};
 
 pub const PACKAGE_MANIFEST_PATH: &str = "wamn.json";
-pub const PACKAGE_MANIFEST_DRIFT_REFUSAL: &str = "package-manifest-drift";
 pub const PACKAGE_MIGRATION_DRIFT_REFUSAL: &str = "package-migration-drift";
 pub const PACKAGE_MIGRATION_DUPLICATE_REFUSAL: &str = "package-migration-duplicate";
 pub const PACKAGE_MIGRATION_GAP_REFUSAL: &str = "package-migration-gap";
 pub const PREDECESSOR_PREFIX_MISMATCH_REFUSAL: &str = "predecessor-prefix-mismatch";
+pub const PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL: &str = "package-coordinate-without-artifact";
 
 /// One exact migration file discovered under a package directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +44,9 @@ pub struct RecordedMigration {
 pub struct AppliedPackage {
     pub coordinate: PackageCoordinate,
     pub predecessor_version: Option<String>,
-    pub manifest_sha256: String,
+    /// The package artifact digest recorded in `catalog.packages`. `None` is a
+    /// coordinate that `wamn dev` applied from a working tree.
+    pub artifact_digest: Option<String>,
     pub migrations: Vec<RecordedMigration>,
 }
 
@@ -53,6 +55,10 @@ pub struct AppliedPackage {
 pub struct PackageDirectory {
     pub manifest_bytes: Vec<u8>,
     pub migrations: Vec<MigrationSource>,
+    /// The digest of the verified package artifact these bytes come from
+    /// (docs/plan/platform-deploy.md R3). The caller supplies it. `None` is a
+    /// working tree, which only `wamn dev` applies.
+    pub artifact_digest: Option<String>,
 }
 
 /// Sole package-local model-key to physical relation mapping.
@@ -87,7 +93,7 @@ pub struct PendingMigration {
 pub struct PackageMigrationPlan {
     pub coordinate: PackageCoordinate,
     pub predecessor_version: Option<String>,
-    pub manifest_sha256: String,
+    pub artifact_digest: Option<String>,
     pub models: Vec<ManagedModel>,
     pub cdc_excluded_relations: Vec<CdcExcludedRelation>,
     pub verified_prefix: Vec<PendingMigration>,
@@ -107,12 +113,12 @@ impl PackageMigrationPlan {
 pub enum PackageMigrationErrorType {
     InvalidManifest,
     InvalidDirectory,
-    ManifestDrift,
     Duplicate,
     Gap,
     MigrationDrift,
     PredecessorPrefixMismatch,
     CoordinateContentConflict,
+    CoordinateWithoutArtifact,
     CoordinatePredecessorConflict,
     PredecessorNotCurrent,
 }
@@ -122,12 +128,12 @@ impl PackageMigrationErrorType {
         match self {
             Self::InvalidManifest => "invalid-manifest",
             Self::InvalidDirectory => "invalid-directory",
-            Self::ManifestDrift => PACKAGE_MANIFEST_DRIFT_REFUSAL,
             Self::Duplicate => PACKAGE_MIGRATION_DUPLICATE_REFUSAL,
             Self::Gap => PACKAGE_MIGRATION_GAP_REFUSAL,
             Self::MigrationDrift => PACKAGE_MIGRATION_DRIFT_REFUSAL,
             Self::PredecessorPrefixMismatch => PREDECESSOR_PREFIX_MISMATCH_REFUSAL,
             Self::CoordinateContentConflict => "package-coordinate-content-conflict",
+            Self::CoordinateWithoutArtifact => PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL,
             Self::CoordinatePredecessorConflict => "package-coordinate-predecessor-conflict",
             Self::PredecessorNotCurrent => "predecessor-not-current",
         }
@@ -256,19 +262,17 @@ impl Error for PackageMigrationError {
 /// The driver inserts only when this returns `true`, in the same transaction.
 pub fn plan_package_registration(
     coordinate: &PackageCoordinate,
-    manifest_sha256: &str,
+    artifact_digest: Option<&str>,
     predecessor_version: Option<&str>,
-    recorded: Option<(&str, Option<&str>)>,
+    recorded: Option<(Option<&str>, Option<&str>)>,
     current_version: Option<&str>,
 ) -> Result<bool, PackageMigrationError> {
-    if let Some((recorded_hash, recorded_predecessor)) = recorded {
-        if recorded_hash != manifest_sha256 {
-            return Err(PackageMigrationError::new(
-                PackageMigrationErrorType::CoordinateContentConflict,
-                format!(
-                    "package-coordinate-content-conflict: coordinate={} recorded-sha256={recorded_hash} presented-sha256={manifest_sha256}",
-                    coordinate_text(coordinate)
-                ),
+    if let Some((recorded_digest, recorded_predecessor)) = recorded {
+        if recorded_digest != artifact_digest {
+            return Err(digest_conflict(
+                coordinate,
+                recorded_digest,
+                artifact_digest,
             ));
         }
         if recorded_predecessor != predecessor_version {
@@ -296,6 +300,42 @@ pub fn plan_package_registration(
         ));
     }
     Ok(true)
+}
+
+/// The refusal for a coordinate recorded with other bytes than presented: a
+/// working-tree install (no digest) on either side, or another artifact.
+fn digest_conflict(
+    coordinate: &PackageCoordinate,
+    recorded: Option<&str>,
+    presented: Option<&str>,
+) -> PackageMigrationError {
+    let (type_, literal) = if recorded.is_none() || presented.is_none() {
+        (
+            PackageMigrationErrorType::CoordinateWithoutArtifact,
+            PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL,
+        )
+    } else {
+        (
+            PackageMigrationErrorType::CoordinateContentConflict,
+            "package-coordinate-content-conflict",
+        )
+    };
+    let shown = |digest: Option<&str>| digest.unwrap_or("<working tree>").to_owned();
+    PackageMigrationError {
+        type_,
+        context: format!(
+            "{literal}: coordinate={} recorded-digest={} presented-digest={}",
+            coordinate_text(coordinate),
+            shown(recorded),
+            shown(presented)
+        )
+        .into_boxed_str(),
+        coordinate: Some(coordinate_text(coordinate).into_boxed_str()),
+        path: None,
+        recorded_hash: Some(shown(recorded).into_boxed_str()),
+        actual_hash: Some(shown(presented).into_boxed_str()),
+        source: None,
+    }
 }
 
 /// Validate a package directory against its immutable applied prefix.
@@ -339,20 +379,17 @@ pub fn plan_package_migrations(
         })?;
     }
     let predecessor_version = manifest.package.predecessor_version.clone();
-    let manifest_sha256 = prefixed_sha256(&directory.manifest_bytes);
+    let artifact_digest = directory.artifact_digest.clone();
 
     if let Some(existing) = applied {
         if existing.coordinate != coordinate {
             return plan_package_migrations_from_predecessor(directory, existing);
         }
-        if existing.manifest_sha256 != manifest_sha256 {
-            return Err(PackageMigrationError::drift(
-                PackageMigrationErrorType::ManifestDrift,
-                PACKAGE_MANIFEST_DRIFT_REFUSAL,
+        if existing.artifact_digest != artifact_digest {
+            return Err(digest_conflict(
                 &coordinate,
-                PACKAGE_MANIFEST_PATH,
-                &existing.manifest_sha256,
-                &manifest_sha256,
+                existing.artifact_digest.as_deref(),
+                artifact_digest.as_deref(),
             ));
         }
     }
@@ -422,7 +459,7 @@ pub fn plan_package_migrations(
     Ok(PackageMigrationPlan {
         coordinate,
         predecessor_version,
-        manifest_sha256,
+        artifact_digest,
         models,
         cdc_excluded_relations,
         verified_prefix: Vec::new(),
@@ -505,7 +542,7 @@ fn plan_package_migrations_from_predecessor(
     Ok(PackageMigrationPlan {
         coordinate: fresh.coordinate,
         predecessor_version: fresh.predecessor_version,
-        manifest_sha256: fresh.manifest_sha256,
+        artifact_digest: fresh.artifact_digest,
         models: fresh.models,
         cdc_excluded_relations: fresh.cdc_excluded_relations,
         verified_prefix,
@@ -777,6 +814,9 @@ mod tests {
         }
     }
 
+    const ARTIFACT: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
     fn directory() -> PackageDirectory {
         PackageDirectory {
             manifest_bytes: manifest("1.0.0"),
@@ -784,13 +824,14 @@ mod tests {
                 source("migrations/0002_add_tag.sql", "SELECT 2;"),
                 source("migrations/0001_initial.sql", "SELECT 1;"),
             ],
+            artifact_digest: Some(ARTIFACT.into()),
         }
     }
 
-    /// `manifest_sha256` is persisted in `catalog.packages` and each migration
-    /// `sha256` is persisted in `catalog.package_migrations`. Both are compared
-    /// on every reapply, so their bytes must never move. The golden values are
-    /// the sha256 of the literal preimages below, computed outside this code.
+    /// Each migration `sha256` is persisted in `catalog.package_migrations`
+    /// and compared on every reapply, so its bytes must never move. The golden
+    /// value is the sha256 of the literal preimage below, computed outside this
+    /// code. The plan carries the artifact digest its caller supplies.
     #[test]
     fn the_persisted_package_digest_bytes_are_pinned() {
         const PINNED_MANIFEST: &str = concat!(
@@ -808,13 +849,11 @@ mod tests {
         let pinned = PackageDirectory {
             manifest_bytes: PINNED_MANIFEST.as_bytes().to_vec(),
             migrations: vec![source("migrations/0001_initial.sql", PINNED_MIGRATION)],
+            artifact_digest: Some(ARTIFACT.into()),
         };
         let plan = plan_package_migrations(&pinned, None).unwrap();
 
-        assert_eq!(
-            plan.manifest_sha256,
-            "sha256:7930243b154d14acce3e440e2647a82d17ca7611347326d4da549f7909d5218a"
-        );
+        assert_eq!(plan.artifact_digest.as_deref(), Some(ARTIFACT));
         assert_eq!(
             plan.pending[0].sha256,
             "sha256:17db4fd369edb9244b9f91d9aeed145c3d04ad8ba6e95d06247f07a63527d11a"
@@ -824,48 +863,57 @@ mod tests {
     #[test]
     fn registration_preserves_replay_conflicts_and_current_predecessor() {
         let coordinate = PackageCoordinate::new("orders", "2.0.0").unwrap();
-        assert!(plan_package_registration(&coordinate, "hash", Some("1.0.0"), None, None).unwrap());
+        let hash = Some("hash");
+        assert!(plan_package_registration(&coordinate, hash, Some("1.0.0"), None, None).unwrap());
         assert!(
-            plan_package_registration(&coordinate, "hash", Some("1.0.0"), None, Some("1.0.0"))
+            plan_package_registration(&coordinate, hash, Some("1.0.0"), None, Some("1.0.0"))
                 .unwrap()
         );
         assert!(
             !plan_package_registration(
                 &coordinate,
-                "hash",
+                hash,
                 Some("1.0.0"),
-                Some(("hash", Some("1.0.0"))),
+                Some((hash, Some("1.0.0"))),
                 Some("3.0.0")
             )
             .unwrap()
         );
         for (hash, predecessor, recorded, current, kind, literal) in [
             (
-                "other",
+                Some("other"),
                 Some("1.0.0"),
-                Some(("hash", Some("1.0.0"))),
+                Some((Some("hash"), Some("1.0.0"))),
                 None,
                 PackageMigrationErrorType::CoordinateContentConflict,
                 "package-coordinate-content-conflict",
             ),
             (
-                "hash",
-                None,
-                Some(("hash", Some("1.0.0"))),
-                None,
-                PackageMigrationErrorType::CoordinatePredecessorConflict,
-                "package-coordinate-predecessor-conflict",
-            ),
-            (
-                "hash",
+                Some("hash"),
                 Some("1.0.0"),
-                Some(("hash", None)),
+                Some((None, Some("1.0.0"))),
+                None,
+                PackageMigrationErrorType::CoordinateWithoutArtifact,
+                PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL,
+            ),
+            (
+                Some("hash"),
+                None,
+                Some((Some("hash"), Some("1.0.0"))),
                 None,
                 PackageMigrationErrorType::CoordinatePredecessorConflict,
                 "package-coordinate-predecessor-conflict",
             ),
             (
-                "hash",
+                Some("hash"),
+                Some("1.0.0"),
+                Some((Some("hash"), None)),
+                None,
+                PackageMigrationErrorType::CoordinatePredecessorConflict,
+                "package-coordinate-predecessor-conflict",
+            ),
+            (
+                Some("hash"),
                 None,
                 None,
                 Some("1.0.0"),
@@ -873,7 +921,7 @@ mod tests {
                 "predecessor-not-current",
             ),
             (
-                "hash",
+                Some("hash"),
                 Some("0.9.0"),
                 None,
                 Some("1.0.0"),
@@ -907,7 +955,7 @@ mod tests {
         let applied = AppliedPackage {
             coordinate: first.coordinate.clone(),
             predecessor_version: None,
-            manifest_sha256: first.manifest_sha256.clone(),
+            artifact_digest: first.artifact_digest.clone(),
             migrations: first
                 .pending
                 .iter()
@@ -964,7 +1012,7 @@ mod tests {
         let predecessor = AppliedPackage {
             coordinate: predecessor_plan.coordinate,
             predecessor_version: None,
-            manifest_sha256: predecessor_plan.manifest_sha256,
+            artifact_digest: predecessor_plan.artifact_digest,
             migrations: predecessor_plan
                 .pending
                 .iter()
@@ -1009,7 +1057,7 @@ mod tests {
         let predecessor = AppliedPackage {
             coordinate: predecessor_plan.coordinate,
             predecessor_version: None,
-            manifest_sha256: predecessor_plan.manifest_sha256,
+            artifact_digest: predecessor_plan.artifact_digest,
             migrations: predecessor_plan
                 .pending
                 .iter()
@@ -1052,20 +1100,39 @@ mod tests {
     }
 
     #[test]
-    fn same_coordinate_manifest_drift_names_coordinate_and_both_hashes() {
+    fn same_coordinate_other_artifact_is_a_content_conflict_naming_both_digests() {
         let first = plan_package_migrations(&directory(), None).unwrap();
         let applied = AppliedPackage {
             coordinate: first.coordinate,
             predecessor_version: None,
-            manifest_sha256: "sha256:recorded".into(),
+            artifact_digest: Some("sha256:recorded".into()),
             migrations: Vec::new(),
         };
         let error = plan_package_migrations(&directory(), Some(&applied)).unwrap_err();
-        assert_eq!(error.error_type(), PackageMigrationErrorType::ManifestDrift);
+        assert_eq!(
+            error.error_type(),
+            PackageMigrationErrorType::CoordinateContentConflict
+        );
         assert_eq!(error.coordinate(), Some("orders@1.0.0"));
-        assert_eq!(error.path(), Some(PACKAGE_MANIFEST_PATH));
         assert_eq!(error.recorded_hash(), Some("sha256:recorded"));
-        assert!(error.actual_hash().unwrap().starts_with("sha256:"));
+        assert_eq!(error.actual_hash(), Some(ARTIFACT));
+
+        // A coordinate that wamn dev applied from a working tree has no
+        // digest, and a release apply over it refuses with its own type.
+        let working_tree = AppliedPackage {
+            artifact_digest: None,
+            ..applied
+        };
+        let error = plan_package_migrations(&directory(), Some(&working_tree)).unwrap_err();
+        assert_eq!(
+            error.error_type(),
+            PackageMigrationErrorType::CoordinateWithoutArtifact
+        );
+        assert!(
+            error
+                .context()
+                .starts_with(PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL)
+        );
     }
 
     #[test]
@@ -1095,7 +1162,7 @@ mod tests {
         let applied = AppliedPackage {
             coordinate: first.coordinate,
             predecessor_version: None,
-            manifest_sha256: first.manifest_sha256,
+            artifact_digest: first.artifact_digest,
             migrations: vec![RecordedMigration {
                 ordinal: 1,
                 relative_path: "migrations/0001_initial.sql".into(),
@@ -1140,7 +1207,7 @@ mod tests {
             let applied = AppliedPackage {
                 coordinate: first.coordinate.clone(),
                 predecessor_version: None,
-                manifest_sha256: first.manifest_sha256.clone(),
+                artifact_digest: first.artifact_digest.clone(),
                 migrations,
             };
             assert_eq!(

@@ -1,8 +1,7 @@
 use serde_json::{Value, json};
 use wamn_schema_generator::{GenerateErrorType, PackageManifest, validate_operation_vocabulary};
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnType, Exclusion, ExclusionAccessMethod, ExclusionElement,
-    ExclusionKey, Table,
+    CatalogIr, Exclusion, ExclusionAccessMethod, ExclusionElement, ExclusionKey, Table,
 };
 
 #[path = "support/platform_fixture.rs"]
@@ -354,7 +353,6 @@ fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
         &fixture::catalog_with_unread_table(),
         &bytes,
         &[],
-        wamn_schema_generator::GenerationProvenance::new("test", "test"),
         &wamn_schema_generator::StatementTransactionality::default(),
     ))
     .expect_err("model/internal relation overlap was accepted");
@@ -363,44 +361,6 @@ fn internal_relations_are_not_models_and_their_vocabulary_is_closed() {
     let mut open = with_internal_relation();
     open["internal_relations"][fixture::UNREAD_TABLE]["cdc"] = json!("ignored");
     assert!(PackageManifest::from_slice(&serde_json::to_vec(&open).unwrap()).is_err());
-}
-
-#[test]
-fn an_unused_column_changes_verified_state_without_widening_the_contract() {
-    let manifest = with_internal_relation();
-    let catalog = fixture::catalog_with_unread_table();
-    let baseline = fixture::generate_with(&catalog, &manifest);
-    let mut tables = catalog.tables().to_vec();
-    let command = tables
-        .iter_mut()
-        .find(|table| table.name() == fixture::UNREAD_TABLE)
-        .expect("internal relation");
-    let mut columns = command.columns().to_vec();
-    columns.push(Column::new(
-        "unused_note",
-        ColumnType::Text,
-        true,
-        None,
-        None,
-    ));
-    *command = Table::new(
-        command.schema(),
-        command.name(),
-        columns,
-        command.constraints().to_vec(),
-        command.indexes().to_vec(),
-    );
-    let additive = fixture::generate_with(&CatalogIr::new(tables), &manifest);
-    let baseline = artifact(&baseline, "generated/package-identity.json");
-    let additive = artifact(&additive, "generated/package-identity.json");
-    assert_ne!(
-        baseline["verified_schema_state_id"],
-        additive["verified_schema_state_id"]
-    );
-    assert_eq!(
-        baseline["required_schema_contract"],
-        additive["required_schema_contract"]
-    );
 }
 
 #[test]
@@ -494,9 +454,12 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
             .file("generated/native-verifier/command_state.rs")
             .is_none()
     );
-    let metadata = artifact(&package, "generated/package-identity.json");
+    let contract = artifact(
+        &package,
+        wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH,
+    );
     assert!(
-        metadata["required_schema_contract"]["tables"]
+        contract["tables"]
             .as_array()
             .unwrap()
             .iter()

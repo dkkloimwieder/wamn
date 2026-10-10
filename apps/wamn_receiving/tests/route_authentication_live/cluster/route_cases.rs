@@ -32,9 +32,6 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             let bytes = fs::read(cluster.artifacts.components.join(format!("{component}.wasm")))?;
             digests.insert(component.into(), json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))));
         }
-        let package: Value = serde_json::from_slice(&fs::read(
-            wamn_schema_generator::output_root(&cluster.resources.repository.join("apps/wamn_receiving"))
-                .join("package-identity.json"))?)?;
         let path = evidence.join("receiving-correctness.jsonl");
         let inputs = serde_json::from_value(json!({
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
@@ -42,7 +39,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             "tenant":super::super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
             "source_commit":cluster.resources.source,"component_digests":digests,
             "packages":super::super::released_package_roots(),
-            "corpus_sha256":package["application_sql_corpus_identity"],"seed":7701,"cases":16,"history":null,
+            "seed":7701,"cases":16,"history":null,
         }))?;
         let cancellation = pg_walstream::CancellationToken::new();
         let _cancel_on_exit = cancellation.clone().drop_guard();

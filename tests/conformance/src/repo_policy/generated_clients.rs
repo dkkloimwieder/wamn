@@ -7,7 +7,6 @@
 //!   `web/host-route-clients.mjs`.
 //! - in a `generated` or `.sqlx` directory under `apps/`: a package's build
 //!   output, which `wamn build` writes to `apps/target/wamn/<package>`.
-//! - a `package-identity.json` outside a `tests` directory.
 //!
 //! Hand-written fixtures and golden expectation files under `tests/` stay
 //! tracked: they are inputs and expectations, not build output.
@@ -50,13 +49,11 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
 
 fn is_build_output(path: &str) -> bool {
     let components = path.split('/').collect::<Vec<_>>();
-    let under_tests = components.contains(&"tests");
     components.contains(&"client-ts")
         || (components.first() == Some(&"apps")
             && components
                 .iter()
                 .any(|component| *component == "generated" || *component == ".sqlx"))
-        || (components.last() == Some(&"package-identity.json") && !under_tests)
 }
 
 #[cfg(test)]
@@ -70,16 +67,13 @@ mod tests {
             "apps/wamn_wms/generated/client-ts/index.ts",
             "apps/wamn_wms/generated/sql/item/get.sql",
             "apps/wamn_wms/tests/.sqlx/query-0.json",
-            "apps/wamn_wms/generated/package-identity.json",
-            "crates/catalog/model/package-identity.json",
         ] {
             assert!(is_build_output(refused), "{refused}");
         }
         for kept in [
             "crates/schema/generator/src/client_ts.rs",
             "apps/wamn_wms/wamn.k",
-            "crates/control/lib/tests/fixtures/component_package/generated/package-identity.json",
-            "crates/control/lib/tests/support/dev_package/package-identity.json",
+            "crates/control/lib/tests/fixtures/component_package/generated/contracts/item/get.operation.json",
         ] {
             assert!(!is_build_output(kept), "{kept}");
         }

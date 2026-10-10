@@ -737,7 +737,7 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     project
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, manifest_sha256) \
+               (tenant_id, package_id, package_version, artifact_digest) \
              VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
                      '{CANDIDATE_MANIFEST_SHA256}'); \
              INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
@@ -778,7 +778,7 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
     project
         .execute(
             "INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, manifest_sha256) \
+               (tenant_id, package_id, package_version, artifact_digest) \
              VALUES ($1, $2, $3, $4)",
             &[
                 &TENANT,

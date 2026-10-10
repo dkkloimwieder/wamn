@@ -47,7 +47,6 @@ fn root_identity(package: PackageIdentity) -> PresentedRootIdentity {
     PresentedRootIdentity {
         package,
         statement_corpus_sha256: format!("sha256:{}", "1".repeat(64)),
-        package_identity_sha256: format!("sha256:{}", "2".repeat(64)),
         data_access_sha256: format!("sha256:{}", "3".repeat(64)),
     }
 }
@@ -120,7 +119,7 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
          CREATE TABLE inventory.successor_only (id int); \
          GRANT USAGE ON SCHEMA inventory TO wamn_app; \
          GRANT SELECT (id,note) ON inventory.widget TO wamn_app; \
-         INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version,manifest_sha256) VALUES \
+         INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version,artifact_digest) VALUES \
            ('upgrade-test','platform_fixture','2.0.0',NULL,'sha256:' || repeat('a',64)), \
            ('upgrade-test','platform_fixture','2.1.0','2.0.0','sha256:' || repeat('b',64)); \
          INSERT INTO catalog.package_migrations (tenant_id,package_id,package_version,ordinal,relative_path,sha256) VALUES \
@@ -144,7 +143,7 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
     let predecessor = PackageIdentity {
         package_version: "2.0.0".to_owned(),
         predecessor_version: None,
-        manifest_sha256: format!("sha256:{}", "a".repeat(64)),
+        artifact_digest: format!("sha256:{}", "a".repeat(64)),
         migrations: candidate.migrations[..1].to_vec(),
         ..candidate.clone()
     };
@@ -154,7 +153,7 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
     let evidence = UpgradeQualification {
         overlay: None,
         upgrade_stage: None,
-        format_version: 1,
+        format_version: crate::qualify_upgrade::PLAIN_FORMAT,
         tenant: "upgrade-test".to_owned(),
         environment: "test".to_owned(),
         predecessor_manifest_digest: manifest.digest().as_str().to_owned(),

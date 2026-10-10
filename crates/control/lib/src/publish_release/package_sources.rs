@@ -1,4 +1,4 @@
-//! Package manifest bytes and generated metadata.
+//! Package manifest bytes and generated operation contracts.
 
 use std::path::Path;
 
@@ -6,14 +6,13 @@ use wamn_record_history::{HISTORY_TABLE_SUFFIX, is_history_table_name};
 
 use super::{
     BTreeMap, BTreeSet, OperationType, PathBuf, PublishManifestError, PublishManifestErrorType,
-    RouteCanonicalization, RouteContract, RouteContracts, ServingRelation, ServingRoute, sha256,
+    RouteCanonicalization, RouteContract, RouteContracts, ServingRelation, ServingRoute,
 };
 
-/// Every package's parsed manifest, every package's manifest digest, and the
-/// contract kind of every operation the packages generate.
+/// Every package's parsed manifest and the contract kind of every operation
+/// the packages generate.
 pub(super) type PackageManifestSources = (
     BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    BTreeMap<String, String>,
     RouteContracts,
 );
 
@@ -21,7 +20,6 @@ pub(super) fn read_package_manifests(
     paths: &[PathBuf],
 ) -> Result<PackageManifestSources, PublishManifestError> {
     let mut manifests = BTreeMap::new();
-    let mut hashes = BTreeMap::new();
     let mut contracts = BTreeMap::new();
     for path in paths {
         let bytes = std::fs::read(path).map_err(|error| {
@@ -48,37 +46,13 @@ pub(super) fn read_package_manifests(
         })?;
         let root = wamn_schema_generator::manifest_package_root(path).ok_or_else(|| {
             PublishManifestError::new(
-                PublishManifestErrorType::GeneratedPackageMetadata,
+                PublishManifestErrorType::PackageManifest,
                 format!(
                     "package manifest {} has no package directory; pass package-owned wamn.json",
                     path.display()
                 ),
             )
         })?;
-        let metadata_path = wamn_schema_generator::output_root(root).join("package-identity.json");
-        let metadata_bytes = std::fs::read(&metadata_path).map_err(|error| {
-            PublishManifestError::with_source(
-                PublishManifestErrorType::GeneratedPackageMetadata,
-                format!(
-                    "package {}@{} requires generated/package-identity.json at {}; regenerate the package evidence",
-                    manifest.package.id,
-                    manifest.package.version,
-                    metadata_path.display()
-                ),
-                error,
-            )
-        })?;
-        let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(&metadata_bytes).map_err(|error| {
-            PublishManifestError::with_source(
-                PublishManifestErrorType::GeneratedPackageMetadata,
-                format!(
-                    "package {}@{} carries an invalid generated/package-identity.json; regenerate the package evidence",
-                    manifest.package.id, manifest.package.version
-                ),
-                error,
-            )
-        })?;
-        validate_package_metadata(&manifest, &metadata)?;
         let package_id = manifest.package.id.clone();
         contracts.insert(package_id.clone(), read_operation_contracts(root)?);
         if manifests.insert(package_id.clone(), manifest).is_some() {
@@ -87,7 +61,6 @@ pub(super) fn read_package_manifests(
                 format!("more than one package manifest names {package_id:?}"),
             ));
         }
-        hashes.insert(package_id, sha256(&bytes));
     }
     let mut kinds = RouteContracts::new();
     for (package_id, package) in &contracts {
@@ -105,7 +78,7 @@ pub(super) fn read_package_manifests(
             kinds.insert((package_id.clone(), contract.operation.clone()), route);
         }
     }
-    Ok((manifests, hashes, kinds))
+    Ok((manifests, kinds))
 }
 
 /// The manifest route of one route attachment of the package at `root`, as
@@ -139,7 +112,7 @@ pub fn package_route(
         .find(|contract| contract.operation == operation)
         .ok_or_else(|| {
             PublishManifestError::new(
-                PublishManifestErrorType::GeneratedPackageMetadata,
+                PublishManifestErrorType::PackageManifest,
                 format!(
                     "no generated contract of package {package_id:?} declares operation {operation:?}; regenerate the package evidence"
                 ),
@@ -210,7 +183,7 @@ fn resolve_claim<B: std::borrow::Borrow<[PackageContract]>>(
         return Ok(contract.route.clone());
     };
     let refused = |detail: String| {
-        PublishManifestError::new(PublishManifestErrorType::GeneratedPackageMetadata, detail)
+        PublishManifestError::new(PublishManifestErrorType::PackageManifest, detail)
     };
     let dependency = manifest
         .base_dependencies
@@ -276,7 +249,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
     }
     let unreadable = |path: &Path, error: std::io::Error| {
         PublishManifestError::with_source(
-            PublishManifestErrorType::GeneratedPackageMetadata,
+            PublishManifestErrorType::PackageManifest,
             format!("read generated contracts {}", path.display()),
             error,
         )
@@ -301,7 +274,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             let bytes = std::fs::read(&path).map_err(|error| unreadable(&path, error))?;
             let contract: Contract = serde_json::from_slice(&bytes).map_err(|error| {
                 PublishManifestError::with_source(
-                    PublishManifestErrorType::GeneratedPackageMetadata,
+                    PublishManifestErrorType::PackageManifest,
                     format!(
                         "generated contract {} names no operation kind; regenerate the package evidence",
                         path.display()
@@ -385,7 +358,7 @@ fn read_input_identity(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
         Err(error) => {
             return Err(PublishManifestError::with_source(
-                PublishManifestErrorType::GeneratedPackageMetadata,
+                PublishManifestErrorType::PackageManifest,
                 format!("read generated contract {}", input_path.display()),
                 error,
             ));
@@ -393,7 +366,7 @@ fn read_input_identity(
     };
     let contract = serde_json::from_slice(&bytes).map_err(|error| {
         PublishManifestError::with_source(
-            PublishManifestErrorType::GeneratedPackageMetadata,
+            PublishManifestErrorType::PackageManifest,
             format!(
                 "generated contract {} is not JSON; regenerate the package evidence",
                 input_path.display()
@@ -405,31 +378,6 @@ fn read_input_identity(
         wamn_schema_generator::client_plan::idempotency_field(&contract),
         wamn_schema_generator::client_plan::route_canonicalization(&contract),
     ))
-}
-
-pub(super) fn validate_package_metadata(
-    manifest: &wamn_schema_generator::PackageManifest,
-    metadata: &wamn_schema_generator::GeneratedPackageMetadata,
-) -> Result<(), PublishManifestError> {
-    let coordinate = format!("{}@{}", manifest.package.id, manifest.package.version);
-    if metadata.required_platform_policy_contract() != &manifest.required_platform_policy_contract {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::GeneratedPackageMetadata,
-            format!(
-                "package {coordinate} manifest and generated package contract disagree on the required platform policy contract; regenerate the package evidence"
-            ),
-        ));
-    }
-    if !metadata.promotion_eligible() {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::PolicyContractUnsatisfied,
-            format!(
-                "package {coordinate} requires platform policy contract {:?} in state unsatisfied; reconcile its generated policy and regenerate with state satisfied",
-                manifest.required_platform_policy_contract.id
-            ),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

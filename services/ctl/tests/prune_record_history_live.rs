@@ -3,8 +3,7 @@
 //! It runs on the PostgreSQL server of its test process and holds the process
 //! lock of that server, because it creates roles.
 //!
-//! Each case applies a fixture package through the real `wamn-ctl apply-package`
-//! process. The package logs three relations: `shipment` keeps its entries for
+//! Each case applies a fixture package through the apply-package library. The package logs three relations: `shipment` keeps its entries for
 //! 30 days, `parcel` for 7 days, and `ledger` without limit. The case mints a
 //! real `wamn_audit_retention` credential generation, writes history, moves
 //! entry times into the past, and runs the real verb through `wamn-ctl-ops`.
@@ -26,12 +25,11 @@
 //! deletes with the retention that it read.
 
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Output;
 use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
+use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
 use wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL;
 use wamn_control_provision::{
     AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, compose_url,
@@ -179,17 +177,17 @@ fn upgrade_retention(root: &Path, table: &str, retention: &str) {
     .expect("write the upgraded manifest");
 }
 
-/// Apply the fixture package through the real `wamn-ctl apply-package` process.
-async fn apply(url: &str, package: &Path) -> anyhow::Result<Output> {
-    ctl_process::run_checked([
-        OsStr::new("apply-package"),
-        OsStr::new("--package"),
-        package.as_os_str(),
-        OsStr::new("--database-url"),
-        OsStr::new(url),
-        OsStr::new("--tenant"),
-        OsStr::new(TENANT),
-    ])
+/// Apply the fixture package through the apply-package library.
+///
+/// The `apply-package` verb takes only a pushed artifact, so the fixture tree
+/// stands in for one under a digest of its own bytes.
+async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
+    wamn_control::package_artifact::record_fixture_artifact_digest(package)?;
+    apply_package::apply_package(ApplyPackageRequest {
+        package: package.to_owned(),
+        database_url: url.to_owned(),
+        tenant: TENANT.to_owned(),
+    })
     .await
 }
 
@@ -419,7 +417,7 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
     write_package(&package);
     apply(&url, &package)
         .await
-        .expect("apply the fixture package through wamn-ctl");
+        .expect("apply the fixture package");
 
     // Spec tests 1a and 6. Each step is one write with the age of its entry,
     // and the expected result keeps each entry whose flag is true.
@@ -711,7 +709,7 @@ async fn a_retention_change_waits_for_a_running_prune() {
     write_package(&package);
     apply(&url, &package)
         .await
-        .expect("apply the fixture package through wamn-ctl");
+        .expect("apply the fixture package");
 
     // The insert expires under P7D. The 3-day update stays under P7D and
     // expires under P1D.
@@ -797,7 +795,7 @@ async fn a_retention_change_waits_for_a_running_prune() {
     apply_task
         .await
         .expect("join apply-package")
-        .expect("apply the retention change through wamn-ctl");
+        .expect("apply the retention change");
 
     let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
     print!("{stdout}");

@@ -86,14 +86,6 @@ pub(super) fn validate(
         &manifest.required_platform_policy_contract.id,
         "platform policy contract",
     )?;
-    for value in [input.provenance.generator, input.provenance.toolchain] {
-        if value.is_empty() {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidIdentity,
-                "generation provenance values must not be empty",
-            ));
-        }
-    }
     if manifest.models.is_empty() && !manifest.declares_no_sql() {
         return Err(GenerateError::new(
             GenerateErrorType::InvalidManifest,

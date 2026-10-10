@@ -195,6 +195,10 @@ async fn install_project_database(client: &Client, url: &str) {
         "the converged post-check did not name exactly the project run-plane record"
     );
 
+    wamn_control::package_artifact::record_fixture_artifact_digest(
+        &wamn_fixture_package::package_root(),
+    )
+    .expect("record the fixture artifact digest");
     apply_package::apply_package(ApplyPackageRequest {
         package: wamn_fixture_package::package_root(),
         database_url: url.to_string(),
@@ -213,7 +217,10 @@ async fn install_project_database(client: &Client, url: &str) {
 
 /// Portable relations the control store installs that the project plane also
 /// installs, so both copies must carry an identical column and constraint shape.
-const SHARED_PORTABLE_RELATIONS: [&str; 2] = ["catalog.packages", "catalog.package_migrations"];
+// catalog.packages is left out: the project copy records artifact_digest
+// (project migration 0018, wamn-vavs4.4), and the system copy keeps
+// manifest_sha256 until Epic 9, which owns the system copy and removes it.
+const SHARED_PORTABLE_RELATIONS: [&str; 1] = ["catalog.package_migrations"];
 
 /// Portable relations both planes install whose shapes DELIBERATELY diverge by
 /// one column, ruled 2026-09-09 on wamn-10yt.52. The component library left

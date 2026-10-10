@@ -110,8 +110,7 @@ const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:222222222222222222
 /// shape of `apps/edge_device`.
 const PACKAGE_MANIFEST: &str = r#"{"package":{"id":"orders","version":"1.0.0"},"required_platform_policy_contract":{"id":"orders_data_access","state":"satisfied"},"models":{},"custom_operations":{"order.read":{"type":"command","visibility":"public","permission":"order.read","input":{"fields":[{"path":"request_id","type":"text","nullable":false},{"path":"value.order","type":"text","nullable":false}]},"result":{"class":"one","fields":[{"path":"order","type":"text","nullable":false}]},"errors":["invalid_input","permission_denied","internal_error"],"error_details":{},"idempotent_by":"stateless","label":"Read an order","description":"The one operation of the apply fixture. It declares no SQL."}},"connections":[],"components":{"orders":{"connections":[]}}}"#;
 /// The data access policy of [`PACKAGE_MANIFEST`]: no relation, no schema.
-/// `manifest_sha256` is the SHA-256 of the manifest bytes.
-const DATA_ACCESS: &str = r#"{"contract":"orders_data_access","manifest_sha256":"sha256:0bd4cf516c32a2db01711d915fb6ff947c649460eddc5031c3a9d4bd0950c0c2","package":"orders@1.0.0","relations":[],"role":"wamn_app","schemas":[]}"#;
+const DATA_ACCESS: &str = r#"{"contract":"orders_data_access","package":"orders@1.0.0","relations":[],"role":"wamn_app","schemas":[]}"#;
 
 struct Run {
     work: PathBuf,

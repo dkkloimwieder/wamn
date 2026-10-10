@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 use wamn_schema_generator::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
 use wamn_schema_generator::{
-    AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance,
-    StatementTransactionality, generate,
+    AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
@@ -59,7 +58,6 @@ pub(crate) fn try_generate_with_sql(
         catalog,
         &manifest,
         &sources,
-        GenerationProvenance::new("wamn-schema-generator/0.1.0", "platform-fixture"),
         &StatementTransactionality::default(),
     ))
 }

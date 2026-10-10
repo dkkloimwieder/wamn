@@ -242,7 +242,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
 ) -> anyhow::Result<()> {
     let packages = project
         .query(
-            "SELECT package_id, package_version, manifest_sha256 \
+            "SELECT package_id, package_version, artifact_digest \
              FROM catalog.packages WHERE tenant_id = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"",
             &[&identity().tenant.as_str()],
@@ -255,7 +255,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
             (
                 row.get::<_, String>(0),
                 row.get::<_, String>(1),
-                row.get::<_, String>(2),
+                row.get::<_, Option<String>>(2),
             )
         })
         .collect::<Vec<_>>();
@@ -266,10 +266,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
     anyhow::ensure!(
         observed_packages.len() == expected_packages.len()
             && observed_packages.iter().zip(expected_packages).all(
-                |((id, version, hash), expected)| {
-                    (id.as_str(), version.as_str()) == expected
-                        && hash.len() == 71
-                        && hash.starts_with("sha256:")
+                // wamn dev applies its working tree and records no artifact digest.
+                |((id, version, digest), expected)| {
+                    (id.as_str(), version.as_str()) == expected && digest.is_none()
                 }
             ),
         "wamn dev installed the wrong exact package coordinates: {observed_packages:?}"

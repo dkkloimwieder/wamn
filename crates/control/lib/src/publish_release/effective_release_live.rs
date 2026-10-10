@@ -12,7 +12,7 @@ use super::{
     DependencyDigestRule, PublishManifestErrorType, PublishReleaseManifest, PublishedRelease,
     ReleaseComponents, ReleaseWiringTarget, effect_free_operation_dependencies,
     publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
-    resolve_route_methods, sha256, validate_package_metadata,
+    resolve_route_methods, sha256,
 };
 use crate::apply_package::{self, ApplyPackageRequest};
 use crate::author_wiring::{self, AuthorWiringRequest};
@@ -172,6 +172,8 @@ async fn provision_control(control: &Client) {
 
 async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
     for input in inputs {
+        crate::package_artifact::record_fixture_artifact_digest(&input.root)
+            .expect("record the fixture artifact digest");
         apply_package::apply_package(ApplyPackageRequest {
             package: input.root.clone(),
             database_url: project_url.to_owned(),
@@ -346,35 +348,6 @@ async fn publish(
     release
 }
 
-fn assert_typed_metadata_refusal(input: &PackageInput) {
-    let manifest_bytes =
-        std::fs::read(wamn_schema_generator::package_manifest_path(&input.root)).unwrap();
-    let mut manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
-    manifest["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
-    let manifest =
-        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
-            .unwrap();
-    let mut metadata: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(
-            wamn_schema_generator::output_root(&input.root).join("package-identity.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    metadata["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
-    metadata["promotion_state"] = serde_json::json!("blocked_unsatisfied_policy_contract");
-    let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(
-        &wamn_execution_contract::canonical_json_bytes(&metadata),
-    )
-    .unwrap();
-    let refusal = validate_package_metadata(&manifest, &metadata)
-        .expect_err("unsatisfied package metadata must refuse release publish");
-    assert_eq!(
-        refusal.error_type(),
-        PublishManifestErrorType::PolicyContractUnsatisfied
-    );
-}
-
 #[tokio::test]
 #[ignore = "requires: WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
 async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
@@ -383,7 +356,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
     ]);
     let inputs = packages();
-    assert_typed_metadata_refusal(&inputs[0]);
     let _lock = wamn_test_postgres::lock();
     let project_database = wamn_test_postgres::database();
     let control_database = wamn_test_postgres::database();
@@ -402,8 +374,20 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         .iter()
         .map(|input| wamn_schema_generator::package_manifest_path(&input.root))
         .collect::<Vec<_>>();
-    let (manifests, manifest_hashes, kinds) = read_package_manifests(&manifest_paths)
+    let (manifests, kinds) = read_package_manifests(&manifest_paths)
         .expect("consume exact package manifests and package contracts");
+    // apply-package recorded the stand-in artifact digest of each fixture tree.
+    let manifest_hashes = inputs
+        .iter()
+        .map(|input| {
+            (
+                input.id.to_owned(),
+                crate::package_artifact::recorded_artifact_digest(&input.root)
+                    .expect("read the fixture artifact digest")
+                    .expect("the apply recorded a fixture artifact digest"),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())

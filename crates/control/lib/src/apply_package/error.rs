@@ -19,6 +19,8 @@ pub const DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL: &str =
 pub const DEFINITION_OWNER_CONFLICT_REFUSAL: &str = "definition-owner-conflict";
 /// PostgreSQL did not expose the definition a migration reported creating.
 pub const DEFINITION_NOT_FOUND_REFUSAL: &str = "definition-not-found";
+/// A release apply takes only a verified package artifact, never a working tree.
+pub const PACKAGE_ARTIFACT_REQUIRED_REFUSAL: &str = "package-artifact-required";
 
 /// Remedy-distinct apply-package refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,6 +33,7 @@ pub enum ApplyPackageErrorType {
     DefinitionOwnerDeclarationMissing,
     DefinitionOwnerConflict,
     DefinitionNotFound,
+    ArtifactRequired,
 }
 
 impl ApplyPackageErrorType {
@@ -46,6 +49,7 @@ impl ApplyPackageErrorType {
             Self::DefinitionOwnerDeclarationMissing => DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
             Self::DefinitionOwnerConflict => DEFINITION_OWNER_CONFLICT_REFUSAL,
             Self::DefinitionNotFound => DEFINITION_NOT_FOUND_REFUSAL,
+            Self::ArtifactRequired => PACKAGE_ARTIFACT_REQUIRED_REFUSAL,
         }
     }
 }
@@ -68,6 +72,25 @@ pub struct ApplyPackageError {
 }
 
 impl ApplyPackageError {
+    /// The refusal of a release apply of a working tree: only `wamn dev`
+    /// applies a tree that no verified artifact names.
+    pub(super) fn artifact_required(coordinate: &str) -> Self {
+        Self {
+            type_: ApplyPackageErrorType::ArtifactRequired,
+            coordinate: coordinate.to_owned(),
+            predecessor_version: None,
+            current_version: None,
+            path: None,
+            schema: None,
+            relation: None,
+            definition_type: None,
+            definition: None,
+            owner_package: None,
+            detail: "apply the verified package artifact that push-package recorded".into(),
+            source: None,
+        }
+    }
+
     pub const fn error_type(&self) -> ApplyPackageErrorType {
         self.type_
     }

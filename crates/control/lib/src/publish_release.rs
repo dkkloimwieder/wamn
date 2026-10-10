@@ -50,12 +50,10 @@ pub use components::effect_free_operation_dependencies;
 
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
-#[cfg(test)]
-use package_sources::validate_package_metadata;
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
-const SELECT_APPLIED_PACKAGE_MANIFEST_SQL: &str = "\
-SELECT manifest_sha256 FROM catalog.packages \
+const SELECT_APPLIED_PACKAGE_DIGEST_SQL: &str = "\
+SELECT artifact_digest FROM catalog.packages \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 FOR SHARE";
 const SELECT_WIRING_SQL: &str = "\
 SELECT wiring_hash, graph_json::text \
@@ -217,8 +215,6 @@ pub enum PublishManifestErrorType {
     Storage,
     Release,
     PackageManifest,
-    GeneratedPackageMetadata,
-    PolicyContractUnsatisfied,
     Wiring,
     Component,
     OperationDependency,
@@ -239,8 +235,6 @@ impl PublishManifestErrorType {
             Self::Storage => "storage",
             Self::Release => "release",
             Self::PackageManifest => "package-manifest",
-            Self::GeneratedPackageMetadata => "package-identity",
-            Self::PolicyContractUnsatisfied => "policy-contract-unsatisfied",
             Self::Wiring => "wiring",
             Self::Component => "component",
             Self::OperationDependency => "operation-dependency",
@@ -412,7 +406,7 @@ pub async fn publish_release(
 pub async fn publish_local(
     args: PublishReleaseRequest,
     package_roots: &[PathBuf],
-    admissions: &[crate::push_component::ComponentAdmission],
+    admissions: &[crate::component_admission::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
     PublishedRelease,
@@ -476,13 +470,13 @@ pub struct AssembledLocalRelease {
 pub fn assemble_local_release(
     args: &PublishReleaseRequest,
     package_roots: &[PathBuf],
-    admissions: &[crate::push_component::ComponentAdmission],
+    admissions: &[crate::component_admission::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<AssembledLocalRelease> {
     use wamn_runtime::local_application::{LocalApplicationFacts, LocalWiringFacts};
     let (attachment_paths, manifest_paths) = package_files(package_roots);
     let authored = read_package_attachments(&attachment_paths, &manifest_paths)?;
-    let (package_manifests, _, route_contracts) = read_package_manifests(&manifest_paths)?;
+    let (package_manifests, route_contracts) = read_package_manifests(&manifest_paths)?;
     let attachments = resolve_route_methods(&authored, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
@@ -598,7 +592,7 @@ pub fn assemble_local_release(
     let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
     let components = admissions
         .iter()
-        .map(super::push_component::ComponentAdmission::facts)
+        .map(super::component_admission::ComponentAdmission::facts)
         .filter(|fact| {
             manifest
                 .components
@@ -675,8 +669,23 @@ async fn publish_candidate(
         .collect::<Vec<_>>();
     let (attachment_paths, manifest_paths) = package_files(&roots);
     let authored_attachments = read_package_attachments(&attachment_paths, &manifest_paths)?;
-    let (package_manifests, package_manifest_hashes, route_contracts) =
-        read_package_manifests(&manifest_paths)?;
+    let (package_manifests, route_contracts) = read_package_manifests(&manifest_paths)?;
+    // The installed check compares each package's artifact digest, as
+    // apply-package recorded it, with the digest the registry records.
+    let package_artifact_digests = args
+        .packages
+        .iter()
+        .zip(&opened)
+        .map(|(package, opened)| {
+            (
+                package.package_id().to_owned(),
+                opened
+                    .digest()
+                    .expect("a verified package opens from its registry digest")
+                    .to_owned(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -748,7 +757,7 @@ async fn publish_candidate(
         &request,
         &release_components,
         &package_manifests,
-        &package_manifest_hashes,
+        &package_artifact_digests,
         &route_contracts,
         &run_schema,
         &source_policy,
@@ -779,7 +788,7 @@ async fn publish_in_transaction(
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    package_manifest_hashes: &BTreeMap<String, String>,
+    package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
     run_schema: &BareSchemaName,
     source_policy: &AuthoritativeEnvironmentPolicy,
@@ -793,7 +802,7 @@ async fn publish_in_transaction(
         request,
         components,
         package_manifests,
-        package_manifest_hashes,
+        package_artifact_digests,
         route_contracts,
     )
     .await?;
@@ -1119,6 +1128,7 @@ pub(crate) async fn attest_deployment_on(
     }
 }
 
+#[cfg(test)]
 fn sha256(bytes: &[u8]) -> String {
     format!(
         "sha256:{}",
@@ -1131,7 +1141,7 @@ async fn publish_release_with_package_manifests(
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    package_manifest_hashes: &BTreeMap<String, String>,
+    package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
     publish_release_from_sources(
@@ -1139,7 +1149,7 @@ async fn publish_release_with_package_manifests(
         request,
         components,
         package_manifests,
-        package_manifest_hashes,
+        package_artifact_digests,
         route_contracts,
     )
     .await
@@ -1150,7 +1160,7 @@ async fn publish_release_from_sources(
     request: &PublishReleaseManifest<'_>,
     component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    package_manifest_hashes: &BTreeMap<String, String>,
+    package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
     transaction
@@ -1162,7 +1172,7 @@ async fn publish_release_from_sources(
         transaction,
         request,
         package_manifests,
-        package_manifest_hashes,
+        package_artifact_digests,
     )
     .await?;
 
@@ -1286,13 +1296,14 @@ fn validate_request(request: &PublishReleaseManifest<'_>) -> Result<(), PublishM
     Ok(())
 }
 
-/// Bind the release's behavior and ownership inputs to the exact package bytes
-/// already admitted by `apply-package`.
+/// Bind the release's behavior and ownership inputs to the exact package
+/// artifact already installed by `apply-package`: the artifact digest it
+/// recorded equals the digest the registry records.
 async fn validate_release_package_manifests(
     transaction: &Transaction<'_>,
     request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    package_manifest_hashes: &BTreeMap<String, String>,
+    package_artifact_digests: &BTreeMap<String, String>,
 ) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
         .packages
@@ -1303,15 +1314,16 @@ async fn validate_release_package_manifests(
         .keys()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let hashed_package_ids = package_manifest_hashes
+    let digested_package_ids = package_artifact_digests
         .keys()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    if presented_package_ids != expected_package_ids || hashed_package_ids != expected_package_ids {
+    if presented_package_ids != expected_package_ids || digested_package_ids != expected_package_ids
+    {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::PackageManifest,
             format!(
-                "release package manifests must exactly match membership; expected={expected_package_ids:?}, presented={presented_package_ids:?}, hashed={hashed_package_ids:?}; supply one exact wamn.json per release package"
+                "release package manifests must exactly match membership; expected={expected_package_ids:?}, presented={presented_package_ids:?}, digested={digested_package_ids:?}; supply one exact wamn.json per release package"
             ),
         ));
     }
@@ -1338,19 +1350,17 @@ async fn validate_release_package_manifests(
                 ),
             ));
         }
-        let presented_hash = package_manifest_hashes
+        let presented_digest = package_artifact_digests
             .get(package.package_id())
             .ok_or_else(|| {
                 PublishManifestError::new(
                     PublishManifestErrorType::PackageManifest,
-                    format!(
-                        "package {coordinate} has no presented manifest hash; supply the exact wamn.json applied by apply-package"
-                    ),
+                    format!("package {coordinate} has no package artifact digest"),
                 )
             })?;
         let Some(row) = transaction
             .query_opt(
-                SELECT_APPLIED_PACKAGE_MANIFEST_SQL,
+                SELECT_APPLIED_PACKAGE_DIGEST_SQL,
                 &[
                     &request.tenant_id,
                     &package.package_id(),
@@ -1358,7 +1368,7 @@ async fn validate_release_package_manifests(
                 ],
             )
             .await
-            .map_err(|error| storage("read the applied package manifest identity", error))?
+            .map_err(|error| storage("read the applied package artifact digest", error))?
         else {
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::PackageManifest,
@@ -1367,12 +1377,20 @@ async fn validate_release_package_manifests(
                 ),
             ));
         };
-        let applied_hash: String = row.get(0);
-        if applied_hash != *presented_hash {
+        let Some(applied_digest) = row.get::<_, Option<String>>(0) else {
             return Err(PublishManifestError::new(
                 PublishManifestErrorType::PackageManifest,
                 format!(
-                    "package {coordinate} presented manifest hash {presented_hash} differs from applied hash {applied_hash}; use the exact wamn.json recorded by apply-package"
+                    "{}: package {coordinate} was applied by wamn dev from a working tree; apply the verified artifact to a release environment",
+                    wamn_schema_control::PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL
+                ),
+            ));
+        };
+        if applied_digest != *presented_digest {
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::PackageManifest,
+                format!(
+                    "package {coordinate} has registry artifact digest {presented_digest}, but apply-package installed {applied_digest}; apply the verified artifact"
                 ),
             ));
         }
@@ -1836,7 +1854,7 @@ fn project_routes(
             .get(&(attachment.package_id.clone(), operation.clone()))
             .ok_or_else(|| {
                 PublishManifestError::new(
-                    PublishManifestErrorType::GeneratedPackageMetadata,
+                    PublishManifestErrorType::PackageManifest,
                     format!(
                         "route operation {operation:?} of package {:?} has no generated contract kind; regenerate the package evidence",
                         attachment.package_id
@@ -2351,7 +2369,7 @@ mod tests {
             .expect_err("a route to an operation with no contract kind refuses");
         assert_eq!(
             unknown.error_type(),
-            PublishManifestErrorType::GeneratedPackageMetadata
+            PublishManifestErrorType::PackageManifest
         );
 
         let mut authored_method = authored;
@@ -2648,61 +2666,6 @@ mod tests {
             }
         });
         serde_json::from_value(document).expect("the dependency fixture manifest parses")
-    }
-
-    #[test]
-    fn release_publish_consumes_package_metadata_and_refuses_unsatisfied_policy() {
-        let manifest_bytes = include_bytes!("../tests/fixtures/component_package/wamn.json");
-        let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
-            .expect("the fixture manifest is valid");
-        let metadata_bytes =
-            include_bytes!("../tests/fixtures/component_package/generated/package-identity.json");
-        let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(metadata_bytes)
-            .expect("the fixture metadata is canonical");
-        validate_package_metadata(&manifest, &metadata)
-            .expect("the fixture manifest and metadata carry one satisfied policy fact");
-
-        let mut unsatisfied_manifest: serde_json::Value =
-            serde_json::from_slice(manifest_bytes).unwrap();
-        unsatisfied_manifest["required_platform_policy_contract"]["state"] =
-            serde_json::json!("unsatisfied");
-        let unsatisfied_manifest = wamn_schema_generator::PackageManifest::from_slice(
-            &serde_json::to_vec(&unsatisfied_manifest).unwrap(),
-        )
-        .unwrap();
-        let mut unsatisfied_metadata: serde_json::Value =
-            serde_json::from_slice(metadata_bytes).unwrap();
-        unsatisfied_metadata["required_platform_policy_contract"]["state"] =
-            serde_json::json!("unsatisfied");
-        unsatisfied_metadata["promotion_state"] =
-            serde_json::json!("blocked_unsatisfied_policy_contract");
-        let unsatisfied_metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(
-            &wamn_execution_contract::canonical_json_bytes(&unsatisfied_metadata),
-        )
-        .unwrap();
-        let refusal = validate_package_metadata(&unsatisfied_manifest, &unsatisfied_metadata)
-            .expect_err("unsatisfied generated metadata cannot enter a release");
-        assert_eq!(
-            refusal.error_type(),
-            PublishManifestErrorType::PolicyContractUnsatisfied
-        );
-        assert!(refusal.detail().contains("fixture_data_access"));
-        assert!(refusal.detail().contains("regenerate"));
-
-        let mut mismatched_metadata: serde_json::Value =
-            serde_json::from_slice(metadata_bytes).unwrap();
-        mismatched_metadata["required_platform_policy_contract"]["id"] =
-            serde_json::json!("different_policy");
-        let mismatched_metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(
-            &wamn_execution_contract::canonical_json_bytes(&mismatched_metadata),
-        )
-        .unwrap();
-        let refusal = validate_package_metadata(&manifest, &mismatched_metadata)
-            .expect_err("metadata cannot restate the manifest policy requirement");
-        assert_eq!(
-            refusal.error_type(),
-            PublishManifestErrorType::GeneratedPackageMetadata
-        );
     }
 
     fn handler_manifest() -> wamn_schema_generator::PackageManifest {

@@ -1,7 +1,6 @@
 use serde_json::{Value, json};
 use wamn_schema_generator::{
-    AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance,
-    StatementTransactionality, generate,
+    AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
 use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnType, Constraint, Table};
 
@@ -58,7 +57,6 @@ fn emit(manifest: &Value, sources: &[AuthoredSql<'_>]) -> GeneratedPackage {
         &catalog(),
         &serde_json::to_vec(manifest).unwrap(),
         sources,
-        GenerationProvenance::new("wamn-schema-generator/0.1.0", "test"),
         &StatementTransactionality::default(),
     ))
     .expect("declared client contract fixture generates")

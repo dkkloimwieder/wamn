@@ -72,7 +72,7 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     .unwrap();
     let (evidence, canonical, digest) = read_qualification(&qualified.result).unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
-    assert_eq!(evidence.format_version, 3);
+    assert_eq!(evidence.format_version, STAGE_FORMAT);
     assert_eq!(digest, qualified.sha256);
     assert_eq!(evidence.predecessor_privileges, original.1);
     assert_eq!(

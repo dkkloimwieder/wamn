@@ -194,8 +194,11 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         ))
         .await
         .expect("ensure the CallableHttp class ACL role the pool probes for");
+    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection");
+    wamn_control::package_artifact::record_fixture_artifact_digest(&package)
+        .expect("record the fixture artifact digest");
     apply_package::apply_package(ApplyPackageRequest {
-        package: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection"),
+        package,
         database_url: project_url.to_string(),
         tenant: TENANT.to_string(),
     })
@@ -343,7 +346,7 @@ async fn assert_nested_effect_snapshot(
         project
             .execute(
                 "INSERT INTO catalog.packages \
-                   (tenant_id, package_id, package_version, manifest_sha256) \
+                   (tenant_id, package_id, package_version, artifact_digest) \
                  VALUES ($1, $2, $3, $4)",
                 &[&TENANT, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
             )

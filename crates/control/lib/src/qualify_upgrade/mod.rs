@@ -59,6 +59,15 @@ pub struct UpgradeQualificationOutcome {
     pub package_version: String,
 }
 
+/// The evidence format of a plain upgrade. Versions 1 to 3 carried the
+/// `wamn.json` hash and the digest of the generated package metadata in place
+/// of the package artifact digest, so they no longer decode (wamn-vavs4.4).
+pub(crate) const PLAIN_FORMAT: u32 = 4;
+/// The evidence format of an upgrade with an overlay.
+pub(crate) const OVERLAY_FORMAT: u32 = 5;
+/// The evidence format of an upgrade with an online stage.
+pub(crate) const STAGE_FORMAT: u32 = 6;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MigrationIdentity {
@@ -73,7 +82,7 @@ pub(crate) struct PackageIdentity {
     pub(crate) package_id: String,
     pub(crate) package_version: String,
     pub(crate) predecessor_version: Option<String>,
-    pub(crate) manifest_sha256: String,
+    pub(crate) artifact_digest: String,
     pub(crate) migrations: Vec<MigrationIdentity>,
 }
 
@@ -82,8 +91,6 @@ pub(crate) struct PackageIdentity {
 pub(crate) struct PresentedRootIdentity {
     pub(crate) package: PackageIdentity,
     pub(crate) statement_corpus_sha256: String,
-    #[serde(rename = "package_weld_sha256")]
-    pub(crate) package_identity_sha256: String,
     pub(crate) data_access_sha256: String,
 }
 
@@ -407,12 +414,12 @@ async fn copy_predecessor(
                 installed.package_version
             );
             ensure!(
-                original.manifest_sha256 == installed.manifest_sha256,
-                "predecessor manifest identity mismatch for {}@{}: supplied {}, installed {}",
+                original.artifact_digest == installed.artifact_digest,
+                "predecessor artifact digest mismatch for {}@{}: supplied {}, installed {}",
                 original.package_id,
                 original.package_version,
-                original.manifest_sha256,
-                installed.manifest_sha256
+                original.artifact_digest,
+                installed.artifact_digest
             );
             ensure!(
                 original.migrations.len() == installed.migrations.len(),
@@ -536,11 +543,11 @@ async fn copy_predecessor(
     let scratch = scratch::copy_database(&request.database_url, &snapshot).await?;
     let evidence = UpgradeQualification {
         format_version: if candidate.manifest.upgrade_stage.is_some() {
-            3
+            STAGE_FORMAT
         } else if overlay.is_some() {
-            2
+            OVERLAY_FORMAT
         } else {
-            1
+            PLAIN_FORMAT
         },
         upgrade_stage: candidate.manifest.upgrade_stage.clone(),
         tenant: request.tenant.clone(),
@@ -724,14 +731,16 @@ fn require_predecessor_statement_facts(
     }
     let mut corpus = BTreeMap::<String, Vec<wamn_catalog::ComponentSqlStatement>>::new();
     for package in predecessors {
-        let frozen =
-            crate::push_component::load_package_statement_facts(&package.root, &package.manifest)
-                .with_context(|| {
-                format!(
-                    "load frozen predecessor statement facts for {}",
-                    package.identity.package_id
-                )
-            })?;
+        let frozen = crate::component_admission::load_package_statement_facts(
+            &package.root,
+            &package.manifest,
+        )
+        .with_context(|| {
+            format!(
+                "load frozen predecessor statement facts for {}",
+                package.identity.package_id
+            )
+        })?;
         for statements in frozen.values() {
             for (digest, statement) in statements {
                 corpus
@@ -916,7 +925,7 @@ fn package_schemas(packages: &[PresentedPackage]) -> anyhow::Result<Vec<String>>
 pub(crate) fn presented_root_identity(root: &Path) -> anyhow::Result<PresentedRootIdentity> {
     let directory = read_package_directory(root)?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
-    let statements = crate::push_component::load_package_statement_facts(root, &manifest)?;
+    let statements = crate::component_admission::load_package_statement_facts(root, &manifest)?;
     let statement_corpus_sha256 =
         wamn_execution_contract::canonical_json_sha256(&serde_json::to_value(statements)?);
     let digest_file = |path: &str| -> anyhow::Result<String> {
@@ -928,7 +937,6 @@ pub(crate) fn presented_root_identity(root: &Path) -> anyhow::Result<PresentedRo
     Ok(PresentedRootIdentity {
         package: identity_from_directory(&directory)?,
         statement_corpus_sha256,
-        package_identity_sha256: digest_file("generated/package-identity.json")?,
         data_access_sha256: digest_file(wamn_schema_generator::DATA_ACCESS_OVERLAY_PATH)?,
     })
 }
@@ -937,11 +945,19 @@ pub(crate) fn identity_from_directory(
     directory: &PackageDirectory,
 ) -> anyhow::Result<PackageIdentity> {
     let plan = plan_package_migrations(directory, None)?;
+    let artifact_digest = plan.artifact_digest.with_context(|| {
+        format!(
+            "{}: {}@{} is a working tree; qualify the verified package artifact",
+            crate::apply_package::PACKAGE_ARTIFACT_REQUIRED_REFUSAL,
+            plan.coordinate.package_id(),
+            plan.coordinate.package_version()
+        )
+    })?;
     Ok(PackageIdentity {
         package_id: plan.coordinate.package_id().to_owned(),
         package_version: plan.coordinate.package_version().to_owned(),
         predecessor_version: plan.predecessor_version,
-        manifest_sha256: plan.manifest_sha256,
+        artifact_digest,
         migrations: plan
             .pending
             .into_iter()
@@ -958,7 +974,7 @@ fn applied_package(identity: &PackageIdentity) -> anyhow::Result<AppliedPackage>
     Ok(AppliedPackage {
         coordinate: PackageCoordinate::new(&identity.package_id, &identity.package_version)?,
         predecessor_version: identity.predecessor_version.clone(),
-        manifest_sha256: identity.manifest_sha256.clone(),
+        artifact_digest: Some(identity.artifact_digest.clone()),
         migrations: identity
             .migrations
             .iter()
@@ -977,7 +993,7 @@ pub(crate) async fn read_current_packages(
     tenant: &str,
 ) -> anyhow::Result<Vec<PackageIdentity>> {
     let rows = tx.query(
-        "SELECT p.package_id, p.package_version, p.predecessor_version, p.manifest_sha256 \
+        "SELECT p.package_id, p.package_version, p.predecessor_version, p.artifact_digest \
            FROM catalog.packages p WHERE p.tenant_id = $1 AND NOT EXISTS \
              (SELECT FROM catalog.packages successor WHERE successor.tenant_id = p.tenant_id \
               AND successor.package_id = p.package_id AND successor.predecessor_version = p.package_version) \
@@ -1004,11 +1020,17 @@ pub(crate) async fn read_current_packages(
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let artifact_digest = row.get::<_, Option<String>>(3).with_context(|| {
+            format!(
+                "{}: {package_id}@{package_version} was applied by wamn dev from a working tree; recreate the environment and apply verified artifacts",
+                wamn_schema_control::PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL
+            )
+        })?;
         packages.push(PackageIdentity {
             package_id,
             package_version,
             predecessor_version: row.get(2),
-            manifest_sha256: row.get(3),
+            artifact_digest,
             migrations,
         });
     }
@@ -1079,13 +1101,13 @@ pub(crate) fn decode_qualification(bytes: &[u8]) -> anyhow::Result<UpgradeQualif
     let evidence: UpgradeQualification =
         serde_json::from_slice(bytes).context("parse upgrade qualification")?;
     ensure!(
-        (evidence.format_version == 1
+        (evidence.format_version == PLAIN_FORMAT
             && evidence.overlay.is_none()
             && evidence.upgrade_stage.is_none())
-            || (evidence.format_version == 2
+            || (evidence.format_version == OVERLAY_FORMAT
                 && evidence.overlay.is_some()
                 && evidence.upgrade_stage.is_none())
-            || (evidence.format_version == 3 && evidence.upgrade_stage.is_some()),
+            || (evidence.format_version == STAGE_FORMAT && evidence.upgrade_stage.is_some()),
         "unsupported upgrade qualification format"
     );
     if let Some(stage) = &evidence.upgrade_stage {

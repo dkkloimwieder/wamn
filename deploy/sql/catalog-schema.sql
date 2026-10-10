@@ -3,8 +3,9 @@ CREATE TABLE catalog.packages (
     package_id         text        NOT NULL,
     package_version    text        NOT NULL,
     predecessor_version text,
-    manifest_sha256    text        NOT NULL,
     registered_at      timestamptz NOT NULL DEFAULT now(),
+    -- NULL: wamn dev applied a working tree. Release verbs refuse that row.
+    artifact_digest    text,
     CONSTRAINT packages_pkey PRIMARY KEY (tenant_id, package_id, package_version),
     CONSTRAINT packages_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
@@ -22,8 +23,8 @@ CREATE TABLE catalog.packages (
             AND strpos(predecessor_version, '::') = 0
         )
     ),
-    CONSTRAINT packages_manifest_sha256_check
-        CHECK (manifest_sha256 ~ '^sha256:[0-9a-f]{64}$')
+    CONSTRAINT packages_artifact_digest_check
+        CHECK (artifact_digest IS NULL OR artifact_digest ~ '^sha256:[0-9a-f]{64}$')
 );
 
 CREATE UNIQUE INDEX packages_one_successor_per_version

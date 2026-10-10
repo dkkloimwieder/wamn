@@ -55,7 +55,7 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
                (tenant_id,expected_environment,durability_class) \
              VALUES ('t1','dev','standard'); \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,manifest_sha256) \
+               (tenant_id,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0','{HASH}');"
         ))
         .await

@@ -42,11 +42,11 @@ use wamn_engine::component_artifact::{
 use wamn_runtime::registry_credentials::read_registry_push_credentials;
 use wamn_schema_generator::{AUTHORED_MANIFEST, PackageManifest, PolicyContractState};
 
+use crate::component_admission::{AdmitComponentRequest, admit_component, publish_and_verify};
 use crate::component_declaration::{
     authored_base_digests, declared_platform_packages, render_declaration_document,
     render_palette_declaration,
 };
-use crate::push_component::{AdmitComponentRequest, admit_component, publish_and_verify};
 pub use wamn_package_artifact::{
     COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoVerifiedArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
     PackedLayer,
@@ -92,7 +92,6 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
             "generated/sql",
             "generated/publication",
             "generated/routes",
-            "generated/package-identity.json",
         ],
     ),
     ("web", &[WEB_LAYER_PATH]),
@@ -227,6 +226,99 @@ fn descriptor_files(root: &Path) -> anyhow::Result<Vec<(ComponentDescriptor, Vec
         descriptors.push((descriptor, bytes));
     }
     Ok(descriptors)
+}
+
+/// The file in a package's output root that names the digest of the verified
+/// artifact the tree was unpacked from. Opening an artifact writes it after
+/// the tree packs again to that digest. A working tree has none. No layer
+/// carries it, so it never changes a digest.
+pub const ARTIFACT_DIGEST_FILE: &str = "artifact-digest";
+
+/// Record that the tree at `root` is the verified package artifact `digest`.
+///
+/// Opening an artifact calls it. A test that applies a fixture tree as a
+/// release names a digest of its own with it.
+///
+/// # Errors
+///
+/// When `digest` is not `sha256:<64 lowercase hex>`, or the file cannot be
+/// written.
+pub fn record_artifact_digest(root: &Path, digest: &str) -> anyhow::Result<()> {
+    ensure!(
+        valid_digest(digest),
+        "artifact digest {digest:?} is not sha256:<64 lowercase hex>"
+    );
+    let directory = wamn_schema_generator::output_root(root);
+    std::fs::create_dir_all(&directory)
+        .with_context(|| format!("create {}", directory.display()))?;
+    let path = directory.join(ARTIFACT_DIGEST_FILE);
+    // Write then rename, so a concurrent reader sees the old file or the new
+    // one and never a partial write.
+    let partial = path.with_extension(format!(
+        "{}-{}",
+        std::process::id(),
+        UNPACK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&partial, digest).with_context(|| format!("write {}", partial.display()))?;
+    std::fs::rename(&partial, &path).with_context(|| format!("write {}", path.display()))
+}
+
+/// Record a stand-in artifact digest for a fixture tree that a test applies as
+/// a release, and return it.
+///
+/// No registry records it. It is the SHA-256 of the length-framed `wamn.json`
+/// and migration bytes, so a test that changes those bytes under one
+/// coordinate presents another digest, as a second push would. It is not the
+/// package artifact digest of the tree ([`package_artifact_digest`]).
+///
+/// # Errors
+///
+/// When the tree cannot be read or the digest cannot be written.
+pub fn record_fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
+    let directory = crate::apply_package::read_package_directory(root)?;
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut frame = |bytes: &[u8]| {
+        context.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
+        context.update(bytes);
+    };
+    frame(&directory.manifest_bytes);
+    for migration in &directory.migrations {
+        frame(migration.relative_path.as_bytes());
+        frame(&migration.bytes);
+    }
+    let digest = format!("sha256:{}", hex::encode(context.finish()));
+    record_artifact_digest(root, &digest)?;
+    Ok(digest)
+}
+
+/// The verified artifact digest the tree at `root` was unpacked from, or
+/// `None` for a working tree.
+///
+/// # Errors
+///
+/// When the file cannot be read or does not hold a digest.
+pub fn recorded_artifact_digest(root: &Path) -> anyhow::Result<Option<String>> {
+    let path = wamn_schema_generator::output_root(root).join(ARTIFACT_DIGEST_FILE);
+    let digest = match std::fs::read_to_string(&path) {
+        Ok(digest) => digest,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    ensure!(
+        valid_digest(&digest),
+        "{} does not hold an artifact digest",
+        path.display()
+    );
+    Ok(Some(digest))
+}
+
+fn valid_digest(digest: &str) -> bool {
+    digest.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 /// The package artifact digest of the package at `root`, the key of its stage
@@ -1006,6 +1098,7 @@ pub enum PackageSource {
 #[derive(Debug)]
 pub struct OpenedPackage {
     root: PathBuf,
+    digest: Option<String>,
     temporary: bool,
 }
 
@@ -1013,6 +1106,12 @@ impl OpenedPackage {
     /// The package root.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The artifact digest the registry records, for an opened artifact. A
+    /// directory has none.
+    pub fn digest(&self) -> Option<&str> {
+        self.digest.as_deref()
     }
 }
 
@@ -1034,6 +1133,7 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
         PackageSource::Directory(root) => {
             return Ok(OpenedPackage {
                 root,
+                digest: None,
                 temporary: false,
             });
         }
@@ -1098,6 +1198,7 @@ async fn open_artifact(
         .with_context(|| format!("create {}", root.display()))?;
     let opened = OpenedPackage {
         root,
+        digest: Some(digest.to_owned()),
         temporary: true,
     };
     unpack_layers(opened.root(), &layers)
@@ -1113,6 +1214,7 @@ async fn open_artifact(
         "package artifact {tag} unpacks to a tree that packs to {}, not {digest}",
         unpacked.digest
     );
+    record_artifact_digest(opened.root(), digest)?;
     Ok(opened)
 }
 
@@ -1267,7 +1369,6 @@ mod tests {
         write(&root, "generated/platform-policy/data-access.json", b"{}\n");
         write(&root, "generated/contracts/receipt.json", b"{}\n");
         write(&root, "generated/sql/receipt.sql", b"SELECT 1;\n");
-        write(&root, "generated/package-identity.json", b"{}\n");
         write(&root, "migrations/0001_initial.sql", b"SELECT 1;\n");
         write(&root, "publication/attachments.json", b"{}\n");
         write(
@@ -1387,7 +1488,6 @@ mod tests {
             paths(3),
             [
                 "generated/contracts/receipt.json",
-                "generated/package-identity.json",
                 "generated/platform-policy/data-access.json",
                 "generated/sql/receipt.sql",
                 "wamn.k",

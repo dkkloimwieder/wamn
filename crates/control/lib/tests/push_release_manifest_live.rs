@@ -98,7 +98,7 @@ async fn a_refused_push_writes_no_attestation() {
     client
         .batch_execute(&format!(
             "SELECT set_config('app.tenant', 'tenant-a', false); \
-             INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256) \
+             INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest) \
                VALUES ('tenant-a', 'orders', '1.0.0', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
              INSERT INTO catalog.effective_releases \
                (tenant_id, manifest_digest, environment, verified_publisher_principal) \

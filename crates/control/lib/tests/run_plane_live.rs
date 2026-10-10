@@ -539,7 +539,7 @@ async fn seed_run_admission_facts(
     .expect("seed the project-local environment policy");
     su.execute(
         "INSERT INTO catalog.packages \
-           (tenant_id,package_id,package_version,manifest_sha256) \
+           (tenant_id,package_id,package_version,artifact_digest) \
          VALUES ($1,$2,'1.0.0',$3)",
         &[&tenant_id, &package_id, &EMPTY_EXECUTION_BUNDLE_HASH],
     )

@@ -11,6 +11,10 @@
 /apps/target
 /apps/platform/no-std/target
 *.wasm
+# The wamn build output of a test fixture package, and the artifact digest a
+# test records for a fixture tree it applies as a release
+**/target/wamn/
+artifact-digest
 
 # Temporary acceptance output
 /evidence/

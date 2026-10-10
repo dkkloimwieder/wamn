@@ -11,6 +11,7 @@ pub mod apply_package;
 pub mod author_wiring;
 pub mod bind_connection;
 pub mod capture_gap;
+pub mod component_admission;
 pub mod component_declaration;
 #[cfg(feature = "ops")]
 pub mod create_user;
@@ -40,7 +41,6 @@ pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod publish_release;
-pub mod push_component;
 pub mod push_release_manifest;
 pub mod qualify_upgrade;
 pub mod reconcile_package_data_access;

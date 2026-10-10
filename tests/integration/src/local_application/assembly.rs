@@ -10,8 +10,8 @@ use wamn_catalog::{
     AttachmentTarget, ServingAttachment, ServingManifest, ServingRoute, WiringDocument,
 };
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
+use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::publish_release::package_route;
-use wamn_control::push_component::{AdmitComponentRequest, admit_component};
 use wamn_control_provision::{
     CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleScope,
     system_reader_generation_role, workload_generation_role,
@@ -203,6 +203,7 @@ pub(super) async fn assemble(
     let mut wirings = Vec::new();
     let mut roots = BTreeMap::new();
     for package in input.packages {
+        wamn_control::package_artifact::record_fixture_artifact_digest(package.root)?;
         let applied = apply_package(ApplyPackageRequest {
             package: package.root.to_owned(),
             database_url: input.database_url.to_owned(),

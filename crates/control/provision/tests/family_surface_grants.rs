@@ -270,7 +270,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         &admin,
         "seed materializer registration inputs",
         "INSERT INTO catalog.packages \
-           (tenant_id, package_id, package_version, manifest_sha256) VALUES \
+           (tenant_id, package_id, package_version, artifact_digest) VALUES \
            ('t1', 'widgets', '1.0.0', \
             'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
            ('t2', 'foreign', '1.0.0', \
@@ -673,7 +673,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "seed one run the executor may claim",
         &format!(
             "INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, manifest_sha256) \
+               (tenant_id, package_id, package_version, artifact_digest) \
              VALUES ('t1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
@@ -890,7 +890,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             // transaction rather than with an UPDATE the schema forbids.
             "BEGIN;\nSET CONSTRAINTS ALL DEFERRED;\n\
              INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, manifest_sha256) \
+               (tenant_id, package_id, package_version, artifact_digest) \
              VALUES ('tenant-a', 'orders', '1.0.0', '{digest}');\n\
              INSERT INTO catalog.releases \
                (tenant_id, manifest_digest, canonical_bytes) \

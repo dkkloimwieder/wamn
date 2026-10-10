@@ -24,6 +24,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         .await
         .unwrap();
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+    crate::package_artifact::record_fixture_artifact_digest(&shipped).unwrap();
     apply_package(ApplyPackageRequest {
         package: shipped.clone(),
         database_url: url.clone(),
@@ -49,6 +50,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     for migration in &directory.migrations {
         std::fs::write(root.join(&migration.relative_path), &migration.bytes).unwrap();
     }
+    crate::package_artifact::record_fixture_artifact_digest(&root).unwrap();
     let applied = apply_package(ApplyPackageRequest {
         package: root.clone(),
         database_url: url.clone(),

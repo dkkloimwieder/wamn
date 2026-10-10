@@ -409,7 +409,7 @@ mod tests {
             package_id: id.to_owned(),
             package_version: version.to_owned(),
             predecessor_version: predecessor.map(str::to_owned),
-            manifest_sha256: format!("sha256:{}", "a".repeat(64)),
+            artifact_digest: format!("sha256:{}", "a".repeat(64)),
             migrations: vec![],
         }
     }

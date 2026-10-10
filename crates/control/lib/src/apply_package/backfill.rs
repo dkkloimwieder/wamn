@@ -120,7 +120,7 @@ pub(super) async fn apply(
                 unreachable!("mode checked before transaction")
             }
         };
-        let artifact = crate::package_artifact::package_artifact_digest(&package.root)?;
+        let artifact = package.artifact_digest()?.to_owned();
         let identity = StageIdentity {
             tenant_id: tenant.to_owned(),
             package_id: package_id.clone(),

@@ -362,7 +362,7 @@ fn route_method(
         .map(|contract| contract.kind.http_method())
         .ok_or_else(|| {
             PublishManifestError::new(
-                PublishManifestErrorType::GeneratedPackageMetadata,
+                PublishManifestErrorType::PackageManifest,
                 format!(
                     "route attachment {attachment_id:?} calls operation {operation:?}, which has no generated contract kind; regenerate the package evidence"
                 ),

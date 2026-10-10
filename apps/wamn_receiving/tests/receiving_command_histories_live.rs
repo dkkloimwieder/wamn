@@ -43,10 +43,9 @@ pub(crate) struct Inputs {
     evidence_file: PathBuf,
     source_commit: String,
     component_digests: BTreeMap<String, String>,
-    /// The root of each released package, by component, whose generated
-    /// identity the record names.
+    /// The root of each released package, by component, whose tree digest
+    /// the record names.
     packages: BTreeMap<String, PathBuf>,
-    corpus_sha256: String,
     seed: u64,
     cases: u32,
     history: Option<History>,
@@ -935,11 +934,8 @@ pub(crate) fn assert_histories_with_cancellation(
         "case count must be within 1..=64"
     );
     ensure!(
-        !inputs.component_digests.is_empty()
-            && inputs.source_commit.len() == 40
-            && inputs.corpus_sha256.starts_with("sha256:")
-            && inputs.corpus_sha256.len() == 71,
-        "source, component and SQL corpus identities are required"
+        !inputs.component_digests.is_empty() && inputs.source_commit.len() == 40,
+        "source and component identities are required"
     );
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let source_head = std::process::Command::new("git")
@@ -955,27 +951,14 @@ pub(crate) fn assert_histories_with_cancellation(
         std::str::from_utf8(&source_head.stdout)?.trim() == inputs.source_commit,
         "Receiving test source identity differs from the current checkout"
     );
-    let metadata: Value = serde_json::from_slice(&std::fs::read(
-        wamn_schema_generator::output_root(&repository.join("apps/wamn_receiving"))
-            .join("package-identity.json"),
-    )?)?;
-    ensure!(
-        metadata["application_sql_corpus_identity"] == inputs.corpus_sha256,
-        "Receiving test SQL corpus identity differs from the package contract"
-    );
-    let mut schema_state_ids = serde_json::Map::new();
-    let mut generation_provenance = serde_json::Map::new();
+    let mut package_tree_digests = serde_json::Map::new();
     for (component, root) in &inputs.packages {
-        let package: Value = serde_json::from_slice(&std::fs::read(
-            wamn_schema_generator::output_root(root).join("package-identity.json"),
-        )?)?;
-        let schema_state_id = package["verified_schema_state_id"]
-            .as_str()
-            .with_context(|| {
-                format!("{component} package contract has no verified schema identity")
-            })?;
-        schema_state_ids.insert(component.clone(), json!(schema_state_id));
-        generation_provenance.insert(component.clone(), package["provenance"].clone());
+        package_tree_digests.insert(
+            component.clone(),
+            json!(wamn_control::package_artifact::package_artifact_digest(
+                root
+            )?),
+        );
     }
     let compiler = std::process::Command::new("rustc")
         .args(["--version", "--verbose"])
@@ -1032,9 +1015,8 @@ pub(crate) fn assert_histories_with_cancellation(
     record(
         &mut evidence,
         &json!({"case":"identity","source_commit":inputs.source_commit,
-        "component_digests":inputs.component_digests,"corpus_sha256":inputs.corpus_sha256,
-        "postgres_server_version_num":version,"schema_state_ids":schema_state_ids,
-        "generation_provenance":generation_provenance,
+        "component_digests":inputs.component_digests,
+        "postgres_server_version_num":version,"package_tree_digests":package_tree_digests,
         "test_compiler_version":compiler_version,
         "seed":inputs.seed,"generated_cases":inputs.cases,"max_shrink_iterations":64,
         "invariants":["REC-HISTORY","REC-REFUSAL","REC-REPLAY","REC-CONTENTION",

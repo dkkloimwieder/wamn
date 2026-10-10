@@ -180,7 +180,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
       INSERT INTO app_system.permissions (tenant_id,role_name,permission,required_by) VALUES ('{TENANT}','automation','{REFERENCE}','{REFERENCE}');
       INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('{TENANT}','test','standard');
-      INSERT INTO catalog.packages (tenant_id,package_id,package_version,manifest_sha256) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
+      INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
     let node = match &mode {
         Mode::Admission => Node::echo(component_bytes()),

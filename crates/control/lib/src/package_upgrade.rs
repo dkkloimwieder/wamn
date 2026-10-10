@@ -177,12 +177,7 @@ pub(crate) async fn apply_coordinated(
                 require_reconciled_privileges(&tx, evidence).await?;
                 require_presented_roots(roots, evidence)?;
             }
-            self::persist(
-                &tx,
-                accepted,
-                &crate::package_artifact::package_artifact_digest(&base.root)?,
-            )
-            .await?;
+            self::persist(&tx, accepted, base.artifact_digest()?).await?;
         }
         tx.commit()
             .await
@@ -237,9 +232,11 @@ async fn read_accepted(
     let value = serde_json::to_value(&evidence)?;
     let sha256 = wamn_execution_contract::canonical_json_sha256(&value);
     ensure!(
-        ((evidence.format_version == 1 && evidence.overlay.is_none())
-            || (evidence.format_version == 2 && evidence.overlay.is_some())
-            || (evidence.format_version == 3 && evidence.upgrade_stage.is_some()))
+        ((evidence.format_version == qualify_upgrade::PLAIN_FORMAT && evidence.overlay.is_none())
+            || (evidence.format_version == qualify_upgrade::OVERLAY_FORMAT
+                && evidence.overlay.is_some())
+            || (evidence.format_version == qualify_upgrade::STAGE_FORMAT
+                && evidence.upgrade_stage.is_some()))
             && wamn_execution_contract::canonical_json_bytes(&value) == bytes
             && sha256 == row.get::<_, String>(1)
             && evidence.tenant == tenant

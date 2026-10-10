@@ -517,7 +517,7 @@ fn table_sections_carry_indexes_rls_and_grants() {
     }
 
     let package = table_section(CATALOG_SCHEMA_SQL, "catalog", "packages");
-    assert!(package.contains("manifest_sha256"));
+    assert!(package.contains("artifact_digest"));
 }
 
 /// THE load-bearing self-consistency invariant: an observation derived from

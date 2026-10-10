@@ -1,14 +1,11 @@
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, GenerateErrorType, GeneratedPackage,
-    GeneratedPackageMetadata, PackageManifest, canonical_operation_identity,
-    canonical_operation_prefix, corpus_sha256, resolve_operation_reference,
-    validate_operation_vocabulary,
+    PackageManifest, REQUIRED_SCHEMA_CONTRACT_PATH, canonical_operation_identity,
+    canonical_operation_prefix, resolve_operation_reference, validate_operation_vocabulary,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
@@ -826,38 +823,13 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
 }
 
 #[test]
-fn metadata_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
-    let base_ir = catalog(false);
-    let additive_ir = catalog(true);
-    let base = run(&base_ir, &manifest(), &QUERY_SOURCES).unwrap();
-    let additive = run(&additive_ir, &manifest(), &QUERY_SOURCES).unwrap();
-    let base_metadata = artifact_json(&base, "generated/package-identity.json");
-    let additive_metadata = artifact_json(&additive, "generated/package-identity.json");
-
-    let expected_schema = format!(
-        "sha256:{}",
-        hex::encode(Sha256::digest(canonical_json_bytes(
-            &serde_json::to_value(&base_ir).unwrap()
-        )))
-    );
-    assert_eq!(base_metadata["verified_schema_state_id"], expected_schema);
-    assert_ne!(
-        base_metadata["verified_schema_state_id"],
-        additive_metadata["verified_schema_state_id"]
-    );
+fn the_required_schema_contract_ignores_unused_tables() {
+    let base = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
+    let additive = run(&catalog(true), &manifest(), &QUERY_SOURCES).unwrap();
     assert_eq!(
-        base_metadata["required_schema_contract"],
-        additive_metadata["required_schema_contract"]
+        artifact_json(&base, REQUIRED_SCHEMA_CONTRACT_PATH),
+        artifact_json(&additive, REQUIRED_SCHEMA_CONTRACT_PATH)
     );
-    assert_eq!(
-        base_metadata["required_platform_policy_contract"],
-        json!({"id": "gadget_data_access", "state": "unsatisfied"})
-    );
-    assert_eq!(
-        base_metadata["promotion_state"],
-        "blocked_unsatisfied_policy_contract"
-    );
-    assert!(!base.metadata().promotion_eligible());
 }
 
 #[test]
@@ -871,8 +843,8 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
         }
     });
     let package = run(&catalog(true), &package_manifest, &QUERY_SOURCES).unwrap();
-    let metadata = artifact_json(&package, "generated/package-identity.json");
-    let required = metadata["required_schema_contract"]["tables"]
+    let contract = artifact_json(&package, REQUIRED_SCHEMA_CONTRACT_PATH);
+    let required = contract["tables"]
         .as_array()
         .unwrap()
         .iter()
@@ -881,66 +853,6 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
     assert_eq!(required["schema"], "inventory");
     assert_eq!(required["fields"], json!([]));
     assert_eq!(required["constraints"], json!([]));
-}
-
-#[test]
-fn generated_metadata_has_one_strict_canonical_reader() {
-    let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
-    let bytes = package
-        .file("generated/package-identity.json")
-        .expect("the generated package carries its metadata")
-        .bytes();
-    assert_eq!(
-        &GeneratedPackageMetadata::from_slice(bytes).unwrap(),
-        package.metadata()
-    );
-
-    let wrong_type = GeneratedPackageMetadata::from_slice(b"null").unwrap_err();
-    assert_eq!(wrong_type.error_type(), GenerateErrorType::InvalidManifest);
-    assert_eq!(
-        std::error::Error::source(&wrong_type).unwrap().to_string(),
-        "invalid type: null, expected struct PackageIdentity at line 1 column 4"
-    );
-
-    let mut alternate = bytes.to_vec();
-    alternate.push(b'\n');
-    assert_eq!(
-        GeneratedPackageMetadata::from_slice(&alternate)
-            .unwrap_err()
-            .error_type(),
-        GenerateErrorType::InvalidManifest
-    );
-
-    let mut unknown: Value = serde_json::from_slice(bytes).unwrap();
-    unknown["extra"] = json!(true);
-    assert_eq!(
-        GeneratedPackageMetadata::from_slice(&canonical_json_bytes(&unknown))
-            .unwrap_err()
-            .error_type(),
-        GenerateErrorType::InvalidManifest
-    );
-
-    let mut contradictory: Value = serde_json::from_slice(bytes).unwrap();
-    contradictory["promotion_state"] = json!("eligible");
-    assert_eq!(
-        GeneratedPackageMetadata::from_slice(&canonical_json_bytes(&contradictory))
-            .unwrap_err()
-            .error_type(),
-        GenerateErrorType::InvalidManifest
-    );
-}
-
-#[test]
-fn corpus_hash_uses_sorted_unambiguous_framing() {
-    let first = corpus_sha256([("a", b"bc".as_slice()), ("ab", b"c".as_slice())]);
-    let reversed = corpus_sha256([("ab", b"c".as_slice()), ("a", b"bc".as_slice())]);
-    let ambiguous_without_lengths = corpus_sha256([("abc", b"".as_slice())]);
-    assert_eq!(first, reversed);
-    assert_ne!(first, ambiguous_without_lengths);
-    assert_eq!(
-        first,
-        "sha256:c29ceb2bae87e8e60215cf078b051f981c665f88aa75ca510eaa99dbc0b3d00f"
-    );
 }
 
 #[test]
@@ -2556,11 +2468,6 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
         &QUERY_SOURCES,
     )
     .unwrap();
-    assert_eq!(
-        artifact_json(&logged, "generated/package-identity.json"),
-        artifact_json(&unlogged, "generated/package-identity.json"),
-        "the verified schema state id and the required schema contract stay"
-    );
     let other_files = |package: &GeneratedPackage| {
         package
             .files()

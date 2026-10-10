@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use anyhow::{Context as _, ensure};
+use anyhow::{Context as _, bail, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_schema_control::plan_package_migrations;
 use wamn_schema_generator::{
@@ -19,7 +19,7 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 pub(crate) const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.data-access:' || current_database(), 0))";
 const SELECT_INSTALLED_SQL: &str = "\
-SELECT package_id, package_version, manifest_sha256 FROM catalog.packages \
+SELECT package_id, package_version, artifact_digest FROM catalog.packages \
  WHERE tenant_id = $1 ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"";
 // apply-package owns these OID histories beside application tables. No package
 // declaration consumes them, so the declared relation list leaves them out.
@@ -62,8 +62,9 @@ SELECT namespace.nspname::text, relation.relname::text, relation.relkind::text, 
    AND relation.relkind = 'S' \
    AND pg_catalog.has_sequence_privilege($1, relation.oid, privilege)";
 
-/// Manifest hash of each package coordinate, keyed by id and version.
-type CoordinateHashes = BTreeMap<(String, String), String>;
+/// Package artifact digest of each package coordinate, keyed by id and version.
+/// `None` is a working tree, which only `wamn dev` applies.
+type CoordinateHashes = BTreeMap<(String, String), Option<String>>;
 
 /// Inputs of one post-apply generated ACL reconciliation.
 #[derive(Debug)]
@@ -118,7 +119,7 @@ struct PresentedPackage {
     coordinate: String,
     package_id: String,
     package_version: String,
-    manifest_sha256: String,
+    artifact_digest: Option<String>,
     schemas: Vec<String>,
     overlay: DataAccessOverlay,
     directory: wamn_schema_control::PackageDirectory,
@@ -202,12 +203,6 @@ fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPac
             "package-data-access-coordinate-mismatch: expected {coordinate}, observed {}",
             overlay.package()
         );
-        ensure!(
-            overlay.manifest_sha256() == plan.manifest_sha256,
-            "package-data-access-manifest-drift: coordinate={coordinate}; recorded-sha256={}; presented-sha256={}",
-            overlay.manifest_sha256(),
-            plan.manifest_sha256
-        );
         validate_data_access_contribution(&overlay, &directory.manifest_bytes)
             .context("verify generated package data-access contribution")?;
         ensure!(
@@ -224,7 +219,7 @@ fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPac
             coordinate,
             package_id: plan.coordinate.package_id().to_owned(),
             package_version: plan.coordinate.package_version().to_owned(),
-            manifest_sha256: plan.manifest_sha256,
+            artifact_digest: plan.artifact_digest,
             schemas,
             overlay,
             directory,
@@ -423,7 +418,7 @@ async fn validate_installed_set(
             installed
                 .insert(
                     (package_id.clone(), package_version.clone()),
-                    row.get::<_, String>(2)
+                    row.get::<_, Option<String>>(2)
                 )
                 .is_none(),
             "package-data-access-installed-set-repeats-coordinate: {package_id}@{package_version}"
@@ -434,23 +429,23 @@ async fn validate_installed_set(
         .map(|package| {
             (
                 (package.package_id.clone(), package.package_version.clone()),
-                package.manifest_sha256.clone(),
+                package.artifact_digest.clone(),
             )
         })
         .collect::<CoordinateHashes>();
     validate_presented_lineages(&installed, &presented)?;
-    // A published coordinate carries one manifest for good. A local target is
-    // disposable and takes a changed wamn.json at the applied coordinate, so
-    // the presented manifest is the truth there and this reconcile records it.
+    // A published coordinate carries one artifact for good. A local target is
+    // disposable and takes a changed tree at the applied coordinate, so the
+    // presented tree is the truth there and this reconcile records it.
     if !local {
         validate_recorded_manifests(&installed, &presented)?;
     }
     Ok(())
 }
 
-/// Write the presented manifest hash of every package into the local target comment.
+/// Write the presented manifest digest of every package into the local target comment.
 ///
-/// The comment then names the manifest the running application came from. This
+/// The comment then names the `wamn.json` the running application came from. This
 /// runs in the transaction that commits the grants, so the comment and the
 /// grants move together or not at all.
 async fn record_local_manifests(
@@ -466,7 +461,7 @@ async fn record_local_manifests(
             tx,
             &mut comment,
             &package.coordinate,
-            &package.manifest_sha256,
+            &crate::apply_package::manifest_digest(&package.directory),
         )
         .await?;
     }
@@ -517,8 +512,9 @@ fn validate_presented_lineages(
 
 /// Refuse a presented root whose bytes moved under an applied coordinate.
 ///
-/// Every presented coordinate is already known to be applied, so the recorded
-/// hash exists for each one.
+/// Every presented coordinate is already known to be applied. A release
+/// reconcile presents verified artifacts only, and refuses a coordinate that
+/// `wamn dev` applied from a working tree.
 fn validate_recorded_manifests(
     installed: &CoordinateHashes,
     presented: &CoordinateHashes,
@@ -527,9 +523,16 @@ fn validate_recorded_manifests(
         let recorded_hash = installed
             .get(&(package_id.clone(), package_version.clone()))
             .expect("every presented coordinate was confirmed as applied");
+        let (Some(recorded_hash), Some(presented_hash)) = (recorded_hash, presented_hash) else {
+            bail!(
+                "package-data-access-artifact-required: package={package_id}@{package_version}; recorded-digest={}; presented-digest={}; remedy=present the verified artifact of a coordinate that apply-package installed from it",
+                recorded_hash.as_deref().unwrap_or("<working tree>"),
+                presented_hash.as_deref().unwrap_or("<working tree>")
+            );
+        };
         ensure!(
             recorded_hash == presented_hash,
-            "package-data-access-source-drift: package={package_id}@{package_version}; recorded-sha256={recorded_hash}; presented-sha256={presented_hash}"
+            "package-data-access-source-drift: package={package_id}@{package_version}; recorded-digest={recorded_hash}; presented-digest={presented_hash}"
         );
     }
     Ok(())
@@ -901,10 +904,10 @@ mod tests {
     fn coordinates(entries: &[(&str, &str, &str)]) -> CoordinateHashes {
         entries
             .iter()
-            .map(|(package_id, package_version, manifest_sha256)| {
+            .map(|(package_id, package_version, artifact_digest)| {
                 (
                     ((*package_id).to_owned(), (*package_version).to_owned()),
-                    (*manifest_sha256).to_owned(),
+                    Some((*artifact_digest).to_owned()),
                 )
             })
             .collect()
@@ -974,7 +977,9 @@ mod tests {
         // source files after validation cannot substitute a later manifest/ACL.
         let source =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_fixture");
-        let original = crate::apply_package::read_package_directory(&source).unwrap();
+        let mut original = crate::apply_package::read_package_directory(&source).unwrap();
+        // The copy below is a working tree, with no verified artifact digest.
+        original.artifact_digest = None;
         let overlay_bytes = std::fs::read(
             wamn_schema_generator::output_root(&source).join("platform-policy/data-access.json"),
         )

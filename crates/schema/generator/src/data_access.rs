@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN};
 use wamn_schema_introspection::ir::CatalogIr;
@@ -29,7 +28,6 @@ pub use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 #[serde(deny_unknown_fields)]
 pub struct DataAccessOverlay {
     package: String,
-    manifest_sha256: String,
     contract: String,
     role: String,
     schemas: Vec<String>,
@@ -131,11 +129,6 @@ impl DataAccessOverlay {
         &self.package
     }
 
-    /// SHA-256 of the exact strict manifest bytes used by generation.
-    pub fn manifest_sha256(&self) -> &str {
-        &self.manifest_sha256
-    }
-
     /// Opaque required platform-policy contract satisfied by this overlay.
     pub fn contract(&self) -> &str {
         &self.contract
@@ -160,7 +153,6 @@ impl DataAccessOverlay {
         if self.role != DATA_ACCESS_ROLE
             || self.package.is_empty()
             || !self.package.contains('@')
-            || self.manifest_sha256.len() != "sha256:".len() + 64
             || self.contract.is_empty()
             // A package with no SQL has neither.
             || self.schemas.is_empty() != self.relations.is_empty()
@@ -602,7 +594,6 @@ impl EffectiveDesiredRelation {
 
 pub(crate) fn derive_data_access_overlay(
     catalog: &CatalogIr,
-    manifest_bytes: &[u8],
     manifest: &PackageManifest,
 ) -> Result<DataAccessOverlay, GenerateError> {
     let relation_fields = catalog
@@ -631,7 +622,7 @@ pub(crate) fn derive_data_access_overlay(
             )
         }))
         .collect::<Vec<_>>();
-    derive_data_access_overlay_for_manifest(&relation_fields, manifest_bytes, manifest)
+    derive_data_access_overlay_for_manifest(&relation_fields, manifest)
 }
 
 /// Re-derive the exact overlay from a verified manifest and live relation fields.
@@ -640,7 +631,7 @@ pub fn derive_data_access_overlay_from_relation_fields(
     manifest_bytes: &[u8],
 ) -> Result<DataAccessOverlay, GenerateError> {
     let manifest = PackageManifest::from_slice(manifest_bytes)?;
-    derive_data_access_overlay_for_manifest(relation_fields, manifest_bytes, &manifest)
+    derive_data_access_overlay_for_manifest(relation_fields, &manifest)
 }
 
 /// Application schemas whose complete relation list owns ACL convergence.
@@ -651,7 +642,6 @@ pub fn data_access_schemas(manifest_bytes: &[u8]) -> Result<Vec<String>, Generat
 
 fn derive_data_access_overlay_for_manifest(
     relation_fields: &[DataAccessRelationFields],
-    manifest_bytes: &[u8],
     manifest: &PackageManifest,
 ) -> Result<DataAccessOverlay, GenerateError> {
     let schemas = application_schemas(manifest)?;
@@ -731,7 +721,6 @@ fn derive_data_access_overlay_for_manifest(
     let coordinate = format!("{}@{}", manifest.package.id, manifest.package.version);
     let overlay = DataAccessOverlay {
         package: coordinate,
-        manifest_sha256: sha256(manifest_bytes),
         contract: manifest.required_platform_policy_contract.id.clone(),
         role: DATA_ACCESS_ROLE.to_owned(),
         schemas,
@@ -991,8 +980,4 @@ fn valid_identifier(value: &str) -> bool {
         && value.bytes().enumerate().all(|(index, byte)| {
             byte.is_ascii_lowercase() || byte == b'_' || (index > 0 && byte.is_ascii_digit())
         })
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }

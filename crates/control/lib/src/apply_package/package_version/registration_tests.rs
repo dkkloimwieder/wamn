@@ -5,12 +5,9 @@ use wamn_schema_control::{PackageMigrationError, PackageMigrationErrorType};
 
 const TENANT: &str = "package-registration";
 
-async fn connect(url: &str, control: bool) -> Client {
+async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await.unwrap();
     tokio::spawn(async move { connection.await.unwrap() });
-    if control {
-        client.batch_execute("SET ROLE wamn_system").await.unwrap();
-    }
     client
         .batch_execute("SET app.tenant = 'package-registration'")
         .await
@@ -29,7 +26,7 @@ async fn register(
         &tx,
         TENANT,
         &PackageCoordinate::new("inventory", version).unwrap(),
-        hash,
+        Some(hash),
         predecessor,
     )
     .await?;
@@ -48,13 +45,13 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
     let _lock = wamn_test_postgres::lock();
     let hash = format!("sha256:{}", "a".repeat(64));
     let other_hash = format!("sha256:{}", "b".repeat(64));
-    for (control, database) in [
-        (false, wamn_catalog::test_database::tenant()),
-        (true, wamn_control_provision::test_database::system()),
-    ] {
+    // The system copy of catalog.packages has no writer and waits for Epic 9,
+    // so registration runs against the project copy only.
+    {
+        let database = wamn_catalog::test_database::tenant();
         let url = database.url();
-        let mut first = connect(url, control).await;
-        let mut second = connect(url, control).await;
+        let mut first = connect(url).await;
+        let mut second = connect(url).await;
         assert!(register(&mut first, "1.0.0", &hash, None).await.unwrap());
         let timestamp: String = first
             .query_one("SELECT registered_at::text FROM catalog.packages", &[])
@@ -110,7 +107,7 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
                     &tx,
                     TENANT,
                     &PackageCoordinate::new("inventory", winner).unwrap(),
-                    &hash,
+                    Some(&hash),
                     Some(predecessor)
                 )
                 .await
@@ -140,7 +137,7 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
                 &tx,
                 TENANT,
                 &PackageCoordinate::new("inventory", "5.0.0").unwrap(),
-                &hash,
+                Some(&hash),
                 Some("4.0.0")
             )
             .await

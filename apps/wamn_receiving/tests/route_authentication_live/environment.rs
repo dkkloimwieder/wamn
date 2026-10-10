@@ -117,8 +117,10 @@ pub(super) async fn install_journey_project(
 ) -> anyhow::Result<()> {
     install_journey_platform_floor(project, identity().tenant.as_str(), PLATFORM_DOMAIN).await?;
     for package in released_journey_packages() {
+        let root = journey_package_root(package, Some(inputs));
+        wamn_control::package_artifact::record_fixture_artifact_digest(&root)?;
         apply_package::apply_package(ApplyPackageRequest {
-            package: journey_package_root(package, Some(inputs)),
+            package: root,
             database_url: project_url.to_owned(),
             tenant: identity().tenant.clone(),
         })

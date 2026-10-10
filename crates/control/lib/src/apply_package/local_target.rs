@@ -1,4 +1,4 @@
-//! The local-target exception to manifest drift and to the release seal.
+//! The local-target exception to the content conflict and to the release seal.
 
 use std::path::{Path, PathBuf};
 
@@ -34,22 +34,24 @@ pub(super) async fn lift_release_seal(
     Ok(comment)
 }
 
-/// Record the current manifest hash of one package coordinate in the local target comment.
+/// Record the current manifest digest of one package coordinate in the local target comment.
 ///
 /// The caller owns the comment, so one transaction can record several
-/// coordinates and keep every hash it already wrote.
+/// coordinates and keep every digest it already wrote. The local target applies
+/// its working tree and records no artifact digest, so the comment names the
+/// `wamn.json` the running application came from ([`manifest_digest`]).
 pub(crate) async fn record_manifest(
     tx: &Transaction<'_>,
     comment: &mut LocalTargetComment,
     coordinate: &str,
-    manifest_sha256: &str,
+    manifest_digest: &str,
 ) -> anyhow::Result<bool> {
-    if comment.manifests.get(coordinate).map(String::as_str) == Some(manifest_sha256) {
+    if comment.manifests.get(coordinate).map(String::as_str) == Some(manifest_digest) {
         return Ok(false);
     }
     comment
         .manifests
-        .insert(coordinate.to_owned(), manifest_sha256.to_owned());
+        .insert(coordinate.to_owned(), manifest_digest.to_owned());
     let statement: String = tx
         .query_one(COMMENT_ON_TARGET_SQL, &[&comment.to_string()])
         .await
@@ -57,21 +59,33 @@ pub(crate) async fn record_manifest(
         .get(0);
     tx.batch_execute(&statement)
         .await
-        .context("record the current manifest hash in the local target comment")?;
+        .context("record the current manifest digest in the local target comment")?;
     Ok(true)
+}
+
+/// The digest of the `wamn.json` bytes of a working tree, which the local
+/// target comment records.
+pub(crate) fn manifest_digest(directory: &PackageDirectory) -> String {
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            &directory.manifest_bytes
+        ))
+    )
 }
 
 /// The refusal for an applied migration that a package directory edits, removes, or reorders.
 ///
-/// The local apply takes a changed wamn.json, so only the applied migrations
-/// are compared.
+/// The local apply takes a changed tree, so only the applied migrations are
+/// compared.
 pub fn applied_migration_drift(
     directory: &PackageDirectory,
     applied: &AppliedPackage,
 ) -> anyhow::Result<Option<String>> {
     let presented = plan_package_migrations(directory, None)?;
     let accepted = AppliedPackage {
-        manifest_sha256: presented.manifest_sha256,
+        artifact_digest: presented.artifact_digest,
         ..applied.clone()
     };
     match plan_package_migrations(directory, Some(&accepted)) {

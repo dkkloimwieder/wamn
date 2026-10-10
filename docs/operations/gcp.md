@@ -565,11 +565,12 @@ target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identi
   --db-host wamn-pg-rw.platform.svc.cluster.local
 target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
   --org dkk --project receiving --tenant dev --env dev --schema wamn_run
-target/debug/wamn-ctl apply-package --package apps/wamn_receiving --database-url "$T" --tenant dev
-target/debug/wamn-ctl reconcile-package-data-access --package apps/wamn_receiving --database-url "$T" --tenant dev
+R="--artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json --control-database-url $WAMN_SYSTEM_ADMIN_URL"
+target/debug/wamn-ctl apply-package --package-artifact wamn_receiving-2.1.0 $R --database-url "$T" --tenant dev
+target/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_receiving-2.1.0 $R --database-url "$T" --tenant dev
 ```
 
-`reconcile-run-plane` runs before `apply-package`, because it installs the catalog schema that `apply-package` writes into. On 2026-09-26 the four verbs took 4, 13, 37 and 16 seconds.
+`apply-package` and `reconcile-package-data-access` take the artifact that `push-package` pushed, never the checkout directory, so run the push below before these two verbs. `reconcile-run-plane` runs before `apply-package`, because it installs the catalog schema that `apply-package` writes into. On 2026-09-26 the four verbs took 4, 13, 37 and 16 seconds.
 
 Every emitted credential URL names the host and port of `--db-host` and `--db-port`, never the port-forward of the admin URL (finding `wamn-lczu`). `provision-identity-issuer` has no default host. `provision-project-env` defaults to `<cluster>-rw:5432`, and a Secret outside the namespace of the cluster needs the full service name. Apply the Secret:
 

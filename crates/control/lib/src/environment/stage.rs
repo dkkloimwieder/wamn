@@ -248,7 +248,10 @@ fn release_requirements(
         .iter()
         .flat_map(|component| {
             component.descriptor.connections.iter().map(|connection| {
-                crate::push_component::portable_requirement(component.digest.as_str(), connection)
+                crate::component_admission::portable_requirement(
+                    component.digest.as_str(),
+                    connection,
+                )
             })
         })
         .collect()

@@ -168,8 +168,11 @@ async fn provision_project(project: &Client, project_url: &str) {
         )
         .await
         .expect("give the project database to the package owner");
+    let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+    wamn_control::package_artifact::record_fixture_artifact_digest(&package)
+        .expect("record the fixture artifact digest");
     apply_package::apply_package(ApplyPackageRequest {
-        package: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base"),
+        package,
         database_url: project_url.to_string(),
         tenant: TENANT.to_string(),
     })

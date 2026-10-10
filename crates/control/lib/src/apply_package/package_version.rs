@@ -12,7 +12,7 @@ use super::error::{ApplyPackageError, ApplyPackageErrorType};
 pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
 const SELECT_PACKAGE_SQL: &str = "\
-SELECT manifest_sha256, predecessor_version FROM catalog.packages \
+SELECT artifact_digest, predecessor_version FROM catalog.packages \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
  FOR UPDATE";
 const SELECT_MIGRATIONS_SQL: &str = "\
@@ -34,7 +34,7 @@ pub async fn register_package(
     tx: &Transaction<'_>,
     tenant: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
-    manifest_sha256: &str,
+    artifact_digest: Option<&str>,
     predecessor_version: Option<&str>,
 ) -> anyhow::Result<bool> {
     let package_id = coordinate.package_id();
@@ -48,27 +48,32 @@ pub async fn register_package(
         )
         .await
         .context("read package coordinate before registration")?;
-    let recorded = recorded.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1)));
+    let recorded = recorded.map(|row| {
+        (
+            row.get::<_, Option<String>>(0),
+            row.get::<_, Option<String>>(1),
+        )
+    });
     let current = current_package_version(tx, tenant, package_id).await?;
     let insert = plan_package_registration(
         coordinate,
-        manifest_sha256,
+        artifact_digest,
         predecessor_version,
         recorded
             .as_ref()
-            .map(|(hash, predecessor)| (hash.as_str(), predecessor.as_deref())),
+            .map(|(digest, predecessor)| (digest.as_deref(), predecessor.as_deref())),
         current.as_deref(),
     )?;
     if insert {
         tx.execute(
             "INSERT INTO catalog.packages \
-             (tenant_id, package_id, package_version, manifest_sha256, predecessor_version) \
+             (tenant_id, package_id, package_version, artifact_digest, predecessor_version) \
              VALUES ($1, $2, $3, $4, $5)",
             &[
                 &tenant,
                 &package_id,
                 &coordinate.package_version(),
-                &manifest_sha256,
+                &artifact_digest,
                 &predecessor_version,
             ],
         )
@@ -179,14 +184,18 @@ pub async fn load_applied_package(
         coordinate: wamn_catalog::PackageCoordinate::new(package_id, package_version)
             .expect("stored package coordinates passed database checks"),
         predecessor_version: package.get(1),
-        manifest_sha256: package.get(0),
+        artifact_digest: package.get(0),
         migrations,
     }))
 }
 
 /// Read the exact package bytes under `root`. The migrations are sorted by
-/// file name, so the result does not depend on the file system order.
+/// file name, so the result does not depend on the file system order. The
+/// artifact digest is the one an opened verified artifact records
+/// ([`crate::package_artifact::recorded_artifact_digest`]), and `None` for a
+/// working tree.
 pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
+    let artifact_digest = crate::package_artifact::recorded_artifact_digest(root)?;
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -200,6 +209,7 @@ pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
         return Ok(PackageDirectory {
             manifest_bytes,
             migrations,
+            artifact_digest,
         });
     }
     let entries = std::fs::read_dir(&migrations_path)
@@ -228,6 +238,7 @@ pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     Ok(PackageDirectory {
         manifest_bytes,
         migrations,
+        artifact_digest,
     })
 }
 

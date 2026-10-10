@@ -54,7 +54,7 @@ async fn seed_package_and_release(client: &Client, store: Store) {
     ] {
         client
             .execute(
-                "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256, predecessor_version) VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)",
                 &[
                     &TENANT,
                     &package_id,

@@ -202,6 +202,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         tenant: TENANT.to_owned(),
     };
     let before = permission_write_identity(project).await?;
+    wamn_control::package_artifact::record_fixture_artifact_digest(&package_root())?;
     apply_package::apply_package(args())
         .await
         .context("apply the route-authentication fixture package")?;

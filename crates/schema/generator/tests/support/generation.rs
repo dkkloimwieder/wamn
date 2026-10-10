@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_schema_generator::{
-    AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
-    StatementTransactionality, generate,
+    AuthoredSql, GeneratedPackage, GenerationInput, PackageManifest, StatementTransactionality,
+    generate,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Table,
@@ -257,7 +257,6 @@ pub(super) fn run(
         catalog,
         &bytes,
         sources,
-        GenerationProvenance::new("wamn-schema-generator/0.1.0", "rust-1.89"),
         &StatementTransactionality::default(),
     ))
 }

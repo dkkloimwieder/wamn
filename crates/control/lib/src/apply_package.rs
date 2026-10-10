@@ -47,11 +47,11 @@ pub use error::{
     APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorType,
     BASE_DEFINITION_MUTATION_REFUSAL, DEFINITION_NOT_FOUND_REFUSAL,
     DEFINITION_OWNER_CONFLICT_REFUSAL, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
-    PACKAGE_VERSION_SEALED_REFUSAL, PREDECESSOR_NOT_CURRENT_REFUSAL,
-    RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
+    PACKAGE_ARTIFACT_REQUIRED_REFUSAL, PACKAGE_VERSION_SEALED_REFUSAL,
+    PREDECESSOR_NOT_CURRENT_REFUSAL, RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
-pub(crate) use local_target::record_manifest;
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
+pub(crate) use local_target::{manifest_digest, record_manifest};
 pub use package_version::{
     LOCK_PACKAGE_SQL, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
     read_package_directory, register_package,
@@ -95,6 +95,20 @@ pub(crate) struct PreparedPackage {
     pub directory: PackageDirectory,
     pub manifest: PackageManifest,
     migration_policy: MigrationPolicyPlan,
+}
+
+impl PreparedPackage {
+    /// The digest of the verified artifact this package was opened from. A
+    /// release apply and its stage evidence take nothing else.
+    pub(crate) fn artifact_digest(&self) -> anyhow::Result<&str> {
+        self.directory.artifact_digest.as_deref().ok_or_else(|| {
+            ApplyPackageError::artifact_required(&format!(
+                "{}@{}",
+                self.manifest.package.id, self.manifest.package.version
+            ))
+            .into()
+        })
+    }
 }
 
 /// Validate one package directory before opening an application transaction.
@@ -243,10 +257,11 @@ pub(crate) async fn apply_qualification_packages(
 
 /// Apply one package directory to a local target that wamn dev created.
 ///
-/// The target also takes a changed wamn.json at an applied coordinate, and a
+/// The target also takes a changed tree at an applied coordinate, and a
 /// migration appended after release membership, while every applied migration
-/// stays byte-identical. The database comment then records the current manifest
-/// hash of the package.
+/// stays byte-identical. The target records no artifact digest: its
+/// `catalog.packages` row holds NULL, and the database comment records the
+/// digest of the current `wamn.json`.
 pub async fn apply_local_package(
     request: ApplyPackageRequest,
     environment: &str,
@@ -420,26 +435,40 @@ async fn apply_prepared(
         _ => None,
     };
 
+    // A release apply takes only a verified artifact. wamn dev applies its
+    // working tree and records no artifact digest.
+    let artifact_digest = if local_comment.is_some() {
+        None
+    } else {
+        Some(
+            directory
+                .artifact_digest
+                .clone()
+                .ok_or_else(|| ApplyPackageError::artifact_required(coordinate_text))?,
+        )
+    };
     let applied = load_applied_package(tx, tenant, &package_id, &package_version).await?;
-    if applied.is_none() {
+    if applied.is_none()
+        && let Some(artifact_digest) = &artifact_digest
+    {
         crate::package_upgrade::progress::require_no_other_stage(
             tx,
             tenant,
             &package_id,
             &package_version,
-            &crate::package_artifact::package_artifact_digest(package_root)?,
+            artifact_digest,
         )
         .await?;
     }
     let plan = if let Some(applied) = applied.as_ref() {
         let compared = if local_comment.is_some() {
-            // A local target takes a changed wamn.json at the same coordinate.
+            // A local target takes a changed tree at the same coordinate.
             // The planner still refuses an edited, removed, or reordered
             // applied migration.
             plan_package_migrations(
                 directory,
                 Some(&AppliedPackage {
-                    manifest_sha256: presented.manifest_sha256.clone(),
+                    artifact_digest: presented.artifact_digest.clone(),
                     ..applied.clone()
                 }),
             )
@@ -453,7 +482,7 @@ async fn apply_prepared(
             Some(current_version) => {
                 plan_package_registration(
                     &presented.coordinate,
-                    &presented.manifest_sha256,
+                    presented.artifact_digest.as_deref(),
                     presented.predecessor_version.as_deref(),
                     None,
                     Some(&current_version),
@@ -611,17 +640,17 @@ async fn apply_prepared(
     set_package_owner_role(tx).await?;
     ensure_model_schemas(tx, &plan).await?;
     reset_host_role(tx).await?;
-    // catalog.packages is immutable, so a local target keeps the first recorded
-    // manifest hash there and records the current one in its comment.
-    let registered_manifest_sha256 = match (&local_comment, &applied) {
-        (Some(_), Some(applied)) => &applied.manifest_sha256,
-        _ => &plan.manifest_sha256,
+    // catalog.packages is immutable, so a local target keeps the row it first
+    // recorded there and records the current manifest in its comment.
+    let registered_artifact_digest = match &applied {
+        Some(applied) if local_comment.is_some() => applied.artifact_digest.as_deref(),
+        _ => artifact_digest.as_deref(),
     };
     let package_inserted = register_package(
         tx,
         tenant,
         &plan.coordinate,
-        registered_manifest_sha256,
+        registered_artifact_digest,
         plan.predecessor_version.as_deref(),
     )
     .await
@@ -695,18 +724,21 @@ async fn apply_prepared(
     }
     let comment_changed = match local_comment.as_mut() {
         Some(comment) => {
-            local_target::record_manifest(tx, comment, coordinate_text, &plan.manifest_sha256)
-                .await?
+            local_target::record_manifest(
+                tx,
+                comment,
+                coordinate_text,
+                &local_target::manifest_digest(directory),
+            )
+            .await?
         }
         None => false,
     };
     if let Some(evidence) = &accepted_upgrade {
-        crate::package_upgrade::persist(
-            tx,
-            evidence,
-            &crate::package_artifact::package_artifact_digest(package_root)?,
-        )
-        .await?;
+        let artifact_digest = artifact_digest
+            .as_deref()
+            .expect("a release apply carries its artifact digest");
+        crate::package_upgrade::persist(tx, evidence, artifact_digest).await?;
     }
     Ok(ApplyOutcome {
         package_id,

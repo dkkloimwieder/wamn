@@ -7,7 +7,6 @@ mod rust;
 mod validation;
 mod wit;
 mod wit_adapters;
-
 use contracts::{
     emit_cursor_contract, emit_custom_operation, emit_model, required_schema_contract,
 };
@@ -15,7 +14,7 @@ use validation::{authored_sql_map, validate};
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
@@ -28,10 +27,10 @@ use crate::manifest::{
     AccessOperationErrorLiteral, AuthoredSqlDeclaration, ContractFieldDeclaration, CrudAction,
     CursorDirection, CustomOperationDeclaration, CustomOperationResultDeclaration,
     CustomOperationType, DeleteMode, FieldText, ModelDeclaration, OperationDeclaration,
-    OperationErrorDetailDeclaration, PackageManifest, PolicyContractRequirement,
-    PolicyContractState, RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch,
-    TombstoneColumn, binding_identifier, canonical_operation_identity, custom_artifact_stem,
-    rust_identifier, rust_type_identifier, validate_identifier, validate_operation_vocabulary,
+    OperationErrorDetailDeclaration, PackageManifest, RecordHistoryColumn, ResultClass,
+    SortDeclaration, StaticSqlFetch, TombstoneColumn, binding_identifier,
+    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
+    validate_identifier, validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -68,23 +67,6 @@ impl<'a> AuthoredSql<'a> {
     }
 }
 
-/// Generator and toolchain facts in each generated package.
-#[derive(Debug, Clone, Copy)]
-pub struct GenerationProvenance<'a> {
-    generator: &'a str,
-    toolchain: &'a str,
-}
-
-impl<'a> GenerationProvenance<'a> {
-    /// Construct generator provenance without consulting git, environment, or a clock.
-    pub const fn new(generator: &'a str, toolchain: &'a str) -> Self {
-        Self {
-            generator,
-            toolchain,
-        }
-    }
-}
-
 /// PostgreSQL's verdict on which statements need a transaction, keyed by the
 /// statement's corpus path.
 ///
@@ -98,8 +80,7 @@ impl<'a> GenerationProvenance<'a> {
 /// Generation runs TWICE: once to obtain the corpus with every verdict absent,
 /// then again with the verdicts the server gave for that corpus. The bit is
 /// contract-only and never reaches SQL bytes, so the corpus is identical across
-/// both passes -- which `application_sql_corpus_identity` would catch if it
-/// were not.
+/// both passes.
 #[derive(Debug, Clone, Default)]
 pub struct StatementTransactionality {
     paths: BTreeMap<String, bool>,
@@ -132,7 +113,6 @@ pub struct GenerationInput<'a> {
     catalog: &'a CatalogIr,
     manifest_json: &'a [u8],
     authored_sql: &'a [AuthoredSql<'a>],
-    provenance: GenerationProvenance<'a>,
     transactional: &'a StatementTransactionality,
 }
 
@@ -142,14 +122,12 @@ impl<'a> GenerationInput<'a> {
         catalog: &'a CatalogIr,
         manifest_json: &'a [u8],
         authored_sql: &'a [AuthoredSql<'a>],
-        provenance: GenerationProvenance<'a>,
         transactional: &'a StatementTransactionality,
     ) -> Self {
         Self {
             catalog,
             manifest_json,
             authored_sql,
-            provenance,
             transactional,
         }
     }
@@ -190,97 +168,10 @@ impl GeneratedFile {
     }
 }
 
-/// Canonical immutable package metadata emitted as `generated/package-identity.json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    rename = "PackageIdentity",
-    expecting = "struct PackageIdentity",
-    deny_unknown_fields
-)]
-pub struct GeneratedPackageMetadata {
-    verified_schema_state_id: Box<str>,
-    required_schema_contract: RequiredSchemaContract,
-    required_platform_policy_contract: PolicyContractRequirement,
-    application_sql_corpus_identity: Box<str>,
-    provenance: OwnedProvenance,
-    promotion_state: PromotionState,
-}
-
-impl GeneratedPackageMetadata {
-    /// Parse the canonical generated metadata and refuse alternate spellings.
-    pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
-        let metadata: Self = serde_json::from_slice(bytes).map_err(|source| {
-            GenerateError::with_source(
-                GenerateErrorType::InvalidManifest,
-                "package-identity.json does not match the package contract",
-                source,
-            )
-        })?;
-        let canonical = canonical_json_bytes(
-            &serde_json::to_value(&metadata).expect("generated package metadata always serializes"),
-        );
-        if canonical != bytes {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidManifest,
-                "package-identity.json is not canonical compact JSON",
-            ));
-        }
-        for (field, value) in [
-            (
-                "verified_schema_state_id",
-                metadata.verified_schema_state_id(),
-            ),
-            (
-                "application_sql_corpus_identity",
-                metadata.application_sql_corpus_identity(),
-            ),
-        ] {
-            if !valid_sha256(value) {
-                return Err(GenerateError::new(
-                    GenerateErrorType::InvalidManifest,
-                    format!("package-identity.json {field} is not sha256:<64 lowercase hex>"),
-                ));
-            }
-        }
-        let expected_promotion_state = match metadata.required_platform_policy_contract.state {
-            PolicyContractState::Unsatisfied => PromotionState::BlockedUnsatisfiedPolicyContract,
-            PolicyContractState::Satisfied => PromotionState::Eligible,
-        };
-        if metadata.promotion_state != expected_promotion_state {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidManifest,
-                "package-identity.json promotion_state disagrees with required_platform_policy_contract.state",
-            ));
-        }
-        Ok(metadata)
-    }
-
-    /// Digest of the complete normalized catalog IR used for generation.
-    pub fn verified_schema_state_id(&self) -> &str {
-        &self.verified_schema_state_id
-    }
-
-    /// Digest of the exact authored and generated SQL files.
-    pub fn application_sql_corpus_identity(&self) -> &str {
-        &self.application_sql_corpus_identity
-    }
-
-    /// Required opaque platform policy contract and current satisfaction state.
-    pub const fn required_platform_policy_contract(&self) -> &PolicyContractRequirement {
-        &self.required_platform_policy_contract
-    }
-
-    /// Whether the typed policy requirement permits package promotion.
-    pub const fn promotion_eligible(&self) -> bool {
-        matches!(self.promotion_state, PromotionState::Eligible)
-    }
-}
-
-/// Generated package files and their metadata.
+/// Generated package files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedPackage {
     files: Box<[GeneratedFile]>,
-    metadata: GeneratedPackageMetadata,
 }
 
 impl GeneratedPackage {
@@ -296,20 +187,18 @@ impl GeneratedPackage {
             .ok()
             .map(|index| &self.files[index])
     }
-
-    /// Canonical metadata included in the generated file set.
-    pub const fn metadata(&self) -> &GeneratedPackageMetadata {
-        &self.metadata
-    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The generated file that names the schema an installed package needs.
+pub const REQUIRED_SCHEMA_CONTRACT_PATH: &str = "generated/required-schema-contract.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RequiredSchemaContract {
     tables: Box<[RequiredTable]>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RequiredTable {
     schema: Box<str>,
@@ -318,7 +207,7 @@ struct RequiredTable {
     constraints: Box<[RequiredConstraint]>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RequiredField {
     name: Box<str>,
@@ -327,34 +216,11 @@ struct RequiredField {
     nullable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RequiredConstraint {
     name: Box<str>,
     definition: Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OwnedProvenance {
-    generator: Box<str>,
-    toolchain: Box<str>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum PromotionState {
-    BlockedUnsatisfiedPolicyContract,
-    Eligible,
-}
-
-fn valid_sha256(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|digest| {
-        digest.len() == 64
-            && digest
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    })
 }
 
 /// Compile an authored manifest: add the members that generation derives.
@@ -467,40 +333,17 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
     data::emit_package_data(&mut files, &manifest)?;
     component::emit_package_component(&mut files, &manifest)?;
     publication::emit_package_publication(&mut files, &manifest)?;
-    let data_access = crate::data_access::derive_data_access_overlay(
-        input.catalog,
-        input.manifest_json,
-        &manifest,
-    )?;
+    let data_access = crate::data_access::derive_data_access_overlay(input.catalog, &manifest)?;
     insert_canonical_json(
         &mut files,
         crate::data_access::DATA_ACCESS_OVERLAY_PATH,
         &data_access,
     )?;
-
-    let metadata = GeneratedPackageMetadata {
-        verified_schema_state_id: sha256(&canonical_json_bytes(
-            &serde_json::to_value(input.catalog).expect("schema IR always serializes"),
-        ))
-        .into(),
-        required_schema_contract: required_schema_contract(input.catalog, &manifest),
-        required_platform_policy_contract: manifest.required_platform_policy_contract.clone(),
-        application_sql_corpus_identity: corpus_sha256(
-            sql_corpus
-                .iter()
-                .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
-        )
-        .into(),
-        provenance: OwnedProvenance {
-            generator: input.provenance.generator.into(),
-            toolchain: input.provenance.toolchain.into(),
-        },
-        promotion_state: match manifest.required_platform_policy_contract.state {
-            PolicyContractState::Unsatisfied => PromotionState::BlockedUnsatisfiedPolicyContract,
-            PolicyContractState::Satisfied => PromotionState::Eligible,
-        },
-    };
-    insert_canonical_json(&mut files, "generated/package-identity.json", &metadata)?;
+    insert_canonical_json(
+        &mut files,
+        REQUIRED_SCHEMA_CONTRACT_PATH,
+        &required_schema_contract(input.catalog, &manifest),
+    )?;
 
     let files = files
         .into_iter()
@@ -508,7 +351,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         .collect::<Vec<_>>()
         .into_boxed_slice();
 
-    Ok(GeneratedPackage { files, metadata })
+    Ok(GeneratedPackage { files })
 }
 
 /// The schema and history table name of each logged model.
@@ -523,30 +366,6 @@ pub(crate) fn logged_history_tables(
         .values()
         .filter(|model| model.log_retention().is_some())
         .map(|model| (model.schema.as_str(), history_table_name(&model.table)))
-}
-
-/// Hash sorted path/byte entries with unambiguous big-endian length framing.
-pub fn corpus_sha256<'a>(entries: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> String {
-    let mut entries = entries.into_iter().collect::<Vec<_>>();
-    entries.sort_by_key(|(path, _)| *path);
-
-    let mut hasher = Sha256::new();
-    for (path, bytes) in entries {
-        let path = path.as_bytes();
-        hasher.update(
-            u64::try_from(path.len())
-                .expect("path length fits u64")
-                .to_be_bytes(),
-        );
-        hasher.update(path);
-        hasher.update(
-            u64::try_from(bytes.len())
-                .expect("artifact length fits u64")
-                .to_be_bytes(),
-        );
-        hasher.update(bytes);
-    }
-    format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
 /// The `from` literal for the constraint a custom operation maps, whether the

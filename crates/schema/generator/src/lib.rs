@@ -1,8 +1,7 @@
 //! Generates deterministic package artifacts from migration-derived schema IR.
 //!
 //! Core generation is a deterministic transformation: callers provide the
-//! normalized [`CatalogIr`], exact manifest bytes, authored SQL bytes, and
-//! explicit provenance. That transformation performs no filesystem, database,
+//! normalized [`CatalogIr`], exact manifest bytes, and authored SQL bytes. That transformation performs no filesystem, database,
 //! clock, or environment access; its one child process is `rustfmt`, which
 //! formats the Rust it emits so that the committed artifacts equal what
 //! `cargo fmt` produces.
@@ -65,8 +64,8 @@ pub use data_access::{
 };
 pub use error::{GenerateError, GenerateErrorType};
 pub use generate::{
-    AuthoredSql, GeneratedFile, GeneratedPackage, GeneratedPackageMetadata, GenerationInput,
-    GenerationProvenance, StatementTransactionality, corpus_sha256, derive_manifest, generate,
+    AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, REQUIRED_SCHEMA_CONTRACT_PATH,
+    StatementTransactionality, derive_manifest, generate,
 };
 pub use manifest::{
     AccessOperationErrorLiteral, AuditLogDeclaration, AuthoredSqlDeclaration, AuthoredSqlVariant,
