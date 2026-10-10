@@ -9,6 +9,7 @@
 //! provisioning uses the existing control library functions.
 
 pub mod ceiling;
+pub mod delivery;
 pub mod environment;
 pub mod journey;
 pub mod session_issuer;

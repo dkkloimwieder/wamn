@@ -39,7 +39,7 @@ use wamn_test_infrastructure::declarations::{
 };
 
 pub(super) const SCHEMA: &str = "wms";
-const CLUSTER: &str = "route-auth-pg18";
+pub(crate) const CLUSTER: &str = "route-auth-pg18";
 /// Platform rows take the email `<component>@example.invalid` in this test.
 const PLATFORM_DOMAIN: &str = "example.invalid";
 

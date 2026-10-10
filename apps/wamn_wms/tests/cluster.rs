@@ -3,6 +3,7 @@
 mod application;
 mod bootstrap;
 mod build;
+mod delivery_case;
 mod demo;
 mod deployment;
 mod reader;

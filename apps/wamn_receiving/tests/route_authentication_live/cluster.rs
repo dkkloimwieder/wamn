@@ -3,6 +3,7 @@
 mod build;
 mod cdc;
 mod default_case;
+mod delivery_case;
 mod deployment;
 mod materializer_case;
 mod measurement;
@@ -35,7 +36,7 @@ use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
     overlay_values, render_host_values,
 };
-use wamn_test_infrastructure::secrets::{HostSecretsInput, derive_host_secrets};
+use wamn_test_infrastructure::secrets::{HostSecret, HostSecretsInput, derive_host_secrets};
 
 use super::{FIRST_RELEASE, connect, identity, release_digest_at, repository_root, routes};
 use build::Artifacts;
@@ -362,14 +363,7 @@ async fn prepare_host(
     carrier: &ReleaseCarrier,
     binding: &HostBinding<'_>,
 ) -> anyhow::Result<(PathBuf, PathBuf)> {
-    let HostBinding {
-        replicas,
-        nats_url,
-        native_nats_secrets,
-        source,
-        session,
-    } = *binding;
-
+    let native_nats_secrets = binding.native_nats_secrets;
     let database_host = reqwest::Url::parse(&inputs.system_pg_url)?
         .host_str()
         .context("the owned system URL has a host")?
@@ -422,6 +416,25 @@ async fn prepare_host(
         &operator_values,
     )
     .await?;
+    render_host(cluster, inputs, carrier, &secrets, binding)
+}
+
+/// Render the base and overlay values of `cluster`'s one host group into its
+/// work directory, bound to `secrets`.
+fn render_host(
+    cluster: &Resources,
+    inputs: &JourneyDocument,
+    carrier: &ReleaseCarrier,
+    secrets: &[HostSecret],
+    binding: &HostBinding<'_>,
+) -> anyhow::Result<(PathBuf, PathBuf)> {
+    let HostBinding {
+        replicas,
+        nats_url,
+        source,
+        session,
+        ..
+    } = *binding;
     let guest = secrets
         .iter()
         .find(|secret| secret.family == WorkloadRoleFamily::App)

@@ -142,6 +142,25 @@ WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> \
 
 The test prints its work directory. `report.json` in that directory records each check with its command, output, and result.
 
+### Delivery on `env apply`
+
+The Receiving and WMS delivery cases deliver each application's release with `wamn-ctl env apply` (docs/plan/platform-deploy.md §17.2 Epic 6).
+Both run on one kept kind cluster that `WAMN_DELIVERY_CLUSTER` names, `wamn-delivery-<suffix>`.
+The first case creates the cluster with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password. The second case attaches to it.
+Each case publishes its release with its fixture, qualifies it, publishes it with `publish-qualified-release`, pushes the role images, writes `environment.k` and runs `env apply`.
+It then checks the hosts, the role placement and the A1 probe. The second case also checks A12 with the two applications in `wamn-system`.
+Run Receiving first, then WMS, then remove the cluster:
+
+```bash
+export WAMN_DELIVERY_CLUSTER=wamn-delivery-<suffix>
+tools/delivery-owned receiving "$WAMN_RESULTS"
+tools/delivery-owned wms "$WAMN_RESULTS"
+tools/delivery-owned remove-kept "$WAMN_DELIVERY_CLUSTER"
+```
+
+A case refuses to run twice on one kept cluster, because its environment exists there.
+Each case writes `delivery-checks.json`, `environment.k` and one command result per step to its results directory.
+
 ### Native RC
 
 Build `wamn-gates`, then inspect its plan before creating the declared cluster:

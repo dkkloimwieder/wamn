@@ -6149,6 +6149,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-engine",
  "wamn-event-wire",
  "wamn-platform-identity",
  "wamn-schema-control",

@@ -216,6 +216,33 @@ pub(super) async fn attach(
     Ok(cluster)
 }
 
+/// The resources of the Receiving delivery case on the kept delivery cluster
+/// (`delivery_case`): `name` is the application's owned name there. The case
+/// creates and removes nothing through them.
+pub(super) fn delivery(
+    repository: &Path,
+    work: &Path,
+    evidence: &Path,
+    name: &str,
+    source: &str,
+) -> Resources {
+    Resources {
+        repository: repository.to_owned(),
+        work: work.to_owned(),
+        evidence: evidence.to_owned(),
+        name: name.to_owned(),
+        source: source.to_owned(),
+        lifecycle: repository.join("tools/receiving-cluster-journey-run"),
+        host_image: format!("wamn-host:{name}"),
+        gates_image: Some(format!("wamn-gates:{name}")),
+        identity_image: Some(format!("wamn-identity:{name}")),
+        candidate: None,
+        reader: None,
+        owned: false,
+        kept: true,
+    }
+}
+
 impl Resources {
     /// Leave the cluster in place when this process ends.
     pub(super) fn keep(&mut self) {

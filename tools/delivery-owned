@@ -2,7 +2,7 @@
 # Existing app fixtures own the stores, release publish, assertions, and cleanup.
 set -euo pipefail
 umask 077
-action=${1:?build-native, native-registry, load-native, remove-native, or render-host}
+action=${1:?build-native, receiving, wms, build-images, native-registry, load-native, remove-native, remove-kept, or render-host}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ $action == build-native ]]; then
   target=${2:?absolute native target directory}
@@ -23,10 +23,68 @@ if [[ $action == build-native ]]; then
     cargo build --locked --offline --profile dev --bins --target-dir "$target" \
       -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
 fi
+# The delivery cases run on one kept cluster that WAMN_DELIVERY_CLUSTER names
+# (docs/plan/platform-deploy.md §17.2). Receiving first, then WMS, which checks
+# the two applications side by side.
+if [[ $action == receiving || $action == wms ]]; then
+  # An optional existing parent directory for the test result directory.
+  if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export "WAMN_${action^^}_EVIDENCE_DIR=$parent"; fi
+  [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
+  cd "$repository"
+  if [[ $action == receiving ]]; then
+    exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
+      route_authentication_live::cluster::delivery_case::owned_release_delivery \
+      -- --exact --ignored --nocapture
+  fi
+  exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-wms-tests --features cluster --lib \
+    cluster::delivery_case::owned_release_delivery -- --exact --ignored --nocapture
+fi
+if [[ $action == remove-kept ]]; then
+  # The kept delivery cluster, its registries, and every container named after it.
+  kept=${2:?kept delivery cluster name}
+  [[ $kept =~ ^wamn-delivery-[a-z0-9]{1,24}$ ]] || { printf 'A kept delivery cluster name is required.\n' >&2; exit 64; }
+  status=0
+  kind delete cluster --name "$kept" || status=$?
+  for container in $(docker container ls --all --format '{{.Names}}'); do
+    [[ $container == "$kept"-* ]] || continue
+    docker rm --force --volumes "$container" || status=$?
+  done
+  if docker volume inspect "$kept-registry-data" >/dev/null 2>&1; then
+    docker volume rm "$kept-registry-data" || status=$?
+  fi
+  # Each application's own image tags; the cached images stay (wamn-szr0).
+  for image in $(docker image ls --format '{{.Repository}}:{{.Tag}}'); do
+    [[ ${image##*:} == "$kept"-receiving || ${image##*:} == "$kept"-wms ]] || continue
+    docker image rm "$image" || status=$?
+  done
+  cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
+  for owner in "$kept-receiving" "$kept-wms"; do
+    "$cache" release "$owner" || status=$?
+  done
+  for name in host identity gates; do
+    "$cache" retain "$name" || status=$?
+  done
+  rm -rf -- "${TMPDIR:-/tmp}/$kept" || status=$?
+  exit "$status"
+fi
+# An application cluster, or one application on the kept delivery cluster.
 cluster=${2:?owned cluster name}
-[[ $cluster =~ ^wamn-(receiving|wms)-[a-f0-9]{32}$ ]] || { printf 'An exact owned application cluster name is required.\n' >&2; exit 64; }
+[[ $cluster =~ ^wamn-(receiving|wms)-[a-f0-9]{32}$ || $cluster =~ ^wamn-delivery-[a-z0-9]{1,24}-(receiving|wms)$ ]] || {
+  printf 'An exact owned application cluster name is required.\n' >&2; exit 64; }
 work=${3:?owned private work directory}
+cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
+# The application's images: the host and identity, and the gates for Receiving.
+roles=(host identity)
+if [[ $cluster == *receiving* ]]; then
+  roles+=(gates)
+fi
 case "$action" in
+  build-images)
+    source=${4:?source commit}
+    for role in "${roles[@]}"; do
+      "$cache" ensure "$repository" "$role" "$role" "$source" "$cluster" "$cluster"
+    done
+    ;;
   native-registry)
     source=${4:?source commit}
     if docker container inspect "$cluster-native-registry" >/dev/null 2>&1; then
@@ -34,10 +92,6 @@ case "$action" in
       exit 64
     fi
     : > "$work/native-registry-owned"
-    roles=(host)
-    if [[ $cluster == wamn-receiving-* ]]; then
-      roles+=(gates identity)
-    fi
     docker run --detach --name "$cluster-native-registry" --network kind \
       --publish 127.0.0.1::5000 registry:2
     port=$(docker inspect --format '{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}' "$cluster-native-registry")
@@ -54,8 +108,10 @@ case "$action" in
     done
     ;;
   load-native)
+    # The kind cluster, when it is not the owned name: the kept delivery cluster.
+    kind_cluster=${4:-$cluster}
     authority=$(cat "$work/native-registry-authority")
-    for node in $(kind get nodes --name "$cluster"); do
+    for node in $(kind get nodes --name "$kind_cluster"); do
       docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
       docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
       for role in host gates identity; do

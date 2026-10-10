@@ -20,13 +20,16 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 serde_yaml = { workspace = true }
 tokio = { workspace = true, features = ["process", "rt"] }
 wamn-control-registry = { workspace = true }
+# The delivery cases on env apply (delivery.rs): the release manifest and the
+# release chart label of its digest.
+wamn-catalog = { workspace = true }
+wamn-engine = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true, features = ["jetstream"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
-wamn-catalog = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-test-postgres = { workspace = true }
