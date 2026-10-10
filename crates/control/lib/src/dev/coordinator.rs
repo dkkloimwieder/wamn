@@ -50,7 +50,6 @@ use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
 use crate::print_release_env::ReleaseCarrier;
 
 const BUILD_TOOL: &str = "tools/build-components";
-const RECORD_HISTORY_SQL: &str = "deploy/sql/record-history.sql";
 const RUN_SCHEMA: &str = "wamn_run";
 
 /// Stable code for the notice a run emits when it built past an authored pin.
@@ -229,7 +228,6 @@ pub struct ProductionDevStageRunner {
     local_admission_digest: Option<String>,
     activation: Option<DevActivation>,
     cdc_reader: Option<super::cdc_reader::CdcReaderProcess>,
-    generated_native_outputs: Option<super::watch::GeneratedNativeOutputs>,
     generate_input_digest: Option<String>,
     generate_input_candidate: Option<String>,
     generated_output_digest: Option<String>,
@@ -304,7 +302,6 @@ impl ProductionDevStageRunner {
             local_admission_digest: None,
             activation: None,
             cdc_reader: None,
-            generated_native_outputs: None,
             generate_input_digest: None,
             generate_input_candidate: None,
             generated_output_digest: None,
@@ -366,14 +363,6 @@ impl ProductionDevStageRunner {
     /// Exact release carrier published and pushed by the Release stage.
     pub const fn release_carrier(&self) -> Option<&ReleaseCarrier> {
         self.release.as_ref()
-    }
-
-    /// Share each successful package emission with the filesystem watcher.
-    pub(super) fn configure_generated_native_outputs(
-        &mut self,
-        outputs: super::watch::GeneratedNativeOutputs,
-    ) {
-        self.generated_native_outputs = Some(outputs);
     }
 
     /// Stop any active workload and local host owned by this runner.
@@ -494,46 +483,22 @@ impl ProductionDevStageRunner {
 
     async fn generate(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Generate);
-        let packages = self.package_inputs()?;
-        for package in packages {
-            let catalog = self
-                .catalogs
-                .get(&package.manifest.package.id)
-                .ok_or_else(|| {
-                    ProductionDevStageError::invalid(
-                        "generate package",
-                        format!(
-                            "no introspection exists for {}@{}",
-                            package.manifest.package.id, package.manifest.package.version
-                        ),
-                    )
-                })?;
-            // The SERVER decides which statements need a transaction, by
-            // planning each one against the migrated database. The unclassified
-            // entry point writes `transactional: false` for every statement,
-            // which rewrites the committed contracts (wamn-10yt.10.33). The
-            // narrowed catalog above is passed through, because every package
-            // here shares one target database and re-introspecting would hand
-            // this package the relations and fields its neighbours own.
-            wamn_schema_generator::materialize_package_verified_with_catalog(
-                catalog,
-                self.config.target_database_url(),
-                &package.root,
+        // `wamn build` of each package, bases first: an overlay's build reads
+        // the build.json of each of its bases. Every build describes its
+        // statements against its own fresh database on the target's server.
+        let mut receipts = BTreeMap::new();
+        for package in self.package_inputs()? {
+            let output_root = wamn_schema_generator::build::default_output_root(&package.root);
+            let receipt = wamn_schema_generator::build::build_package(
+                &wamn_schema_generator::build::BuildRequest::new(
+                    &package.root,
+                    &output_root,
+                    self.config.target_database_url(),
+                ),
             )
             .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("materialize generated package", source)
-            })?;
-            // Acknowledge this emission now: accepting snapshots after Build
-            // would hide external edits made while the later stages were running.
-            if let Some(outputs) = &self.generated_native_outputs {
-                outputs.acknowledge(&package.root).map_err(|source| {
-                    ProductionDevStageError::owner(
-                        "acknowledge generated native outputs",
-                        source.into(),
-                    )
-                })?;
-            }
+            .map_err(|source| ProductionDevStageError::owner("build package", source))?;
+            receipts.insert(package.manifest.package.id.clone(), receipt);
         }
         let selected = self.package_inputs()?;
         if selected
@@ -554,11 +519,7 @@ impl ProductionDevStageRunner {
         for package in selected {
             let package_id = &package.manifest.package.id;
             if crate::delivery::sqlx::requires_verifier(&package.manifest) {
-                let current =
-                    sqlx_metadata_inputs_on_disk(self.git.repository_root(), &package.root)
-                        .map_err(|source| {
-                            ProductionDevStageError::owner("read SQLx metadata inputs", source)
-                        })?;
+                let current = SqlxMetadataInputs::of(&receipts[package_id]);
                 if sqlx_metadata_is_current(self.sqlx_metadata_inputs.get(package_id), &current) {
                     self.sqlx_metadata_inputs
                         .insert(package_id.clone(), Some(current));
@@ -1046,7 +1007,6 @@ impl ProductionDevStageRunner {
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
             wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
-            host_output_log: None,
             local_admission_digest: Some(&admission_digest),
         })
         .map_err(|source| {
@@ -1104,7 +1064,6 @@ impl ProductionDevStageRunner {
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
             wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
-            host_output_log: None,
             local_admission_digest: self.local_admission_digest.as_deref(),
         })
         .await
@@ -1494,54 +1453,25 @@ fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, Product
     ))
 }
 
-/// Everything that changes a verifier's SQLx metadata.
+/// What a verifier's SQLx metadata was prepared from: the input digest of the
+/// package's build.json and the digests of its base packages.
 ///
-/// SQLx describes the emitted SQL against the verified schema, which includes
-/// the record-history functions that authored SQL calls. The locked SQLx
-/// macros write the metadata files. A Rust-only edit changes none of these.
+/// The verifier's statements and the schema they run against both come from
+/// these inputs, so equal inputs give equal metadata. A component Rust edit
+/// does not reach here, because Generate does not run for it.
 #[derive(Debug, PartialEq, Eq)]
 struct SqlxMetadataInputs {
-    sql_corpus: Box<str>,
-    schema_state: Box<str>,
-    record_history: Vec<u8>,
-    sqlx_packages: Vec<String>,
+    inputs: String,
+    dependencies: Vec<wamn_schema_generator::receipt::ReceiptDependency>,
 }
 
-fn sqlx_metadata_inputs(
-    weld: &[u8],
-    record_history: Vec<u8>,
-    cargo_lock: &[u8],
-) -> anyhow::Result<SqlxMetadataInputs> {
-    let weld = wamn_schema_generator::GeneratedPackageMetadata::from_slice(weld)?;
-    let mut name = "";
-    let mut sqlx_packages = Vec::new();
-    for line in std::str::from_utf8(cargo_lock)?.lines() {
-        if let Some(value) = line.strip_prefix("name = ") {
-            name = value;
-        } else if let Some(version) = line.strip_prefix("version = ")
-            && (name == "\"sqlx\"" || name.starts_with("\"sqlx-"))
-        {
-            sqlx_packages.push(format!("{name} {version}"));
+impl SqlxMetadataInputs {
+    fn of(receipt: &wamn_schema_generator::receipt::BuildReceipt) -> Self {
+        Self {
+            inputs: receipt.inputs.digest.clone(),
+            dependencies: receipt.dependencies.clone(),
         }
     }
-    Ok(SqlxMetadataInputs {
-        sql_corpus: weld.application_sql_corpus_identity().into(),
-        schema_state: weld.verified_schema_state_id().into(),
-        record_history,
-        sqlx_packages,
-    })
-}
-
-fn sqlx_metadata_inputs_on_disk(
-    repository: &Path,
-    package: &Path,
-) -> anyhow::Result<SqlxMetadataInputs> {
-    let read = |path: PathBuf| fs::read(&path).with_context(|| format!("read {}", path.display()));
-    sqlx_metadata_inputs(
-        &read(wamn_schema_generator::output_root(package).join("package-identity.json"))?,
-        read(repository.join(RECORD_HISTORY_SQL))?,
-        &read(repository.join("Cargo.lock"))?,
-    )
 }
 
 /// Whether the verifier's SQLx metadata was prepared for `current`.
@@ -2688,66 +2618,43 @@ mod tests {
     }
 
     #[test]
-    fn sqlx_preparation_skips_a_rust_only_edit_and_runs_for_emitted_sql() {
-        let root = std::env::temp_dir().join(format!(
-            "wamn-sqlx-inputs-{}-{}",
-            std::process::id(),
-            TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let package = root.join("apps/demo");
-        let identity = wamn_schema_generator::output_root(&package).join("package-identity.json");
-        let weld = include_bytes!("../../tests/support/dev_package/package-identity.json");
-        let weld = weld.strip_suffix(b"\n").unwrap_or(weld);
-        for (path, bytes) in [
-            (identity.clone(), weld),
-            (package.join("component/src/lib.rs"), b"pub fn value() {}"),
-            (
-                root.join(RECORD_HISTORY_SQL),
-                b"CREATE SCHEMA wamn_history;",
-            ),
-            (
-                root.join("Cargo.lock"),
-                b"[[package]]\nname = \"sqlx-macros-core\"\nversion = \"0.9.0\"\n",
-            ),
-        ] {
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, bytes).unwrap();
-        }
-        let prepared = sqlx_metadata_inputs_on_disk(&root, &package).unwrap();
+    fn sqlx_preparation_is_keyed_on_the_build_input_digest() {
+        let receipt = |inputs: &str, base: &str| {
+            let receipt: wamn_schema_generator::receipt::BuildReceipt =
+                serde_json::from_value(serde_json::json!({
+                    "schema": "wamn.build/v1",
+                    "package": {"id": "demo", "version": "1.0.0"},
+                    "inputs": {"digest": inputs, "files": {}},
+                    "dependencies": [{"id": "base", "version": "1.0.0", "digest": base}],
+                    "generator": {"id": "generator", "toolchain": "rust", "sqlx": "0.9.0"},
+                    "outputs": {"manifest": "m", "files": {}, "components": [], "web": null},
+                }))
+                .unwrap();
+            SqlxMetadataInputs::of(&receipt)
+        };
+        let prepared = receipt("sha256:a", "sha256:base");
         assert!(
             !sqlx_metadata_is_current(None, &prepared),
             "a new session prepares once"
         );
-
-        fs::write(
-            package.join("component/src/lib.rs"),
-            b"pub fn value() -> u8 { 1 }",
-        )
-        .unwrap();
-        let rust_only = sqlx_metadata_inputs_on_disk(&root, &package).unwrap();
         assert!(
-            sqlx_metadata_is_current(Some(&Some(prepared)), &rust_only),
-            "a Rust-only edit keeps the prepared SQLx metadata"
+            sqlx_metadata_is_current(Some(&Some(prepared)), &receipt("sha256:a", "sha256:base")),
+            "an unchanged build input digest keeps the prepared SQLx metadata"
         );
-
-        let corpus = wamn_schema_generator::GeneratedPackageMetadata::from_slice(weld)
-            .unwrap()
-            .application_sql_corpus_identity()
-            .to_owned();
-        let emitted = String::from_utf8(weld.to_vec())
-            .unwrap()
-            .replace(&corpus, &format!("sha256:{}", "0".repeat(64)));
-        fs::write(&identity, emitted).unwrap();
-        let sql = sqlx_metadata_inputs_on_disk(&root, &package).unwrap();
+        let prepared = receipt("sha256:a", "sha256:base");
         assert!(
-            !sqlx_metadata_is_current(Some(&Some(rust_only)), &sql),
-            "emitted SQL that differs from the prepared SQL prepares"
+            !sqlx_metadata_is_current(Some(&Some(prepared)), &receipt("sha256:b", "sha256:base")),
+            "a changed build input digest prepares"
+        );
+        let prepared = receipt("sha256:a", "sha256:base");
+        assert!(
+            !sqlx_metadata_is_current(Some(&Some(prepared)), &receipt("sha256:a", "sha256:other")),
+            "a changed base package prepares"
         );
         assert!(
-            !sqlx_metadata_is_current(Some(&None), &sql),
+            !sqlx_metadata_is_current(Some(&None), &receipt("sha256:a", "sha256:base")),
             "an unfinished preparation runs again"
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

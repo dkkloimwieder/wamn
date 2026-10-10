@@ -115,11 +115,15 @@ Otherwise the first run of the new process recreates the target.
 
 Rust code saves reuse the schema, database rows, and unchanged generated files.
 Cargo controls which selected components need compilation.
-Named SQL and operation contract changes refresh generation against the retained database.
+Named SQL and operation contract changes run the Generate stage again.
+Generate runs [`wamn build`](building.md#wamn-build) for each package, the base packages first.
+Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
 SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
 Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
 The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover, such as `web/dist`.
 The watcher uses the same ignore rules.
+The watcher watches the package directories, the component build roots, and the local configuration files of `dev.json`.
+Nothing in the loop builds natively, so the root Cargo files and `crates/client` are not inputs.
 In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `wamn.json` in the build output, `apps/target/wamn/<package>`, as generated output.
 Missing or changed generated files prevent reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.

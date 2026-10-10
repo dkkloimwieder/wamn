@@ -7,8 +7,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::fs::OpenOptions;
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -73,8 +72,6 @@ pub struct DevActivationRequest<'a> {
     pub identity: &'a DevActivationIdentity,
     pub host_binary: &'a Path,
     pub wasmtime_cache_dir: &'a Path,
-    /// Retained private output for a host sharing a named operator session.
-    pub host_output_log: Option<&'a Path>,
     /// Integrity of exact admitted bytes, held by the coordinator until cutover.
     pub local_admission_digest: Option<&'a str>,
 }
@@ -88,7 +85,6 @@ impl fmt::Debug for DevActivationRequest<'_> {
             .field("identity", self.identity)
             .field("host_binary", &self.host_binary)
             .field("wasmtime_cache_dir", &self.wasmtime_cache_dir)
-            .field("host_output_log", &self.host_output_log)
             .finish()
     }
 }
@@ -192,7 +188,6 @@ struct HostProcessSpec {
     program: PathBuf,
     args: Box<[String]>,
     env: Box<[(String, String)]>,
-    host_output_log: Option<PathBuf>,
 }
 
 impl fmt::Debug for HostProcessSpec {
@@ -201,7 +196,6 @@ impl fmt::Debug for HostProcessSpec {
             .debug_struct("HostProcessSpec")
             .field("program", &self.program)
             .field("args", &self.args)
-            .field("host_output_log", &self.host_output_log)
             .field(
                 "env_keys",
                 &self.env.iter().map(|(key, _)| key).collect::<Vec<_>>(),
@@ -218,27 +212,7 @@ fn spawn_host_process(spec: &HostProcessSpec) -> anyhow::Result<Child> {
         .envs(spec.env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::null())
         .kill_on_drop(true);
-    if let Some(path) = &spec.host_output_log {
-        let parent = path
-            .parent()
-            .context("host diagnostics path has no parent")?;
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create host diagnostics directory {}", parent.display()))?;
-        // A fresh regular file rejects existing paths, including symlinks,
-        // without truncating previous activation diagnostics.
-        let log = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(path)
-            .with_context(|| format!("create private host diagnostics {}", path.display()))?;
-        let stderr = log
-            .try_clone()
-            .with_context(|| format!("clone host diagnostics handle {}", path.display()))?;
-        command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
-    } else {
-        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    }
+    command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
     command
         .spawn()
         .with_context(|| format!("spawn local wamn-host at {}", spec.program.display()))
@@ -986,7 +960,6 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         program: request.host_binary.to_owned(),
         args: args.into_boxed_slice(),
         env: env.into_boxed_slice(),
-        host_output_log: request.host_output_log.map(Path::to_owned),
     }
 }
 
@@ -1550,71 +1523,6 @@ mod tests {
         HostLogFixture(root)
     }
 
-    fn host_log_spec(log: &Path) -> HostProcessSpec {
-        HostProcessSpec {
-            program: PathBuf::from("/bin/sh"),
-            args: [
-                "-c".to_owned(),
-                "printf 'host stdout\\n'; printf 'host stderr\\n' >&2".to_owned(),
-            ]
-            .into(),
-            env: Box::new([]),
-            host_output_log: Some(log.to_owned()),
-        }
-    }
-
-    #[tokio::test]
-    async fn host_output_log_retains_both_process_streams_in_a_private_regular_file() {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let fixture = host_log_fixture();
-        let first = fixture.0.join("cache/first.log");
-        let second = fixture.0.join("cache/second.log");
-        for log in [&first, &second] {
-            let mut child = spawn_host_process(&host_log_spec(log))
-                .expect("spawn the replacement host into its own log");
-            let status = timeout(Duration::from_secs(2), child.wait())
-                .await
-                .expect("fake host exits before the deadline")
-                .expect("reap fake host");
-            assert!(status.success());
-            let metadata = std::fs::symlink_metadata(log).expect("host log survives process exit");
-            assert!(metadata.is_file());
-            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
-        }
-        for log in [&first, &second] {
-            assert_eq!(
-                std::fs::read_to_string(log).expect("both activations retain their output"),
-                "host stdout\nhost stderr\n"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn host_output_log_refuses_existing_files_and_symlinks_without_clobbering() {
-        let fixture = host_log_fixture();
-        let preserved = fixture.0.join("preserved.log");
-        std::fs::write(&preserved, "existing diagnostics")
-            .expect("create existing private log fixture");
-        let symlink = fixture.0.join("linked.log");
-        std::os::unix::fs::symlink(&preserved, &symlink).expect("create existing log symlink");
-        for log in [&preserved, &symlink] {
-            let error = spawn_host_process(&host_log_spec(log))
-                .expect_err("existing log path must refuse before spawning the host");
-            assert!(error.to_string().contains(&log.display().to_string()));
-            assert_eq!(
-                std::fs::read_to_string(&preserved).expect("read preserved diagnostics"),
-                "existing diagnostics"
-            );
-        }
-        assert!(
-            std::fs::symlink_metadata(symlink)
-                .expect("inspect refused symlink")
-                .file_type()
-                .is_symlink()
-        );
-    }
-
     #[derive(Clone, Debug, Eq, PartialEq)]
     enum Event {
         Subscribe(String),
@@ -1969,7 +1877,6 @@ mod tests {
             identity: &identity,
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
-            host_output_log: None,
             local_admission_digest: None,
         };
         let spec = host_process_spec(&request);
@@ -2002,7 +1909,6 @@ mod tests {
             identity: &identity,
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
-            host_output_log: None,
             local_admission_digest: None,
         };
         let spec = host_process_spec(&request);
@@ -2084,7 +1990,6 @@ mod tests {
             identity: &identity,
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
-            host_output_log: None,
             local_admission_digest: Some(&admission_digest),
         };
         prepare_local(&request).expect("Release stages validated workload bytes");
@@ -2198,7 +2103,6 @@ mod tests {
             identity: &identity,
             host_binary: Path::new("/opt/wamn/bin/wamn-host"),
             wasmtime_cache_dir: Path::new("/tmp/wamn-dev-cache"),
-            host_output_log: None,
             local_admission_digest: None,
         };
         let shared = Arc::new(Shared::default());
@@ -2488,7 +2392,6 @@ mod tests {
             identity: &identity,
             host_binary: Path::new("/opt/wamn/bin/wamn-host"),
             wasmtime_cache_dir: Path::new("/tmp/wamn-dev-cache"),
-            host_output_log: None,
             local_admission_digest: None,
         };
         let shared = Arc::new(Shared::default());

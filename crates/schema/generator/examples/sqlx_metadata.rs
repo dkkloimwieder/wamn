@@ -1,6 +1,7 @@
 //! Prepares SQLx metadata for one generated package into its build output.
 //!
-//! The dev loop runs it. It goes when the dev loop builds through `wamn build`.
+//! The dev loop runs it after `wamn build`, through
+//! `wamn_control::delivery::sqlx::prepare_command`.
 
 use std::path::PathBuf;
 

@@ -45,6 +45,9 @@ const HAND_WRITTEN_MANIFEST: &str = "wamn.json";
 /// The type that stands in for an undeclared statement value type while the
 /// build reads facts that do not depend on it.
 const PLACEHOLDER_TYPE: &str = "text";
+/// The SQLx metadata of the generated verifier. It is prepared into the build
+/// output after the build (§7.1 step 7), so a build keeps it.
+const SQLX_METADATA: &str = ".sqlx";
 
 /// One package build.
 #[derive(Debug, Clone)]
@@ -593,8 +596,9 @@ async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
 }
 
 /// Write the build output: every generated file, the canonical `wamn.json`,
-/// and nothing else. A file whose bytes are unchanged keeps its modification
-/// time. The receipt goes first, so an interrupted build leaves none.
+/// and nothing else except the SQLx metadata. A file whose bytes are unchanged
+/// keeps its modification time. The receipt goes first, so an interrupted
+/// build leaves none.
 fn write_outputs(
     package_output: &Path,
     canonical: &[u8],
@@ -613,7 +617,7 @@ fn write_outputs(
         fs::remove_file(&receipt).with_context(|| format!("remove {}", receipt.display()))?;
     }
     for stale in existing_files(package_output)? {
-        if !outputs.contains_key(&stale) {
+        if !outputs.contains_key(&stale) && !stale.starts_with(SQLX_METADATA) {
             let path = package_output.join(stale);
             fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
         }

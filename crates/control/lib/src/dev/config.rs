@@ -46,7 +46,6 @@ const DUP_WINDOW_SECS: &str = "dup_window_secs";
 const TEMPO_QUERY_URL: &str = "tempo_query_url";
 const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "otel_exporter_otlp_endpoint";
 const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
-const OPERATOR_BEARER_TOKEN: &str = "operator_bearer_token";
 const ROUTE_HOST: &str = "route_host";
 const PLATFORM_DOMAIN: &str = "platform_domain";
 const LOCAL_ARTIFACTS: &str = "local_artifacts";
@@ -150,9 +149,6 @@ struct DevConfigDocument {
     tempo_query_url: String,
     otel_exporter_otlp_endpoint: String,
     gate_bearer_token: String,
-    #[serde(default)]
-    #[schemars(with = "String")]
-    operator_bearer_token: Option<String>,
     route_host: String,
     platform_domain: String,
     local_artifacts: LocalArtifacts,
@@ -586,7 +582,6 @@ pub struct DevConfig {
     otel_exporter_otlp_endpoint: Box<str>,
     local_artifacts: LocalArtifacts,
     gate_bearer_token: Box<str>,
-    operator_bearer_token: Option<Box<str>>,
     route_host: Box<str>,
     platform_domain: Box<str>,
     package_sources: Box<[PathBuf]>,
@@ -808,11 +803,6 @@ impl DevConfig {
         &self.gate_bearer_token
     }
 
-    /// Operator credential for generated clients, separate from Gate authority.
-    pub fn operator_bearer_token(&self) -> Option<&str> {
-        self.operator_bearer_token.as_deref()
-    }
-
     /// Deployment-owned route hostname supplied at publication.
     pub fn route_host(&self) -> &str {
         &self.route_host
@@ -922,7 +912,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         otel_exporter_otlp_endpoint,
         local_artifacts,
         gate_bearer_token,
-        operator_bearer_token,
         route_host,
         platform_domain,
         package_sources,
@@ -1011,9 +1000,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let target_database_acl_file =
         nonempty_path(target_database_acl_file, TARGET_DATABASE_ACL_FILE)?;
     let gate_bearer_token = nonempty_string(gate_bearer_token, GATE_BEARER_TOKEN)?;
-    let operator_bearer_token = operator_bearer_token
-        .map(|token| nonempty_string(token, OPERATOR_BEARER_TOKEN))
-        .transpose()?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
     wamn_control_provision::validate_platform_domain(&platform_domain).map_err(|source| {
         DevConfigError::new(
@@ -1213,7 +1199,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         otel_exporter_otlp_endpoint,
         local_artifacts,
         gate_bearer_token,
-        operator_bearer_token,
         route_host,
         platform_domain: platform_domain.into_boxed_str(),
         package_sources,
@@ -1824,32 +1809,6 @@ pub(crate) mod tests {
             listener.accept().await.expect("accept preflight probe");
         });
         (address, accepted)
-    }
-
-    #[test]
-    fn operator_token_is_optional_redacted_and_separate_from_gate_authority() {
-        let address: SocketAddr = "127.0.0.1:5432".parse().unwrap();
-        let mut document = complete_document(&[address; ENDPOINT_COUNT]);
-        let parse = |value: &Value| parse_config(&serde_json::to_vec(value).unwrap());
-        assert!(parse(&document).unwrap().operator_bearer_token().is_none());
-        document[OPERATOR_BEARER_TOKEN] = Value::String("operator-private-token".into());
-        let config = parse(&document).unwrap();
-        assert_eq!(
-            config.operator_bearer_token(),
-            Some("operator-private-token")
-        );
-        assert_ne!(
-            config.operator_bearer_token(),
-            Some(config.gate_bearer_token())
-        );
-        assert!(!format!("{config:?}").contains("operator-private-token"));
-        for invalid in [Value::Null, Value::Bool(true), Value::String(String::new())] {
-            document[OPERATOR_BEARER_TOKEN] = invalid;
-            assert_eq!(
-                parse(&document).unwrap_err().error_type(),
-                DevConfigErrorType::InvalidValue
-            );
-        }
     }
 
     #[test]

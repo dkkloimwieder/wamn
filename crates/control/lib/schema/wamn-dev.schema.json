@@ -166,10 +166,6 @@
       "description": "The materializer's events binding in the environment's private root, as the cluster mounts its Secret.",
       "type": "string"
     },
-    "operator_bearer_token": {
-      "default": null,
-      "type": "string"
-    },
     "org": {
       "type": "string"
     },

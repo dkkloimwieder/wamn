@@ -8,8 +8,8 @@ An empty selection, failure, ignored case, or reported skip cannot establish suc
 
 ```bash
 wamn-ctl check-changes --repository "$SOURCE" \
-  --package wamn-client-tui --test screen \
-  --case unchanged_activation_preserves_state_but_same_schema_target_replacement_resets_everything \
+  --package wamn-schema-generator --test client_emitter \
+  --case generated_code_carries_release_facts_and_no_deployment_facts \
   --result "$CHANGE_RESULT"
 ```
 

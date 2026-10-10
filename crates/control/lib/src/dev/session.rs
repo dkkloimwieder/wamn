@@ -333,34 +333,13 @@ async fn run_watch_command(
         .collect::<Vec<_>>();
     let component_roots =
         component_build_watch_roots(git.repository_root(), &package_roots).await?;
-    let repository_root = git.repository_root().to_owned();
-    let native_files = [
-        "Cargo.toml",
-        "Cargo.lock",
-        ".cargo/config",
-        ".cargo/config.toml",
-        "rust-toolchain",
-        "rust-toolchain.toml",
-    ]
-    .map(|file| repository_root.join(file))
-    .to_vec();
-    let mut filesystem = FilesystemInvalidationSource::with_native_inputs(
-        package_roots,
-        component_roots,
-        [repository_root.join("crates/client")],
-        native_files,
-        git.clone(),
-    )
-    .await
-    .context("watch package, component and native client inputs")?;
+    let mut filesystem =
+        FilesystemInvalidationSource::new(package_roots, component_roots, git.clone())
+            .await
+            .context("watch package and component inputs")?;
     filesystem
         .replace_configuration_files(local_configuration_files(config))
         .context("watch local configuration files")?;
-    runner.configure_generated_native_outputs(
-        filesystem
-            .watch_generated_native_outputs()
-            .context("watch generated native outputs at their emission boundary")?,
-    );
     let native = NativeInvalidations {
         filesystem,
         config: config.clone(),

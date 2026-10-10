@@ -553,10 +553,8 @@ The platform verifier discovers queries and Rust types from generated source map
 It writes the metadata to `.sqlx` in the package's build output.
 It prepares an application only when one of these inputs changed:
 
-- the emitted SQL, `application_sql_corpus_identity` in the package's `package-identity.json`
-- the verified schema, `verified_schema_state_id` in the same file, which for Acme also changes with a Receiving migration
-- `deploy/sql/record-history.sql`
-- the locked SQLx crates in `Cargo.lock`
+- the input digest in the package's `build.json`, which covers the package files, the apps workspace `Cargo.lock`, and the generator identity
+- the digest of each base package in the same `build.json`, which for Acme changes with a Receiving change
 
 The loop compares these inputs with the inputs of its last successful preparation in the session.
 A new session prepares once. A failed or interrupted preparation runs again in the next cycle.

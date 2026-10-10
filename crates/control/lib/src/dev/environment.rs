@@ -1069,7 +1069,6 @@ pub fn write_dev_config(
             .management_token
             .as_deref()
             .context("project provisioning emitted no management-author PAT")?,
-        "operator_bearer_token": route.token.as_str(),
         "route_host": inputs.route_host.as_str(),
         "package_sources": inputs.package_sources.as_slice(),
         "catalog": identity.catalog.as_str(),
