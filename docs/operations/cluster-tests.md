@@ -129,7 +129,8 @@ The startup case records requests, traces, recovery, and cache identity without 
 
 ### Environment apply on kind
 
-`environment_apply_kind` is the one kind suite of the platform. It runs once per epic.
+`environment_apply_kind` is the one kind suite of the platform. No epic runs it.
+It runs once, from scratch, as part of the cutover acceptance (wamn-k8127), after every other epic closes.
 It creates its own kind cluster `wamn-apply-<pid>` with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password.
 It runs `env apply`, rollback, release none and delete on two environments, and it checks the host heartbeat labels, placement by `hostSelector`, route host isolation and the operator release.
 It removes the cluster and the registry at the end.
