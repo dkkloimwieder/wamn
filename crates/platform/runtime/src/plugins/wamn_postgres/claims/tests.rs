@@ -454,7 +454,9 @@ fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
         "wiring.graph_json ->> 'wiring-id' = $5",
         "component.tenant_id = executing_member.tenant_id",
         "component.package_id = executing_member.package_id",
-        "component.package_version = executing_member.package_version",
+        "LEFT JOIN release_component AS component",
+        "release_manifest.manifest -> 'components'",
+        "member.value -> 'descriptor' -> 'operations' AS operations",
         "component.component_digest = $8",
         "component.operations #>> ARRAY[$18, 'registered-operation']",
         "wiring.graph_json #> ARRAY['nodes', $7]",
@@ -487,6 +489,7 @@ fn effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback() {
         "catalog_version",
         "gated_catalog_version",
         "catalog_heads",
+        "component_library",
     ] {
         assert!(!sql.contains(retired), "effect authority retains {retired}");
     }

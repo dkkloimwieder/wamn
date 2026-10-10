@@ -508,17 +508,33 @@ pub struct ConnectionEffectSnapshot {
 /// if the environment's hot pointer flips concurrently. The mounted release is
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not
 /// a database relation and must not be projected back into Postgres.
+///
+/// The origin and executing component facts are the descriptors of the
+/// components of release `$3`, the one owner of component facts (R2).
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
-WITH release_member AS MATERIALIZED ( \
+WITH release_manifest AS MATERIALIZED ( \
     SELECT release.tenant_id, \
-           package.value ->> 'package-id' AS package_id, \
-           package.value ->> 'package-version' AS package_version \
+           convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
-     CROSS JOIN LATERAL jsonb_array_elements( \
-           convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}' \
-       ) AS package(value) \
      WHERE release.tenant_id = $1 \
        AND release.manifest_digest = $3 \
+), release_member AS MATERIALIZED ( \
+    SELECT release_manifest.tenant_id, \
+           package.value ->> 'package-id' AS package_id, \
+           package.value ->> 'package-version' AS package_version \
+      FROM release_manifest \
+     CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest #> '{release,packages}') \
+           AS package(value) \
+), release_component AS MATERIALIZED ( \
+    SELECT release_manifest.tenant_id, \
+           member.value ->> 'package-id' AS package_id, \
+           member.value -> 'descriptor' ->> 'component' AS component, \
+           member.value -> 'descriptor' ->> 'interface-version' AS interface_version, \
+           member.value -> 'descriptor' ->> 'component-digest' AS component_digest, \
+           member.value -> 'descriptor' -> 'operations' AS operations \
+      FROM release_manifest \
+     CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest -> 'components') \
+           AS member(value) \
 ), member AS MATERIALIZED ( \
     SELECT member.tenant_id, member.package_id, member.package_version \
       FROM release_member AS member \
@@ -566,20 +582,18 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
   LEFT JOIN release_member AS origin_member \
     ON origin_member.tenant_id = member.tenant_id \
    AND origin_member.package_id = $13 \
-  LEFT JOIN catalog.component_library AS origin_component \
+  LEFT JOIN release_component AS origin_component \
     ON origin_component.tenant_id = origin_member.tenant_id \
    AND origin_component.package_id = origin_member.package_id \
-   AND origin_component.package_version = origin_member.package_version \
    AND origin_component.component_digest = $14 \
    AND origin_component.component = $15 \
    AND origin_component.interface_version = $16 \
   LEFT JOIN release_member AS executing_member \
     ON executing_member.tenant_id = member.tenant_id \
    AND executing_member.package_id = $2 \
-  LEFT JOIN catalog.component_library AS component \
+  LEFT JOIN release_component AS component \
     ON component.tenant_id = executing_member.tenant_id \
    AND component.package_id = executing_member.package_id \
-   AND component.package_version = executing_member.package_version \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \

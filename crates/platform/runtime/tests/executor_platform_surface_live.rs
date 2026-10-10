@@ -256,9 +256,10 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let definition_hash = digest("2");
     let validation_hash = digest("3");
     // The release facts the runtime reads from the bytes: package membership,
-    // the wiring membership and the component closure.
+    // the wiring membership and the component closure, each component with
+    // its descriptor.
     let manifest_body = format!(
-        r#"{{"components":[{{"component":"entity","digest":"{component_digest}","interface-version":"0.1","package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}},"workflow":{{"wirings":[{{"graph-hash":"{wiring_hash}","package-id":"{PACKAGE_ID}","wiring-id":"{WIRING_ID}","wiring-version":{WIRING_VERSION}}}]}}}}"#
+        r#"{{"components":[{{"component":"entity","descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"digest":"{component_digest}","interface-version":"0.1","package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}},"workflow":{{"wirings":[{{"graph-hash":"{wiring_hash}","package-id":"{PACKAGE_ID}","wiring-id":"{WIRING_ID}","wiring-version":{WIRING_VERSION}}}]}}}}"#
     );
     admin
         .batch_execute(&format!(
@@ -372,7 +373,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             "component-digest": component_digest, "imports": [],
             "imports-fingerprint": imports_fingerprint, "effects": [],
         }),
-        "the component library join produced the wrong released fact"
+        "the release descriptor produced the wrong released fact"
     );
 
     // A route reads the same release component list with no wiring.

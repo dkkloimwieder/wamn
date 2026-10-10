@@ -32,9 +32,9 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::NoTls;
 use wamn_catalog::{
-    AdmittedComponent, ComponentDeclaration, ConnectionTypeDescriptor,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingComponentOperation, WiringDocument, WiringNode,
-    WiringTerminal,
+    AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
+    ComponentDescriptor, ConnectionTypeDescriptor, SERVING_MANIFEST_FORMAT_VERSION,
+    ServingComponentOperation, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::push_component::admitted_projection_hash;
 use wamn_control_provision::{
@@ -354,7 +354,13 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
             "interface-version": component.interface_version,
             "digest": component.component_digest,
             "operations": operations,
-            "descriptor": {"component": component.component, "interface-version": component.interface_version, "component-digest": component.component_digest, "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
+            "descriptor": ComponentDescriptor::new(
+                component.clone(),
+                vec![ComponentConnection {
+                    store_alias: STORE_ALIAS.to_owned(),
+                    requirement_type: ComponentConnectionType::Http,
+                }],
+            ),
         }],
         "routes": [],
         "attachments": {},

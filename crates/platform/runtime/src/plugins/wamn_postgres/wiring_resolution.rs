@@ -16,7 +16,8 @@ use super::{CandidateBindingWorld, WamnPostgres};
 /// The release is its manifest digest (docs/plan/platform-deploy.md R1).
 /// `catalog.releases` holds the verified manifest bytes under that digest, and
 /// the package membership, the wiring membership and the component closure are
-/// read from those bytes. Binds: `$1` tenant, `$2` package, `$3` wiring id,
+/// read from those bytes. Each component's facts are its descriptor in the
+/// manifest, the one owner of component facts (R2). Binds: `$1` tenant, `$2` package, `$3` wiring id,
 /// `$4` wiring version, `$5` manifest digest.
 pub const RELEASE_WIRING_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
@@ -59,29 +60,23 @@ SELECT selected.version, selected.package_version, \
                jsonb_build_object( \
                    'scope', jsonb_build_object( \
                        'tenant-id', $1::text, \
-                       'package-id', component.package_id, \
-                       'package-version', component.package_version \
+                       'package-id', release_package.package_id, \
+                       'package-version', release_package.package_version \
                    ), \
-                   'component', component.component, \
-                   'interface-version', component.interface_version, \
-                   'operations', component.operations, \
-                   'component-digest', component.component_digest, \
-                   'imports', component.imports, \
-                   'imports-fingerprint', component.imports_fingerprint, \
-                   'effects', component.effects \
+                   'component', descriptor.value -> 'component', \
+                   'interface-version', descriptor.value -> 'interface-version', \
+                   'operations', descriptor.value -> 'operations', \
+                   'component-digest', descriptor.value -> 'component-digest', \
+                   'imports', descriptor.value -> 'imports', \
+                   'imports-fingerprint', descriptor.value -> 'imports-fingerprint', \
+                   'effects', descriptor.value -> 'effects' \
                ) ORDER BY projected.ordinality \
             ) \
               FROM jsonb_array_elements(release_scope.manifest -> 'components') \
                    WITH ORDINALITY AS projected(definition, ordinality) \
+             CROSS JOIN LATERAL (SELECT projected.definition -> 'descriptor') AS descriptor(value) \
               JOIN release_package \
-                ON release_package.package_id = projected.definition ->> 'package-id' \
-              JOIN catalog.component_library AS component \
-                ON component.tenant_id = $1 \
-               AND component.package_id = release_package.package_id \
-               AND component.package_version = release_package.package_version \
-               AND component.component = projected.definition ->> 'component' \
-               AND component.interface_version = projected.definition ->> 'interface-version' \
-               AND component.component_digest = projected.definition ->> 'digest'), \
+                ON release_package.package_id = projected.definition ->> 'package-id'), \
            '[]'::jsonb \
        )::text AS components, \
        jsonb_array_length(release_scope.manifest -> 'components') AS manifest_component_count \
@@ -112,29 +107,23 @@ SELECT COALESCE( \
                jsonb_build_object( \
                    'scope', jsonb_build_object( \
                        'tenant-id', $1::text, \
-                       'package-id', component.package_id, \
-                       'package-version', component.package_version \
+                       'package-id', release_package.package_id, \
+                       'package-version', release_package.package_version \
                    ), \
-                   'component', component.component, \
-                   'interface-version', component.interface_version, \
-                   'operations', component.operations, \
-                   'component-digest', component.component_digest, \
-                   'imports', component.imports, \
-                   'imports-fingerprint', component.imports_fingerprint, \
-                   'effects', component.effects \
+                   'component', descriptor.value -> 'component', \
+                   'interface-version', descriptor.value -> 'interface-version', \
+                   'operations', descriptor.value -> 'operations', \
+                   'component-digest', descriptor.value -> 'component-digest', \
+                   'imports', descriptor.value -> 'imports', \
+                   'imports-fingerprint', descriptor.value -> 'imports-fingerprint', \
+                   'effects', descriptor.value -> 'effects' \
                ) ORDER BY projected.ordinality \
             ) \
               FROM jsonb_array_elements(release_scope.manifest -> 'components') \
                    WITH ORDINALITY AS projected(definition, ordinality) \
+             CROSS JOIN LATERAL (SELECT projected.definition -> 'descriptor') AS descriptor(value) \
               JOIN release_package \
-                ON release_package.package_id = projected.definition ->> 'package-id' \
-              JOIN catalog.component_library AS component \
-                ON component.tenant_id = $1 \
-               AND component.package_id = release_package.package_id \
-               AND component.package_version = release_package.package_version \
-               AND component.component = projected.definition ->> 'component' \
-               AND component.interface_version = projected.definition ->> 'interface-version' \
-               AND component.component_digest = projected.definition ->> 'digest'), \
+                ON release_package.package_id = projected.definition ->> 'package-id'), \
            '[]'::jsonb \
        )::text AS components, \
        jsonb_array_length(release_scope.manifest -> 'components') AS manifest_component_count \
@@ -149,16 +138,33 @@ SELECT COALESCE( \
 /// other immutable coordinate that admission read from the same row. Parameter
 /// eight is the frozen binding JSON for execution, or NULL to capture current
 /// admission inputs.
+///
+/// The wiring nodes resolve against the descriptors of the components that
+/// release `$6` carries for package `$2`.
 pub const CANDIDATE_WIRING_SQL: &str = "\
-WITH release_scope AS MATERIALIZED ( \
-    SELECT package.value ->> 'package-version' AS package_version \
+WITH release_manifest AS MATERIALIZED ( \
+    SELECT convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
-     CROSS JOIN LATERAL jsonb_array_elements( \
-           convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}' \
-       ) AS package(value) \
      WHERE release.tenant_id = $1 \
        AND release.manifest_digest = $6 \
-       AND package.value ->> 'package-id' = $2 \
+), release_scope AS MATERIALIZED ( \
+    SELECT package.value ->> 'package-version' AS package_version \
+      FROM release_manifest \
+     CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest #> '{release,packages}') \
+           AS package(value) \
+     WHERE package.value ->> 'package-id' = $2 \
+), release_component AS MATERIALIZED ( \
+    SELECT member.value -> 'descriptor' ->> 'component' AS component, \
+           member.value -> 'descriptor' ->> 'interface-version' AS interface_version, \
+           member.value -> 'descriptor' -> 'operations' AS operations, \
+           member.value -> 'descriptor' ->> 'component-digest' AS component_digest, \
+           member.value -> 'descriptor' -> 'imports' AS imports, \
+           member.value -> 'descriptor' ->> 'imports-fingerprint' AS imports_fingerprint, \
+           member.value -> 'descriptor' -> 'effects' AS effects \
+      FROM release_manifest \
+     CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest -> 'components') \
+           AS member(value) \
+     WHERE member.value ->> 'package-id' = $2 \
 ), selected AS MATERIALIZED ( \
     SELECT wiring.version, \
            release_scope.package_version, \
@@ -181,11 +187,8 @@ WITH release_scope AS MATERIALIZED ( \
         CASE WHEN jsonb_typeof(selected.graph_json -> 'nodes') = 'object' \
              THEN selected.graph_json -> 'nodes' ELSE '{}'::jsonb END \
       ) AS node \
-      LEFT JOIN catalog.component_library AS component \
-        ON component.tenant_id = $1 \
-       AND component.package_id = $2 \
-       AND component.package_version = selected.package_version \
-       AND component.component = node.value ->> 'component' \
+      LEFT JOIN release_component AS component \
+        ON component.component = node.value ->> 'component' \
        AND component.interface_version = node.value ->> 'interface-version' \
        AND component.operations ? (node.value ->> 'operation') \
 ), node_summary AS MATERIALIZED ( \
@@ -263,7 +266,7 @@ SELECT selected.version, \
                    'scope', jsonb_build_object( \
                        'tenant-id', $1::text, \
                        'package-id', $2::text, \
-                       'package-version', component.package_version \
+                       'package-version', selected.package_version \
                    ), \
                    'component', component.component, \
                    'interface-version', component.interface_version, \
@@ -280,11 +283,8 @@ SELECT selected.version, \
        binding_world.requirement_count, binding_world.resolved_count, \
        binding_world.binding_world_json::text \
   FROM selected CROSS JOIN node_summary CROSS JOIN binding_world \
-  LEFT JOIN catalog.component_library AS component \
-    ON component.tenant_id = $1 \
-   AND component.package_id = $2 \
-   AND component.package_version = selected.package_version \
-   AND EXISTS ( \
+  LEFT JOIN release_component AS component \
+    ON EXISTS ( \
        SELECT 1 \
          FROM jsonb_each(selected.graph_json -> 'nodes') AS node(node_id, definition) \
         WHERE definition ->> 'component' = component.component \
@@ -1155,6 +1155,19 @@ mod tests {
         assert!(RELEASE_WIRING_SQL.contains("catalog.releases"));
         assert!(RELEASE_WIRING_SQL.contains("release.manifest_digest = $5"));
         assert!(!RELEASE_WIRING_SQL.contains("wiring_activation"));
+    }
+
+    #[test]
+    fn component_facts_come_from_the_release_descriptors() {
+        for sql in [
+            RELEASE_WIRING_SQL,
+            RELEASE_COMPONENTS_SQL,
+            CANDIDATE_WIRING_SQL,
+        ] {
+            assert!(sql.contains("-> 'descriptor'"));
+            assert!(!sql.contains("component_library"));
+        }
+        assert!(CANDIDATE_WIRING_SQL.contains("LEFT JOIN release_component AS component"));
     }
 
     #[test]
