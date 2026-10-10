@@ -100,7 +100,6 @@ pub(super) async fn prepare_session_host_fixture(
             publisher: &publisher,
             project: project.as_ref(),
             control: admin.as_ref(),
-            attachments,
         },
     )
     .await?;
@@ -385,7 +384,6 @@ pub(super) async fn assert_nested_session(
             publisher: &publisher,
             project: project.as_ref(),
             control: admin.as_ref(),
-            attachments,
         },
     )
     .await?;

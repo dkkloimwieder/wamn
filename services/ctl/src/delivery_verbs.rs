@@ -410,7 +410,7 @@ mod tests {
         "registry.example/wamn/releases",
     ];
 
-    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":6,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 
     fn parse(source: &[&str]) -> Result<PushReleaseManifestArgs, clap::Error> {
         let mut argv = vec!["push-release-manifest"];
@@ -487,7 +487,7 @@ mod tests {
         ])
         .expect("the published snapshot source parses");
         let (_, manifest_digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-5 bytes");
+            .expect("the fixture is canonical format-6 bytes");
         let coordinate = args.into_request().deployment_coordinate(&manifest_digest);
 
         assert_eq!(coordinate.triple.org, "fixture");

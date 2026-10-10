@@ -561,7 +561,25 @@ pub(super) struct JourneyReleaseTarget<'a> {
     pub(super) publisher: &'a str,
     pub(super) project: &'a Client,
     pub(super) control: &'a Client,
-    pub(super) attachments: Vec<PathBuf>,
+}
+
+/// The package artifact registry of the journey: `<registry>/<org>/packages`
+/// beside the component artifact base, recorded in the control database.
+pub(super) fn journey_package_registry(
+    inputs: &JourneyDocument,
+    system_url: &str,
+) -> anyhow::Result<wamn_control::package_artifact::PackageRegistry> {
+    let (parent, _) = inputs
+        .component_artifact_base
+        .rsplit_once('/')
+        .context("the component artifact base names a repository")?;
+    Ok(wamn_control::package_artifact::PackageRegistry {
+        artifact_base: format!("{parent}/packages"),
+        registry_auth_file: inputs.registry_auth_file.clone(),
+        insecure_registry: true,
+        oci_ca_paths: Vec::new(),
+        control_database_url: system_url.to_owned(),
+    })
 }
 
 pub(super) async fn publish_journey_release(
@@ -574,7 +592,6 @@ pub(super) async fn publish_journey_release(
         publisher,
         project,
         control,
-        attachments,
     } = target;
     let wirings = released_journey_packages()
         .flat_map(|package| {
@@ -585,29 +602,38 @@ pub(super) async fn publish_journey_release(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let digest = publish_release::publish_release(PublishReleaseRequest {
-        database_url: project_url.to_owned(),
-        control_database_url: system_url.to_owned(),
-        org: identity().org.clone(),
-        project: identity().project.clone(),
-        tenant: identity().tenant.clone(),
-        environment: identity().environment.clone(),
-        verified_publisher_principal: publisher.to_owned(),
-        run_schema: "wamn_run".to_owned(),
-        packages: released_journey_packages()
-            .map(|package| PackageCoordinate::new(package.id, package.version()))
-            .collect::<Result<Vec<_>, _>>()?,
-        wirings,
-        attachments,
-        package_manifests: released_journey_packages()
-            .map(|package| {
-                wamn_schema_generator::package_manifest_path(&journey_package_root(
-                    package,
-                    Some(inputs),
-                ))
-            })
-            .collect(),
-    })
+    // The release composes the verified package artifacts, which live beside
+    // the component artifacts.
+    let registry = journey_package_registry(inputs, system_url)?;
+    for package in released_journey_packages() {
+        wamn_control::package_artifact::push_package(
+            &wamn_control::package_artifact::PushPackageRequest {
+                package: journey_package_root(package, Some(inputs)),
+                registry: registry.clone(),
+                component_artifact_base: inputs.component_artifact_base.clone(),
+                source_commit: None,
+            },
+        )
+        .await
+        .with_context(|| format!("push the {} package artifact", package.id))?;
+    }
+    let digest = publish_release::publish_release(
+        PublishReleaseRequest {
+            database_url: project_url.to_owned(),
+            control_database_url: system_url.to_owned(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            tenant: identity().tenant.clone(),
+            environment: identity().environment.clone(),
+            verified_publisher_principal: publisher.to_owned(),
+            run_schema: "wamn_run".to_owned(),
+            packages: released_journey_packages()
+                .map(|package| PackageCoordinate::new(package.id, package.version()))
+                .collect::<Result<Vec<_>, _>>()?,
+            wirings,
+        },
+        &registry,
+    )
     .await
     .context("publish the production Receiving release")?
     .to_string();

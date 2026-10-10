@@ -1,13 +1,14 @@
-//! Digest and closed-shape tests for serving-manifest format 5.
+//! Digest and closed-shape tests for serving-manifest format 6.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
     ArtifactHash, AttachmentAuthPolicy, AttachmentTarget, AttachmentType, CatalogIdentityError,
-    DefinitionHash, OperationType, PackageCoordinate, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRegistrationInput,
-    ServingRelease, ServingRoute, ServingWiring, parse_attachment_auth_policy,
+    ComponentDescriptor, DefinitionHash, OperationType, PackageCoordinate, ServingAttachment,
+    ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
+    ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring,
+    parse_attachment_auth_policy,
 };
 
 mod publish_vector {
@@ -60,6 +61,7 @@ fn components() -> BTreeSet<ServingComponent> {
                     statements: BTreeMap::new(),
                 },
             )]),
+            descriptor: ComponentDescriptor::named("transform", "0.1", COMPONENT_B),
         },
         ServingComponent {
             package_id: "platform_fixture_overlay".into(),
@@ -80,6 +82,7 @@ fn components() -> BTreeSet<ServingComponent> {
                     statements: BTreeMap::new(),
                 },
             )]),
+            descriptor: ComponentDescriptor::named("http-request", "0.1", COMPONENT_A),
         },
     ])
 }
@@ -175,7 +178,7 @@ fn manifest() -> ServingManifest {
             },
         )]),
     )
-    .expect("the format-five fixture is valid")
+    .expect("the format-six fixture is valid")
 }
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -190,13 +193,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_five_preimage_and_digest_are_pinned() {
+fn the_format_six_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
-        .expect("the format-five vector is admitted by the reader");
+        .expect("the format-six vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), publish_vector::DIGEST);
 
@@ -220,7 +223,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
     });
     assert_eq!(format!("sha256:{hex}"), format_three_vector::DIGEST);
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
-        .expect_err("format 5 refuses the frozen format-3 bytes");
+        .expect_err("format 6 refuses the frozen format-3 bytes");
     assert!(
         matches!(
             &error,
@@ -232,7 +235,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
 }
 
 #[test]
-fn fresh_only_is_digest_bound_without_changing_format_five_default_bytes() {
+fn fresh_only_is_digest_bound_without_changing_format_six_default_bytes() {
     let baseline = manifest();
     let mut fresh = baseline.clone();
     fresh.components = fresh
@@ -248,9 +251,9 @@ fn fresh_only_is_digest_bound_without_changing_format_five_default_bytes() {
         })
         .collect();
     let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
-        .expect("format-five reader admits registered fresh-only operations");
+        .expect("format-six reader admits registered fresh-only operations");
     assert_eq!(admitted, fresh);
-    assert_eq!(admitted.format_version, 5);
+    assert_eq!(admitted.format_version, 6);
     assert_ne!(digest, baseline.digest());
     assert_eq!(baseline.canonical_bytes(), publish_vector::CANONICAL_BYTES);
 }
@@ -439,6 +442,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
                         ..operation.clone()
                     },
                 )]),
+                descriptor: ComponentDescriptor::named("provider", "0.1.0", COMPONENT_A),
             },
             ServingComponent {
                 package_id: "consumer".into(),
@@ -446,6 +450,7 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
                 interface_version: "0.1.0".into(),
                 digest: artifact_hash(COMPONENT_B),
                 operations: BTreeMap::from([("consumer:entry/run@1.0.0".into(), operation)]),
+                descriptor: ComponentDescriptor::named("consumer", "0.1.0", COMPONENT_B),
             },
         ]),
         BTreeSet::new(),
@@ -473,6 +478,7 @@ fn duplicate_export_only_interfaces_are_admitted() {
             .clone();
         other.component = "another-provider".into();
         other.digest = artifact_hash(COMPONENT_B);
+        other.descriptor = ComponentDescriptor::named("another-provider", "0.1.0", COMPONENT_B);
         let operation = other.operations.get_mut(export).unwrap();
         operation.registered_operation = None;
         operation.permissions.clear();
@@ -575,6 +581,7 @@ fn every_manifest_field_is_pinned() {
         sorted_keys(&document["components"][0]),
         [
             "component",
+            "descriptor",
             "digest",
             "interface-version",
             "operations",

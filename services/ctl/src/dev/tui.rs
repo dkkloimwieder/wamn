@@ -927,6 +927,7 @@ mod tests {
             interface_version: "0.1.0".to_owned(),
             digest: ArtifactHash::parse(DIGEST).expect("valid digest"),
             operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
+            descriptor: wamn_catalog::ComponentDescriptor::named("fixture", "0.1.0", DIGEST),
         };
         let http = attachment(AttachmentType::Http, "widget-get-http", "/widget/get");
         let studio = attachment(

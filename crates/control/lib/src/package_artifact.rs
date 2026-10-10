@@ -1,5 +1,6 @@
 //! Package artifacts: the `push-package` verb and the package source of
-//! `apply-package` (docs/plan/platform-deploy.md §7.2, contract A).
+//! `apply-package` and `publish-release` (docs/plan/platform-deploy.md §7.2,
+//! contract A).
 //!
 //! `push-package` verifies an authored package before it pushes anything:
 //! the policy contract of `generated/wamn.json` is satisfied, the migrations
@@ -176,6 +177,38 @@ struct DescriptorFile {
 /// descriptor layers, which differs from the pushed digest, and an unpacked
 /// artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
+    let descriptors = descriptor_files(root)?
+        .into_iter()
+        .map(|(descriptor, bytes)| DescriptorFile {
+            name: descriptor.component,
+            digest: descriptor.component_digest,
+            bytes,
+        })
+        .collect();
+    pack_layers(root, &BTreeMap::new(), descriptors)
+}
+
+/// The component descriptors of the unpacked artifact at `root`, sorted by
+/// component name: the admitted facts that `publish-release` composes into a
+/// release (docs/plan/platform-deploy.md §8.1).
+///
+/// # Errors
+///
+/// When a descriptor file cannot be read, does not parse, is not named after
+/// its component, or is not canonical JSON.
+pub fn read_descriptors(root: &Path) -> anyhow::Result<Vec<ComponentDescriptor>> {
+    let mut descriptors = descriptor_files(root)?
+        .into_iter()
+        .map(|(descriptor, _)| descriptor)
+        .collect::<Vec<_>>();
+    descriptors.sort_by(|left, right| left.component.cmp(&right.component));
+    Ok(descriptors)
+}
+
+/// Each file of [`DESCRIPTOR_DIRECTORY`] under `root`, parsed, with its exact
+/// bytes. The bytes are the canonical JSON of the parsed descriptor, so a
+/// release that carries the parsed descriptor carries the layer bytes.
+fn descriptor_files(root: &Path) -> anyhow::Result<Vec<(ComponentDescriptor, Vec<u8>)>> {
     let directory = root.join(DESCRIPTOR_DIRECTORY);
     let mut descriptors = Vec::new();
     let entries = match std::fs::read_dir(&directory) {
@@ -197,13 +230,16 @@ pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
             path.display(),
             descriptor.component
         );
-        descriptors.push(DescriptorFile {
-            name: descriptor.component,
-            digest: descriptor.component_digest,
-            bytes,
-        });
+        ensure!(
+            wamn_execution_contract::canonical_json_bytes(
+                &serde_json::to_value(&descriptor).context("encode a component descriptor")?
+            ) == bytes,
+            "component descriptor {} is not canonical JSON",
+            path.display()
+        );
+        descriptors.push((descriptor, bytes));
     }
-    pack_layers(root, &BTreeMap::new(), descriptors)
+    Ok(descriptors)
 }
 
 /// The package artifact digest of the package at `root`, the key of its stage
@@ -1143,8 +1179,7 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
         }
         PackageSource::Artifact { tag, registry } => (tag, registry),
     };
-    let repository = Repository::open(&registry, &tag)?;
-    let (digest, layers) =
+    let digest =
         crate::publish_release::on_control_plane(&registry.control_database_url, async |control| {
             let rows = control
                 .query(
@@ -1160,12 +1195,56 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
                     rows.len()
                 );
             };
-            let digest: String = row.get(0);
-            let layers = repository.pull(&digest).await?;
-            Ok((digest, layers))
+            Ok(row.get::<_, String>(0))
         })
         .await?;
+    open_artifact(&registry, &tag, &digest).await
+}
 
+/// Open the verified package artifact of `package_id@version`, the one
+/// `catalog.package_artifacts` records with its `verified_at` (R11 (2)).
+///
+/// # Errors
+///
+/// When no verified artifact is recorded for the package (run
+/// `push-package`), or the artifact cannot be fetched or does not unpack to
+/// its digest.
+pub async fn open_verified_package(
+    registry: &PackageRegistry,
+    package_id: &str,
+    version: &str,
+) -> anyhow::Result<OpenedPackage> {
+    let digest =
+        crate::publish_release::on_control_plane(&registry.control_database_url, async |control| {
+            let row = control
+                .query_opt(
+                    "SELECT digest, verified_at IS NOT NULL FROM catalog.package_artifacts \
+                      WHERE package_id = $1 AND version = $2",
+                    &[&package_id, &version],
+                )
+                .await
+                .context("read catalog.package_artifacts")?;
+            match row {
+                Some(row) if row.get::<_, bool>(1) => Ok(row.get::<_, String>(0)),
+                _ => bail!(
+                    "package {package_id}@{version} has no verified artifact in \
+                     catalog.package_artifacts; run push-package"
+                ),
+            }
+        })
+        .await?;
+    open_artifact(registry, &format!("{package_id}-{version}"), &digest).await
+}
+
+/// Fetch the artifact `tag`, whose manifest digest must be `digest`, and
+/// unpack it into a private temporary directory, which must pack again to
+/// `digest`.
+async fn open_artifact(
+    registry: &PackageRegistry,
+    tag: &str,
+    digest: &str,
+) -> anyhow::Result<OpenedPackage> {
+    let layers = Repository::open(registry, tag)?.pull(digest).await?;
     let root = std::env::temp_dir().join(format!(
         "wamn-package-{}-{}",
         std::process::id(),

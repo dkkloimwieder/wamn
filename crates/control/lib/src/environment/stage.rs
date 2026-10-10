@@ -6,8 +6,8 @@
 //! (the installed versions are the ones analysis read); apply the stage of
 //! each staged successor the release names; write the release cache row;
 //! materialize the release's connection requirements from the admitted
-//! descriptors in its package artifacts (contract D, R3); reconcile the
-//! packages' data access. A failed stage stops here, and
+//! descriptors the release manifest carries (contract D, R2 (3)); reconcile
+//! the packages' data access. A failed stage stops here, and
 //! nothing was written to Kubernetes. A backfill that stops on a lock is
 //! resumed by applying again.
 
@@ -93,7 +93,7 @@ pub async fn stage(
     // 2. The release cache row, once its package versions are installed: the
     // row seals the migrations of every version it names.
     write_release(project_url, &tenant, release).await?;
-    materialize_requirements(project_url, &tenant, release, &packages).await?;
+    materialize_requirements(project_url, &tenant, release).await?;
 
     // 3. The data access of the packages of the release, when each is the
     // installed version. A release on the tested predecessor keeps the
@@ -178,83 +178,15 @@ pub(super) async fn open(
 
 /// Materialize `catalog.connection_requirements` for the release's
 /// components in this environment: a runtime projection of the admitted
-/// descriptors, the `connections` of each component's declaration in its
-/// package artifact (contract D). A declaration whose store alias is the
-/// placeholder takes the alias its package's wiring gives the component. A
-/// component with no declaration in the artifact declares no connection. An
-/// existing row with other bytes refuses.
+/// descriptors the release manifest carries, one row for each connection of
+/// each component's descriptor (contract D, R2 (3)). An existing row with
+/// other bytes refuses.
 async fn materialize_requirements(
     project_url: &str,
     tenant: &str,
     release: &ReleaseFacts,
-    packages: &[(String, String, OpenedPackage)],
 ) -> anyhow::Result<()> {
-    use crate::release_composition::{
-        PackageInput, SelectedComponentArtifact, load_wirings, wiring_store_alias,
-    };
-    let inputs = packages
-        .iter()
-        .map(|(_, _, opened)| {
-            let path = wamn_schema_generator::package_manifest_path(opened.root());
-            Ok(PackageInput {
-                root: opened.root().to_owned(),
-                manifest: PackageManifest::from_slice(
-                    &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-                )
-                .with_context(|| format!("parse {}", path.display()))?,
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let wirings = load_wirings(&inputs)?;
-    let mut requirements = Vec::new();
-    for component in &release.manifest.components {
-        let Some((_, version, opened)) = packages
-            .iter()
-            .find(|(id, _, _)| *id == component.package_id)
-        else {
-            continue;
-        };
-        let template = opened
-            .root()
-            .join("publication/components")
-            .join(format!("{}.json.in", component.component));
-        if !template.is_file() {
-            continue;
-        }
-        let declaration: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&template).with_context(|| format!("read {}", template.display()))?,
-        )
-        .with_context(|| format!("parse {}", template.display()))?;
-        let connections: Vec<wamn_catalog::ComponentConnection> =
-            serde_json::from_value(declaration["connections"].clone())
-                .with_context(|| format!("read the connections of {}", template.display()))?;
-        for connection in connections {
-            let alias = if connection.store_alias
-                == crate::component_declaration::COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER
-            {
-                let artifact = SelectedComponentArtifact {
-                    package_id: component.package_id.as_str().into(),
-                    package_version: version.as_str().into(),
-                    component: component.component.as_str().into(),
-                    path: template.clone(),
-                    digest: component.digest.as_str().into(),
-                };
-                match wiring_store_alias(&wirings, &artifact)? {
-                    Some(alias) => alias,
-                    None => continue,
-                }
-            } else {
-                connection.store_alias.clone()
-            };
-            requirements.push(crate::push_component::portable_requirement(
-                component.digest.as_str(),
-                &wamn_catalog::ComponentConnection {
-                    store_alias: alias,
-                    requirement_type: connection.requirement_type,
-                },
-            ));
-        }
-    }
+    let requirements = release_requirements(&release.manifest);
     if requirements.is_empty() {
         return Ok(());
     }
@@ -306,6 +238,22 @@ async fn materialize_requirements(
         .context("commit the connection requirements")
 }
 
+/// The connection requirements of the descriptors of `manifest`: exactly one
+/// for each connection of each release component.
+fn release_requirements(
+    manifest: &wamn_catalog::ServingManifest,
+) -> Vec<wamn_catalog::ComponentConnectionRequirement> {
+    manifest
+        .components
+        .iter()
+        .flat_map(|component| {
+            component.descriptor.connections.iter().map(|connection| {
+                crate::push_component::portable_requirement(component.digest.as_str(), connection)
+            })
+        })
+        .collect()
+}
+
 /// Write `catalog.releases (manifest_digest, manifest)` for the release if
 /// absent (R1). The row is immutable, and its bytes hash to its key.
 async fn write_release(
@@ -341,4 +289,80 @@ async fn write_release(
         .commit()
         .await
         .context("commit the release cache row")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use wamn_catalog::{
+        ArtifactHash, ComponentConnection, ComponentConnectionType, ComponentDescriptor,
+        ConnectionTypeDescriptor, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        ServingComponent, ServingManifest, ServingRelease, WorkflowSection,
+    };
+
+    use super::release_requirements;
+
+    fn component(name: &str, digest: &str, aliases: &[&str]) -> ServingComponent {
+        let mut descriptor = ComponentDescriptor::named(name, "0.1", digest);
+        descriptor.connections = aliases
+            .iter()
+            .map(|alias| ComponentConnection {
+                store_alias: (*alias).to_owned(),
+                requirement_type: ComponentConnectionType::Blobstore,
+            })
+            .collect();
+        ServingComponent {
+            package_id: "orders".to_owned(),
+            component: name.to_owned(),
+            interface_version: "0.1".to_owned(),
+            digest: ArtifactHash::parse(digest.to_owned()).expect("a digest"),
+            operations: BTreeMap::new(),
+            descriptor,
+        }
+    }
+
+    /// Apply writes one requirement for each connection of each release
+    /// descriptor, and nothing else (R2 (3)).
+    #[test]
+    fn the_requirements_are_exactly_those_of_the_release_descriptors() {
+        let first = format!("sha256:{}", "1".repeat(64));
+        let second = format!("sha256:{}", "2".repeat(64));
+        let manifest = ServingManifest {
+            format_version: SERVING_MANIFEST_FORMAT_VERSION,
+            release: ServingRelease {
+                packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
+            },
+            components: BTreeSet::from([
+                component("blob-put", &first, &["archive", "labels"]),
+                component("orders", &second, &[]),
+            ]),
+            routes: BTreeSet::new(),
+            attachments: BTreeMap::new(),
+            workflow: WorkflowSection {
+                wirings: BTreeSet::new(),
+                attachments: BTreeMap::new(),
+                registrations: BTreeMap::new(),
+            },
+            host_routes: BTreeSet::new(),
+        };
+        let written = release_requirements(&manifest)
+            .iter()
+            .map(|requirement| {
+                (
+                    requirement.component_digest().to_owned(),
+                    requirement.store_alias().to_owned(),
+                    requirement.requirement().clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let blobstore = ConnectionTypeDescriptor::blobstore_v1();
+        assert_eq!(
+            written,
+            vec![
+                (first.clone(), "archive".to_owned(), blobstore.clone()),
+                (first, "labels".to_owned(), blobstore),
+            ]
+        );
+    }
 }

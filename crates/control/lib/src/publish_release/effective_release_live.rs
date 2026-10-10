@@ -10,7 +10,7 @@ use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_compo
 
 use super::{
     DependencyDigestRule, PublishManifestErrorType, PublishReleaseManifest, PublishedRelease,
-    ReleaseWiringTarget, effect_free_operation_dependencies,
+    ReleaseComponents, ReleaseWiringTarget, effect_free_operation_dependencies,
     publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
     resolve_route_methods, sha256, validate_package_metadata,
 };
@@ -186,9 +186,10 @@ async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
 async fn admit_components(
     project: &mut Client,
     inputs: &[PackageInput],
-) -> BTreeMap<String, String> {
+) -> (BTreeMap<String, String>, ReleaseComponents) {
     let engine = wamn_engine::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
+    let mut release_components = ReleaseComponents::default();
     // The test admits packages in dependency order, base before overlay, so
     // the fact a dependency resolves to is already in hand when the component
     // that declares the dependency reaches admission.
@@ -272,9 +273,12 @@ async fn admit_components(
         component_facts
             .entry(scope)
             .or_default()
-            .push(facts.component);
+            .push(facts.component.clone());
+        release_components
+            .insert(facts.component, facts.connections)
+            .expect("each package names its component once");
     }
-    digests
+    (digests, release_components)
 }
 
 /// Author one base-package wiring of the fixture get operation, with no edges.
@@ -337,15 +341,22 @@ async fn author_one_node_wiring(project: &mut Client, control: &Client) -> Relea
 async fn publish(
     project: &mut Client,
     request: &PublishReleaseManifest<'_>,
+    components: &ReleaseComponents,
     manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     hashes: &BTreeMap<String, String>,
     kinds: &super::RouteContracts,
 ) -> PublishedRelease {
     let transaction = project.transaction().await.expect("begin release publish");
-    let release =
-        publish_release_with_package_manifests(&transaction, request, manifests, hashes, kinds)
-            .await
-            .expect("publish the exact fresh two-package release");
+    let release = publish_release_with_package_manifests(
+        &transaction,
+        request,
+        components,
+        manifests,
+        hashes,
+        kinds,
+    )
+    .await
+    .expect("publish the exact fresh two-package release");
     transaction.commit().await.expect("commit release publish");
     release
 }
@@ -399,7 +410,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     provision_project(&project).await;
     provision_control(&control).await;
     apply_packages(&project_url, &inputs).await;
-    let admitted_digests = admit_components(&mut project, &inputs).await;
+    let (admitted_digests, components) = admit_components(&mut project, &inputs).await;
     let wirings = BTreeSet::new();
 
     let manifest_paths = inputs
@@ -435,8 +446,24 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         environment_is_disposable: false,
     };
 
-    let first = publish(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
-    let second = publish(&mut project, &request, &manifests, &manifest_hashes, &kinds).await;
+    let first = publish(
+        &mut project,
+        &request,
+        &components,
+        &manifests,
+        &manifest_hashes,
+        &kinds,
+    )
+    .await;
+    let second = publish(
+        &mut project,
+        &request,
+        &components,
+        &manifests,
+        &manifest_hashes,
+        &kinds,
+    )
+    .await;
     assert_eq!(first.canonical_bytes, second.canonical_bytes);
     assert_eq!(first.digest, second.digest);
     assert_eq!(first.manifest, second.manifest);
@@ -515,6 +542,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     let refusal = publish_release_with_package_manifests(
         &transaction,
         &request,
+        &components,
         &manifests,
         &drifted_hashes,
         &kinds,
@@ -546,6 +574,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
             wirings: &one_node,
             ..request
         },
+        &components,
         &manifests,
         &manifest_hashes,
         &kinds,

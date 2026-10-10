@@ -219,6 +219,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"packages":[{"package-id":"automation","package-version":"1.0.0"}]},
         "components":[{"package-id":"automation","component":component,"interface-version":"0.1.0","digest":admitted.component_digest,
+          "descriptor": {"component": component, "interface-version": "0.1.0", "component-digest": admitted.component_digest, "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
           "operations":{(node.operation.clone()):node.serving}}],
         "routes":[],"attachments":{},"workflow":{"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}]}
     }))?;

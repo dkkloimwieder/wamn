@@ -171,6 +171,11 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
             interface_version: "0.1.0".to_owned(),
             digest: ArtifactHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
             operations,
+            descriptor: wamn_catalog::ComponentDescriptor::named(
+                "fixture",
+                "0.1.0",
+                format!("sha256:{}", "a".repeat(64)),
+            ),
         }]),
         BTreeSet::new(),
         BTreeSet::new(),

@@ -31,9 +31,8 @@ use super::{
     BASE_PACKAGE_ID, BASE_PACKAGE_VERSION, BASE_RECORD_RECEIPT, JOURNEY_PACKAGES, JourneyDocument,
     JourneyRuntime, ROUTE_JOURNEY_GATE_BIND, ScratchRoot, TraceHarness, assert_invocation_identity,
     assert_operation_refusal, assert_postgres_descendants, build_journey_runtime,
-    invoke_journey_route, journey_package_root, journey_publication_root,
-    journey_scenario_worker_binary, journey_trace, span_attribute, span_descends_from,
-    successful_value, trace_component_invocations,
+    invoke_journey_route, journey_publication_root, journey_scenario_worker_binary, journey_trace,
+    span_attribute, span_descends_from, successful_value, trace_component_invocations,
 };
 
 const PACKAGE: &str = "fresh_only_probe";
@@ -244,9 +243,11 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         "route": {"path": ROUTE},
         "raw-body-bytes": {"maximum": 1_048_576},
         "input-schema": ports["input-ports"][0]["schema"]});
-    let attachment = root.join("attachment.json");
+    // The attachment is the fixture package's publication, so the package
+    // artifact carries it.
+    std::fs::create_dir_all(package.join("publication"))?;
     write_json(
-        &attachment,
+        &package.join("publication/attachments.json"),
         &json!({(WIRING): {
             "type": "http", "package-id": PACKAGE, "wiring-id": WIRING, "wiring-version": 1,
             "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
@@ -259,31 +260,39 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         PackageCoordinate::new(BASE_PACKAGE_ID, *BASE_PACKAGE_VERSION)?,
         PackageCoordinate::new(PACKAGE, VERSION)?,
     ];
-    let manifests = vec![
-        wamn_schema_generator::package_manifest_path(&journey_package_root(
-            base_package,
-            Some(test.inputs),
-        )),
-        package.join("wamn.json"),
-    ];
-    let digest = publish_release::publish_release(PublishReleaseRequest {
-        database_url: test.project_url.to_owned(),
-        control_database_url: test.inputs.system_pg_url.clone(),
-        org: identity().org.clone(),
-        project: identity().project.clone(),
-        tenant: identity().tenant.clone(),
-        environment: identity().environment.clone(),
-        verified_publisher_principal: test.publisher.to_owned(),
-        run_schema: "wamn_run".to_owned(),
-        packages,
-        wirings: vec![
-            format!("{PACKAGE}@{VERSION}::{WIRING}=1")
-                .parse::<ReleaseWiringTarget>()
-                .map_err(anyhow::Error::msg)?,
-        ],
-        attachments: vec![attachment],
-        package_manifests: manifests,
-    })
+    // The release composes verified package artifacts: the base was pushed
+    // with the journey release, and the fixture package is pushed here.
+    let registry =
+        super::environment::journey_package_registry(test.inputs, &test.inputs.system_pg_url)?;
+    wamn_control::package_artifact::push_package(
+        &wamn_control::package_artifact::PushPackageRequest {
+            package: package.clone(),
+            registry: registry.clone(),
+            component_artifact_base: test.inputs.component_artifact_base.clone(),
+            source_commit: None,
+        },
+    )
+    .await
+    .context("push the prior-commit fixture package artifact")?;
+    let digest = publish_release::publish_release(
+        PublishReleaseRequest {
+            database_url: test.project_url.to_owned(),
+            control_database_url: test.inputs.system_pg_url.clone(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            tenant: identity().tenant.clone(),
+            environment: identity().environment.clone(),
+            verified_publisher_principal: test.publisher.to_owned(),
+            run_schema: "wamn_run".to_owned(),
+            packages,
+            wirings: vec![
+                format!("{PACKAGE}@{VERSION}::{WIRING}=1")
+                    .parse::<ReleaseWiringTarget>()
+                    .map_err(anyhow::Error::msg)?,
+            ],
+        },
+        &registry,
+    )
     .await?
     .to_string();
     push_release_manifest::push_release_manifest(

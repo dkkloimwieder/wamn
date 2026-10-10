@@ -379,6 +379,26 @@ impl ComponentDescriptor {
         }
     }
 
+    /// A descriptor of `component` with no operation, import, effect or
+    /// connection, for a test manifest.
+    #[cfg(feature = "test-util")]
+    pub fn named(
+        component: impl Into<String>,
+        interface_version: impl Into<String>,
+        component_digest: impl Into<String>,
+    ) -> Self {
+        Self {
+            component: component.into(),
+            interface_version: interface_version.into(),
+            component_digest: component_digest.into(),
+            operations: BTreeMap::new(),
+            imports: Vec::new(),
+            imports_fingerprint: String::new(),
+            effects: Vec::new(),
+            connections: Vec::new(),
+        }
+    }
+
     /// The admitted facts of this descriptor in `scope`.
     pub fn into_admitted(self, scope: ComponentPackageScope) -> AdmittedComponentFacts {
         AdmittedComponentFacts {

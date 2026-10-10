@@ -106,7 +106,7 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 
 #[test]
 fn pulled_bytes_load_the_release_naming_their_carrier() {
-    let canonical = br#"{"attachments":{},"components":[],"format-version":5,"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"routes":[]}"#;
+    let canonical = br#"{"attachments":{},"components":[],"format-version":6,"release":{"packages":[{"package-id":"cat","package-version":"1.0.0"}]},"routes":[]}"#;
 
     let loaded_release = LoadedRelease::load_canonical_bytes(
         canonical,

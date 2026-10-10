@@ -1,8 +1,12 @@
 //! Publish one immutable release.
 //!
 //! A release is its manifest digest (docs/plan/platform-deploy.md R1). The
-//! publisher resolves every wiring and component from the exact package pairs,
-//! records the canonical manifest bytes under their digest in
+//! publisher composes verified package artifacts (§8.1): it opens the artifact
+//! that `catalog.package_artifacts` records for each exact package pair, and
+//! refuses a package with no verified artifact before it writes anything
+//! (R11 (2)). It resolves every wiring and component from the admitted
+//! descriptors of those artifacts, and each release component carries its
+//! descriptor. It records the canonical manifest bytes under their digest in
 //! `catalog.releases`, then projects only the release identity to the control
 //! plane so a later deployment attestation can reference it.
 
@@ -14,10 +18,10 @@ use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, AttachmentTarget,
-    ComponentPackageScope, ManifestDigest, OperationType, PackageCoordinate, RouteCanonicalization,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
-    ServingRegistration, ServingRelation, ServingRelease, ServingRoute, ServingWiring,
-    WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
+    ComponentConnection, ComponentPackageScope, ManifestDigest, OperationType, PackageCoordinate,
+    RouteCanonicalization, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
+    ServingManifest, ServingRegistration, ServingRelation, ServingRelease, ServingRoute,
+    ServingWiring, WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_engine::release_manifest::ReleaseScope;
@@ -26,6 +30,7 @@ use wamn_schema_control::{
     normalize_http_route,
 };
 
+use crate::package_artifact::{OpenedPackage, PackageRegistry};
 use crate::verification_policy::AuthoritativeEnvironmentPolicy;
 
 mod attachments;
@@ -367,12 +372,8 @@ pub struct PublishReleaseRequest {
     pub run_schema: String,
     /// Exact package membership.
     pub packages: Vec<PackageCoordinate>,
-    /// Exact package-owned wirings.
+    /// Exact package-owned wirings, read from `catalog.wirings`.
     pub wirings: Vec<ReleaseWiringTarget>,
-    /// Package-owned attachment documents.
-    pub attachments: Vec<PathBuf>,
-    /// Exact `wamn.json` for every package in the release.
-    pub package_manifests: Vec<PathBuf>,
 }
 
 /// Parse one exact `PACKAGE_ID@PACKAGE_VERSION` package coordinate.
@@ -398,9 +399,13 @@ impl PublishReleaseRequest {
     }
 }
 
-/// Publish one effective release, project its identity, and return its manifest digest.
-pub async fn publish_release(request: PublishReleaseRequest) -> anyhow::Result<ManifestDigest> {
-    let published = publish_candidate(&request, false).await?;
+/// Publish one effective release from the verified package artifacts in
+/// `registry`, project its identity, and return its manifest digest.
+pub async fn publish_release(
+    request: PublishReleaseRequest,
+    registry: &PackageRegistry,
+) -> anyhow::Result<ManifestDigest> {
+    let published = publish_candidate(&request, registry, false).await?;
     let coordinate = request.deployment_coordinate(&published.digest);
     report_deployment_coordinate(&coordinate);
     project_release_identity(&request.control_database_url, &coordinate).await?;
@@ -408,8 +413,12 @@ pub async fn publish_release(request: PublishReleaseRequest) -> anyhow::Result<M
 }
 
 /// Assemble a candidate only in a provisioned disposable target, without publication.
+///
+/// The packages are the directories `package_roots`, and the components their
+/// in-process admissions: the dev loop pushes nothing and reads no registry.
 pub async fn publish_local(
     args: PublishReleaseRequest,
+    package_roots: &[PathBuf],
     admissions: &[crate::push_component::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
@@ -432,7 +441,7 @@ pub async fn publish_local(
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&args.tenant])
         .await?;
-    let assembled = assemble_local_release(&args, admissions, documents)?;
+    let assembled = assemble_local_release(&args, package_roots, admissions, documents)?;
     let run_schema = args.verified_run_schema()?;
     let policy = crate::verification_policy::read_authoritative_environment_policy(
         &args.control_database_url,
@@ -466,18 +475,21 @@ pub struct AssembledLocalRelease {
     pub facts: wamn_runtime::local_application::LocalApplicationFacts,
 }
 
-/// Assemble the manifest and local facts of a local release from its package
-/// files and admitted components, as [`publish_local`] does before it records
-/// the release. It reads no database, so the two database URLs of `args` go
+/// Assemble the manifest and local facts of a local release from the package
+/// directories `package_roots` and admitted components, as [`publish_local`]
+/// does before it records the release. Each component's descriptor comes from
+/// its admission. It reads no database, so the two database URLs of `args` go
 /// unused.
 pub fn assemble_local_release(
     args: &PublishReleaseRequest,
+    package_roots: &[PathBuf],
     admissions: &[crate::push_component::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<AssembledLocalRelease> {
     use wamn_runtime::local_application::{LocalApplicationFacts, LocalWiringFacts};
-    let authored = read_package_attachments(&args.attachments, &args.package_manifests)?;
-    let (package_manifests, _, route_contracts) = read_package_manifests(&args.package_manifests)?;
+    let (attachment_paths, manifest_paths) = package_files(package_roots);
+    let authored = read_package_attachments(&attachment_paths, &manifest_paths)?;
+    let (package_manifests, _, route_contracts) = read_package_manifests(&manifest_paths)?;
     let attachments = resolve_route_methods(&authored, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
@@ -502,7 +514,7 @@ pub fn assemble_local_release(
                 .is_some_and(|manifest| manifest.package.version == package.package_version())),
         "local candidate requires every exact package manifest"
     );
-    let mut component_facts = BTreeMap::<(String, String), Vec<AdmittedComponent>>::new();
+    let mut release_components = ReleaseComponents::default();
     for admission in admissions {
         let fact = admission.facts();
         ensure!(
@@ -513,13 +525,7 @@ pub fn assemble_local_release(
                         && package.package_version() == fact.scope.package_version),
             "local admission is outside package membership"
         );
-        component_facts
-            .entry((
-                fact.scope.package_id.clone(),
-                fact.scope.package_version.clone(),
-            ))
-            .or_default()
-            .push(fact.clone());
+        release_components.insert(fact.clone(), admission.descriptor().connections)?;
     }
     let mut components = BTreeSet::new();
     let mut wirings = BTreeSet::new();
@@ -546,7 +552,7 @@ pub fn assemble_local_release(
             &target,
             &scope,
             &document,
-            &component_facts,
+            &release_components,
             &package_manifests,
             &mut components,
             &mut wirings,
@@ -555,7 +561,7 @@ pub fn assemble_local_release(
         let node_components = resolve_wiring_components(
             &document,
             &scope,
-            &component_facts,
+            &release_components.facts,
             package_manifests.get(&scope.package_id),
             DependencyDigestRule::for_environment(true),
         )?;
@@ -572,7 +578,7 @@ pub fn assemble_local_release(
     let routes = project_routes(
         &request,
         &route_contracts,
-        &component_facts,
+        &release_components,
         &mut components,
     )?;
     let registrations = derive_serving_registrations(&package_manifests, &entry_targets)?;
@@ -638,6 +644,7 @@ pub fn assemble_local_release(
 
 async fn publish_candidate(
     args: &PublishReleaseRequest,
+    registry: &PackageRegistry,
     local: bool,
 ) -> anyhow::Result<PublishedRelease> {
     ensure!(
@@ -648,10 +655,35 @@ async fn publish_candidate(
         !args.verified_publisher_principal.is_empty(),
         "verified-publisher-principal must not be empty"
     );
-    let authored_attachments =
-        read_package_attachments(&args.attachments, &args.package_manifests)?;
+    // Every package opens from its verified artifact before anything is
+    // written, so an unknown or unverified package refuses here.
+    let mut opened = Vec::new();
+    for package in &args.packages {
+        opened.push(
+            crate::package_artifact::open_verified_package(
+                registry,
+                package.package_id(),
+                package.package_version(),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "open the package artifact of {}@{}",
+                    package.package_id(),
+                    package.package_version()
+                )
+            })?,
+        );
+    }
+    let release_components = descriptor_components(&args.tenant, &args.packages, &opened)?;
+    let roots = opened
+        .iter()
+        .map(|package| package.root().to_owned())
+        .collect::<Vec<_>>();
+    let (attachment_paths, manifest_paths) = package_files(&roots);
+    let authored_attachments = read_package_attachments(&attachment_paths, &manifest_paths)?;
     let (package_manifests, package_manifest_hashes, route_contracts) =
-        read_package_manifests(&args.package_manifests)?;
+        read_package_manifests(&manifest_paths)?;
     let attachments = resolve_route_methods(&authored_attachments, &route_contracts)?;
     let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
@@ -721,6 +753,7 @@ async fn publish_candidate(
     let published = publish_in_transaction(
         &mut client,
         &request,
+        &release_components,
         &package_manifests,
         &package_manifest_hashes,
         &route_contracts,
@@ -744,9 +777,14 @@ async fn publish_candidate(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each input is one independent fact of the release"
+)]
 async fn publish_in_transaction(
     client: &mut Client,
     request: &PublishReleaseManifest<'_>,
+    components: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
@@ -760,6 +798,7 @@ async fn publish_in_transaction(
     let published = publish_release_with_package_manifests(
         &transaction,
         request,
+        components,
         package_manifests,
         package_manifest_hashes,
         route_contracts,
@@ -1097,6 +1136,7 @@ fn sha256(bytes: &[u8]) -> String {
 async fn publish_release_with_package_manifests(
     transaction: &Transaction<'_>,
     request: &PublishReleaseManifest<'_>,
+    components: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
@@ -1104,6 +1144,7 @@ async fn publish_release_with_package_manifests(
     publish_release_from_sources(
         transaction,
         request,
+        components,
         package_manifests,
         package_manifest_hashes,
         route_contracts,
@@ -1114,6 +1155,7 @@ async fn publish_release_with_package_manifests(
 async fn publish_release_from_sources(
     transaction: &Transaction<'_>,
     request: &PublishReleaseManifest<'_>,
+    component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_manifest_hashes: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
@@ -1133,21 +1175,8 @@ async fn publish_release_from_sources(
 
     let mut components = BTreeSet::new();
     let mut wirings = BTreeSet::new();
-    let mut component_facts = BTreeMap::new();
     let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
     let mut one_node = Vec::new();
-    for package in request.packages {
-        let scope = ComponentPackageScope {
-            tenant_id: request.tenant_id.to_owned(),
-            package_id: package.package_id().to_owned(),
-            package_version: package.package_version().to_owned(),
-        };
-        let facts = load_component_facts(transaction, &scope).await?;
-        component_facts.insert(
-            (scope.package_id.clone(), scope.package_version.clone()),
-            facts,
-        );
-    }
     for target in request.wirings {
         let package = PackageCoordinate::new(&target.package_id, &target.package_version)
             .expect("ReleaseWiringTarget parsing admitted this coordinate");
@@ -1173,7 +1202,7 @@ async fn publish_release_from_sources(
             request,
             target,
             &scope,
-            &component_facts,
+            component_facts,
             package_manifests,
             &mut components,
             &mut wirings,
@@ -1186,7 +1215,7 @@ async fn publish_release_from_sources(
             .push(target.clone());
     }
 
-    let routes = project_routes(request, route_contracts, &component_facts, &mut components)?;
+    let routes = project_routes(request, route_contracts, component_facts, &mut components)?;
     let registrations = derive_serving_registrations(package_manifests, &entry_targets)?;
     refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
     let (route_attachments, wiring_attachments) =
@@ -1214,7 +1243,7 @@ async fn publish_release_from_sources(
         ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
-                "the release does not project a deliverable format-5 manifest",
+                "the release does not project a deliverable format-6 manifest",
                 error,
             )
         })?;
@@ -1377,6 +1406,112 @@ async fn record_release(
     Ok(())
 }
 
+/// The admitted components of the release packages: the facts of each package
+/// by `(package_id, package_version)`, and the declared connections of each
+/// component by `(package_id, component)`. Together they are the descriptors
+/// the release carries.
+#[derive(Debug, Default)]
+struct ReleaseComponents {
+    facts: BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    connections: BTreeMap<(String, String), Vec<ComponentConnection>>,
+}
+
+impl ReleaseComponents {
+    /// Add one admitted component and its connections. A package names each
+    /// component once.
+    fn insert(
+        &mut self,
+        fact: AdmittedComponent,
+        connections: Vec<ComponentConnection>,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            self.connections
+                .insert(
+                    (fact.scope.package_id.clone(), fact.component.clone()),
+                    connections,
+                )
+                .is_none(),
+            "package {}@{} names component {} twice",
+            fact.scope.package_id,
+            fact.scope.package_version,
+            fact.component
+        );
+        self.facts
+            .entry((
+                fact.scope.package_id.clone(),
+                fact.scope.package_version.clone(),
+            ))
+            .or_default()
+            .push(fact);
+        Ok(())
+    }
+
+    /// The declared connections of `fact`.
+    fn connections(
+        &self,
+        fact: &AdmittedComponent,
+    ) -> Result<Vec<ComponentConnection>, PublishManifestError> {
+        self.connections
+            .get(&(fact.scope.package_id.clone(), fact.component.clone()))
+            .cloned()
+            .ok_or_else(|| {
+                PublishManifestError::new(
+                    PublishManifestErrorType::Component,
+                    format!(
+                        "component {:?} of package {:?} has no descriptor",
+                        fact.component, fact.scope.package_id
+                    ),
+                )
+            })
+    }
+}
+
+/// The admitted components of the opened package artifacts, each from its
+/// descriptor layer, in the scope of `tenant`.
+fn descriptor_components(
+    tenant: &str,
+    packages: &[PackageCoordinate],
+    opened: &[OpenedPackage],
+) -> anyhow::Result<ReleaseComponents> {
+    let mut components = ReleaseComponents::default();
+    for (package, opened) in packages.iter().zip(opened) {
+        let scope =
+            ComponentPackageScope::new(tenant, package.package_id(), package.package_version())
+                .context("name the release component scope")?;
+        for descriptor in crate::package_artifact::read_descriptors(opened.root())? {
+            let facts = descriptor.into_admitted(scope.clone());
+            wamn_catalog::verify_stored_effect_projection(&facts.component).with_context(|| {
+                format!(
+                    "component {:?} of package {}@{} carries an invalid effect projection",
+                    facts.component.component,
+                    package.package_id(),
+                    package.package_version()
+                )
+            })?;
+            components.insert(facts.component, facts.connections)?;
+        }
+    }
+    Ok(components)
+}
+
+/// The attachment documents and the `wamn.json` of the packages at `roots`. A
+/// package with no `publication/attachments.json` has no attachment document.
+fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let attachments = roots
+        .iter()
+        .map(|root| root.join("publication/attachments.json"))
+        .filter(|path| path.is_file())
+        .collect();
+    let manifests = roots
+        .iter()
+        .map(|root| wamn_schema_generator::package_manifest_path(root))
+        .collect();
+    (attachments, manifests)
+}
+
+/// The admitted component facts of one package in `component_library`, for
+/// wiring authorship. A release reads its components from the descriptors of
+/// its package artifacts.
 pub async fn load_component_facts(
     transaction: &Transaction<'_>,
     scope: &ComponentPackageScope,
@@ -1591,7 +1726,7 @@ async fn resolve_wiring(
     request: &PublishReleaseManifest<'_>,
     target: &ReleaseWiringTarget,
     scope: &ComponentPackageScope,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
@@ -1677,7 +1812,7 @@ fn project_wiring_document(
     target: &ReleaseWiringTarget,
     scope: &ComponentPackageScope,
     document: &WiringDocument,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
     wirings: &mut BTreeSet<ServingWiring>,
@@ -1690,7 +1825,7 @@ fn project_wiring_document(
     let resolved = resolve_wiring_components(
         document,
         scope,
-        component_facts,
+        &component_facts.facts,
         package_manifests.get(&target.package_id),
         rule,
     )?;
@@ -1704,7 +1839,7 @@ fn project_wiring_document(
             error,
         )
     })?;
-    resolve_component_dependency_closure(&resolved, component_facts, rule)?;
+    resolve_component_dependency_closure(&resolved, &component_facts.facts, rule)?;
     validate_anonymous_wiring_closure(request.attachments, target, document, &resolved)?;
     let entry_operation = resolved_wiring_entry_operation(document, &resolved)?;
     wirings.insert(ServingWiring {
@@ -1714,7 +1849,12 @@ fn project_wiring_document(
         graph_hash: document.wiring_hash(),
     });
     for fact in resolved.values() {
-        components.insert(project_serving_component(fact, component_facts, rule)?);
+        components.insert(project_serving_component(
+            fact,
+            component_facts.connections(fact)?,
+            &component_facts.facts,
+            rule,
+        )?);
     }
     Ok(entry_operation)
 }
@@ -1726,7 +1866,7 @@ fn project_wiring_document(
 fn project_routes(
     request: &PublishReleaseManifest<'_>,
     route_contracts: &RouteContracts,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    component_facts: &ReleaseComponents,
     components: &mut BTreeSet<ServingComponent>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
@@ -1753,6 +1893,7 @@ fn project_routes(
                 )
             })?;
         let facts = component_facts
+            .facts
             .get(&(
                 package.package_id().to_owned(),
                 package.package_version().to_owned(),
@@ -1771,8 +1912,13 @@ fn project_routes(
                 )
             })?;
         let roots = BTreeMap::from([(operation.clone(), fact.clone())]);
-        resolve_component_dependency_closure(&roots, component_facts, rule)?;
-        components.insert(project_serving_component(fact, component_facts, rule)?);
+        resolve_component_dependency_closure(&roots, &component_facts.facts, rule)?;
+        components.insert(project_serving_component(
+            fact,
+            component_facts.connections(fact)?,
+            &component_facts.facts,
+            rule,
+        )?);
         routes.insert(ServingRoute {
             package_id: attachment.package_id.clone(),
             component: component.clone(),
@@ -2327,14 +2473,22 @@ mod tests {
     fn fresh_only_component_policy_survives_release_projection() {
         let operation = "base:widget/get@1.0.0";
         let mut component = closure_component("registered-component", Some(operation));
-        let baseline =
-            project_serving_component(&component, &BTreeMap::new(), DependencyDigestRule::Declared)
-                .unwrap();
+        let baseline = project_serving_component(
+            &component,
+            Vec::new(),
+            &BTreeMap::new(),
+            DependencyDigestRule::Declared,
+        )
+        .unwrap();
         assert!(!baseline.operations[operation].fresh_only);
         component.operations.get_mut(operation).unwrap().fresh_only = true;
-        let projected =
-            project_serving_component(&component, &BTreeMap::new(), DependencyDigestRule::Declared)
-                .unwrap();
+        let projected = project_serving_component(
+            &component,
+            Vec::new(),
+            &BTreeMap::new(),
+            DependencyDigestRule::Declared,
+        )
+        .unwrap();
         assert!(projected.operations[operation].fresh_only);
         assert_eq!(
             serde_json::to_value(&projected).unwrap()["operations"][operation]["fresh-only"],
@@ -2346,6 +2500,145 @@ mod tests {
                 .as_deref(),
             Some(operation)
         );
+    }
+
+    /// A package directory whose `descriptors/` holds the canonical descriptor
+    /// of `fact` with one connection, as an unpacked artifact holds it.
+    fn unpacked_descriptor(label: &str, fact: &AdmittedComponent) -> (PathBuf, Vec<u8>) {
+        let root = std::env::temp_dir().join(format!(
+            "wamn-publish-descriptor-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(crate::package_artifact::DESCRIPTOR_DIRECTORY)).unwrap();
+        let descriptor = wamn_catalog::ComponentDescriptor::new(
+            fact.clone(),
+            vec![ComponentConnection {
+                store_alias: "labels".to_owned(),
+                requirement_type: wamn_catalog::ComponentConnectionType::Blobstore,
+            }],
+        );
+        let bytes = wamn_execution_contract::canonical_json_bytes(
+            &serde_json::to_value(&descriptor).unwrap(),
+        );
+        std::fs::write(
+            root.join(crate::package_artifact::DESCRIPTOR_DIRECTORY)
+                .join(format!("{}.json", fact.component)),
+            &bytes,
+        )
+        .unwrap();
+        (root, bytes)
+    }
+
+    /// The release component carries the descriptor layer byte for byte, and
+    /// two tenants read one component from one artifact.
+    #[tokio::test]
+    async fn a_release_component_carries_its_descriptor_layer_in_every_tenant() {
+        let fact = closure_component("registered-component", Some("base:widget/get@1.0.0"));
+        let (root, layer) = unpacked_descriptor("layer", &fact);
+        let opened = crate::package_artifact::open_package_source(
+            crate::package_artifact::PackageSource::Directory(root.clone()),
+        )
+        .await
+        .unwrap();
+        let packages = [PackageCoordinate::new("base", "1.0.0").unwrap()];
+        let project = |tenant: &str| {
+            let components =
+                descriptor_components(tenant, &packages, std::slice::from_ref(&opened)).unwrap();
+            let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
+            assert_eq!(fact.scope.tenant_id, tenant);
+            project_serving_component(
+                fact,
+                components.connections(fact).unwrap(),
+                &components.facts,
+                DependencyDigestRule::Declared,
+            )
+            .unwrap()
+        };
+        let first = project("acme--plant--dev");
+        let second = project("acme--plant--prod");
+        assert_eq!(first, second);
+        assert_eq!(
+            wamn_execution_contract::canonical_json_bytes(
+                &serde_json::to_value(&first.descriptor).unwrap()
+            ),
+            layer
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A descriptor file that is not canonical JSON is not a layer a release
+    /// can carry byte for byte.
+    #[test]
+    fn a_descriptor_that_is_not_canonical_refuses() {
+        let fact = closure_component("registered-component", None);
+        let (root, layer) = unpacked_descriptor("pretty", &fact);
+        let value: serde_json::Value = serde_json::from_slice(&layer).unwrap();
+        std::fs::write(
+            root.join(crate::package_artifact::DESCRIPTOR_DIRECTORY)
+                .join("registered-component.json"),
+            serde_json::to_vec_pretty(&value).unwrap(),
+        )
+        .unwrap();
+        let error = crate::package_artifact::read_descriptors(&root).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("is not canonical JSON"),
+            "{error:#}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A package with no verified artifact refuses before publish connects
+    /// to the project database or the registry (R11 (2)).
+    #[tokio::test]
+    async fn a_package_without_a_verified_artifact_refuses_before_any_write() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+            .await
+            .unwrap();
+        let task = tokio::spawn(connection);
+        client
+            .batch_execute(
+                "CREATE SCHEMA catalog; \
+                 CREATE TABLE catalog.package_artifacts (\
+                   package_id text NOT NULL, version text NOT NULL, digest text NOT NULL, \
+                   source_commit text, verified_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+                   PRIMARY KEY (package_id, version));",
+            )
+            .await
+            .unwrap();
+        let registry = PackageRegistry {
+            artifact_base: "127.0.0.1:9/wamn/packages".to_owned(),
+            registry_auth_file: PathBuf::from("/nonexistent/config.json"),
+            insecure_registry: true,
+            oci_ca_paths: Vec::new(),
+            control_database_url: database.url().to_owned(),
+        };
+        let error = publish_release(
+            PublishReleaseRequest {
+                database_url: "postgres://project.invalid/none".to_owned(),
+                control_database_url: database.url().to_owned(),
+                org: "acme".to_owned(),
+                project: "plant".to_owned(),
+                tenant: "acme--plant--dev".to_owned(),
+                environment: "dev".to_owned(),
+                verified_publisher_principal: "publisher".to_owned(),
+                run_schema: "wamn_run".to_owned(),
+                packages: vec![PackageCoordinate::new("orders", "1.0.0").unwrap()],
+                wirings: Vec::new(),
+            },
+            &registry,
+        )
+        .await
+        .unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("orders@1.0.0 has no verified artifact"),
+            "{rendered}"
+        );
+        drop(client);
+        task.await.unwrap().unwrap();
     }
 
     fn closure_document(with_registered_edge: bool) -> WiringDocument {
@@ -2892,8 +3185,9 @@ mod tests {
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
-        let folded = project_serving_component(&overlay, &facts, DependencyDigestRule::Declared)
-            .expect("the composed overlay folds its base");
+        let folded =
+            project_serving_component(&overlay, Vec::new(), &facts, DependencyDigestRule::Declared)
+                .expect("the composed overlay folds its base");
         assert_eq!(
             folded.operations[overlay_operation].permissions,
             BTreeSet::from([base_operation.to_owned(), overlay_operation.to_owned()]),
@@ -3086,9 +3380,13 @@ mod tests {
                 },
             );
 
-        let serving =
-            project_serving_component(&admitted, &BTreeMap::new(), DependencyDigestRule::Declared)
-                .expect("an admitted component projects to serving facts");
+        let serving = project_serving_component(
+            &admitted,
+            Vec::new(),
+            &BTreeMap::new(),
+            DependencyDigestRule::Declared,
+        )
+        .expect("an admitted component projects to serving facts");
 
         assert_eq!(
             serving.operations[operation].statement(&digest),

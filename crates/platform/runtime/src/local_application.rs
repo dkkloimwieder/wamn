@@ -657,6 +657,11 @@ mod tests {
                         statements: BTreeMap::new(),
                     },
                 )]),
+                descriptor: wamn_catalog::ComponentDescriptor::named(
+                    "transform",
+                    "0.1.0",
+                    component.component_digest.clone(),
+                ),
             }]),
             BTreeSet::new(),
             BTreeSet::from([ServingWiring {

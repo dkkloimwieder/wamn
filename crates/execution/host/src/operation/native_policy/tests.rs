@@ -609,7 +609,7 @@ impl Fixture {
         if matches!(case, Case::PostgresImport) {
             root.imports.push(STATEMENTS.into());
         }
-        let mut served = ServingComponent::project(&root, &|dependency| {
+        let mut served = ServingComponent::project(&root, Vec::new(), &|dependency| {
             callees
                 .iter()
                 .find(|callee| callee.component_digest == dependency.digest)

@@ -65,9 +65,11 @@ fn grant_release() -> anyhow::Result<LoadedRelease> {
         "components": [
             {"package-id": "child", "component": "node", "interface-version": "0.1.0",
              "digest": format!("sha256:{}", "c".repeat(64)),
+             "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "c".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
              "operations": {CHILD: operation(CHILD)}},
             {"package-id": "root", "component": "node", "interface-version": "0.1.0",
              "digest": format!("sha256:{}", "a".repeat(64)),
+             "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
              "operations": {ROOT: operation(ROOT), PARTICIPANT: operation(PARTICIPANT)}}],
         "routes": [],
         "attachments": {}
@@ -273,7 +275,9 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         "format-version": super::SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "root", "package-version": "1.0.0"}]},
         "components": [{"package-id": "root", "component": "node", "interface-version": "0.1.0",
-            "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
+            "digest": format!("sha256:{}", "a".repeat(64)),
+            "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
+            "operations": {
                 ROOT: {"registered-operation": ROOT, "permissions": [ROOT]}
             }}],
         "routes": [],

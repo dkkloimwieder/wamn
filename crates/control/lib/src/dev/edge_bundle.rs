@@ -26,9 +26,7 @@ use wamn_engine::artifact_source::local_component_path;
 use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 
-use super::coordinator::{
-    NODE_CAPABILITY, PACKAGE_ATTACHMENTS, PACKAGE_COMPONENTS, POSTGRES_CAPABILITY, TemporaryFile,
-};
+use super::coordinator::{NODE_CAPABILITY, PACKAGE_COMPONENTS, POSTGRES_CAPABILITY, TemporaryFile};
 use crate::component_declaration::{authored_base_digests, render_declaration_document};
 use crate::publish_release::{PublishReleaseRequest, assemble_local_release};
 use crate::push_component::{AdmitComponentRequest, admit_component};
@@ -131,10 +129,13 @@ pub fn write_package(
             admission.package_version(),
         )?],
         wirings: Vec::new(),
-        attachments: vec![package.join(PACKAGE_ATTACHMENTS)],
-        package_manifests: vec![wamn_schema_generator::package_manifest_path(package)],
     };
-    let assembled = assemble_local_release(&request, std::slice::from_ref(&admission), Vec::new())?;
+    let assembled = assemble_local_release(
+        &request,
+        &[package.to_owned()],
+        std::slice::from_ref(&admission),
+        Vec::new(),
+    )?;
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.facts,

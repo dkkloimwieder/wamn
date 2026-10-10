@@ -354,6 +354,7 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
             "interface-version": component.interface_version,
             "digest": component.component_digest,
             "operations": operations,
+            "descriptor": {"component": component.component, "interface-version": component.interface_version, "component-digest": component.component_digest, "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
         }],
         "routes": [],
         "attachments": {},

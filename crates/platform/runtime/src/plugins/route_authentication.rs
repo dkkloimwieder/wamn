@@ -517,6 +517,11 @@ mod tests {
                         statements: BTreeMap::new(),
                     },
                 )]),
+                descriptor: wamn_catalog::ComponentDescriptor::named(
+                    "http-request",
+                    "0.1",
+                    digest('a'),
+                ),
             }]),
             BTreeSet::new(),
             BTreeSet::from([ServingWiring {

@@ -6,12 +6,14 @@ use std::path::PathBuf;
 use clap::Args;
 use wamn_catalog::PackageCoordinate;
 use wamn_control::author_wiring::{self, AuthorWiringDocumentRequest};
+use wamn_control::package_artifact::PackageRegistry;
 use wamn_control::publish_release::{
     self, PublishReleaseRequest, ReleaseWiringTarget, parse_package,
 };
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneOutcome, ReconcileRunPlaneRequest};
 use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
 use wamn_run_state::operator_action::OperatorActionBasis;
+use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Arguments for the wiring-authorship verb.
 #[derive(Debug, Args)]
@@ -46,10 +48,14 @@ pub struct AuthorWiringArgs {
     pub wiring_document: PathBuf,
 }
 
+/// Arguments for the release publish verb. Each package is the verified
+/// artifact that `push-package` recorded in `catalog.package_artifacts`.
 #[derive(Debug, Args)]
 pub struct PublishReleaseArgs {
     #[arg(long)]
     pub database_url: String,
+    /// Owner URL of the control database. It holds `catalog.package_artifacts`
+    /// and receives the release identity.
     #[arg(long)]
     pub control_database_url: String,
     #[arg(long)]
@@ -65,19 +71,27 @@ pub struct PublishReleaseArgs {
     pub verified_publisher_principal: String,
     #[arg(long)]
     pub run_schema: String,
-    /// Exact package membership; repeat once per package.
-    #[arg(long = "package", value_parser = parse_package, required = true)]
+    /// Exact package membership; repeat once per package. Each resolves
+    /// through `catalog.package_artifacts` to its verified artifact.
+    #[arg(long = "package", value_name = "ID@VERSION", value_parser = parse_package, required = true)]
     pub packages: Vec<PackageCoordinate>,
-    /// Exact package-owned wiring; repeat once per wiring. A release whose
-    /// attachments all target routes names none.
+    /// Exact package-owned wiring in `catalog.wirings`; repeat once per
+    /// wiring. A release whose attachments all target routes names none.
     #[arg(long = "wiring", value_name = "PACKAGE@VERSION::WIRING=VERSION")]
     pub wirings: Vec<ReleaseWiringTarget>,
-    /// Package-owned attachment documents; repeat once per package.
-    #[arg(long = "attachments", value_name = "PATH", required = true)]
-    pub attachments: Vec<PathBuf>,
-    /// Exact `wamn.json` for every package in the release.
-    #[arg(long = "package-manifest", value_name = "PATH", required = true)]
-    pub package_manifests: Vec<PathBuf>,
+    /// Explicit `<registry>/<repository>` base for package artifacts.
+    #[arg(long)]
+    pub artifact_base: String,
+    /// `.dockerconfigjson` file carrying the registry pull credential.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: PathBuf,
+    /// Use plain HTTP for exactly the registry in `--artifact-base`.
+    #[arg(long, default_value_t = false)]
+    pub insecure_registry: bool,
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in
+    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
+    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -169,20 +183,28 @@ pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
 
 /// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
-    let digest = publish_release::publish_release(PublishReleaseRequest {
-        database_url: args.database_url,
-        control_database_url: args.control_database_url,
-        org: args.org,
-        project: args.project,
-        tenant: args.tenant,
-        environment: args.environment,
-        verified_publisher_principal: args.verified_publisher_principal,
-        run_schema: args.run_schema,
-        packages: args.packages,
-        wirings: args.wirings,
-        attachments: args.attachments,
-        package_manifests: args.package_manifests,
-    })
+    let registry = PackageRegistry {
+        artifact_base: args.artifact_base,
+        registry_auth_file: args.registry_auth_file,
+        insecure_registry: args.insecure_registry,
+        oci_ca_paths: args.oci_ca_paths,
+        control_database_url: args.control_database_url.clone(),
+    };
+    let digest = publish_release::publish_release(
+        PublishReleaseRequest {
+            database_url: args.database_url,
+            control_database_url: args.control_database_url,
+            org: args.org,
+            project: args.project,
+            tenant: args.tenant,
+            environment: args.environment,
+            verified_publisher_principal: args.verified_publisher_principal,
+            run_schema: args.run_schema,
+            packages: args.packages,
+            wirings: args.wirings,
+        },
+        &registry,
+    )
     .await?;
     println!("{digest}");
     Ok(())
@@ -366,6 +388,67 @@ mod tests {
         ];
         for refused in refusals {
             assert!(parse(&refused).is_err(), "accepted {refused:?}");
+        }
+    }
+
+    /// Host command for the publish argument surface under test.
+    #[derive(Debug, clap::Parser)]
+    struct PublishProbe {
+        #[command(flatten)]
+        args: PublishReleaseArgs,
+    }
+
+    const PUBLISH: [&str; 22] = [
+        "publish-release",
+        "--database-url",
+        "postgres://publish.invalid/env",
+        "--control-database-url",
+        "postgres://publish.invalid/control",
+        "--org",
+        "acme",
+        "--project",
+        "plant",
+        "--tenant",
+        "acme--plant--dev",
+        "--environment",
+        "dev",
+        "--verified-publisher-principal",
+        "publisher",
+        "--run-schema",
+        "wamn_run",
+        "--package",
+        "orders@1.0.0",
+        "--artifact-base",
+        "registry.invalid/wamn/packages",
+        "--registry-auth-file=config.json",
+    ];
+
+    /// A package is an id and a version that the registry resolves to its
+    /// verified artifact, so argv names no package file.
+    #[test]
+    fn publish_release_takes_packages_from_the_registry() {
+        let args = PublishProbe::try_parse_from(PUBLISH)
+            .expect("the registry surface parses")
+            .args;
+        assert_eq!(
+            args.packages,
+            vec![PackageCoordinate::new("orders", "1.0.0").unwrap()]
+        );
+        assert_eq!(args.artifact_base, "registry.invalid/wamn/packages");
+        assert!(
+            PublishProbe::try_parse_from(&PUBLISH[..19]).is_err(),
+            "publish-release parsed with no package artifact base"
+        );
+        for retired in [
+            ["--package-manifest", "apps/orders/generated/wamn.json"],
+            ["--attachments", "apps/orders/publication/attachments.json"],
+        ] {
+            let mut retired_argv = PUBLISH.to_vec();
+            retired_argv.extend(retired);
+            assert!(
+                PublishProbe::try_parse_from(retired_argv).is_err(),
+                "accepted {retired:?}"
+            );
         }
     }
 }

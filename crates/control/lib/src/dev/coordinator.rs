@@ -56,7 +56,6 @@ const RUN_SCHEMA: &str = "wamn_run";
 
 /// Stable code for the notice a run emits when it built past an authored pin.
 pub const BASE_PIN_STALE_NOTICE: &str = "pin stale";
-pub(super) const PACKAGE_ATTACHMENTS: &str = "publication/attachments.json";
 pub(super) const PACKAGE_COMPONENTS: &str = "publication/components";
 pub(super) const NODE_CAPABILITY: &str = "wamn:node";
 pub(super) const POSTGRES_CAPABILITY: &str = "wamn:postgres";
@@ -940,14 +939,10 @@ impl ProductionDevStageRunner {
                 wiring_version: gated.wiring.version,
             })
             .collect();
-        let attachments = packages
+        let package_roots = packages
             .iter()
-            .map(|package| package.root.join(PACKAGE_ATTACHMENTS))
-            .collect();
-        let package_manifests = packages
-            .iter()
-            .map(|package| wamn_schema_generator::package_manifest_path(&package.root))
-            .collect();
+            .map(|package| package.root.clone())
+            .collect::<Vec<_>>();
         let identity = self.config.activation_identity();
         let request = PublishReleaseRequest {
             database_url: self.config.target_database_url().to_owned(),
@@ -960,8 +955,6 @@ impl ProductionDevStageRunner {
             run_schema: RUN_SCHEMA.to_owned(),
             packages: package_coordinates,
             wirings,
-            attachments,
-            package_manifests,
         };
         let local = self.config.local_artifacts();
         let documents = self
@@ -979,7 +972,7 @@ impl ProductionDevStageRunner {
             })
             .collect();
         let (published, mut local_facts) =
-            publish_release::publish_local(request, &self.admissions, documents)
+            publish_release::publish_local(request, &package_roots, &self.admissions, documents)
                 .await
                 .map_err(|source| {
                     ProductionDevStageError::owner("assemble local application", source)

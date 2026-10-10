@@ -353,15 +353,17 @@ fn validate_component_dependency_cycles<'a>(
 /// The dependencies of a composed component run inside its own bytes, so the
 /// manifest lists only the component itself. Admission found the declared
 /// base embedded in the bytes, and the fold reads that base's admitted fact.
+/// The component carries its descriptor: `fact` with its `connections`.
 pub(super) fn project_serving_component(
     fact: &AdmittedComponent,
+    connections: Vec<wamn_catalog::ComponentConnection>,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
 ) -> Result<ServingComponent, PublishManifestError> {
     let resolve = |dependency: &wamn_catalog::ComponentOperationDependency| {
         resolve_component_dependency(dependency, component_facts, rule).ok()
     };
-    ServingComponent::project(fact, &resolve).map_err(|error| {
+    ServingComponent::project(fact, connections, &resolve).map_err(|error| {
         PublishManifestError::with_source(
             PublishManifestErrorType::OperationDependency,
             format!(

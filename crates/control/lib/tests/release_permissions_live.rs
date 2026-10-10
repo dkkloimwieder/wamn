@@ -52,6 +52,11 @@ fn component(package: &str, operations: &[(&str, &[&str])]) -> ServingComponent 
                 )
             })
             .collect(),
+        descriptor: wamn_catalog::ComponentDescriptor::named(
+            package,
+            "1",
+            format!("sha256:{}", "0".repeat(64)),
+        ),
     }
 }
 

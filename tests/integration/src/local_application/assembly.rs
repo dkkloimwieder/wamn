@@ -483,7 +483,7 @@ fn serving_manifest(
         .iter()
         .map(|(_, component)| {
             Ok(serde_json::to_value(
-                wamn_catalog::ServingComponent::project(component, &resolve)?,
+                wamn_catalog::ServingComponent::project(component, Vec::new(), &resolve)?,
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;

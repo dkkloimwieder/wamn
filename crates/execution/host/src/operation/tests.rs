@@ -110,7 +110,7 @@ fn partial_statement_binding_failure_cleans_earlier_operations() {
     // The refusal moved to preparation: a digest that does not name its
     // SQL is refused before any scope exists to bind it under, so nothing
     // partial can ever have been bound.
-    let served = wamn_catalog::ServingComponent::project(&component, &|_| None)
+    let served = wamn_catalog::ServingComponent::project(&component, Vec::new(), &|_| None)
         .expect("the fixture projects");
     let error = prepare_statement_sets(&served.operations)
         .expect_err("a digest that does not name its SQL is refused at preparation");

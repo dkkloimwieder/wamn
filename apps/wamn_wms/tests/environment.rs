@@ -19,6 +19,7 @@ use wamn_control::component_declaration::declared_platform_packages;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{JourneyCredentials, connect};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
+use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::print_release_env::{self, ReleaseCarrier};
 use wamn_control::provision_org::{self, ProvisionOrgRequest};
@@ -598,23 +599,45 @@ pub async fn publish(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let release_digest = publish_release::publish_release(PublishReleaseRequest {
-        database_url: route.database_url.clone(),
+    // The release composes the verified package artifact, beside the
+    // component artifacts.
+    let (artifact_parent, _) = inputs
+        .component_artifact_base
+        .rsplit_once('/')
+        .context("the component artifact base names a repository")?;
+    let registry = PackageRegistry {
+        artifact_base: format!("{artifact_parent}/packages"),
+        registry_auth_file: inputs.registry_auth_file.clone(),
+        insecure_registry: true,
+        oci_ca_paths: Vec::new(),
         control_database_url: inputs.system_pg_url.clone(),
-        org: identity().org.clone(),
-        project: identity().project.clone(),
-        tenant: identity().tenant.clone(),
-        environment: identity().environment.clone(),
-        verified_publisher_principal: route
-            .management_principal_subject
-            .clone()
-            .context("WMS provisioning returned its management principal")?,
-        run_schema: "wamn_run".into(),
-        packages: vec![package],
-        wirings: targets,
-        attachments: vec![root.join("publication/attachments.json")],
-        package_manifests: vec![wamn_schema_generator::package_manifest_path(&root)],
+    };
+    push_package(&PushPackageRequest {
+        package: root.clone(),
+        registry: registry.clone(),
+        component_artifact_base: inputs.component_artifact_base.clone(),
+        source_commit: None,
     })
+    .await
+    .context("push the WMS package artifact")?;
+    let release_digest = publish_release::publish_release(
+        PublishReleaseRequest {
+            database_url: route.database_url.clone(),
+            control_database_url: inputs.system_pg_url.clone(),
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            tenant: identity().tenant.clone(),
+            environment: identity().environment.clone(),
+            verified_publisher_principal: route
+                .management_principal_subject
+                .clone()
+                .context("WMS provisioning returned its management principal")?,
+            run_schema: "wamn_run".into(),
+            packages: vec![package],
+            wirings: targets,
+        },
+        &registry,
+    )
     .await?
     .to_string();
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {

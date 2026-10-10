@@ -1030,15 +1030,13 @@ impl Run {
                     })
                     .collect::<Result<_, _>>()?,
                 wirings: targets,
-                attachments: roots
-                    .iter()
-                    .map(|root| root.join("publication/attachments.json"))
-                    .filter(|path| path.is_file())
-                    .collect(),
-                package_manifests: roots
-                    .iter()
-                    .map(|root| wamn_schema_generator::package_manifest_path(root))
-                    .collect(),
+            },
+            &crate::package_artifact::PackageRegistry {
+                artifact_base: format!("{}/packages", environment.registry),
+                registry_auth_file: registry.auth_file(),
+                insecure_registry: false,
+                oci_ca_paths: Vec::new(),
+                control_database_url: system_url.clone(),
             },
         )
         .await?;

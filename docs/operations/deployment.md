@@ -123,8 +123,12 @@ The CronJob runs `wamn-ctl-ops prune-record-history --tenant "$TENANT"` once a d
 ## Publish and select a release
 
 The example below selects Receiving.
-For an overlay, repeat package, attachment, and manifest arguments for the exact selected package set.
-Use the package manifests as the source for that selection.
+`publish-release` composes verified package artifacts.
+Push each package with `wamn-ctl push-package` first; it records the artifact in `catalog.package_artifacts` of the control database.
+Each `--package ID@VERSION` resolves through that record to its artifact under `--artifact-base`.
+A package with no verified artifact refuses, and the publish writes nothing.
+The release takes each package's `wamn.json`, attachments and component descriptors from its artifact.
+For an overlay, repeat `--package` for the exact selected package set.
 Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
 
 ```bash
@@ -135,8 +139,7 @@ wamn-ctl publish-release \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
-  --attachments apps/wamn_receiving/publication/attachments.json \
-  --package-manifest apps/wamn_receiving/generated/wamn.json
+  --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PULL_DOCKERCONFIG"
 
 wamn-ctl publish-qualified-release \
   --qualification "$DELIVERY_QUALIFICATION" --release-chart "$WAMN_RELEASE_CHART" \
@@ -152,6 +155,7 @@ wamn-ctl print-release-env \
 ```
 
 `publish-release` records the release by its canonical manifest digest and prints that digest.
+Each component of the release carries its admitted descriptor from the package artifact.
 Set `RELEASE_DIGEST` to it.
 The manifest names no tenant and no environment, so one release has one digest in every environment.
 The tenant of an environment is `<org>--<project>--<environment>`.

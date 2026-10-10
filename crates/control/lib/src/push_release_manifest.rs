@@ -578,7 +578,7 @@ mod tests {
 
     use super::*;
 
-    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":6,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 
     fn fixture_reference() -> Reference {
         Reference::with_tag(
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn pushed_bytes_carry_their_own_half_of_the_attestation_key() {
         let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-5 bytes");
+            .expect("the fixture is canonical format-6 bytes");
         let coordinate = DeploymentCoordinate::new(
             "acme",
             "billing",
@@ -631,9 +631,9 @@ mod tests {
     fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
         let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
             .expect("fixture is UTF-8")
-            .replacen("\"format-version\":5", "\"format-version\":4", 1);
+            .replacen("\"format-version\":6", "\"format-version\":5", 1);
         let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
-            .expect_err("format four refuses");
+            .expect_err("format five refuses");
         assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));
 
         let mut indented = CANONICAL_MANIFEST.to_vec();

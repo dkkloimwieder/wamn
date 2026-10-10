@@ -712,6 +712,17 @@ mod tests {
         let invocation = released();
         let (mut manifest, _scope) = manifest("tenant-a", "package_a");
         manifest.components = BTreeSet::from([ServingComponent {
+            descriptor: wamn_catalog::ComponentDescriptor::named(
+                snapshot
+                    .component
+                    .clone()
+                    .expect("the fixture snapshot names a component"),
+                snapshot
+                    .interface_version
+                    .clone()
+                    .expect("the fixture snapshot names an interface version"),
+                invocation.component_digest.clone(),
+            ),
             package_id: invocation.package_id.clone(),
             component: snapshot
                 .component

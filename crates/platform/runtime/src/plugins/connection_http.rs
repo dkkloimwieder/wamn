@@ -1255,6 +1255,14 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("package_a", "1.0.0").unwrap()]),
             },
             components: BTreeSet::from([ServingComponent {
+                descriptor: wamn_catalog::ComponentDescriptor::named(
+                    snapshot.component.clone().expect("component"),
+                    snapshot
+                        .interface_version
+                        .clone()
+                        .expect("interface version"),
+                    invocation.component_digest.clone(),
+                ),
                 package_id: invocation.package_id.clone(),
                 component: snapshot.component.expect("component"),
                 interface_version: snapshot.interface_version.expect("interface version"),

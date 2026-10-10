@@ -22,7 +22,8 @@ use tokio_postgres::{Client as PgClient, Config as PgConfig, NoTls, Transaction}
 use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
-    ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts, component_sql_digest,
+    ComponentDescriptor, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
+    component_sql_digest,
 };
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_engine::component_admission::validate_component_admission;
@@ -361,6 +362,7 @@ pub struct ComponentAdmission {
     directory: PackageDirectory,
     component_bytes: Box<[u8]>,
     component: AdmittedComponent,
+    connections: Box<[ComponentConnection]>,
     requirements: Box<[ComponentConnectionRequirement]>,
     manifest_sha256: Box<str>,
     projection_hash: Box<str>,
@@ -389,6 +391,13 @@ impl ComponentAdmission {
 
     pub fn requirements(&self) -> &[ComponentConnectionRequirement] {
         &self.requirements
+    }
+
+    /// The admitted descriptor (docs/plan/platform-deploy.md §7.2, contract
+    /// A): the facts without their scope, and the declared connections sorted
+    /// by store alias, as `push-package` writes it.
+    pub fn descriptor(&self) -> ComponentDescriptor {
+        ComponentDescriptor::new(self.component.clone(), self.connections.to_vec())
     }
 
     /// Exact package identity carried by the admitted component facts.
@@ -472,12 +481,15 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         .map(|connection| portable_requirement(&admitted.component_digest, connection))
         .collect::<Vec<_>>();
     let projection_hash = admitted_projection_hash(&admitted, &requirements)?;
+    let mut connections = facts.connections;
+    connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
 
     Ok(ComponentAdmission {
         package_path: args.package,
         directory,
         component_bytes: component_bytes.into_boxed_slice(),
         component: admitted,
+        connections: connections.into_boxed_slice(),
         requirements: requirements.into_boxed_slice(),
         manifest_sha256: package.manifest_sha256.into_boxed_str(),
         projection_hash: projection_hash.into_boxed_str(),
@@ -2248,6 +2260,7 @@ mod tests {
             },
             component_bytes: Box::from(&b"private-component-bytes-marker"[..]),
             component,
+            connections: Vec::new().into_boxed_slice(),
             requirements: Vec::new().into_boxed_slice(),
             manifest_sha256: format!("sha256:{}", "c".repeat(64)).into_boxed_str(),
             projection_hash: format!("sha256:{}", "d".repeat(64)).into_boxed_str(),
@@ -2712,6 +2725,11 @@ mod tests {
             directory: directory.clone(),
             component_bytes: component_bytes.into_boxed_slice(),
             component: component.clone(),
+            connections: vec![ComponentConnection {
+                store_alias: "warehouse".to_owned(),
+                requirement_type: ComponentConnectionType::Http,
+            }]
+            .into_boxed_slice(),
             requirements: requirements.clone().into_boxed_slice(),
             manifest_sha256: package.manifest_sha256.clone().into_boxed_str(),
             projection_hash: projection_hash.clone().into_boxed_str(),

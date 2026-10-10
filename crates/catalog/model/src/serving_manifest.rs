@@ -1,8 +1,10 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 5 closes over exact package membership, component digests, routes,
+//! Format 6 closes over exact package membership, component digests, routes,
 //! the permissions and SQL statements of each export's call graph, and route
-//! attachments. Publish folds each call graph, because an application's
+//! attachments. Each component carries its admitted descriptor, the bytes of
+//! the descriptor layer of its package artifact (docs/plan/platform-deploy.md
+//! §7.2, contract A). Publish folds each call graph, because an application's
 //! components compose at build into one component. A route calls one component
 //! export. The workflow section holds the wiring definitions, the attachments
 //! that start a wiring, and the registrations. A wiring is a graph the router
@@ -29,13 +31,14 @@ use serde_json::Value;
 
 use crate::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
-    CatalogIdentityError, ComponentOperationDependency, ComponentSqlStatement, DefinitionHash,
-    HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest, PackageCoordinate,
-    package::validate_canonical_operation_for_package, validate_digest, validate_text,
+    CatalogIdentityError, ComponentConnection, ComponentDescriptor, ComponentOperationDependency,
+    ComponentSqlStatement, DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet,
+    ManifestDigest, PackageCoordinate, package::validate_canonical_operation_for_package,
+    validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 5;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 6;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -200,7 +203,7 @@ impl ServingComponentOperation {
 }
 
 /// One immutable component artifact in the release closure.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
     pub package_id: String,
@@ -208,6 +211,46 @@ pub struct ServingComponent {
     pub interface_version: String,
     pub digest: ArtifactHash,
     pub operations: BTreeMap<String, ServingComponentOperation>,
+    /// The admitted descriptor of this component. Its canonical bytes are the
+    /// descriptor layer of the package artifact that lists the component, so
+    /// the release is the one owner of component facts (R2).
+    pub descriptor: ComponentDescriptor,
+}
+
+/// A descriptor holds JSON values, which have no order, so the order of two
+/// components with equal other fields is the order of their descriptors'
+/// canonical bytes.
+impl Ord for ServingComponent {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (
+            &self.package_id,
+            &self.component,
+            &self.interface_version,
+            &self.digest,
+            &self.operations,
+        )
+            .cmp(&(
+                &other.package_id,
+                &other.component,
+                &other.interface_version,
+                &other.digest,
+                &other.operations,
+            ))
+            .then_with(|| {
+                let bytes = |descriptor: &ComponentDescriptor| {
+                    wamn_execution_contract::canonical_json_bytes(
+                        &serde_json::to_value(descriptor).expect("a descriptor serializes"),
+                    )
+                };
+                bytes(&self.descriptor).cmp(&bytes(&other.descriptor))
+            })
+    }
+}
+
+impl PartialOrd for ServingComponent {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl ServingComponent {
@@ -219,9 +262,11 @@ impl ServingComponent {
     /// `resolve` returns the admitted fact of each dependency's base. Every
     /// export then carries the union of the permissions and SQL statements of
     /// its call graph, the fresh-credential rule of any callee, and the
-    /// participant that the base selects.
+    /// participant that the base selects. The descriptor is `fact` with its
+    /// `connections`.
     pub fn project<'a>(
         fact: &'a AdmittedComponent,
+        connections: Vec<ComponentConnection>,
         resolve: &dyn Fn(&ComponentOperationDependency) -> Option<&'a AdmittedComponent>,
     ) -> Result<Self, CatalogIdentityError> {
         let digest = ArtifactHash::parse(fact.component_digest.clone())?;
@@ -250,6 +295,7 @@ impl ServingComponent {
             interface_version: fact.interface_version.clone(),
             digest,
             operations,
+            descriptor: ComponentDescriptor::new(fact.clone(), connections),
         })
     }
 }
@@ -1112,9 +1158,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-5 bytes.
+    /// Parse, validate, and admit only canonical format-6 bytes.
     ///
-    /// The version is classified before the format-5 schema is decoded. This is
+    /// The version is classified before the format-6 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1171,6 +1217,20 @@ impl ServingManifest {
             validate_package_member(&package_versions, &component.package_id)?;
             validate_text(&component.component, "component")?;
             validate_text(&component.interface_version, "interface-version")?;
+            let descriptor = &component.descriptor;
+            if descriptor.component != component.component
+                || descriptor.interface_version != component.interface_version
+                || descriptor.component_digest != component.digest.as_str()
+            {
+                return invalid(format!(
+                    "component {:?} of package {:?} carries the descriptor of {:?} {:?} {}",
+                    component.component,
+                    component.package_id,
+                    descriptor.component,
+                    descriptor.interface_version,
+                    descriptor.component_digest
+                ));
+            }
             if component.operations.is_empty() {
                 return invalid("a serving component must export at least one operation");
             }
@@ -1621,6 +1681,7 @@ mod tests {
                         statements: BTreeMap::new(),
                     },
                 )]),
+                descriptor: ComponentDescriptor::named("transform", "0.1", COMPONENT_B),
             },
             ServingComponent {
                 package_id: "base".into(),
@@ -1639,6 +1700,7 @@ mod tests {
                         statements: BTreeMap::new(),
                     },
                 )]),
+                descriptor: ComponentDescriptor::named("http-request", "0.1", COMPONENT_A),
             },
         ])
     }
@@ -1891,7 +1953,8 @@ mod tests {
             ],
         );
         let resolve = |_: &ComponentOperationDependency| Some(&base);
-        let projected = ServingComponent::project(&overlay, &resolve).expect("the graph folds");
+        let projected =
+            ServingComponent::project(&overlay, Vec::new(), &resolve).expect("the graph folds");
         let entry = &projected.operations[OVERLAY];
         assert_eq!(
             entry.permissions,
@@ -1915,7 +1978,7 @@ mod tests {
         assert!(participant.participant.is_none() && !participant.fresh_only);
 
         let unresolved = |_: &ComponentOperationDependency| None;
-        let error = ServingComponent::project(&overlay, &unresolved)
+        let error = ServingComponent::project(&overlay, Vec::new(), &unresolved)
             .expect_err("an unresolved dependency was folded");
         assert!(error.to_string().contains("has no admitted fact"));
 
@@ -1935,7 +1998,7 @@ mod tests {
                 &overlay
             })
         };
-        let error = ServingComponent::project(&overlay, &cyclic)
+        let error = ServingComponent::project(&overlay, Vec::new(), &cyclic)
             .expect_err("a call graph cycle was folded");
         assert!(error.to_string().contains("calls itself"));
     }
@@ -1963,13 +2026,13 @@ mod tests {
 
         let optional = base.clone();
         let resolve = |_: &ComponentOperationDependency| Some(&optional);
-        let projected =
-            ServingComponent::project(&overlay, &resolve).expect("an optional slot folds");
+        let projected = ServingComponent::project(&overlay, Vec::new(), &resolve)
+            .expect("an optional slot folds");
         assert!(projected.operations[OVERLAY].participant.is_none());
 
         base.operations.get_mut(BASE).unwrap().pre_commit_required = true;
         let resolve = |_: &ComponentOperationDependency| Some(&base);
-        let error = ServingComponent::project(&overlay, &resolve)
+        let error = ServingComponent::project(&overlay, Vec::new(), &resolve)
             .expect_err("a required slot without a participant was published");
         assert_eq!(
             error.to_string(),
@@ -2034,7 +2097,7 @@ mod tests {
     }
 
     #[test]
-    fn only_canonical_format_five_bytes_are_admitted() {
+    fn only_canonical_format_six_bytes_are_admitted() {
         let manifest = manifest();
         let bytes = manifest.canonical_bytes();
         assert_eq!(
@@ -2048,6 +2111,52 @@ mod tests {
             ServingManifest::from_canonical_bytes(&indented),
             Err(CatalogIdentityError::NonCanonicalJson)
         );
+    }
+
+    /// Each component carries the descriptor of its own component, interface
+    /// version and digest, and the canonical bytes carry it whole.
+    #[test]
+    fn a_component_carries_its_own_descriptor() {
+        let manifest = manifest();
+        let value: Value = serde_json::from_slice(&manifest.canonical_bytes()).unwrap();
+        for (index, component) in manifest.components.iter().enumerate() {
+            assert_eq!(
+                value["components"][index]["descriptor"],
+                serde_json::to_value(&component.descriptor).unwrap()
+            );
+        }
+        let wrong = [
+            ComponentDescriptor::named("other", "0.1", COMPONENT_A),
+            ComponentDescriptor::named("http-request", "0.2", COMPONENT_A),
+            ComponentDescriptor::named("http-request", "0.1", COMPONENT_B),
+        ];
+        for descriptor in wrong {
+            let mut components = components();
+            let mut base = components
+                .iter()
+                .find(|component| component.package_id == "base")
+                .cloned()
+                .unwrap();
+            components.remove(&base);
+            base.descriptor = descriptor;
+            components.insert(base);
+            let error = ServingManifest::new(
+                release(),
+                components,
+                routes(),
+                wirings(),
+                BTreeMap::from([
+                    ("orders".to_string(), attachment()),
+                    ("widget-get".to_string(), route_attachment()),
+                ]),
+                BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
+            )
+            .expect_err("a descriptor of another component refuses");
+            assert!(
+                error.to_string().contains("carries the descriptor of"),
+                "{error}"
+            );
+        }
     }
 
     #[test]
@@ -2139,14 +2248,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 6] {
+        for version in [0, 1, 2, 3, 4, 5, 7] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format five may enter the decoder");
+                .expect_err("only format six may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {

@@ -9,9 +9,9 @@ use wamn_catalog::edge_bundle::{
     BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, GRANTS_FILE_NAME, INGRESS_FILE_NAME, file_digest,
 };
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, ComponentPackageScope,
-    PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent, ServingComponentOperation,
-    ServingManifest, ServingRelease,
+    AdmittedComponent, AdmittedComponentOperation, ArtifactHash, ComponentDescriptor,
+    ComponentPackageScope, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingComponent,
+    ServingComponentOperation, ServingManifest, ServingRelease,
 };
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
 use wamn_engine::release_manifest::ReleaseScope;
@@ -48,6 +48,7 @@ fn manifest() -> ServingManifest {
                     statements: BTreeMap::new(),
                 },
             )]),
+            descriptor: ComponentDescriptor::named(COMPONENT, "0.1", file_digest(BODY)),
         }]),
         BTreeSet::new(),
         BTreeSet::new(),
