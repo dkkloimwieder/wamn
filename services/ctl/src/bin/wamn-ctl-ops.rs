@@ -20,8 +20,6 @@ struct Cli {
 enum Command {
     /// Create one user principal that an operator can then grant access to.
     CreateUser(ops_verbs::CreateUserArgs),
-    /// Copy a project-env to another environment.
-    CopyProjectEnv(ops_verbs::CopyProjectEnvArgs),
     /// Prune terminal run history older than the retention period.
     PruneRunHistory(ops_verbs::PruneRunHistoryArgs),
     /// Remove expired record history entries as the audit retention task.
@@ -46,7 +44,6 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::CreateUser(args) => ops_verbs::create_user(args).await,
-        Command::CopyProjectEnv(args) => ops_verbs::copy_project_env(args).await,
         Command::PruneRunHistory(args) => ops_verbs::prune_run_history(args).await,
         Command::PruneRecordHistory(args) => ops_verbs::prune_record_history(args).await,
         Command::EventAdvisories(args) => ops_verbs::event_advisories(args).await,

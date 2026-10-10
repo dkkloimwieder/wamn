@@ -76,7 +76,7 @@
 
 -- ---------------------------------------------------------------------------
 -- Schemas. `registry` = the org/project placement model (wamn-q3n.1);
--- `provisioning` = the operations state of deploy/sql/ops-schema.sql; `identity` = first-party platform principals,
+-- `provisioning` = operations state, empty today; `identity` = first-party platform principals,
 -- local user credential hashes, project-role assignments (wamn-ctc8.6), and
 -- personal-access-token digests (wamn-ctc8.7), and signing generations (wamn-ctc8.15.1).
 -- Distinct schemas keep each control-plane subsystem namespaced.

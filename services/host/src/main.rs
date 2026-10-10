@@ -7,7 +7,7 @@
 //! remain separate services.
 //!
 //! The one-shot control-plane verbs (provision*, apply-package, publish-release,
-//! dump/restore/copy-project-env, enable-cdc-project-env) live in `wamn-ctl`
+//! enable-cdc-project-env) live in `wamn-ctl`
 //! (SR9); this artifact ships none of them.
 //!
 //! The test suite lives in the separate

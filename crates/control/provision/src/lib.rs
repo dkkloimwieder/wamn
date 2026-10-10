@@ -52,8 +52,6 @@ pub mod audit_retention;
 #[cfg(feature = "ops")]
 pub mod backup;
 pub mod control_author;
-#[cfg(feature = "ops")]
-pub mod copy;
 pub mod database;
 mod error;
 pub mod events;
@@ -72,8 +70,6 @@ pub mod secret;
 pub mod session_role_reader;
 pub mod session_target;
 pub mod sql;
-#[cfg(feature = "ops")]
-pub mod state;
 /// The two T1 control-database read consumers' scoped credential contract.
 pub mod system_reader;
 /// The pure derivation guest RLS uses to reach a tenant from `current_user`.
@@ -91,12 +87,6 @@ pub use backup::{
 pub use control_author::{
     ControlAuthoringConnection, ControlAuthoringUrlError, ControlAuthoringUrlErrorType,
     control_author_generation_role, control_author_scope_hash, parse_control_authoring_url,
-};
-#[cfg(feature = "ops")]
-pub use copy::{
-    COPY_SAGA_TYPE, CopyRequest, CopyStep, DUMP_FORMAT, count_rows_sql, dump_object_key,
-    list_schema_tables_sql, pg_dump_argv, pg_restore_data_only_argv, plan_copy,
-    quiesce_database_sql, terminate_database_backends_sql, unquiesce_database_sql,
 };
 pub use database::render_project_env_database;
 pub use error::{ProvisionError, check_tenant_environment_identity};
@@ -183,7 +173,3 @@ pub const APP_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/app-schema.sql"),
     include_str!("../../../../deploy/sql/app-schema-migrations.sql"),
 );
-
-/// Operations persistence extension, installed after the core system schema.
-#[cfg(feature = "ops")]
-pub const OPS_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/ops-schema.sql");

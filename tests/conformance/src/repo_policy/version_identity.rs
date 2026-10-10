@@ -65,11 +65,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         exact: "INSERT INTO registry.meta (schema_version) VALUES ('0.1');",
         expected_count: 1,
     },
-    GovernedLiteral {
-        path: "deploy/sql/ops-schema.sql",
-        exact: "-- schema_version: 0.1",
-        expected_count: 1,
-    },
     // RETIRED `crates/schema/control/src/run_plane.rs` /
     // `authoring_test_sets_schema_version_check`: the reconciliation CheckSpec
     // went with its table in wamn-0h0g.15.27 (3a042d96). The admission-context

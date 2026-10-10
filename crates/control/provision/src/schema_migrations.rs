@@ -186,6 +186,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0021_remove_release_heads.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0021_remove_release_heads.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0022_remove_copy_project_env.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0022_remove_copy_project_env.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

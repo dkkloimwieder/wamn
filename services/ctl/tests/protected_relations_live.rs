@@ -17,7 +17,6 @@ use wamn_schema_control::BareSchemaName;
 use wamn_test_infrastructure::locked_database;
 
 const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
-const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
@@ -75,11 +74,6 @@ async fn prepare_scratch_database(client: &Client) {
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                ELSE ALTER ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_ops') THEN \
-                 CREATE ROLE wamn_ops NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
-               ELSE ALTER ROLE wamn_ops NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_control_author') THEN \
                  CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
@@ -104,8 +98,7 @@ async fn install_control_database(client: &Client) {
         .await
         .expect("ensure the database-owner role that the record history grants name");
     let system_install = format!(
-        "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\n\
-         {OPS_SCHEMA_SQL}\nRESET ROLE;"
+        "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\nRESET ROLE;"
     );
     client
         .batch_execute(&system_install)

@@ -12,16 +12,6 @@ ops = []
 # PostgreSQL server for the test process, so no production build enables it.
 test-util = ["dep:wamn-test-postgres"]
 
-[[test]]
-name = "copy_snapshot"
-path = "tests/copy_snapshot.rs"
-required-features = ["ops"]
-
-[[test]]
-name = "ops_storage"
-path = "tests/ops_storage.rs"
-required-features = ["ops"]
-
 [dependencies]
 # Native broker configuration types. Network effects stay in wamn-ctl.
 # server_2_11 and server_2_12 are the features wash-runtime enables. This crate

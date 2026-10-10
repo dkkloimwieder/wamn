@@ -13,8 +13,6 @@ pub mod bind_connection;
 pub mod capture_gap;
 pub mod component_declaration;
 #[cfg(feature = "ops")]
-pub mod copy_project_env;
-#[cfg(feature = "ops")]
 pub mod create_user;
 pub mod delivery;
 pub mod dev;
@@ -28,8 +26,6 @@ pub mod git_source;
 pub mod ident;
 pub mod identity_issuer;
 pub mod invite;
-#[cfg(feature = "ops")]
-mod ops_schema;
 pub mod owned_command;
 pub mod package_artifact;
 mod package_upgrade;
