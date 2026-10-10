@@ -137,8 +137,14 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_QUEUE_LEASE_TTL_MS", default_value_t = DEFAULT_QUEUE_LEASE_TTL_MS)]
     pub queue_lease_ttl_ms: u64,
 
-    /// Environment advertised in heartbeats (chart passes the pod namespace)
-    #[arg(long = "environment", env = "WASMCLOUD_HOST_ENVIRONMENT")]
+    /// Environment advertised in heartbeats. The operator chart passes the pod
+    /// namespace first; a release passes the environment name again in its
+    /// `extraArgs`, and the last value wins (R1, R6).
+    #[arg(
+        long = "environment",
+        env = "WASMCLOUD_HOST_ENVIRONMENT",
+        overrides_with = "environment"
+    )]
     pub environment: Option<String>,
 
     /// Address for the workload HTTP server
@@ -2080,6 +2086,19 @@ mod tests {
             assert!(!error.contains("test-password"), "{error}");
             assert!(!error.contains("foreign-password"), "{error}");
         }
+    }
+
+    #[test]
+    fn a_release_environment_argument_replaces_the_chart_namespace() {
+        let args = parse([
+            "wamn-host",
+            "--environment=wamn-system",
+            "--drain-delay=5s",
+            "--environment=dev",
+        ])
+        .unwrap()
+        .args;
+        assert_eq!(args.environment.as_deref(), Some("dev"));
     }
 
     #[test]

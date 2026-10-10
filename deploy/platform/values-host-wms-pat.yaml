@@ -71,10 +71,6 @@ runtime:
         - { name: WAMN_EVT_DUP_WINDOW_SECS, value: "120" }
         - { name: WAMN_ORG, value: acme }
         - { name: WAMN_PROJECT, value: wms }
-        # The operator chart sets this to the pod namespace. The host derives
-        # its tenant from WAMN_ORG, WAMN_PROJECT and this name (R1), so it
-        # names the real environment and replaces the chart's value.
-        - { name: WASMCLOUD_HOST_ENVIRONMENT, value: dev }
         # The host's drain bound, equal to terminationGracePeriodSeconds (R20).
         - { name: WAMN_DRAIN_BOUND_SECONDS, value: "70" }
         - { name: WAMN_SCHEMA, value: wms }
@@ -159,6 +155,11 @@ runtime:
       extraArgs:
         - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
         - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        # The operator chart passes the pod namespace as --environment. The
+        # host derives its tenant from WAMN_ORG, WAMN_PROJECT and the
+        # environment name (R1), so this later flag names the real
+        # environment, and the host keeps the last value.
+        - "--environment=dev"
       resources:
         requests:
           memory: "256Mi"

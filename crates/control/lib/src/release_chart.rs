@@ -196,17 +196,23 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
 /// The host variables that carry the environment coordinate (R1). The host
 /// derives its tenant from the coordinate, because the manifest names none.
 /// The route host is not one of them: it lives only on the http workload's
-/// `config.host` (R2). The operator chart sets
-/// `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace first, and this later
-/// entry replaces it, because the namespace is shared by every environment
-/// (R6). `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one
-/// budget of the host's shutdown sequence, from the same value as the pods'
+/// `config.host` (R2). The environment name is not one of them either: the
+/// operator chart sets `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace,
+/// which every environment shares (R6), and a second entry of one name is
+/// refused by server-side apply. The release passes `--environment` again in
+/// `extraArgs`, after the chart's, and the host keeps the last value.
+/// `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one budget of
+/// the host's shutdown sequence, from the same value as the pods'
 /// `terminationGracePeriodSeconds` (R20).
-const HOST_VARIABLES: [&str; 4] = [
+const HOST_VARIABLES: [&str; 3] = ["WAMN_ORG", "WAMN_PROJECT", "WAMN_DRAIN_BOUND_SECONDS"];
+
+/// The host variables a host group body must not set: the derived ones, and
+/// the chart's environment variable, which the release replaces by argument.
+const REFUSED_VARIABLES: [&str; 4] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
-    "WASMCLOUD_HOST_ENVIRONMENT",
     "WAMN_DRAIN_BOUND_SECONDS",
+    "WASMCLOUD_HOST_ENVIRONMENT",
 ];
 
 /// The inputs of one environment's install values.
@@ -255,14 +261,13 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         !variables.iter().any(|variable| {
             variable["name"]
                 .as_str()
-                .is_some_and(|name| HOST_VARIABLES.contains(&name))
+                .is_some_and(|name| REFUSED_VARIABLES.contains(&name))
         }),
         "the host group body sets a scope variable, which the release chart derives"
     );
     for (variable, value) in HOST_VARIABLES.into_iter().zip([
         input.org.clone(),
         input.project.clone(),
-        input.env.clone(),
         input.drain_bound_seconds.to_string(),
     ]) {
         variables.push(mapping([("name", variable.to_owned()), ("value", value)]));
@@ -272,6 +277,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         Value::Sequence(vec![
             format!("--release-artifact-base={}", input.artifact_base).into(),
             format!("--release-manifest-digest={}", input.manifest_digest).into(),
+            format!("--environment={}", input.env).into(),
         ]),
     );
     let roles = input
@@ -534,7 +540,6 @@ mod tests {
             group["env"],
             serde_yaml::from_str::<Value>(
                 "[{name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
-                 {name: WASMCLOUD_HOST_ENVIRONMENT, value: prod}, \
                  {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}]"
             )
             .expect("yaml")
@@ -542,7 +547,8 @@ mod tests {
         assert_eq!(
             group["extraArgs"],
             serde_yaml::from_str::<Value>(&format!(
-                "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}]"
+                "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}, \
+                 --environment=prod]"
             ))
             .expect("yaml")
         );
@@ -567,12 +573,15 @@ mod tests {
         let mut input = input();
         input.manifest_digest = "e3b0".into();
         assert!(values(&input).is_err());
-        let mut input = super::tests::input();
-        input.host_group.insert(
-            "env".into(),
-            serde_yaml::from_str("[{name: WAMN_ORG, value: other}]").expect("yaml"),
-        );
-        assert!(values(&input).is_err(), "a scope variable is refused");
+        for variable in ["WAMN_ORG", "WASMCLOUD_HOST_ENVIRONMENT"] {
+            let mut input = super::tests::input();
+            input.host_group.insert(
+                "env".into(),
+                serde_yaml::from_str(&format!("[{{name: {variable}, value: other}}]"))
+                    .expect("yaml"),
+            );
+            assert!(values(&input).is_err(), "{variable} is refused");
+        }
     }
 
     #[test]
