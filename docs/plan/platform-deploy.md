@@ -8,7 +8,11 @@ Status: single authority. Evidence cites the repo's `main` by file and symbol; f
 
 - This is the one authority for how an application is authored, built, packaged, published, qualified, deployed, upgraded, rolled back and removed on wamn. Where it differs from `docs/architecture`, `docs/plan` or `docs/operations`, those are updated by the epic that lands the difference.
 - Epics may run in parallel when they share no files and no migration (owner ruling 2026-10-09). Each running epic is scoped into issues; the epics not yet started in §17 are direction, not work, and have no issues. Merges to `main` are serial. Migration numbers are assigned at merge, not in the lane. Before merge, a lane runs every live test target that touches its files. The test of this document is that scoping: an epic must be scopable into fully specified issues from this document alone, each issue naming its files, the §2 invariants it makes true and the §3 checks it runs. If it cannot be, the document is insufficient; the gap is reported with the section that fails to answer, and nothing is guessed.
-- An epic is a few large issues with every foreseeable question answered in the issue; an agent stops and asks on an uncovered fork and never decides it.
+- Standing rules (owner, 2026-10-10):
+  1. Decide, do not ask. The orchestrator decides any question that does not change a §2 invariant, with these defaults: delete over add; one owner per fact; greenfield (refuse old rows, bump formats, no compatibility paths); no new table, column, flag or environment variable unless a rule names it; NULL for dev-only state; literals without a versioned contract change freely. The decision is recorded on the issue. Only a change to an invariant goes to the owner.
+  2. Findings first. A lane with open review findings starts nothing else.
+  3. An epic is at most three issues.
+  4. Reports are ten lines or fewer. There are no progress reports: a report comes at merge, at epic close, or with an invariant question.
 - The five shared contracts (§17.1) are written down and accepted before Epic 1 is scoped.
 - Owner rulings this plan rests on are listed in §2.
 
