@@ -118,9 +118,12 @@ Pass two generates every other output from those `wamn.json` bytes.
 
 A statement value in `wamn.k` can leave out its `type`, and the build takes the type from SQLx.
 A stated type that differs from the type SQLx gives is refused.
+A statement value can also leave out `nullable`.
+A row value without it takes the nullability that SQLx gives. If SQLx cannot tell, as for an expression, the value is nullable.
+A parameter without it is not null.
 A row value stated `nullable = True` is kept, even when SQLx says that the column cannot be null.
-A row value that is not stated nullable, where SQLx says that the column can be null, is refused.
-If SQLx cannot tell, as for an expression, the declaration stands.
+A row value stated `nullable = False`, where SQLx says that the column can be null, is refused.
+If SQLx cannot tell, the stated `nullable = False` stands.
 The refusal names the operation, the statement, and the value.
 
 The build writes each package to `<output root>/<package id>/`.

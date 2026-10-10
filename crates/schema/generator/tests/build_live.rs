@@ -218,7 +218,7 @@ async fn statement_types_are_derived_and_nullability_only_widens() {
     let refused = Workspace::new("refused");
     refused.edit_manifest(
         "manifest.nullable(manifest.text(\"note\"))",
-        "manifest.text(\"note\")",
+        "manifest.Value {name = \"note\", type = \"text\", nullable = False}",
     );
     let error = build(
         &refused.package(),

@@ -85,13 +85,15 @@ schema Field:
 
 schema Value:
     """A parameter or row column of a statement. The type is optional: wamn build
-    derives it from the statement and refuses a stated type that differs. A
-    row value stated nullable = True is kept even where SQLx says the column
-    cannot be null; nullable = False where SQLx says it can be null is refused,
-    and stands where SQLx cannot tell."""
+    derives it from the statement and refuses a stated type that differs.
+    nullable is optional too. A row value that does not state it takes SQLx's
+    nullability, and is nullable where SQLx cannot tell. A row value stated
+    nullable = True is kept even where SQLx says the column cannot be null;
+    nullable = False where SQLx says it can be null is refused, and stands
+    where SQLx cannot tell. A parameter that does not state it is not null."""
     name: str
     type?: ColumnType
-    nullable: bool = False
+    nullable?: bool
 
 schema CountLimit:
     minimum: int

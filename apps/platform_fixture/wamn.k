@@ -117,7 +117,7 @@ manifest.Package {
                 list = manifest.Statement("query", "widget_list") {
                     fetch = "bounded_list"
                     parameters = []
-                    row = [manifest.uuid("id"), manifest.text("code"), manifest.int64("edit_version"), manifest.json("attributes")]
+                    row = [manifest.uuid("id"), manifest.text("code"), manifest.int64("edit_version"), manifest.Value {name = "attributes", type = "json", nullable = False}]
                 }
             }
             lists = {model = "widget", key_field = "id", display_field = "code"}

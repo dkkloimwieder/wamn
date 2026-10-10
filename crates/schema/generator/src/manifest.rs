@@ -590,6 +590,9 @@ pub struct StaticSqlValueDeclaration {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: wamn_schema_introspection::ir::ColumnType,
+    /// `wamn build` states it for every value. A compiled `wamn.k` that does
+    /// not state it reads as not null, because only the build derives it.
+    #[serde(default)]
     pub nullable: bool,
 }
 

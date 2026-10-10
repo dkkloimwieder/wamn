@@ -145,7 +145,7 @@ fn each_authoring_default_fills() {
     assert_eq!(statement["path"], "command/widget_archive/archive.sql");
     assert_eq!(
         statement["parameters"],
-        json!([{"name": "id", "type": "uuid", "nullable": false}])
+        json!([{"name": "id", "type": "uuid"}])
     );
     assert_eq!(
         statement["row"],

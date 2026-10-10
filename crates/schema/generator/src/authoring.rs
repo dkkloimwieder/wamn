@@ -155,7 +155,11 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     let current = fs::read(&path)
         .ok()
         .and_then(|written| without_derived_members(&written).ok())
-        .and_then(|written| serde_json::from_slice::<Value>(&written).ok());
+        .and_then(|written| serde_json::from_slice::<Value>(&written).ok())
+        .map(|mut written| {
+            without_derived_statement_facts(&mut written, &compiled);
+            written
+        });
     if current.as_ref() != Some(&compiled) {
         let directory = output_root(package_root);
         fs::create_dir_all(&directory)
@@ -389,6 +393,45 @@ fn without_derived_members(compiled: &[u8]) -> serde_json::Result<Vec<u8>> {
     document.to_bytes()
 }
 
+/// Remove from `written` each statement value `type` and `nullable` that the
+/// compile `authored` leaves out: `wamn build` derives them (§6.1 row 3).
+fn without_derived_statement_facts(written: &mut Value, authored: &Value) {
+    let Some(operations) = written
+        .get_mut("custom_operations")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    for (operation, declaration) in operations {
+        let Some(statements) = declaration
+            .get_mut("statements")
+            .and_then(Value::as_object_mut)
+        else {
+            continue;
+        };
+        for (name, statement) in statements {
+            for member in ["parameters", "row"] {
+                let values = statement
+                    .get_mut(member)
+                    .and_then(Value::as_array_mut)
+                    .into_iter()
+                    .flatten();
+                for (index, value) in values.enumerate() {
+                    let stated = &authored["custom_operations"][operation]["statements"][name]
+                        [member][index];
+                    if let Some(value) = value.as_object_mut() {
+                        for fact in ["type", "nullable"] {
+                            if stated.get(fact).is_none() {
+                                value.remove(fact);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A JSON document whose objects keep their members in the order written.
 ///
 /// `serde_json` here sorts the members of an object, and the compiled
@@ -582,6 +625,20 @@ mod tests {
             );
             assert_eq!(without_derived_members(&compiled).expect("strip"), authored);
         }
+    }
+
+    #[test]
+    fn statement_facts_that_the_build_derives_are_not_authored_differences() {
+        let authored = serde_json::json!({"custom_operations": {"a.b": {"statements": {"s": {
+            "parameters": [{"name": "id", "type": "uuid"}],
+            "row": [{"name": "n", "nullable": true}],
+        }}}}});
+        let mut written = serde_json::json!({"custom_operations": {"a.b": {"statements": {"s": {
+            "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
+            "row": [{"name": "n", "type": "int64", "nullable": true}],
+        }}}}});
+        without_derived_statement_facts(&mut written, &authored);
+        assert_eq!(written, authored);
     }
 
     #[test]

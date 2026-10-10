@@ -301,8 +301,10 @@ fn with_placeholder_types(authored: &Value) -> Value {
 /// (docs/plan/platform-deploy.md §6.1 row 3).
 ///
 /// A value without a type takes the described type. A stated type must equal
-/// it. For a row value's nullability the owner's rule (wamn-00rts.3) holds: a
-/// `nullable: true` declaration on a column that SQLx says cannot be null is
+/// it. A parameter without a nullability is not null, because SQLx describes
+/// no parameter nullability. A row value without a nullability takes SQLx's,
+/// and is nullable where SQLx cannot tell. For a stated row nullability the
+/// owner's rule (wamn-00rts.3) holds: a `nullable: true` declaration on a column that SQLx says cannot be null is
 /// wider, always safe, and kept, because SQLx can miss an outer join that
 /// planning removed. A `nullable: false` declaration is refused only when SQLx
 /// says the column can be null; when SQLx does not know, as for an
@@ -328,6 +330,7 @@ fn apply_statement_types(
         if parameters.len() == described.parameters.len() {
             for (value, type_name) in parameters.into_iter().zip(&described.parameters) {
                 apply_type(&at, value, type_name, &mut refusals);
+                value.entry("nullable").or_insert(Value::Bool(false));
             }
         } else {
             refusals.push(format!(
@@ -767,6 +770,29 @@ mod tests {
         apply_statement_types(&mut document, &described(None)).expect("keep the declaration");
         let row = &document["custom_operations"]["adjust"]["statements"]["select_quantity"]["row"];
         assert_eq!(row[0]["nullable"], false);
+    }
+
+    #[test]
+    fn an_unstated_nullability_is_derived() {
+        for (described_nullable, row_nullable) in
+            [(Some(true), true), (Some(false), false), (None, true)]
+        {
+            let mut document = manifest(false, None);
+            let statement =
+                &mut document["custom_operations"]["adjust"]["statements"]["select_quantity"];
+            for member in ["parameters", "row"] {
+                statement[member][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("nullable");
+            }
+            apply_statement_types(&mut document, &described(described_nullable))
+                .expect("derive the nullability");
+            let statement =
+                &document["custom_operations"]["adjust"]["statements"]["select_quantity"];
+            assert_eq!(statement["parameters"][0]["nullable"], false);
+            assert_eq!(statement["row"][0]["nullable"], row_nullable);
+        }
     }
 
     #[test]
