@@ -1,18 +1,25 @@
 # @generated; do not edit.
+#
+# A standalone crate: tools/build-components builds it with --manifest-path
+# from the package's build output, outside the apps workspace. The
+# dependency and the release profile equal the apps workspace's.
 
 [package]
 name = "wamn-receiving-receiving-record-receipt-no-op"
-version.workspace = true
-edition.workspace = true
+version = "0.1.0"
+edition = "2024"
 description = "No-op participant for wamn-receiving:receiving/record-receipt-pre-commit@2.1.0"
 license = "Apache-2.0"
 
 [dependencies]
-wit-bindgen = { workspace = true }
+wit-bindgen = { version = "0.62.0", default-features = false, features = ["async", "macros", "realloc"] }
 
 [lib]
 crate-type = ["cdylib"]
 bench = false
 
-[lints]
-workspace = true
+[workspace]
+
+[profile.release]
+opt-level = "s"
+strip = true

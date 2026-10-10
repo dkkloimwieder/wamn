@@ -26,7 +26,7 @@
     },
     {
       "package": "wamn-receiving-receiving-record-receipt-no-op",
-      "workspace_manifest": "apps/Cargo.toml",
+      "workspace_manifest": "apps/target/wamn/wamn_receiving/receiving_record_receipt-no-op/Cargo.toml",
       "raw_file": "wamn_receiving_receiving_record_receipt_no_op.wasm",
       "output_file": "wamn_receiving_receiving_record_receipt_no_op.wasm"
     },

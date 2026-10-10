@@ -290,9 +290,15 @@ fn an_optional_pre_commit_slot_generates_its_no_op_participant() {
         cargo.contains("name = \"platform-fixture-widget-archive-no-op\""),
         "{cargo}"
     );
+    // A standalone crate: it inherits nothing from the apps workspace.
+    assert!(
+        cargo.contains("\n[workspace]\n") && !cargo.contains(".workspace = true"),
+        "{cargo}"
+    );
     let library = source("generated/widget_archive-no-op/src/lib.rs");
     for expected in [
         "export platform-fixture:widget/archive-pre-commit@2.1.0;",
+        "\"../../../../../crates/execution/workflow/router/wit\"",
         "\"../wit/deps/platform-fixture-widget\"",
         "input: ArchivePreCommitRequest,",
         "std::future::ready(Ok(input))",

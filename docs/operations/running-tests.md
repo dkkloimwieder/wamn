@@ -160,6 +160,7 @@ Count the rows of that tag in `edge_samples.sample` of the session's target data
 
 Run the prior-commit fixture admission and exact forwarding assertions.
 The tests compose the fixture with the built Receiving base and its no-op participant.
+`tools/build-components` reads the no-op participant from the Receiving build output, so build Receiving first with `wamn build apps/wamn_receiving` and a PostgreSQL server URL in `DATABASE_URL`.
 
 ```bash
 tools/build-components app apps/wamn_receiving

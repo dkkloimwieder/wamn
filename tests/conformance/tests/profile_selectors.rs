@@ -12,6 +12,19 @@ const ROOT_MANIFEST: &str = "Cargo.toml";
 /// additive-only inside one invocation, so the `no_std` palette guests are
 /// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
 const COMPONENT_MANIFESTS: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"];
+/// The generated no-op participant of Receiving. It is a standalone crate in
+/// the build output that `wamn build apps/wamn_receiving` writes, and
+/// `tools/build-components` reads it as one more component workspace when it
+/// selects Receiving. Its lock file is `apps/Cargo.lock`, trimmed by Cargo.
+const NO_OP_MANIFEST: &str =
+    "apps/target/wamn/wamn_receiving/receiving_record_receipt-no-op/Cargo.toml";
+/// Every component workspace that a Receiving or `all` selection reads, in the
+/// order the tool reads them.
+const SELECTED_MANIFESTS: [&str; 3] = [
+    COMPONENT_MANIFESTS[0],
+    COMPONENT_MANIFESTS[1],
+    NO_OP_MANIFEST,
+];
 const COMPONENT_TOOL: &str = "tools/build-components";
 const COMPONENT_VIRTUALIZATION: &str = "tools/component-virtualization.json";
 const COMPONENT_COMPOSITION: &str = "tools/component-composition.json";
@@ -54,7 +67,12 @@ fn repository_root() -> PathBuf {
 }
 
 fn cargo_metadata_output(root: &Path, manifest: &str) -> Output {
-    Command::new(env!("CARGO"))
+    let mut command = Command::new(env!("CARGO"));
+    if manifest == NO_OP_MANIFEST {
+        stage_no_op_lock(root);
+        command.env("CARGO_TARGET_DIR", root.join("apps/target"));
+    }
+    command
         .current_dir(root)
         .args([
             "metadata",
@@ -68,6 +86,33 @@ fn cargo_metadata_output(root: &Path, manifest: &str) -> Output {
         ])
         .output()
         .unwrap_or_else(|error| panic!("failed to run Cargo metadata for {manifest}: {error}"))
+}
+
+/// Stage the no-op participant's lock file the way the tool does: a copy of
+/// `apps/Cargo.lock` that Cargo trims to the crate.
+fn stage_no_op_lock(root: &Path) {
+    let manifest = root.join(NO_OP_MANIFEST);
+    assert!(
+        manifest.is_file(),
+        "{NO_OP_MANIFEST} is absent; run wamn build apps/wamn_receiving first"
+    );
+    fs::copy(
+        root.join("apps/Cargo.lock"),
+        manifest.with_file_name("Cargo.lock"),
+    )
+    .expect("stage the no-op participant lock file");
+    let trim = Command::new(env!("CARGO"))
+        .current_dir(root)
+        .env("CARGO_TARGET_DIR", root.join("apps/target"))
+        .args(["metadata", "--manifest-path", NO_OP_MANIFEST])
+        .args(["--offline", "--format-version", "1"])
+        .output()
+        .expect("run Cargo metadata to trim the no-op participant lock file");
+    assert!(
+        trim.status.success(),
+        "trim the no-op participant lock file:\n{}",
+        String::from_utf8_lossy(&trim.stderr)
+    );
 }
 
 fn parse_metadata(output: &Output, manifest: &str) -> CargoMetadata {
@@ -154,7 +199,7 @@ fn virtualization_allowlist_matches_component_metadata() {
         "virtualizer tool package must be a root workspace member"
     );
 
-    let component_metadata = COMPONENT_MANIFESTS
+    let component_metadata = SELECTED_MANIFESTS
         .iter()
         .map(|manifest| {
             (
@@ -387,6 +432,29 @@ fn expected_metadata_invocation(root: &Path, manifest: &Path) -> Vec<String> {
     .into()
 }
 
+/// The Cargo invocations that read one component workspace. The tool first
+/// trims the lock file of a no-op participant from `apps/Cargo.lock`.
+fn expected_workspace_invocations(root: &Path, manifest: &str) -> Vec<Vec<String>> {
+    let path = root.join(manifest);
+    let mut invocations = Vec::new();
+    if manifest == NO_OP_MANIFEST {
+        invocations.push(
+            [
+                root.display().to_string(),
+                "metadata".to_string(),
+                "--manifest-path".to_string(),
+                path.display().to_string(),
+                "--offline".to_string(),
+                "--format-version".to_string(),
+                "1".to_string(),
+            ]
+            .into(),
+        );
+    }
+    invocations.push(expected_metadata_invocation(root, &path));
+    invocations
+}
+
 #[test]
 fn selector_tools_execute_exact_fake_cargo_argv() {
     let root = repository_root();
@@ -397,7 +465,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
     fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
     let mut component_members = Vec::new();
     let mut component_metadata = Vec::new();
-    for manifest in COMPONENT_MANIFESTS {
+    for manifest in SELECTED_MANIFESTS {
         let output = cargo_metadata_output(&root, manifest);
         let metadata = parse_metadata(&output, manifest);
         component_members.push(set(&names_for_ids(&metadata, &metadata.workspace_members)));
@@ -475,12 +543,12 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         // Read each workspace once, then build each selected package separately.
         // The first build fails, but all later builds must run and succeed.
         // Preserve the failure status after those successful invocations.
-        let expected_metadata = COMPONENT_MANIFESTS
+        let expected_metadata = SELECTED_MANIFESTS
             .iter()
-            .map(|manifest| expected_metadata_invocation(&root, &root.join(manifest)))
+            .flat_map(|manifest| expected_workspace_invocations(&root, manifest))
             .collect::<Vec<_>>();
         let mut expected = expected_metadata.clone();
-        for (manifest, members) in COMPONENT_MANIFESTS.iter().zip(&component_members) {
+        for (manifest, members) in SELECTED_MANIFESTS.iter().zip(&component_members) {
             let owned = selected
                 .iter()
                 .filter(|package| members.contains(*package))
@@ -785,7 +853,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
 
     let mut target_directories = BTreeMap::new();
     let mut component_members = BTreeMap::new();
-    for manifest in COMPONENT_MANIFESTS {
+    for manifest in SELECTED_MANIFESTS {
         let output = cargo_metadata_output(&root, manifest);
         let metadata = parse_metadata(&output, manifest);
         component_members.insert(
@@ -1083,7 +1151,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .into_iter()
         .collect::<Vec<_>>();
     let mut expected_build_plan = Vec::new();
-    for manifest in COMPONENT_MANIFESTS {
+    for manifest in SELECTED_MANIFESTS {
         for package in &selected {
             if component_members[manifest].contains(package) {
                 expected_build_plan

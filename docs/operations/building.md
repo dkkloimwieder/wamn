@@ -55,6 +55,8 @@ After virtualization, the tool composes each overlay whose component declaration
 `wamn-component-composer` joins the overlay component, each base component, and each participant component into one component.
 [`tools/component-composition.json`](../../tools/component-composition.json) names the participant crates of each overlay package under `participants`.
 It names the generated no-op participant crates of each base package under `no_op_participants`.
+A no-op participant crate is not an apps workspace member. It is a standalone crate in the build output of its package, `apps/target/wamn/<package>/`, so run `wamn build` of the base package first.
+The tool copies `apps/Cargo.lock` beside the crate, lets Cargo trim it to the crate, builds the crate by `--manifest-path` with `--locked`, and puts its output in the apps target directory.
 A selected application also builds the crates named for it.
 The declarations give each link.
 The overlay imports each base operation that it depends on, and the base supplies that operation.

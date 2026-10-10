@@ -151,8 +151,9 @@ fi
 cd -- "$WAMN_REPOSITORY_ROOT"
 
 # Separate Cargo workspaces keep no-std guests isolated from std features.
-readonly -a WAMN_MANIFESTS=(apps/Cargo.toml apps/platform/no-std/Cargo.toml)
-readonly WAMN_MANIFEST_LIST="$(printf '%s\n' "${WAMN_MANIFESTS[@]}" | jq -Rn '[inputs]')"
+# Each generated no-op participant that a selected application names is one
+# more workspace, appended below.
+declare -a WAMN_MANIFESTS=(apps/Cargo.toml apps/platform/no-std/Cargo.toml)
 readonly WAMN_APPLICATION_LIST="$(printf '%s\n' "${WAMN_APPLICATIONS[@]}" | jq -Rn '[inputs | select(length > 0)]')"
 
 # Application manifests declare the components that need virtualization.
@@ -214,6 +215,45 @@ WAMN_COMPOSITION_MEMBERS="$(
 )" || wamn_fail 65 'could not read composition members'
 readonly WAMN_COMPOSITION_MEMBERS
 
+# A generated no-op participant is a standalone crate with its own [workspace]
+# in the build output of its package, <package>/../target/wamn/<package>, which
+# `wamn build` writes. It is not an apps workspace member, so the apps
+# workspace loads without any build output. Its lock file is apps/Cargo.lock,
+# which Cargo trims to the crate, so it resolves the versions the apps
+# workspace pins. It builds into the apps target directory, like every other
+# application guest.
+declare -A WAMN_NO_OP_MANIFESTS=()
+for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
+  no_op_package="$(jq -r '.package.id? // ""' "$application")"
+  no_op_root="$(application_root "$application")"
+  no_op_output="$(dirname -- "$no_op_root")/target/wamn/$(basename -- "$no_op_root")"
+  while IFS= read -r participant; do
+    [[ -n "$participant" ]] || continue
+    no_op_manifest=''
+    for candidate in "$no_op_output"/*/Cargo.toml; do
+      [[ -f "$candidate" ]] || continue
+      if grep -qxF "name = \"$participant\"" "$candidate"; then
+        no_op_manifest="$candidate"
+      fi
+    done
+    [[ -n "$no_op_manifest" ]] || {
+      wamn_fail 65 "the no-op participant $participant of $no_op_package is not in $no_op_output. Run wamn build $no_op_root first."
+    }
+    [[ "$no_op_manifest" == "$WAMN_REPOSITORY_ROOT"/* ]] || {
+      wamn_fail 65 "the no-op participant $no_op_manifest lies outside the repository"
+    }
+    no_op_manifest="${no_op_manifest#"$WAMN_REPOSITORY_ROOT/"}"
+    if [[ -z "${WAMN_NO_OP_MANIFESTS[$no_op_manifest]:-}" ]]; then
+      WAMN_NO_OP_MANIFESTS["$no_op_manifest"]=1
+      WAMN_MANIFESTS+=("$no_op_manifest")
+    fi
+  done < <(jq -r --arg package "$no_op_package" \
+    '.no_op_participants[$package] // [] | .[]' "$WAMN_COMPOSITION_MANIFEST")
+done
+readonly WAMN_NO_OP_MANIFESTS
+readonly WAMN_MANIFESTS
+readonly WAMN_MANIFEST_LIST="$(printf '%s\n' "${WAMN_MANIFESTS[@]}" | jq -Rn '[inputs]')"
+
 # A palette component is a platform component that a wiring of a selected
 # application names. Its declaration.json.in under apps/platform/*/*/ names it,
 # and the Cargo package in that directory builds it. A wiring node that names
@@ -249,15 +289,37 @@ readonly WAMN_PALETTE
 
 declare -a WAMN_METADATA=()
 declare WAMN_WORKSPACE_METADATA
+declare WAMN_APPS_TARGET_DIRECTORY=''
 for manifest in "${WAMN_MANIFESTS[@]}"; do
-  WAMN_WORKSPACE_METADATA="$("$WAMN_CARGO" metadata \
-    --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest" \
-    --locked --offline --no-deps --format-version 1)" || {
+  if [[ -n "${WAMN_NO_OP_MANIFESTS[$manifest]:-}" ]]; then
+    cp -- "$WAMN_REPOSITORY_ROOT/apps/Cargo.lock" "$(dirname -- "$WAMN_REPOSITORY_ROOT/$manifest")/Cargo.lock" || {
+      wamn_fail 65 "cannot stage the lock file of $manifest"
+    }
+    CARGO_TARGET_DIR="$WAMN_APPS_TARGET_DIRECTORY" "$WAMN_CARGO" metadata \
+      --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest" \
+      --offline --format-version 1 >/dev/null || {
+      wamn_fail 65 "cannot trim the lock file of $manifest from apps/Cargo.lock"
+    }
+  fi
+  WAMN_WORKSPACE_METADATA="$(
+    if [[ -n "${WAMN_NO_OP_MANIFESTS[$manifest]:-}" ]]; then
+      export CARGO_TARGET_DIR="$WAMN_APPS_TARGET_DIRECTORY"
+    fi
+    "$WAMN_CARGO" metadata \
+      --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest" \
+      --locked --offline --no-deps --format-version 1
+  )" || {
     wamn_fail 65 "locked component Cargo metadata failed for $manifest"
   }
   WAMN_METADATA+=("$WAMN_WORKSPACE_METADATA")
+  if [[ "$manifest" == apps/Cargo.toml ]]; then
+    WAMN_APPS_TARGET_DIRECTORY="$(jq -er '.target_directory' <<<"$WAMN_WORKSPACE_METADATA")" || {
+      wamn_fail 65 'cannot read the target directory of apps/Cargo.toml'
+    }
+  fi
 done
 readonly WAMN_METADATA
+readonly WAMN_APPS_TARGET_DIRECTORY
 
 # The one workspace crate in the directory of each palette declaration, and the
 # raw guest file of its one cdylib target.
@@ -423,7 +485,13 @@ WAMN_VIRTUALIZATION_PLAN="$(
           workspace_manifest: $holders[0].manifest,
           raw_file: (($component | gsub("-"; "_")) + ".wasm"),
           output_file: (($component | gsub("-"; "_")) + ".wasm")}] as $derived_artifacts
-    | ($virtual.artifacts + $derived_artifacts) as $all_artifacts
+    # A generated no-op participant lies in build output. The allowlist names
+    # it only when this run selected its application and so read its workspace.
+    | [$virtual.artifacts[]
+       | select((.workspace_manifest | type == "string" and startswith("apps/target/")) as $built
+                | ($built | not) or (.workspace_manifest as $owner | $manifests | index($owner) != null))]
+      as $listed_artifacts
+    | ($listed_artifacts + $derived_artifacts) as $all_artifacts
     | select([$all_artifacts[]
               | select((keys | sort)
                        != ["output_file", "package", "raw_file", "workspace_manifest"])]
@@ -480,7 +548,7 @@ printf 'build-components: %s selects %s component packages across %s Cargo invoc
 wamn_build() {
   local exit_status=0
   local leg manifest package leg_status
-  local -a arguments
+  local -a arguments environment
 
   # Every leg runs: one invocation's failure does not describe another
   # selection, including selections that share a workspace.
@@ -504,13 +572,18 @@ wamn_build() {
       arguments+=(-p "$package")
     done < <(jq -r --argjson leg "$leg" '.[$leg].packages[]' <<<"$WAMN_PLAN")
     leg_status=0
+    # A no-op participant is its own workspace and builds into the apps target
+    # directory, where its raw and virtualized outputs are read.
+    environment=(RUSTFLAGS="$WAMN_GUEST_RUSTFLAGS")
+    if [[ -n "${WAMN_NO_OP_MANIFESTS[$manifest]:-}" ]]; then
+      environment+=(CARGO_TARGET_DIR="$WAMN_APPS_TARGET_DIRECTORY")
+    fi
     # DIGEST STABILITY, second of two channels. Relocation (wamn-10yt.10.29) put
     # every guest-consumed crate inside this workspace so `-C metadata` stops
     # deriving from an absolute path; tools/guest-rustflags closes the other
     # channel, the absolute source paths that file!() and panic locations bake
     # into the artifact. wamn_check_outputs refuses a guest that still has one.
-    RUSTFLAGS="$WAMN_GUEST_RUSTFLAGS" \
-      "$WAMN_CARGO" "${arguments[@]}" || leg_status=$?
+    env "${environment[@]}" "$WAMN_CARGO" "${arguments[@]}" || leg_status=$?
     if ((leg_status != 0)); then
       printf 'build-components: FAIL: %s (exit %d)\n' "$manifest" "$leg_status" >&2
       if ((exit_status == 0)); then

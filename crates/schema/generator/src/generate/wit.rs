@@ -1633,6 +1633,10 @@ pub(super) fn emit_custom_operation_wit(
 
 /// The component that plugs an optional pre-commit slot when an overlay names
 /// no participant. It exports the slot and returns its input unchanged.
+///
+/// The crate is standalone, not an apps workspace member. Its path to the
+/// router WIT assumes that it lies in the build output directory
+/// `apps/target/wamn/<package>/<crate>`.
 fn emit_no_op_participant(
     files: &mut BTreeMap<String, Vec<u8>>,
     package: &str,
@@ -1654,7 +1658,7 @@ fn emit_no_op_participant(
         files,
         &format!("{directory}/Cargo.toml"),
         format!(
-            "# @generated; do not edit.\n\n[package]\nname = \"{crate_name}\"\nversion.workspace = true\nedition.workspace = true\ndescription = \"No-op participant for {slot}\"\nlicense = \"Apache-2.0\"\n\n[dependencies]\nwit-bindgen = {{ workspace = true }}\n\n[lib]\ncrate-type = [\"cdylib\"]\nbench = false\n\n[lints]\nworkspace = true\n"
+            "# @generated; do not edit.\n#\n# A standalone crate: tools/build-components builds it with --manifest-path\n# from the package's build output, outside the apps workspace. The\n# dependency and the release profile equal the apps workspace's.\n\n[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\ndescription = \"No-op participant for {slot}\"\nlicense = \"Apache-2.0\"\n\n[dependencies]\nwit-bindgen = {{ version = \"0.62.0\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }}\n\n[lib]\ncrate-type = [\"cdylib\"]\nbench = false\n\n[workspace]\n\n[profile.release]\nopt-level = \"s\"\nstrip = true\n"
         )
         .into_bytes(),
     )?;
@@ -1686,7 +1690,7 @@ wit_bindgen::generate!({{
         }}
     ",
     path: [
-        "../../../../crates/execution/workflow/router/wit",
+        "../../../../../crates/execution/workflow/router/wit",
         "../wit/deps/{package}-{group}",
     ],
     generate_all,
