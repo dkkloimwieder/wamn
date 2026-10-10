@@ -17,6 +17,8 @@
 //! `crates/platform/runtime/wit/deps/wamn-postgres-0.3/package.wit`.
 
 mod authoring;
+/// `wamn build`: the two-pass package build (docs/plan/platform-deploy.md §7.1).
+pub mod build;
 pub mod client_component;
 mod client_fields;
 pub mod client_ir;
@@ -28,6 +30,7 @@ pub mod client_rust;
 pub mod client_ts;
 mod cursor;
 mod data_access;
+mod describe;
 mod error;
 mod generate;
 mod manifest;
@@ -35,6 +38,8 @@ mod materialize;
 pub mod operation_reference;
 mod output;
 mod package_catalog;
+/// `build.json`, the content receipt of one package build.
+pub mod receipt;
 pub mod route_schema;
 mod rustfmt;
 mod sql;

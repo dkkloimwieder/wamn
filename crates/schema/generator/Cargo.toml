@@ -13,6 +13,8 @@ hex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 sha2.workspace = true
+# `Executor::describe` is behind `sqlx-core/offline`, which only `macros` turns on.
+sqlx = { workspace = true, features = ["macros", "postgres", "runtime-tokio"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 url.workspace = true

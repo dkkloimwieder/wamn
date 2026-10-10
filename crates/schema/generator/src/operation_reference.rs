@@ -44,13 +44,28 @@ pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), 
             )
         })?;
     let path = crate::package_manifest_path(root);
-    let bytes = std::fs::read(&path).map_err(|error| {
-        GenerateError::with_source(
-            GenerateErrorType::InvalidManifest,
-            format!("read {}", path.display()),
-            error,
-        )
-    })?;
+    // `wamn build` reads the publication files before it writes any output, so
+    // a package authored in wamn.k without a compiled manifest reads its owners
+    // from the compile. The owners are authored facts.
+    let bytes = if crate::is_authored(root) && !path.exists() {
+        crate::authoring::compile_authored_manifest(root).map_err(|error| {
+            GenerateError::new(
+                GenerateErrorType::InvalidManifest,
+                format!(
+                    "compile {}: {error:#}",
+                    root.join(crate::AUTHORED_MANIFEST).display()
+                ),
+            )
+        })?
+    } else {
+        std::fs::read(&path).map_err(|error| {
+            GenerateError::with_source(
+                GenerateErrorType::InvalidManifest,
+                format!("read {}", path.display()),
+                error,
+            )
+        })?
+    };
     Ok((root.to_owned(), OperationOwners::from_slice(&bytes)?))
 }
 

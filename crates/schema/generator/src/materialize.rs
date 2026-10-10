@@ -33,8 +33,8 @@ use crate::{
     manifest::CONTROL_OWNED_RELATION_TABLES,
 };
 
-const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
-const TOOLCHAIN_ID: &str = "rust-1.99.0";
+pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
+pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
 
 /// Whether materialization writes generated artifacts or checks committed bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,9 +46,9 @@ pub enum MaterializeMode {
 }
 
 #[derive(Debug)]
-struct SourceFile {
-    path: String,
-    bytes: Vec<u8>,
+pub(crate) struct SourceFile {
+    pub(crate) path: String,
+    pub(crate) bytes: Vec<u8>,
 }
 
 /// Materialize one package from its manifest, authored SQL, and migrated database.
@@ -70,7 +70,16 @@ pub async fn materialize_package(
 /// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
 pub async fn introspect_package(database_url: &str, package_root: &Path) -> Result<CatalogIr> {
     let (_, manifest) = load_manifest(package_root)?;
-    let schemas = application_schemas(&manifest).context("resolve application schemas")?;
+    introspect_with_manifest(database_url, package_root, &manifest).await
+}
+
+/// Introspect the schemas that `manifest` names, as [`introspect_package`] does.
+pub(crate) async fn introspect_with_manifest(
+    database_url: &str,
+    package_root: &Path,
+    manifest: &PackageManifest,
+) -> Result<CatalogIr> {
+    let schemas = application_schemas(manifest).context("resolve application schemas")?;
 
     let (client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
@@ -86,7 +95,7 @@ pub async fn introspect_package(database_url: &str, package_root: &Path) -> Resu
         })
         .collect::<Vec<_>>();
     let catalog_result = async {
-        let expected = synchronization::expectations(&client, package_root, &manifest).await?;
+        let expected = synchronization::expectations(&client, package_root, manifest).await?;
         read_catalog_with_synchronizations(&client, &schema_names, &excluded_relations, &expected)
             .await
             .context("introspect package schemas")
@@ -118,7 +127,7 @@ pub async fn introspect_package(database_url: &str, package_root: &Path) -> Resu
 /// statement that reads a column outside those grants therefore fails here,
 /// and so does every whole-row reference that the grants do not cover. The
 /// error lists each refused statement with its path, SQLSTATE, and message.
-async fn classify_statements(
+pub(crate) async fn classify_statements(
     client: &mut tokio_postgres::Client,
     corpus: &std::collections::BTreeMap<String, Vec<u8>>,
     schemas: &[String],
@@ -394,7 +403,8 @@ pub fn materialize_package_classified(
             fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
         }
     }
-    let client = client_bindings(package_root, &package)?;
+    let (_, manifest) = load_manifest(package_root)?;
+    let client = client_bindings(package_root, &manifest, &package)?;
     let mut expected = expected_files(&package)?;
     // The compiled manifest is one more file of the owned set.
     let compiled_manifest = if is_authored(package_root) {
@@ -440,10 +450,13 @@ pub fn materialize_package_classified(
 /// `/purchase_order/get` and the overlay publishes its own at
 /// `/acme/purchase_order/get` — so a binding that derived a path from an
 /// operation name would call the wrong one.
-fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Vec<GeneratedFile>> {
+pub(crate) fn client_bindings(
+    package_root: &Path,
+    manifest: &PackageManifest,
+    package: &GeneratedPackage,
+) -> Result<Vec<GeneratedFile>> {
     const CONTRACTS: &str = "generated/contracts/";
 
-    let (_, manifest) = load_manifest(package_root)?;
     let contracts = package
         .files()
         .iter()
@@ -495,7 +508,25 @@ fn generate_package(
     transactional: &StatementTransactionality,
 ) -> Result<crate::GeneratedPackage> {
     let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
-    let source_files = load_authored_sql(package_root, &manifest)?;
+    generate_from_manifest(
+        catalog,
+        &manifest_bytes,
+        &manifest,
+        package_root,
+        transactional,
+    )
+}
+
+/// Generate from compiled manifest bytes that the caller holds. `manifest` is
+/// their parse. The authored SQL is read from `package_root`.
+pub(crate) fn generate_from_manifest(
+    catalog: &CatalogIr,
+    manifest_bytes: &[u8],
+    manifest: &PackageManifest,
+    package_root: &Path,
+    transactional: &StatementTransactionality,
+) -> Result<crate::GeneratedPackage> {
+    let source_files = load_authored_sql(package_root, manifest)?;
     let authored_sql = source_files
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
@@ -503,7 +534,7 @@ fn generate_package(
 
     generate(&GenerationInput::new(
         catalog,
-        &manifest_bytes,
+        manifest_bytes,
         &authored_sql,
         GenerationProvenance::new(GENERATOR_ID, TOOLCHAIN_ID),
         transactional,
@@ -518,12 +549,29 @@ fn statement_corpus(
     package_root: &Path,
     catalog: &CatalogIr,
 ) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
-    let (_, manifest) = load_manifest(package_root)?;
+    let (manifest_bytes, manifest) = load_compiled_manifest(package_root, catalog)?;
+    statement_corpus_from_manifest(catalog, &manifest_bytes, &manifest, package_root)
+}
+
+/// The statement corpus and derived grants of compiled manifest bytes that the
+/// caller holds, as [`statement_corpus`] gives them.
+pub(crate) fn statement_corpus_from_manifest(
+    catalog: &CatalogIr,
+    manifest_bytes: &[u8],
+    manifest: &PackageManifest,
+    package_root: &Path,
+) -> Result<(std::collections::BTreeMap<String, Vec<u8>>, String)> {
     let mut corpus = std::collections::BTreeMap::new();
-    for source in load_authored_sql(package_root, &manifest)? {
+    for source in load_authored_sql(package_root, manifest)? {
         corpus.insert(source.path.clone(), source.bytes.clone());
     }
-    let discovery = generate_package(catalog, package_root, &StatementTransactionality::default())?;
+    let discovery = generate_from_manifest(
+        catalog,
+        manifest_bytes,
+        manifest,
+        package_root,
+        &StatementTransactionality::default(),
+    )?;
     for file in discovery.files() {
         if std::path::Path::new(file.path())
             .extension()
@@ -656,7 +704,10 @@ fn load_compiled_manifest(
     Ok((compiled, manifest))
 }
 
-fn load_authored_sql(package_root: &Path, manifest: &PackageManifest) -> Result<Vec<SourceFile>> {
+pub(crate) fn load_authored_sql(
+    package_root: &Path,
+    manifest: &PackageManifest,
+) -> Result<Vec<SourceFile>> {
     let mut paths = manifest
         .models
         .values()
@@ -708,7 +759,7 @@ fn validate_authored_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<PathBuf, &[u8]>> {
+pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<PathBuf, &[u8]>> {
     package
         .files()
         .iter()
@@ -873,7 +924,7 @@ fn refuse_unexpected(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) ->
     Ok(())
 }
 
-fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
     if !root
         .try_exists()
         .with_context(|| format!("inspect {}", root.display()))?

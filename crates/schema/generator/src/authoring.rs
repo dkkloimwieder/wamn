@@ -28,7 +28,7 @@ pub const AUTHORED_MANIFEST: &str = "wamn.k";
 /// in the package's [`output_root`].
 pub const COMPILED_MANIFEST: &str = "generated/wamn.json";
 /// The compiled manifest's file name in the package's [`output_root`].
-const COMPILED_MANIFEST_NAME: &str = "wamn.json";
+pub(crate) const COMPILED_MANIFEST_NAME: &str = "wamn.json";
 /// The hand-written manifest of a package that is not converted.
 const HAND_WRITTEN_MANIFEST: &str = "wamn.json";
 /// The environment variable that names a `kcl` binary in place of `tools/install-kcl`.
@@ -89,8 +89,31 @@ pub fn is_package_root(directory: &Path) -> bool {
 ///
 /// When the package also holds a hand-written `wamn.json`, when no `kcl` runs,
 /// when KCL refuses the file (the error names its path and line), or when the
-/// compiled JSON is not a valid manifest.
+/// compiled JSON is not a valid manifest. A statement value that states no
+/// type is not valid here: only `wamn build` derives it.
 pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
+    let bytes = compile_authored_manifest(package_root)?;
+    PackageManifest::from_slice(&bytes).with_context(|| {
+        format!(
+            "the compiled {} is not a valid manifest",
+            package_root.join(AUTHORED_MANIFEST).display()
+        )
+    })?;
+    Ok(bytes)
+}
+
+/// Compile a package's `wamn.k` to its authored form: every fact the author
+/// states and no derived member (docs/plan/platform-deploy.md §7.1 step 1).
+///
+/// The authored form may leave out the type of a statement parameter or row
+/// value, which `wamn build` derives from the statement. It therefore is not
+/// yet a [`PackageManifest`], and this function does not parse it as one.
+///
+/// # Errors
+///
+/// When the package also holds a hand-written `wamn.json`, when no `kcl` runs,
+/// when KCL refuses the file, or when the file states a derived member.
+pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> {
     ensure!(
         !package_root.join(HAND_WRITTEN_MANIFEST).exists(),
         "{}: the manifest is authored in wamn.k; wamn.json is generated",
@@ -99,12 +122,6 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
     let module = SchemaModule::write("manifest", SCHEMA_MODULE_DECLARATION, SCHEMA_MODULE)?;
     let bytes = run_kcl(&module, package_root, Path::new(AUTHORED_MANIFEST))?;
     refuse_derived_members(package_root, &bytes)?;
-    PackageManifest::from_slice(&bytes).with_context(|| {
-        format!(
-            "the compiled {} is not a valid manifest",
-            package_root.join(AUTHORED_MANIFEST).display()
-        )
-    })?;
     Ok(bytes)
 }
 

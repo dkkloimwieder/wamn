@@ -84,9 +84,13 @@ schema Field:
     references?: Ref
 
 schema Value:
-    """A parameter or row column of a statement."""
+    """A parameter or row column of a statement. The type is optional: wamn build
+    derives it from the statement and refuses a stated type that differs. A
+    row value stated nullable = True is kept even where SQLx says the column
+    cannot be null; nullable = False where SQLx says it can be null is refused,
+    and stands where SQLx cannot tell."""
     name: str
-    type: ColumnType
+    type?: ColumnType
     nullable: bool = False
 
 schema CountLimit:

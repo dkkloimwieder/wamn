@@ -53,6 +53,30 @@ fn mvp_binary_exposes_only_mvp_verbs() {
 }
 
 #[test]
+fn build_is_a_verb_of_the_developer_binary_only() {
+    let output = help(env!("CARGO_BIN_EXE_wamn"));
+    assert!(
+        output
+            .lines()
+            .any(|line| line.trim_start().starts_with("build ")),
+        "wamn help omitted build\n{output}"
+    );
+    let ctl = help(env!("CARGO_BIN_EXE_wamn-ctl"));
+    assert!(
+        !ctl.lines()
+            .any(|line| line.trim_start().starts_with("build ")),
+        "wamn-ctl help exposed build\n{ctl}"
+    );
+    let build = command_help(env!("CARGO_BIN_EXE_wamn"), "build");
+    for flag in ["<PACKAGES>...", "--output-root", "--database-url"] {
+        assert!(
+            build.contains(flag),
+            "wamn build help omitted {flag}\n{build}"
+        );
+    }
+}
+
+#[test]
 fn package_apply_has_one_exact_directory_and_no_destructive_override() {
     let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "apply-package");
     for flag in ["--confirm-with-backup", "--acknowledge-impact"] {

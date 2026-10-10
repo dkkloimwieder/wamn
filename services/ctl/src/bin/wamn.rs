@@ -16,6 +16,8 @@ struct Cli {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Build packages: generate every output from wamn.k into target/wamn.
+    Build(wamn_ctl::build_verbs::BuildArgs),
     /// Run the package development loop, or stand up the environment it needs.
     #[command(args_conflicts_with_subcommands = true)]
     Dev(Box<DevArgs>),
@@ -72,6 +74,7 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     match Cli::parse().command {
+        Command::Build(args) => wamn_ctl::build_verbs::run(args).await,
         Command::Web(args) => wamn_ctl::web::run(args).await,
         Command::Dev(dev) => match dev.environment {
             Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(*args).await,

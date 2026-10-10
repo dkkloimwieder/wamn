@@ -292,6 +292,22 @@ fn a_derived_member_is_refused() {
     );
 }
 
+/// The schema module lets a statement value leave out its type, which only
+/// `wamn build` derives (docs/plan/platform-deploy.md §6.1). KCL accepts it;
+/// a reader that has no build to derive it refuses the compiled manifest.
+#[test]
+fn a_statement_value_type_is_optional_and_only_the_build_derives_it() {
+    let package = Package::new(&source("", "").replace(
+        "parameters = [manifest.uuid(\"id\")]",
+        "parameters = [manifest.Value {name = \"id\"}]",
+    ));
+    let refusal = package.refusal();
+    assert!(
+        refusal.contains("is not a valid manifest") && refusal.contains("missing field `type`"),
+        "{refusal}"
+    );
+}
+
 #[test]
 fn a_wrong_enum_value_fails_at_compile_with_its_path() {
     for (model, command, wrong) in [

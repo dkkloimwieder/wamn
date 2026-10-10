@@ -97,6 +97,41 @@ The generator runs the script itself, so you do not install KCL by hand.
 If the repository is absent, set `WAMN_KCL` to a `kcl` binary of the pinned version.
 The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
 
+## wamn build
+
+`wamn build` builds packages in two passes ([platform-deploy.md §7.1](../plan/platform-deploy.md)).
+It needs a PostgreSQL server, which it does not start.
+Give a superuser URL of the server in `DATABASE_URL` or `--database-url`.
+The build creates its own verification database on that server and drops it at the end.
+The server keeps the roles `wamn_app` and `wamn_db_owner` if the build had to create them.
+
+```bash
+DATABASE_URL=postgres://postgres:<password>@127.0.0.1:<port>/postgres \
+  cargo run --locked --offline -p wamn-ctl --bin wamn -- build \
+  apps/wamn_receiving apps/client_acme_receiving
+```
+
+Pass one compiles `wamn.k` and migrates the verification database.
+The migrations of each base package run first, then the package's own migrations, then the history tables.
+The build then describes every authored statement through SQLx and writes the canonical `wamn.json`.
+Pass two generates every other output from those `wamn.json` bytes.
+
+A statement value in `wamn.k` can leave out its `type`, and the build takes the type from SQLx.
+A stated type that differs from the type SQLx gives is refused.
+A row value stated `nullable = True` is kept, even when SQLx says that the column cannot be null.
+A row value that is not stated nullable, where SQLx says that the column can be null, is refused.
+If SQLx cannot tell, as for an expression, the declaration stands.
+The refusal names the operation, the statement, and the value.
+
+The build writes each package to `<output root>/<package id>/`.
+The default output root is `apps/target/wamn` for an application, and `--output-root` changes it.
+The layout is the same as the package's `generated/` directory, plus `build.json`.
+The committed `generated/` directory does not change.
+`build.json` is the build receipt, schema `wamn.build/v1`, in canonical JSON.
+It records the input files and their digest, the base packages, the generator identity, and the digest of each output.
+An overlay reads the `build.json` of each base package, so build the base first.
+The build does not compile components or the web client yet.
+
 ## The edge box binary
 
 The edge box is an aarch64 Linux computer, for example a Raspberry Pi 3B.

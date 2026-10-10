@@ -635,6 +635,18 @@ cargo test --locked --offline -p wamn-control --lib \
 
 The test requires SQLx CLI 0.9.0 and the PostgreSQL 18 binaries.
 
+### wamn build
+
+The live build tests use the PostgreSQL 18 binaries and start their own server, as the other generator database tests do:
+
+```bash
+cargo test --locked --offline -p wamn-schema-generator --test build_live
+```
+
+They copy the platform fixture without its `generated/` directory and build it.
+Two builds must give the same bytes and the same `build.json`.
+The tests also check that a left-out statement type is derived and that the nullability rule of [building](building.md#wamn-build) holds.
+
 ### Generated TypeScript bindings
 
 The generated TypeScript is type-checked by hand, not by a test and not by a build.
