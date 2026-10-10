@@ -658,29 +658,49 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     let output = wamn_schema_generator::output_root(&package);
     std::fs::create_dir_all(output.join("platform-policy"))?;
     std::fs::create_dir_all(package.join("migrations"))?;
-    std::fs::create_dir_all(packages.join("target"))?;
     std::fs::write(
         package.join("wamn.k"),
         "# orders@1.0.0, the apply fixture\n",
     )?;
     std::fs::write(output.join("wamn.json"), PACKAGE_MANIFEST)?;
     std::fs::write(output.join("platform-policy/data-access.json"), DATA_ACCESS)?;
-    // The build index entry of the component: push-package lists it, and no
+    // The build.json entry of the component: push-package lists it, and no
     // step pulls it.
-    let component = packages.join("target/orders.wasm");
-    std::fs::write(&component, b"orders")?;
-    let recorded_at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs()
-        + 1;
-    std::fs::write(
-        packages.join("target/components.json"),
-        serde_json::to_vec(
-            &json!([{"name": "orders", "crate": "orders", "file": component,
-            "sha256": "1c168adb00d208e42f93314529f1fa9c0427eb63233ceda95a5db52b7012a719",
-            "recorded_at": recorded_at}]),
-        )?,
-    )?;
+    std::fs::create_dir_all(output.join("components"))?;
+    std::fs::write(output.join("components/orders.wasm"), b"orders")?;
+    {
+        use wamn_schema_generator::receipt;
+        let receipt = receipt::BuildReceipt {
+            schema: receipt::RECEIPT_SCHEMA.to_owned(),
+            package: receipt::ReceiptPackage {
+                id: "orders".to_owned(),
+                version: "1.0.0".to_owned(),
+            },
+            inputs: receipt::ReceiptInputs {
+                digest: receipt::input_digest(&package)?,
+                files: std::collections::BTreeMap::new(),
+            },
+            dependencies: Vec::new(),
+            generator: receipt::ReceiptGenerator {
+                id: "generator".to_owned(),
+                toolchain: "toolchain".to_owned(),
+                sqlx: "0.9.0".to_owned(),
+            },
+            outputs: receipt::ReceiptOutputs {
+                manifest: wamn_package_artifact::sha256_digest(PACKAGE_MANIFEST.as_bytes()),
+                files: std::collections::BTreeMap::new(),
+                components: vec![receipt::ReceiptComponent {
+                    name: "orders".to_owned(),
+                    path: "components/orders.wasm".to_owned(),
+                    sha256:
+                        "sha256:1c168adb00d208e42f93314529f1fa9c0427eb63233ceda95a5db52b7012a719"
+                            .to_owned(),
+                }],
+                web: None,
+            },
+        };
+        std::fs::write(output.join(receipt::RECEIPT_FILE), receipt.to_bytes())?;
+    }
     let ca = vec![work.join("ca.crt")];
     let package_base = format!("{local}/wamn/packages");
     let mut pushed = None;

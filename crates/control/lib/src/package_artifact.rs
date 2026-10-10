@@ -6,8 +6,8 @@
 //! the policy contract of `generated/wamn.json` is satisfied, the migrations
 //! plan, and every component admits against its built bytes, its declaration
 //! and the generated statement facts. A component is one the package owns or a
-//! palette component its wirings name; the build index of
-//! `tools/build-components` names its bytes. Then it pushes each component as
+//! palette component its wirings name; `outputs.components` of the package's
+//! `build.json` names its bytes. Then it pushes each component as
 //! its own OCI artifact under its digest, pushes the package artifact, reads
 //! its manifest back, and records the manifest digest in
 //! `catalog.package_artifacts` last.
@@ -99,10 +99,6 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
 /// `<name>.json` each.
 pub const DESCRIPTOR_DIRECTORY: &str = "descriptors";
 
-/// The build index that `tools/build-components` writes for the packages under
-/// `apps/`, relative to a package root.
-pub const COMPONENT_INDEX: &str = "../target/components.json";
-
 /// The platform component declarations, relative to a package root under
 /// `apps/`. Each `<area>/<crate>/declaration.json.in` names its component.
 pub const PLATFORM_DIRECTORY: &str = "../platform";
@@ -113,15 +109,6 @@ const ADMISSION_TENANT: &str = "package-artifact";
 
 /// The platform packages a package-owned component is admitted with.
 const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
-
-/// One entry of the build index [`COMPONENT_INDEX`].
-#[derive(Debug, serde::Deserialize)]
-struct IndexedComponent {
-    name: String,
-    file: PathBuf,
-    sha256: String,
-    recorded_at: u64,
-}
 
 /// One package tree packed into its layers and image manifest.
 #[derive(Debug)]
@@ -472,7 +459,7 @@ enum ComponentTemplate {
     },
 }
 
-/// One component the package pushes: its build index entry and its template.
+/// One component the package pushes: its `build.json` entry and its template.
 #[derive(Debug)]
 struct SourceComponent {
     name: String,
@@ -482,10 +469,12 @@ struct SourceComponent {
 }
 
 /// The components that `manifest` owns or a wiring of `publication/wirings/`
-/// names, sorted by name, with their build index entries. A missing index, a
-/// name without an entry, an entry whose file is missing or newer than its
-/// record, a palette component without exactly one platform declaration, and
-/// a palette component with two store aliases refuse.
+/// names, sorted by name, with their entries in `outputs.components` of the
+/// package's `build.json`. A missing receipt, a receipt whose `inputs.digest`
+/// differs from the tree, a name without an entry, a palette component without
+/// exactly one platform declaration, and a palette component with two store
+/// aliases refuse. The bytes of each entry are checked against its digest when
+/// they are read (§7.2: never by timestamp).
 fn source_components(
     root: &Path,
     manifest: &PackageManifest,
@@ -520,39 +509,32 @@ fn source_components(
             },
         );
     }
-    let index = root.join(COMPONENT_INDEX);
-    let bytes = std::fs::read(&index).with_context(|| {
-        format!(
-            "read the build index {}; run tools/build-components first",
-            index.display()
-        )
-    })?;
-    let indexed: Vec<IndexedComponent> = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse the build index {}", index.display()))?;
+    let output = wamn_schema_generator::output_root(root);
+    let receipt = wamn_schema_generator::receipt::read(&output)
+        .with_context(|| format!("read the build of {}; run wamn build first", root.display()))?;
+    let inputs = wamn_schema_generator::receipt::input_digest(root)?;
+    ensure!(
+        receipt.inputs.digest == inputs,
+        "the build of {} is stale: build.json records inputs {}, and the tree is {inputs}; run wamn build again",
+        root.display(),
+        receipt.inputs.digest
+    );
     templates
         .into_iter()
         .map(|(name, template)| {
-            let entry = indexed
+            let entry = receipt
+                .outputs
+                .components
                 .iter()
                 .find(|entry| entry.name == name)
                 .with_context(|| {
-                    format!("the build index {} has no component {name}", index.display())
+                    format!(
+                        "build.json of {} records no component {name}; run wamn build again",
+                        root.display()
+                    )
                 })?;
-            let modified = std::fs::metadata(&entry.file)
-                .and_then(|metadata| metadata.modified())
-                .with_context(|| {
-                    format!("component {name} has no built file {}", entry.file.display())
-                })?
-                .duration_since(std::time::UNIX_EPOCH)
-                .context("read a file time")?
-                .as_secs();
-            ensure!(
-                modified <= entry.recorded_at,
-                "component {name} at {} is newer than its build index record; run tools/build-components again",
-                entry.file.display()
-            );
             Ok(SourceComponent {
-                file: entry.file.clone(),
+                file: output.join(&entry.path),
                 sha256: entry.sha256.clone(),
                 name,
                 template,
@@ -791,8 +773,8 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
             .with_context(|| format!("read {}", source.file.display()))?;
         let digest = sha256_digest(&bytes);
         ensure!(
-            digest == facts.component_digest && digest == format!("sha256:{}", source.sha256),
-            "component {} is {digest}, but admission saw {} and the build index records sha256:{}",
+            digest == facts.component_digest && digest == source.sha256,
+            "component {} is {digest}, but admission saw {} and build.json records {}; run wamn build again",
             source.name,
             facts.component_digest,
             source.sha256
@@ -1248,24 +1230,46 @@ mod tests {
         std::fs::write(path, bytes).unwrap();
     }
 
-    /// The build index of `apps/target` with `receiving` and `blob-put`, each
-    /// recorded at `recorded_at`.
-    fn write_index(apps: &Path, recorded_at: u64) {
-        let entries = ["receiving", "blob-put"].map(|name| {
-            let file = apps.join(format!("target/built/{}.wasm", name.replace('-', "_")));
-            serde_json::json!({
-                "name": name,
-                "crate": name,
-                "file": file,
-                "sha256": hex::encode(ring::digest::digest(&ring::digest::SHA256, name.as_bytes())),
-                "recorded_at": recorded_at,
+    /// The `build.json` of the package at `root`, current for its tree, with
+    /// the components `receiving` and `blob-put` in its build output.
+    fn write_receipt(root: &Path) {
+        use wamn_schema_generator::receipt;
+        let output = wamn_schema_generator::output_root(root);
+        let components = ["blob-put", "receiving"]
+            .map(|name| {
+                let path = format!("components/{name}.wasm");
+                write(&output, &path, name.as_bytes());
+                receipt::ReceiptComponent {
+                    name: name.to_owned(),
+                    path,
+                    sha256: sha256_digest(name.as_bytes()),
+                }
             })
-        });
-        write(
-            apps,
-            "target/components.json",
-            &serde_json::to_vec(&entries).unwrap(),
-        );
+            .to_vec();
+        let receipt = receipt::BuildReceipt {
+            schema: receipt::RECEIPT_SCHEMA.to_owned(),
+            package: receipt::ReceiptPackage {
+                id: "wamn_receiving".to_owned(),
+                version: "2.1.0".to_owned(),
+            },
+            inputs: receipt::ReceiptInputs {
+                digest: receipt::input_digest(root).unwrap(),
+                files: BTreeMap::new(),
+            },
+            dependencies: Vec::new(),
+            generator: receipt::ReceiptGenerator {
+                id: "generator".to_owned(),
+                toolchain: "toolchain".to_owned(),
+                sqlx: "0.9.0".to_owned(),
+            },
+            outputs: receipt::ReceiptOutputs {
+                manifest: sha256_digest(b"manifest"),
+                files: BTreeMap::new(),
+                components,
+                web: None,
+            },
+        };
+        write(&output, receipt::RECEIPT_FILE, &receipt.to_bytes());
     }
 
     fn receiving_manifest() -> Vec<u8> {
@@ -1276,21 +1280,13 @@ mod tests {
     }
 
     /// A package root under `apps`, whose wiring names its own component and
-    /// the platform component `blob-put`, with the build index that
-    /// `tools/build-components` writes beside it.
+    /// the platform component `blob-put`, with a current `build.json`.
     fn package_tree(name: &str) -> PathBuf {
         let apps = std::env::temp_dir().join(format!(
             "wamn-package-artifact-test-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&apps);
-        write(&apps, "target/built/receiving.wasm", b"receiving");
-        write(&apps, "target/built/blob_put.wasm", b"blob-put");
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        write_index(&apps, now);
         write(
             &apps,
             "platform/execution/blob-put/declaration.json.in",
@@ -1318,6 +1314,7 @@ mod tests {
         write(&root, "web/dist/stale.html", b"left out\n");
         write(&root, "web/src/main.ts", b"left out\n");
         write(&root, "generated/client/left-out.ts", b"left out\n");
+        write_receipt(&root);
         root
     }
 
@@ -1465,9 +1462,8 @@ mod tests {
     }
 
     #[test]
-    fn the_build_index_refuses_a_missing_or_stale_component() {
+    fn the_build_refuses_a_stale_receipt_or_a_missing_component() {
         let root = package_tree("index");
-        let apps = root.parent().unwrap().to_path_buf();
         let manifest = manifest(&root);
 
         let listed = source_components(&root, &manifest).unwrap();
@@ -1478,6 +1474,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["blob-put", "receiving"]
         );
+        assert_eq!(listed[1].sha256, sha256_digest(b"receiving"));
         let ComponentTemplate::Palette {
             bytes, store_alias, ..
         } = &listed[0].template
@@ -1487,20 +1484,18 @@ mod tests {
         assert_eq!(bytes, b"{\"component\": \"blob-put\"}\n");
         assert_eq!(store_alias.as_deref(), Some("labels"));
 
-        std::fs::remove_file(apps.join("target/built/receiving.wasm")).unwrap();
+        write(&root, "migrations/0002_more.sql", b"SELECT 2;\n");
         let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
-        assert!(
-            error.contains("component receiving has no built file"),
-            "{error}"
-        );
+        assert!(error.contains("is stale"), "{error}");
 
-        write(&apps, "target/built/receiving.wasm", b"receiving");
-        write_index(&apps, 0);
-        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
-        assert!(
-            error.contains("newer than its build index record"),
-            "{error}"
+        write(
+            &root,
+            "publication/wirings/shape.json",
+            b"{\"nodes\": {\"a\": {\"component\": \"jsonata\"}}}\n",
         );
+        write_receipt(&root);
+        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
+        assert!(error.contains("records no component jsonata"), "{error}");
 
         write(
             &root,
@@ -1514,12 +1509,13 @@ mod tests {
         );
 
         std::fs::remove_file(root.join("publication/wirings/shape.json")).unwrap();
-        std::fs::remove_file(apps.join("target/components.json")).unwrap();
+        std::fs::remove_file(
+            wamn_schema_generator::output_root(&root)
+                .join(wamn_schema_generator::receipt::RECEIPT_FILE),
+        )
+        .unwrap();
         let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
-        assert!(
-            error.contains("run tools/build-components first"),
-            "{error}"
-        );
+        assert!(error.contains("run wamn build first"), "{error}");
         remove(&root);
     }
 

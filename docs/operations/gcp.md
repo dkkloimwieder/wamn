@@ -592,7 +592,7 @@ os.write(fd, json.dumps({"auths": {"us-central1-docker.pkg.dev": {"username": "o
 os.close(fd)' $A
 ```
 
-Push the package. `push-package` reads `receiving.wasm` through the build index `apps/target/components.json`, admits it, pushes it under its digest to the component repository, and then pushes the package artifact:
+Push the package. `push-package` reads `receiving.wasm` through `outputs.components` of the package's `build.json`, admits it, pushes it under its digest to the component repository, and then pushes the package artifact:
 
 ```bash
 target/debug/wamn-ctl push-package --package apps/wamn_receiving \

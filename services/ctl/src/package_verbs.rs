@@ -229,8 +229,8 @@ fn roots(opened: &[OpenedPackage]) -> Vec<PackageRoot> {
 #[derive(Debug, Args)]
 pub struct PushPackageArgs {
     /// Root of the authored package (it holds `wamn.k`). Its built components
-    /// are read through `../target/components.json`, the build index that
-    /// `tools/build-components` writes.
+    /// are read through `outputs.components` of its `build.json`, which must
+    /// be current for the tree.
     #[arg(long)]
     pub package: PathBuf,
 

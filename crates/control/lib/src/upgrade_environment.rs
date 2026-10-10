@@ -659,14 +659,6 @@ impl Run {
                         && old.package_version == package.manifest.package.version
                 })
             }) {
-                let index = package.root.join(crate::package_artifact::COMPONENT_INDEX);
-                fs::create_dir_all(
-                    index
-                        .parent()
-                        .context("the package build index has no parent")?,
-                )?;
-                fs::copy(self.delivery().join("components.json"), &index)
-                    .context("present the stage build index to push-package")?;
                 crate::package_artifact::push_package(
                     &crate::package_artifact::PushPackageRequest {
                         package: package.root.clone(),

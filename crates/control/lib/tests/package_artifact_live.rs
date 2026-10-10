@@ -2,8 +2,8 @@
 //! (wamn-vavs4.1, docs/plan/platform-deploy.md section 7.2) against a local
 //! `registry:2` that each test starts and removes, and a disposable control
 //! database. The packages are the built packages under `apps/`: run
-//! `tools/build-components` first, so `apps/target/components.json` names
-//! their components.
+//! `wamn build` and then `tools/build-components` first, so the `build.json`
+//! of each package names its components.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -250,14 +250,12 @@ async fn push_repeat_fetch_and_refusals() {
 async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
     let fixture = Fixture::start("palette").await;
 
-    // A copy of Receiving whose one wiring names jsonata, beside the build
-    // index and the platform declarations it reads.
+    // A copy of Receiving whose one wiring names jsonata, beside the platform
+    // declarations it reads.
     let copy = fixture.directory.join("apps");
     std::fs::create_dir(&copy).expect("create the copy");
-    for shared in ["platform", "target"] {
-        std::os::unix::fs::symlink(apps().join(shared), copy.join(shared))
-            .expect("link a shared directory");
-    }
+    std::os::unix::fs::symlink(apps().join("platform"), copy.join("platform"))
+        .expect("link the platform declarations");
     let copied = Command::new("cp")
         .arg("-r")
         .arg(apps().join("wamn_receiving"))
@@ -272,6 +270,38 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
         br#"{"nodes": {"a": {"component": "jsonata"}}}"#,
     )
     .unwrap();
+    // The build of the copy: Receiving's, with the inputs of the copy and the
+    // jsonata component that WMS's build recorded.
+    {
+        use wamn_schema_generator::receipt;
+        let output = copy.join("target/wamn/wamn_receiving");
+        std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+        let copied = Command::new("cp")
+            .arg("-r")
+            .arg(apps().join("target/wamn/wamn_receiving"))
+            .arg(output.parent().unwrap())
+            .status()
+            .expect("run cp");
+        assert!(copied.success(), "copy the Receiving build");
+        let wms_output = apps().join("target/wamn/wamn_wms");
+        let jsonata = receipt::read(&wms_output)
+            .expect("read the WMS build")
+            .outputs
+            .components
+            .into_iter()
+            .find(|component| component.name == "jsonata")
+            .expect("the WMS build records jsonata");
+        std::fs::copy(wms_output.join(&jsonata.path), output.join(&jsonata.path))
+            .expect("copy jsonata");
+        let mut built = receipt::read(&output).expect("read the Receiving build");
+        built.inputs.digest = receipt::input_digest(&receiving).unwrap();
+        built.outputs.components.push(jsonata);
+        built
+            .outputs
+            .components
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        std::fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes()).unwrap();
+    }
 
     let wms = push_package(&fixture.request(apps().join("wamn_wms")))
         .await
