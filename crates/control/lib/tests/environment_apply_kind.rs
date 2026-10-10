@@ -106,8 +106,12 @@ const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
 /// registration, so no materializer renders.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
 /// The package `orders@1.0.0` the fixture release names: no model, no
-/// migration.
-const PACKAGE_MANIFEST: &str = r#"{"package":{"id":"orders","version":"1.0.0"},"required_platform_policy_contract":{"id":"orders_data_access","state":"satisfied"},"models":{},"connections":[],"components":{}}"#;
+/// migration, no SQL, and one stateless command in its one component, the
+/// shape of `apps/edge_device`.
+const PACKAGE_MANIFEST: &str = r#"{"package":{"id":"orders","version":"1.0.0"},"required_platform_policy_contract":{"id":"orders_data_access","state":"satisfied"},"models":{},"custom_operations":{"order.read":{"type":"command","visibility":"public","permission":"order.read","input":{"fields":[{"path":"request_id","type":"text","nullable":false},{"path":"value.order","type":"text","nullable":false}]},"result":{"class":"one","fields":[{"path":"order","type":"text","nullable":false}]},"errors":["invalid_input","permission_denied","internal_error"],"error_details":{},"idempotent_by":"stateless","label":"Read an order","description":"The one operation of the apply fixture. It declares no SQL."}},"connections":[],"components":{"orders":{"connections":[]}}}"#;
+/// The data access policy of [`PACKAGE_MANIFEST`]: no relation, no schema.
+/// `manifest_sha256` is the SHA-256 of the manifest bytes.
+const DATA_ACCESS: &str = r#"{"contract":"orders_data_access","manifest_sha256":"sha256:0bd4cf516c32a2db01711d915fb6ff947c649460eddc5031c3a9d4bd0950c0c2","package":"orders@1.0.0","relations":[],"role":"wamn_app","schemas":[]}"#;
 
 struct Run {
     work: PathBuf,
@@ -660,7 +664,27 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         "# orders@1.0.0, the apply fixture\n",
     )?;
     std::fs::write(package.join("generated/wamn.json"), PACKAGE_MANIFEST)?;
-    std::fs::write(packages.join("target/components.json"), "[]")?;
+    std::fs::create_dir_all(package.join("generated/platform-policy"))?;
+    std::fs::write(
+        package.join("generated/platform-policy/data-access.json"),
+        DATA_ACCESS,
+    )?;
+    // The build index entry of the component: push-package lists it, and no
+    // step pulls it.
+    let component = packages.join("target/orders.wasm");
+    std::fs::write(&component, b"orders")?;
+    let recorded_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs()
+        + 1;
+    std::fs::write(
+        packages.join("target/components.json"),
+        serde_json::to_vec(
+            &json!([{"name": "orders", "crate": "orders", "file": component,
+            "sha256": "1c168adb00d208e42f93314529f1fa9c0427eb63233ceda95a5db52b7012a719",
+            "recorded_at": recorded_at}]),
+        )?,
+    )?;
     let ca = vec![work.join("ca.crt")];
     let package_base = format!("{local}/wamn/packages");
     let mut pushed = None;
@@ -1269,6 +1293,16 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     let grace = pods["items"][0]["spec"]["terminationGracePeriodSeconds"]
         .as_u64()
         .context("the pod's grace period")?;
+    // The host's own log of its drain, kept in the report.
+    let host_log = work.join("drain-host.log");
+    let mut follow = Command::new("kubectl")
+        .args(["-n", NAMESPACE, "logs", "--follow", &pod])
+        .env("KUBECONFIG", work.join("kubeconfig"))
+        .stdout(std::fs::File::create(&host_log)?)
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .context("follow the host log")?;
     let deleted = Instant::now();
     run.run(
         "kubectl",
@@ -1316,11 +1350,21 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         )
         .await?;
     let (status, queued): (String, bool) = (finished.get(0), finished.get(1));
+    let _ = follow.kill().await;
+    let log = std::fs::read_to_string(&host_log).unwrap_or_default();
+    let log_tail: Vec<&str> = log
+        .lines()
+        .rev()
+        .take(40)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
     run.pass(
         "host_exits_before_its_grace_period",
         &format!("kubectl -n {NAMESPACE} delete pod {pod}; kubectl get pod {pod} -o json"),
         json!({"grace_seconds": grace, "exit_code": exit_code, "exited_after_seconds": exited_after,
-            "run_status": status, "run_queued": queued}),
+            "run_status": status, "run_queued": queued, "host_log_tail": log_tail}),
         exit_code == Some(0)
             && exited_after.is_some_and(|seconds| seconds < grace)
             && status == "effect-uncertain"
