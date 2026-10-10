@@ -20,7 +20,8 @@ use wamn_control_provision::project_env_database_name;
 use wamn_control_provision::session_target::SessionTarget;
 use wamn_control_provision::sql::{
     ensure_db_owner_role_sql, grant_session_role_reader_surface_sql,
-    prepare_workload_generation_sql, revoke_public_connect_floor_sql,
+    prepare_workload_generation_sql, record_generation_password_sql,
+    revoke_public_connect_floor_sql,
 };
 use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
 use wamn_control_provision::{
@@ -938,6 +939,7 @@ async fn retained_successor_allows_real_retirement(
     ))
     .await
     .expect_redacted("prepare exact successor through production builder");
+    record_password_fingerprint(&fixture.system.client, &successor_role).await;
     let admin = fixture.admin.as_str();
     let parsed = url::Url::parse(admin).expect_redacted("administrator URL shape");
     let successor_target = SessionTarget::new(
@@ -1044,6 +1046,17 @@ fn compiled_ctl_binary() -> std::path::PathBuf {
         expected.display()
     );
     binary
+}
+
+/// Record the password fingerprint of a generation that the fixture prepared.
+/// A generation is active only with it, and the provisioner records it beside
+/// each prepare (wamn-zua8.3).
+async fn record_password_fingerprint(system: &Client, role: &str) {
+    let fingerprint = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(PASSWORD.as_bytes()));
+    system
+        .execute(record_generation_password_sql(), &[&role, &fingerprint])
+        .await
+        .expect_redacted("record the generation password fingerprint");
 }
 
 async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process::Output {
@@ -1305,6 +1318,7 @@ async fn setup(raw: &str) -> Fixture {
             ))
             .await
             .expect_redacted("actual dedicated role-reader provisioning");
+        record_password_fingerprint(&system.client, target.connection().role()).await;
         let triple = target.triple();
         system.client.execute("INSERT INTO registry.orgs (id,placement_type) VALUES ($1,'dedicated') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture org");
         system.client.execute("INSERT INTO registry.projects (org,id) VALUES ($1,'widgets') ON CONFLICT DO NOTHING", &[&triple.org]).await.expect_redacted("fixture project");
