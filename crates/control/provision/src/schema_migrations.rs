@@ -210,6 +210,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0025_remove_component_library.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0026_package_artifact_verified_at.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0026_package_artifact_verified_at.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

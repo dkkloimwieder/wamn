@@ -2543,6 +2543,32 @@ mod tests {
     /// to the project database or the registry (R11 (2)).
     #[tokio::test]
     async fn a_package_without_a_verified_artifact_refuses_before_any_write() {
+        let rendered = publish_with_recorded_artifacts("").await;
+        assert!(
+            rendered.contains("orders@1.0.0 has no verified artifact"),
+            "{rendered}"
+        );
+    }
+
+    /// A recorded artifact whose `verified_at` is NULL was never verified,
+    /// so publish refuses it as it refuses a package with no row (R11 (2)).
+    #[tokio::test]
+    async fn a_package_artifact_with_a_null_verified_at_refuses() {
+        let rendered = publish_with_recorded_artifacts(
+            "INSERT INTO catalog.package_artifacts (package_id, version, digest) \
+             VALUES ('orders', '1.0.0', 'sha256:' || repeat('a', 64));",
+        )
+        .await;
+        assert!(
+            rendered.contains("orders@1.0.0 has no verified artifact"),
+            "{rendered}"
+        );
+    }
+
+    /// Publish `orders@1.0.0` against a control database whose
+    /// `catalog.package_artifacts` holds the rows `rows` inserts, and render
+    /// its refusal.
+    async fn publish_with_recorded_artifacts(rows: &str) -> String {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::database();
         let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
@@ -2554,11 +2580,12 @@ mod tests {
                 "CREATE SCHEMA catalog; \
                  CREATE TABLE catalog.package_artifacts (\
                    package_id text NOT NULL, version text NOT NULL, digest text NOT NULL, \
-                   source_commit text, verified_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+                   source_commit text, verified_at timestamptz, \
                    PRIMARY KEY (package_id, version));",
             )
             .await
             .unwrap();
+        client.batch_execute(rows).await.unwrap();
         let registry = PackageRegistry {
             artifact_base: "127.0.0.1:9/wamn/packages".to_owned(),
             registry_auth_file: PathBuf::from("/nonexistent/config.json"),
@@ -2583,13 +2610,9 @@ mod tests {
         )
         .await
         .unwrap_err();
-        let rendered = format!("{error:#}");
-        assert!(
-            rendered.contains("orders@1.0.0 has no verified artifact"),
-            "{rendered}"
-        );
         drop(client);
         task.await.unwrap().unwrap();
+        format!("{error:#}")
     }
 
     fn closure_document(with_registered_edge: bool) -> WiringDocument {

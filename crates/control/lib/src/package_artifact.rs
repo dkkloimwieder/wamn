@@ -1004,8 +1004,8 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
                 control
                     .execute(
                         "INSERT INTO catalog.package_artifacts \
-                           (package_id, version, digest, source_commit) \
-                         VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+                           (package_id, version, digest, source_commit, verified_at) \
+                         VALUES ($1, $2, $3, $4, clock_timestamp()) ON CONFLICT DO NOTHING",
                         &[
                             &packed.package_id,
                             &packed.version,
@@ -1126,7 +1126,8 @@ impl Drop for OpenedPackage {
 static UNPACK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Open a package source. An artifact is fetched only when its manifest digest
-/// equals the digest that `catalog.package_artifacts` records. It is unpacked
+/// equals the digest that `catalog.package_artifacts` records with its
+/// `verified_at`. It is unpacked
 /// into a private temporary directory, which must pack again to that digest.
 pub async fn open_package_source(source: PackageSource) -> anyhow::Result<OpenedPackage> {
     let (tag, registry) = match source {
@@ -1144,7 +1145,7 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
             let rows = control
                 .query(
                     "SELECT digest FROM catalog.package_artifacts \
-                      WHERE package_id || '-' || version = $1",
+                      WHERE package_id || '-' || version = $1 AND verified_at IS NOT NULL",
                     &[&tag],
                 )
                 .await

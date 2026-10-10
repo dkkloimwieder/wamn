@@ -1,8 +1,9 @@
 //! Live test of `system/0023_package_artifact_verification.sql`
 //! (wamn-vavs4.1): on a control database whose `catalog.package_artifacts` is
 //! the one `system/0010_package_artifacts.sql` created, with a row, the
-//! migration drops the old rows and creates the table as a fresh install has
-//! it, with `verified_at`. The test holds the process lock of its server,
+//! migration drops the old rows and, with the grant of `system/0024` and
+//! `system/0026`, leaves the table as a fresh install has it, with a nullable
+//! `verified_at`. The test holds the process lock of its server,
 //! because the installer creates cluster-wide roles.
 
 use tokio_postgres::{Client, NoTls};
@@ -13,6 +14,11 @@ const CREATED: &str =
     include_str!("../../../../deploy/sql/migrations/system/0010_package_artifacts.sql");
 const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0023_package_artifact_verification.sql");
+const AUTHOR_GRANT: &str = include_str!(
+    "../../../../deploy/sql/migrations/system/0024_control_author_package_artifacts.sql"
+);
+const NULLABLE: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0026_package_artifact_verified_at.sql");
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -85,9 +91,8 @@ async fn the_migration_recreates_the_package_artifacts_table_as_a_fresh_install_
     assert!(
         fresh
             .iter()
-            .any(|entry| entry
-                == "column verified_at timestamp with time zone true clock_timestamp()"),
-        "a fresh install has verified_at: {fresh:?}"
+            .any(|entry| entry == "column verified_at timestamp with time zone false "),
+        "a fresh install has a nullable verified_at with no default: {fresh:?}"
     );
 
     client
@@ -104,10 +109,10 @@ async fn the_migration_recreates_the_package_artifacts_table_as_a_fresh_install_
         .expect("make the table as system/0010 left it, with one old row");
     client
         .batch_execute(&format!(
-            "BEGIN; SET LOCAL ROLE wamn_system; {MIGRATION} COMMIT;"
+            "BEGIN; SET LOCAL ROLE wamn_system; {MIGRATION} {AUTHOR_GRANT} {NULLABLE} COMMIT;"
         ))
         .await
-        .expect("apply system/0023 as wamn_system");
+        .expect("apply system/0023, 0024 and 0026 as wamn_system");
     assert_eq!(
         definition(&client).await,
         fresh,

@@ -343,8 +343,9 @@ impl ArtifactRegistry {
             let digest = registry.push(package, &descriptors).await?;
             admin
                 .execute(
-                    "INSERT INTO catalog.package_artifacts (package_id, version, digest) \
-                     VALUES ($1, $2, $3)",
+                    "INSERT INTO catalog.package_artifacts \
+                       (package_id, version, digest, verified_at) \
+                     VALUES ($1, $2, $3, clock_timestamp())",
                     &[&package, &CANDIDATE_PACKAGE_VERSION, &digest],
                 )
                 .await

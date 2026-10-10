@@ -289,15 +289,16 @@ CREATE TABLE catalog.deployment_attestations (
 
 -- One row per package artifact that `push-package` verified and pushed
 -- (wamn-vavs4.1, docs/plan/platform-deploy.md section 7.2): the digest of its
--- image manifest, written once after every check and push succeeds. A
--- package artifact belongs to no tenant, so its policy admits every row; the
--- catalog keeps its RLS floor.
+-- image manifest, written once after every check and push succeeds, with
+-- verified_at. A row without verified_at is not verified, and every reader
+-- refuses it. A package artifact belongs to no tenant, so its policy admits
+-- every row; the catalog keeps its RLS floor.
 CREATE TABLE catalog.package_artifacts (
     package_id    text        NOT NULL CHECK (package_id <> ''),
     version       text        NOT NULL CHECK (version <> ''),
     digest        text        NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     source_commit text        CHECK (source_commit IS NULL OR source_commit <> ''),
-    verified_at   timestamptz NOT NULL DEFAULT clock_timestamp(),
+    verified_at   timestamptz,
     CONSTRAINT package_artifacts_pkey PRIMARY KEY (package_id, version)
 );
 ALTER TABLE catalog.package_artifacts ENABLE ROW LEVEL SECURITY;
