@@ -40,8 +40,15 @@
 //! 11. and 12. delete --data drops the database; a plain delete leaves it on
 //!    the cluster and removes the row.
 //!
-//! A6 (kind half) and A7 (kind half) need a staged package upgrade and an
-//! http role; this fixture has neither, and the report says so.
+//!
+//! Check of `wamn-snz0.5` (§3 A7, R2):
+//! 13. A7: two environments serve one release with an http attachment, so each
+//!    has the http role. A request to each environment's http Service with
+//!    each route host reaches the route guest only under the Service's own
+//!    route host; the other host is not routed.
+//!
+//! A6 (kind half) needs a staged package upgrade; this fixture has none, and
+//! the report says so.
 //!
 //! Run (epic closeout only):
 //! `WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
@@ -82,7 +89,13 @@ const POLICY: &str = "dev";
 const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 /// The second fixture release, B: the same package, another component digest.
 const MANIFEST_B: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
-/// A role image no WorkloadDeployment pulls: the fixture renders no role.
+/// The third fixture release, H: the same package with one http attachment,
+/// served with no authentication, so its environments render the http role.
+const MANIFEST_H: &[u8] = br#"{"attachments":{"orders-read-http":{"auth-policy":{"modes":["none"]},"component":"http-request","definition":{"id":"orders-read-http","route":{"method":"GET","path":"/orders"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"orders:order/read@1.0.0","package-id":"orders","type":"http"}},"components":[{"component":"http-request","digest":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1","operations":{"orders:order/read@1.0.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[{"component":"http-request","operation":"orders:order/read@1.0.0","package-id":"orders","type":"get"}],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+/// The route guest's refusal of a path the release does not serve.
+const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
+/// A role image no WorkloadDeployment pulls: no fixture release has a
+/// registration, so no materializer renders.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
 /// The package `orders@1.0.0` the fixture release names: no model, no
 /// migration.
@@ -591,6 +604,39 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         }
     }
     pushed.context("push the fixture package")?;
+
+    // The http role image: the route guest, built as the Dockerfile builds it
+    // and pushed to the registry as a wasm component.
+    let flags = run
+        .run(
+            &repository.join("tools/guest-rustflags").to_string_lossy(),
+            &[],
+        )
+        .await?;
+    let built = Command::new(env!("CARGO"))
+        .current_dir(repository.join("apps"))
+        .env("RUSTFLAGS", flags.trim())
+        .args(["build", "--locked", "--offline", "--release"])
+        .args(["--target", "wasm32-wasip2", "-p", "http-route"])
+        .status()
+        .await
+        .context("start the route guest build")?;
+    ensure!(built.success(), "the route guest build exited {built}");
+    let guest = std::fs::read(repository.join("apps/target/wasm32-wasip2/release/http_route.wasm"))
+        .context("read the route guest")?;
+    wash_runtime::oci::set_extra_ca_certificates(&[work.join("ca.crt")])?;
+    let http_digest = wash_runtime::oci::push_component(
+        &format!("{local}/wamn/flow-http:apply"),
+        &guest,
+        wash_runtime::oci::OciConfig::new_with_credentials(USER, PASSWORD),
+        None,
+    )
+    .await
+    .context("push the http role image")?;
+    ensure!(
+        http_digest.starts_with("sha256:"),
+        "the http role push returned {http_digest}"
+    );
     let digest = push_manifest_bytes(
         MANIFEST,
         &format!("{local}/wamn/releases"),
@@ -603,7 +649,6 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     .digest
     .as_str()
     .to_owned();
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(MANIFEST)?;
 
     // The host image, pinned by the digest the node reports, as the smoke.
     run.run(
@@ -645,7 +690,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     .await?;
     let set = ImageSet {
         host: format!("{host_image}@{node_digest}"),
-        http: UNPULLED.to_owned(),
+        http: format!("{local}/wamn/flow-http@{http_digest}"),
         materializer: UNPULLED.to_owned(),
     };
     let chart = stamp(
@@ -656,18 +701,21 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     run.run("helm", &["dependency", "build", &chart.to_string_lossy()])
         .await?;
 
-    // The qualification of the release on the chart's image set (R12).
-    system
-        .execute(
-            "INSERT INTO catalog.qualifications (qualification_sha256, package_set, image_digests) \
-             VALUES ($1, $2::text::jsonb, $3::text::jsonb)",
-            &[
-                &format!("sha256:{}", "9".repeat(64)),
-                &serde_json::to_string(&package_set(&manifest)?)?,
-                &serde_json::to_string(&image_set_digests(&set)?)?,
-            ],
-        )
-        .await?;
+    // The qualification of each fixture release on the chart's image set (R12).
+    for (fill, bytes) in [("9", MANIFEST), ("8", MANIFEST_B), ("7", MANIFEST_H)] {
+        let (release, _) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
+        system
+            .execute(
+                "INSERT INTO catalog.qualifications (qualification_sha256, package_set, image_digests) \
+                 VALUES ($1, $2::text::jsonb, $3::text::jsonb)",
+                &[
+                    &format!("sha256:{}", fill.repeat(64)),
+                    &serde_json::to_string(&package_set(&release)?)?,
+                    &serde_json::to_string(&image_set_digests(&set)?)?,
+                ],
+            )
+            .await?;
+    }
     system_task.abort();
 
     // The platform part of the host group: the registry mount, as the smoke.
@@ -677,6 +725,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
             "replicas": 1,
             "env": [
                 {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
+                {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
                 {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{local}/wamn/components")},
             ],
             "ociCaPaths": ["/apply-registry/ca.crt"],
@@ -1244,11 +1293,108 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         json!({"reason": "the fixture release has no staged package upgrade, so no old release serves on an expanded schema between steps 5 and 6"}),
         "not-run",
     );
-    run.record(
-        "A7 kind half",
-        "",
-        json!({"reason": "the fixture release has no http attachment, so no route host is served"}),
-        "not-run",
+    // 13. A7: each route host reaches only its own environment.
+    let digest_h = push_manifest_bytes(
+        MANIFEST_H,
+        &format!("{local}/wamn/releases"),
+        false,
+        &platform.oci_ca_paths,
+        &work.join("auth.json"),
+    )
+    .await
+    .context("push the http fixture release manifest")?
+    .digest
+    .as_str()
+    .to_owned();
+    let served = [
+        ("east", "east.orders.example"),
+        ("west", "west.orders.example"),
+    ];
+    for (env, route_host) in served {
+        let mut http = document(env, route_host);
+        http.release = DeclaredRelease::Digest(digest_h.clone());
+        apply(&http, &format!("{env}-http")).await?;
+    }
+    let mut answers = Vec::new();
+    let mut own_only = true;
+    for (service_env, _) in served {
+        let service = format!(
+            "http://{}-http.{NAMESPACE}.svc.cluster.local/no-such-route",
+            release_name(ORG, PROJECT, service_env)?
+        );
+        for (host_env, route_host) in served {
+            let (status, body) = route_probe(run, &service, route_host).await?;
+            let reached = status == 404 && body == ROUTE_NOT_FOUND;
+            own_only &= reached == (service_env == host_env);
+            answers.push(json!({"service": service_env, "host": route_host,
+                "status": status, "body": body, "reached_the_route_guest": reached}));
+        }
+    }
+    run.pass(
+        "A7 each route host reaches only its own environment",
+        "wamn-ctl env apply east-http.k west-http.k; curl -H 'Host: <route host>' http://<release>-http/no-such-route",
+        json!({"release": digest_h, "answers": answers}),
+        own_only,
     );
     Ok(())
+}
+
+/// GET `url` from a pod in the namespace with `Host: route_host`, and return
+/// the status and the body.
+async fn route_probe(run: &Run, url: &str, route_host: &str) -> anyhow::Result<(u16, String)> {
+    let pod = format!("route-probe-{}", route_host.replace('.', "-"));
+    let script = format!(
+        "curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body \
+         --write-out '%{{http_code}}\\n' --header 'Host: {route_host}' '{url}'; cat /tmp/body"
+    );
+    run.run(
+        "kubectl",
+        &[
+            "-n",
+            NAMESPACE,
+            "run",
+            &pod,
+            "--restart=Never",
+            &format!(
+                "--image={}",
+                wamn_test_infrastructure::workload::HTTP_PROBE_IMAGE
+            ),
+            "--command",
+            "--",
+            "/bin/sh",
+            "-ec",
+            &script,
+        ],
+    )
+    .await?;
+    let waited = run
+        .run(
+            "kubectl",
+            &[
+                "-n",
+                NAMESPACE,
+                "wait",
+                "--for=jsonpath={.status.phase}=Succeeded",
+                &format!("pod/{pod}"),
+                "--timeout=120s",
+            ],
+        )
+        .await;
+    let logs = run
+        .run("kubectl", &["-n", NAMESPACE, "logs", &format!("pod/{pod}")])
+        .await;
+    run.run(
+        "kubectl",
+        &["-n", NAMESPACE, "delete", "pod", &pod, "--wait=true"],
+    )
+    .await?;
+    waited?;
+    let logs = logs?;
+    let (status, body) = logs
+        .split_once('\n')
+        .with_context(|| format!("the route probe printed {logs:?}"))?;
+    Ok((
+        status.trim().parse().context("the route probe status")?,
+        body.to_owned(),
+    ))
 }
