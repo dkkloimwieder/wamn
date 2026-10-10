@@ -99,7 +99,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             .is_some_and(|operation| operation.fresh_only),
         "prior-commit fixture requires the released fresh-only base"
     );
-    let base_digest = base.digest.as_str();
+    let base_digest = base.descriptor.component_digest.as_str();
     let manifest = fixture_manifest(base_digest);
     write_json(&package.join("wamn.json"), &manifest)?;
     std::fs::write(
@@ -341,13 +341,15 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
                 .manifest()
                 .components
                 .iter()
-                .any(|component| component.digest.as_str() == parent_digest
-                    && component
-                        .operations
-                        .get(OPERATION)
-                        .is_some_and(|operation| operation.fresh_only
-                            && operation.registered_operation.is_none()
-                            && operation.permissions.contains(*BASE_RECORD_RECEIPT)))
+                .any(
+                    |component| component.descriptor.component_digest.as_str() == parent_digest
+                        && component
+                            .operations
+                            .get(OPERATION)
+                            .is_some_and(|operation| operation.fresh_only
+                                && operation.registered_operation.is_none()
+                                && operation.permissions.contains(*BASE_RECORD_RECEIPT))
+                )
             && release
                 .manifest()
                 .components

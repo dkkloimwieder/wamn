@@ -91,7 +91,6 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
 
     let mut components = base.manifest.components.clone();
     let mut component = components.pop_first().unwrap();
-    component.digest = ArtifactHash::parse(ORIGINAL_PIN).unwrap();
     ORIGINAL_PIN.clone_into(&mut component.descriptor.component_digest);
     components.insert(component);
     let overlay_manifest = PackageManifest::from_slice(
@@ -139,9 +138,6 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
             .collect();
     components.insert(ServingComponent {
         package_id: OVERLAY.to_owned(),
-        component: "fixture_overlay".to_owned(),
-        interface_version: "0.1.0".to_owned(),
-        digest: ArtifactHash::parse(format!("sha256:{}", "c".repeat(64))).unwrap(),
         operations,
         descriptor: wamn_catalog::ComponentDescriptor::named(
             "fixture_overlay",
@@ -944,9 +940,6 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     let mut components = fixture.base.manifest.components.clone();
     components.insert(ServingComponent {
         package_id: SECOND.to_owned(),
-        component: "fixture_overlay".to_owned(),
-        interface_version: "0.1.0".to_owned(),
-        digest: ArtifactHash::parse(format!("sha256:{}", "d".repeat(64))).unwrap(),
         operations,
         descriptor: wamn_catalog::ComponentDescriptor::named(
             "fixture_overlay",

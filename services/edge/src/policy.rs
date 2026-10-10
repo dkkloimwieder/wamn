@@ -75,8 +75,8 @@ impl EdgePolicy {
                 .iter()
                 .find(|served| {
                     served.package_id == fact.scope.package_id
-                        && served.component == fact.component
-                        && served.digest.as_str() == fact.component_digest
+                        && served.descriptor.component == fact.component
+                        && served.descriptor.component_digest.as_str() == fact.component_digest
                 })
                 .context("component-not-in-carried-release")?;
             policies.insert(

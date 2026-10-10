@@ -1,7 +1,7 @@
 //! Installed-data qualification without a Kubernetes deployment journey.
 
 use super::*;
-use wamn_catalog::{ArtifactHash, ServingComponent, ServingComponentOperation, ServingRelease};
+use wamn_catalog::{ServingComponent, ServingComponentOperation, ServingRelease};
 use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
 mod overlay;
@@ -169,9 +169,6 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
         },
         BTreeSet::from([ServingComponent {
             package_id: "platform_fixture".to_owned(),
-            component: "fixture".to_owned(),
-            interface_version: "0.1.0".to_owned(),
-            digest: ArtifactHash::parse(format!("sha256:{}", "a".repeat(64))).unwrap(),
             operations,
             descriptor: wamn_catalog::ComponentDescriptor::named(
                 "fixture",

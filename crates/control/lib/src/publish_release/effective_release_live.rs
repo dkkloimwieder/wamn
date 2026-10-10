@@ -473,7 +473,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     );
     for component in &first.manifest.components {
         assert_eq!(
-            component.digest.as_str(),
+            component.descriptor.component_digest.as_str(),
             admitted_digests[component.package_id.as_str()]
         );
     }

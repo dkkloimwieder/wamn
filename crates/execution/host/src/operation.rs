@@ -380,8 +380,8 @@ impl OperationHost {
             .iter()
             .find(|served| {
                 served.package_id == component.scope.package_id
-                    && served.component == component.component
-                    && served.digest.as_str() == component.component_digest
+                    && served.descriptor.component == component.component
+                    && served.descriptor.component_digest.as_str() == component.component_digest
             })
             .and_then(|served| served.operations.get(operation))
             .and_then(|released| released.participant.as_deref());

@@ -54,7 +54,7 @@ SELECT requirement.requirement_json::text, requirement.requirement_hash \
              convert_from(release.canonical_bytes, 'UTF8')::jsonb -> 'components' \
          ) AS component(value) \
       WHERE release.tenant_id = $1 AND release.manifest_digest = $4 \
-        AND component.value ->> 'digest' = $2)";
+        AND component.value -> 'descriptor' ->> 'component-digest' = $2)";
 const FIRST_GENERATION: i64 = 1;
 /// Enable a disabled instance again, at the revision the caller read.
 const ENABLE_INSTANCE_SQL: &str = "\

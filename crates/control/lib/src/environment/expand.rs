@@ -98,7 +98,7 @@ pub async fn expand(
             .manifest
             .components
             .iter()
-            .map(|component| component.digest.as_str().to_owned())
+            .map(|component| component.descriptor.component_digest.as_str().to_owned())
             .collect();
         project
             .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])

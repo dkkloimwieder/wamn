@@ -586,9 +586,9 @@ pub(crate) fn authorize_release_closure(
     }
     let component = manifest.components.iter().find(|candidate| {
         candidate.package_id == invocation.package_id
-            && candidate.component == *component
-            && candidate.interface_version == *interface_version
-            && candidate.digest == digest
+            && candidate.descriptor.component == *component
+            && candidate.descriptor.interface_version == *interface_version
+            && candidate.descriptor.component_digest == digest.as_str()
     });
     let operation_admitted = component
         .and_then(|component| component.operations.get(operation))
@@ -621,9 +621,9 @@ pub(crate) fn authorize_release_closure(
     };
     let root = manifest.components.iter().find(|component| {
         component.package_id == origin.package_id
-            && component.component == origin.component
-            && component.interface_version == origin.interface_version
-            && component.digest.as_str() == origin.component_digest
+            && component.descriptor.component == origin.component
+            && component.descriptor.interface_version == origin.interface_version
+            && component.descriptor.component_digest.as_str() == origin.component_digest
     });
     if !operation_admitted
         || !entry_released
@@ -645,8 +645,8 @@ fn released_operation_reachable(
 ) -> bool {
     root.operations.contains_key(root_operation)
         && root.package_id == invocation.package_id
-        && root.component == invocation.component
-        && root.digest.as_str() == invocation.component_digest
+        && root.descriptor.component == invocation.component
+        && root.descriptor.component_digest.as_str() == invocation.component_digest
         && root_operation == invocation.operation
 }
 
@@ -1264,10 +1264,6 @@ mod tests {
                     invocation.component_digest.clone(),
                 ),
                 package_id: invocation.package_id.clone(),
-                component: snapshot.component.expect("component"),
-                interface_version: snapshot.interface_version.expect("interface version"),
-                digest: ArtifactHash::parse(invocation.component_digest)
-                    .expect("fixture artifact hash is canonical"),
                 operations: BTreeMap::from([(
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {
@@ -1397,16 +1393,20 @@ mod tests {
 
         let mut unrelated = manifest.components.first().expect("root").clone();
         unrelated.package_id = "package_b".to_string();
-        unrelated.component = "unrelated".to_string();
-        unrelated.digest = ArtifactHash::parse(digest('e')).expect("unrelated digest");
+        unrelated.descriptor.component = "unrelated".to_string();
+        unrelated.descriptor.component_digest = digest('e');
         manifest
             .release
             .packages
             .insert(PackageCoordinate::new("package_b", "1.0.0").expect("unrelated package"));
         invocation.package_id.clone_from(&unrelated.package_id);
-        invocation.component.clone_from(&unrelated.component);
-        invocation.component_digest = unrelated.digest.to_string();
-        snapshot.component = Some(unrelated.component.clone());
+        invocation
+            .component
+            .clone_from(&unrelated.descriptor.component);
+        invocation
+            .component_digest
+            .clone_from(&unrelated.descriptor.component_digest);
+        snapshot.component = Some(unrelated.descriptor.component.clone());
         manifest.components.insert(unrelated);
         assert!(
             matches!(

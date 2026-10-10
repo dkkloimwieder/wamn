@@ -1350,9 +1350,8 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME,
-        ServingAttachment, ServingComponent, ServingComponentOperation, ServingRelease,
-        ServingRoute, ServingWiring,
+        DefinitionHash, PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingAttachment,
+        ServingComponent, ServingComponentOperation, ServingRelease, ServingRoute, ServingWiring,
     };
 
     use super::*;
@@ -1366,9 +1365,6 @@ mod tests {
     fn components() -> BTreeSet<ServingComponent> {
         BTreeSet::from([ServingComponent {
             package_id: "cat".into(),
-            component: "http-request".into(),
-            interface_version: "0.1".into(),
-            digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
             operations: BTreeMap::from([(
                 "request".into(),
                 ServingComponentOperation {

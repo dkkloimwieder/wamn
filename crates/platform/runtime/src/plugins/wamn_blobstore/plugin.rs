@@ -473,8 +473,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        ArtifactHash, DefinitionHash, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponent, ServingComponentOperation, ServingRelease, ServingWiring,
+        DefinitionHash, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
+        ServingComponentOperation, ServingRelease, ServingWiring,
     };
 
     use super::*;
@@ -724,16 +724,6 @@ mod tests {
                 invocation.component_digest.clone(),
             ),
             package_id: invocation.package_id.clone(),
-            component: snapshot
-                .component
-                .clone()
-                .expect("the fixture snapshot names a component"),
-            interface_version: snapshot
-                .interface_version
-                .clone()
-                .expect("the fixture snapshot names an interface version"),
-            digest: ArtifactHash::parse(invocation.component_digest)
-                .expect("the fixture digest is canonical"),
             operations: BTreeMap::from([(
                 snapshot
                     .operation

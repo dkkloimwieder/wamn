@@ -210,7 +210,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     let manifest: ServingManifest = serde_json::from_value(json!({
         "format-version":wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
         "release":{"packages":[{"package-id":"automation","package-version":"1.0.0"}]},
-        "components":[{"package-id":"automation","component":component,"interface-version":"0.1.0","digest":admitted.component_digest,
+        "components":[{"package-id":"automation",
           "descriptor": wamn_catalog::ComponentDescriptor::new(admitted.clone(), Vec::new()),
           "operations":{(node.operation.clone()):node.serving}}],
         "routes":[],"attachments":{},"workflow":{"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}]}

@@ -387,12 +387,12 @@ pub fn validate_local_facts(
             .iter()
             .find(|component| {
                 component.package_id == fact.scope.package_id
-                    && component.component == fact.component
-                    && component.interface_version == fact.interface_version
+                    && component.descriptor.component == fact.component
+                    && component.descriptor.interface_version == fact.interface_version
             })
             .context("local component is outside the manifest")?;
         anyhow::ensure!(
-            projected.digest.as_str() == fact.component_digest
+            projected.descriptor.component_digest.as_str() == fact.component_digest
                 && projected.operations.len() == fact.operations.len(),
             "local component differs from its manifest projection"
         );
@@ -629,8 +629,8 @@ mod tests {
     fn fixture() -> (super::LocalApplicationFacts, wamn_catalog::ServingManifest) {
         use std::collections::{BTreeMap, BTreeSet};
         use wamn_catalog::{
-            ArtifactHash, PackageCoordinate, ServingComponent, ServingComponentOperation,
-            ServingManifest, ServingRelease, ServingWiring, WiringDocument,
+            PackageCoordinate, ServingComponent, ServingComponentOperation, ServingManifest,
+            ServingRelease, ServingWiring, WiringDocument,
         };
         let component = wamn_catalog::normalize_component_fact(serde_json::from_value(serde_json::json!({
             "scope": {"tenant-id": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
@@ -642,9 +642,6 @@ mod tests {
             },
             BTreeSet::from([ServingComponent {
                 package_id: "orders".to_owned(),
-                component: "transform".to_owned(),
-                interface_version: "0.1.0".to_owned(),
-                digest: ArtifactHash::parse(&component.component_digest).unwrap(),
                 operations: BTreeMap::from([(
                     "run".to_owned(),
                     ServingComponentOperation {

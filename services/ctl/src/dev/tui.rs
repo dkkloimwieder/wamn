@@ -319,9 +319,9 @@ fn release_lines(snapshot: &DevSnapshot) -> Vec<String> {
         lines.push(format!(
             "package-id={} component={} interface-version={} digest={} token={} facts={}",
             component.package_id,
-            component.component,
-            component.interface_version,
-            component.digest,
+            component.descriptor.component,
+            component.descriptor.interface_version,
+            component.descriptor.component_digest,
             token,
             exact_json(facts),
         ));
@@ -531,9 +531,9 @@ mod tests {
     use serde_json::json;
     use wamn_authoring_model::{GateRefusal, GateResult, ValidatedDraftRef};
     use wamn_catalog::{
-        ArtifactHash, AttachmentType, DefinitionHash, PackageCoordinate,
-        SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
-        ServingComponentOperation, ServingManifest, ServingRelease, ServingWiring, WorkflowSection,
+        AttachmentType, DefinitionHash, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
+        ServingRelease, ServingWiring, WorkflowSection,
     };
     use wamn_runtime::plugins::wamn_jetstream::{
         RouterTapFormatVersion, RouterTapRecord, RouterTapRecordPhase, RouterTapSourceType,
@@ -923,9 +923,6 @@ mod tests {
         };
         let component = ServingComponent {
             package_id: "platform_fixture".to_owned(),
-            component: "fixture".to_owned(),
-            interface_version: "0.1.0".to_owned(),
-            digest: ArtifactHash::parse(DIGEST).expect("valid digest"),
             operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
             descriptor: wamn_catalog::ComponentDescriptor::named("fixture", "0.1.0", DIGEST),
         };

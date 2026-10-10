@@ -252,9 +252,6 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
         },
         "components": [{
             "package-id": FIXTURE_PACKAGE_ID,
-            "component": FIXTURE_COMPONENT,
-            "interface-version": "0.1.0",
-            "digest": format!("sha256:{}", "a".repeat(64)),
             "descriptor": {"component": FIXTURE_COMPONENT, "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
             "operations": {
                 (OPERATION): {"registered-operation": OPERATION, "permissions": [OPERATION]},

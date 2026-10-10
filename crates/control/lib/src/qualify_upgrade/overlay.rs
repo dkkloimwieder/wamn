@@ -100,7 +100,7 @@ pub(super) fn validate_transition(
                 ensure!(
                     serving.components.iter().any(|component| {
                         component.package_id == base.id
-                            && component.digest.as_str() == pin.digest
+                            && component.descriptor.component_digest.as_str() == pin.digest
                             && component.operations.values().any(|export| {
                                 export.registered_operation.as_deref() == Some(sealed.as_str())
                             })

@@ -283,10 +283,10 @@ impl Candidate {
             ensure!(
                 files
                     .values()
-                    .any(|digest| digest == component.digest.as_str()),
+                    .any(|digest| digest == component.descriptor.component_digest.as_str()),
                 "candidate lacks component {} with digest {}",
-                component.component,
-                component.digest
+                component.descriptor.component,
+                component.descriptor.component_digest
             );
         }
         Ok(files)

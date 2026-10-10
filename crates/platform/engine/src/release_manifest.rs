@@ -283,9 +283,9 @@ pub fn validate_component_in_release(
     // release carries a superset of the admitted fact. The runtime trusts it.
     let carried = manifest.components.iter().any(|served| {
         served.package_id == component.scope.package_id
-            && served.component == component.component
-            && served.interface_version == component.interface_version
-            && served.digest == digest
+            && served.descriptor.component == component.component
+            && served.descriptor.interface_version == component.interface_version
+            && served.descriptor.component_digest == digest.as_str()
             && served.operations.len() == component.operations.len()
             && component.operations.iter().all(|(name, operation)| {
                 served
@@ -340,9 +340,6 @@ mod tests {
             },
             BTreeSet::from([ServingComponent {
                 package_id: "cat".into(),
-                component: "transform".into(),
-                interface_version: "0.1".into(),
-                digest: ArtifactHash::parse(COMPONENT).expect("fixture artifact hash is canonical"),
                 operations: BTreeMap::from([(
                     "map".into(),
                     ServingComponentOperation {

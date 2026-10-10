@@ -1,10 +1,12 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 6 closes over exact package membership, component digests, routes,
+//! Format 7 closes over exact package membership, component digests, routes,
 //! the permissions and SQL statements of each export's call graph, and route
-//! attachments. Each component carries its admitted descriptor, the bytes of
-//! the descriptor layer of its package artifact (docs/plan/platform-deploy.md
-//! §7.2, contract A). Publish folds each call graph, because an application's
+//! attachments. Each component is its package, its admitted descriptor (the
+//! bytes of the descriptor layer of its package artifact,
+//! docs/plan/platform-deploy.md §7.2, contract A) and its folded operations.
+//! The descriptor is the one owner of the component name, interface version
+//! and digest. Publish folds each call graph, because an application's
 //! components compose at build into one component. A route calls one component
 //! export. The workflow section holds the wiring definitions, the attachments
 //! that start a wiring, and the registrations. A wiring is a graph the router
@@ -38,7 +40,7 @@ use crate::{
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 6;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 7;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -207,33 +209,32 @@ impl ServingComponentOperation {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponent {
     pub package_id: String,
-    pub component: String,
-    pub interface_version: String,
-    pub digest: ArtifactHash,
-    pub operations: BTreeMap<String, ServingComponentOperation>,
     /// The admitted descriptor of this component. Its canonical bytes are the
     /// descriptor layer of the package artifact that lists the component, so
-    /// the release is the one owner of component facts (R2).
+    /// the release is the one owner of component facts (R2): the name, the
+    /// interface version and the digest are read from here.
     pub descriptor: ComponentDescriptor,
+    pub operations: BTreeMap<String, ServingComponentOperation>,
 }
 
-/// A descriptor holds JSON values, which have no order, so the order of two
-/// components with equal other fields is the order of their descriptors'
-/// canonical bytes.
+/// Components order by package, name, interface version, digest and
+/// operations. A descriptor holds JSON values, which have no order, so the
+/// order of two components with equal other fields is the order of their
+/// descriptors' canonical bytes.
 impl Ord for ServingComponent {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (
             &self.package_id,
-            &self.component,
-            &self.interface_version,
-            &self.digest,
+            &self.descriptor.component,
+            &self.descriptor.interface_version,
+            &self.descriptor.component_digest,
             &self.operations,
         )
             .cmp(&(
                 &other.package_id,
-                &other.component,
-                &other.interface_version,
-                &other.digest,
+                &other.descriptor.component,
+                &other.descriptor.interface_version,
+                &other.descriptor.component_digest,
                 &other.operations,
             ))
             .then_with(|| {
@@ -269,7 +270,7 @@ impl ServingComponent {
         connections: Vec<ComponentConnection>,
         resolve: &dyn Fn(&ComponentOperationDependency) -> Option<&'a AdmittedComponent>,
     ) -> Result<Self, CatalogIdentityError> {
-        let digest = ArtifactHash::parse(fact.component_digest.clone())?;
+        ArtifactHash::parse(fact.component_digest.clone())?;
         let mut operations = BTreeMap::new();
         for (name, operation) in &fact.operations {
             let mut folded = ServingComponentOperation {
@@ -291,11 +292,8 @@ impl ServingComponent {
         }
         Ok(Self {
             package_id: fact.scope.package_id.clone(),
-            component: fact.component.clone(),
-            interface_version: fact.interface_version.clone(),
-            digest,
-            operations,
             descriptor: ComponentDescriptor::new(fact.clone(), connections),
+            operations,
         })
     }
 }
@@ -1158,9 +1156,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-6 bytes.
+    /// Parse, validate, and admit only canonical format-7 bytes.
     ///
-    /// The version is classified before the format-6 schema is decoded. This is
+    /// The version is classified before the format-7 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1215,22 +1213,10 @@ impl ServingManifest {
 
         for component in &self.components {
             validate_package_member(&package_versions, &component.package_id)?;
-            validate_text(&component.component, "component")?;
-            validate_text(&component.interface_version, "interface-version")?;
             let descriptor = &component.descriptor;
-            if descriptor.component != component.component
-                || descriptor.interface_version != component.interface_version
-                || descriptor.component_digest != component.digest.as_str()
-            {
-                return invalid(format!(
-                    "component {:?} of package {:?} carries the descriptor of {:?} {:?} {}",
-                    component.component,
-                    component.package_id,
-                    descriptor.component,
-                    descriptor.interface_version,
-                    descriptor.component_digest
-                ));
-            }
+            validate_text(&descriptor.component, "component")?;
+            validate_text(&descriptor.interface_version, "interface-version")?;
+            ArtifactHash::parse(descriptor.component_digest.clone())?;
             if component.operations.is_empty() {
                 return invalid("a serving component must export at least one operation");
             }
@@ -1337,7 +1323,7 @@ impl ServingManifest {
                 .iter()
                 .filter(|component| {
                     component.package_id == route.package_id
-                        && component.component == route.component
+                        && component.descriptor.component == route.component
                         && component.operations.contains_key(&route.operation)
                 })
                 .count();
@@ -1642,10 +1628,6 @@ mod tests {
     const DEFINITION: &str =
         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
-    fn artifact_hash(value: &str) -> ArtifactHash {
-        ArtifactHash::parse(value).expect("fixture artifact hash is canonical")
-    }
-
     fn definition_hash(value: &str) -> DefinitionHash {
         DefinitionHash::parse(value).expect("fixture definition hash is canonical")
     }
@@ -1663,9 +1645,6 @@ mod tests {
         BTreeSet::from([
             ServingComponent {
                 package_id: "overlay".into(),
-                component: "transform".into(),
-                interface_version: "0.1".into(),
-                digest: artifact_hash(COMPONENT_B),
                 operations: BTreeMap::from([(
                     "overlay:transform/map@3.0.0".into(),
                     ServingComponentOperation {
@@ -1685,9 +1664,6 @@ mod tests {
             },
             ServingComponent {
                 package_id: "base".into(),
-                component: "http-request".into(),
-                interface_version: "0.1".into(),
-                digest: artifact_hash(COMPONENT_A),
                 operations: BTreeMap::from([(
                     "base:widget/get@1.0.0".into(),
                     ServingComponentOperation {
@@ -2113,48 +2089,24 @@ mod tests {
         );
     }
 
-    /// Each component carries the descriptor of its own component, interface
-    /// version and digest, and the canonical bytes carry it whole.
+    /// A component is its package, its descriptor and its operations, and
+    /// nothing else: the descriptor is the one owner of the component name,
+    /// interface version and digest. The canonical bytes carry it whole.
     #[test]
-    fn a_component_carries_its_own_descriptor() {
+    fn a_component_holds_its_package_descriptor_and_operations_only() {
         let manifest = manifest();
         let value: Value = serde_json::from_slice(&manifest.canonical_bytes()).unwrap();
         for (index, component) in manifest.components.iter().enumerate() {
+            let keys = value["components"][index]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            assert_eq!(keys, ["descriptor", "operations", "package-id"]);
             assert_eq!(
                 value["components"][index]["descriptor"],
                 serde_json::to_value(&component.descriptor).unwrap()
-            );
-        }
-        let wrong = [
-            ComponentDescriptor::named("other", "0.1", COMPONENT_A),
-            ComponentDescriptor::named("http-request", "0.2", COMPONENT_A),
-            ComponentDescriptor::named("http-request", "0.1", COMPONENT_B),
-        ];
-        for descriptor in wrong {
-            let mut components = components();
-            let mut base = components
-                .iter()
-                .find(|component| component.package_id == "base")
-                .cloned()
-                .unwrap();
-            components.remove(&base);
-            base.descriptor = descriptor;
-            components.insert(base);
-            let error = ServingManifest::new(
-                release(),
-                components,
-                routes(),
-                wirings(),
-                BTreeMap::from([
-                    ("orders".to_string(), attachment()),
-                    ("widget-get".to_string(), route_attachment()),
-                ]),
-                BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
-            )
-            .expect_err("a descriptor of another component refuses");
-            assert!(
-                error.to_string().contains("carries the descriptor of"),
-                "{error}"
             );
         }
     }
@@ -2248,14 +2200,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 5, 7] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 8] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format six may enter the decoder");
+                .expect_err("only format seven may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {

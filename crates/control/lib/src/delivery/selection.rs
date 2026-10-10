@@ -75,13 +75,13 @@ pub fn package_set(manifest: &ServingManifest) -> anyhow::Result<Vec<PackageTrip
                 .with_context(|| {
                     format!(
                         "component {} names package {}, which the release does not hold",
-                        component.component, component.package_id
+                        component.descriptor.component, component.package_id
                     )
                 })?;
             Ok(PackageTriple {
                 package_id: component.package_id.clone(),
                 version: (*version).to_owned(),
-                component_digest: component.digest.as_str().to_owned(),
+                component_digest: component.descriptor.component_digest.as_str().to_owned(),
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;

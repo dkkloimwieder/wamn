@@ -481,7 +481,7 @@ mod tests {
 
     use serde_json::{Value, json};
     use wamn_catalog::{
-        ArtifactHash, AttachmentTarget, AttachmentType, DefinitionHash, PAT_AUTHENTICATION_MODE,
+        AttachmentTarget, AttachmentType, DefinitionHash, PAT_AUTHENTICATION_MODE,
         PackageCoordinate, ServingAttachment, ServingComponent, ServingComponentOperation,
         ServingManifest, ServingRelease, ServingWiring,
     };
@@ -502,9 +502,6 @@ mod tests {
             },
             BTreeSet::from([ServingComponent {
                 package_id: "cat".into(),
-                component: "http-request".into(),
-                interface_version: "0.1".into(),
-                digest: ArtifactHash::parse(digest('a')).unwrap(),
                 operations: BTreeMap::from([(
                     "request".into(),
                     ServingComponentOperation {

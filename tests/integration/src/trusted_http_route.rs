@@ -348,9 +348,6 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
         },
         "components": [{
             "package-id": PACKAGE,
-            "component": component.component,
-            "interface-version": component.interface_version,
-            "digest": component.component_digest,
             "operations": operations,
             "descriptor": ComponentDescriptor::new(
                 component.clone(),

@@ -745,7 +745,7 @@ pub(super) fn released_component_digests(
         .map(|component| {
             (
                 component.package_id.clone(),
-                component.digest.as_str().to_owned(),
+                component.descriptor.component_digest.as_str().to_owned(),
             )
         })
         .collect::<HashMap<_, _>>();
@@ -762,7 +762,8 @@ pub(super) fn released_component_digests(
         release.manifest().components.len() == JOURNEY_PACKAGES.len()
             && release.manifest().components.iter().all(|component| {
                 JOURNEY_PACKAGES.iter().any(|package| {
-                    component.package_id == package.id && component.component == package.component
+                    component.package_id == package.id
+                        && component.descriptor.component == package.component
                 })
             }),
         "released manifest does not carry exactly one component for each package"

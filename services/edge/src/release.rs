@@ -181,14 +181,15 @@ fn check_one_fact_per_component(
         }
     }
     let manifest = release.manifest();
-    if let Some(missing) = manifest
-        .components
-        .iter()
-        .find(|served| !seen.contains(&(served.package_id.as_str(), served.component.as_str())))
-    {
+    if let Some(missing) = manifest.components.iter().find(|served| {
+        !seen.contains(&(
+            served.package_id.as_str(),
+            served.descriptor.component.as_str(),
+        ))
+    }) {
         return Err(rejected(format!(
             "{COMPONENTS_FILE_NAME} has no fact for {}/{}",
-            missing.package_id, missing.component
+            missing.package_id, missing.descriptor.component
         )));
     }
     Ok(())

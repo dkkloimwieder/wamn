@@ -507,7 +507,7 @@ async fn read_release(
     let components: Vec<String> = manifest
         .components
         .iter()
-        .map(|component| component.digest.as_str().to_owned())
+        .map(|component| component.descriptor.component_digest.as_str().to_owned())
         .collect();
     let required_connections = system
         .query(

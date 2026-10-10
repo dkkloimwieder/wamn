@@ -249,7 +249,7 @@ fn release_requirements(
         .flat_map(|component| {
             component.descriptor.connections.iter().map(|connection| {
                 crate::component_admission::portable_requirement(
-                    component.digest.as_str(),
+                    component.descriptor.component_digest.as_str(),
                     connection,
                 )
             })
@@ -299,7 +299,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        ArtifactHash, ComponentConnection, ComponentConnectionType, ComponentDescriptor,
+        ComponentConnection, ComponentConnectionType, ComponentDescriptor,
         ConnectionTypeDescriptor, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
         ServingComponent, ServingManifest, ServingRelease, WorkflowSection,
     };
@@ -317,9 +317,6 @@ mod tests {
             .collect();
         ServingComponent {
             package_id: "orders".to_owned(),
-            component: name.to_owned(),
-            interface_version: "0.1".to_owned(),
-            digest: ArtifactHash::parse(digest.to_owned()).expect("a digest"),
             operations: BTreeMap::new(),
             descriptor,
         }

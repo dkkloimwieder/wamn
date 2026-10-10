@@ -594,10 +594,9 @@ pub fn assemble_local_release(
         .iter()
         .map(super::component_admission::ComponentAdmission::facts)
         .filter(|fact| {
-            manifest
-                .components
-                .iter()
-                .any(|component| component.digest.as_str() == fact.component_digest)
+            manifest.components.iter().any(|component| {
+                component.descriptor.component_digest.as_str() == fact.component_digest
+            })
         })
         .cloned()
         .collect();
@@ -605,10 +604,9 @@ pub fn assemble_local_release(
         .iter()
         .flat_map(|admission| admission.requirements().iter())
         .filter(|requirement| {
-            manifest
-                .components
-                .iter()
-                .any(|component| component.digest.as_str() == requirement.component_digest())
+            manifest.components.iter().any(|component| {
+                component.descriptor.component_digest.as_str() == requirement.component_digest()
+            })
         })
         .cloned()
         .collect();
@@ -1246,7 +1244,7 @@ async fn publish_release_from_sources(
         ServingManifest::from_canonical_bytes(&canonical_bytes).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
-                "the release does not project a deliverable format-6 manifest",
+                "the release does not project a deliverable format-7 manifest",
                 error,
             )
         })?;

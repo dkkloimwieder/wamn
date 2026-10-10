@@ -815,7 +815,7 @@ pub(crate) async fn plan_predecessor_in_transaction(
                 corpus.insert(
                     format!(
                         "predecessor/{}/{}/{operation}/{}/{digest}",
-                        component.package_id, component.component, statement.path
+                        component.package_id, component.descriptor.component, statement.path
                     ),
                     statement.sql.as_bytes().to_vec(),
                 );

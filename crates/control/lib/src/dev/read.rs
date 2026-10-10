@@ -566,9 +566,7 @@ mod tests {
 
     use serde_json::json;
     use wamn_authoring_model::ValidatedDraftRef;
-    use wamn_catalog::{
-        ArtifactHash, DefinitionHash, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease,
-    };
+    use wamn_catalog::{DefinitionHash, SERVING_MANIFEST_FORMAT_VERSION, ServingRelease};
 
     use super::*;
 
@@ -805,9 +803,6 @@ mod tests {
         };
         let component = ServingComponent {
             package_id: "platform_fixture".to_owned(),
-            component: "fixture".to_owned(),
-            interface_version: "0.1.0".to_owned(),
-            digest: ArtifactHash::parse(DIGEST).expect("valid digest"),
             operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
             descriptor: wamn_catalog::ComponentDescriptor::named("fixture", "0.1.0", DIGEST),
         };

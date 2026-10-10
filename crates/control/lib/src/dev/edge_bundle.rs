@@ -175,7 +175,7 @@ fn write_bundle(
             .iter()
             .find(|served| {
                 served.package_id == attachment.package_id
-                    && served.component == attachment.component
+                    && served.descriptor.component == attachment.component
             })
             .and_then(|served| served.operations.get(&attachment.operation))
             .with_context(|| format!("attachment {id} names no released operation"))?;

@@ -171,8 +171,7 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
-        "components": [{"package-id": "session_test", "component": "purchase", "interface-version": "0.1.0",
-            "digest": format!("sha256:{}", "a".repeat(64)),
+        "components": [{"package-id": "session_test",
             "descriptor": {"component": "purchase", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
             "operations": {
                 READ: {"registered-operation": READ, "permissions": [READ]},

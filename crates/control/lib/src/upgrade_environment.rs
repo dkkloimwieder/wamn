@@ -2207,8 +2207,9 @@ async fn copy_bindings(
         let component = &manifest
             .components
             .iter()
-            .find(|component| component.digest.as_str() == old_digest)
+            .find(|component| component.descriptor.component_digest.as_str() == old_digest)
             .with_context(|| format!("release {current} names no component {old_digest}"))?
+            .descriptor
             .component;
         let new_digest = pushed.get(component).with_context(|| {
             format!(

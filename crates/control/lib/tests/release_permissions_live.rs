@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{ArtifactHash, ServingComponent, ServingComponentOperation};
+use wamn_catalog::{ServingComponent, ServingComponentOperation};
 use wamn_control::role_permissions::{
     ReleaseClosures, create_role, delete_role, grant_permission, revoke_permission,
 };
@@ -28,9 +28,6 @@ const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 fn component(package: &str, operations: &[(&str, &[&str])]) -> ServingComponent {
     ServingComponent {
         package_id: package.to_owned(),
-        component: package.to_owned(),
-        interface_version: "1".to_owned(),
-        digest: ArtifactHash::parse(format!("sha256:{}", "0".repeat(64))).unwrap(),
         operations: operations
             .iter()
             .enumerate()
