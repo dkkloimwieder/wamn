@@ -29,7 +29,11 @@
 //! 7. rollback with one retained revision refuses "no retained prior
 //!    release" and the history is unchanged.
 //! 8. `host_exits_before_its_grace_period`: a deleted host pod with a pinned
-//!    backlog exits with code 0 before `terminationGracePeriodSeconds`.
+//!    backlog it can claim finishes the run and exits with code 0 before
+//!    `terminationGracePeriodSeconds` (R20 (2)). The fixture has no
+//!    executable component, so the run is one the claim itself finishes: a
+//!    `durable` run whose lease expired after an effect attempt, which the
+//!    claim terminalizes as `effect-uncertain`.
 //! 9. release = none: no host pod remains, the declared instance stays
 //!    enabled, no binding remains.
 //! 10. delete with a run pinned to a release with no pod refuses.
@@ -994,7 +998,11 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     );
 
     // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
-    // it never empties exits with code 0 before its grace period.
+    // it can claim finishes the run and exits with code 0 before its grace
+    // period (R20 (2)). The run turns claimable ten seconds after it is
+    // seeded, once the pod is draining. It is `durable`, its prior lease
+    // expired after an effect attempt, so the claim terminalizes it as
+    // `effect-uncertain` with no component to execute.
     let (system, system_task) = connect(&system_url).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
     system
@@ -1012,20 +1020,35 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         .execute(
             "INSERT INTO wamn_run.runs \
                (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
-                wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
-             VALUES ($1, 'pinned-backlog', 'orders', 1, 'orders', $2, 'dev', 'orders', 1, \
-                     'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
+                wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id, \
+                durability_class) \
+             VALUES ($1, 'drain-claimable', 'orders', 1, 'orders', $2, 'dev', 'orders', 1, \
+                     'running', 'automation', '{}', '00000000-0000-0000-0000-000000000001', \
+                     'durable')",
             &[&tenant, &digest],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at) \
-             VALUES ($1, 'pinned-backlog', 'infinity')",
+            "INSERT INTO wamn_run.run_queue \
+               (tenant_id, run_id, available_at, lease_owner, lease_expires_at, lease_generation) \
+             VALUES ($1, 'drain-claimable', now() + interval '10 seconds', 'gone-replica', \
+                     '2000-01-01', 1)",
             &[&tenant],
         )
         .await?;
-    project_task.abort();
+    let hash = format!("sha256:{}", "5".repeat(64));
+    project
+        .execute(
+            "INSERT INTO wamn_run.effect_attempts \
+               (tenant_id, run_id, root_plan_hash, current_plan_hash, frame_id, local_node_id, \
+                source_artifact_hash, requirement_name, occurrence, seq, generation_fact_type, \
+                attempt_deadline_at, attempt_input_ref) \
+             VALUES ($1, 'drain-claimable', $2, $2, 0, 'effect-node', $2, 'manager', 0, 1, \
+                     'not-required', '2099-01-01T00:00:00Z', 'sha256:drain-effect-input')",
+            &[&tenant, &hash],
+        )
+        .await?;
     let pods = run
         .json(
             "kubectl",
@@ -1086,12 +1109,45 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+    let finished = project
+        .query_one(
+            "SELECT r.status, EXISTS (SELECT 1 FROM wamn_run.run_queue q \
+                                      WHERE q.tenant_id = r.tenant_id AND q.run_id = r.run_id) \
+               FROM wamn_run.runs r WHERE r.tenant_id = $1 AND r.run_id = 'drain-claimable'",
+            &[&tenant],
+        )
+        .await?;
+    let (status, queued): (String, bool) = (finished.get(0), finished.get(1));
     run.pass(
         "host_exits_before_its_grace_period",
         &format!("kubectl -n {NAMESPACE} delete pod {pod}; kubectl get pod {pod} -o json"),
-        json!({"grace_seconds": grace, "exit_code": exit_code, "exited_after_seconds": exited_after}),
-        exit_code == Some(0) && exited_after.is_some_and(|seconds| seconds < grace),
+        json!({"grace_seconds": grace, "exit_code": exit_code, "exited_after_seconds": exited_after,
+            "run_status": status, "run_queued": queued}),
+        exit_code == Some(0)
+            && exited_after.is_some_and(|seconds| seconds < grace)
+            && status == "effect-uncertain"
+            && !queued,
     );
+
+    // The run that check 10 finds stranded: pinned to A and never claimable.
+    project
+        .execute(
+            "INSERT INTO wamn_run.runs \
+               (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+                wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
+             VALUES ($1, 'pinned-backlog', 'orders', 1, 'orders', $2, 'dev', 'orders', 1, \
+                     'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
+            &[&tenant, &digest],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at) \
+             VALUES ($1, 'pinned-backlog', 'infinity')",
+            &[&tenant],
+        )
+        .await?;
+    project_task.abort();
 
     // 9. release = none: no host pod remains, the declared instances stay
     // enabled, and the release's bindings are gone.
