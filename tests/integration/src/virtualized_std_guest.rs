@@ -41,7 +41,7 @@ mod tests {
     const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
     // Each export is named by reference, and `sealed` reads its version from
     // the package wamn.json.
-    const RECEIVING_EXPORTS: [&str; 9] = [
+    const RECEIVING_EXPORTS: [&str; 11] = [
         "wamn-receiving:location/list",
         "wamn-receiving:purchase-order/get",
         "wamn-receiving:purchase-order/query",
@@ -51,6 +51,8 @@ mod tests {
         "wamn-receiving:receiving/load-purchase-order-history",
         "wamn-receiving:receiving/load-receipt-screen",
         "wamn-receiving:receiving/record-receipt",
+        "wamn-receiving:supplier/create",
+        "wamn-receiving:supplier/query",
     ];
     const HANDLER_PARAMETERS_AND_RESULTS: &str = concat!(
         "(ctx:record{wiring-id:string,wiring-version:u32,node-id:string,",
@@ -268,15 +270,22 @@ mod tests {
             .iter()
             .find(|entry| entry.0 == "run")
             .expect("the exact function-name check found run");
+        // A read carries no request id (wamn-rst8.1); a write carries one on
+        // each request and each outcome.
+        let request_id = if run.2.contains(",input:list<record{request-id:string,") {
+            "request-id:string,"
+        } else {
+            ""
+        };
         ensure!(
             run.2
                 .starts_with("(ctx:record{wiring-id:string,wiring-version:u32,node-id:string,")
                 && run
                     .2
-                    .contains(",input:list<record{request-id:string,input:result<")
-                && run
-                    .2
-                    .contains(")->(result<list<record{request-id:string,outcome:result<")
+                    .contains(&format!(",input:list<record{{{request_id}input:result<"))
+                && run.2.contains(&format!(
+                    ")->(result<list<record{{{request_id}outcome:result<"
+                ))
                 && run.2.ends_with(",cancelled}>)"),
             "Receiving operation {operation:?} run does not carry typed request and outcome lists: {:?}",
             run.2
@@ -394,7 +403,10 @@ mod tests {
             "virtualized std probe run is not the pinned async handler"
         );
 
+        // The generated Receiving world also imports its own pre-commit hook
+        // interface, which a participant supplies.
         let expected_receiving = BTreeSet::from([
+            "wamn-receiving:receiving".to_owned(),
             "wamn:node".to_owned(),
             "wamn:postgres".to_owned(),
             "wasi:clocks".to_owned(),
@@ -406,7 +418,7 @@ mod tests {
         let packages = import_packages(&engine, &bytes, "receiving")?;
         ensure!(
             packages == expected_receiving,
-            "virtualized Receiving artifact imports {packages:?}, not its exact four-package profile"
+            "virtualized Receiving artifact imports {packages:?}, not its exact five-package profile"
         );
         let exports = operation_exports(&engine, &bytes, "virtualized receiving")?;
         let expected_exports = RECEIVING_EXPORTS
