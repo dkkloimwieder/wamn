@@ -3,11 +3,9 @@ use std::path::PathBuf;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ComponentSqlStatement, PackageCoordinate, ServingManifest};
-use wamn_engine::release_manifest::ReleaseScope;
 
 use super::{
-    AcceptedUpgrade, matching_reconciliation_evidence, persist, read_accepted,
-    require_compatible_schema, require_prefix,
+    AcceptedUpgrade, matching_reconciliation_evidence, persist, read_accepted, require_prefix,
 };
 use crate::qualify_upgrade::workload::{PackageWorkload, ServingWorkloads, WorkloadTarget};
 use crate::qualify_upgrade::{
@@ -20,11 +18,6 @@ mod vector {
         env!("CARGO_MANIFEST_DIR"),
         "/../../../crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs"
     ));
-}
-
-/// The tenant and environment of every selection in these tests.
-fn scope() -> ReleaseScope {
-    ReleaseScope::new("upgrade-test", "test")
 }
 
 fn predecessor_manifest() -> ServingManifest {
@@ -211,22 +204,12 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
     let accepted = seed(&mut client, &manifest).await;
     assert_complete_world_selection(&accepted);
 
-    let mut tx = client.transaction().await.unwrap();
-    let refusal = require_compatible_schema(&mut tx, &manifest, &scope())
-        .await
-        .unwrap_err();
-    assert!(
-        refusal
-            .to_string()
-            .contains("persisted immediate-predecessor")
-    );
-    tx.rollback().await.unwrap();
     let tx = client.transaction().await.unwrap();
     persist(&tx, &accepted, &format!("sha256:{}", "f".repeat(64)))
         .await
         .unwrap();
     tx.rollback().await.unwrap();
-    let mut tx = client.transaction().await.unwrap();
+    let tx = client.transaction().await.unwrap();
     assert!(
         read_accepted(&tx, "upgrade-test", "platform_fixture", "2.1.0")
             .await
@@ -236,9 +219,6 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
     persist(&tx, &accepted, &format!("sha256:{}", "f".repeat(64)))
         .await
         .unwrap();
-    require_compatible_schema(&mut tx, &manifest, &scope())
-        .await
-        .expect("persisted proof admits its immediate predecessor");
     let role: String = tx
         .query_one("SELECT current_user::text", &[])
         .await
@@ -250,17 +230,6 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
     );
     tx.commit().await.unwrap();
 
-    // Another release of the same packages has another digest, so the
-    // persisted evidence of the first does not admit it.
-    let mut changed_release = manifest.clone();
-    changed_release.host_routes = [wamn_catalog::HostRouteSet::Control].into();
-    let mut tx = client.transaction().await.unwrap();
-    assert!(
-        require_compatible_schema(&mut tx, &changed_release, &scope())
-            .await
-            .is_err()
-    );
-    tx.rollback().await.unwrap();
     let mut changed = accepted.evidence.clone();
     changed.predecessor_package.migrations[0].sha256 = format!("sha256:{}", "e".repeat(64));
     assert!(
@@ -268,33 +237,12 @@ async fn persisted_immediate_predecessor_requires_exact_post_state_and_live_plan
         "a non-prefix predecessor is never rollback evidence"
     );
 
-    client
-        .batch_execute("REVOKE SELECT (note) ON inventory.widget FROM wamn_app")
-        .await
-        .unwrap();
-    let mut tx = client.transaction().await.unwrap();
-    assert!(
-        require_compatible_schema(&mut tx, &manifest, &scope())
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("data-access post-state changed")
-    );
-    tx.rollback().await.unwrap();
-    client.batch_execute("GRANT SELECT (note) ON inventory.widget TO wamn_app; ALTER TABLE inventory.widget ADD COLUMN ungranted text").await.unwrap();
-    let mut tx = client.transaction().await.unwrap();
+    let tx = client.transaction().await.unwrap();
     assert_eq!(
         read_upgrade_privileges(&tx, &accepted.evidence.schemas)
             .await
             .unwrap(),
         accepted.evidence.post_privileges
-    );
-    let refusal = require_compatible_schema(&mut tx, &manifest, &scope())
-        .await
-        .unwrap_err();
-    assert!(
-        format!("{refusal:#}").contains("retained schema"),
-        "{refusal:#}"
     );
     tx.rollback().await.unwrap();
     drop(client);

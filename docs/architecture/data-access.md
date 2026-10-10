@@ -673,9 +673,9 @@ A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id
 `wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles`, `permissions` and `environment`.
 It holds `INSERT` on the entry columns of their five history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
-It holds `USAGE` on `catalog` and `SELECT` on `catalog.effective_release_heads`, so a grant can read whether its release is the head.
+It holds `USAGE` on `catalog`.
 Project migration `0007` creates `environment` in an installed database, and `0008` gives the family its write.
-`0006` and `0003` keep the surfaces that installed databases recorded.
+The migration that removes `catalog.effective_release_heads` renders the current surface, and `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.

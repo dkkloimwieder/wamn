@@ -249,11 +249,6 @@ const DIVERGED_PORTABLE_RELATIONS: [&str; 2] = [
     "catalog.connection_requirements",
 ];
 
-/// The release head both planes install with the same columns. Its foreign
-/// key differs: the project head names `catalog.releases`, the control head
-/// names `catalog.effective_releases` (platform-deploy.md R1).
-const RELEASE_HEAD_RELATION: [&str; 1] = ["catalog.effective_release_heads"];
-
 /// The one column the diverged relations are permitted to differ by.
 const DIVERGENCE_COLUMN: &str = "environment_instance";
 
@@ -513,7 +508,6 @@ async fn protected_relations_match_reconciled_postgres() {
         portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await;
     let control_only_fingerprints =
         portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
-    let control_head = portable_fingerprints(&client, &RELEASE_HEAD_RELATION).await;
     assert!(
         control_only_fingerprints
             .values()
@@ -534,13 +528,6 @@ async fn protected_relations_match_reconciled_postgres() {
         &control_diverged_fingerprints,
         &portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await,
     );
-    let project_head = portable_fingerprints(&client, &RELEASE_HEAD_RELATION).await;
-    assert_eq!(
-        control_head[RELEASE_HEAD_RELATION[0]].columns,
-        project_head[RELEASE_HEAD_RELATION[0]].columns,
-        "the two release heads drifted in their columns"
-    );
-    assert!(!project_head[RELEASE_HEAD_RELATION[0]].columns.is_empty());
     let project_side_control_only =
         portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
     assert!(

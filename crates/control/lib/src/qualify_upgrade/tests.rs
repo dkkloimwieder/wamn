@@ -98,7 +98,6 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
     let bytes = manifest.canonical_bytes();
     let (_, digest) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
     source.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&TENANT, &digest.as_str(), &bytes]).await.unwrap();
-    source.execute("INSERT INTO catalog.effective_release_heads (tenant_id,environment,manifest_digest) VALUES ($1,$2,$3)", &[&TENANT, &ENVIRONMENT, &digest.as_str()]).await.unwrap();
 
     let root = std::env::temp_dir().join(format!("wamn-qualify-{name}-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
@@ -223,7 +222,6 @@ async fn state(client: &mut Client) -> (Vec<String>, UpgradePrivileges) {
         "catalog.packages",
         "catalog.package_migrations",
         "catalog.package_definition_owners",
-        "catalog.effective_release_heads",
         "catalog.releases",
         "catalog.package_upgrade_qualifications",
     ] {

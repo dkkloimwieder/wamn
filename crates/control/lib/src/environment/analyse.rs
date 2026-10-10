@@ -368,12 +368,11 @@ pub(crate) async fn read_project(
     }))
 }
 
-async fn read_release(
+/// Pull the release manifest `digest` from the platform's release artifacts.
+pub(crate) async fn pull_release_manifest(
     platform: &Platform,
-    system: &Client,
     digest: &str,
-    tenant: &str,
-) -> anyhow::Result<ReleaseFacts> {
+) -> anyhow::Result<ServingManifest> {
     let source = ReleaseManifestSource::new(
         &platform.release_artifact_base,
         false,
@@ -388,6 +387,16 @@ async fn read_release(
         .with_context(|| format!("pull release manifest {digest}"))?;
     let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)
         .with_context(|| format!("read release manifest {digest}"))?;
+    Ok(manifest)
+}
+
+async fn read_release(
+    platform: &Platform,
+    system: &Client,
+    digest: &str,
+    tenant: &str,
+) -> anyhow::Result<ReleaseFacts> {
+    let manifest = pull_release_manifest(platform, digest).await?;
     let image_set = release_chart::image_set(&platform.chart).await?;
     system
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
@@ -442,12 +451,20 @@ pub(crate) async fn helm(
     platform: &Platform,
     arguments: &[&str],
 ) -> anyhow::Result<std::process::Output> {
+    helm_in(&platform.target, arguments).await
+}
+
+/// Run `helm` with an explicit kubeconfig, context and namespace.
+async fn helm_in(
+    target: &release_chart::Target,
+    arguments: &[&str],
+) -> anyhow::Result<std::process::Output> {
     Command::new("helm")
         .args(arguments)
         .arg("--kubeconfig")
-        .arg(&platform.target.kubeconfig)
-        .args(["--kube-context", &platform.target.context])
-        .args(["--namespace", &platform.target.namespace])
+        .arg(&target.kubeconfig)
+        .args(["--kube-context", &target.context])
+        .args(["--namespace", &target.namespace])
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true)
         .output()
@@ -461,8 +478,16 @@ pub(crate) async fn read_revision(
     platform: &Platform,
     release_name: &str,
 ) -> anyhow::Result<Option<Revision>> {
-    let output = helm(
-        platform,
+    read_revision_in(&platform.target, release_name).await
+}
+
+/// [`read_revision`] with an explicit kubeconfig, context and namespace.
+async fn read_revision_in(
+    target: &release_chart::Target,
+    release_name: &str,
+) -> anyhow::Result<Option<Revision>> {
+    let output = helm_in(
+        target,
         &["history", release_name, "--max", "50", "-o", "json"],
     )
     .await?;
@@ -485,8 +510,8 @@ pub(crate) async fn read_revision(
         .and_then(|number| u32::try_from(number).ok())
         .context("helm history gave a revision that is not a number")?;
     let revision = number.to_string();
-    let output = helm(
-        platform,
+    let output = helm_in(
+        target,
         &[
             "get",
             "values",
@@ -509,6 +534,28 @@ pub(crate) async fn read_revision(
         chart: entry["chart"].as_str().unwrap_or_default().to_owned(),
         values: serde_json::from_slice(&output.stdout).context("decode helm values")?,
     }))
+}
+
+/// The release the environment serves: the digest of the newest successful
+/// revision of its release chart (docs/plan/platform-deploy.md §13). `tenant`
+/// is the environment's `org--project--env`.
+///
+/// None when the environment has no successful revision.
+///
+/// # Errors
+///
+/// When `tenant` is not a coordinate, or Helm cannot be read.
+pub async fn deployed_release(
+    target: &release_chart::Target,
+    tenant: &str,
+) -> anyhow::Result<Option<String>> {
+    let [org, project, env] = tenant.split("--").collect::<Vec<_>>()[..] else {
+        bail!("the tenant {tenant} is not an org--project--env coordinate");
+    };
+    let name = release_chart::release_name(org, project, env)?;
+    Ok(read_revision_in(target, &name)
+        .await?
+        .and_then(|revision| revision.manifest_digest().map(str::to_owned)))
 }
 
 /// Whether Helm holds the release chart of the environment, in any status.

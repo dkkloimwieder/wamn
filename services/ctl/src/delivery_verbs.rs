@@ -12,9 +12,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::Args;
-use serde_json::json;
-use wamn_control::delivery::selection::QualificationSource;
-use wamn_control::delivery::{PrepareReleaseRequest, deployment, publication, qualification};
+use wamn_control::delivery::{PrepareReleaseRequest, publication, qualification};
 use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_control::push_release_manifest::PushReleaseManifestRequest;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
@@ -169,68 +167,6 @@ pub struct PublishArgs {
     pub publication: PushReleaseManifestArgs,
 }
 
-/// Select a published release without rebuilding or activating its workloads.
-#[derive(Debug, Args)]
-pub struct SelectArgs {
-    /// A qualification file. A passing file is recorded for reuse.
-    #[arg(
-        long,
-        required_unless_present = "host_image",
-        conflicts_with = "host_image"
-    )]
-    pub qualification: Option<PathBuf>,
-    /// The host image, `repository@sha256:<digest>`. Without a file, the select
-    /// reuses a recorded qualification with this release's package set and
-    /// these image digests.
-    #[arg(long)]
-    pub host_image: Option<String>,
-    /// The gates image, `repository@sha256:<digest>`.
-    #[arg(long, requires = "host_image")]
-    pub gates_image: Option<String>,
-    /// The identity image, `repository@sha256:<digest>`.
-    #[arg(long, requires = "host_image")]
-    pub identity_image: Option<String>,
-    #[command(flatten)]
-    pub release: PushReleaseManifestArgs,
-}
-
-/// Deploy exact qualified Kubernetes inputs to one explicitly named environment.
-#[derive(Debug, Args)]
-pub struct DeployArgs {
-    #[arg(long)]
-    pub qualification: PathBuf,
-    #[command(flatten)]
-    pub release: PushReleaseManifestArgs,
-    #[arg(long)]
-    pub kubeconfig: PathBuf,
-    #[arg(long)]
-    pub context: String,
-    #[arg(long)]
-    pub namespace: String,
-    /// Existing HTTP WorkloadDeployment that must become ready before the application request.
-    #[arg(long)]
-    pub http_workload: Option<String>,
-    /// Existing rendered native Kubernetes Deployment JSON for the host.
-    #[arg(long)]
-    pub host_deployment: PathBuf,
-    #[arg(long)]
-    pub identity_deployment: Option<PathBuf>,
-    #[arg(long)]
-    pub principal: String,
-    /// A released POST route reached through this deployment's ingress.
-    #[arg(long)]
-    pub interaction_url: String,
-    #[arg(long)]
-    pub route_host: String,
-    #[arg(long)]
-    pub request_body: PathBuf,
-    #[arg(long)]
-    pub expected_response: PathBuf,
-    /// Private credential file, excluded from qualified artifacts and output.
-    #[arg(long)]
-    pub bearer_file: PathBuf,
-}
-
 /// Qualify a clean selected revision through the existing application cases.
 #[derive(Debug, Args)]
 pub struct QualifyReleaseArgs {
@@ -331,83 +267,6 @@ pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
     let published =
         publication::publish(&args.qualification, &args.publication.into_request()).await?;
     println!("{}", published.digest);
-    Ok(())
-}
-
-/// Select one published release for its environment and print what it selected.
-pub async fn select(args: SelectArgs) -> anyhow::Result<()> {
-    let source = match (args.qualification, args.host_image) {
-        (Some(file), None) => QualificationSource::File(file),
-        (None, Some(host)) => QualificationSource::Images {
-            host,
-            gates: args.gates_image,
-            identity: args.identity_image,
-        },
-        _ => anyhow::bail!("give one of --qualification or --host-image"),
-    };
-    let selected = deployment::select(&source, &args.release.into_request()).await?;
-    println!(
-        "{}",
-        json!({"selected_release":selected.release,
-        "manifest_digest":selected.manifest_digest,
-        "qualification_sha256":selected.qualification_sha256,"result":"pass"})
-    );
-    Ok(())
-}
-
-/// Deploy exact qualified artifacts and print what the environment now serves.
-///
-/// The interrupt, termination, and hangup arms live here rather than in the
-/// library: cancelling this verb rolls the deployment transaction back, so the
-/// signal is the operator's answer to the CLI, not the library's own cleanup.
-pub async fn deploy(args: DeployArgs) -> anyhow::Result<()> {
-    let DeployArgs {
-        qualification,
-        release,
-        kubeconfig,
-        context,
-        namespace,
-        http_workload,
-        host_deployment,
-        identity_deployment,
-        principal,
-        interaction_url,
-        route_host,
-        request_body,
-        expected_response,
-        bearer_file,
-    } = args;
-    let release = release.into_request();
-    let request = deployment::DeployRequest {
-        kubeconfig,
-        context,
-        namespace,
-        http_workload,
-        host_deployment,
-        identity_deployment,
-        principal,
-        interaction_url,
-        route_host,
-        request_body,
-        expected_response,
-        bearer_file,
-    };
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-    let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
-    let deployed = tokio::select! {
-        result = deployment::deploy_release(&qualification, &release, &request) => result?,
-        result = tokio::signal::ctrl_c() => {
-            result.context("listen for deployment interruption")?;
-            anyhow::bail!("deployment interrupted; no automatic mutation retry")
-        }
-        _ = terminate.recv() => anyhow::bail!("deployment terminated; no automatic mutation retry"),
-        _ = hangup.recv() => anyhow::bail!("deployment connection closed; no automatic mutation retry"),
-    };
-    println!(
-        "{}",
-        json!({"source_commit":deployed.source_commit,"deployed_release":deployed.release,
-        "manifest_digest":deployed.manifest_digest,"result":"pass"})
-    );
     Ok(())
 }
 

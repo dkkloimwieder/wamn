@@ -8,7 +8,6 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use wamn_catalog::{ManifestDigest, PackageCoordinate, ServingManifest, ServingRelease};
 
-pub mod deployment;
 pub mod environment;
 pub mod publication;
 pub mod qualification;

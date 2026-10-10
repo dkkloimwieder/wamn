@@ -3,7 +3,6 @@
 mod application;
 mod bootstrap;
 mod build;
-mod delivery_case;
 mod demo;
 mod deployment;
 mod reader;
@@ -40,13 +39,6 @@ async fn released_wms_routes() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
-async fn owned_release_delivery() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
-    run_case(Case::Delivery).await
-}
-
-#[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run_case(Case::PartialCompletion).await
@@ -71,7 +63,6 @@ async fn restarted_wms_host_retains_compiled_code_and_serves_requests() -> anyho
 #[derive(Clone, Copy, Debug)]
 enum Case {
     Routes,
-    Delivery,
     PartialCompletion,
     GeneratedTerminal,
     Startup,
@@ -117,11 +108,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     .to_owned();
     let identifier = uuid::Uuid::new_v4().simple().to_string();
     let cluster = format!("wamn-wms-{identifier}");
-    let tag = if matches!(case, Case::Delivery) {
-        cluster.clone()
-    } else {
-        format!("wms-{}-{}-debug", &head[..12], &identifier[..12])
-    };
+    let tag = format!("wms-{}-{}-debug", &head[..12], &identifier[..12]);
     let image = candidate
         .as_ref()
         .map(|(candidate, _)| crate::delivery::image_reference(&candidate.host_image))
@@ -174,17 +161,9 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         .create(&work_path)
         .context("create the private owned WMS directory")?;
     let work = ScratchRoot(work_path);
-    let delivery_cancelled = pg_walstream::CancellationToken::new();
     let mut run = Box::pin(
         std::panic::AssertUnwindSafe(async {
-            build::build(
-                &repository,
-                &target,
-                &evidence,
-                generated_terminal,
-                matches!(case, Case::Delivery),
-            )
-            .await?;
+            build::build(&repository, &target, &evidence, generated_terminal).await?;
             let files = bootstrap::prepare(&repository, work.path())?;
             let scope = Triple::new(
                 crate::environment::identity().org.as_str(),
@@ -201,16 +180,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 &advisory,
                 &crate::environment::declared_consumers()?,
             )?;
-            if matches!(case, Case::Delivery) {
-                checked(
-                    Command::new(repository.join("tools/delivery-owned"))
-                        .arg("build-host")
-                        .arg(&cluster)
-                        .arg(work.path())
-                        .arg(&head),
-                )
-                .await?;
-            } else if candidate.is_none() {
+            if candidate.is_none() {
                 deployment::prepare_image(&target, work.path())?;
                 checked(
                     Command::new(&lifecycle)
@@ -252,7 +222,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 work.path(),
                 &image,
                 &head,
-                if candidate.is_some() || matches!(case, Case::Delivery) {
+                if candidate.is_some() {
                     "release"
                 } else {
                     "debug"
@@ -281,7 +251,6 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 &scope,
                 case,
                 browser,
-                &delivery_cancelled,
             ))
             .await;
             demo::hold(work.path(), browser && result.is_ok()).await?;
@@ -297,13 +266,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     };
     let observed = match observed {
         Ok(result) => result,
-        Err(failure) => {
-            delivery_cancelled.cancel();
-            if matches!(case, Case::Delivery) {
-                let _ = tokio::time::timeout(Duration::from_secs(180), &mut run).await;
-            }
-            Ok(Err(anyhow::anyhow!(failure)))
-        }
+        Err(failure) => Ok(Err(anyhow::anyhow!(failure))),
     };
     drop(run);
     let run = observed;
@@ -352,7 +315,6 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             "source":head,"cluster":cluster,"completed":matches!(&run, Ok(Ok(()))),
             "partial_completion":partial_completion,"generated_terminal":generated_terminal,
             "startup":matches!(case, Case::Startup),"demo":browser,
-            "delivery":matches!(case, Case::Delivery),
             "failure_capture":failure_capture.as_ref().err().map(|error|format!("{error:#}")),
             "failure":match &run { Ok(Err(error)) => Some(format!("{error:#}")), Err(_) => Some("test panicked".to_owned()), _ => None },
             "resource_cleanup":removed.is_ok() && absent.is_ok(),
@@ -444,7 +406,6 @@ async fn run_created(
     scope: &Triple,
     case: Case,
     browser: bool,
-    delivery_cancelled: &pg_walstream::CancellationToken,
 ) -> anyhow::Result<()> {
     let CaseContext {
         repository,
@@ -516,13 +477,13 @@ async fn run_created(
             scenario_worker: &target.join("debug/wamn-scenario-worker"),
             label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
             minio_endpoint: &minio_endpoint,
-            publish_only: matches!(case, Case::Delivery),
+            publish_only: false,
         },
         evidence,
     )
     .await?;
     event_broker::write_binding(broker, &nats_url, source)?;
-    if measure_startup || matches!(case, Case::Delivery) {
+    if measure_startup {
         let provisioning = event_broker::connect(&broker.provisioning, &nats_url).await?;
         wamn_control::event_streams::provision(
             &async_nats::jetstream::new(provisioning.clone()),
@@ -566,18 +527,6 @@ async fn run_created(
         .drain()
         .await
         .context("close the scoped stream observation client")?;
-    if matches!(case, Case::Delivery) {
-        return delivery_case::run(
-            case_context,
-            &document,
-            &route,
-            &release,
-            &postgres_ip,
-            &nats_url,
-            delivery_cancelled,
-        )
-        .await;
-    }
     let (project, project_task) =
         wamn_control::dev::environment::connect(&route.database_url).await?;
     let reader_args = if measure_startup {

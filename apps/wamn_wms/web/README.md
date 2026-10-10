@@ -19,7 +19,7 @@ WAMN_ROUTE_URL=<the base URL the loop printed> \
 
 Open the address that Vite prints, and sign in with an account of that environment.
 
-`pnpm run build` writes the static files to `dist/`. [`wamn web upload`](../../../docs/operations/deployment.md#web-client-files) builds them and writes them to a bucket, and the edge in [`deploy/platform/edge`](../../../deploy/platform/edge) serves them.
+`pnpm run build` writes the static files to `dist/`. `push-package` packs them into the package artifact, [`wamn web upload`](../../../docs/operations/deployment.md#web-client-files) writes them to a bucket, and the edge in [`deploy/platform/edge`](../../../deploy/platform/edge) serves them.
 
 ## The account and the seed
 

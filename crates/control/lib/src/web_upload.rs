@@ -1,59 +1,132 @@
 //! Web client files in a bucket (docs/plan/web-deployment.md).
 //!
-//! `wamn web upload` builds a client and writes it here, under
-//! `<prefix>/<package_id>/<release hex>/`, every built file create-only, then
-//! `config.json`, and the index last.
+//! `wamn web upload` writes the built client of each package of the release
+//! an environment serves, under `<prefix>/<package_id>/<release hex>/`, every
+//! built file create-only, then `config.json`, and the index last. The release
+//! must be the one the newest successful revision of the environment's release
+//! chart installed, and the built files are the `web/dist` layer of each
+//! package artifact (docs/plan/platform-deploy.md §13, §7.2).
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, bail};
+use anyhow::{Context as _, bail, ensure};
 use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
-use tokio_postgres::NoTls;
+use wamn_control_registry::Triple;
 
-use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE};
+use crate::environment::Platform;
+use crate::package_artifact::{PackageRegistry, PackageSource, open_package_source};
+use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE, scope_file_bytes};
 
 /// A built file name carries its content hash, so a browser keeps it.
 const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
 /// The index names the current files, so a browser asks again at every load.
 const INDEX_CACHE: &str = "no-cache";
-/// The manifest digest of the release each environment head of the database
-/// names. `select-release` writes the head.
-const SELECT_HEADS: &str = "SELECT manifest_digest FROM catalog.effective_release_heads";
-
-/// What a write does when its object exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExistingObject {
-    /// Refuse the write. `wamn web upload` never replaces an object.
-    Refuse,
-    /// Count an object with the same bytes as written, and refuse one with
-    /// other bytes. A resumed saga writes the same files again.
-    AcceptIdentical,
+/// The client of one package, as [`upload_release`] left it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UploadedClient {
+    pub package: String,
+    /// `<scheme><bucket>/<root>/`.
+    pub location: String,
+    /// False when the index was already there, so nothing was written.
+    pub written: bool,
 }
 
-/// Refuse a release that is not the head of the environment.
+/// Write the built client of each package of `release` that has one.
 ///
-/// An existing release is not enough: an old client written over the current
-/// one would serve the current release with stale files.
-pub async fn require_head(database_url: &str, release: &str) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(database_url, NoTls)
-        .await
-        .context("connect to the project-environment database")?;
-    let connection = tokio::spawn(connection);
-    let heads = client
-        .query(SELECT_HEADS, &[])
-        .await
-        .context("read the release head")?;
-    drop(client);
-    let _ = connection.await;
-    let heads: Vec<String> = heads.iter().map(|row| row.get(0)).collect();
-    match heads.as_slice() {
-        [head] if head == release => Ok(()),
-        [head] => bail!("release {release} is not the head {head} of this environment"),
-        [] => bail!("the database has no release head; select-release sets it"),
-        _ => bail!("the database has more than one release head: {heads:?}"),
+/// # Errors
+///
+/// When `release` is not the release the environment serves, a package
+/// artifact cannot be read or holds no built client, or a write fails. An
+/// object is never replaced.
+pub async fn upload_release(
+    platform: &Platform,
+    triple: &Triple,
+    release: &str,
+    bucket: &str,
+) -> anyhow::Result<Vec<UploadedClient>> {
+    let hex = release_hex(release)?;
+    let tenant = wamn_control_provision::project_env_tenant(
+        &triple.org,
+        &triple.project,
+        triple.env.as_str(),
+    );
+    let deployed = crate::environment::analyse::deployed_release(&platform.target, &tenant)
+        .await?
+        .with_context(|| format!("{triple} serves no release"))?;
+    ensure!(
+        deployed == release,
+        "release {release} is not the release {deployed} that {triple} serves"
+    );
+    let manifest = crate::environment::analyse::pull_release_manifest(platform, release).await?;
+    let registry = PackageRegistry {
+        artifact_base: platform
+            .package_artifact_base
+            .clone()
+            .context("set WAMN_PACKAGE_ARTIFACT_BASE; the built clients are package artifacts")?,
+        registry_auth_file: platform.registry_auth_file.clone(),
+        insecure_registry: false,
+        oci_ca_paths: platform.oci_ca_paths.clone(),
+        control_database_url: platform.system_database_url.clone(),
+    };
+    let sink = Sink::parse(bucket)?;
+    let store = sink.store()?;
+    let mut uploaded = Vec::new();
+    for package in &manifest.release.packages {
+        let tag = format!("{}-{}", package.package_id(), package.package_version());
+        let opened = open_package_source(PackageSource::Artifact {
+            tag: tag.clone(),
+            registry: registry.clone(),
+        })
+        .await?;
+        let manifest_path = wamn_schema_generator::package_manifest_path(opened.root());
+        let compiled: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&manifest_path)
+                .with_context(|| format!("read {}", manifest_path.display()))?,
+        )
+        .with_context(|| format!("decode {}", manifest_path.display()))?;
+        let Some(client) = compiled
+            .pointer("/client_package/name")
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let project = client_project(client)?;
+        let dist = opened.root().join("web/dist");
+        let root = client_root(sink.prefix, package.package_id(), hex);
+        let location = format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket);
+        let index = object_store::path::Path::from(format!("{root}/index.html"));
+        if store.head(&index).await.is_ok() {
+            uploaded.push(UploadedClient {
+                package: package.package_id().to_owned(),
+                location,
+                written: false,
+            });
+            continue;
+        }
+        let mut files = Vec::new();
+        collect(&dist, &mut files)
+            .with_context(|| format!("the package artifact {tag} holds no built web client"))?;
+        ensure!(
+            files.iter().any(|file| file == &dist.join("index.html")),
+            "the package artifact {tag} holds no web/dist/index.html"
+        );
+        write_files(
+            store.as_ref(),
+            &root,
+            &dist,
+            &mut files,
+            &scope_file_bytes(&triple.org, project),
+        )
+        .await?;
+        uploaded.push(UploadedClient {
+            package: package.package_id().to_owned(),
+            location,
+            written: true,
+        });
     }
+    Ok(uploaded)
 }
 
 /// The hexadecimal digits of a release `sha256:<64 lowercase hex>`.
@@ -86,7 +159,6 @@ pub async fn write_files(
     dist: &Path,
     files: &mut [PathBuf],
     scope: &[u8],
-    existing: ExistingObject,
 ) -> anyhow::Result<()> {
     files.sort_by_key(|file| file == &dist.join("index.html"));
     for file in files.iter() {
@@ -98,7 +170,6 @@ pub async fn write_files(
                 scope.to_vec(),
                 SCOPE_CACHE,
                 SCOPE_CONTENT_TYPE,
-                existing,
             )
             .await?;
         }
@@ -120,7 +191,6 @@ pub async fn write_files(
             std::fs::read(file)?,
             cache,
             content_type(relative)?,
-            existing,
         )
         .await?;
     }
@@ -135,44 +205,24 @@ async fn put(
     bytes: Vec<u8>,
     cache: &'static str,
     content_type: &'static str,
-    existing: ExistingObject,
 ) -> anyhow::Result<()> {
     let mut attributes = Attributes::new();
     attributes.insert(Attribute::CacheControl, cache.into());
     attributes.insert(Attribute::ContentType, content_type.into());
     let key = object_store::path::Path::from(format!("{root}/{relative}"));
-    let written = store
+    store
         .put_opts(
             &key,
-            bytes.clone().into(),
+            bytes.into(),
             PutOptions {
                 mode: PutMode::Create,
                 attributes,
                 ..PutOptions::default()
             },
         )
-        .await;
-    match written {
-        Ok(_) => Ok(()),
-        Err(object_store::Error::AlreadyExists { .. })
-            if existing == ExistingObject::AcceptIdentical =>
-        {
-            let stored = store
-                .get(&key)
-                .await
-                .with_context(|| format!("read the existing {key}"))?
-                .bytes()
-                .await
-                .with_context(|| format!("read the existing {key}"))?;
-            if stored[..] == bytes[..] {
-                Ok(())
-            } else {
-                bail!("write {key}; an existing object with other bytes is never replaced")
-            }
-        }
-        Err(error) => Err(anyhow::Error::new(error)
-            .context(format!("write {key}; an existing object is never replaced"))),
-    }
+        .await
+        .map(|_| ())
+        .with_context(|| format!("write {key}; an existing object is never replaced"))
 }
 
 /// The project that a client package `@wamn/<project>-client` names.
@@ -291,44 +341,10 @@ mod tests {
     use object_store::ObjectStoreExt as _;
     use object_store::memory::InMemory;
 
-    use super::{ExistingObject, Scheme, Sink, collect, require_head, write_files};
+    use super::{Scheme, Sink, collect, write_files};
 
     const HEAD: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const OTHER: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const SCOPE: &[u8] = br#"{"org":"acme","project":"receiving"}"#;
-
-    #[tokio::test]
-    async fn a_stale_release_is_refused_before_the_build() {
-        let database = wamn_catalog::test_database::tenant();
-        // The digest check of the release table holds, so the head row names
-        // the digest of these bytes.
-        let bytes = "{}";
-        let head = format!(
-            "sha256:{}",
-            database
-                .execute(&[&format!("SELECT encode(sha256('{bytes}'::bytea), 'hex')")])
-                .expect("hash the snapshot bytes")
-                .trim()
-        );
-        database
-            .execute(&[&format!(
-                "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
-                 VALUES ('t', '{head}', '{bytes}'::bytea); \
-                 INSERT INTO catalog.effective_release_heads (tenant_id, environment, manifest_digest) \
-                 VALUES ('t', 'dev', '{head}');"
-            )])
-            .expect("seed one head");
-        require_head(database.url(), &head)
-            .await
-            .expect("the head is accepted");
-        let error = require_head(database.url(), OTHER)
-            .await
-            .expect_err("a release that is not the head refuses");
-        assert_eq!(
-            error.to_string(),
-            format!("release {OTHER} is not the head {head} of this environment")
-        );
-    }
 
     #[tokio::test]
     async fn an_existing_object_is_never_replaced() {
@@ -340,40 +356,21 @@ mod tests {
         let store = InMemory::new();
         let mut files = Vec::new();
         collect(&dist, &mut files).unwrap();
-        write_files(
-            &store,
-            HEAD,
-            &dist,
-            &mut files,
-            SCOPE,
-            ExistingObject::Refuse,
-        )
-        .await
-        .expect("the first upload writes");
-        write_files(
-            &store,
-            HEAD,
-            &dist,
-            &mut files,
-            SCOPE,
-            ExistingObject::AcceptIdentical,
-        )
-        .await
-        .expect("a resumed upload of the same files counts as done");
+        write_files(&store, HEAD, &dist, &mut files, SCOPE)
+            .await
+            .expect("the first upload writes");
 
         std::fs::write(dist.join("index.html"), "second").unwrap();
         std::fs::write(dist.join("assets/app.js"), "second").unwrap();
-        for existing in [ExistingObject::Refuse, ExistingObject::AcceptIdentical] {
-            let error = write_files(&store, HEAD, &dist, &mut files, SCOPE, existing)
-                .await
-                .expect_err("the second upload refuses");
-            assert!(
-                error
-                    .to_string()
-                    .starts_with(&format!("write {HEAD}/assets/app.js")),
-                "{error}"
-            );
-        }
+        let error = write_files(&store, HEAD, &dist, &mut files, SCOPE)
+            .await
+            .expect_err("the second upload refuses");
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("write {HEAD}/assets/app.js")),
+            "{error}"
+        );
         for (name, bytes) in [
             ("index.html", &b"first"[..]),
             ("assets/app.js", b"first"),

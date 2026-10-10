@@ -311,8 +311,25 @@ async fn copy_predecessor(
         "upgrade-schema must install the package qualification carrier before qualification"
     );
     let predecessor_packages = read_current_packages(&tx, &request.tenant).await?;
-    let (manifest, manifest_digest) =
-        read_selected_manifest(&tx, &request.tenant, &request.environment).await?;
+    let manifest_digest = match observer {
+        WorkloadObserver::Live => {
+            let workload = &request.workload;
+            crate::environment::analyse::deployed_release(
+                &crate::release_chart::Target {
+                    kubeconfig: workload.kubeconfig.clone(),
+                    context: workload.context.clone(),
+                    namespace: workload.namespace.clone(),
+                },
+                &request.tenant,
+            )
+            .await?
+            .context("the environment's release chart has no deployed release")?
+        }
+        #[cfg(test)]
+        WorkloadObserver::Captured(serving)
+        | WorkloadObserver::CapturedWithChange { serving, .. } => serving.manifest_digest.clone(),
+    };
+    let manifest = read_release_manifest(&tx, &request.tenant, &manifest_digest).await?;
     let predecessor = predecessor_packages
         .iter()
         .find(|package| package.package_id == candidate.identity.package_id)
@@ -620,10 +637,10 @@ async fn prove_connected_copy(
         read_current_packages(&tx, &request.tenant).await? == evidence.predecessor_packages,
         "copied package state differs from the source snapshot"
     );
-    let (copied_manifest, copied_digest) =
-        read_selected_manifest(&tx, &request.tenant, &request.environment).await?;
+    let copied_manifest =
+        read_release_manifest(&tx, &request.tenant, &evidence.predecessor_manifest_digest).await?;
     ensure!(
-        copied_manifest == *manifest && copied_digest == evidence.predecessor_manifest_digest,
+        copied_manifest == *manifest,
         "copied release state differs from the source snapshot"
     );
     restore_upgrade_privileges(&tx, &evidence.schemas, &evidence.predecessor_privileges).await?;
@@ -1001,26 +1018,28 @@ pub(crate) async fn read_current_packages(
     Ok(packages)
 }
 
-pub(crate) async fn read_selected_manifest(
+/// The release `digest` from the digest-keyed release cache of the project
+/// database (docs/plan/platform-deploy.md §13).
+pub(crate) async fn read_release_manifest(
     tx: &Transaction<'_>,
     tenant: &str,
-    environment: &str,
-) -> anyhow::Result<(ServingManifest, String)> {
-    let row = tx.query_opt(
-        "SELECT release.manifest_digest, release.canonical_bytes \
-           FROM catalog.effective_release_heads head \
-           JOIN catalog.releases release \
-             ON release.tenant_id = head.tenant_id AND release.manifest_digest = head.manifest_digest \
-          WHERE head.tenant_id = $1 AND head.environment = $2", &[&tenant, &environment],
-    ).await.context("read selected predecessor serving manifest")?.context("environment has no selected canonical serving manifest")?;
-    let digest: String = row.get(0);
-    let bytes: Vec<u8> = row.get(1);
-    let (manifest, observed) = ServingManifest::from_canonical_bytes(&bytes)?;
+    digest: &str,
+) -> anyhow::Result<ServingManifest> {
+    let row = tx
+        .query_opt(
+            "SELECT canonical_bytes FROM catalog.releases \
+              WHERE tenant_id = $1 AND manifest_digest = $2",
+            &[&tenant, &digest],
+        )
+        .await
+        .context("read the predecessor release")?
+        .with_context(|| format!("catalog.releases holds no release {digest}"))?;
+    let (manifest, observed) = ServingManifest::from_canonical_bytes(&row.get::<_, Vec<u8>>(0))?;
     ensure!(
         observed.as_str() == digest,
-        "selected serving manifest differs from its stored release identity"
+        "the cached release differs from its digest"
     );
-    Ok((manifest, digest))
+    Ok(manifest)
 }
 
 /// Admit only the canonical upgrade result format, distinct from release qualification.

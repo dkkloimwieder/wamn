@@ -104,10 +104,11 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     client
         .batch_execute(
             "DROP TABLE catalog.package_upgrade_qualifications; \
-             ALTER TABLE catalog.effective_release_heads \
-               DROP CONSTRAINT effective_release_heads_release_fkey, \
-               DROP COLUMN manifest_digest, \
-               ADD COLUMN effective_release_id int NOT NULL; \
+             CREATE TABLE catalog.effective_release_heads ( \
+               tenant_id text NOT NULL, environment text NOT NULL, \
+               effective_release_id int NOT NULL, \
+               updated_at timestamptz NOT NULL DEFAULT now(), \
+               PRIMARY KEY (tenant_id, environment)); \
              ALTER TABLE catalog.connection_bindings \
                DROP CONSTRAINT connection_bindings_release_fkey, \
                DROP CONSTRAINT connection_bindings_pkey, \
@@ -225,14 +226,14 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(migrations, 13);
+    assert_eq!(migrations, 16);
     // Migration 0012 keyed the release rows by their digest: the snapshot became
-    // the cached release, the head took its digest, and each run took the digest
-    // of its frozen release or, with no frozen release, no pin.
+    // the cached release, and each run took the digest of its frozen release or,
+    // with no frozen release, no pin. The head it converted is gone with the
+    // last migration.
     let converted: String = client
         .query_one(
             "SELECT (SELECT string_agg(manifest_digest, ',') FROM catalog.releases) || '|' || \
-                    (SELECT manifest_digest FROM catalog.effective_release_heads) || '|' || \
                     (SELECT string_agg(run_id || '=' || coalesce(manifest_digest, 'none'), ',' \
                        ORDER BY run_id) FROM wamn_run.runs)",
             &[],
@@ -243,7 +244,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     let release = "sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394";
     assert_eq!(
         converted,
-        format!("{release}|{release}|pinned={release},unfrozen=none")
+        format!("{release}|pinned={release},unfrozen=none")
     );
     upgrade_schema(&UpgradeSchemaRequest {
         baseline: None,

@@ -495,8 +495,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
             "GRANT INSERT ON TABLE wamn_run.runs TO {stable};\n\
              GRANT UPDATE (input_json) ON TABLE wamn_run.runs TO {stable};\n\
              GRANT SELECT ON TABLE wamn_run.environment_policies TO {stable};\n\
-             GRANT SELECT ON TABLE catalog.effective_release_heads, \
-               catalog.wiring_tombstones TO {stable};\n\
+             GRANT SELECT ON TABLE catalog.wiring_tombstones TO {stable};\n\
              GRANT EXECUTE ON FUNCTION \
                wamn_run.guard_event_lineage_immutable() TO {stable};\n"
         ),
@@ -540,7 +539,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     for relation in [
         "catalog.packages",
         "catalog.package_migrations",
-        "catalog.effective_release_heads",
         "catalog.wiring_tombstones",
         "catalog.event_registrations",
         "wamn_run.operator_run_actions",
@@ -851,7 +849,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         "wamn_run.effect_attempts",
         "wamn_run.environment_policies",
         "catalog.packages",
-        "catalog.effective_release_heads",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             writeln!(

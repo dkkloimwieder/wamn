@@ -281,9 +281,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                (tenant_id,manifest_digest,canonical_bytes) \
              SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{manifest_body}', 'UTF8') AS bytes) AS frozen; \
-             INSERT INTO catalog.effective_release_heads \
-               (tenant_id,environment,manifest_digest) \
-             SELECT '{TENANT}','{ENVIRONMENT}',manifest_digest FROM catalog.releases; \
              INSERT INTO catalog.connection_requirements \
                (tenant_id,component_digest,store_alias,requirement_json,requirement_hash) \
              VALUES ('{TENANT}','{component_digest}','a-store', \

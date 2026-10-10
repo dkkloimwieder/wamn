@@ -8,8 +8,7 @@
  * `project_admin.revoke` as the control host does, over the projects
  * `billing` and `shop` with the environment `dev` each. A refusal goes through
  * the runtime's classifier, so it carries the text of its contract.
- * `package.list` answers three package versions, and `control.mine` answers
- * whether the caller holds org-admin.
+ * `control.mine` answers whether the caller holds org-admin.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
@@ -40,8 +39,6 @@ export interface ControlState {
   refuseNext: { readonly code: string; readonly detail: JsonValue } | null;
   /** Whether the caller holds org-admin, as `control.mine` answers it. */
   callerOrgAdmin: boolean;
-  /** The pushed package versions, as `package.list` answers them. */
-  readonly packages: JsonValue[];
 }
 
 /** Boss holds org-admin, Cat project-admin of billing, and Ann a membership of billing dev. */
@@ -57,11 +54,6 @@ export function controlState(): ControlState {
     memberships: new Set([`billing dev ${BOSS}`, `shop dev ${BOSS}`, `billing dev ${CAT}`, `billing dev ${ANN}`]),
     refuseNext: null,
     callerOrgAdmin: true,
-    packages: [
-      { package_id: "wamn_receiving", version: "1.0.0", attested_at: "2026-10-03T09:00:00.000000Z" },
-      { package_id: "wamn_receiving", version: "1.1.0", attested_at: "2026-10-03T11:00:00.000000Z" },
-      { package_id: "wamn_wms", version: "1.0.0", attested_at: "2026-10-03T10:00:00.000000Z" },
-    ],
   };
 }
 
@@ -115,8 +107,6 @@ export function controlStub(state: ControlState = controlState()): { transport: 
           org_admin: state.callerOrgAdmin,
           projects: Object.keys(PROJECTS).map((name) => ({ project: name, project_admin: true })),
         });
-      case "wamn-control:package/list":
-        return completed({ packages: state.packages });
       case "wamn-control:user/invite": {
         state.members.set(NEW, {
           email: String(value["email"]),

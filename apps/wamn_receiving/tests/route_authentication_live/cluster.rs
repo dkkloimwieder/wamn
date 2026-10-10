@@ -3,9 +3,7 @@
 mod build;
 mod cdc;
 mod default_case;
-mod delivery_case;
 mod deployment;
-mod edge_case;
 mod materializer_case;
 mod measurement;
 mod measurement_cases;

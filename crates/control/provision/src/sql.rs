@@ -578,7 +578,6 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
          FROM {role}; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_history, {schema} FROM {role}; \
          GRANT USAGE ON SCHEMA catalog, app_system, wamn_history TO {role}; \
-         GRANT SELECT ON TABLE catalog.effective_release_heads TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
     );

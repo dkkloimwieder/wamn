@@ -4,13 +4,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
-use wamn_catalog::ServingManifest;
-use wamn_engine::release_manifest::ReleaseScope;
 use wamn_schema_control::{PackageDirectory, PackageMigrationPlan};
 
 use crate::qualify_upgrade::{
     self, MigrationIdentity, PackageIdentity, PresentedRootIdentity, UpgradeQualification,
-    identity_from_directory, read_current_packages, read_selected_manifest,
+    identity_from_directory, read_current_packages, read_release_manifest,
 };
 use crate::reconcile_package_data_access::upgrade::read_upgrade_privileges;
 
@@ -161,8 +159,12 @@ pub(crate) async fn apply_coordinated(
         );
         if let Some(accepted) = &persist {
             if whole_row {
-                let (manifest, _) =
-                    read_selected_manifest(&tx, &request.tenant, &evidence.environment).await?;
+                let manifest = read_release_manifest(
+                    &tx,
+                    &request.tenant,
+                    &evidence.predecessor_manifest_digest,
+                )
+                .await?;
                 crate::apply_package::finish_whole_row_stage(
                     &mut tx,
                     &request.tenant,
@@ -563,79 +565,5 @@ pub(crate) async fn require_reconciled_privileges(
         read_upgrade_privileges(tx, &evidence.schemas).await? == evidence.post_privileges,
         "reconciled privileges differ from the qualified complete-root post-state"
     );
-    Ok(())
-}
-
-/// The one selection/deployment predicate: identical migrations or proved direct rollback.
-pub(crate) async fn require_compatible_schema(
-    tx: &mut Transaction<'_>,
-    manifest: &ServingManifest,
-    scope: &ReleaseScope,
-) -> anyhow::Result<()> {
-    tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
-        .await?;
-    let release = &manifest.release;
-    // Acquire every requested lineage in stable order before any head row lock.
-    for package in &release.packages {
-        tx.query_one(
-            crate::apply_package::LOCK_PACKAGE_SQL,
-            &[&scope.tenant_id, &package.package_id()],
-        )
-        .await?;
-    }
-    let installed = read_current_packages(tx, &scope.tenant_id).await?;
-    for package in &release.packages {
-        let leaf = installed
-            .iter()
-            .find(|leaf| leaf.package_id == package.package_id())
-            .context("the target lacks the selected package")?;
-        let selected = crate::apply_package::load_applied_package(
-            tx,
-            &scope.tenant_id,
-            package.package_id(),
-            package.package_version(),
-        )
-        .await?
-        .context("the target lacks the selected package coordinate")?;
-        let selected_migrations = selected
-            .migrations
-            .iter()
-            .map(|migration| MigrationIdentity {
-                ordinal: migration.ordinal,
-                relative_path: migration.relative_path.clone(),
-                sha256: migration.sha256.clone(),
-            })
-            .collect::<Vec<_>>();
-        if selected_migrations == leaf.migrations {
-            continue;
-        }
-        let accepted = read_accepted(tx, &scope.tenant_id, &leaf.package_id, &leaf.package_version)
-            .await?.context("schema-changing release selection requires persisted immediate-predecessor upgrade evidence")?;
-        let evidence = &accepted.evidence;
-        require_prefix(evidence)?;
-        ensure!(
-            evidence.environment == scope.environment
-                && evidence.predecessor_manifest_digest == manifest.digest().as_str()
-                && evidence.predecessor_package.package_id == package.package_id()
-                && evidence.predecessor_package.package_version == package.package_version()
-                && evidence.predecessor_package.manifest_sha256 == selected.manifest_sha256
-                && evidence.predecessor_package.migrations == selected_migrations
-                && evidence.candidate_package == *leaf,
-            "selected release is not the qualified immediate predecessor of the installed leaf"
-        );
-        ensure!(
-            installed == evidence.presented_packages,
-            "qualified installed package post-state changed"
-        );
-        ensure!(
-            read_upgrade_privileges(tx, &evidence.schemas).await? == evidence.post_privileges,
-            "qualified data-access post-state changed"
-        );
-        // An ungranted out-of-band column can invalidate a whole-row statement
-        // without changing migration records or existing privilege facts.
-        qualify_upgrade::plan_predecessor_in_transaction(tx, manifest, &evidence.serving_workloads)
-            .await
-            .context("qualified predecessor no longer plans against the retained schema")?;
-    }
     Ok(())
 }

@@ -74,7 +74,7 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
     };
     while let Some(stage) = record.next_stage() {
         record.start(&path, stage, run.inputs(stage))?;
-        match run.stage(stage, &record).await {
+        match Box::pin(run.stage(stage, &record)).await {
             Ok((result, outputs)) => record.finish(&path, result, outputs)?,
             Err(error) => {
                 let cause = redact(&format!("{error:#}"));
@@ -109,12 +109,19 @@ impl Run {
             Stage::Schema => self.schema().await,
             Stage::Packages => self.packages(record).await,
             Stage::Qualify => self.qualify(record).await,
-            Stage::PublishAndSelect => self.publish_and_select(record).await,
-            Stage::Deploy => self.deploy(record).await,
+            Stage::Publish => self.publish(record).await,
+            Stage::Deploy => Box::pin(self.deploy(record)).await,
             Stage::CheckAndRetire => self.check_and_retire(record).await,
             Stage::Record => self.finish_record(record),
         }
     }
+}
+
+/// The platform inputs of `wamn-ctl env`, on the environment file's context.
+fn platform(environment: &EnvironmentFile) -> anyhow::Result<crate::environment::Platform> {
+    let mut platform = crate::environment::Platform::from_env()?;
+    platform.target.context.clone_from(&environment.context);
+    Ok(platform)
 }
 
 /// A refusal that changes what runs: the run stops at once and is not
@@ -182,6 +189,24 @@ impl Run {
     fn environment(&self) -> anyhow::Result<EnvironmentFile> {
         EnvironmentFile::read(
             &self.checkout,
+            &self.arguments.org,
+            &self.arguments.project,
+            &self.arguments.environment,
+        )
+    }
+
+    /// The coordinate of the run.
+    fn triple(&self) -> wamn_control_registry::Triple {
+        wamn_control_registry::Triple::new(
+            self.arguments.org.clone(),
+            self.arguments.project.clone(),
+            self.arguments.environment.clone(),
+        )
+    }
+
+    /// The Helm release name of the environment's release chart.
+    fn release_name(&self) -> anyhow::Result<String> {
+        crate::release_chart::release_name(
             &self.arguments.org,
             &self.arguments.project,
             &self.arguments.environment,
@@ -537,8 +562,8 @@ impl Run {
         Ok(crate::qualify_upgrade::workload::WorkloadTarget {
             kubeconfig,
             context: environment.context.clone(),
-            namespace: HOST_NAMESPACE.to_owned(),
-            host_deployment: format!("hostgroup-{}", environment.host_group),
+            namespace: platform(environment)?.target.namespace,
+            host_deployment: format!("hostgroup-{}", self.release_name()?),
             package_workloads: environment.package_workloads.clone(),
         })
     }
@@ -1075,9 +1100,9 @@ impl Run {
         Ok((StepResult::Done, outputs))
     }
 
-    /// Stage 9: the qualified publication and the selection of the
-    /// environment that the run changes.
-    async fn publish_and_select(&self, record: &RunRecord) -> Outcome {
+    /// Stage 9: the qualified publication, which records its qualification
+    /// for `env apply`.
+    async fn publish(&self, record: &RunRecord) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
@@ -1099,21 +1124,9 @@ impl Run {
         let pushed = crate::delivery::publication::publish(&qualification, &request)
             .await
             .context(StopRun("the qualified publication refused the bytes"))?;
-        let selected = crate::delivery::deployment::select(
-            &crate::delivery::selection::QualificationSource::File(qualification.clone()),
-            &request,
-        )
-        .await?;
         let outputs = BTreeMap::from([
             ("published".to_owned(), format!("{pushed:?}")),
-            (
-                "selected release".to_owned(),
-                format!("{:?}", selected.release),
-            ),
-            (
-                "manifest digest".to_owned(),
-                selected.manifest_digest.clone(),
-            ),
+            ("manifest digest".to_owned(), pushed.digest.to_string()),
         ]);
         Ok((StepResult::Done, outputs))
     }
@@ -1168,76 +1181,51 @@ impl Run {
         self.release_files().join("rendered")
     }
 
-    /// Stage 10: the web client, the edge, the URL map, the hosts and the
-    /// workloads, with every host group and workload Ready.
+    /// Stage 10: `env apply` of the environment's document with the published
+    /// release (docs/plan/platform-deploy.md §15.2), then the web client, the
+    /// edge and the URL map.
     async fn deploy(&self, record: &RunRecord) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         self.broker(&kubectl).await?;
-        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        let digest = record
-            .output(Stage::PublishAndSelect, "manifest digest")?
-            .to_owned();
+        let digest = record.output(Stage::Publish, "manifest digest")?.to_owned();
         let hex = digest
             .strip_prefix("sha256:")
-            .context("the selected manifest digest has no sha256 prefix")?
+            .context("the published manifest digest has no sha256 prefix")?
             .to_owned();
         let rendered = self.rendered();
         private_directory(&rendered)?;
         let mut outputs = BTreeMap::new();
         let project = gcp_project(&environment.registry)?;
+        let platform = platform(&environment)?;
+        let triple = self.triple();
+        let applied = crate::environment::apply_release(&platform, &triple, &digest).await?;
+        outputs.insert("apply".to_owned(), applied.plan.join("; "));
 
-        // The web client of each package that has one, create-only.
+        // The web client of each package that has one, create-only, from its
+        // package artifact.
         let mut client_package = None;
-        for root in &environment.packages {
-            let root = self.checkout.join(root);
-            let manifest: Value = serde_json::from_slice(&fs::read(
-                wamn_schema_generator::package_manifest_path(&root),
-            )?)?;
-            if manifest.pointer("/client_package/name").is_none() {
-                continue;
-            }
-            let package = manifest
-                .pointer("/package/id")
-                .and_then(Value::as_str)
-                .context("a package manifest names no package id")?
-                .to_owned();
-            let index = format!(
-                "gs://{}/{}/{package}/{hex}/index.html",
+        for client in crate::web_upload::upload_release(
+            &platform,
+            &triple,
+            &digest,
+            &format!(
+                "gs://{}/{}",
                 environment.web_client.bucket, environment.web_client.prefix
-            );
-            let present = Command::new("gcloud")
-                .args(["storage", "ls", &index, "--project", &project])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .await?
-                .success();
-            if present {
-                outputs.insert(format!("web client {package}"), format!("{index} present"));
+            ),
+        )
+        .await?
+        {
+            let state = if client.written {
+                "uploaded"
             } else {
-                self.command(
-                    "pnpm-install",
-                    Command::new("pnpm").args(["install", "--frozen-lockfile"]),
-                )
-                .await?;
-                let mut upload = Command::new(self.programs().join("debug/wamn"));
-                upload
-                    .args(["web", "upload"])
-                    .arg(&root)
-                    .args(["--release", &digest, "--org", &self.arguments.org])
-                    .arg("--bucket")
-                    .arg(format!(
-                        "gs://{}/{}",
-                        environment.web_client.bucket, environment.web_client.prefix
-                    ))
-                    .env("WAMN_WEB_DATABASE_URL", databases.project_url());
-                self.command(&format!("web-upload-{package}"), &mut upload)
-                    .await?;
-                outputs.insert(format!("web client {package}"), format!("{index} uploaded"));
-            }
-            client_package.get_or_insert(package);
+                "present"
+            };
+            outputs.insert(
+                format!("web client {}", client.package),
+                format!("{} {state}", client.location),
+            );
+            client_package.get_or_insert(client.package);
         }
 
         // The edge and the URL map, from their live state, for this route
@@ -1322,102 +1310,6 @@ impl Run {
             }
         }
 
-        // The host values from the stage 3 host image, with this group's new
-        // release and the current release of every other group.
-        ensure!(
-            HOST_VALUES_GROUPS.contains(&environment.host_group.as_str()),
-            "the host values program renders no host group {}",
-            environment.host_group
-        );
-        let live = helm(
-            &environment.context,
-            &[
-                "get",
-                "values",
-                HOST_RELEASE,
-                "-n",
-                HOST_NAMESPACE,
-                "-o",
-                "json",
-            ],
-        )
-        .await?;
-        let live: Value = serde_json::from_str(&live)?;
-        let mut digests = Vec::new();
-        for group in HOST_VALUES_GROUPS {
-            digests.push(if group == environment.host_group {
-                digest.clone()
-            } else {
-                release_digest(&live, group)?
-            });
-        }
-        let host_image = record.output(Stage::Images, "host")?.to_owned();
-        let mut values = Command::new("cargo");
-        values
-            .args(["run", "--locked", "-p", "wamn-test-infrastructure"])
-            .args(["--example", "host_values_files", "--"])
-            .arg(&rendered)
-            .arg(&host_image)
-            .arg(format!("{}/releases", environment.registry))
-            .args(&digests)
-            .env("CARGO_TARGET_DIR", self.programs());
-        self.command("host-values", &mut values).await?;
-        let flow = record.output(Stage::Guests, "flow-http")?.to_owned();
-        let materializer = record.output(Stage::Guests, "materializer")?.to_owned();
-        let mut workloads = Command::new("cargo");
-        workloads
-            .args(["run", "--locked", "-p", "wamn-test-infrastructure"])
-            .args(["--example", "workload_files", "--"])
-            .arg(&rendered)
-            .args([&flow, &materializer, &flow, &materializer])
-            .env("CARGO_TARGET_DIR", self.programs());
-        self.command("workload-files", &mut workloads).await?;
-        helm(
-            &environment.context,
-            &[
-                "upgrade",
-                HOST_RELEASE,
-                HOST_CHART,
-                "--version",
-                HOST_CHART_VERSION,
-                "-n",
-                HOST_NAMESPACE,
-                "-f",
-                &rendered.join("values-host-base.yaml").display().to_string(),
-                "-f",
-                &rendered.join("values-host.yaml").display().to_string(),
-                "--wait",
-                "--timeout",
-                "10m",
-            ],
-        )
-        .await?;
-        outputs.insert("host image".to_owned(), host_image);
-        let mut names = Vec::new();
-        for workload in &environment.workloads {
-            let file = rendered.join(
-                workload
-                    .file_name()
-                    .context("a workload file has no name")?,
-            );
-            kubectl
-                .run(&["apply", "-f", &file.display().to_string()])
-                .await?;
-            names.extend(workload_names(&fs::read_to_string(&file)?)?);
-        }
-        for name in &names {
-            kubectl
-                .run(&[
-                    "-n",
-                    HOST_NAMESPACE,
-                    "wait",
-                    "--for=condition=Ready",
-                    &format!("workloaddeployment/{name}"),
-                    "--timeout=240s",
-                ])
-                .await?;
-        }
-        outputs.insert("workloads".to_owned(), names.join(", "));
         Ok((StepResult::Done, outputs))
     }
 
@@ -1441,8 +1333,8 @@ impl Run {
         let routes = serve_routes(&manifest.0)?;
         let forward = ServiceForward::open(
             &kubectl,
-            HOST_NAMESPACE,
-            &format!("hostgroup-{}", environment.host_group),
+            &platform(&environment)?.target.namespace,
+            &format!("{}-http", self.release_name()?),
         )
         .await?;
         let checked = serve_check(forward.port, &environment.route_host, &routes)
@@ -2214,38 +2106,45 @@ async fn copy_bindings(
     release: &str,
     pushed: &BTreeMap<String, String>,
 ) -> anyhow::Result<Vec<(String, String)>> {
+    // An environment with no release chart revision binds nothing yet.
+    let Some(current) = crate::environment::analyse::deployed_release(
+        &platform(&run.environment()?)?.target,
+        &databases.tenant,
+    )
+    .await?
+    else {
+        return Ok(Vec::new());
+    };
     let client = databases.project().await?;
     let rows = client
         .query(
-            "SELECT b.manifest_digest, b.component_digest, b.store_alias, b.instance_id,
+            "SELECT b.component_digest, b.store_alias, b.instance_id,
                     i.requirement_type, g.definition_json::text, g.credential_set_handle,
                     (SELECT l.component FROM catalog.component_library AS l
                       WHERE l.tenant_id = b.tenant_id AND l.component_digest = b.component_digest
                       ORDER BY l.admitted_at DESC LIMIT 1)
-               FROM catalog.effective_release_heads AS h
-               JOIN catalog.connection_bindings AS b
-                 ON b.tenant_id = h.tenant_id AND b.manifest_digest = h.manifest_digest
+               FROM catalog.connection_bindings AS b
                JOIN catalog.connection_instances AS i
                  ON i.tenant_id = b.tenant_id AND i.environment = b.environment
                 AND i.instance_id = b.instance_id
                JOIN catalog.connection_generations AS g
                  ON g.tenant_id = i.tenant_id AND g.environment = i.environment
                 AND g.instance_id = i.instance_id AND g.generation = i.active_generation
-              WHERE h.tenant_id = $1 AND h.environment = $2 AND b.binding_status = 'active'
+              WHERE b.tenant_id = $1 AND b.environment = $2 AND b.manifest_digest = $3
+                AND b.binding_status = 'active'
               ORDER BY b.instance_id, b.store_alias",
-            &[&databases.tenant, &run.arguments.environment],
+            &[&databases.tenant, &run.arguments.environment, &current],
         )
         .await?;
     let mut copied = Vec::new();
     for row in rows {
-        let current: String = row.get(0);
-        let old_digest: String = row.get(1);
-        let store_alias: String = row.get(2);
-        let instance_id: String = row.get(3);
-        let requirement: String = row.get(4);
-        let definition: String = row.get(5);
-        let credential_handle: Option<String> = row.get(6);
-        let component: Option<String> = row.get(7);
+        let old_digest: String = row.get(0);
+        let store_alias: String = row.get(1);
+        let instance_id: String = row.get(2);
+        let requirement: String = row.get(3);
+        let definition: String = row.get(4);
+        let credential_handle: Option<String> = row.get(5);
+        let component: Option<String> = row.get(6);
         let component = component
             .with_context(|| format!("no component of the tenant has the digest {old_digest}"))?;
         let new_digest = pushed.get(&component).with_context(|| {
@@ -2325,15 +2224,6 @@ pub(crate) async fn apply_environment_package_qualification(
         ])
     }
 }
-
-/// The Helm release of the hosts (docs/operations/gcp.md §3.14).
-const HOST_RELEASE: &str = "wamn-host";
-const HOST_NAMESPACE: &str = "hosts";
-const HOST_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
-const HOST_CHART_VERSION: &str = "2.10.3";
-/// The host groups that `host_values_files` renders, in the order of its
-/// release digest arguments.
-const HOST_VALUES_GROUPS: [&str; 2] = ["default", "wms"];
 
 async fn helm(context: &str, arguments: &[&str]) -> anyhow::Result<String> {
     let output = Command::new("helm")
@@ -2439,47 +2329,6 @@ fn rewrite_url_map(
         "the path matcher of {host} rewrites to no release under {prefix}"
     );
     Ok(changed)
-}
-
-/// The release manifest digest in the live host values of one host group.
-fn release_digest(values: &Value, group: &str) -> anyhow::Result<String> {
-    values["runtime"]["hostGroups"]
-        .as_array()
-        .context("the live host values have no runtime.hostGroups")?
-        .iter()
-        .find(|candidate| candidate["name"] == group)
-        .with_context(|| format!("the live host values have no host group {group}"))?["extraArgs"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find_map(|argument| {
-            argument
-                .as_str()?
-                .strip_prefix("--release-manifest-digest=")
-        })
-        .map(str::to_owned)
-        .with_context(|| format!("the host group {group} names no release manifest digest"))
-}
-
-/// The names of the WorkloadDeployment documents of a workload file.
-fn workload_names(file: &str) -> anyhow::Result<Vec<String>> {
-    let mut names = Vec::new();
-    for document in serde_yaml::Deserializer::from_str(file) {
-        let value = <serde_yaml::Value as serde::Deserialize>::deserialize(document)?;
-        if value["kind"] == "WorkloadDeployment" {
-            names.push(
-                value["metadata"]["name"]
-                    .as_str()
-                    .context("a WorkloadDeployment has no name")?
-                    .to_owned(),
-            );
-        }
-    }
-    ensure!(
-        !names.is_empty(),
-        "a workload file holds no WorkloadDeployment"
-    );
-    Ok(names)
 }
 
 /// Each HTTP route of the release with its method and path.
@@ -3511,30 +3360,6 @@ mod tests {
         let wms = serde_yaml::to_string(&map["pathMatchers"][1]).unwrap();
         // /assets/, /config.json (wamn-l2fi), / and every other page.
         assert_eq!(wms.matches(&hex).count(), 4, "{wms}");
-    }
-
-    #[test]
-    fn the_live_host_values_name_each_group_release() {
-        let values: serde_yaml::Value = serde_yaml::from_str(
-            &fs::read_to_string(repository().join("deploy/gcp/values-host.yaml")).unwrap(),
-        )
-        .unwrap();
-        let values = serde_json::to_value(values).unwrap();
-        for group in HOST_VALUES_GROUPS {
-            let digest = release_digest(&values, group).unwrap();
-            assert!(
-                digest.starts_with("sha256:") && digest.len() == 71,
-                "{digest}"
-            );
-        }
-        assert!(release_digest(&values, "control").is_err());
-    }
-
-    #[test]
-    fn a_workload_file_names_its_workload_deployments() {
-        let file = fs::read_to_string(repository().join("deploy/gcp/flow-http.yaml")).unwrap();
-        assert_eq!(workload_names(&file).unwrap(), ["flow-http"]);
-        assert!(workload_names("kind: Service\n").is_err());
     }
 
     #[test]

@@ -1047,7 +1047,7 @@ target/debug/wamn web upload apps/wamn_receiving \
 
 On 2026-09-27 the upload wrote 10 files in 17 seconds, after a 54 second build of `wamn`. The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
 The second upload on 2026-09-27 added the `/invite` page and took 10 seconds. Run the same command after each change to the client.
-From `wamn-ld93.5` the command also takes `--database-url`, and it refuses a release that is not the head. [Web client files](deployment.md#web-client-files) has the current command.
+From `wamn-snz0.6` the command takes the environment coordinate, reads the built client from each package artifact, and refuses a release that the environment's release chart does not serve. [Web client files](deployment.md#web-client-files) has the current command.
 The `--org` value is a deployment value. The project comes from the client package name `@wamn/<project>-client`. The build receives both as `WAMN_ORG` and `WAMN_PROJECT`, and the shell offers and accepts only environments of that org and project. The third upload on 2026-09-27 added `--org` and took 15 seconds.
 
 ### 4.2.1 Password recovery mail
@@ -1553,7 +1553,7 @@ target/debug/wamn web upload apps/wamn_wms \
   --org dkk
 ```
 
-From `wamn-ld93.5` the command also takes `--database-url`, and it refuses a release that is not the head. [Web client files](deployment.md#web-client-files) has the current command.
+From `wamn-snz0.6` the command takes the environment coordinate, reads the built client from each package artifact, and refuses a release that the environment's release chart does not serve. [Web client files](deployment.md#web-client-files) has the current command.
 
 [values-edge.yaml](../../deploy/gcp/values-edge.yaml) lists WMS with its host, `http://wms-flow-http.hosts.svc.cluster.local` and its bucket path. [url-map.yaml](../../deploy/gcp/url-map.yaml) has the host rule `wms.wamn.dev` and the path matcher `wms`, with the same rules as Receiving. Upgrade the edge, import the URL map and add the record:
 

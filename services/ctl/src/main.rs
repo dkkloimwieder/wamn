@@ -36,10 +36,6 @@ enum Command {
     PublishQualifiedRelease(delivery_verbs::PublishArgs),
     /// Push one published release manifest with no qualification commit and attest it.
     PushReleaseManifest(delivery_verbs::PushReleaseManifestArgs),
-    /// Select one published release for its environment.
-    SelectRelease(delivery_verbs::SelectArgs),
-    /// Deploy exact qualified artifacts while the selection remains current.
-    DeployRelease(delivery_verbs::DeployArgs),
     /// Capture a published release and exact artifact locations for qualification.
     PrepareRelease(delivery_verbs::PrepareReleaseArgs),
     /// Execute selected existing tests before integration.
@@ -138,8 +134,6 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::PublishQualifiedRelease(args) => delivery_verbs::publish(args).await,
         Command::PushReleaseManifest(args) => delivery_verbs::push_release_manifest(args).await,
-        Command::SelectRelease(args) => delivery_verbs::select(args).await,
-        Command::DeployRelease(args) => delivery_verbs::deploy(args).await,
         Command::PrepareRelease(args) => delivery_verbs::prepare(args).await,
         Command::CheckChanges(args) => delivery_verbs::check_changes(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,

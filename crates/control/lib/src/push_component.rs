@@ -1290,54 +1290,6 @@ fn registry_client(
     Ok((client, auth))
 }
 
-/// Pull the bytes of the component `component_digest` that `push-component`
-/// pushed under `artifact_base` (`wamn-zua8.3`). A digest that the registry
-/// does not hold is refused by name, and so is a layer with other bytes.
-pub async fn pull_component_bytes(
-    artifact_base: &str,
-    component_digest: &str,
-    registry_auth_file: &Path,
-    insecure: bool,
-    oci_ca_paths: &[PathBuf],
-) -> anyhow::Result<Vec<u8>> {
-    let artifact = component_artifact_reference(artifact_base, component_digest)
-        .context("derive component artifact reference")?;
-    let reference = Reference::with_tag(
-        artifact.registry().to_owned(),
-        artifact.repository().to_owned(),
-        artifact.tag().to_owned(),
-    );
-    let credentials = read_registry_push_credentials(registry_auth_file, artifact.registry())
-        .context("load component registry credential")?;
-    let (client, auth) = registry_client(&reference, insecure, oci_ca_paths, credentials.as_ref())?;
-    let (manifest, _) = client
-        .pull_image_manifest(&reference, &auth)
-        .await
-        .with_context(|| {
-            format!("the registry holds no component {component_digest} at {reference}")
-        })?;
-    let [layer] = manifest.layers.as_slice() else {
-        anyhow::bail!(
-            "component artifact {reference} has {} layers, not one",
-            manifest.layers.len()
-        );
-    };
-    let mut bytes = Vec::new();
-    client
-        .pull_blob(&reference, layer, &mut bytes)
-        .await
-        .with_context(|| format!("pull component artifact {reference}"))?;
-    let pulled = format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes))
-    );
-    anyhow::ensure!(
-        pulled == component_digest,
-        "component artifact {reference} holds {pulled}, not {component_digest}"
-    );
-    Ok(bytes)
-}
-
 fn artifact_layout(
     component_bytes: &[u8],
     config_bytes: &[u8],
@@ -3552,32 +3504,5 @@ mod tests {
         )
         .await
         .expect("production publisher and puller agree");
-
-        let pulled = pull_component_bytes(
-            &artifact_base,
-            &component.component_digest,
-            PathBuf::from(&registry_auth_file).as_path(),
-            insecure_registry,
-            &oci_ca_paths,
-        )
-        .await
-        .expect("the saga pull reads the pushed component");
-        assert_eq!(pulled, component_bytes);
-        let missing = format!("sha256:{}", "0".repeat(64));
-        let error = pull_component_bytes(
-            &artifact_base,
-            &missing,
-            PathBuf::from(&registry_auth_file).as_path(),
-            insecure_registry,
-            &oci_ca_paths,
-        )
-        .await
-        .expect_err("a digest the registry does not hold is refused");
-        assert!(
-            error
-                .to_string()
-                .starts_with(&format!("the registry holds no component {missing}")),
-            "{error}"
-        );
     }
 }

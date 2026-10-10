@@ -85,26 +85,6 @@ Read the case results there, then remove the directory.
 Keep the qualification result and candidate files until publication and deployment finish.
 No source-host or CI-provider API is required.
 
-## Owned application acceptance
-
-Use a clean integrated checkout for the complete release command tests.
-Set `CARGO_TARGET_DIR` to the absolute build directory for that checkout.
-Run the existing Receiving and WMS fixtures:
-
-```bash
-tools/delivery-owned receiving
-tools/delivery-owned wms
-```
-
-Each fixture creates its own services, database, kind cluster, and native image registry.
-It keeps the published release store until preparation, qualification, publication, selection, and deployment finish.
-The application owner supplies the authenticated request and expected response.
-Receiving and WMS both supply the combined host image.
-The fixture reports failure if an operation or cleanup fails.
-It removes only its own resources.
-It writes the command results to its own new directory and prints that path.
-The directory is in the system temporary directory, or in the existing parent directory that an optional second argument names.
-
 ## Qualified publication
 
 A qualification result binds executed application checks to exact release files and one source commit.
@@ -143,83 +123,12 @@ If the registry uses HTTP, add `--insecure-registry` for that registry.
 The existing publisher preserves an exact retry and refuses conflicting content or source attribution.
 Different release bytes require a different identity through the existing release creation command.
 
-## Selection and deployment
+## Qualification record and deployment
 
-Select an already published release before starting its deployment:
-
-```bash
-wamn-ctl select-release \
-  --qualification "$DELIVERY_QUALIFICATION" "${release_args[@]}"
-```
-
-The select records a passing qualification file in `catalog.qualifications` in the control database.
-A later select of another release with the same package set and images can reuse it without the file:
-
-```bash
-wamn-ctl select-release \
-  --host-image "$DELIVERY_HOST_IMAGE" --gates-image "$DELIVERY_GATES_IMAGE" \
-  --identity-image "$DELIVERY_IDENTITY_IMAGE" "${release_args[@]}"
-```
-
-Give each image as `repository@sha256:<digest>`. The select refuses a tag without a digest.
-The package set is the `(package_id, version, component_digest)` triples of the release. The tenant, the environment and the release ID do not count.
-The select does not compare the commit of the qualification with the commit of the publication record. The record stays, and the gate is the package set and the image digests.
-Every select writes one row of `catalog.release_selections` with the qualification it used, and prints its `qualification_sha256`.
-
-Selection updates the existing `catalog.effective_release_heads` row for the release tenant and environment.
-Release IDs are scoped identities, and their numeric magnitude does not set deployment order.
-A deployment never selects itself again.
-If another release is already selected, the deployment refuses before changing workloads.
-
-Include the rendered host Deployment JSON and the application request and expected response files in `candidate.deployment_files` before qualification.
-Use absolute paths for these files.
-The Deployment must name the explicit namespace and contain one container with the qualified immutable host image.
-Its `--release-artifact-base` and `--release-manifest-digest` arguments must match the published release.
-For fresh nodes, set `imagePullPolicy: IfNotPresent` so the node can fetch that exact image from its registry.
-The owned application fixtures set this policy for qualified candidates.
-The command permits Kubernetes defaults but refuses changes to supplied container fields or additional container images.
-
-If the deployment also replaces identity, include its qualified Deployment JSON and pass `--identity-deployment`.
-The target must already provide its database, bindings, credentials, ingress, and other required infrastructure.
-
-Run the deployment against the explicit Kubernetes target:
-
-```bash
-wamn-ctl deploy-release \
-  --qualification "$DELIVERY_QUALIFICATION" "${release_args[@]}" \
-  --kubeconfig "$DELIVERY_KUBECONFIG" --context "$DELIVERY_CONTEXT" \
-  --namespace "$DELIVERY_NAMESPACE" --host-deployment "$DELIVERY_HOST_JSON" \
-  --http-workload "$DELIVERY_HTTP_WORKLOAD" \
-  --principal "$DELIVERY_OPERATOR" \
-  --interaction-url "$DELIVERY_INTERACTION_URL" --route-host "$DELIVERY_ROUTE_HOST" \
-  --request-body "$DELIVERY_REQUEST_JSON" --expected-response "$DELIVERY_RESPONSE_JSON" \
-  --bearer-file "$DELIVERY_CALLER_TOKEN_FILE"
-```
-
-The interaction URL must reach an operation in this deployment through its configured ingress.
-The kind of the operation sets the method. A read is a GET, and its request body file holds exactly one item, which the command sends in the query string.
-The selected manifest must permit a platform access token for that route.
-Keep the token in the private bearer file, outside qualified artifacts.
-If `--http-workload` is supplied, the command waits for that WorkloadDeployment and its same-named Service to become ready before the request.
-It requires a ready EndpointSlice backend and a reachable TCP endpoint.
-Readiness polls for up to 60 seconds. The authenticated request runs once.
-Readiness failure reports the Service, EndpointSlices, selected backends, target port, and pod readiness.
-The command requires an HTTP success response and an exact JSON result.
-It refuses redirects and does not repeat the application request automatically.
-
-Deployment pulls the published manifest by digest and uses the supplied immutable images without rebuilding.
-It holds the existing selection row lock through workload readiness, the authenticated operation, and the commit.
-It also holds the package owner's lineage locks while comparing the selected and installed migration sequences.
-Identical applied migrations permit code replacement across package versions.
-A different sequence requires persisted upgrade evidence for the exact immediate predecessor release and unchanged relevant installed state.
-Selection and deployment share this compatibility rule. Other mismatches refuse without reversing committed migrations.
-See [retained-schema rollback](deployment.md#rollback-and-maintenance).
-
-The command bounds deployment to 15 minutes and each Kubernetes rollout wait to 5 minutes.
-Failure or interruption leaves the deployment transaction uncommitted and reports failure.
-Workload changes and an application mutation can already exist when failure occurs.
-Inspect that state before another authorized attempt because the command does not reset the database or roll back workloads automatically.
-The deployment pull uses the same `--oci-ca-path` roots from `release_args`.
+`publish-qualified-release` records the passing qualification file in `catalog.qualifications` in the control database, after the push.
+The key is the package set of the release, its `(package_id, version, component_digest)` triples, and the `@sha256` digests of the host, gates and identity images.
+`wamn-ctl env apply` deploys a release: the environment document names its digest, and `apply` refuses a release with no recorded qualification on the host image of the release chart.
+See [deployment](deployment.md) for the environment verbs.
 
 Receiving and WMS qualification require a supplied identity image through `--identity-image`, because their published application routes accept sessions.
 The owned fixtures start that image and supply issuer trust to their application hosts.

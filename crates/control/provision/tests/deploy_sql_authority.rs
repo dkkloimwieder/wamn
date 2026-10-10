@@ -373,8 +373,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "39",
-        "the sweep must cover exactly the 39 governed relations"
+        governed, "38",
+        "the sweep must cover exactly the 38 governed relations"
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
@@ -435,7 +435,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 /// The floor was UNTARGETED, so it applied to every role — and it calls
 /// `wamn_authority.current_tenant_key()`, which only `wamn_app` may EXECUTE.
 /// Measured against these very files on PostgreSQL 18.6: `wamn_scenario_author`
-/// reading `catalog.effective_release_heads` got `ERROR: permission denied for
+/// reading a catalog relation got `ERROR: permission denied for
 /// function current_tenant_key`. Loud, and therefore survivable.
 ///
 /// Narrowing the floor `TO wamn_app` turns that error into something worse.

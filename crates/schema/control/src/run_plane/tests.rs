@@ -1203,7 +1203,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
     obs.authoring_effective_column_privileges
         .entry((
             "catalog".to_string(),
-            "effective_release_heads".to_string(),
+            "connection_requirements".to_string(),
             "wamn_app".to_string(),
         ))
         .or_default()
@@ -1214,7 +1214,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
         "packages",
         "connection_bindings",
         "releases",
-        "effective_release_heads",
+        "connection_requirements",
     ] {
         let repair = plan
             .actions

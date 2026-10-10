@@ -189,35 +189,34 @@ Record the selected source, artifact identity, release identity, command exits, 
 
 The verbs that manifests run are `wamn-ctl-ops prune-record-history`, `wamn-ctl-ops prune-run-history`, and `wamn-ctl reconcile-run-plane`.
 
-The [repository delivery commands](delivery.md) serialize deployment against the existing selected release.
+`wamn-ctl env apply` serializes deployment under the lifecycle lock of the environment.
 A CI completion order does not set deployment precedence.
 
 ## Web client files
 
-`wamn web upload` builds an application's web client with Vite and writes it to a bucket.
-Pass the manifest digest of the release that the client belongs to, and the project-environment database that holds the release head.
-The command refuses a release that is not the head, before the build. `select-release` sets the head.
+`wamn web upload` writes the built web client of each package of the release that an environment serves to a bucket.
+The built files are the `web/dist` layer of each package artifact, so `push-package` must run after the client is built.
+Pass the coordinate and the manifest digest of the release. The command refuses a release that is not the one the newest successful revision of the environment's release chart installed.
+It reads the platform inputs of `wamn-ctl env`, including `WAMN_PACKAGE_ARTIFACT_BASE`.
 
 ```bash
 AWS_ENDPOINT=<object store URL> AWS_ACCESS_KEY_ID=<key> AWS_SECRET_ACCESS_KEY=<secret> \
-  wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket s3://<bucket>/<prefix> \
-    --org <org> --database-url <project-environment database URL>
+  wamn web upload <org>/<project>/<env> --release sha256:<manifest digest> --bucket s3://<bucket>/<prefix>
 ```
 
 On Google Cloud, pass a `gs://` sink. The command then uses Application Default Credentials, which `gcloud auth application-default login` writes as a user OAuth token. No HMAC key exists:
 
 ```bash
-wamn web upload apps/wamn_receiving --release sha256:<manifest digest> --bucket gs://<bucket>/<prefix> \
-  --org <org> --database-url <project-environment database URL>
+wamn web upload <org>/<project>/<env> --release sha256:<manifest digest> --bucket gs://<bucket>/<prefix>
 ```
 
 The files go to `<prefix>/<package id>/<digest hex>/`, so each release keeps its own path.
 The build carries no org or project, so the built files are the same bytes for every deployment.
-The command writes `config.json` beside `index.html`, with the `--org` value and the project of the client package: `{"org":"<org>","project":"<project>"}`.
+The command writes `config.json` beside `index.html`, with the org of the coordinate and the project of the client package: `{"org":"<org>","project":"<project>"}`.
 The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
 Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` and `config.json` are `no-cache`.
 The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
-The command writes each object create-only. An object that already exists refuses the upload, and the command never replaces it.
+The command writes each object create-only and never replaces one. A package whose `index.html` is already there is reported as present and not written again.
 The bucket must allow reads without credentials.
 The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, the route ingress `api` of its host group, and its upload path `bucketPath`. The edge passes the headers of each object on.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
@@ -309,14 +308,12 @@ wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin
   --operation <package>:<interface>/<operation>
 ```
 
-The operation must be served by the current serving release of the environment, which `select-release` sets.
+The operation must be served by the release the environment serves, which `wamn-ctl env apply` installs.
 The grant also writes each operation that the selected operation requires in that release, and it prints them.
 `wamn-ctl revoke-permission` removes the selection and the operations that it required.
 An operation that another selected operation of the role requires stays effective, and the verb names that operation.
 The verb refuses an operation that the role holds only because another selected operation requires it.
 
-Before a release becomes current, `select-release` and the dev loop update these rows from the new release.
-A selection that the new release does not serve is removed.
 
 ## Mailbox-loss recovery
 
@@ -519,12 +516,11 @@ Continue through the existing [release commands](delivery.md) in this order:
 
 ```text
 push-component → publish-release → prepare-release → qualify-release
-→ publish-qualified-release → select-release
-→ host/workload deployment → readiness and authenticated operation
+→ publish-qualified-release → wamn-ctl env apply
 → optional wamn web upload
 ```
 
-Before mutation, application rechecks the predecessor head, package bytes, and privileges.
+Before mutation, application rechecks the installed predecessor packages, package bytes, and privileges.
 It stores accepted canonical evidence and its digest in `catalog.package_upgrade_qualifications` within the package application transaction.
 An exact retry changes nothing. Conflicting evidence for the same coordinate refuses.
 Data-access reconciliation consumes the persisted evidence and refuses a changed root set or derived privilege state.
@@ -532,10 +528,9 @@ Reconciliation requires a qualification that matches the complete current roots,
 It does not select by timestamp. Earlier qualifications remain immutable history and do not independently constrain later package sets.
 Each subsequent qualification starts from the complete installed set and proves the complete successor set.
 
-Kind delivery uses `deploy-release` after selection.
-wamn-dev/GCP uses generated host values, `helm upgrade`, and `kubectl apply` of the released workloads, as [Google Cloud operations](gcp.md) records.
+Deployment is `wamn-ctl env apply` of a document that names the release digest; `upgrade-environment` runs the same apply.
 Wait for readiness and prove a meaningful authenticated application operation before reporting success.
-Upload web files only after selecting their release.
+Upload web files only after `apply` installed their release.
 
 ### Coordinated base and overlay upgrade
 
@@ -595,23 +590,22 @@ Epic 2 does not require a scheduled live rollback and re-forward cycle.
 | Package application | The transaction rolls back, including candidate registration and accepted evidence. Correct the cause and retry. |
 | Application committed, data access not reconciled | The candidate schema remains with predecessor grants. Qualification proved predecessor SQL in this state. Repair reconciliation using the qualified roots. |
 | Data access committed, replica identity or later publication/qualification failed | The predecessor serves on candidate schema and grants. Repair and continue, or abandon that release attempt. |
-| Selection or host deployment | The head and serving release can differ. Complete deployment or select the qualified immediate predecessor and restore its workloads. Restore convergence before another upgrade. |
+| `env apply` write or readiness | The release chart serves its newest successful revision. Apply again, or run `wamn-ctl env rollback`. Restore convergence before another upgrade. |
 
 Never reverse a committed package migration for recovery.
 Any replacement package candidate names the installed leaf as its predecessor, including after a later deployment failure.
 
 ## Rollback and maintenance
 
-Select the qualified previous release, then restore its host and workload configuration through the environment's normal deployment procedure.
+Run `wamn-ctl env rollback <coordinate> --reason <text>`, which applies the previous intended release of the release chart.
 A release digest selects exact bytes, but a mutable image tag does not.
 The installed package and its committed migrations remain in place.
 Reverse migration is not rollback.
 
 After an additive package upgrade, rollback supports only the exact immediate predecessor release recorded in accepted upgrade evidence.
-`select-release` and kind `deploy-release` use the same compatibility rule: exact installed migration signatures, or persisted predecessor compatibility with unchanged relevant live state.
-They refuse missing evidence, a changed installed leaf, a non-prefix history, a different predecessor manifest, or changed qualified data privileges.
+`apply` refuses a release whose packages the installed schema is not compatible with.
 Rollback needs no operator-local upgrade result file. Ordinary release qualification and publication requirements still apply.
-On wamn-dev/GCP, select the predecessor, render its host values, run `helm upgrade`, apply its workloads, and prove readiness and authenticated operation success.
+Prove readiness and authenticated operation success after the rollback.
 The installed successor schema remains throughout rollback and any later re-forward deployment.
 
 `wamn-ctl-ops` contains copy, run-history pruning, event advisory, and cluster recovery commands.

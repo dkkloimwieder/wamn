@@ -188,10 +188,9 @@ BEGIN
   ASSERT catalog_tables = ARRAY[
     'authoring_command_audit', 'component_digest_owners', 'component_library',
     'connection_requirements', 'deployment_attestations',
-    'effective_release_heads', 'effective_release_packages',
+    'effective_release_packages',
     'effective_releases', 'package_artifacts', 'package_migrations',
-    'packages', 'qualifications', 'release_selections',
-    'tenant_environments'
+    'packages', 'qualifications', 'tenant_environments'
   ]::text[], format('catalog table list drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
@@ -241,9 +240,6 @@ INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment)
 INSERT INTO catalog.effective_release_packages
   (tenant_id, manifest_digest, package_id, package_version)
 VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'widgets', '1.0.0');
-INSERT INTO catalog.effective_release_heads
-  (tenant_id, environment, manifest_digest)
-VALUES ('tenant-a', 'dev', 'sha256:' || repeat('7', 64));
 
 
 
@@ -412,9 +408,6 @@ DO $seed$ DECLARE tenant text; package text; release text; BEGIN
     INSERT INTO catalog.effective_release_packages
       (tenant_id, manifest_digest, package_id, package_version)
     VALUES (tenant, release, package, '1.0.0');
-    INSERT INTO catalog.effective_release_heads
-      (tenant_id, environment, manifest_digest)
-    VALUES (tenant, 'dev', release);
     INSERT INTO catalog.component_digest_owners
       (tenant_id, environment_instance, component_digest, package_id)
     VALUES (tenant, '', 'sha256:' || repeat('b', 64), package);
@@ -458,7 +451,6 @@ $identity$;
 SET app.tenant = 'tenant-a';
 DO $positive$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.effective_releases) = 1;
-  ASSERT (SELECT count(*) FROM catalog.effective_release_heads) = 1;
   ASSERT (SELECT count(*) FROM catalog.connection_requirements) = 1;
 END
 $positive$;
@@ -500,8 +492,8 @@ DO $denied$ BEGIN
   BEGIN PERFORM 1 FROM catalog.deployment_attestations;
     ASSERT false, 'the author read deployment attestations';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  BEGIN UPDATE catalog.effective_release_heads SET manifest_digest = 'sha256:' || repeat('2', 64);
-    ASSERT false, 'the author moved an effective release head';
+  BEGIN UPDATE catalog.effective_releases SET environment = 'prod';
+    ASSERT false, 'the author rewrote an effective release';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM 1 FROM wamn_authority.author_login_tenants;
     ASSERT false, 'the author read its tenant mapping';

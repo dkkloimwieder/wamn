@@ -539,10 +539,6 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
              INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
              SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{CANDIDATE_RELEASE_BYTES}', 'UTF8') AS bytes) AS release; \
-             INSERT INTO catalog.effective_release_heads \
-               (tenant_id, environment, manifest_digest) \
-             SELECT '{TENANT}', '{ENVIRONMENT}', manifest_digest FROM catalog.releases \
-              WHERE tenant_id = '{TENANT}'; \
              INSERT INTO catalog.component_digest_owners \
                (tenant_id, component_digest, package_id) \
              VALUES ('{TENANT}', '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PACKAGE}'), \
@@ -1063,23 +1059,19 @@ async fn effectful_candidate_runtime_state(project: &Client) -> (bool, bool, boo
             "SELECT \
                EXISTS (SELECT 1 FROM catalog.connection_requirements \
                         WHERE tenant_id = $1 AND component_digest = $2) AS has_requirement, \
-               EXISTS (SELECT 1 FROM catalog.effective_release_heads AS head \
-                         JOIN catalog.releases AS release \
-                           ON release.tenant_id = head.tenant_id \
-                          AND release.manifest_digest = head.manifest_digest \
+               EXISTS (SELECT 1 FROM catalog.releases AS release \
                         CROSS JOIN LATERAL jsonb_array_elements( \
                               convert_from(release.canonical_bytes, 'UTF8')::jsonb \
                                 #> '{release,packages}') AS member(value) \
-                        WHERE head.tenant_id = $1 AND head.environment = $3 \
-                          AND member.value ->> 'package-id' = $4 \
-                          AND member.value ->> 'package-version' = $5) \
+                        WHERE release.tenant_id = $1 \
+                          AND member.value ->> 'package-id' = $3 \
+                          AND member.value ->> 'package-version' = $4) \
                  AS has_release_scope, \
                EXISTS (SELECT 1 FROM catalog.connection_bindings \
                         WHERE tenant_id = $1 AND component_digest = $2) AS has_binding",
             &[
                 &TENANT,
                 &EFFECTFUL_COMPONENT_DIGEST,
-                &ENVIRONMENT,
                 &EFFECTFUL_PACKAGE,
                 &CANDIDATE_PACKAGE_VERSION,
             ],

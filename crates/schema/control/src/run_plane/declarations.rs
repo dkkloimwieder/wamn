@@ -746,12 +746,6 @@ pub(super) const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "effective_release_heads",
-        app: &["SELECT"],
-        author: &[],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
         table: "connection_requirements",
         app: &["SELECT"],
         author: &[],

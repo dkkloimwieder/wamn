@@ -732,7 +732,6 @@ pub(super) fn verify_administration_grants(
         tuple("schema", "catalog", "catalog", "USAGE"),
         tuple("schema", "app_system", "app_system", "USAGE"),
         tuple("schema", "wamn_history", "wamn_history", "USAGE"),
-        tuple("relation", "catalog", "effective_release_heads", "SELECT"),
         tuple("routine", "wamn_history", "row_image", "EXECUTE"),
         tuple("routine", "wamn_authority", "tenant_key", "EXECUTE"),
     ]);

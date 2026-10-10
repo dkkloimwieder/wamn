@@ -1,39 +1,21 @@
-//! The qualification that a select uses (owner rulings of 2026-10-02 on
+//! The recorded qualification of a release (owner rulings of 2026-10-02 on
 //! `wamn-zua8.3`, [release qualification](../../../../../docs/plan/release-qualification.md)).
 //!
 //! A qualification proves bytes, not names. Its key is the package set, the
 //! exact `(package_id, version, component_digest)` triples of the release, and
 //! the `@sha256` digests of the host, gates and identity images, with the
-//! registry names ignored. A select with a qualification file records the file
-//! in `catalog.qualifications`. A select without one reuses a recorded
-//! qualification whose key equals the key of the release and its images.
+//! registry names ignored. `publish-qualified-release` records a passing file
+//! in `catalog.qualifications`, and `env apply` reads it by the package set
+//! and the host image digest of the release chart.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
-use anyhow::{Context as _, bail, ensure};
+use anyhow::{Context as _, ensure};
 use serde::Serialize;
 use tokio_postgres::Transaction;
 use wamn_catalog::ServingManifest;
 
 use super::Qualification;
-
-/// Where a select takes its qualification from.
-#[derive(Debug, Clone)]
-pub enum QualificationSource {
-    /// A qualification file. A passing file is recorded for reuse.
-    File(PathBuf),
-    /// The images of the candidate. A recorded qualification with the same
-    /// package set and image digests is reused.
-    Images {
-        /// The host image, `repository@sha256:<digest>`.
-        host: String,
-        /// The gates image, `repository@sha256:<digest>`.
-        gates: Option<String>,
-        /// The identity image, `repository@sha256:<digest>`.
-        identity: Option<String>,
-    },
-}
 
 /// One `(package_id, version, component_digest)` triple of a release.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -121,76 +103,40 @@ pub fn image_digest(reference: &str) -> anyhow::Result<String> {
     Ok(format!("sha256:{hex}"))
 }
 
-/// Resolve the qualification of `source` for the release `manifest`, on the
-/// control transaction, and return its SHA-256.
-pub(super) async fn resolve(
+/// Record a passing qualification in `catalog.qualifications` on the
+/// control transaction, and return its SHA-256. A recorded file is kept.
+pub(super) async fn record(
     control: &Transaction<'_>,
-    source: &QualificationSource,
-    manifest: &ServingManifest,
+    qualification: &Qualification,
+    bytes: &[u8],
 ) -> anyhow::Result<String> {
-    match source {
-        QualificationSource::File(path) => {
-            let bytes = std::fs::read(path).context("read the qualification result")?;
-            let qualification: Qualification =
-                serde_json::from_slice(&bytes).context("decode the qualification result")?;
-            qualification.require_pass()?;
-            let (qualified, _) = qualification.candidate.manifest()?;
-            let candidate = &qualification.candidate;
-            let key = QualificationKey::new(
-                &qualified,
-                &candidate.host_image,
-                candidate.gates_image.as_deref(),
-                candidate.identity_image.as_deref(),
-            )?;
-            ensure!(
-                key.package_set == package_set(manifest)?,
-                "the qualification's package set differs from the release's"
-            );
-            let sha256 = format!(
-                "sha256:{}",
-                hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes))
-            );
-            control
-                .execute(
-                    "INSERT INTO catalog.qualifications \
-                       (qualification_sha256, package_set, image_digests) \
-                     VALUES ($1, $2::text::jsonb, $3::text::jsonb) ON CONFLICT DO NOTHING",
-                    &[
-                        &sha256,
-                        &serde_json::to_string(&key.package_set)?,
-                        &serde_json::to_string(&key.image_digests)?,
-                    ],
-                )
-                .await
-                .context("record the qualification")?;
-            Ok(sha256)
-        }
-        QualificationSource::Images {
-            host,
-            gates,
-            identity,
-        } => {
-            let key = QualificationKey::new(manifest, host, gates.as_deref(), identity.as_deref())?;
-            let row = control
-                .query_opt(
-                    "SELECT qualification_sha256 FROM catalog.qualifications \
-                      WHERE package_set = $1::text::jsonb AND image_digests = $2::text::jsonb \
-                      ORDER BY recorded_at DESC LIMIT 1",
-                    &[
-                        &serde_json::to_string(&key.package_set)?,
-                        &serde_json::to_string(&key.image_digests)?,
-                    ],
-                )
-                .await
-                .context("look up a recorded qualification")?;
-            let Some(row) = row else {
-                bail!(
-                    "no recorded qualification has the package set and image digests of this release"
-                );
-            };
-            Ok(row.get(0))
-        }
-    }
+    qualification.require_pass()?;
+    let (qualified, _) = qualification.candidate.manifest()?;
+    let candidate = &qualification.candidate;
+    let key = QualificationKey::new(
+        &qualified,
+        &candidate.host_image,
+        candidate.gates_image.as_deref(),
+        candidate.identity_image.as_deref(),
+    )?;
+    let sha256 = format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
+    );
+    control
+        .execute(
+            "INSERT INTO catalog.qualifications \
+               (qualification_sha256, package_set, image_digests) \
+             VALUES ($1, $2::text::jsonb, $3::text::jsonb) ON CONFLICT DO NOTHING",
+            &[
+                &sha256,
+                &serde_json::to_string(&key.package_set)?,
+                &serde_json::to_string(&key.image_digests)?,
+            ],
+        )
+        .await
+        .context("record the qualification")?;
+    Ok(sha256)
 }
 
 #[cfg(test)]

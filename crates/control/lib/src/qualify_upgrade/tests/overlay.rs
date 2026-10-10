@@ -177,10 +177,6 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
         "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT, &digest, &bytes],
     ).await.unwrap();
-    base.source.execute(
-        "UPDATE catalog.effective_release_heads SET manifest_digest = $3 WHERE tenant_id = $1 AND environment = $2",
-        &[&TENANT, &ENVIRONMENT, &digest],
-    ).await.unwrap();
     base.serving.manifest_digest = digest;
     base.serving.packages.insert(
         OVERLAY.to_owned(),
@@ -574,15 +570,6 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
         "{error:#}"
     );
     assert_eq!(state(&mut fixture.base.source).await, reconciled);
-    let mut tx = fixture.base.source.transaction().await.unwrap();
-    crate::package_upgrade::require_compatible_schema(
-        &mut tx,
-        &fixture.base.manifest,
-        &wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
-    )
-    .await
-    .unwrap();
-    tx.rollback().await.unwrap();
     let tx = fixture.base.source.transaction().await.unwrap();
     tx.batch_execute("SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), set_config('app.operation', 'admin:constraint-proof', true)").await.unwrap();
     let duplicate = tx
@@ -1017,10 +1004,6 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     fixture.base.source.execute(
         "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT, &digest, &bytes],
-    ).await.unwrap();
-    fixture.base.source.execute(
-        "UPDATE catalog.effective_release_heads SET manifest_digest = $3 WHERE tenant_id = $1 AND environment = $2",
-        &[&TENANT, &ENVIRONMENT, &digest],
     ).await.unwrap();
     fixture.base.serving.manifest_digest = digest;
     fixture.base.serving.packages.insert(

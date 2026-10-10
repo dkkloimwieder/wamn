@@ -169,18 +169,6 @@ CREATE TRIGGER package_migrations_release_seal
     FOR EACH ROW
     EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
-CREATE TABLE catalog.effective_release_heads (
-    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
-    environment     text        NOT NULL CHECK (environment <> ''),
-    manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    updated_at      timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT effective_release_heads_pkey
-        PRIMARY KEY (tenant_id, environment),
-    CONSTRAINT effective_release_heads_release_fkey
-        FOREIGN KEY (tenant_id, manifest_digest)
-        REFERENCES catalog.releases (tenant_id, manifest_digest)
-);
-
 -- A component digest belongs to one package for life. Each version of that
 -- package may hold it once, and another package may not hold it
 -- (docs/plan/kind-to-type.md §4.3.6).
@@ -460,7 +448,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners',
-        'releases', 'effective_release_heads',
+        'releases',
         'component_digest_owners', 'component_library', 'connection_requirements',
         'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
@@ -515,7 +503,6 @@ CREATE TRIGGER connection_bindings_immutable
 
 GRANT SELECT ON catalog.packages,
     catalog.releases,
-    catalog.effective_release_heads,
     catalog.component_digest_owners,
     catalog.component_library,
     catalog.connection_requirements,

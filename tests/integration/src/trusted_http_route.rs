@@ -698,15 +698,6 @@ async fn seed_with_client(
     if let Some((component, documents)) = additional_wiring {
         seed_additional_wirings(client, component, documents).await?;
     }
-    client
-        .execute(
-            "INSERT INTO catalog.effective_release_heads \
-                    (tenant_id, environment, manifest_digest) \
-             VALUES ($1, $2, $3)",
-            &[&TENANT, &ENVIRONMENT, &manifest_digest],
-        )
-        .await
-        .context("select the effective release")?;
 
     let config: tokio_postgres::Config = options
         .database_url

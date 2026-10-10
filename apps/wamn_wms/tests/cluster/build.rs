@@ -14,7 +14,6 @@ pub(super) async fn build(
     target: &Path,
     evidence: &Path,
     generated_terminal: bool,
-    delivery: bool,
 ) -> anyhow::Result<()> {
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         candidate.artifact_hashes()?;
@@ -101,9 +100,6 @@ pub(super) async fn build(
     }
     components.sort_by(|left, right| left.0.cmp(&right.0));
     crate::wms_runtime_live::write_result(evidence, "component-bytes.json", &json!(components))?;
-    if delivery {
-        return Ok(());
-    }
     let host = target.join("debug/wamn-host");
     let bytes = fs::read(&host).context("read the host produced by the native build")?;
     crate::wms_runtime_live::write_result(

@@ -2,7 +2,7 @@
 # Existing app fixtures own the stores, release publish, assertions, and cleanup.
 set -euo pipefail
 umask 077
-action=${1:?receiving, wms, native-registry, load-native, remove-native, or render-host}
+action=${1:?build-native, native-registry, load-native, remove-native, or render-host}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ $action == build-native ]]; then
   target=${2:?absolute native target directory}
@@ -23,32 +23,10 @@ if [[ $action == build-native ]]; then
     cargo build --locked --offline --profile dev --bins --target-dir "$target" \
       -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
 fi
-if [[ $action == receiving ]]; then
-  # An optional existing parent directory for the test result directory.
-  if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export WAMN_RECEIVING_EVIDENCE_DIR=$parent; fi
-  [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
-  cd "$repository"
-  exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-receiving-tests --features cluster --lib \
-    route_authentication_live::cluster::delivery_case::owned_release_delivery \
-    -- --exact --ignored --nocapture
-fi
-if [[ $action == wms ]]; then
-  # An optional existing parent directory for the test result directory.
-  if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export WAMN_WMS_EVIDENCE_DIR=$parent; fi
-  [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
-  cd "$repository"
-  exec "$repository/tools/require-test-result" cargo test --locked --offline -p wamn-wms-tests --features cluster --lib cluster::owned_release_delivery \
-    -- --exact --ignored --nocapture
-fi
 cluster=${2:?owned cluster name}
 [[ $cluster =~ ^wamn-(receiving|wms)-[a-f0-9]{32}$ ]] || { printf 'An exact owned application cluster name is required.\n' >&2; exit 64; }
 work=${3:?owned private work directory}
-cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
 case "$action" in
-  build-host)
-    source=${4:?source commit}
-    "$cache" ensure "$repository" host host "$source" "$cluster" "$cluster"
-    ;;
   native-registry)
     source=${4:?source commit}
     if docker container inspect "$cluster-native-registry" >/dev/null 2>&1; then

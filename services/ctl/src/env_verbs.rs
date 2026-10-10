@@ -130,7 +130,7 @@ fn confirm_data(coordinate: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn parse_coordinate(coordinate: &str) -> anyhow::Result<Triple> {
+pub(crate) fn parse_coordinate(coordinate: &str) -> anyhow::Result<Triple> {
     let mut parts = coordinate.split('/');
     let (Some(org), Some(project), Some(env), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())

@@ -1105,9 +1105,8 @@ async fn publish_release_with_package_manifests(
         transaction,
         request,
         package_manifests,
-        Some(package_manifest_hashes),
+        package_manifest_hashes,
         route_contracts,
-        None,
     )
     .await
 }
@@ -1116,24 +1115,21 @@ async fn publish_release_from_sources(
     transaction: &Transaction<'_>,
     request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
-    package_manifest_hashes: Option<&BTreeMap<String, String>>,
+    package_manifest_hashes: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
-    promoted_registrations: Option<&BTreeMap<String, ServingRegistration>>,
 ) -> Result<PublishedRelease, PublishManifestError> {
     transaction
         .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
         .await
         .map_err(|error| storage("claim the release tenant", error))?;
     validate_request(request)?;
-    if let Some(package_manifest_hashes) = package_manifest_hashes {
-        validate_release_package_manifests(
-            transaction,
-            request,
-            package_manifests,
-            package_manifest_hashes,
-        )
-        .await?;
-    }
+    validate_release_package_manifests(
+        transaction,
+        request,
+        package_manifests,
+        package_manifest_hashes,
+    )
+    .await?;
 
     let mut components = BTreeSet::new();
     let mut wirings = BTreeSet::new();
@@ -1191,11 +1187,7 @@ async fn publish_release_from_sources(
     }
 
     let routes = project_routes(request, route_contracts, &component_facts, &mut components)?;
-    let registrations = if let Some(registrations) = promoted_registrations {
-        registrations.clone()
-    } else {
-        derive_serving_registrations(package_manifests, &entry_targets)?
-    };
+    let registrations = derive_serving_registrations(package_manifests, &entry_targets)?;
     refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
     let (route_attachments, wiring_attachments) =
         ServingAttachment::split(request.attachments.clone());

@@ -143,19 +143,6 @@ CREATE TRIGGER package_migrations_release_seal
     FOR EACH ROW
     EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
-CREATE TABLE catalog.effective_release_heads (
-    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
-    environment     text        NOT NULL CHECK (environment <> ''),
-    manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    updated_at      timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT effective_release_heads_pkey
-        PRIMARY KEY (tenant_id, environment),
-    CONSTRAINT effective_release_heads_release_fkey
-        FOREIGN KEY (tenant_id, manifest_digest, environment)
-        REFERENCES catalog.effective_releases
-            (tenant_id, manifest_digest, environment)
-);
-
 -- `environment_instance` names WHICH CREATION of the project database this fact
 -- belongs to (wamn-10yt.52). The development loop drops and clones the project
 -- database before every run, while this control database is never recreated, so
@@ -386,28 +373,6 @@ ALTER TABLE catalog.qualifications FORCE ROW LEVEL SECURITY;
 CREATE POLICY qualifications_all ON catalog.qualifications
     USING (true) WITH CHECK (true);
 
--- Every select, with the qualification it used (wamn-zua8.3).
-CREATE TABLE catalog.release_selections (
-    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
-    environment          text        NOT NULL CHECK (environment <> ''),
-    manifest_digest      text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    qualification_sha256 text,
-    reason               text        NOT NULL
-        CHECK (reason IN ('qualification', 'environment-creation')),
-    selected_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT release_selections_qualification_check
-        CHECK ((qualification_sha256 IS NULL) = (reason = 'environment-creation')),
-    CONSTRAINT release_selections_pkey
-        PRIMARY KEY (tenant_id, environment, selected_at),
-    CONSTRAINT release_selections_release_fkey
-        FOREIGN KEY (tenant_id, manifest_digest, environment)
-        REFERENCES catalog.effective_releases
-            (tenant_id, manifest_digest, environment),
-    CONSTRAINT release_selections_qualification_fkey
-        FOREIGN KEY (qualification_sha256)
-        REFERENCES catalog.qualifications (qualification_sha256)
-);
-
 -- Tenant isolation is structural even for owner-only tables.
 DO $tenant_policies$
 DECLARE
@@ -417,10 +382,10 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.effective_release_heads', 'catalog.component_digest_owners',
+        'catalog.component_digest_owners',
         'catalog.component_library', 'catalog.connection_requirements',
         'catalog.authoring_command_audit', 'catalog.deployment_attestations',
-        'catalog.tenant_environments', 'catalog.release_selections',
+        'catalog.tenant_environments',
         'wamn_run.gate_reports'
     ] LOOP
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', relation_name);
@@ -451,7 +416,7 @@ BEGIN
         'catalog.authoring_command_audit', 'catalog.component_digest_owners',
         'catalog.component_library', 'catalog.connection_requirements',
         'catalog.deployment_attestations', 'catalog.package_artifacts',
-        'catalog.qualifications', 'catalog.release_selections',
+        'catalog.qualifications',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -497,7 +462,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.effective_releases', 'catalog.effective_release_heads',
+        'catalog.effective_releases',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
         'wamn_run.gate_reports'
     ] LOOP
@@ -516,11 +481,9 @@ GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_control_author;
 GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
     TO wamn_control_author;
 
-REVOKE ALL PRIVILEGES ON catalog.effective_releases,
-    catalog.effective_release_heads, catalog.connection_requirements
+REVOKE ALL PRIVILEGES ON catalog.effective_releases, catalog.connection_requirements
     FROM wamn_control_author;
-GRANT SELECT ON catalog.effective_releases,
-    catalog.effective_release_heads, catalog.connection_requirements
+GRANT SELECT ON catalog.effective_releases, catalog.connection_requirements
     TO wamn_control_author;
 
 REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports
@@ -544,10 +507,9 @@ BEGIN
     IF catalog_tables IS DISTINCT FROM ARRAY[
         'authoring_command_audit', 'component_digest_owners', 'component_library',
         'connection_requirements', 'deployment_attestations',
-        'effective_release_heads', 'effective_release_packages',
+        'effective_release_packages',
         'effective_releases', 'package_artifacts', 'package_migrations',
-        'packages', 'qualifications', 'release_selections',
-        'tenant_environments'
+        'packages', 'qualifications', 'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';
@@ -579,7 +541,6 @@ BEGIN
            AND NOT EXISTS (
              SELECT 1 FROM (VALUES
                  ('catalog', 'effective_releases', 'SELECT'),
-                 ('catalog', 'effective_release_heads', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),

@@ -107,8 +107,7 @@ A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the tenant lock that `wamn-ctl` and release reconciliation take.
 The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/platform/src/application.rs), which the role verbs of `wamn-ctl` also call.
 `user_role.revoke` reads `project-admin` through the identity reader of the host, because `org-admin` writes `project-admin` in every project of the org.
-`permission.grant` writes the closure of the loaded release, so under the tenant lock it reads `catalog.effective_release_heads` first.
-If the head names another release, the grant refuses with `release_not_current`, because release reconciliation already wrote the closures of the head.
+`permission.grant` writes the permission root; each host expands the roots through the release it loaded.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `release_not_current`, `permission_not_held`, `permission_not_selected` (with `required_by`), `user_not_found` or `admin_covered`.
 The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `host_route/generated/client-ts`.
 The web screens `RoleGrid` and `UserGrid` of [`@wamn/ui/admin`](../../web/ui/README.md#the-platform-exports) call these routes through that client and write no database directly.

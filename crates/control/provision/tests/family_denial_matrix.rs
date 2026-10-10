@@ -92,7 +92,7 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 27] = [
+const MATRIX_RELATIONS: [&str; 26] = [
     "app_system.environment",
     "app_system.permissions",
     "app_system.user_roles",
@@ -103,7 +103,6 @@ const MATRIX_RELATIONS: [&str; 27] = [
     "catalog.connection_generations",
     "catalog.connection_instances",
     "catalog.connection_requirements",
-    "catalog.effective_release_heads",
     "catalog.event_registrations",
     "catalog.packages",
     "catalog.releases",
@@ -182,7 +181,6 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
-            "catalog.effective_release_heads|SELECT|table",
             "catalog.event_registrations|SELECT|table",
             "catalog.packages|SELECT|table",
             "catalog.releases|SELECT|table",
@@ -307,7 +305,6 @@ const MATRIX: [FamilyReach; 10] = [
             "app_system.users|INSERT|table",
             "app_system.users|SELECT|table",
             "app_system.users|UPDATE|table",
-            "catalog.effective_release_heads|SELECT|table",
         ],
         routines: &["wamn_authority.tenant_key(text)"],
     },
@@ -601,9 +598,6 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.releases
     (tenant_id, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO catalog.effective_release_heads
-    (tenant_id, environment, manifest_digest)
-    VALUES (t, 'dev', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');
   INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class)
     VALUES (t, 'dev', 'standard');
   INSERT INTO wamn_run.runs
