@@ -54,6 +54,8 @@ async fn carrier_shape(client: &Client, table: &str) -> Vec<String> {
         .collect()
 }
 
+const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+
 const INSERT_EVIDENCE: &str = "\
 INSERT INTO catalog.package_upgrade_qualifications \
     (tenant_id, package_id, candidate_package_version, canonical_bytes, result_sha256, \
@@ -99,11 +101,19 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     // and names its releases by integer id: the release tables, the head, the
     // connection bindings and the run pin that migration 0012 converts.
     // Only this registry projection is needed to register the disposable target,
-    // with the permission rows that migration 0011 prunes and the wiring
-    // activation tables that migration 0013 drops.
+    // with the wiring activation tables that migration 0013 drops, the
+    // connection requirement foreign key that migration 0014 drops, and no
+    // package floors, which migration 0015 creates. The application schema
+    // carries the permission rows that migration 0011 prunes and the
+    // administration tables that migration 0016 grants.
     client
         .batch_execute(
             "DROP TABLE catalog.package_upgrade_qualifications; \
+             DROP TABLE catalog.package_floors; \
+             ALTER TABLE catalog.connection_requirements \
+               ADD CONSTRAINT connection_requirements_component_fkey \
+                 FOREIGN KEY (tenant_id, component_digest) \
+                 REFERENCES catalog.component_digest_owners (tenant_id, component_digest); \
              CREATE TABLE catalog.effective_release_heads ( \
                tenant_id text NOT NULL, environment text NOT NULL, \
                effective_release_id int NOT NULL, \
@@ -190,8 +200,6 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
                  CHECK (definition_type IN ('relation', 'field', 'constraint')); \
              CREATE TABLE catalog.wiring_activation (tenant_id text); \
              CREATE TABLE catalog.wiring_activation_events (tenant_id text); \
-             CREATE SCHEMA app_system; \
-             CREATE TABLE app_system.permissions (permission text, required_by text); \
              CREATE SCHEMA registry; \
              CREATE TABLE registry.project_envs \
                (org text, project text, env text, instance_suffix text); \
@@ -200,6 +208,10 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         )
         .await
         .expect("prepare the installed pre-change database");
+    client
+        .batch_execute(APP_SCHEMA)
+        .await
+        .expect("install the application schema");
     let request = UpgradeSchemaRequest {
         system_database_url: coordinate.url().to_owned(),
         admin_database_url: Some(coordinate.url().to_owned()),
