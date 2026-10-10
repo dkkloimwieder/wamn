@@ -39,7 +39,8 @@ use wamn_runtime::plugins::wamn_postgres::{
     ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, ProductionClaimErrorType,
     ProductionClaimResult, ProductionCompletion, ProductionCompletionResult,
     ProductionLeaseRenewal, ProductionReapResult, RELEASE_COMPONENTS_SQL, RELEASE_WIRING_SQL,
-    WamnPostgres, WamnPostgresConfig, credential_exactness_probe, explicit_credential_source,
+    ReleaseIdentity, WamnPostgres, WamnPostgresConfig, credential_exactness_probe,
+    explicit_credential_source,
 };
 
 /// The generation login every leg runs as.
@@ -710,6 +711,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     plugin.set_tenant(COMPONENT, TENANT)?;
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
+    // A production host carries its release digest and claims only the runs
+    // pinned to it (docs/plan/platform-deploy.md R20).
+    plugin.set_release_identity(
+        COMPONENT,
+        ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(&manifest_digest)?),
+    )?;
     assert_eq!(
         plugin.renew(COMPONENT, "absent", 1, 30_000).await?,
         ProductionLeaseRenewal::FenceLost
