@@ -198,6 +198,7 @@ fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
         database_url: fixture.source_database.url().to_owned(),
         tenant: TENANT.to_owned(),
         environment: ENVIRONMENT.to_owned(),
+        predecessor_release: fixture.serving.manifest_digest.clone(),
         package: package.clone(),
         presented_packages: vec![package],
         predecessor_packages: Vec::new(),
@@ -513,4 +514,35 @@ async fn whole_row_failure_is_refused_before_grants_that_would_fix_it() {
     assert_eq!(state(&mut fixture.source).await, original);
     drop(copy);
     scratch.finish().await.unwrap();
+}
+
+#[test]
+fn the_predecessor_release_must_name_the_installed_versions() {
+    let installed = [PackageIdentity {
+        package_id: "platform_fixture".to_owned(),
+        package_version: PREDECESSOR_VERSION.to_owned(),
+        predecessor_version: None,
+        manifest_sha256: String::new(),
+        migrations: Vec::new(),
+    }];
+    require_installed_release(
+        "sha256:a",
+        [("platform_fixture", PREDECESSOR_VERSION)],
+        &installed,
+    )
+    .unwrap();
+    let older = require_installed_release("sha256:a", [("platform_fixture", "2.0.0")], &installed)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        older,
+        "predecessor release sha256:a names platform_fixture@2.0.0, but platform_fixture@2.1.0 is installed"
+    );
+    let missing = require_installed_release("sha256:a", [("other", "1.0.0")], &installed)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        missing,
+        "predecessor release sha256:a names other@1.0.0, which is not installed"
+    );
 }

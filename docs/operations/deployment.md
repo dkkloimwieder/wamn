@@ -439,7 +439,9 @@ An upgrade result cannot satisfy `publish-qualified-release` or replace ordinary
 ### Upgrade prerequisites
 
 Use one deployment writer for the environment. Resolve any mismatch between the selected release and serving workloads before qualification.
-The observer compares the selected manifest digest with `--release-manifest-digest` on fully rolled-out, ready host pods.
+`--predecessor-release` names the manifest digest of the release the environment serves.
+The command refuses it when `catalog.releases` has no row for it, or when it names a package version that is not installed.
+The observer compares that digest with the one on fully rolled-out, ready host pods.
 It follows each selected `WorkloadDeployment` through its current replica set to the ready, correctly placed `Workload` objects.
 The Kubernetes arguments select those resources. They do not assert application schemas.
 
@@ -461,6 +463,7 @@ The verb fetches each predecessor by its recorded digest and compares its frozen
 It does not rebuild predecessor SQL with the current generator.
 
 The package stage qualifies the complete successor set before application.
+It takes the predecessor release from the active connection bindings of the environment, which must name one release.
 An additive base upgrade and all affected overlay successors apply in one transaction, with the base first.
 A retry requires the saved qualification to match the exact environment, complete package roots, and selected base component bytes.
 The verb refuses multiple independent base transitions in one run.
@@ -481,6 +484,7 @@ Repeat `--presented-package` for every installed lineage and `--package-workload
 ```bash
 wamn-ctl qualify-upgrade \
   --database-url "$OWNER_URL" --tenant "$TENANT" --environment "$ENVIRONMENT" \
+  --predecessor-release "$PREDECESSOR_RELEASE" \
   --package "$CANDIDATE_PACKAGE" --presented-package "$CANDIDATE_PACKAGE" \
   --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
   --host-deployment "$HOST_DEPLOYMENT" \
@@ -561,6 +565,7 @@ Repeat `--package-workload PACKAGE=NAME` for every SQL-bearing package in the pr
 ```bash
 wamn-ctl qualify-upgrade \
   --database-url "$OWNER_URL" --tenant "$TENANT" --environment "$ENVIRONMENT" \
+  --predecessor-release "$PREDECESSOR_RELEASE" \
   --package "$BASE_SUCCESSOR" --base-component "$BASE_COMPONENT" \
   --predecessor-package "$BASE_PREDECESSOR" --predecessor-package "$OVERLAY_PREDECESSOR" \
   --presented-package "$BASE_SUCCESSOR" --presented-package "$OVERLAY_SUCCESSOR" \

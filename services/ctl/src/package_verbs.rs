@@ -87,6 +87,10 @@ pub struct QualifyUpgradeArgs {
     /// Environment whose selected release currently serves.
     #[arg(long)]
     pub environment: String,
+    /// Manifest digest of the release the environment serves; it must be in
+    /// `catalog.releases` and name the installed package versions.
+    #[arg(long)]
+    pub predecessor_release: String,
     /// New file for canonical qualification evidence.
     #[arg(long)]
     pub result: PathBuf,
@@ -130,6 +134,7 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
         database_url: args.database_url,
         tenant: args.tenant,
         environment: args.environment,
+        predecessor_release: args.predecessor_release,
         package: args.package,
         presented_packages: args.presented_packages,
         predecessor_packages: args.predecessor_packages,

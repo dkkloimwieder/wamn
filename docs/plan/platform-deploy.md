@@ -397,9 +397,9 @@ The head is read in twelve places on `main`, not only by deployment. Each gets a
 | create/copy upload-ui | `serve.rs::upload_ui` | manifest digest of head | the values |
 | create/copy apply | `serve.rs::head_release` | existing head with equal package set | removed with the saga |
 | copy read-source | `environment_copy.rs::source_head` | source release and tenant | the document: a copy is the same file under a new coordinate, so nothing is read from a source |
-| qualify-upgrade predecessor | `qualify_upgrade/mod.rs` | predecessor manifest | the installed package versions and `catalog.releases` in the project database |
+| qualify-upgrade predecessor | `qualify_upgrade/mod.rs` | predecessor manifest | the `--predecessor-release` digest, refused unless `catalog.releases` holds it and it names the installed package versions in the project database |
 | apply-package / package upgrade | `package_upgrade.rs::require_application` (callers `apply_package.rs::apply_prepared`, `package_upgrade.rs::apply_coordinated`) | predecessor unchanged since qualification | the installed package versions in the project database, compared at §10.2 step 1 |
-| upgrade-environment bindings | `upgrade_environment.rs::copy_bindings` | the connection bindings in the project database, which the host reads per request; nothing in Helm carries them | `catalog.connection_bindings` in the project database (R22) |
+| upgrade-environment bindings | `upgrade_environment.rs::copy_bindings` | the connection bindings in the project database, which the host reads per request; nothing in Helm carries them | `catalog.connection_bindings` in the project database: the active rows must name one release, else refused (R22) |
 | runtime route authority | `application_route.rs::RELEASE_HEAD_SQL, require_head, handle` | refuse a `PermissionGrant` route when the loaded release is not head | deleted; a host serves exactly the release on its pod template, and during a rollout both releases legitimately serve. Moved first in Epic 6, or every deploy fails its own test. |
 | teardown | `delete_project_env.rs` | deletion order | `helm uninstall` |
 | promote | `promote.rs::UPSERT_HEAD_SQL` (writer) | upsert head | a document naming the digest; `apply` |

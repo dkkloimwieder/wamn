@@ -736,6 +736,16 @@ impl Run {
                     database_url: databases.project_url(),
                     tenant: databases.tenant.clone(),
                     environment: self.arguments.environment.clone(),
+                    predecessor_release: bound_release(
+                        &databases.project().await?,
+                        &databases.tenant,
+                        &self.arguments.environment,
+                        None,
+                    )
+                    .await?
+                    .context(
+                        "no active connection binding names the release the environment serves, so the package upgrade has no predecessor release",
+                    )?,
                     package: candidate.root.clone(),
                     presented_packages: roots.clone(),
                     predecessor_packages: predecessors
@@ -2098,25 +2108,60 @@ impl GateService {
     }
 }
 
+/// The one release that the active connection bindings of the environment
+/// name, other than `except`. None when no such binding is active. Refused
+/// when they name more than one release (docs/plan/platform-deploy.md §13, R22).
+async fn bound_release(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    environment: &str,
+    except: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    let digests = client
+        .query(
+            "SELECT DISTINCT manifest_digest FROM catalog.connection_bindings
+              WHERE tenant_id = $1 AND environment = $2 AND binding_status = 'active'
+                AND manifest_digest IS DISTINCT FROM $3
+              ORDER BY manifest_digest",
+            &[&tenant, &environment, &except],
+        )
+        .await
+        .context("read the releases of the active connection bindings")?
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>();
+    match digests.as_slice() {
+        [] => Ok(None),
+        [digest] => Ok(Some(digest.clone())),
+        _ => bail!(
+            "the active connection bindings of {environment} name more than one release ({}); they must name one",
+            digests.join(", ")
+        ),
+    }
+}
+
 /// Copies each active binding of the current release of the environment to
 /// the new release, with the digest that this run pushed for the same
-/// component (owner ruling of 2026-10-02 on `wamn-m511.5`).
+/// component (owner ruling of 2026-10-02 on `wamn-m511.5`). The current
+/// release is the one the active bindings name, other than the new release.
 async fn copy_bindings(
     run: &Run,
     databases: &Databases,
     release: &str,
     pushed: &BTreeMap<String, String>,
 ) -> anyhow::Result<Vec<(String, String)>> {
-    // An environment with no release chart revision binds nothing yet.
-    let Some(current) = crate::environment::analyse::deployed_release(
-        &platform(&run.environment()?)?.target,
+    let client = databases.project().await?;
+    // An environment with no active binding binds nothing yet.
+    let Some(current) = bound_release(
+        &client,
         &databases.tenant,
+        &run.arguments.environment,
+        Some(release),
     )
     .await?
     else {
         return Ok(Vec::new());
     };
-    let client = databases.project().await?;
     let rows = client
         .query(
             "SELECT b.component_digest, b.store_alias, b.instance_id,

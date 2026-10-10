@@ -36,6 +36,10 @@ pub struct QualifyUpgradeRequest {
     pub database_url: String,
     pub tenant: String,
     pub environment: String,
+    /// Manifest digest of the release the environment serves. It must be a
+    /// row of `catalog.releases` and name the installed package versions
+    /// (docs/plan/platform-deploy.md §13).
+    pub predecessor_release: String,
     pub package: PathBuf,
     pub presented_packages: Vec<PathBuf>,
     /// Complete frozen original roots for an installed package upgrade.
@@ -311,25 +315,17 @@ async fn copy_predecessor(
         "upgrade-schema must install the package qualification carrier before qualification"
     );
     let predecessor_packages = read_current_packages(&tx, &request.tenant).await?;
-    let manifest_digest = match observer {
-        WorkloadObserver::Live => {
-            let workload = &request.workload;
-            crate::environment::analyse::deployed_release(
-                &crate::release_chart::Target {
-                    kubeconfig: workload.kubeconfig.clone(),
-                    context: workload.context.clone(),
-                    namespace: workload.namespace.clone(),
-                },
-                &request.tenant,
-            )
-            .await?
-            .context("the environment's release chart has no deployed release")?
-        }
-        #[cfg(test)]
-        WorkloadObserver::Captured(serving)
-        | WorkloadObserver::CapturedWithChange { serving, .. } => serving.manifest_digest.clone(),
-    };
+    let manifest_digest = request.predecessor_release.clone();
     let manifest = read_release_manifest(&tx, &request.tenant, &manifest_digest).await?;
+    require_installed_release(
+        &manifest_digest,
+        manifest
+            .release
+            .packages
+            .iter()
+            .map(|package| (package.package_id(), package.package_version())),
+        &predecessor_packages,
+    )?;
     let predecessor = predecessor_packages
         .iter()
         .find(|package| package.package_id == candidate.identity.package_id)
@@ -1041,6 +1037,31 @@ pub(crate) async fn read_release_manifest(
         "the cached release differs from its digest"
     );
     Ok(manifest)
+}
+
+/// Refuse a predecessor release that names a package version other than the
+/// installed one, or a package that is not installed.
+fn require_installed_release<'a>(
+    digest: &str,
+    released: impl IntoIterator<Item = (&'a str, &'a str)>,
+    installed: &[PackageIdentity],
+) -> anyhow::Result<()> {
+    for (package_id, package_version) in released {
+        let installed = installed
+            .iter()
+            .find(|installed| installed.package_id == package_id)
+            .with_context(|| {
+                format!(
+                    "predecessor release {digest} names {package_id}@{package_version}, which is not installed"
+                )
+            })?;
+        ensure!(
+            installed.package_version == package_version,
+            "predecessor release {digest} names {package_id}@{package_version}, but {package_id}@{} is installed",
+            installed.package_version
+        );
+    }
+    Ok(())
 }
 
 /// Admit only the canonical upgrade result format, distinct from release qualification.
