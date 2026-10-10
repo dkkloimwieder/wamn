@@ -665,6 +665,7 @@ impl Run {
                     &crate::package_artifact::PushPackageRequest {
                         package: package.root.clone(),
                         registry: package_registry.clone(),
+                        component_artifact_base: format!("{}/components", environment.registry),
                         source_commit: Some(self.arguments.commit.clone()),
                     },
                 )

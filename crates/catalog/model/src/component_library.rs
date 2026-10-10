@@ -347,6 +347,56 @@ pub struct AdmittedComponentFacts {
     pub connections: Vec<ComponentConnection>,
 }
 
+/// The admitted facts of one component as a package artifact carries them
+/// (docs/plan/platform-deploy.md §7.2, contract A): an [`AdmittedComponent`]
+/// without its scope, plus its connections. A package artifact is tenant-free,
+/// so the reader supplies the scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentDescriptor {
+    pub component: String,
+    pub interface_version: String,
+    pub component_digest: String,
+    pub operations: BTreeMap<String, AdmittedComponentOperation>,
+    pub imports: Vec<String>,
+    pub imports_fingerprint: String,
+    pub effects: Vec<AdmittedComponentEffect>,
+    pub connections: Vec<ComponentConnection>,
+}
+
+impl ComponentDescriptor {
+    /// The descriptor of `component`. Its scope is dropped.
+    pub fn new(component: AdmittedComponent, connections: Vec<ComponentConnection>) -> Self {
+        Self {
+            component: component.component,
+            interface_version: component.interface_version,
+            component_digest: component.component_digest,
+            operations: component.operations,
+            imports: component.imports,
+            imports_fingerprint: component.imports_fingerprint,
+            effects: component.effects,
+            connections,
+        }
+    }
+
+    /// The admitted facts of this descriptor in `scope`.
+    pub fn into_admitted(self, scope: ComponentPackageScope) -> AdmittedComponentFacts {
+        AdmittedComponentFacts {
+            component: AdmittedComponent {
+                scope,
+                component: self.component,
+                interface_version: self.interface_version,
+                operations: self.operations,
+                component_digest: self.component_digest,
+                imports: self.imports,
+                imports_fingerprint: self.imports_fingerprint,
+                effects: self.effects,
+            },
+            connections: self.connections,
+        }
+    }
+}
+
 /// Stable classification for component-fact normalization refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComponentFactErrorType {
@@ -1335,6 +1385,40 @@ mod tests {
         assert!(fact.imports_fingerprint.starts_with("sha256:"));
         assert_eq!(fact.effects, vec![postgres_effect()]);
         assert!(facts.connections.is_empty());
+    }
+
+    #[test]
+    fn a_component_descriptor_drops_the_scope_and_the_reader_supplies_it() {
+        let facts = normalize_component_fact(
+            declaration(),
+            format!("sha256:{}", "a".repeat(64)),
+            ["wamn:postgres/client@0.1.0".to_string()],
+            vec![postgres_effect()],
+        )
+        .expect("component fact normalizes");
+        let connections = vec![ComponentConnection {
+            store_alias: "labels".to_string(),
+            requirement_type: ComponentConnectionType::Blobstore,
+        }];
+        let descriptor = ComponentDescriptor::new(facts.component.clone(), connections.clone());
+
+        let document = serde_json::to_value(&descriptor).expect("descriptor serializes");
+        assert!(document.get("scope").is_none());
+        assert_eq!(
+            document["connections"],
+            json!([{"store-alias": "labels", "requirement-type": "blobstore"}])
+        );
+        let decoded: ComponentDescriptor =
+            serde_json::from_value(document.clone()).expect("descriptor decodes");
+        assert_eq!(decoded, descriptor);
+
+        let mut unknown = document;
+        unknown["scope"] = json!({});
+        assert!(serde_json::from_value::<ComponentDescriptor>(unknown).is_err());
+
+        let admitted = decoded.into_admitted(facts.component.scope.clone());
+        assert_eq!(admitted.component, facts.component);
+        assert_eq!(admitted.connections, connections);
     }
 
     #[test]

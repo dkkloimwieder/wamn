@@ -197,6 +197,11 @@ pub struct PushPackageArgs {
     #[arg(long)]
     pub artifact_base: String,
 
+    /// Explicit `<registry>/<repository>` base for component artifacts. Each
+    /// component is pushed under its digest there before the package artifact.
+    #[arg(long)]
+    pub component_artifact_base: String,
+
     /// `.dockerconfigjson` file carrying the push credential.
     #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
     pub registry_auth_file: PathBuf,
@@ -231,6 +236,7 @@ pub async fn push(args: PushPackageArgs) -> anyhow::Result<()> {
             oci_ca_paths: args.oci_ca_paths,
             control_database_url: args.control_database_url,
         },
+        component_artifact_base: args.component_artifact_base,
         source_commit: args.source_commit,
     })
     .await?;

@@ -1,15 +1,18 @@
-//! Live test of `system/0010_package_artifacts.sql` (wamn-zua8.3): on a
-//! control database installed before it, the migration creates
-//! `catalog.package_artifacts` as a fresh install has it. The test holds the
-//! process lock of its server, because the installer creates cluster-wide
-//! roles.
+//! Live test of `system/0023_package_artifact_verification.sql`
+//! (wamn-vavs4.1): on a control database whose `catalog.package_artifacts` is
+//! the one `system/0010_package_artifacts.sql` created, with a row, the
+//! migration drops the old rows and creates the table as a fresh install has
+//! it, with `verified_at`. The test holds the process lock of its server,
+//! because the installer creates cluster-wide roles.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_test_infrastructure::locked_database;
 
-const MIGRATION: &str =
+const CREATED: &str =
     include_str!("../../../../deploy/sql/migrations/system/0010_package_artifacts.sql");
+const MIGRATION: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0023_package_artifact_verification.sql");
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -60,7 +63,7 @@ async fn definition(client: &Client) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn the_migration_creates_the_package_artifacts_table_as_a_fresh_install_has_it() {
+async fn the_migration_recreates_the_package_artifacts_table_as_a_fresh_install_has_it() {
     let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     client
@@ -83,25 +86,39 @@ async fn the_migration_creates_the_package_artifacts_table_as_a_fresh_install_ha
         fresh
             .iter()
             .any(|entry| entry
-                == "constraint package_artifacts_pkey PRIMARY KEY (package_id, version)"),
-        "a fresh install has the table: {fresh:?}"
+                == "column verified_at timestamp with time zone true clock_timestamp()"),
+        "a fresh install has verified_at: {fresh:?}"
     );
 
     client
         .batch_execute("DROP TABLE catalog.package_artifacts")
         .await
-        .expect("make the catalog as 0009 left it");
+        .expect("drop the fresh table");
+    client
+        .batch_execute(&format!(
+            "BEGIN; SET LOCAL ROLE wamn_system; {CREATED} \
+             INSERT INTO catalog.package_artifacts (package_id, version, digest) \
+             VALUES ('wamn_receiving', '2.0.0', 'sha256:' || repeat('c', 64)); COMMIT;"
+        ))
+        .await
+        .expect("make the table as system/0010 left it, with one old row");
     client
         .batch_execute(&format!(
             "BEGIN; SET LOCAL ROLE wamn_system; {MIGRATION} COMMIT;"
         ))
         .await
-        .expect("apply system/0010 as wamn_system");
+        .expect("apply system/0023 as wamn_system");
     assert_eq!(
         definition(&client).await,
         fresh,
         "the migration creates the table as a fresh install has it"
     );
+    let rows: i64 = client
+        .query_one("SELECT count(*) FROM catalog.package_artifacts", &[])
+        .await
+        .expect("count the rows")
+        .get(0);
+    assert_eq!(rows, 0, "the old layer digests are gone");
 
     // A recorded artifact is an immutable fact.
     client

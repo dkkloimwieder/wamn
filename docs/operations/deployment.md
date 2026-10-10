@@ -455,7 +455,7 @@ Keep the exact predecessor release available for recovery.
 `upgrade-environment` reads installed package artifacts from the environment's `registry` value plus `/packages`.
 It uses the same login as component publication. Immutable package tags identify each package ID and version.
 The operator pushes the artifacts of older installed versions once from their attested commits before an upgrade.
-The package stage calls `push-package` for each newly installed version before application, with the run's commit and component index.
+The package stage calls `push-package` for each newly installed version before application, with the run's commit and component index. It pushes the components under the `registry` value plus `/components` and the package artifact under `/packages`.
 An existing package tag with different bytes refuses before application.
 The verb fetches each predecessor by its recorded digest and compares its frozen manifest, migrations, and SQL with installed and serving facts.
 It does not rebuild predecessor SQL with the current generator.

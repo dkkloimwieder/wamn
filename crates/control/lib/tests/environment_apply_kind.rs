@@ -695,6 +695,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
                 oci_ca_paths: ca.clone(),
                 control_database_url: system_url.clone(),
             },
+            component_artifact_base: format!("{local}/wamn/components"),
             source_commit: None,
         })
         .await

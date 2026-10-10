@@ -1,68 +1,107 @@
 //! Package artifacts: the `push-package` verb and the package source of
-//! `apply-package` (owner rulings of 2026-10-02 on `wamn-zua8.3`).
+//! `apply-package` (docs/plan/platform-deploy.md §7.2, contract A).
 //!
-//! A package artifact is one OCI artifact with one tar layer. The layer holds
-//! the authored package as pushed: `wamn.k`, `generated/wamn.json`,
-//! `migrations/`, `publication/`, `web/dist/`,
-//! `generated/platform-policy/data-access.json`, and the frozen inputs of
-//! upgrade qualification, `generated/contracts/`, `generated/sql/` and
-//! `generated/package-identity.json`. `push-package` adds
-//! `publication/components.json`, the name and SHA-256 of every component that
-//! the package owns or that its wirings name, from the build index of
-//! `tools/build-components`, and the declaration template of each platform
-//! component its wirings name. Its tag is
-//! `<package_id>-<version>` under an explicit `<registry>/<repository>` base.
-//! The tar has sorted paths, a zero mtime and a fixed owner and mode, so one
-//! tree packs to one digest. `catalog.package_artifacts` in the control
-//! database records the digest of each package version.
+//! `push-package` verifies an authored package before it pushes anything:
+//! the policy contract of `generated/wamn.json` is satisfied, the migrations
+//! plan, and every component admits against its built bytes, its declaration
+//! and the generated statement facts. A component is one the package owns or a
+//! palette component its wirings name; the build index of
+//! `tools/build-components` names its bytes. Then it pushes each component as
+//! its own OCI artifact under its digest, pushes the package artifact, reads
+//! its manifest back, and records the manifest digest in
+//! `catalog.package_artifacts` last.
+//!
+//! A package artifact is one OCI image manifest with artifact type
+//! [`PACKAGE_ARTIFACT_TYPE`], the empty config, and these layers in order:
+//! the exact `generated/wamn.json` bytes, then four tars (`migrations`,
+//! `publication`, `sources`, `web`), then one canonical component descriptor
+//! per component, sorted by name. Its tag is `<package_id>-<version>` under an
+//! explicit `<registry>/<repository>` base. Its digest is the SHA-256 of the
+//! manifest bytes. Each tar has sorted paths, a zero mtime and a fixed owner
+//! and mode, so one tree packs to one digest. An unpacked artifact packs again
+//! offline to the same digest.
 
-use std::collections::BTreeMap;
-use std::os::unix::fs::DirBuilderExt as _;
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write as _;
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+use std::path::{Component as PathComponent, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, bail, ensure};
-use oci_client::client::{Config, ImageLayer};
-use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciImageManifest};
+use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::Client as PgClient;
-use wamn_engine::component_artifact::parse_component_artifact_base;
-use wamn_runtime::component_artifact_source::read_ca_bundles;
-use wamn_runtime::registry_credentials::read_registry_credentials;
-use wamn_runtime::release_manifest_artifact::{
-    RELEASE_MANIFEST_CONFIG_BYTES, RELEASE_MANIFEST_CONFIG_MEDIA_TYPE,
+use wamn_catalog::{
+    AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
+    ComponentPackageScope,
 };
-use wamn_schema_generator::{AUTHORED_MANIFEST, COMPILED_MANIFEST, PackageManifest};
+use wamn_engine::component_artifact::{
+    component_artifact_config_bytes, component_artifact_reference, parse_component_artifact_base,
+};
+use wamn_runtime::component_artifact_source::read_ca_bundles;
+use wamn_runtime::registry_credentials::{
+    read_registry_credentials, read_registry_push_credentials,
+};
+use wamn_schema_generator::{AUTHORED_MANIFEST, PackageManifest, PolicyContractState};
 
+use crate::component_declaration::{
+    authored_base_digests, declared_platform_packages, render_declaration_document,
+    render_palette_declaration,
+};
+use crate::push_component::{AdmitComponentRequest, admit_component, publish_and_verify};
 use crate::push_release_manifest::{artifact_is_absent, registry_auth, registry_client};
 
-/// OCI artifact type and layer media type of a package artifact.
-pub const PACKAGE_ARTIFACT_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
+/// Artifact type of a package artifact.
+pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v2";
 
-/// The package paths the layer carries. `wamn.k` and `generated/wamn.json`
-/// are required. A directory that a package does not have is left out.
-pub const PACKAGE_ARTIFACT_PATHS: [&str; 14] = [
-    AUTHORED_MANIFEST,
-    COMPILED_MANIFEST,
-    "migrations",
-    "command",
-    "query",
-    "publication",
-    "web/dist",
-    "generated/platform-policy/data-access.json",
-    "generated/contracts",
-    "generated/sql",
-    "generated/package-identity.json",
-    "generated/publication",
-    "generated/routes",
-    COMPONENT_LIST,
+/// Media type of the four tar layers.
+pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
+
+/// Media type of layer 0, the exact `generated/wamn.json` bytes.
+pub const PACKAGE_MANIFEST_MEDIA_TYPE: &str = "application/vnd.wamn.package.manifest.v1+json";
+
+/// Media type of a component descriptor layer.
+pub const COMPONENT_DESCRIPTOR_MEDIA_TYPE: &str =
+    "application/vnd.wamn.component.descriptor.v1+json";
+
+const EMPTY_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
+const EMPTY_CONFIG: &[u8] = b"{}";
+const TITLE_ANNOTATION: &str = "org.opencontainers.image.title";
+const PACKAGE_ID_ANNOTATION: &str = "wamn.package.id";
+const PACKAGE_VERSION_ANNOTATION: &str = "wamn.package.version";
+const COMPONENT_NAME_ANNOTATION: &str = "wamn.component.name";
+const COMPONENT_DIGEST_ANNOTATION: &str = "wamn.component.digest";
+
+/// Title of layer 0.
+const MANIFEST_TITLE: &str = "wamn.json";
+
+/// The tar layers in order: title and the package paths each carries. A path
+/// that a package does not have is left out, and a layer with no file is an
+/// empty tar.
+pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
+    ("migrations", &["migrations"]),
+    ("publication", &["publication"]),
+    (
+        "sources",
+        &[
+            AUTHORED_MANIFEST,
+            "command",
+            "query",
+            "generated/platform-policy/data-access.json",
+            "generated/contracts",
+            "generated/sql",
+            "generated/publication",
+            "generated/routes",
+            "generated/package-identity.json",
+        ],
+    ),
+    ("web", &["web/dist"]),
 ];
 
-/// The components the package owns or its wirings name, as
-/// `[{"name", "sha256"}]` sorted by name. `push-package` writes it into the
-/// layer, never into the package tree.
-pub const COMPONENT_LIST: &str = "publication/components.json";
+/// Where an unpacked artifact keeps its component descriptors, one
+/// `<name>.json` each.
+pub const DESCRIPTOR_DIRECTORY: &str = "descriptors";
 
 /// The build index that `tools/build-components` writes for the packages under
 /// `apps/`, relative to a package root.
@@ -72,14 +111,12 @@ pub const COMPONENT_INDEX: &str = "../target/components.json";
 /// `apps/`. Each `<area>/<crate>/declaration.json.in` names its component.
 pub const PLATFORM_DIRECTORY: &str = "../platform";
 
-/// One entry of [`COMPONENT_LIST`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ListedComponent {
-    /// The component name of `generated/wamn.json` or of a wiring node.
-    pub name: String,
-    /// Lowercase hex SHA-256 of the built `.wasm` file.
-    pub sha256: String,
-}
+/// The tenant that admission writes into a component scope. A package
+/// artifact is tenant-free, and a descriptor drops the scope.
+const ADMISSION_TENANT: &str = "package-artifact";
+
+/// The platform packages a package-owned component is admitted with.
+const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
 
 /// One entry of the build index [`COMPONENT_INDEX`].
 #[derive(Debug, serde::Deserialize)]
@@ -90,16 +127,29 @@ struct IndexedComponent {
     recorded_at: u64,
 }
 
-/// One package tree packed into its layer.
+/// One layer of a package artifact.
+#[derive(Debug, Clone)]
+pub struct PackedLayer {
+    /// The layer media type.
+    pub media_type: String,
+    /// The layer annotations.
+    pub annotations: BTreeMap<String, String>,
+    /// The layer bytes.
+    pub bytes: Vec<u8>,
+}
+
+/// One package tree packed into its layers and image manifest.
 #[derive(Debug)]
 pub struct PackedPackage {
-    /// Package id from `generated/wamn.json`.
+    /// Package id from the package manifest.
     pub package_id: String,
-    /// Package version from `generated/wamn.json`.
+    /// Package version from the package manifest.
     pub version: String,
-    /// The tar layer.
-    pub bytes: Vec<u8>,
-    /// `sha256:<hex>` of the layer.
+    /// The layers in order.
+    pub layers: Vec<PackedLayer>,
+    /// The image manifest bytes.
+    pub manifest: Vec<u8>,
+    /// `sha256:<hex>` of the image manifest bytes: the artifact digest.
     pub digest: String,
 }
 
@@ -110,70 +160,184 @@ impl PackedPackage {
     }
 }
 
-/// Pack the package at `root` into its deterministic tar layer.
+/// One component descriptor layer: the component name, its digest and the
+/// canonical descriptor bytes.
+#[derive(Debug, Clone)]
+struct DescriptorFile {
+    name: String,
+    digest: String,
+    bytes: Vec<u8>,
+}
+
+/// Pack the tree at `root` as it is, offline.
 ///
-/// With `index`, the build index of `tools/build-components`, the layer gains
-/// [`COMPONENT_LIST`] for every component that `generated/wamn.json` or a
-/// wiring of `publication/wirings/` names, and the declaration template of
-/// each platform component as `publication/components/<name>.json.in`. A
-/// missing index, a name without an entry, and an entry whose file is missing
-/// or newer than its record refuse. Without it, the tree packs as it is,
-/// which is how an unpacked artifact is checked.
-pub fn pack_package(root: &Path, index: Option<&Path>) -> anyhow::Result<PackedPackage> {
-    ensure!(
-        root.join(AUTHORED_MANIFEST).is_file(),
-        "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
-        root.display()
-    );
+/// The descriptors are the files of [`DESCRIPTOR_DIRECTORY`], which only an
+/// unpacked artifact has. So a source tree packs to a digest without
+/// descriptor layers, which differs from the pushed digest, and an unpacked
+/// artifact packs to the digest it was pushed under.
+pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
+    let directory = root.join(DESCRIPTOR_DIRECTORY);
+    let mut descriptors = Vec::new();
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => Some(entries),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).with_context(|| format!("read {}", directory.display())),
+    };
+    for entry in entries.into_iter().flatten() {
+        let path = entry
+            .with_context(|| format!("read {}", directory.display()))?
+            .path();
+        let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        let descriptor: ComponentDescriptor = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse component descriptor {}", path.display()))?;
+        ensure!(
+            path.file_name().and_then(|name| name.to_str())
+                == Some(format!("{}.json", descriptor.component).as_str()),
+            "{} describes component {}",
+            path.display(),
+            descriptor.component
+        );
+        descriptors.push(DescriptorFile {
+            name: descriptor.component,
+            digest: descriptor.component_digest,
+            bytes,
+        });
+    }
+    pack_layers(root, &BTreeMap::new(), descriptors)
+}
+
+/// The package artifact digest of the package at `root`, the key of its stage
+/// evidence and stage progress (docs/plan/platform-deploy.md §10.2): the
+/// offline manifest digest of the tree as it is ([`pack_package`]).
+pub fn package_artifact_digest(root: &Path) -> anyhow::Result<String> {
+    Ok(pack_package(root)?.digest)
+}
+
+/// Pack the tree at `root` with `publication` files added to the publication
+/// layer and `descriptors` as the descriptor layers.
+fn pack_layers(
+    root: &Path,
+    publication: &BTreeMap<String, Vec<u8>>,
+    mut descriptors: Vec<DescriptorFile>,
+) -> anyhow::Result<PackedPackage> {
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
-    let manifest = PackageManifest::from_slice(&manifest_bytes)
-        .with_context(|| format!("parse {}", manifest_path.display()))?;
+    let (package_id, version) = package_coordinate(&manifest_bytes)
+        .with_context(|| format!("read the package of {}", manifest_path.display()))?;
+    ensure_tag(&format!("{package_id}-{version}"))?;
 
-    let mut files = BTreeMap::new();
-    for path in PACKAGE_ARTIFACT_PATHS {
-        collect_files(root, path, &mut files)?;
-    }
-    let mut entries = files
-        .iter()
-        .map(|(name, path)| {
-            let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
-            Ok((name.clone(), data))
-        })
-        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
-    if let Some(index) = index {
-        ensure!(
-            !entries.contains_key(COMPONENT_LIST),
-            "{} has {COMPONENT_LIST}; push-package writes it",
-            root.display()
-        );
-        let wired = wiring_components(root)?;
-        let platform = wired
-            .iter()
-            .filter(|name| !manifest.components.contains_key(*name))
-            .collect::<Vec<_>>();
-        for name in &platform {
-            let template = format!("publication/components/{name}.json.in");
-            ensure!(
-                !entries.contains_key(&template),
-                "{} has {template}; push-package copies the platform template",
-                root.display()
-            );
-            entries.insert(template, platform_template(root, name)?);
+    let mut layers = vec![PackedLayer {
+        media_type: PACKAGE_MANIFEST_MEDIA_TYPE.to_owned(),
+        annotations: BTreeMap::from([(TITLE_ANNOTATION.to_owned(), MANIFEST_TITLE.to_owned())]),
+        bytes: manifest_bytes,
+    }];
+    for (title, paths) in PACKAGE_TAR_LAYERS {
+        let mut files = BTreeMap::new();
+        for path in paths {
+            collect_files(root, path, &mut files)?;
         }
-        let names = manifest
-            .components
-            .keys()
-            .chain(platform.iter().copied())
-            .collect::<std::collections::BTreeSet<_>>();
-        let listed = indexed_components(index, &names)?;
-        let mut list = serde_json::to_vec_pretty(&listed).context("encode the component list")?;
-        list.push(b'\n');
-        entries.insert(COMPONENT_LIST.to_owned(), list);
+        let mut entries = files
+            .iter()
+            .map(|(name, path)| {
+                let data =
+                    std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+                Ok((name.clone(), data))
+            })
+            .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+        if title == "publication" {
+            for (name, data) in publication {
+                ensure!(
+                    !entries.contains_key(name),
+                    "{} has {name}; push-package copies the platform template",
+                    root.display()
+                );
+                entries.insert(name.clone(), data.clone());
+            }
+        }
+        layers.push(PackedLayer {
+            media_type: PACKAGE_TAR_MEDIA_TYPE.to_owned(),
+            annotations: BTreeMap::from([(TITLE_ANNOTATION.to_owned(), title.to_owned())]),
+            bytes: tar_layer(title, &entries)?,
+        });
     }
+    descriptors.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut annotations = BTreeMap::from([
+        (PACKAGE_ID_ANNOTATION.to_owned(), package_id.clone()),
+        (PACKAGE_VERSION_ANNOTATION.to_owned(), version.clone()),
+    ]);
+    for descriptor in descriptors {
+        ensure!(
+            annotations
+                .insert(
+                    format!("wamn.component.{}", descriptor.name),
+                    descriptor.digest.clone()
+                )
+                .is_none(),
+            "two descriptors name component {}",
+            descriptor.name
+        );
+        layers.push(PackedLayer {
+            media_type: COMPONENT_DESCRIPTOR_MEDIA_TYPE.to_owned(),
+            annotations: BTreeMap::from([
+                (COMPONENT_NAME_ANNOTATION.to_owned(), descriptor.name),
+                (COMPONENT_DIGEST_ANNOTATION.to_owned(), descriptor.digest),
+            ]),
+            bytes: descriptor.bytes,
+        });
+    }
+    let manifest = image_manifest(&layers, &annotations);
+    Ok(PackedPackage {
+        package_id,
+        version,
+        digest: sha256_digest(&manifest),
+        layers,
+        manifest,
+    })
+}
+
+/// The canonical image manifest bytes of `layers`.
+fn image_manifest(layers: &[PackedLayer], annotations: &BTreeMap<String, String>) -> Vec<u8> {
+    let manifest = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": OCI_IMAGE_MEDIA_TYPE,
+        "artifactType": PACKAGE_ARTIFACT_TYPE,
+        "config": {
+            "mediaType": EMPTY_CONFIG_MEDIA_TYPE,
+            "digest": sha256_digest(EMPTY_CONFIG),
+            "size": EMPTY_CONFIG.len(),
+        },
+        "layers": layers
+            .iter()
+            .map(|layer| serde_json::json!({
+                "mediaType": layer.media_type,
+                "digest": sha256_digest(&layer.bytes),
+                "size": layer.bytes.len(),
+                "annotations": layer.annotations,
+            }))
+            .collect::<Vec<_>>(),
+        "annotations": annotations,
+    });
+    wamn_execution_contract::canonical_json_bytes(&manifest)
+}
+
+/// The package id and version of a package manifest.
+fn package_coordinate(manifest: &[u8]) -> anyhow::Result<(String, String)> {
+    let document: serde_json::Value = serde_json::from_slice(manifest)?;
+    let field = |pointer: &str| {
+        document
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .with_context(|| format!("the manifest has no {pointer}"))
+    };
+    Ok((field("/package/id")?, field("/package/version")?))
+}
+
+/// One deterministic tar of `entries`, keyed by package-relative path.
+fn tar_layer(title: &str, entries: &BTreeMap<String, Vec<u8>>) -> anyhow::Result<Vec<u8>> {
     let mut builder = tar::Builder::new(Vec::new());
-    for (name, data) in &entries {
+    for (name, data) in entries {
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Regular);
         header.set_size(data.len() as u64);
@@ -183,23 +347,185 @@ pub fn pack_package(root: &Path, index: Option<&Path>) -> anyhow::Result<PackedP
         header.set_mtime(0);
         builder
             .append_data(&mut header, name, data.as_slice())
-            .with_context(|| format!("add {name} to the package layer"))?;
+            .with_context(|| format!("add {name} to the {title} layer"))?;
     }
-    let bytes = builder.into_inner().context("finish the package layer")?;
-    let packed = PackedPackage {
-        package_id: manifest.package.id,
-        version: manifest.package.version,
-        digest: sha256_digest(&bytes),
-        bytes,
-    };
-    ensure_tag(&packed.tag())?;
-    Ok(packed)
+    builder
+        .into_inner()
+        .with_context(|| format!("finish the {title} layer"))
 }
 
-/// The component names of the nodes of every wiring in `publication/wirings/`.
-fn wiring_components(root: &Path) -> anyhow::Result<std::collections::BTreeSet<String>> {
+/// The file of the package-relative `logical` path. A `generated/` path names
+/// a file of the package's output root.
+fn physical_path(root: &Path, logical: &str) -> PathBuf {
+    match Path::new(logical).strip_prefix("generated") {
+        Ok(output) => wamn_schema_generator::output_root(root).join(output),
+        Err(_) => root.join(logical),
+    }
+}
+
+/// Add every regular file under `relative` to `files`, keyed by its path
+/// relative to `root` with `/` separators.
+fn collect_files(
+    root: &Path,
+    relative: &str,
+    files: &mut BTreeMap<String, PathBuf>,
+) -> anyhow::Result<()> {
+    let path = physical_path(root, relative);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
+    };
+    if metadata.is_file() {
+        files.insert(relative.to_owned(), path);
+    } else if metadata.is_dir() {
+        for entry in std::fs::read_dir(&path).with_context(|| format!("read {}", path.display()))? {
+            let entry = entry.with_context(|| format!("read {}", path.display()))?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|name| anyhow::anyhow!("{} is not UTF-8", name.to_string_lossy()))?;
+            collect_files(root, &format!("{relative}/{name}"), files)?;
+        }
+    } else {
+        bail!(
+            "{} is neither a file nor a directory; a package artifact carries neither links nor devices",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn sha256_digest(bytes: &[u8]) -> String {
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
+    )
+}
+
+/// Refuse a tag that the OCI distribution grammar does not admit.
+fn ensure_tag(tag: &str) -> anyhow::Result<()> {
+    let bytes = tag.as_bytes();
+    ensure!(
+        !bytes.is_empty()
+            && bytes.len() <= 128
+            && (bytes[0].is_ascii_alphanumeric() || bytes[0] == b'_')
+            && bytes
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
+        "package tag {tag:?} is not an OCI tag"
+    );
+    Ok(())
+}
+
+/// Where the declaration of one component comes from.
+#[derive(Debug)]
+enum ComponentTemplate {
+    /// `publication/components/<name>.json.in` of the package.
+    Owned(PathBuf),
+    /// The platform declaration of a palette component that a wiring names,
+    /// with the one store alias the wirings give it.
+    Palette {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        store_alias: Option<String>,
+    },
+}
+
+/// One component the package pushes: its build index entry and its template.
+#[derive(Debug)]
+struct SourceComponent {
+    name: String,
+    file: PathBuf,
+    sha256: String,
+    template: ComponentTemplate,
+}
+
+/// The components that `manifest` owns or a wiring of `publication/wirings/`
+/// names, sorted by name, with their build index entries. A missing index, a
+/// name without an entry, an entry whose file is missing or newer than its
+/// record, a palette component without exactly one platform declaration, and
+/// a palette component with two store aliases refuse.
+fn source_components(
+    root: &Path,
+    manifest: &PackageManifest,
+) -> anyhow::Result<Vec<SourceComponent>> {
+    let wired = wiring_components(root)?;
+    let mut templates = BTreeMap::new();
+    for name in manifest.components.keys() {
+        templates.insert(
+            name.clone(),
+            ComponentTemplate::Owned(
+                root.join("publication/components")
+                    .join(format!("{name}.json.in")),
+            ),
+        );
+    }
+    for (name, aliases) in &wired {
+        if templates.contains_key(name) {
+            continue;
+        }
+        ensure!(
+            aliases.len() <= 1,
+            "the wirings give palette component {name} {} store aliases {aliases:?}, not one",
+            aliases.len()
+        );
+        let (path, bytes) = platform_template(root, name)?;
+        templates.insert(
+            name.clone(),
+            ComponentTemplate::Palette {
+                path,
+                bytes,
+                store_alias: aliases.first().cloned(),
+            },
+        );
+    }
+    let index = root.join(COMPONENT_INDEX);
+    let bytes = std::fs::read(&index).with_context(|| {
+        format!(
+            "read the build index {}; run tools/build-components first",
+            index.display()
+        )
+    })?;
+    let indexed: Vec<IndexedComponent> = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse the build index {}", index.display()))?;
+    templates
+        .into_iter()
+        .map(|(name, template)| {
+            let entry = indexed
+                .iter()
+                .find(|entry| entry.name == name)
+                .with_context(|| {
+                    format!("the build index {} has no component {name}", index.display())
+                })?;
+            let modified = std::fs::metadata(&entry.file)
+                .and_then(|metadata| metadata.modified())
+                .with_context(|| {
+                    format!("component {name} has no built file {}", entry.file.display())
+                })?
+                .duration_since(std::time::UNIX_EPOCH)
+                .context("read a file time")?
+                .as_secs();
+            ensure!(
+                modified <= entry.recorded_at,
+                "component {name} at {} is newer than its build index record; run tools/build-components again",
+                entry.file.display()
+            );
+            Ok(SourceComponent {
+                file: entry.file.clone(),
+                sha256: entry.sha256.clone(),
+                name,
+                template,
+            })
+        })
+        .collect()
+}
+
+/// The component names of the nodes of every wiring in `publication/wirings/`,
+/// each with the `params.store_alias` values its nodes give it.
+fn wiring_components(root: &Path) -> anyhow::Result<BTreeMap<String, BTreeSet<String>>> {
     let directory = root.join("publication/wirings");
-    let mut names = std::collections::BTreeSet::new();
+    let mut names = BTreeMap::<String, BTreeSet<String>>::new();
     let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(names),
@@ -226,7 +552,13 @@ fn wiring_components(root: &Path) -> anyhow::Result<std::collections::BTreeSet<S
                 .get("component")
                 .and_then(serde_json::Value::as_str)
                 .with_context(|| format!("a node of {} names no component", path.display()))?;
-            names.insert(component.to_owned());
+            let aliases = names.entry(component.to_owned()).or_default();
+            if let Some(alias) = node
+                .pointer("/params/store_alias")
+                .and_then(serde_json::Value::as_str)
+            {
+                aliases.insert(alias.to_owned());
+            }
         }
     }
     Ok(names)
@@ -235,7 +567,7 @@ fn wiring_components(root: &Path) -> anyhow::Result<std::collections::BTreeSet<S
 /// The declaration template of the platform component `name`: the one
 /// `declaration.json.in` under [`PLATFORM_DIRECTORY`] whose `component` is
 /// `name`.
-fn platform_template(root: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
+fn platform_template(root: &Path, name: &str) -> anyhow::Result<(PathBuf, Vec<u8>)> {
     let platform = root.join(PLATFORM_DIRECTORY);
     let mut found = Vec::new();
     for area in
@@ -265,12 +597,12 @@ fn platform_template(root: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
                 .and_then(serde_json::Value::as_str)
                 == Some(name)
             {
-                found.push(bytes);
+                found.push((path, bytes));
             }
         }
     }
-    match <[Vec<u8>; 1]>::try_from(found) {
-        Ok([bytes]) => Ok(bytes),
+    match <[(PathBuf, Vec<u8>); 1]>::try_from(found) {
+        Ok([template]) => Ok(template),
         Err(found) => bail!(
             "{} platform declarations name component {name}, not one",
             found.len()
@@ -278,143 +610,167 @@ fn platform_template(root: &Path, name: &str) -> anyhow::Result<Vec<u8>> {
     }
 }
 
-/// The entries of the build index at `index` for `names`. A missing index, a
-/// name without an entry, and an entry whose file is missing or newer than its
-/// record refuse.
-fn indexed_components(
-    index: &Path,
-    names: &std::collections::BTreeSet<&String>,
-) -> anyhow::Result<Vec<ListedComponent>> {
-    let bytes = std::fs::read(index).with_context(|| {
-        format!(
-            "read the build index {}; run tools/build-components first",
-            index.display()
-        )
-    })?;
-    let indexed: Vec<IndexedComponent> = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse the build index {}", index.display()))?;
-    names
-        .iter()
-        .map(|name| {
-            let entry = indexed
-                .iter()
-                .find(|entry| &entry.name == *name)
-                .with_context(|| {
-                    format!("the build index {} has no component {name}", index.display())
-                })?;
-            let modified = std::fs::metadata(&entry.file)
-                .and_then(|metadata| metadata.modified())
-                .with_context(|| {
-                    format!("component {name} has no built file {}", entry.file.display())
-                })?
-                .duration_since(std::time::UNIX_EPOCH)
-                .context("read a file time")?
-                .as_secs();
-            ensure!(
-                modified <= entry.recorded_at,
-                "component {name} at {} is newer than its build index record; run tools/build-components again",
-                entry.file.display()
-            );
-            Ok(ListedComponent {
-                name: (*name).clone(),
-                sha256: entry.sha256.clone(),
-            })
-        })
-        .collect()
-}
+/// A rendered declaration in a private file, removed on drop.
+#[derive(Debug)]
+struct DeclarationFile(PathBuf);
 
-/// Add every regular file under `relative` to `files`, keyed by its path
-/// relative to `root` with `/` separators.
-fn collect_files(
-    root: &Path,
-    relative: &str,
-    files: &mut BTreeMap<String, PathBuf>,
-) -> anyhow::Result<()> {
-    // A `generated/` layer path names a file of the package's output root.
-    let path = match Path::new(relative).strip_prefix("generated") {
-        Ok(output) => wamn_schema_generator::output_root(root).join(output),
-        Err(_) => root.join(relative),
-    };
-    let metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
-    };
-    if metadata.is_file() {
-        files.insert(relative.to_owned(), path);
-    } else if metadata.is_dir() {
-        for entry in std::fs::read_dir(&path).with_context(|| format!("read {}", path.display()))? {
-            let entry = entry.with_context(|| format!("read {}", path.display()))?;
-            let name = entry
-                .file_name()
-                .into_string()
-                .map_err(|name| anyhow::anyhow!("{} is not UTF-8", name.to_string_lossy()))?;
-            collect_files(root, &format!("{relative}/{name}"), files)?;
-        }
-    } else {
-        bail!(
-            "{} is neither a file nor a directory; a package artifact carries neither links nor devices",
-            path.display()
-        );
+static DECLARATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+impl DeclarationFile {
+    fn write(document: &serde_json::Value) -> anyhow::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "wamn-package-declaration-{}-{}.json",
+            std::process::id(),
+            DECLARATION_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .with_context(|| format!("create {}", path.display()))?;
+        let file_guard = Self(path);
+        file.write_all(&serde_json::to_vec(document)?)
+            .context("write the rendered declaration")?;
+        Ok(file_guard)
     }
-    Ok(())
 }
 
-/// The package artifact digest of the package at `root`, the key of its stage
-/// evidence and stage progress (docs/plan/platform-deploy.md §10.2).
-///
-/// An authored package packs to its deterministic layer, whose digest is the
-/// one `push-package` recorded. A hand-written package has no artifact; its
-/// digest is over the layer of its manifest and migrations, which is the
-/// whole of what `apply-package` reads from it.
-pub fn package_artifact_digest(root: &Path) -> anyhow::Result<String> {
-    if wamn_schema_generator::is_authored(root) {
-        return Ok(pack_package(root, None)?.digest);
+impl Drop for DeclarationFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
     }
-    let directory = crate::apply_package::read_package_directory(root)?;
-    let mut builder = tar::Builder::new(Vec::new());
-    let mut entries = vec![("wamn.json".to_owned(), directory.manifest_bytes.as_slice())];
-    entries.extend(
-        directory
-            .migrations
-            .iter()
-            .map(|migration| (migration.relative_path.clone(), migration.bytes.as_slice())),
-    );
-    for (name, data) in entries {
-        let mut header = tar::Header::new_gnu();
-        header.set_entry_type(tar::EntryType::Regular);
-        header.set_size(data.len() as u64);
-        header.set_mode(0o644);
-        header.set_mtime(0);
-        builder
-            .append_data(&mut header, &name, data)
-            .with_context(|| format!("add {name} to the package digest"))?;
-    }
-    Ok(sha256_digest(
-        &builder.into_inner().context("finish the package digest")?,
-    ))
 }
 
-fn sha256_digest(bytes: &[u8]) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
-    )
+/// One admitted component and its exact bytes.
+#[derive(Debug)]
+struct VerifiedComponent {
+    facts: AdmittedComponent,
+    bytes: Vec<u8>,
 }
 
-/// Refuse a tag that the OCI distribution grammar does not admit.
-fn ensure_tag(tag: &str) -> anyhow::Result<()> {
-    let bytes = tag.as_bytes();
+/// An authored package that passed every check of `push-package`, packed.
+#[derive(Debug)]
+struct VerifiedPackage {
+    packed: PackedPackage,
+    components: Vec<VerifiedComponent>,
+}
+
+/// Every check of `push-package`, before anything is pushed: the policy
+/// contract is satisfied, the migrations plan, and every component admits.
+fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     ensure!(
-        !bytes.is_empty()
-            && bytes.len() <= 128
-            && (bytes[0].is_ascii_alphanumeric() || bytes[0] == b'_')
-            && bytes
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
-        "package tag {tag:?} is not an OCI tag"
+        root.join(AUTHORED_MANIFEST).is_file(),
+        "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
+        root.display()
     );
-    Ok(())
+    let manifest_path = wamn_schema_generator::package_manifest_path(root);
+    let manifest = PackageManifest::from_slice(
+        &std::fs::read(&manifest_path)
+            .with_context(|| format!("read {}", manifest_path.display()))?,
+    )
+    .with_context(|| format!("parse {}", manifest_path.display()))?;
+    let contract = &manifest.required_platform_policy_contract;
+    ensure!(
+        contract.state == PolicyContractState::Satisfied,
+        "{}@{} requires platform policy contract {}, which is not satisfied; nothing was pushed",
+        manifest.package.id,
+        manifest.package.version,
+        contract.id
+    );
+    let directory = crate::apply_package::read_package_directory(root)?;
+    wamn_schema_control::plan_package_migrations(&directory, None)
+        .context("plan the package migrations")?;
+
+    let base_digests = authored_base_digests(root).context("read the authored base digests")?;
+    let scope = ComponentPackageScope::new(
+        ADMISSION_TENANT,
+        manifest.package.id.clone(),
+        manifest.package.version.clone(),
+    )
+    .context("name the admission scope")?;
+    let mut publication = BTreeMap::new();
+    let mut descriptors = Vec::new();
+    let mut components = Vec::new();
+    for source in source_components(root, &manifest)? {
+        let (document, platform_packages) = match &source.template {
+            ComponentTemplate::Owned(template) => (
+                render_declaration_document(template, ADMISSION_TENANT, &base_digests)?,
+                OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec(),
+            ),
+            ComponentTemplate::Palette {
+                path,
+                bytes,
+                store_alias,
+            } => {
+                publication.insert(
+                    format!("publication/components/{}.json.in", source.name),
+                    bytes.clone(),
+                );
+                let document = render_palette_declaration(path, &scope, store_alias.as_deref())?;
+                let packages = declared_platform_packages(path, &document)?;
+                (document, packages)
+            }
+        };
+        let mut connections: Vec<ComponentConnection> =
+            serde_json::from_value::<ComponentDeclaration>(document.clone())
+                .with_context(|| format!("parse the declaration of component {}", source.name))?
+                .connections;
+        connections.sort_by(|left, right| left.store_alias.cmp(&right.store_alias));
+        let declaration = DeclarationFile::write(&document)?;
+        let admission = admit_component(AdmitComponentRequest {
+            package: root.to_owned(),
+            component_bytes: source.file.clone(),
+            declaration: declaration.0.clone(),
+            admitted_platform_packages: platform_packages,
+        })
+        .with_context(|| format!("admit component {}", source.name))?;
+        let facts = admission.facts().clone();
+        let mut required = admission
+            .requirements()
+            .iter()
+            .map(wamn_catalog::ComponentConnectionRequirement::store_alias)
+            .collect::<Vec<_>>();
+        required.sort_unstable();
+        ensure!(
+            required
+                == connections
+                    .iter()
+                    .map(|connection| connection.store_alias.as_str())
+                    .collect::<Vec<_>>(),
+            "component {} admits connections {required:?}, not its declared ones",
+            source.name
+        );
+        ensure!(
+            facts.component == source.name,
+            "the declaration of component {} names component {}",
+            source.name,
+            facts.component
+        );
+        let bytes = std::fs::read(&source.file)
+            .with_context(|| format!("read {}", source.file.display()))?;
+        let digest = sha256_digest(&bytes);
+        ensure!(
+            digest == facts.component_digest && digest == format!("sha256:{}", source.sha256),
+            "component {} is {digest}, but admission saw {} and the build index records sha256:{}",
+            source.name,
+            facts.component_digest,
+            source.sha256
+        );
+        let descriptor = ComponentDescriptor::new(facts.clone(), connections);
+        descriptors.push(DescriptorFile {
+            name: source.name.clone(),
+            digest: digest.clone(),
+            bytes: wamn_execution_contract::canonical_json_bytes(
+                &serde_json::to_value(&descriptor).context("encode a component descriptor")?,
+            ),
+        });
+        components.push(VerifiedComponent { facts, bytes });
+    }
+    Ok(VerifiedPackage {
+        packed: pack_layers(root, &publication, descriptors)?,
+        components,
+    })
 }
 
 /// The registry inputs that `push-package` and `apply-package
@@ -461,14 +817,22 @@ impl Repository {
         })
     }
 
-    /// The manifest of the tag, or `None` when the tag does not exist.
-    async fn manifest(&self) -> anyhow::Result<Option<OciImageManifest>> {
+    /// The manifest bytes and digest of the tag, or `None` when the tag does
+    /// not exist.
+    async fn manifest(&self) -> anyhow::Result<Option<(Vec<u8>, String)>> {
         match self
             .client
-            .pull_image_manifest(&self.reference, &self.auth)
+            .pull_manifest_raw(&self.reference, &self.auth, &[OCI_IMAGE_MEDIA_TYPE])
             .await
         {
-            Ok((manifest, _)) => Ok(Some(manifest)),
+            Ok((bytes, digest)) => {
+                ensure!(
+                    sha256_digest(&bytes) == digest,
+                    "the manifest of package artifact {} does not hash to {digest}",
+                    self.reference
+                );
+                Ok(Some((bytes.to_vec(), digest)))
+            }
             Err(error) if artifact_is_absent(&error) => Ok(None),
             Err(error) => {
                 Err(error).with_context(|| format!("read package artifact {}", self.reference))
@@ -476,74 +840,80 @@ impl Repository {
         }
     }
 
-    /// The layer digest of the tag, or `None` when the tag does not exist.
-    async fn layer_digest(&self) -> anyhow::Result<Option<String>> {
-        let Some(manifest) = self.manifest().await? else {
-            return Ok(None);
-        };
-        Ok(Some(self.verified_layer(&manifest)?.digest.clone()))
-    }
-
-    fn verified_layer<'a>(
-        &self,
-        manifest: &'a OciImageManifest,
-    ) -> anyhow::Result<&'a oci_client::manifest::OciDescriptor> {
-        ensure!(
-            manifest.artifact_type.as_deref() == Some(PACKAGE_ARTIFACT_MEDIA_TYPE)
-                && manifest.layers.len() == 1
-                && manifest.layers[0].media_type == PACKAGE_ARTIFACT_MEDIA_TYPE,
-            "{} is not a package artifact with one {PACKAGE_ARTIFACT_MEDIA_TYPE} layer",
-            self.reference
-        );
-        Ok(&manifest.layers[0])
-    }
-
-    async fn push(&self, bytes: &[u8]) -> anyhow::Result<()> {
-        let layer = ImageLayer::new(bytes.to_vec(), PACKAGE_ARTIFACT_MEDIA_TYPE.to_owned(), None);
-        let config = Config::new(
-            RELEASE_MANIFEST_CONFIG_BYTES.to_vec(),
-            RELEASE_MANIFEST_CONFIG_MEDIA_TYPE.to_owned(),
-            None,
-        );
-        let mut manifest = OciImageManifest::build(std::slice::from_ref(&layer), &config, None);
-        manifest.media_type = Some(OCI_IMAGE_MEDIA_TYPE.to_owned());
-        manifest.artifact_type = Some(PACKAGE_ARTIFACT_MEDIA_TYPE.to_owned());
+    /// Push every blob of `packed`, then its manifest bytes.
+    async fn push(&self, packed: &PackedPackage) -> anyhow::Result<()> {
+        for bytes in packed
+            .layers
+            .iter()
+            .map(|layer| layer.bytes.as_slice())
+            .chain([EMPTY_CONFIG])
+        {
+            self.client
+                .push_blob(&self.reference, bytes.to_vec(), &sha256_digest(bytes))
+                .await
+                .with_context(|| format!("push a blob of package artifact {}", self.reference))?;
+        }
         self.client
-            .push(
+            .push_manifest_raw(
                 &self.reference,
-                std::slice::from_ref(&layer),
-                config,
-                &self.auth,
-                Some(manifest),
+                packed.manifest.clone(),
+                reqwest::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
             )
             .await
             .with_context(|| format!("push package artifact {}", self.reference))?;
         Ok(())
     }
 
-    async fn pull_layer(&self, digest: &str) -> anyhow::Result<Vec<u8>> {
-        let manifest = self
+    /// The layers of the artifact under the tag, whose manifest digest must be
+    /// `digest`.
+    async fn pull(&self, digest: &str) -> anyhow::Result<Vec<PackedLayer>> {
+        let (bytes, found) = self
             .manifest()
             .await?
             .with_context(|| format!("package artifact {} does not exist", self.reference))?;
-        let layer = self.verified_layer(&manifest)?;
         ensure!(
-            layer.digest == digest,
-            "package artifact {} has digest {}, but catalog.package_artifacts records {digest}",
-            self.reference,
-            layer.digest
+            found == digest,
+            "package artifact {} has digest {found}, but catalog.package_artifacts records {digest}",
+            self.reference
         );
+        let manifest: OciImageManifest = serde_json::from_slice(&bytes).with_context(|| {
+            format!("parse the manifest of package artifact {}", self.reference)
+        })?;
+        ensure!(
+            manifest.artifact_type.as_deref() == Some(PACKAGE_ARTIFACT_TYPE)
+                && manifest.layers.len() > PACKAGE_TAR_LAYERS.len(),
+            "{} is not a {PACKAGE_ARTIFACT_TYPE} package artifact",
+            self.reference
+        );
+        let mut layers = Vec::new();
+        for layer in &manifest.layers {
+            layers.push(self.pull_layer(layer).await?);
+        }
+        Ok(layers)
+    }
+
+    async fn pull_layer(&self, layer: &OciDescriptor) -> anyhow::Result<PackedLayer> {
         let mut bytes = Vec::new();
         self.client
             .pull_blob(&self.reference, layer, &mut bytes)
             .await
-            .with_context(|| format!("pull package artifact {}", self.reference))?;
+            .with_context(|| format!("pull a layer of package artifact {}", self.reference))?;
         ensure!(
-            sha256_digest(&bytes) == digest,
-            "the layer of package artifact {} does not hash to {digest}",
-            self.reference
+            sha256_digest(&bytes) == layer.digest,
+            "a layer of package artifact {} does not hash to {}",
+            self.reference,
+            layer.digest
         );
-        Ok(bytes)
+        Ok(PackedLayer {
+            media_type: layer.media_type.clone(),
+            annotations: layer
+                .annotations
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+            bytes,
+        })
     }
 }
 
@@ -554,6 +924,9 @@ pub struct PushPackageRequest {
     pub package: PathBuf,
     /// Registry and control database.
     pub registry: PackageRegistry,
+    /// Explicit `<registry>/<repository>` base for component artifacts, in the
+    /// registry of `registry`.
+    pub component_artifact_base: String,
     /// The source commit recorded with the artifact.
     pub source_commit: Option<String>,
 }
@@ -563,7 +936,7 @@ pub struct PushPackageRequest {
 pub enum PackagePushDisposition {
     /// The run pushed the artifact.
     Pushed,
-    /// The tag already held the same layer.
+    /// The tag already held the same artifact.
     AlreadyPresent,
 }
 
@@ -572,18 +945,20 @@ pub enum PackagePushDisposition {
 pub struct PushedPackage {
     /// The artifact tag.
     pub tag: String,
-    /// `sha256:<hex>` of the layer.
+    /// `sha256:<hex>` of the image manifest.
     pub digest: String,
     /// Whether the run pushed.
     pub disposition: PackagePushDisposition,
 }
 
-/// Pack the package, push it under `<package_id>-<version>`, and record its
-/// digest in `catalog.package_artifacts`.
+/// Verify the package, push its components and its package artifact under
+/// `<package_id>-<version>`, and record the artifact digest in
+/// `catalog.package_artifacts`.
 ///
-/// The verb reads the control record before the push. A recorded or pushed
-/// tag with another digest refuses and names both digests. The same bytes
-/// push nothing and leave the record unchanged.
+/// Every check runs before the first push. A recorded or pushed tag with
+/// another digest refuses and names both digests. The same artifact pushes no
+/// package manifest and leaves the record unchanged. The record is written
+/// last, after every push is read back.
 pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<PushedPackage> {
     if let Some(source_commit) = &request.source_commit {
         ensure!(
@@ -591,10 +966,8 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
             "source commit must be one nonempty value"
         );
     }
-    let packed = pack_package(
-        &request.package,
-        Some(&request.package.join(COMPONENT_INDEX)),
-    )?;
+    let verified = verify_package(&request.package)?;
+    let packed = &verified.packed;
     let tag = packed.tag();
     let repository = Repository::open(&request.registry, &tag)?;
     crate::publish_release::on_control_plane(
@@ -608,21 +981,33 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
                     packed.digest
                 );
             }
-            let disposition = match repository.layer_digest().await? {
-                Some(existing) if existing == packed.digest => {
+            for component in &verified.components {
+                push_component_artifact(
+                    &request.registry,
+                    &request.component_artifact_base,
+                    component,
+                )
+                .await?;
+            }
+            let disposition = match repository.manifest().await? {
+                Some((_, existing)) if existing == packed.digest => {
                     PackagePushDisposition::AlreadyPresent
                 }
-                Some(existing) => bail!(
+                Some((_, existing)) => bail!(
                     "package artifact {} holds {existing}, but the package packs to {}; tags are immutable",
                     repository.reference,
                     packed.digest
                 ),
                 None => {
-                    repository.push(&packed.bytes).await?;
+                    repository.push(packed).await?;
+                    let pulled = repository.manifest().await?;
                     ensure!(
-                        repository.layer_digest().await?.as_deref() == Some(packed.digest.as_str()),
-                        "pushed package artifact {} is not readable",
-                        repository.reference
+                        pulled.as_ref().map(|(_, digest)| digest.as_str())
+                            == Some(packed.digest.as_str()),
+                        "pushed package artifact {} reads back as {}, not {}",
+                        repository.reference,
+                        pulled.as_ref().map_or("nothing", |(_, digest)| digest.as_str()),
+                        packed.digest
                     );
                     PackagePushDisposition::Pushed
                 }
@@ -656,6 +1041,36 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
                 disposition,
             })
         },
+    )
+    .await
+}
+
+/// Push one admitted component under its digest and pull it back through the
+/// production puller.
+async fn push_component_artifact(
+    registry: &PackageRegistry,
+    artifact_base: &str,
+    component: &VerifiedComponent,
+) -> anyhow::Result<()> {
+    let artifact = component_artifact_reference(artifact_base, &component.facts.component_digest)
+        .context("derive the component artifact reference")?;
+    let reference = Reference::with_tag(
+        artifact.registry().to_owned(),
+        artifact.repository().to_owned(),
+        artifact.tag().to_owned(),
+    );
+    let credentials =
+        read_registry_push_credentials(&registry.registry_auth_file, artifact.registry())
+            .context("load the component registry push credential")?;
+    publish_and_verify(
+        &reference,
+        artifact_base,
+        registry.insecure_registry,
+        &registry.oci_ca_paths,
+        &component.bytes,
+        &component_artifact_config_bytes(&component.facts),
+        &component.facts,
+        credentials.as_ref(),
     )
     .await
 }
@@ -715,9 +1130,9 @@ impl Drop for OpenedPackage {
 
 static UNPACK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// Open a package source. An artifact is fetched only when its digest equals
-/// the digest that `catalog.package_artifacts` records, and is unpacked into a
-/// private temporary directory.
+/// Open a package source. An artifact is fetched only when its manifest digest
+/// equals the digest that `catalog.package_artifacts` records. It is unpacked
+/// into a private temporary directory, which must pack again to that digest.
 pub async fn open_package_source(source: PackageSource) -> anyhow::Result<OpenedPackage> {
     let (tag, registry) = match source {
         PackageSource::Directory(root) => {
@@ -729,7 +1144,7 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
         PackageSource::Artifact { tag, registry } => (tag, registry),
     };
     let repository = Repository::open(&registry, &tag)?;
-    let bytes =
+    let (digest, layers) =
         crate::publish_release::on_control_plane(&registry.control_database_url, async |control| {
             let rows = control
                 .query(
@@ -746,7 +1161,8 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
                 );
             };
             let digest: String = row.get(0);
-            repository.pull_layer(&digest).await
+            let layers = repository.pull(&digest).await?;
+            Ok((digest, layers))
         })
         .await?;
 
@@ -763,16 +1179,99 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
         root,
         temporary: true,
     };
-    tar::Archive::new(bytes.as_slice())
-        .unpack(opened.root())
+    unpack_layers(opened.root(), &layers)
         .with_context(|| format!("unpack package artifact {tag}"))?;
-    let unpacked = pack_package(opened.root(), None)?;
+    let unpacked = pack_package(opened.root())?;
     ensure!(
         unpacked.tag() == tag,
         "package artifact {tag} holds package {}",
         unpacked.tag()
     );
+    ensure!(
+        unpacked.digest == digest,
+        "package artifact {tag} unpacks to a tree that packs to {}, not {digest}",
+        unpacked.digest
+    );
     Ok(opened)
+}
+
+/// Unpack `layers` into `root`: layer 0 to `generated/wamn.json`, the tars in
+/// place, and each descriptor to `descriptors/<name>.json`.
+fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
+    let tar_count = PACKAGE_TAR_LAYERS.len();
+    ensure!(
+        layers.len() > tar_count,
+        "a package artifact has at least {} layers, not {}",
+        tar_count + 1,
+        layers.len()
+    );
+    ensure!(
+        layers[0].media_type == PACKAGE_MANIFEST_MEDIA_TYPE,
+        "layer 0 is {}, not {PACKAGE_MANIFEST_MEDIA_TYPE}",
+        layers[0].media_type
+    );
+    write_file(
+        &physical_path(root, wamn_schema_generator::COMPILED_MANIFEST),
+        &layers[0].bytes,
+    )?;
+    for layer in &layers[1..=tar_count] {
+        ensure!(
+            layer.media_type == PACKAGE_TAR_MEDIA_TYPE,
+            "a tar layer is {}, not {PACKAGE_TAR_MEDIA_TYPE}",
+            layer.media_type
+        );
+        let mut archive = tar::Archive::new(layer.bytes.as_slice());
+        for entry in archive.entries().context("read a tar layer")? {
+            let mut entry = entry.context("read a tar entry")?;
+            ensure!(
+                entry.header().entry_type() == tar::EntryType::Regular,
+                "a tar layer holds an entry that is not a regular file"
+            );
+            let logical = entry
+                .path()
+                .context("read a tar entry path")?
+                .to_str()
+                .context("a tar entry path is not UTF-8")?
+                .to_owned();
+            ensure!(
+                Path::new(&logical)
+                    .components()
+                    .all(|part| matches!(part, PathComponent::Normal(_))),
+                "tar entry {logical:?} is not a package-relative path"
+            );
+            let mut data = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut data)
+                .with_context(|| format!("read tar entry {logical}"))?;
+            write_file(&physical_path(root, &logical), &data)?;
+        }
+    }
+    for layer in &layers[tar_count + 1..] {
+        ensure!(
+            layer.media_type == COMPONENT_DESCRIPTOR_MEDIA_TYPE,
+            "a descriptor layer is {}, not {COMPONENT_DESCRIPTOR_MEDIA_TYPE}",
+            layer.media_type
+        );
+        let name = layer
+            .annotations
+            .get(COMPONENT_NAME_ANNOTATION)
+            .context("a descriptor layer names no component")?;
+        ensure!(
+            !name.is_empty() && !name.contains(['/', '\\']) && name != "." && name != "..",
+            "a descriptor layer names component {name:?}"
+        );
+        write_file(
+            &root.join(DESCRIPTOR_DIRECTORY).join(format!("{name}.json")),
+            &layer.bytes,
+        )?;
+    }
+    Ok(())
+}
+
+fn write_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(path, bytes).with_context(|| format!("write {}", path.display()))
 }
 
 #[cfg(test)]
@@ -805,6 +1304,13 @@ mod tests {
         );
     }
 
+    fn receiving_manifest() -> Vec<u8> {
+        std::fs::read(wamn_schema_generator::package_manifest_path(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
+        ))
+        .unwrap()
+    }
+
     /// A package root under `apps`, whose wiring names its own component and
     /// the platform component `blob-put`, with the build index that
     /// `tools/build-components` writes beside it.
@@ -832,12 +1338,8 @@ mod tests {
             b"{\"component\": \"jsonata\"}\n",
         );
         let root = apps.join("wamn_receiving");
-        let manifest = std::fs::read(wamn_schema_generator::package_manifest_path(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
-        ))
-        .unwrap();
         write(&root, "wamn.k", b"# authored\n");
-        write(&root, "generated/wamn.json", &manifest);
+        write(&root, "generated/wamn.json", &receiving_manifest());
         write(&root, "generated/platform-policy/data-access.json", b"{}\n");
         write(&root, "generated/contracts/receipt.json", b"{}\n");
         write(&root, "generated/sql/receipt.sql", b"SELECT 1;\n");
@@ -847,7 +1349,7 @@ mod tests {
         write(
             &root,
             "publication/wirings/store.json",
-            b"{\"nodes\": {\"a\": {\"component\": \"receiving\"}, \"b\": {\"component\": \"blob-put\"}}}\n",
+            b"{\"nodes\": {\"a\": {\"component\": \"receiving\"}, \"b\": {\"component\": \"blob-put\", \"params\": {\"store_alias\": \"labels\"}}}}\n",
         );
         write(&root, "web/dist/index.html", b"<html></html>\n");
         write(&root, "web/src/main.ts", b"left out\n");
@@ -855,74 +1357,137 @@ mod tests {
         root
     }
 
-    fn pack(root: &Path) -> anyhow::Result<PackedPackage> {
-        pack_package(root, Some(&root.join(COMPONENT_INDEX)))
+    fn manifest(root: &Path) -> PackageManifest {
+        PackageManifest::from_slice(
+            &std::fs::read(wamn_schema_generator::package_manifest_path(root)).unwrap(),
+        )
+        .unwrap()
     }
 
     fn remove(root: &Path) {
         std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
-    fn sha256(bytes: &[u8]) -> String {
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
+    /// A canonical descriptor of the component `receiving`.
+    fn descriptor() -> DescriptorFile {
+        let digest = sha256_digest(b"receiving");
+        let descriptor: ComponentDescriptor = serde_json::from_value(serde_json::json!({
+            "component": "receiving",
+            "interface-version": "0.1.0",
+            "component-digest": digest,
+            "operations": {},
+            "imports": [],
+            "imports-fingerprint": format!("sha256:{}", "b".repeat(64)),
+            "effects": [],
+            "connections": [],
+        }))
+        .unwrap();
+        DescriptorFile {
+            name: "receiving".to_owned(),
+            digest,
+            bytes: wamn_execution_contract::canonical_json_bytes(
+                &serde_json::to_value(&descriptor).unwrap(),
+            ),
+        }
     }
 
-    #[test]
-    fn two_packs_of_the_same_tree_give_one_digest() {
-        let root = package_tree("same");
-        let first = pack(&root).unwrap();
-        // A newer mtime does not change the layer.
-        std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
-        let second = pack(&root).unwrap();
-        assert_eq!(first.digest, second.digest);
-        assert_eq!(first.tag(), "wamn_receiving-2.1.0");
-
-        let mut archive = tar::Archive::new(first.bytes.as_slice());
-        let mut contents = BTreeMap::new();
-        let entries: Vec<(String, u32, u64, u64)> = archive
+    fn tar_entries(bytes: &[u8]) -> Vec<(String, u32, u64, u64)> {
+        tar::Archive::new(bytes)
             .entries()
             .unwrap()
             .map(|entry| {
-                let mut entry = entry.unwrap();
-                let path = entry.path().unwrap().to_string_lossy().into_owned();
-                let mut data = Vec::new();
-                std::io::Read::read_to_end(&mut entry, &mut data).unwrap();
-                contents.insert(path.clone(), data);
+                let entry = entry.unwrap();
                 let header = entry.header();
                 (
-                    path,
+                    entry.path().unwrap().to_string_lossy().into_owned(),
                     header.mode().unwrap(),
                     header.uid().unwrap(),
                     header.mtime().unwrap(),
                 )
             })
-            .collect();
-        let paths = [
-            "generated/contracts/receipt.json",
-            "generated/package-identity.json",
-            "generated/platform-policy/data-access.json",
-            "generated/sql/receipt.sql",
-            "generated/wamn.json",
-            "migrations/0001_initial.sql",
-            "publication/attachments.json",
-            "publication/components.json",
-            "publication/components/blob-put.json.in",
-            "publication/wirings/store.json",
-            "wamn.k",
-            "web/dist/index.html",
-        ];
-        assert_eq!(entries, paths.map(|path| (path.to_owned(), 0o644, 0, 0)));
+            .collect()
+    }
+
+    #[test]
+    fn two_packs_of_the_same_tree_give_one_digest() {
+        let root = package_tree("same");
+        let first = pack_package(&root).unwrap();
+        // A newer mtime does not change the artifact.
+        std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
+        let second = pack_package(&root).unwrap();
+        assert_eq!(first.digest, second.digest);
+        assert_eq!(first.digest, sha256_digest(&first.manifest));
+        assert_eq!(first.tag(), "wamn_receiving-2.1.0");
+
+        let layout = first
+            .layers
+            .iter()
+            .map(|layer| {
+                (
+                    layer.media_type.as_str(),
+                    layer.annotations[TITLE_ANNOTATION].as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            String::from_utf8(contents[COMPONENT_LIST].clone()).unwrap(),
-            format!(
-                "[\n  {{\n    \"name\": \"blob-put\",\n    \"sha256\": \"{}\"\n  }},\n  {{\n    \"name\": \"receiving\",\n    \"sha256\": \"{}\"\n  }}\n]\n",
-                sha256(b"blob-put"),
-                sha256(b"receiving")
-            )
+            layout,
+            [
+                (PACKAGE_MANIFEST_MEDIA_TYPE, "wamn.json"),
+                (PACKAGE_TAR_MEDIA_TYPE, "migrations"),
+                (PACKAGE_TAR_MEDIA_TYPE, "publication"),
+                (PACKAGE_TAR_MEDIA_TYPE, "sources"),
+                (PACKAGE_TAR_MEDIA_TYPE, "web"),
+            ]
+        );
+        // Layer 0 is the exact compiled manifest, not a re-encoding.
+        assert_eq!(first.layers[0].bytes, receiving_manifest());
+        let paths = |index: usize| {
+            tar_entries(&first.layers[index].bytes)
+                .into_iter()
+                .map(|(path, mode, uid, mtime)| {
+                    assert_eq!((mode, uid, mtime), (0o644, 0, 0), "{path}");
+                    path
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths(1), ["migrations/0001_initial.sql"]);
+        assert_eq!(
+            paths(2),
+            [
+                "publication/attachments.json",
+                "publication/wirings/store.json"
+            ]
         );
         assert_eq!(
-            contents["publication/components/blob-put.json.in"],
-            b"{\"component\": \"blob-put\"}\n"
+            paths(3),
+            [
+                "generated/contracts/receipt.json",
+                "generated/package-identity.json",
+                "generated/platform-policy/data-access.json",
+                "generated/sql/receipt.sql",
+                "wamn.k",
+            ]
+        );
+        assert_eq!(paths(4), ["web/dist/index.html"]);
+
+        let manifest: serde_json::Value = serde_json::from_slice(&first.manifest).unwrap();
+        assert_eq!(manifest["schemaVersion"], 2);
+        assert_eq!(manifest["mediaType"], OCI_IMAGE_MEDIA_TYPE);
+        assert_eq!(manifest["artifactType"], PACKAGE_ARTIFACT_TYPE);
+        assert_eq!(
+            manifest["config"],
+            serde_json::json!({
+                "mediaType": EMPTY_CONFIG_MEDIA_TYPE,
+                "digest": sha256_digest(b"{}"),
+                "size": 2,
+            })
+        );
+        assert_eq!(
+            manifest["annotations"],
+            serde_json::json!({
+                "wamn.package.id": "wamn_receiving",
+                "wamn.package.version": "2.1.0",
+            })
         );
         remove(&root);
     }
@@ -930,9 +1495,9 @@ mod tests {
     #[test]
     fn a_changed_file_changes_the_digest() {
         let root = package_tree("changed");
-        let first = pack(&root).unwrap();
+        let first = pack_package(&root).unwrap();
         std::fs::write(root.join("web/dist/index.html"), b"<html>2</html>\n").unwrap();
-        assert_ne!(first.digest, pack(&root).unwrap().digest);
+        assert_ne!(first.digest, pack_package(&root).unwrap().digest);
         remove(&root);
     }
 
@@ -940,9 +1505,27 @@ mod tests {
     fn the_build_index_refuses_a_missing_or_stale_component() {
         let root = package_tree("index");
         let apps = root.parent().unwrap().to_path_buf();
+        let manifest = manifest(&root);
+
+        let listed = source_components(&root, &manifest).unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|component| component.name.as_str())
+                .collect::<Vec<_>>(),
+            ["blob-put", "receiving"]
+        );
+        let ComponentTemplate::Palette {
+            bytes, store_alias, ..
+        } = &listed[0].template
+        else {
+            panic!("blob-put is a palette component");
+        };
+        assert_eq!(bytes, b"{\"component\": \"blob-put\"}\n");
+        assert_eq!(store_alias.as_deref(), Some("labels"));
 
         std::fs::remove_file(apps.join("target/built/receiving.wasm")).unwrap();
-        let error = format!("{:#}", pack(&root).unwrap_err());
+        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
         assert!(
             error.contains("component receiving has no built file"),
             "{error}"
@@ -950,7 +1533,7 @@ mod tests {
 
         write(&apps, "target/built/receiving.wasm", b"receiving");
         write_index(&apps, 0);
-        let error = format!("{:#}", pack(&root).unwrap_err());
+        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
         assert!(
             error.contains("newer than its build index record"),
             "{error}"
@@ -961,7 +1544,7 @@ mod tests {
             "publication/wirings/shape.json",
             b"{\"nodes\": {\"a\": {\"component\": \"label-render\"}}}\n",
         );
-        let error = format!("{:#}", pack(&root).unwrap_err());
+        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
         assert!(
             error.contains("0 platform declarations name component label-render"),
             "{error}"
@@ -969,7 +1552,7 @@ mod tests {
 
         std::fs::remove_file(root.join("publication/wirings/shape.json")).unwrap();
         std::fs::remove_file(apps.join("target/components.json")).unwrap();
-        let error = format!("{:#}", pack(&root).unwrap_err());
+        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
         assert!(
             error.contains("run tools/build-components first"),
             "{error}"
@@ -978,16 +1561,108 @@ mod tests {
     }
 
     #[test]
+    fn two_store_aliases_for_one_palette_component_refuse() {
+        let root = package_tree("aliases");
+        write(
+            &root,
+            "publication/wirings/other.json",
+            b"{\"nodes\": {\"a\": {\"component\": \"blob-put\", \"params\": {\"store_alias\": \"archive\"}}}}\n",
+        );
+        let error = format!(
+            "{:#}",
+            source_components(&root, &manifest(&root)).unwrap_err()
+        );
+        assert!(
+            error.contains("palette component blob-put 2 store aliases"),
+            "{error}"
+        );
+        remove(&root);
+    }
+
+    #[tokio::test]
+    async fn an_unsatisfied_policy_contract_refuses_before_any_push() {
+        let root = package_tree("policy");
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&receiving_manifest()).unwrap();
+        document["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
+        write(
+            &root,
+            "generated/wamn.json",
+            &serde_json::to_vec(&document).unwrap(),
+        );
+        // No registry and no database exist: the refusal comes first.
+        let error = push_package(&PushPackageRequest {
+            package: root.clone(),
+            registry: PackageRegistry {
+                artifact_base: "registry.invalid/wamn/packages".to_owned(),
+                registry_auth_file: root.join("missing-auth.json"),
+                insecure_registry: false,
+                oci_ca_paths: Vec::new(),
+                control_database_url: "postgres://nobody@127.0.0.1:1/none".to_owned(),
+            },
+            component_artifact_base: "registry.invalid/wamn/components".to_owned(),
+            source_commit: None,
+        })
+        .await
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(
+            error.contains(
+                "requires platform policy contract receiving_data_access, which is not satisfied"
+            ),
+            "{error}"
+        );
+        remove(&root);
+    }
+
+    #[test]
     fn an_unpacked_artifact_packs_to_its_own_digest() {
         let root = package_tree("unpacked");
-        let packed = pack(&root).unwrap();
+        let publication = BTreeMap::from([(
+            "publication/components/blob-put.json.in".to_owned(),
+            b"{\"component\": \"blob-put\"}\n".to_vec(),
+        )]);
+        let descriptor = descriptor();
+        let packed = pack_layers(&root, &publication, vec![descriptor.clone()]).unwrap();
+        // A source tree has no descriptor layers, so its digest differs.
+        assert_ne!(pack_package(&root).unwrap().digest, packed.digest);
+
+        let last = packed.layers.last().unwrap();
+        assert_eq!(last.media_type, COMPONENT_DESCRIPTOR_MEDIA_TYPE);
+        assert_eq!(
+            last.annotations,
+            BTreeMap::from([
+                (COMPONENT_NAME_ANNOTATION.to_owned(), "receiving".to_owned()),
+                (
+                    COMPONENT_DIGEST_ANNOTATION.to_owned(),
+                    descriptor.digest.clone()
+                ),
+            ])
+        );
+        let manifest: serde_json::Value = serde_json::from_slice(&packed.manifest).unwrap();
+        assert_eq!(
+            manifest["annotations"]["wamn.component.receiving"],
+            descriptor.digest
+        );
+
         let unpacked = root.parent().unwrap().join("unpacked");
-        tar::Archive::new(packed.bytes.as_slice())
-            .unpack(&unpacked)
-            .unwrap();
-        assert_eq!(pack_package(&unpacked, None).unwrap().digest, packed.digest);
-        let error = format!("{:#}", pack(&unpacked).unwrap_err());
-        assert!(error.contains("push-package writes it"), "{error}");
+        unpack_layers(&unpacked, &packed.layers).unwrap();
+        assert_eq!(
+            std::fs::read(unpacked.join("generated/wamn.json")).unwrap(),
+            receiving_manifest()
+        );
+        assert_eq!(
+            std::fs::read(unpacked.join("descriptors/receiving.json")).unwrap(),
+            descriptor.bytes
+        );
+        assert!(
+            unpacked
+                .join("publication/components/blob-put.json.in")
+                .is_file()
+        );
+        let repacked = pack_package(&unpacked).unwrap();
+        assert_eq!(repacked.digest, packed.digest);
+        assert_eq!(repacked.manifest, packed.manifest);
         remove(&root);
     }
 }

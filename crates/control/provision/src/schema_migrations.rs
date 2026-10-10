@@ -192,6 +192,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0022_remove_copy_project_env.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0023_package_artifact_verification.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0023_package_artifact_verification.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -378,9 +384,9 @@ mod tests {
             .find(|migration| {
                 migration
                     .relative_path
-                    .ends_with("_remove_environment_sagas.sql")
+                    .ends_with("_package_artifact_verification.sql")
             })
-            .expect("the migration that removes the environment sagas exists");
+            .expect("the migration that recreates catalog.package_artifacts exists");
         let grants = format!(
             "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control') THEN\n    {}\n  END IF;",
             crate::sql::control_surface_grants_sql()

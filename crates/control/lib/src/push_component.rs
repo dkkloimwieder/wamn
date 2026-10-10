@@ -1201,7 +1201,7 @@ fn read_package_owned_file(
     clippy::too_many_arguments,
     reason = "the push and its verification pull share one registry's transport facts"
 )]
-async fn publish_and_verify(
+pub(crate) async fn publish_and_verify(
     reference: &Reference,
     artifact_base: &str,
     insecure: bool,
@@ -1254,7 +1254,7 @@ async fn publish_and_verify(
 
 /// One registry client for the component repository of `reference`, and its
 /// authentication.
-fn registry_client(
+pub(crate) fn registry_client(
     reference: &Reference,
     insecure: bool,
     oci_ca_paths: &[PathBuf],
@@ -1294,7 +1294,7 @@ fn registry_client(
     Ok((client, auth))
 }
 
-fn artifact_layout(
+pub(crate) fn artifact_layout(
     component_bytes: &[u8],
     config_bytes: &[u8],
 ) -> (ImageLayer, Config, OciImageManifest) {
