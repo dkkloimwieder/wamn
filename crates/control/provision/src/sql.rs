@@ -138,23 +138,23 @@ pub fn drain_app_role_sessions_sql() -> String {
 
 /// Catalog relations read by the surviving management-admission surface.
 ///
-/// Publish reads the immutable wiring and package-owned component facts; Gate
-/// reads the same component facts for compatibility and effect posture. Runtime
-/// connection state is deliberately absent: an empty case set executes nothing,
-/// while a nonempty set reaches the effect posture before any binding could be
-/// relevant (`wamn-10yt.10.14`).
-pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 2] = ["wirings", "component_library"];
+/// Publish reads the immutable wirings. Publish and Gate read the component
+/// facts from the verified package artifact, not from this database
+/// (`wamn-vavs4.6`). Runtime connection state is deliberately absent: an empty
+/// case set executes nothing, while a nonempty set reaches the effect posture
+/// before any binding could be relevant (`wamn-10yt.10.14`).
+pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 1] = ["wirings"];
 
 /// Catalog relations read by callable-HTTP connection authorization.
 ///
 /// `CONNECTION_EFFECT_SNAPSHOT_SQL` resolves one exact package membership and
-/// joins the immutable wiring, component, requirement, binding, instance, and
-/// generation facts. Unlike management admission, it never consults the
-/// environment's mutable effective-release head.
-pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 7] = [
+/// joins the immutable wiring, requirement, binding, instance, and generation
+/// facts, and the components that the release manifest carries. Unlike
+/// management admission, it never consults the environment's mutable
+/// effective-release head.
+pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
     "releases",
     "wirings",
-    "component_library",
     "connection_requirements",
     "connection_bindings",
     "connection_instances",
@@ -205,9 +205,8 @@ pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 7] = [
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 6] = [
     "wirings",
-    "component_library",
     "connection_requirements",
     "connection_bindings",
     "connection_instances",
@@ -439,7 +438,7 @@ fn grant_tenant_key_execute_sql(role: &str) -> String {
 
 /// Converge management publication to its exact catalog grants.
 ///
-/// The family reads component and wiring facts and appends immutable wirings.
+/// The family reads wiring facts and appends immutable wirings.
 /// Revocation removes stale table, column, and schema privileges before grants.
 pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
     let role = quote_ident(MANAGEMENT_ADMITTER_ROLE);
@@ -1227,7 +1226,6 @@ mod tests {
              GRANT USAGE ON SCHEMA catalog, app_system, wamn_cache TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"component_library\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
@@ -1237,7 +1235,7 @@ mod tests {
              GRANT SELECT ON TABLE app_system.\"users\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE wamn_cache.\"model_versions\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads seven catalog relations, three permission relations and the \
+            "the callable-HTTP admitter reads six catalog relations, three permission relations and the \
              model versions, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
@@ -1264,7 +1262,6 @@ mod tests {
              FROM \"wamn_executor_platform\"; \
              GRANT USAGE ON SCHEMA catalog, \"wamn_run\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"component_library\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" \

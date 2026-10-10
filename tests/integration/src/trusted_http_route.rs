@@ -36,7 +36,6 @@ use wamn_catalog::{
     ComponentDescriptor, ConnectionTypeDescriptor, SERVING_MANIFEST_FORMAT_VERSION,
     ServingComponentOperation, WiringDocument, WiringNode, WiringTerminal,
 };
-use wamn_control::push_component::admitted_projection_hash;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
@@ -251,8 +250,7 @@ async fn build_with_credentials(
     })
 }
 
-/// The SHIPPED palette declaration, rendered the way
-/// `apps/platform/no-std/publish.sh` renders it.
+/// The SHIPPED palette declaration, rendered from its template.
 ///
 /// Read from the template rather than restated here: a copy would drift from
 /// the guest's real parameter contract, and `validate_parameters` in
@@ -392,7 +390,7 @@ fn credential_secret() -> String {
 }
 
 /// Publish the exact bytes the production puller will verify, in the layout
-/// `wamn-ctl push-component` writes.
+/// `wamn-ctl push-package` writes for each component.
 async fn publish_component(
     artifact_base: &str,
     component: &AdmittedComponent,
@@ -510,10 +508,6 @@ async fn seed_with_client(
 
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
-    let imports = serde_json::to_string(&component.imports).context("serialize imports")?;
-    let operations =
-        serde_json::to_string(&component.operations).context("serialize operations")?;
-    let effects = serde_json::to_string(&component.effects).context("serialize effects")?;
     // The whole portable record component admission mints, not just its
     // descriptor: `requirement_hash` is the SHA-256 of exactly these bytes.
     let requirement = ComponentConnectionRequirement::new(
@@ -524,8 +518,6 @@ async fn seed_with_client(
     let requirement_json = String::from_utf8(requirement.canonical_bytes())
         .context("portable requirement bytes are UTF-8")?;
     let requirement_hash = requirement.requirement_hash();
-    let projection_hash = admitted_projection_hash(component, std::slice::from_ref(&requirement))
-        .context("hash the complete admitted projection")?;
     // `require_direct_transport` demands an EXPLICIT null proxy-transport: an
     // absent key is a refusal, not a default.
     let definition_json = serde_json::json!({
@@ -594,39 +586,6 @@ async fn seed_with_client(
         )
         .await
         .context("seed the wiring version")?;
-    client
-        .execute(
-            "INSERT INTO catalog.component_digest_owners \
-                   (tenant_id, component_digest, package_id) \
-             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&TENANT, &component.component_digest, &PACKAGE],
-        )
-        .await
-        .context("seed the component digest owner")?;
-    client
-        .execute(
-            "INSERT INTO catalog.component_library (\
-                 tenant_id, package_id, package_version, component, interface_version, operations, \
-                 component_digest, projection_hash, imports, imports_fingerprint, effects\
-             ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, \
-                 $11::text::jsonb)",
-            &[
-                &TENANT,
-                &PACKAGE,
-                &PACKAGE_VERSION,
-                &component.component,
-                &component.interface_version,
-                &operations,
-                &component.component_digest,
-                &projection_hash,
-                &imports,
-                &component.imports_fingerprint,
-                &effects,
-            ],
-        )
-        .await
-        .context("seed the admitted component fact")?;
-
     client
         .execute(
             "INSERT INTO catalog.connection_requirements (\
@@ -797,25 +756,6 @@ async fn seed_additional_wirings(
               &wamn_execution_contract::canonical_json_sha256(&manifest)],
         ).await?;
     }
-    let projection_hash = admitted_projection_hash(component, &[])?;
-    client
-        .execute(
-            "INSERT INTO catalog.component_digest_owners (tenant_id, component_digest, package_id) \
-         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&TENANT, &component.component_digest, package],
-        )
-        .await
-        .context("seed the additional component digest owner")?;
-    client.execute(
-        "INSERT INTO catalog.component_library (tenant_id, package_id, package_version, \
-             component, interface_version, operations, component_digest, projection_hash, \
-             imports, imports_fingerprint, effects) \
-         VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb)",
-        &[&TENANT, package, package_version, &component.component, &component.interface_version,
-          &serde_json::to_string(&component.operations)?, &component.component_digest, &projection_hash,
-          &serde_json::to_string(&component.imports)?, &component.imports_fingerprint,
-          &serde_json::to_string(&component.effects)?],
-    ).await.context("seed the additional admitted component before sealing")?;
     for document in documents {
         let version = i32::try_from(document.version)?;
         let wiring_hash = document.wiring_hash().as_str().to_owned();

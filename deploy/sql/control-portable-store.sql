@@ -157,54 +157,6 @@ CREATE TRIGGER package_migrations_release_seal
 -- There is deliberately no `CHECK (environment_instance <> '')`: the empty
 -- string IS the durable value, and the instance is whatever the recreate minted
 -- (a `pg_database` oid today), not a shape this store gets to constrain.
---
--- A component digest belongs to one package for life in each environment
--- instance. Each version of that package may hold it once, and another package
--- may not hold it (docs/plan/kind-to-type.md §4.3.6).
-CREATE TABLE catalog.component_digest_owners (
-    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
-    environment_instance text NOT NULL,
-    component_digest     text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    package_id           text NOT NULL CHECK (package_id <> ''),
-    CONSTRAINT component_digest_owners_pkey
-        PRIMARY KEY (tenant_id, environment_instance, component_digest),
-    CONSTRAINT component_digest_owners_package_key
-        UNIQUE (tenant_id, environment_instance, component_digest, package_id)
-);
-
-CREATE TABLE catalog.component_library (
-    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
-    environment_instance text        NOT NULL,
-    package_id           text        NOT NULL CHECK (package_id <> ''),
-    package_version      text        NOT NULL CHECK (package_version <> ''),
-    component            text        NOT NULL CHECK (component <> ''),
-    interface_version    text        NOT NULL CHECK (interface_version <> ''),
-    operations           jsonb       NOT NULL CHECK (
-        jsonb_typeof(operations) = 'object' AND operations <> '{}'::jsonb
-    ),
-    component_digest     text        NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    projection_hash      text        NOT NULL CHECK (projection_hash ~ '^sha256:[0-9a-f]{64}$'),
-    imports              jsonb       NOT NULL CHECK (jsonb_typeof(imports) = 'array'),
-    imports_fingerprint  text        NOT NULL CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
-    effects              jsonb       NOT NULL CHECK (jsonb_typeof(effects) = 'array'),
-    admitted_at          timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT component_library_pkey
-        PRIMARY KEY (tenant_id, environment_instance, package_id, package_version,
-                     component, interface_version),
-    CONSTRAINT component_library_package_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version),
-    CONSTRAINT component_library_digest_owner_fkey
-        FOREIGN KEY (tenant_id, environment_instance, component_digest, package_id)
-        REFERENCES catalog.component_digest_owners
-            (tenant_id, environment_instance, component_digest, package_id),
-    CONSTRAINT component_library_package_digest_key
-        UNIQUE (tenant_id, environment_instance, package_id, package_version, component_digest)
-);
-
--- Keyed by the same instance as the component fact it requires, and its foreign
--- key travels through `component_digest_owners`, so a requirement can never
--- resolve to another creation's component (wamn-10yt.52).
 CREATE TABLE catalog.connection_requirements (
     tenant_id            text  NOT NULL CHECK (tenant_id <> ''),
     environment_instance text  NOT NULL,
@@ -213,11 +165,7 @@ CREATE TABLE catalog.connection_requirements (
     requirement_json     jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
     requirement_hash     text  NOT NULL CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT connection_requirements_pkey
-        PRIMARY KEY (tenant_id, environment_instance, component_digest, store_alias),
-    CONSTRAINT connection_requirements_component_fkey
-        FOREIGN KEY (tenant_id, environment_instance, component_digest)
-        REFERENCES catalog.component_digest_owners
-            (tenant_id, environment_instance, component_digest)
+        PRIMARY KEY (tenant_id, environment_instance, component_digest, store_alias)
 );
 
 -- ---------------------------------------------------------------------------
@@ -314,7 +262,7 @@ CREATE TABLE wamn_run.gate_reports (
 );
 
 -- The attestation's coordinate carries the environment instance for the same
--- reason the component fact does (wamn-10yt.52): keyed by the instance, a
+-- reason the connection requirement does (wamn-10yt.52): keyed by the instance, a
 -- recreated database is a different coordinate rather than a conflict with a
 -- row whose database no longer exists.
 CREATE TABLE catalog.deployment_attestations (
@@ -384,8 +332,7 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.component_digest_owners',
-        'catalog.component_library', 'catalog.connection_requirements',
+        'catalog.connection_requirements',
         'catalog.authoring_command_audit', 'catalog.deployment_attestations',
         'catalog.tenant_environments',
         'wamn_run.gate_reports'
@@ -407,16 +354,14 @@ DECLARE
     trigger_name text;
 BEGIN
     -- ONE freeze for every control fact, unconditionally (wamn-10yt.52). The
-    -- component library, its connection requirements and the deployment
-    -- attestations rejoined this list when they started keying by the
+    -- connection requirements and the deployment attestations rejoined this list when they started keying by the
     -- environment instance: a recreated environment now writes a DIFFERENT row
     -- rather than editing the one whose database is gone, so there is nothing
     -- left for a conditional freeze to permit.
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.packages', 'catalog.package_migrations',
         'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.authoring_command_audit', 'catalog.component_digest_owners',
-        'catalog.component_library', 'catalog.connection_requirements',
+        'catalog.authoring_command_audit', 'catalog.connection_requirements',
         'catalog.deployment_attestations', 'catalog.package_artifacts',
         'catalog.qualifications',
         'wamn_run.gate_reports'
@@ -513,8 +458,7 @@ BEGIN
     SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
       FROM pg_tables WHERE schemaname = 'catalog';
     IF catalog_tables IS DISTINCT FROM ARRAY[
-        'authoring_command_audit', 'component_digest_owners', 'component_library',
-        'connection_requirements', 'deployment_attestations',
+        'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
         'effective_release_packages',
         'effective_releases', 'package_artifacts', 'package_migrations',
         'packages', 'qualifications', 'tenant_environments'

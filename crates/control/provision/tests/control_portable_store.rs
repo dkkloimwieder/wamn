@@ -173,7 +173,7 @@ fn control_portable_store_enforces_the_current_record_on_postgres() {
     psql_ok(
         &url,
         "check the installed package/release record",
-        r#"
+        r"
 SET ROLE wamn_system;
 SET app.tenant = 'tenant-a';
 DO $shape$
@@ -186,8 +186,7 @@ BEGIN
   SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
     FROM pg_tables WHERE schemaname = 'catalog';
   ASSERT catalog_tables = ARRAY[
-    'authoring_command_audit', 'component_digest_owners', 'component_library',
-    'connection_requirements', 'deployment_attestations',
+    'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
     'effective_release_packages',
     'effective_releases', 'package_artifacts', 'package_migrations',
     'packages', 'qualifications', 'tenant_environments'
@@ -243,34 +242,28 @@ VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'widgets', '1.0.0');
 
 
 
--- wamn-10yt.52. The admitted component fact is frozen for EVERY environment,
+-- wamn-10yt.52. A connection requirement is frozen for EVERY environment,
 -- and a RECREATED environment writes its own row under its own creation rather
 -- than editing the one whose database was dropped. This replaces the
 -- wamn-10yt.38 test that the disposable marker made the fact replaceable in
 -- place; that overwrite is retired and the marker decides nothing here.
-INSERT INTO catalog.component_digest_owners
-  (tenant_id, environment_instance, component_digest, package_id)
-VALUES ('tenant-a', '', 'sha256:' || repeat('1', 64), 'widgets');
-INSERT INTO catalog.component_library
-  (tenant_id, environment_instance, package_id, package_version, component,
-   interface_version, operations, component_digest, projection_hash, imports,
-   imports_fingerprint, effects)
-VALUES ('tenant-a', '', 'widgets', '1.0.0', 'widgets', '0.1.0',
-        '{"wamn-widgets:widget/get@1.0.0": {}}'::jsonb,
-        'sha256:' || repeat('1', 64), 'sha256:' || repeat('2', 64),
-        '[]'::jsonb, 'sha256:' || repeat('3', 64), '[]'::jsonb);
+INSERT INTO catalog.connection_requirements
+  (tenant_id, environment_instance, component_digest, store_alias,
+   requirement_json, requirement_hash)
+VALUES ('tenant-a', '', 'sha256:' || repeat('1', 64), 'db', '{}'::jsonb,
+        'sha256:' || repeat('2', 64));
 
 DO $unprojected_is_frozen$ BEGIN
   ASSERT NOT EXISTS (
     SELECT 1 FROM catalog.tenant_environments WHERE tenant_id = 'tenant-a'),
     'the store shipped a projected environment';
   BEGIN
-    UPDATE catalog.component_library
+    UPDATE catalog.connection_requirements
        SET component_digest = 'sha256:' || repeat('4', 64)
      WHERE tenant_id = 'tenant-a';
     ASSERT false, 'a tenant with no projected environment replaced its fact';
   EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'catalog.component_library is immutable';
+    ASSERT SQLERRM = 'catalog.connection_requirements is immutable';
   END;
 END
 $unprojected_is_frozen$;
@@ -281,12 +274,12 @@ DO $durable_is_frozen$ BEGIN
            WHERE tenant_id = 'tenant-a') = '',
     'provisioning claimed a database creation it did not make';
   BEGIN
-    UPDATE catalog.component_library
+    UPDATE catalog.connection_requirements
        SET component_digest = 'sha256:' || repeat('4', 64)
      WHERE tenant_id = 'tenant-a';
-    ASSERT false, 'a durable environment replaced a frozen component fact';
+    ASSERT false, 'a durable environment replaced a frozen connection requirement';
   EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'catalog.component_library is immutable';
+    ASSERT SQLERRM = 'catalog.connection_requirements is immutable';
   END;
 END
 $durable_is_frozen$;
@@ -296,12 +289,12 @@ $durable_is_frozen$;
 UPDATE catalog.tenant_environments SET instance_suffix='efgh5678', disposable=true, environment_instance='', projected_at=now() WHERE tenant_id='tenant-a';
 DO $the_marker_alone_unlocks_nothing$ BEGIN
   BEGIN
-    UPDATE catalog.component_library
+    UPDATE catalog.connection_requirements
        SET component_digest = 'sha256:' || repeat('4', 64)
      WHERE tenant_id = 'tenant-a';
     ASSERT false, 'the disposable marker alone still replaces a frozen fact';
   EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'catalog.component_library is immutable';
+    ASSERT SQLERRM = 'catalog.connection_requirements is immutable';
   END;
   ASSERT (SELECT instance_suffix FROM catalog.tenant_environments
            WHERE tenant_id = 'tenant-a') = 'efgh5678',
@@ -309,26 +302,20 @@ DO $the_marker_alone_unlocks_nothing$ BEGIN
 END
 $the_marker_alone_unlocks_nothing$;
 
--- The recreate claims a creation, and the SAME coordinate then admits its own
--- bytes BESIDE the previous creation's fact rather than over it.
+-- The recreate claims a creation, and the SAME coordinate then records its own
+-- requirement BESIDE the previous creation's fact rather than over it.
 UPDATE catalog.tenant_environments SET environment_instance='16384', projected_at=now() WHERE tenant_id='tenant-a';
-INSERT INTO catalog.component_digest_owners
-  (tenant_id, environment_instance, component_digest, package_id)
-VALUES ('tenant-a', '16384', 'sha256:' || repeat('4', 64), 'widgets');
-INSERT INTO catalog.component_library
-  (tenant_id, environment_instance, package_id, package_version, component,
-   interface_version, operations, component_digest, projection_hash, imports,
-   imports_fingerprint, effects)
-VALUES ('tenant-a', '16384', 'widgets', '1.0.0', 'widgets', '0.1.0',
-        '{"wamn-widgets:widget/get@1.0.0": {}}'::jsonb,
-        'sha256:' || repeat('4', 64), 'sha256:' || repeat('5', 64),
-        '[]'::jsonb, 'sha256:' || repeat('3', 64), '[]'::jsonb);
+INSERT INTO catalog.connection_requirements
+  (tenant_id, environment_instance, component_digest, store_alias,
+   requirement_json, requirement_hash)
+VALUES ('tenant-a', '16384', 'sha256:' || repeat('4', 64), 'db', '{}'::jsonb,
+        'sha256:' || repeat('5', 64));
 DO $each_creation_keeps_its_own_fact$ BEGIN
-  ASSERT (SELECT component_digest FROM catalog.component_library
+  ASSERT (SELECT component_digest FROM catalog.connection_requirements
            WHERE tenant_id = 'tenant-a' AND environment_instance = '16384')
          = 'sha256:' || repeat('4', 64),
-    'the new creation did not carry the bytes it admitted';
-  ASSERT (SELECT component_digest FROM catalog.component_library
+    'the new creation did not carry the requirement it recorded';
+  ASSERT (SELECT component_digest FROM catalog.connection_requirements
            WHERE tenant_id = 'tenant-a' AND environment_instance = '')
          = 'sha256:' || repeat('1', 64),
     'the previous creation stopped resolving to the run that owns it';
@@ -343,7 +330,7 @@ UPDATE catalog.tenant_environments SET environment_instance='', projected_at=now
 
 
 RESET ROLE;
-"#,
+",
     );
 }
 
@@ -387,7 +374,7 @@ fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
         &url,
         "seed two control tenants",
         &format!(
-            r#"
+            r"
 SET ROLE wamn_system;
 INSERT INTO wamn_authority.author_login_tenants
   (login_identity, tenant_id, org_id, project_id, environment)
@@ -408,18 +395,6 @@ DO $seed$ DECLARE tenant text; package text; release text; BEGIN
     INSERT INTO catalog.effective_release_packages
       (tenant_id, manifest_digest, package_id, package_version)
     VALUES (tenant, release, package, '1.0.0');
-    INSERT INTO catalog.component_digest_owners
-      (tenant_id, environment_instance, component_digest, package_id)
-    VALUES (tenant, '', 'sha256:' || repeat('b', 64), package);
-    INSERT INTO catalog.component_library
-      (tenant_id, environment_instance, package_id, package_version, component,
-       interface_version, operations, component_digest, projection_hash, imports,
-       imports_fingerprint, effects)
-    VALUES
-      (tenant, '', package, '1.0.0', 'worker', '0.1.0',
-       '{{"run":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}',
-       'sha256:' || repeat('b', 64), 'sha256:' || repeat('c', 64), '[]',
-       'sha256:' || repeat('d', 64), '[]');
     INSERT INTO catalog.connection_requirements
       (tenant_id, environment_instance, component_digest, store_alias,
        requirement_json, requirement_hash)
@@ -430,7 +405,7 @@ DO $seed$ DECLARE tenant text; package text; release text; BEGIN
 END
 $seed$;
 RESET ROLE;
-"#
+"
         ),
     );
 

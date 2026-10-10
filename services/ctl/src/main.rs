@@ -86,8 +86,6 @@ enum Command {
     QualifyUpgrade(package_verbs::QualifyUpgradeArgs),
     /// Reconcile generated package data privileges after apply-package.
     ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
-    /// Validate/publish component bytes, then exact-project their facts to both planes
-    PushComponent(component_verbs::PushComponentArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
     AuthorWiring(release_verbs::AuthorWiringArgs),
     /// Bind one admitted component's declared connection alias to an
@@ -162,7 +160,6 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await
         }
-        Command::PushComponent(args) => component_verbs::push(args).await,
         Command::AuthorWiring(args) => release_verbs::author(args).await,
         Command::PublishRelease(args) => release_verbs::publish(args).await,
         Command::PrintReleaseEnv(args) => delivery_verbs::print_release_env(args).await,

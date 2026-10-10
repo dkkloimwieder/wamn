@@ -11,9 +11,7 @@ use wamn_catalog::{
 };
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_control::publish_release::package_route;
-use wamn_control::push_component::{
-    AdmitComponentRequest, admit_component, project_admitted_component_for_verification,
-};
+use wamn_control::push_component::{AdmitComponentRequest, admit_component};
 use wamn_control_provision::{
     CredentialGeneration, SystemReader, WorkloadRoleFamily, WorkloadRoleScope,
     system_reader_generation_role, workload_generation_role,
@@ -228,7 +226,6 @@ pub(super) async fn assemble(
             declaration: declaration_path,
             admitted_platform_packages: vec!["wamn:node".into(), "wamn:postgres".into()],
         })?;
-        project_admitted_component_for_verification(&admission, input.database_url).await?;
         let facts = admission.facts().clone();
         std::fs::write(
             local_component_path(input.scratch, &facts.component_digest)?,

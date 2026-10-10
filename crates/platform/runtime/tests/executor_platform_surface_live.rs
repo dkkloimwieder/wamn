@@ -247,7 +247,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .context("assert the generation identity")?;
 
     let component_digest = digest("a");
-    let projection_hash = digest("6");
     let imports_fingerprint = digest("b");
     let wiring_hash = digest("c");
     let dead_wiring_hash = digest("d");
@@ -266,14 +265,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
             "INSERT INTO catalog.packages \
                (tenant_id,package_id,package_version,manifest_sha256) \
              VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{manifest_sha256}'); \
-             INSERT INTO catalog.component_digest_owners (tenant_id,component_digest,package_id) \
-             VALUES ('{TENANT}','{component_digest}','{PACKAGE_ID}'); \
-             INSERT INTO catalog.component_library \
-               (tenant_id,package_id,package_version,component,interface_version,operations, \
-                component_digest,projection_hash,imports,imports_fingerprint,effects) \
-             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','entity','0.1', \
-                     '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
-                     '{component_digest}','{projection_hash}','[]','{imports_fingerprint}','[]'); \
              INSERT INTO catalog.wirings \
                (tenant_id,package_id,package_version,wiring_id,version, \
                 graph_json,wiring_hash) VALUES \

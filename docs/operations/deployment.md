@@ -49,7 +49,7 @@ wamn-ctl provision-system --system-url "$SYSTEM_ADMIN_URL" --platform-domain "$P
 
 The verb installs the record history, the system schema and the portable store as `wamn_system`, and closes the PUBLIC `CONNECT` and `TEMPORARY` floors.
 It refuses a database that already has the schema `registry`.
-Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-component`.
+Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `apply-package`, `reconcile-package-data-access`, `push-package`.
 
 The control host of an org holds the administration login of each environment of the org ([host-run routes](../architecture/execution.md#host-run-routes)).
 `provision-org --emit-control-administration-secret PATH` writes the empty Secret `wamn-control-administration-<org>`. Apply it before the control host starts, because the host mounts it.
@@ -103,9 +103,9 @@ Apply the selected package migrations to a fresh target with `wamn-ctl apply-pac
 apply-package owns the grants of the `wamn_audit_retention` role on history tables.
 It grants and revokes them in the transaction that writes the log triggers.
 Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access`.
-Publish the selected component bytes with `wamn-ctl push-component`.
-If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
 Push the package with `wamn-ctl push-package` before you gate or submit a wiring.
+It admits each component, pushes it under its digest, and then pushes the package artifact with the component descriptors.
+If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
 `author-wiring` and the management gate read the component facts of the package from the descriptors of its verified artifact, the way `publish-release` reads them.
 `author-wiring` takes the same registry arguments as `publish-release`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
 The scenario worker reads the artifact with a pull-only registry credential scoped to the package repositories.
@@ -172,7 +172,7 @@ Add `--environment=<environment>` to the host group's `extraArgs`; the host keep
 The route host is only the `host` of the http workload config; the router matches routes under it.
 [Qualify the exact candidate](delivery.md#candidate-qualification) before publication.
 The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
-It takes the same `--oci-ca-path` input as `push-component`.
+It takes the same `--oci-ca-path` input as `push-package`.
 `print-release-env` prints the host release settings without editing files.
 A deployment that is not a qualification pushes the published manifest with `wamn-ctl push-release-manifest`, which takes the same arguments as `publish-qualified-release` without `--qualification` and `--release-chart`. It attests the push in the control database and records no source commit.
 
@@ -532,7 +532,7 @@ Run replica-identity reconciliation for each package whose registrations require
 Continue through the existing [release commands](delivery.md) in this order:
 
 ```text
-push-component → publish-release → prepare-release → qualify-release
+push-package → publish-release → prepare-release → qualify-release
 → publish-qualified-release → wamn-ctl env apply
 → optional wamn web upload
 ```

@@ -147,8 +147,6 @@ const CANDIDATE_MANIFEST_SHA256: &str =
 const CANDIDATE_WIRING: &str = "orders-create";
 const CANDIDATE_COMPONENT_DIGEST: &str =
     "sha256:2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d";
-const CANDIDATE_PROJECTION_HASH: &str =
-    "sha256:4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f4f";
 const CANDIDATE_IMPORTS_FINGERPRINT: &str =
     "sha256:3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e";
 /// An admitted package that deliberately belongs to no effective release.
@@ -163,8 +161,6 @@ const EFFECTFUL_COMPONENT: &str = "http-client";
 const EFFECTFUL_OPERATION: &str = "send";
 const EFFECTFUL_COMPONENT_DIGEST: &str =
     "sha256:5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a";
-const EFFECTFUL_PROJECTION_HASH: &str =
-    "sha256:7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c";
 const EFFECTFUL_STORE_ALIAS: &str = "documents";
 const HTTP_IMPORT: &str = "wamn:connection/http@0.1.0";
 /// The blobstore capability's first consumer, refused by the same clause.
@@ -178,8 +174,6 @@ const BLOBSTORE_WIRING: &str = "labels-write";
 const BLOBSTORE_COMPONENT: &str = "blob-put";
 const BLOBSTORE_COMPONENT_DIGEST: &str =
     "sha256:3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d";
-const BLOBSTORE_PROJECTION_HASH: &str =
-    "sha256:4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e";
 const BLOBSTORE_IMPORTS_FINGERPRINT: &str =
     "sha256:5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f";
 /// Fixed loopback port for the gate. Cluster-global roles, one project
@@ -749,29 +743,6 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
              INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
              SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{CANDIDATE_RELEASE_BYTES}', 'UTF8') AS bytes) AS release; \
-             INSERT INTO catalog.component_digest_owners \
-               (tenant_id, component_digest, package_id) \
-             VALUES ('{TENANT}', '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PACKAGE}'), \
-                    ('{TENANT}', '{BLOBSTORE_COMPONENT_DIGEST}', '{CANDIDATE_PACKAGE}'); \
-             INSERT INTO catalog.component_library \
-               (tenant_id, package_id, package_version, component, interface_version, operations, \
-                component_digest, projection_hash, imports, imports_fingerprint, effects) \
-             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
-                     'entity', '0.1', \
-                     '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
-                     '{CANDIDATE_COMPONENT_DIGEST}', '{CANDIDATE_PROJECTION_HASH}', '[]', \
-                     '{CANDIDATE_IMPORTS_FINGERPRINT}', '[]'); \
-             INSERT INTO catalog.component_library \
-               (tenant_id, package_id, package_version, component, interface_version, operations, \
-                component_digest, projection_hash, imports, imports_fingerprint, effects) \
-             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
-                     '{BLOBSTORE_COMPONENT}', '0.1', \
-                     '{{\"put\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
-                     '{BLOBSTORE_COMPONENT_DIGEST}', '{BLOBSTORE_PROJECTION_HASH}', \
-                     '[\"wasmcloud:blobstore/blobstore@0.1.0\"]', \
-                     '{BLOBSTORE_IMPORTS_FINGERPRINT}', \
-                     '[{{\"package\":\"wasmcloud:blobstore\",\"provenance\":\"imported\",\
-\"interfaces\":[\"wasmcloud:blobstore/blobstore@0.1.0\"]}}]'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id, expected_environment, durability_class) \
              VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
@@ -791,42 +762,19 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     // `stored_wiring_count` asserts.
     //
     // What IS seeded above stays seeded: the applied package, effective release,
-    // component library, and environment policy are facts their owning verbs
-    // legitimately write. Gate judges only the component facts.
+    // and environment policy are facts their owning verbs legitimately write.
+    // Gate judges only the component facts of the verified package artifact.
     Ok(())
 }
 
-/// Persist one production-valid connection/effect pair without release state.
-///
-/// Production admission refuses an HTTP requirement unless its audited
-/// import is present in the nonempty effect posture. This fixture preserves that
-/// exact pair; separating them would fabricate a state push-component cannot
-/// persist.
+/// Persist one unreleased package and the HTTP connection requirement of its
+/// component, without release state.
 async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result<()> {
     let requirement = ComponentConnectionRequirement::new(
         EFFECTFUL_COMPONENT_DIGEST,
         EFFECTFUL_STORE_ALIAS,
         ConnectionTypeDescriptor::http_v1(),
     );
-    let operations = serde_json::Value::Object(
-        [(
-            EFFECTFUL_OPERATION.to_owned(),
-            serde_json::json!({"input-ports": [], "output-ports": [], "parameters": []}),
-        )]
-        .into_iter()
-        .collect(),
-    )
-    .to_string();
-    let imports = serde_json::json!([HTTP_IMPORT]);
-    let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(&imports);
-    let imports = imports.to_string();
-    let effects = serde_json::json!([{
-        "package": "wamn:connection",
-        "provenance": "imported",
-        "interfaces": [HTTP_IMPORT],
-    }])
-    .to_string();
-
     project
         .execute(
             "INSERT INTO catalog.packages \
@@ -841,38 +789,6 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
         )
         .await
         .context("seed the unreleased package root")?;
-    project
-        .execute(
-            "INSERT INTO catalog.component_digest_owners \
-                   (tenant_id, component_digest, package_id) \
-             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&TENANT, &EFFECTFUL_COMPONENT_DIGEST, &EFFECTFUL_PACKAGE],
-        )
-        .await
-        .expect("seed the component digest owner");
-    project
-        .execute(
-            "INSERT INTO catalog.component_library \
-               (tenant_id, package_id, package_version, component, interface_version, operations, \
-                component_digest, projection_hash, imports, imports_fingerprint, effects) \
-             VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, \
-                     $11::text::jsonb)",
-            &[
-                &TENANT,
-                &EFFECTFUL_PACKAGE,
-                &CANDIDATE_PACKAGE_VERSION,
-                &EFFECTFUL_COMPONENT,
-                &"0.1",
-                &operations,
-                &EFFECTFUL_COMPONENT_DIGEST,
-                &EFFECTFUL_PROJECTION_HASH,
-                &imports,
-                &imports_fingerprint,
-                &effects,
-            ],
-        )
-        .await
-        .context("seed the normalized connection-bearing component")?;
     let requirement_json = String::from_utf8(requirement.canonical_bytes())
         .context("connection requirement is canonical UTF-8")?;
     let requirement_hash = requirement.requirement_hash();

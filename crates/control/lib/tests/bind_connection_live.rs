@@ -7,8 +7,8 @@
 //! coordinates that were bound, over a snapshot the postgres plugin's own
 //! `connection_effect_snapshot` loaded from the rows the verb wrote. Nothing
 //! between the verb and the resolver is this file's: the fixture is a
-//! package applied by the real verb, a component admitted the way
-//! push-component admits one, a wiring authored by the real author under a
+//! package applied by the real verb, a component with the facts admission
+//! produces, a wiring authored by the real author under a
 //! green report, and a release row of the shape the publish writes.
 //!
 //! Two databases on the PostgreSQL server of the test process: a project
@@ -27,7 +27,6 @@ use wamn_catalog::{
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{AuthorWiringRequest, author_wiring};
 use wamn_control::bind_connection::{self, BindConnectionRequest};
-use wamn_control::push_component::admitted_projection_hash;
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
     CandidateConnectionBinding, ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT,
@@ -106,9 +105,9 @@ fn wiring() -> WiringDocument {
     .expect("fixture wiring is structurally valid")
 }
 
-/// One admitted component with one declared connection, recorded the way
-/// push-component records it: the library row, then the requirement row built
-/// by the control library from the platform's own descriptor. It returns the
+/// One admitted component with one declared connection. It records the
+/// requirement row built by the control library from the platform's own
+/// descriptor, and returns the
 /// admitted facts, which authorship reads from the verified package artifact
 /// in production (`wamn_package_artifact::load_component_facts`).
 async fn admit_component(
@@ -149,39 +148,6 @@ async fn admit_component(
         imports_fingerprint: FACT_FINGERPRINT.to_owned(),
         effects: Vec::new(),
     };
-    let projection_hash =
-        admitted_projection_hash(&admitted, &[]).expect("hash the admitted fixture projection");
-    let operations = serde_json::to_value(&admitted.operations).expect("serialize operations");
-    project
-        .execute(
-            "INSERT INTO catalog.component_digest_owners \
-                   (tenant_id, component_digest, package_id) \
-             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&TENANT, &digest, &package_id],
-        )
-        .await
-        .expect("seed the component digest owner");
-    project
-        .execute(
-            "INSERT INTO catalog.component_library \
-                   (tenant_id, package_id, package_version, component, interface_version, \
-                    operations, component_digest, projection_hash, imports, \
-                    imports_fingerprint, effects) \
-             VALUES ($1, $2, $3, $4, '0.1.0', \
-                     $5::jsonb, $6, $7, '[]'::jsonb, $8, '[]'::jsonb)",
-            &[
-                &TENANT,
-                &package_id,
-                &PACKAGE_VERSION,
-                &component,
-                &operations,
-                &digest,
-                &projection_hash,
-                &FACT_FINGERPRINT,
-            ],
-        )
-        .await
-        .expect("admit the fixture component");
     let requirement = ComponentConnectionRequirement::new(digest, store_alias, descriptor);
     let canonical = String::from_utf8(requirement.canonical_bytes()).expect("canonical utf-8");
     project

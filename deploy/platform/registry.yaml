@@ -76,7 +76,7 @@
 # repo path (wamn/materializer:dev) resolve to the same manifest/blobs.
 #
 # The HTTP workload example uses the same trust and credential directory.
-# WAMN custom component publication remains `wamn-ctl push-component`, and
+# WAMN custom component publication is `wamn-ctl push-package`, and
 # `wamn-ctl publish-qualified-release` publishes the release manifest. Over the
 # same port-forward both take the same CA as `--oci-ca-path /tmp/wamn-ca.crt`
 # (env `WASH_OCI_CA_PATHS`) with `--artifact-base localhost:5000/<repository>`,

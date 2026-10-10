@@ -489,7 +489,6 @@ fn effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback() {
         "catalog_version",
         "gated_catalog_version",
         "catalog_heads",
-        "component_library",
     ] {
         assert!(!sql.contains(retired), "effect authority retains {retired}");
     }

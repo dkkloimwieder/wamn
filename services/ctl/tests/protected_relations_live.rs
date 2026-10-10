@@ -216,16 +216,17 @@ async fn install_project_database(client: &Client, url: &str) {
 const SHARED_PORTABLE_RELATIONS: [&str; 2] = ["catalog.packages", "catalog.package_migrations"];
 
 /// Portable relations both planes install whose shapes DELIBERATELY diverge by
-/// one column, ruled 2026-09-09 on wamn-10yt.52.
+/// one column, ruled 2026-09-09 on wamn-10yt.52. The component library left
+/// both planes in wamn-vavs4.7.
 ///
 /// # What the retired arm asserted
 ///
-/// These two used to sit in [`SHARED_PORTABLE_RELATIONS`], where
+/// These used to sit in [`SHARED_PORTABLE_RELATIONS`], where
 /// `assert_eq!(control_shared_fingerprints, project_shared_fingerprints,
 /// "control copies drifted from the still-authoritative project column/constraint
 /// shapes")` required their control and project copies to be IDENTICAL in every column
 /// (number, name, type, nullability, default) and every non-trigger constraint.
-/// That equality is GONE for these two relations and is not asserted anywhere
+/// That equality is GONE for these relations and is not asserted anywhere
 /// else. The control copies key by `environment_instance` and the project copies
 /// do not, because a project database is dropped and cloned before every
 /// development run and has no second creation to distinguish.
@@ -237,10 +238,7 @@ const SHARED_PORTABLE_RELATIONS: [&str; 2] = ["catalog.packages", "catalog.packa
 /// columns must be the project copy's plus EXACTLY `environment_instance`. Any
 /// other drift between the planes still fails, so the loss is confined to the
 /// constraint shapes the added key column necessarily moves.
-const DIVERGED_PORTABLE_RELATIONS: [&str; 2] = [
-    "catalog.component_library",
-    "catalog.connection_requirements",
-];
+const DIVERGED_PORTABLE_RELATIONS: [&str; 1] = ["catalog.connection_requirements"];
 
 /// The one column the diverged relations are permitted to differ by.
 const DIVERGENCE_COLUMN: &str = "environment_instance";

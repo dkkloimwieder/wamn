@@ -299,11 +299,4 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
         ["labels"],
         "the store alias comes from the wiring"
     );
-    let owners: i64 = fixture
-        .client
-        .query_one("SELECT count(*) FROM catalog.component_digest_owners", &[])
-        .await
-        .expect("count the owner rows")
-        .get(0);
-    assert_eq!(owners, 0, "push-package writes no owner row");
 }

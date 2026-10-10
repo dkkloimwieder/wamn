@@ -417,7 +417,6 @@ fn expected_executor_grants() -> Vec<String> {
     }
     rows.push("relation|wamn_run|environment_policies|SELECT".to_owned());
     for relation in [
-        "component_library",
         "connection_bindings",
         "connection_generations",
         "connection_instances",
@@ -896,16 +895,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              INSERT INTO catalog.releases \
                (tenant_id, manifest_digest, canonical_bytes) \
              VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{{}}');\n\
-             INSERT INTO catalog.component_digest_owners \
-               (tenant_id, component_digest, package_id) \
-             VALUES ('tenant-a', '{digest}', 'orders');\n\
-             INSERT INTO catalog.component_library \
-               (tenant_id, package_id, package_version, component, interface_version, \
-                operations, component_digest, projection_hash, imports, imports_fingerprint, \
-                effects, admitted_at) \
-             VALUES ('tenant-a', 'orders', '1.0.0', 'http-request', '0.1.0', \
-                     '{{\"run\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
-                     '{digest}', '{digest}', '[]', '{digest}', '[]', now());\n\
              INSERT INTO catalog.wirings \
                (tenant_id, package_id, package_version, wiring_id, version, \
                 graph_json, wiring_hash, created_at) \

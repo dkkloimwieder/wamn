@@ -89,7 +89,7 @@ pub struct BindConnectionRequest {
     /// The release whose component is being bound, as its manifest digest.
     pub manifest_digest: String,
 
-    /// The admitted component's digest, as push-component printed it.
+    /// The admitted component's digest, as the release manifest names it.
     pub component_digest: String,
 
     /// The store alias that component declared for this connection.
@@ -256,7 +256,7 @@ async fn bind_in(
         .context("read the component's connection requirement")?;
     let Some(requirement) = requirement else {
         bail!(
-            "component {} declares no connection requirement named {} in the selected release and environment; push-component records \
+            "component {} declares no connection requirement named {} in the selected release and environment; the release records \
              one per declared alias and this binds only what was declared",
             args.component_digest,
             args.store_alias

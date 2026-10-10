@@ -290,16 +290,17 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
     Ok(())
 }
 
-pub(super) async fn push_journey_components(
+/// Admit each journey component from its exact bytes and declaration.
+/// push-package pushes them with the package artifacts.
+pub(super) fn admit_journey_components(
     inputs: &JourneyDocument,
-    project_url: &str,
-    system_url: &str,
     declarations: &[JourneyComponentDeclaration],
-) -> anyhow::Result<()> {
-    for declaration in declarations {
-        let package = declaration.package;
-        wamn_gate_harness::environment::push_component(
-            AdmitComponentRequest {
+) -> anyhow::Result<Vec<AdmittedComponent>> {
+    declarations
+        .iter()
+        .map(|declaration| {
+            let package = declaration.package;
+            let admission = admit_component(AdmitComponentRequest {
                 package: journey_package_root(package, Some(inputs)),
                 component_bytes: inputs
                     .component_directory
@@ -309,61 +310,45 @@ pub(super) async fn push_journey_components(
                     "wamn:node".to_owned(),
                     "wamn:postgres".to_owned(),
                 ],
-            },
-            PublishAdmittedComponentRequest {
-                artifact_base: inputs.component_artifact_base.clone(),
-                registry_auth_file: inputs.registry_auth_file.clone(),
-                insecure_registry: true,
-                oci_ca_paths: Vec::new(),
-                project_database_url: project_url.to_owned(),
-                control_database_url: system_url.to_owned(),
-            },
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "publish production component {}@{}::{}",
-                package.id,
-                package.version(),
-                package.component
-            )
-        })?;
-    }
-    Ok(())
+            })
+            .with_context(|| {
+                format!(
+                    "admit production component {}@{}::{}",
+                    package.id,
+                    package.version(),
+                    package.component
+                )
+            })?;
+            Ok(admission.facts().clone())
+        })
+        .collect()
 }
 
-pub(super) async fn verify_journey_components_are_effectful(
-    project: &Client,
+pub(super) fn verify_journey_components_are_effectful(
+    components: &[AdmittedComponent],
 ) -> anyhow::Result<HashMap<String, String>> {
     let mut digests = HashMap::new();
     for package in released_journey_packages() {
-        let rows = project
-            .query(
-                "SELECT component, operations, effects, component_digest \
-                 FROM catalog.component_library \
-                 WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-                 ORDER BY component COLLATE \"C\"",
-                &[&identity().tenant.as_str(), &package.id, &package.version()],
-            )
-            .await
-            .with_context(|| format!("read the admitted {} effect projection", package.id))?;
+        let admitted = components
+            .iter()
+            .filter(|component| {
+                component.scope.package_id == package.id
+                    && component.scope.package_version == package.version()
+            })
+            .collect::<Vec<_>>();
         anyhow::ensure!(
-            rows.len() == 1,
-            "component publication projected {} {} rows instead of one",
-            rows.len(),
+            admitted.len() == 1,
+            "component admission produced {} {} components instead of one",
+            admitted.len(),
             package.id
         );
-        let row = &rows[0];
-        let component: String = row.get(0);
+        let admitted = admitted[0];
         anyhow::ensure!(
-            component == package.component,
-            "component publication projected {component} instead of {}",
+            admitted.component == package.component,
+            "component admission produced {} instead of {}",
+            admitted.component,
             package.component
         );
-        let operations: Value = row.get(1);
-        let operation_facts = operations
-            .as_object()
-            .with_context(|| format!("{} operations fact is not an object", package.id))?;
         let mut expected = package
             .operations
             .iter()
@@ -372,17 +357,18 @@ pub(super) async fn verify_journey_components_are_effectful(
         if package.id == OVERLAY_PACKAGE_ID {
             expected.insert((*OVERLAY_RECEIPT_PARTICIPANT).to_owned());
         }
-        let observed = operation_facts.keys().cloned().collect::<BTreeSet<_>>();
+        let observed = admitted.operations.keys().cloned().collect::<BTreeSet<_>>();
         anyhow::ensure!(
             observed == expected,
-            "{} component projected the wrong operation set: {observed:?}",
+            "{} component admitted the wrong operation set: {observed:?}",
             package.id
         );
         for token in expected {
-            let fact = operation_facts
+            let fact = admitted
+                .operations
                 .get(&token)
                 .with_context(|| format!("{} operation fact missing for {token}", package.id))?;
-            let registered = fact["registered-operation"].as_str();
+            let registered = fact.registered_operation.as_deref();
             if token == sealed("client-acme-receiving:quality/create-inspection") {
                 anyhow::ensure!(
                     registered.is_none(),
@@ -391,22 +377,20 @@ pub(super) async fn verify_journey_components_are_effectful(
             } else {
                 anyhow::ensure!(
                     registered == Some(token.as_str()),
-                    "operation {token} projected a different authorization identity"
+                    "operation {token} admitted a different authorization identity"
                 );
             }
         }
-        let effects: Value = row.get(2);
         anyhow::ensure!(
-            effects
-                .as_array()
-                .is_some_and(|effects| !effects.is_empty()),
-            "{} component is not effectful: {effects}",
+            !admitted.effects.is_empty(),
+            "{} component is not effectful",
             package.id
         );
-        let digest: String = row.get(3);
         anyhow::ensure!(
-            digests.insert(package.id.to_owned(), digest).is_none(),
-            "{} projected more than one component digest",
+            digests
+                .insert(package.id.to_owned(), admitted.component_digest.clone())
+                .is_none(),
+            "{} admitted more than one component digest",
             package.id
         );
     }

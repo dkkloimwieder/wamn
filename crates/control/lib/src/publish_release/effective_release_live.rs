@@ -16,7 +16,6 @@ use super::{
 };
 use crate::apply_package::{self, ApplyPackageRequest};
 use crate::author_wiring::{self, AuthorWiringRequest};
-use crate::push_component::{admitted_projection_hash, append_or_verify_admitted_component};
 
 const TENANT: &str = "effective-release-poc";
 const ENVIRONMENT: &str = "dev";
@@ -183,10 +182,7 @@ async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
     }
 }
 
-async fn admit_components(
-    project: &mut Client,
-    inputs: &[PackageInput],
-) -> (BTreeMap<String, String>, ReleaseComponents) {
+fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, ReleaseComponents) {
     let engine = wamn_engine::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
     let mut release_components = ReleaseComponents::default();
@@ -245,23 +241,6 @@ async fn admit_components(
             facts.connections.is_empty(),
             "the POC application components declare no portable store aliases"
         );
-        let projection_hash = admitted_projection_hash(&facts.component, &[])
-            .expect("hash the admitted component projection");
-        let transaction = project
-            .transaction()
-            .await
-            .expect("begin component fact persistence");
-        transaction
-            .query_one(super::CLAIM_TENANT_SQL, &[&TENANT])
-            .await
-            .expect("claim the component tenant");
-        append_or_verify_admitted_component(&transaction, &facts.component, &projection_hash)
-            .await
-            .expect("persist the byte-admitted component fact");
-        transaction
-            .commit()
-            .await
-            .expect("commit the byte-admitted component fact");
         digests.insert(
             input.id.to_owned(),
             facts.component.component_digest.clone(),
@@ -416,7 +395,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     provision_project(&project).await;
     provision_control(&control).await;
     apply_packages(&project_url, &inputs).await;
-    let (admitted_digests, components) = admit_components(&mut project, &inputs).await;
+    let (admitted_digests, components) = admit_components(&inputs);
     let wirings = BTreeSet::new();
 
     let manifest_paths = inputs

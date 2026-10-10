@@ -105,11 +105,19 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
     // connection requirement foreign key that migration 0014 drops, and no
     // package floors, which migration 0015 creates. The application schema
     // carries the permission rows that migration 0011 prunes and the
-    // administration tables that migration 0016 grants.
+    // administration tables that migration 0016 grants. The component library
+    // tables are the ones that migration 0017 drops.
     client
         .batch_execute(
             "DROP TABLE catalog.package_upgrade_qualifications; \
              DROP TABLE catalog.package_floors; \
+             CREATE TABLE catalog.component_digest_owners ( \
+               tenant_id text NOT NULL, component_digest text NOT NULL, \
+               PRIMARY KEY (tenant_id, component_digest)); \
+             CREATE TABLE catalog.component_library ( \
+               tenant_id text NOT NULL, component_digest text NOT NULL, \
+               FOREIGN KEY (tenant_id, component_digest) \
+                 REFERENCES catalog.component_digest_owners (tenant_id, component_digest)); \
              ALTER TABLE catalog.connection_requirements \
                ADD CONSTRAINT connection_requirements_component_fkey \
                  FOREIGN KEY (tenant_id, component_digest) \
@@ -238,7 +246,7 @@ async fn fresh_and_upgrade_schema_install_the_same_immutable_carrier() {
         .await
         .unwrap()
         .get(0);
-    assert_eq!(migrations, 16);
+    assert_eq!(migrations, 17);
     // Migration 0012 keyed the release rows by their digest: the snapshot became
     // the cached release, and each run took the digest of its frozen release or,
     // with no frozen release, no pin. The head it converted is gone with the

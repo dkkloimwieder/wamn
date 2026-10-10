@@ -591,19 +591,17 @@ os.write(fd, json.dumps({"auths": {"us-central1-docker.pkg.dev": {"username": "o
 os.close(fd)' $A
 ```
 
-Push the component. `--declaration-template` renders `publication/components/receiving.json.in` with the tenant and the base digests of `wamn.json`:
+Push the package. `push-package` reads `receiving.wasm` through the build index `apps/target/components.json`, admits it, pushes it under its digest to the component repository, and then pushes the package artifact:
 
 ```bash
-export WAMN_PG_ADMIN_URL="$T"
-target/debug/wamn-ctl push-component --package apps/wamn_receiving \
-  --component-bytes apps/target/virtualized/std-empty-environment/receiving.wasm \
-  --declaration-template apps/wamn_receiving/publication/components/receiving.json.in --tenant dev \
-  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $A/config.json \
-  --admit-platform-package wamn:node --admit-platform-package wamn:postgres
+target/debug/wamn-ctl push-package --package apps/wamn_receiving \
+  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages \
+  --component-artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components \
+  --registry-auth-file $A/config.json --control-database-url "$WAMN_SYSTEM_ADMIN_URL"
 rm -rf $A
 ```
 
-The printed digest must equal the `sha256sum` of the local `receiving.wasm`. On 2026-09-26 both were `sha256:36b94783af587a75c3054deeb7ab4f721a89a3832b3b2d788e86a60981a36d0e`, and the push took 14 seconds. This credential is for the operator push only. The host pulls with the CronJob token of finding `wamn-i87m`.
+The component digest must equal the `sha256sum` of the local `receiving.wasm`. On 2026-09-26 the retired `push-component` verb pushed `sha256:36b94783af587a75c3054deeb7ab4f721a89a3832b3b2d788e86a60981a36d0e` in 14 seconds. This credential is for the operator push only. The host pulls with the CronJob token of finding `wamn-i87m`.
 
 ### 3.10 Identity
 

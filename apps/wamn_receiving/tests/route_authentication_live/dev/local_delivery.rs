@@ -259,14 +259,13 @@ async fn require_local_facts(
         .await?
         .get(0);
     let (target, task) = connect(target_url).await?;
-    let publications = target
+    let wirings: i64 = target
         .query_one(
-            "SELECT \
-             (SELECT count(*) FROM catalog.component_library WHERE tenant_id=$1), \
-             (SELECT count(*) FROM catalog.wirings WHERE tenant_id=$1)",
+            "SELECT count(*) FROM catalog.wirings WHERE tenant_id=$1",
             &[&identity().tenant.as_str()],
         )
-        .await?;
+        .await?
+        .get(0);
     // The local run plane needs the release row its runs pin, and nothing
     // else: the component and wiring facts remain local files.
     let releases = target
@@ -280,9 +279,7 @@ async fn require_local_facts(
         .collect::<Vec<_>>();
     task.abort();
     ensure!(
-        published == 0
-            && attestations == 0
-            && (0..2_usize).all(|column| publications.get::<_, i64>(column) == 0),
+        published == 0 && attestations == 0 && wirings == 0,
         "local execution wrote permanent publication facts"
     );
     ensure!(

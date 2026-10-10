@@ -92,13 +92,11 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 26] = [
+const MATRIX_RELATIONS: [&str; 24] = [
     "app_system.environment",
     "app_system.permissions",
     "app_system.user_roles",
     "app_system.users",
-    "catalog.component_digest_owners",
-    "catalog.component_library",
     "catalog.connection_bindings",
     "catalog.connection_generations",
     "catalog.connection_instances",
@@ -175,8 +173,6 @@ const MATRIX: [FamilyReach; 10] = [
             "app_system.permissions|SELECT|table",
             "app_system.user_roles|SELECT|table",
             "app_system.users|SELECT|table",
-            "catalog.component_digest_owners|SELECT|table",
-            "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
@@ -206,7 +202,6 @@ const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::ManagementAdmitter,
         relations: &[
-            "catalog.component_library|SELECT|table",
             "catalog.wirings|INSERT|column",
             "catalog.wirings|SELECT|table",
         ],
@@ -215,7 +210,6 @@ const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::ExecutorPlatform,
         relations: &[
-            "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
@@ -240,7 +234,6 @@ const MATRIX: [FamilyReach; 10] = [
             "app_system.permissions|SELECT|table",
             "app_system.user_roles|SELECT|table",
             "app_system.users|SELECT|table",
-            "catalog.component_library|SELECT|table",
             "catalog.connection_bindings|SELECT|table",
             "catalog.connection_generations|SELECT|table",
             "catalog.connection_instances|SELECT|table",
@@ -1746,7 +1739,11 @@ fn the_tenantless_tables_are_the_only_pass_all_policies_and_owner_only() {
                 AND acl.grantee <> c.relowner \
               ORDER BY 1",
         ),
-        ["package_artifacts wamn_control:SELECT"],
+        [
+            "package_artifacts wamn_control:SELECT",
+            // The scenario-worker reads verified artifacts (system migration 0024).
+            "package_artifacts wamn_control_author:SELECT",
+        ],
         "a role other than the owner holds a privilege on a tenant-less table"
     );
 }

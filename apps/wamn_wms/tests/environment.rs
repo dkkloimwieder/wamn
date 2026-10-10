@@ -28,7 +28,7 @@ use wamn_control::provision_project_env::{
     secret_value,
 };
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
+use wamn_control::push_component::AdmitComponentRequest;
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
@@ -423,7 +423,7 @@ fn component_declaration(
     )?)
 }
 
-/// Render the WMS template as `push-component` does: the version comes from
+/// Render the WMS template as `push-package` does: the version comes from
 /// the package's `wamn.json`, and the template authors none (wamn-uqs5.3).
 fn wms_component_declaration(root: &Path, tenant: &str, output: &Path) -> anyhow::Result<()> {
     let declaration = wamn_control::component_declaration::render_declaration_document(
@@ -520,50 +520,26 @@ pub async fn publish(
         declaration,
         admitted_platform_packages: admitted,
     };
-    let publish_request = || PublishAdmittedComponentRequest {
-        artifact_base: inputs.component_artifact_base.clone(),
-        registry_auth_file: inputs.registry_auth_file.clone(),
-        insecure_registry: true,
-        oci_ca_paths: Vec::new(),
-        project_database_url: route.database_url.clone(),
-        control_database_url: inputs.system_pg_url.clone(),
-    };
-    let wms_digest = shared::push_component(
-        admit_request(
-            inputs.component_directory.join("wms.wasm"),
-            wms_declaration,
-            vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-        ),
-        publish_request(),
-    )
-    .await?;
-    let label_digest = shared::push_component(
-        admit_request(
-            label_render_wasm.to_path_buf(),
-            label_declaration,
-            label_packages,
-        ),
-        publish_request(),
-    )
-    .await?;
-    let blob_digest = shared::push_component(
-        admit_request(
-            inputs.component_directory.join("blob_put.wasm"),
-            blob_declaration,
-            blob_packages,
-        ),
-        publish_request(),
-    )
-    .await?;
-    let jsonata_digest = shared::push_component(
-        admit_request(
-            inputs.component_directory.join("jsonata_expression.wasm"),
-            jsonata_declaration,
-            jsonata_packages,
-        ),
-        publish_request(),
-    )
-    .await?;
+    let wms_digest = shared::admit_component_digest(admit_request(
+        inputs.component_directory.join("wms.wasm"),
+        wms_declaration,
+        vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
+    ))?;
+    let label_digest = shared::admit_component_digest(admit_request(
+        label_render_wasm.to_path_buf(),
+        label_declaration,
+        label_packages,
+    ))?;
+    let blob_digest = shared::admit_component_digest(admit_request(
+        inputs.component_directory.join("blob_put.wasm"),
+        blob_declaration,
+        blob_packages,
+    ))?;
+    let jsonata_digest = shared::admit_component_digest(admit_request(
+        inputs.component_directory.join("jsonata_expression.wasm"),
+        jsonata_declaration,
+        jsonata_packages,
+    ))?;
     fs::write(
         evidence.join("component-digests.json"),
         serde_json::to_vec_pretty(&json!({"wms":wms_digest,"label-render":label_digest,

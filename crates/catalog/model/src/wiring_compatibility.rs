@@ -1,4 +1,4 @@
-//! Pure semantic gate for a wiring against admitted component-library facts.
+//! Pure semantic gate for a wiring against admitted component facts.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -181,7 +181,7 @@ fn validate_resolved_edges(
                 ),
             ));
         }
-        crate::component_library::validate_committed_result_schema(
+        crate::component_facts::validate_committed_result_schema(
             operation.registered_operation.as_deref(),
             operation.committed_result_schema.as_ref(),
         )

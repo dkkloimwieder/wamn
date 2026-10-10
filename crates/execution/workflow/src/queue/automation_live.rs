@@ -205,14 +205,6 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         "edges":[],"cases":[]
     }))?;
     let graph_hash = document.wiring_hash();
-    let transaction = admin.transaction().await?;
-    wamn_control::push_component::append_or_verify_admitted_component(
-        &transaction,
-        &admitted,
-        &wamn_control::push_component::admitted_projection_hash(&admitted, &[])?,
-    )
-    .await?;
-    transaction.commit().await?;
     admin.execute("INSERT INTO catalog.wirings (tenant_id,package_id,package_version,wiring_id,version,graph_json,wiring_hash) VALUES ($1,'automation','1.0.0','echo',1,$2::text::jsonb,$3)",
         &[&TENANT,&serde_json::to_string(&document)?,&graph_hash.as_str()]).await?;
     let manifest: ServingManifest = serde_json::from_value(json!({

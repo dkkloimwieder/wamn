@@ -344,10 +344,11 @@ impl WiringDocument {
             if node.terminal != Some(WiringTerminal::Respond) {
                 return invalid("response node must be a Respond terminal");
             }
-            crate::component_library::normalize_schema(response.schema.clone(), "response")
-                .map_err(|error| CatalogIdentityError::InvalidDefinition {
+            crate::component_facts::normalize_schema(response.schema.clone(), "response").map_err(
+                |error| CatalogIdentityError::InvalidDefinition {
                     message: format!("wiring response schema is invalid: {error}"),
-                })?;
+                },
+            )?;
             if let Some(committed) = &response.committed_result {
                 validate_text(committed, "committed-result node")?;
                 if !self.nodes.contains_key(committed) {

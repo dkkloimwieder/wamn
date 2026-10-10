@@ -267,7 +267,7 @@ run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
             WHERE n.nspname = 'catalog' AND c.relkind IN ('r','p','v','m') \
               AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
            ASSERT actual = \
-             'component_library:SELECT,connection_bindings:SELECT,\
+             'connection_bindings:SELECT,\
 connection_generations:SELECT,connection_instances:SELECT,connection_requirements:SELECT,\
 releases:SELECT,wirings:SELECT', \
                   'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \

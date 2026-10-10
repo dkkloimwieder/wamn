@@ -1298,9 +1298,9 @@ impl ServingManifest {
                         return invalid("committed-result schema must be canonical JSON");
                     }
                     let normalized =
-                        crate::component_library::normalize_schema(value, "committed-result")
+                        crate::component_facts::normalize_schema(value, "committed-result")
                             .and_then(|schema| {
-                                crate::component_library::validate_committed_result_schema(
+                                crate::component_facts::validate_committed_result_schema(
                                     operation.registered_operation.as_deref(),
                                     Some(&schema),
                                 )
@@ -1309,7 +1309,7 @@ impl ServingManifest {
                         message: format!("serving component operation {export:?} carries invalid committed-result facts: {error}"),
                     })?;
                 }
-                crate::component_library::validate_operation_statement_facts(
+                crate::component_facts::validate_operation_statement_facts(
                     export,
                     &operation.statements,
                 )

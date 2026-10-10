@@ -1,4 +1,4 @@
-//! Pure component-library facts stored after byte admission.
+//! Pure component facts produced by byte admission.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -311,11 +311,11 @@ impl AdmittedComponentOperation {
     }
 }
 
-/// Complete package-owned fact persisted in `catalog.component_library`.
+/// Complete package-owned fact that byte admission produces.
 ///
 /// Environment is deliberately absent: an environment selects a wiring, while
-/// component admission is owned by an exact package version. `admitted_at` is likewise
-/// a storage timestamp, not validator output, so admission stays clock-free.
+/// component admission is owned by an exact package version. No timestamp is
+/// part of the fact, so admission stays clock-free.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponent {
@@ -445,7 +445,7 @@ pub enum ComponentFactErrorType {
     DuplicateStatementField,
 }
 
-/// Refusal to mint a complete normalized component-library fact.
+/// Refusal to mint a complete normalized component fact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentFactError {
     type_: ComponentFactErrorType,

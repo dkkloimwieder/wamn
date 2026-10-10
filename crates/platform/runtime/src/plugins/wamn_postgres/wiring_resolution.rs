@@ -1165,7 +1165,6 @@ mod tests {
             CANDIDATE_WIRING_SQL,
         ] {
             assert!(sql.contains("-> 'descriptor'"));
-            assert!(!sql.contains("component_library"));
         }
         assert!(CANDIDATE_WIRING_SQL.contains("LEFT JOIN release_component AS component"));
     }

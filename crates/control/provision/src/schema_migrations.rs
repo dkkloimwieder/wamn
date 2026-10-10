@@ -204,6 +204,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0024_control_author_package_artifacts.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0025_remove_component_library.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0025_remove_component_library.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -286,6 +292,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0016_remove_release_heads.sql",
         sql: include_str!(
             "../../../../deploy/sql/migrations/project/0016_remove_release_heads.sql"
+        ),
+    },
+    Migration {
+        relative_path: "migrations/project/0017_remove_component_library.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0017_remove_component_library.sql"
         ),
     },
 ];

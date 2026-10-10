@@ -169,45 +169,6 @@ CREATE TRIGGER package_migrations_release_seal
     FOR EACH ROW
     EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
--- A component digest belongs to one package for life. Each version of that
--- package may hold it once, and another package may not hold it
--- (docs/plan/kind-to-type.md §4.3.6).
-CREATE TABLE catalog.component_digest_owners (
-    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
-    component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    package_id       text NOT NULL CHECK (package_id <> ''),
-    CONSTRAINT component_digest_owners_pkey
-        PRIMARY KEY (tenant_id, component_digest),
-    CONSTRAINT component_digest_owners_package_key
-        UNIQUE (tenant_id, component_digest, package_id)
-);
-
-CREATE TABLE catalog.component_library (
-    tenant_id           text        NOT NULL CHECK (tenant_id <> ''),
-    package_id          text        NOT NULL CHECK (package_id <> ''),
-    package_version     text        NOT NULL CHECK (package_version <> ''),
-    component           text        NOT NULL CHECK (component <> ''),
-    interface_version   text        NOT NULL CHECK (interface_version <> ''),
-    operations          jsonb       NOT NULL
-        CHECK (jsonb_typeof(operations) = 'object' AND operations <> '{}'::jsonb),
-    component_digest    text        NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    projection_hash     text        NOT NULL CHECK (projection_hash ~ '^sha256:[0-9a-f]{64}$'),
-    imports             jsonb       NOT NULL CHECK (jsonb_typeof(imports) = 'array'),
-    imports_fingerprint text        NOT NULL CHECK (imports_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
-    effects             jsonb       NOT NULL CHECK (jsonb_typeof(effects) = 'array'),
-    admitted_at         timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT component_library_pkey
-        PRIMARY KEY (tenant_id, package_id, package_version, component, interface_version),
-    CONSTRAINT component_library_package_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version),
-    CONSTRAINT component_library_digest_owner_fkey
-        FOREIGN KEY (tenant_id, component_digest, package_id)
-        REFERENCES catalog.component_digest_owners (tenant_id, component_digest, package_id),
-    CONSTRAINT component_library_package_digest_key
-        UNIQUE (tenant_id, package_id, package_version, component_digest)
-);
-
 CREATE TABLE catalog.connection_requirements (
     tenant_id        text  NOT NULL CHECK (tenant_id <> ''),
     component_digest text  NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -449,7 +410,7 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners',
         'releases',
-        'component_digest_owners', 'component_library', 'connection_requirements',
+        'connection_requirements',
         'connection_instances',
         'connection_generations', 'connection_bindings', 'wirings',
         'wiring_tombstones',
@@ -482,7 +443,7 @@ DECLARE
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners',
-        'releases', 'component_digest_owners', 'component_library',
+        'releases',
         'connection_requirements', 'connection_generations',
         'wirings', 'wiring_tombstones',
         'package_upgrade_qualifications'
@@ -503,8 +464,6 @@ CREATE TRIGGER connection_bindings_immutable
 
 GRANT SELECT ON catalog.packages,
     catalog.releases,
-    catalog.component_digest_owners,
-    catalog.component_library,
     catalog.connection_requirements,
     catalog.connection_instances,
     catalog.connection_generations,

@@ -43,14 +43,14 @@ use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::Client;
 use tracing_subscriber::layer::SubscriberExt;
-use wamn_catalog::{AttachmentType, PackageCoordinate};
+use wamn_catalog::{AdmittedComponent, AttachmentType, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring;
 use wamn_control::dev::watch::GitSource;
 use wamn_control::git_source::GitSourceState;
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
+use wamn_control::push_component::{AdmitComponentRequest, admit_component};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_engine::engine::{
@@ -85,10 +85,10 @@ use wash_runtime::wasmtime::component::Component;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
 use environment::{
-    JourneyReleaseTarget, author_journey_wirings, gate_journey_wirings, install_journey_project,
-    journey_package_root, journey_publication_root, journey_scenario_worker_binary,
-    overlay_package_root, overlay_route_path, package_root, publish_and_push_journey_release,
-    push_journey_components, reconcile_journey_data_access, reference_of,
+    JourneyReleaseTarget, admit_journey_components, author_journey_wirings, gate_journey_wirings,
+    install_journey_project, journey_package_root, journey_publication_root,
+    journey_scenario_worker_binary, overlay_package_root, overlay_route_path, package_root,
+    publish_and_push_journey_release, reconcile_journey_data_access, reference_of,
     released_component_digests, render_component_declarations, repository_root, required_journey,
     required_journey_path, seed_materializer_order, seed_materializer_trigger_rows,
     seed_preexisting_quality_fixture, seed_receiving_business_rows,

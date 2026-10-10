@@ -44,7 +44,7 @@ const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
 /// The control tables that key rows by `tenant_id`, leaves first, each with
 /// its immutability trigger. The foreign keys have no `ON DELETE` clause, so
 /// this order is the one that deletes.
-pub const CONTROL_TABLES: [(&str, Option<&str>); 9] = [
+pub const CONTROL_TABLES: [(&str, Option<&str>); 8] = [
     (
         "catalog.deployment_attestations",
         Some("deployment_attestations_immutable"),
@@ -52,10 +52,6 @@ pub const CONTROL_TABLES: [(&str, Option<&str>); 9] = [
     (
         "catalog.connection_requirements",
         Some("connection_requirements_immutable"),
-    ),
-    (
-        "catalog.component_library",
-        Some("component_library_immutable"),
     ),
     (
         "catalog.effective_release_packages",
@@ -544,7 +540,6 @@ mod tests {
             position("catalog.effective_release_packages") < position("catalog.effective_releases")
         );
         assert!(position("catalog.package_migrations") < position("catalog.packages"));
-        assert!(position("catalog.component_library") < position("catalog.packages"));
         assert_eq!(
             delete_control_rows_sql("catalog.packages", Some("packages_immutable"), "dev"),
             [

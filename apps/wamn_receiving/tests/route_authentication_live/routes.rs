@@ -254,9 +254,8 @@ async fn receiving_release_journey(
     reconcile_journey_data_access(inputs, &route.database_url).await?;
     let declarations =
         render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
-    push_journey_components(inputs, &route.database_url, &system_url, &declarations).await?;
-    let admitted_component_digests =
-        verify_journey_components_are_effectful(project.as_ref()).await?;
+    let admitted_components = admit_journey_components(inputs, &declarations)?;
+    let admitted_component_digests = verify_journey_components_are_effectful(&admitted_components)?;
     // The gate and authorship read component facts from the verified package
     // artifacts, so the packages are pushed before the gate starts.
     super::environment::push_journey_packages(inputs, &system_url).await?;
