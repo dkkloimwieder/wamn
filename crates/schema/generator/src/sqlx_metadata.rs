@@ -168,8 +168,8 @@ pub fn stage_sqlx_verifier(
         copy_tree(&metadata, &verifier_root.join(".sqlx"))?;
     }
 
-    let source_maps = package_root.join("generated/source-map");
-    let native_root = package_root.join("generated/native-verifier");
+    let source_maps = crate::output_root(package_root).join("source-map");
+    let native_root = crate::output_root(package_root).join("native-verifier");
     let mut modules = Vec::new();
     let mut query_count = 0;
     let mut native_files = file_stems(&native_root, "rs")?;
@@ -192,7 +192,11 @@ pub fn stage_sqlx_verifier(
             let row = string(accessor, "row")?;
             accessor_names.insert(name);
             let path = statement_path(&map, accessor, &mut operation_offsets)?;
-            copy_file(&package_root.join(path), &verifier_root.join(path))?;
+            let source = match Path::new(path).strip_prefix("generated") {
+                Ok(output) => crate::output_root(package_root).join(output),
+                Err(_) => package_root.join(path),
+            };
+            copy_file(&source, &verifier_root.join(path))?;
             let binds = accessor
                 .get("binds")
                 .and_then(Value::as_array)

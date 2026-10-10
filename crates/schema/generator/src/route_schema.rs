@@ -159,7 +159,10 @@ fn checked(reference: &str) -> Result<&str, RouteSchemaError> {
 /// [`RouteSchemaError`] when the reference leaves the generated route schemas,
 /// or the file is unreadable or not JSON.
 pub fn read_from_package(package_root: &Path, reference: &str) -> Result<Value, RouteSchemaError> {
-    read_json(&package_root.join(checked(reference)?))
+    let file = Path::new(checked(reference)?)
+        .strip_prefix("generated")
+        .expect("a checked reference lies under generated/routes/");
+    read_json(&crate::output_root(package_root).join(file))
 }
 
 fn read_json(path: &Path) -> Result<Value, RouteSchemaError> {
@@ -299,7 +302,10 @@ pub fn read_generated_publication(
     package_root: &Path,
     file: &str,
 ) -> Result<Option<Value>, RouteSchemaError> {
-    let path = package_root.join(file);
+    let path = match Path::new(file).strip_prefix("generated") {
+        Ok(output) => crate::output_root(package_root).join(output),
+        Err(_) => package_root.join(file),
+    };
     if path.exists() {
         read_json(&path).map(Some)
     } else {

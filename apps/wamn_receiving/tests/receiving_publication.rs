@@ -103,7 +103,10 @@ fn authored(
 
 /// One generated publication file of the package.
 fn generated(file: &str) -> Value {
-    read_json(&publication_root().join("..").join(file))
+    let output = Path::new(file)
+        .strip_prefix("generated")
+        .expect("a generated publication file lies under generated/");
+    read_json(&wamn_schema_generator::output_root(&publication_root().join("..")).join(output))
 }
 
 /// The authored attachments with the generated route entries.
@@ -147,8 +150,9 @@ fn declaration() -> ComponentDeclaration {
 
 #[test]
 fn package_owned_inputs_declare_the_exact_eleven_route_closure() {
-    let package_manifest =
-        read_json(&repository_root().join("apps/wamn_receiving/generated/wamn.json"));
+    let package_manifest = read_json(&wamn_schema_generator::package_manifest_path(
+        &repository_root().join("apps/wamn_receiving"),
+    ));
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(attachments_document())
             .expect("the attachment map has the serving wire shape");

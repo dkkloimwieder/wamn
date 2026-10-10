@@ -121,7 +121,9 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         &package,
     )
     .await?;
-    let counter_read = std::fs::read_to_string(package.join("generated/sql/counter/get.sql"))?;
+    let counter_read = std::fs::read_to_string(
+        wamn_schema_generator::output_root(&package).join("sql/counter/get.sql"),
+    )?;
     // Test instrumentation, not a generated application command: the ordinary
     // raw palette import uses GuestSql and its login-bound tenant. Only count is
     // writable; this fixture adds no role or permanent product policy.

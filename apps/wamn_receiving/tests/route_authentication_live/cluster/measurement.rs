@@ -960,9 +960,8 @@ async fn throughput_sweep(
         .get_dbname()
         .context("the throughput project URL names its database")?;
     let statement = benchmark_sql(&fs::read_to_string(
-        resources
-            .repository
-            .join("apps/wamn_receiving/generated/sql/purchase_order/get.sql"),
+        wamn_schema_generator::output_root(&resources.repository.join("apps/wamn_receiving"))
+            .join("sql/purchase_order/get.sql"),
     )?)?;
     let mut index = ThroughputIndex {
         schema:throughput_bench::INDEX_SCHEMA.to_owned(),source:resources.source.clone(),duration_seconds:10,

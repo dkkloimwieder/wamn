@@ -81,7 +81,7 @@ pub(super) async fn after_install(
 ) -> anyhow::Result<()> {
     let overlay = super::overlay_package_root();
     let metadata: Value = serde_json::from_slice(&std::fs::read(
-        overlay.join("generated/package-identity.json"),
+        wamn_schema_generator::output_root(&overlay).join("package-identity.json"),
     )?)?;
     let (project, connection_task) = super::connect(project_url).await?;
     let observation =
@@ -597,7 +597,8 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         .get::<_, Option<String>>(0)
         .context("production install must retain an explicit schema ACL")?;
     let metadata: Value = serde_json::from_slice(&std::fs::read(
-        super::overlay_package_root().join("generated/package-identity.json"),
+        wamn_schema_generator::output_root(&super::overlay_package_root())
+            .join("package-identity.json"),
     )?)?;
     let required = &metadata["required_schema_contract"];
     let baseline = observe_installed_contract(&project, required).await?;

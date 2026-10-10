@@ -164,7 +164,10 @@ async fn push_repeat_fetch_and_a_refused_fetch() {
     .expect("fetch with the recorded digest");
     assert_eq!(
         std::fs::read(opened.root().join("generated/wamn.json")).unwrap(),
-        std::fs::read(receiving_package().join("generated/wamn.json")).unwrap()
+        std::fs::read(wamn_schema_generator::package_manifest_path(
+            &receiving_package()
+        ))
+        .unwrap()
     );
     let listed: Vec<ListedComponent> = serde_json::from_slice(
         &std::fs::read(opened.root().join(COMPONENT_LIST)).expect("read the component list"),

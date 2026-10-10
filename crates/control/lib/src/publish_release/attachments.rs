@@ -198,7 +198,7 @@ fn read_authored_attachments(
         })?;
         if !generated.is_empty() {
             documents.push((
-                root.join(wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS),
+                wamn_schema_generator::output_root(root).join("publication/attachments.json"),
                 generated,
             ));
         }

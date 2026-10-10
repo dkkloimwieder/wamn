@@ -14,8 +14,8 @@ mod synchronization;
 
 use crate::StatementTransactionality;
 use crate::authoring::{
-    COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, is_authored,
-    package_manifest_path,
+    COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, compiled_manifest_path,
+    is_authored, package_manifest_path,
 };
 use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
@@ -383,12 +383,12 @@ pub fn materialize_package_classified(
     transactional: &StatementTransactionality,
 ) -> Result<()> {
     let package = generate_package(catalog, package_root, transactional)?;
-    let output_root = package_root.join("generated");
+    let output_root = crate::output_root(package_root);
     // The route readers below read the compiled manifest from its file, so a
     // write puts the file in place before them.
     if mode == MaterializeMode::Write && is_authored(package_root) {
         let (bytes, _) = load_compiled_manifest(package_root, catalog)?;
-        let path = package_root.join(COMPILED_MANIFEST);
+        let path = compiled_manifest_path(package_root);
         fs::create_dir_all(&output_root)
             .with_context(|| format!("create generated directory {}", output_root.display()))?;
         if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
@@ -991,7 +991,7 @@ mod tests {
         }
 
         fn generated_snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
-            let generated = self.root.join("generated");
+            let generated = crate::output_root(&self.root);
             existing_files(&generated)
                 .expect("enumerate generated files")
                 .into_iter()
@@ -1080,7 +1080,7 @@ generated = { package = "wamn-generated-test-package-tui", path = "../generated/
 
         let generated = split.generated_snapshot();
         let stale = generated.keys().next().expect("generated artifact exists");
-        fs::write(split.root.join("generated").join(stale), b"stale")
+        fs::write(crate::output_root(&split.root).join(stale), b"stale")
             .expect("write stale generated artifact");
         let error = materialize_package_from_catalog(MaterializeMode::Check, &catalog, &split.root)
             .expect_err("exact mode accepted stale output");
@@ -1095,7 +1095,7 @@ generated = { package = "wamn-generated-test-package-tui", path = "../generated/
             .expect("materialize the package");
         let generated = package.generated_snapshot();
         let (relative, original) = generated.iter().next().expect("generated artifact exists");
-        let path = package.root.join("generated").join(relative);
+        let path = crate::output_root(&package.root).join(relative);
         let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_hours(24);
         let set_old_mtime = || {
             fs::File::options()

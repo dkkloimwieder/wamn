@@ -924,7 +924,8 @@ pub(crate) fn presented_root_identity(root: &Path) -> anyhow::Result<PresentedRo
     let statement_corpus_sha256 =
         wamn_execution_contract::canonical_json_sha256(&serde_json::to_value(statements)?);
     let digest_file = |path: &str| -> anyhow::Result<String> {
-        let bytes = fs::read(root.join(path))
+        let output = Path::new(path).strip_prefix("generated")?;
+        let bytes = fs::read(wamn_schema_generator::output_root(root).join(output))
             .with_context(|| format!("read presented root artifact {path}"))?;
         Ok(bytes_digest(&bytes))
     };

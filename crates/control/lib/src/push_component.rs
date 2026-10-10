@@ -1160,7 +1160,11 @@ fn read_package_owned_file(
             ),
         ));
     }
-    let candidate = package_root.join(path);
+    // A `generated/` path names a file of the package's output root.
+    let candidate = match path.strip_prefix("generated") {
+        Ok(output) => wamn_schema_generator::output_root(package_root).join(output),
+        Err(_) => package_root.join(path),
+    };
     let metadata = std::fs::symlink_metadata(&candidate).map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementPathInvalid,

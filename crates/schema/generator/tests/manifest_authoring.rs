@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 use wamn_schema_generator::{
-    COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, package_manifest_path,
-    write_compiled_manifest,
+    COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, output_root,
+    package_manifest_path, write_compiled_manifest,
 };
 
 struct Package(PathBuf);
@@ -346,9 +346,9 @@ fn a_hand_edited_compiled_manifest_fails_the_check() {
     let compiled = compile_manifest(package.root()).expect("compile wamn.k");
     assert_eq!(
         package_manifest_path(package.root()),
-        package.root().join(COMPILED_MANIFEST)
+        output_root(package.root()).join("wamn.json")
     );
-    let committed = package.root().join(COMPILED_MANIFEST);
+    let committed = package_manifest_path(package.root());
     std::fs::create_dir_all(committed.parent().expect("generated/")).expect("create generated/");
     std::fs::write(&committed, &compiled).expect("write generated/wamn.json");
     check_compiled_manifest(package.root(), &compiled).expect("the committed bytes match");
@@ -396,7 +396,7 @@ fn the_compiled_bytes_are_two_space_json_in_schema_order() {
 #[test]
 fn an_edited_wamn_k_reaches_the_compiled_file_before_a_reader_reads_it() {
     let package = Package::new(&source("", ""));
-    let compiled = package.root().join(COMPILED_MANIFEST);
+    let compiled = package_manifest_path(package.root());
     write_compiled_manifest(package.root()).expect("write generated/wamn.json");
     assert_eq!(
         std::fs::read(&compiled).expect("read generated/wamn.json"),
@@ -424,7 +424,7 @@ fn an_edited_wamn_k_reaches_the_compiled_file_before_a_reader_reads_it() {
 #[test]
 fn a_compiled_file_keeps_its_derived_relations_until_wamn_k_changes() {
     let package = Package::new(&source("", ""));
-    let path = package.root().join(COMPILED_MANIFEST);
+    let path = package_manifest_path(package.root());
     let authored = String::from_utf8(compile_manifest(package.root()).expect("compile wamn.k"))
         .expect("UTF-8");
     // Generation writes each derived relation before the statements.

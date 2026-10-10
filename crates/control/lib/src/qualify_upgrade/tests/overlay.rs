@@ -35,19 +35,23 @@ fn compile(root: &Path) {
 }
 
 fn frozen_predecessor(source: &Path, target: &Path) {
+    let output = |root: &Path, path: &str| match Path::new(path).strip_prefix("generated") {
+        Ok(relative) => wamn_schema_generator::output_root(root).join(relative),
+        Err(_) => root.join(path),
+    };
     for directory in [
         "migrations",
         "generated/contracts",
         "generated/platform-policy",
     ] {
-        copy_tree(&source.join(directory), &target.join(directory));
+        copy_tree(&output(source, directory), &output(target, directory));
     }
     for relative in [
         "wamn.k",
         "generated/wamn.json",
         "generated/package-identity.json",
     ] {
-        fs::copy(source.join(relative), target.join(relative)).unwrap();
+        fs::copy(output(source, relative), output(target, relative)).unwrap();
     }
     let manifest = PackageManifest::from_slice(
         &fs::read(wamn_schema_generator::package_manifest_path(source)).unwrap(),
@@ -58,13 +62,14 @@ fn frozen_predecessor(source: &Path, target: &Path) {
         .values()
     {
         for statement in statements.values() {
-            let path = target.join(&statement.path);
+            let path = output(target, &statement.path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::copy(source.join(&statement.path), path).unwrap();
+            fs::copy(output(source, &statement.path), path).unwrap();
         }
     }
-    assert!(!target.join("generated/fixture-tui").exists());
-    assert!(!target.join("generated/fixture_overlay-tui").exists());
+    let target_output = wamn_schema_generator::output_root(target);
+    assert!(!target_output.join("fixture-tui").exists());
+    assert!(!target_output.join("fixture_overlay-tui").exists());
 }
 
 async fn overlay_fixture(name: &str) -> OverlayFixture {
@@ -77,7 +82,8 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
             .join("platform_fixture_overlay"),
         &predecessor,
     );
-    let workspace_manifest = predecessor.join("generated/fixture_overlay-tui/Cargo.toml");
+    let workspace_manifest =
+        wamn_schema_generator::output_root(&predecessor).join("fixture_overlay-tui/Cargo.toml");
     let declaration = fs::read_to_string(&workspace_manifest).unwrap();
     let workspace_entry = "workspace = \"../../../..\"";
     assert_eq!(declaration.matches(workspace_entry).count(), 1);
@@ -370,12 +376,13 @@ async fn qualification_refuses_input_changes_before_publication() {
         value["properties"]["id"]["type"] = serde_json::json!("integer");
         (path, serde_json::to_vec(&value).unwrap())
     };
-    let original_contract = predecessor.join("generated/contracts/widget/archive.input.json");
-    let candidate_contract = fixture
-        .base
-        .root
-        .join("candidate/generated/contracts/widget/archive.input.json");
-    let identity = fixture.predecessor.join("generated/package-identity.json");
+    let original_contract = wamn_schema_generator::output_root(&predecessor)
+        .join("contracts/widget/archive.input.json");
+    let candidate_contract =
+        wamn_schema_generator::output_root(&fixture.base.root.join("candidate"))
+            .join("contracts/widget/archive.input.json");
+    let identity =
+        wamn_schema_generator::output_root(&fixture.predecessor).join("package-identity.json");
     let mut metadata: serde_json::Value =
         serde_json::from_slice(&fs::read(&identity).unwrap()).unwrap();
     metadata["verified_schema_state_id"] = serde_json::json!(format!("sha256:{}", "0".repeat(64)));
@@ -389,7 +396,9 @@ async fn qualification_refuses_input_changes_before_publication() {
     for (name, changes, expected) in [
         (
             "manifest",
-            vec![append(fixture.predecessor.join("generated/wamn.json"))],
+            vec![append(wamn_schema_generator::package_manifest_path(
+                &fixture.predecessor,
+            ))],
             "presented package changed during qualification",
         ),
         (
@@ -405,7 +414,7 @@ async fn qualification_refuses_input_changes_before_publication() {
         (
             "sql",
             vec![append(
-                fixture.predecessor.join("generated/sql/widget/get.sql"),
+                wamn_schema_generator::output_root(&fixture.predecessor).join("sql/widget/get.sql"),
             )],
             "statement-digest-mismatch",
         ),
@@ -679,11 +688,12 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
             .exists()
     );
     assert_eq!(state(&mut fixture.base.source).await, original);
-    let sql_path = fixture.predecessor.join("generated/sql/widget/get.sql");
-    let contract_path = fixture
-        .predecessor
-        .join("generated/contracts/widget/get.operation.json");
-    let identity_path = fixture.predecessor.join("generated/package-identity.json");
+    let sql_path =
+        wamn_schema_generator::output_root(&fixture.predecessor).join("sql/widget/get.sql");
+    let contract_path = wamn_schema_generator::output_root(&fixture.predecessor)
+        .join("contracts/widget/get.operation.json");
+    let identity_path =
+        wamn_schema_generator::output_root(&fixture.predecessor).join("package-identity.json");
     let sql = fs::read(&sql_path).unwrap();
     let contract = fs::read(&contract_path).unwrap();
     let identity_bytes = fs::read(&identity_path).unwrap();
@@ -784,10 +794,8 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     assert!(!fixture.base.root.join("wrong-pin.json").exists());
     assert_eq!(state(&mut fixture.base.source).await, original);
 
-    let contract = fixture
-        .base
-        .root
-        .join("candidate/generated/contracts/widget/archive.input.json");
+    let contract = wamn_schema_generator::output_root(&fixture.base.root.join("candidate"))
+        .join("contracts/widget/archive.input.json");
     let bytes = fs::read(&contract).unwrap();
     let mut changed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     changed["properties"]["id"]["type"] = serde_json::json!("integer");
@@ -887,9 +895,10 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
             )
             .unwrap();
         }
-        let workspace_manifest = target.join("generated/fixture_overlay-tui/Cargo.toml");
+        let workspace_manifest =
+            wamn_schema_generator::output_root(target).join("fixture_overlay-tui/Cargo.toml");
         let workspace = fs::read(&workspace_manifest).unwrap();
-        fs::remove_dir_all(target.join("generated")).unwrap();
+        fs::remove_dir_all(wamn_schema_generator::output_root(target)).unwrap();
         fs::create_dir_all(workspace_manifest.parent().unwrap()).unwrap();
         fs::write(workspace_manifest, workspace).unwrap();
         compile(target);

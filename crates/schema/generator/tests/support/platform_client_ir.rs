@@ -432,7 +432,7 @@ fn each_fixture_route_projects_a_direct_client_route() {
     attachments.extend(
         serde_json::from_slice::<BTreeMap<String, Value>>(
             &std::fs::read(
-                package.join(wamn_schema_generator::route_schema::GENERATED_ATTACHMENTS),
+                wamn_schema_generator::output_root(&package).join("publication/attachments.json"),
             )
             .unwrap(),
         )
@@ -447,7 +447,7 @@ fn each_fixture_route_projects_a_direct_client_route() {
     );
     let release = ClientContractIr::from_release(
         "platform_fixture",
-        &package.join("generated/contracts"),
+        &wamn_schema_generator::output_root(&package).join("contracts"),
         &publication.join("attachments.json"),
     )
     .unwrap();

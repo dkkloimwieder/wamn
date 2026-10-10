@@ -934,7 +934,9 @@ mod tests {
                 "--migration-dir".to_owned(),
                 path("apps/platform_fixture_overlay/migrations"),
                 "--history-manifest".to_owned(),
-                path("apps/platform_fixture_overlay/generated/wamn.json"),
+                wamn_schema_generator::package_manifest_path(&wamn_fixture_package::overlay_root())
+                    .display()
+                    .to_string(),
                 "--url-env".to_owned(),
                 "DATABASE_URL".to_owned(),
                 "--".to_owned(),

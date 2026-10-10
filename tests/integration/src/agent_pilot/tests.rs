@@ -58,7 +58,8 @@ fn package(root: &Path) -> PathBuf {
 
 fn placement_input(root: &Path) {
     fs::create_dir_all(root.join("grade")).unwrap();
-    fs::create_dir_all(package(root).join("generated/contracts")).unwrap();
+    fs::create_dir_all(wamn_schema_generator::output_root(&package(root)).join("contracts"))
+        .unwrap();
     write_json(&root.join("task.json"), &json!({"task":"placement","identity":{"route_host":"test.localhost"},"overlay_root":"packages/dock","grade":{"steps":"steps.json","checks":[],"fence_reports":[]}})).unwrap();
     write_json(
         &root.join("run.json"),
@@ -69,7 +70,9 @@ fn placement_input(root: &Path) {
 }
 
 fn contract(root: &Path, domain: &str, action: &str, input: &str, result: &str) {
-    let directory = package(root).join("generated/contracts").join(domain);
+    let directory = wamn_schema_generator::output_root(&package(root))
+        .join("contracts")
+        .join(domain);
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join(format!("{action}.input.json")), input).unwrap();
     fs::write(directory.join(format!("{action}.result.json")), result).unwrap();

@@ -14,7 +14,6 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const OVERLAY_EVIDENCE_PATH: &str = "generated/platform-policy/data-access.json";
 const TENANT: &str = "package-data-access-live";
 const PASSWORD: &str = "package-data-access-live-password";
 /// The relation maps apply-package writes beside the application tables.
@@ -411,7 +410,7 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
     let root = lineage_fixture_directory().join(name);
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("migrations")).expect("create staged migrations directory");
-    std::fs::create_dir_all(root.join("generated/platform-policy"))
+    std::fs::create_dir_all(wamn_schema_generator::output_root(&root).join("platform-policy"))
         .expect("create staged evidence directory");
     for entry in std::fs::read_dir(source.join("migrations")).expect("read package migrations") {
         let entry = entry.expect("read one package migration entry");
@@ -445,7 +444,7 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
     std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write staged manifest");
 
     let mut overlay: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(source.join(OVERLAY_EVIDENCE_PATH)).expect("read package evidence"),
+        &std::fs::read(overlay_evidence_path(source)).expect("read package evidence"),
     )
     .expect("parse package evidence");
     let overlay_object = overlay
@@ -470,7 +469,7 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
         serde_json::json!(staged_sha256),
     );
     std::fs::write(
-        root.join(OVERLAY_EVIDENCE_PATH),
+        overlay_evidence_path(&root),
         wamn_execution_contract::canonical_json_bytes(&overlay),
     )
     .expect("write staged evidence");
@@ -604,7 +603,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
     );
     std::fs::write(bumped.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
     let mut evidence: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(bumped.join(OVERLAY_EVIDENCE_PATH)).expect("read staged evidence"),
+        &std::fs::read(overlay_evidence_path(&bumped)).expect("read staged evidence"),
     )
     .expect("parse staged evidence");
     evidence
@@ -615,7 +614,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
             serde_json::json!(moved_sha256),
         );
     std::fs::write(
-        bumped.join(OVERLAY_EVIDENCE_PATH),
+        overlay_evidence_path(&bumped),
         wamn_execution_contract::canonical_json_bytes(&evidence),
     )
     .expect("regenerate evidence for the moved manifest");
@@ -917,7 +916,7 @@ fn change_manifest_bytes(root: &Path) -> String {
     std::fs::write(&path, &bytes).expect("write the changed manifest");
     let changed = manifest_sha256(&bytes);
     let mut evidence: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(root.join(OVERLAY_EVIDENCE_PATH)).expect("read staged evidence"),
+        &std::fs::read(overlay_evidence_path(root)).expect("read staged evidence"),
     )
     .expect("parse staged evidence");
     evidence
@@ -925,7 +924,7 @@ fn change_manifest_bytes(root: &Path) -> String {
         .expect("package evidence is an object")
         .insert("manifest_sha256".to_owned(), serde_json::json!(changed));
     std::fs::write(
-        root.join(OVERLAY_EVIDENCE_PATH),
+        overlay_evidence_path(root),
         wamn_execution_contract::canonical_json_bytes(&evidence),
     )
     .expect("regenerate evidence for the changed manifest");
@@ -1045,4 +1044,9 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     for root in &roots {
         std::fs::remove_dir_all(root).expect("remove the local reconcile fixture");
     }
+}
+
+/// The data-access evidence of the package at `root`, in its output root.
+fn overlay_evidence_path(root: &Path) -> PathBuf {
+    wamn_schema_generator::output_root(root).join("platform-policy/data-access.json")
 }

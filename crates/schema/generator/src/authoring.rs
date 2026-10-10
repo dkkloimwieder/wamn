@@ -19,12 +19,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::Value;
 
-use crate::{PackageManifest, StaticSqlRelationDeclaration};
+use crate::{PackageManifest, StaticSqlRelationDeclaration, output_root};
 
 /// The manifest file an author writes.
 pub const AUTHORED_MANIFEST: &str = "wamn.k";
-/// The compiled manifest, relative to the package root.
+/// The compiled manifest's logical path, relative to the package root. A
+/// package artifact carries it at this path. In a package tree the file lies
+/// in the package's [`output_root`].
 pub const COMPILED_MANIFEST: &str = "generated/wamn.json";
+/// The compiled manifest's file name in the package's [`output_root`].
+const COMPILED_MANIFEST_NAME: &str = "wamn.json";
 /// The hand-written manifest of a package that is not converted.
 const HAND_WRITTEN_MANIFEST: &str = "wamn.json";
 /// The environment variable that names a `kcl` binary in place of `tools/install-kcl`.
@@ -46,28 +50,26 @@ pub fn is_authored(package_root: &Path) -> bool {
 #[must_use]
 pub fn package_manifest_path(package_root: &Path) -> PathBuf {
     if is_authored(package_root) {
-        package_root.join(COMPILED_MANIFEST)
+        compiled_manifest_path(package_root)
     } else {
         package_root.join(HAND_WRITTEN_MANIFEST)
     }
 }
 
+/// The compiled manifest file of a package tree, in its [`output_root`].
+pub(crate) fn compiled_manifest_path(package_root: &Path) -> PathBuf {
+    output_root(package_root).join(COMPILED_MANIFEST_NAME)
+}
+
 /// The package root of a manifest path that [`package_manifest_path`] gives:
-/// the directory above `generated/` for a compiled manifest, otherwise the
-/// manifest's own directory.
+/// the authored package whose [`output_root`] holds a compiled manifest,
+/// otherwise the manifest's own directory.
 #[must_use]
 pub fn manifest_package_root(manifest: &Path) -> Option<&Path> {
     let directory = manifest.parent()?;
-    if directory
-        .file_name()
-        .is_some_and(|name| name == "generated")
-        && directory
-            .parent()
-            .is_some_and(|root| root.join(AUTHORED_MANIFEST).is_file())
-    {
-        directory.parent()
-    } else {
-        Some(directory)
+    match directory.parent() {
+        Some(root) if is_authored(root) && output_root(root) == directory => Some(root),
+        _ => Some(directory),
     }
 }
 
@@ -123,14 +125,14 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
         return Ok(());
     }
     let bytes = compile_manifest(package_root)?;
-    let path = package_root.join(COMPILED_MANIFEST);
+    let path = compiled_manifest_path(package_root);
     // A file that generation compiled from the same wamn.k is kept, with the
     // members it derived.
     let current = fs::read(&path)
         .ok()
         .and_then(|compiled| without_derived_members(&compiled).ok());
     if current.as_deref() != Some(bytes.as_slice()) {
-        let directory = package_root.join("generated");
+        let directory = output_root(package_root);
         fs::create_dir_all(&directory)
             .with_context(|| format!("create generated directory {}", directory.display()))?;
         fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
@@ -145,7 +147,7 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
 /// When the committed file is missing, or differs from `compiled`. The error
 /// names the first JSON path that differs, or says that only the formatting does.
 pub fn check_compiled_manifest(package_root: &Path, compiled: &[u8]) -> Result<()> {
-    let path = package_root.join(COMPILED_MANIFEST);
+    let path = compiled_manifest_path(package_root);
     let committed = fs::read(&path).with_context(|| format!("missing {}", path.display()))?;
     if committed == compiled {
         return Ok(());
@@ -583,18 +585,16 @@ mod tests {
     #[test]
     fn a_compiled_manifest_belongs_to_the_package_above_generated() {
         let root = std::env::temp_dir().join(format!("wamn-authoring-root-{}", std::process::id()));
-        fs::create_dir_all(root.join("generated")).expect("create the package");
+        fs::create_dir_all(output_root(&root)).expect("create the package");
         assert_eq!(package_manifest_path(&root), root.join("wamn.json"));
         assert_eq!(
             manifest_package_root(&root.join("wamn.json")),
             Some(root.as_path())
         );
         fs::write(root.join(AUTHORED_MANIFEST), "").expect("write wamn.k");
-        assert_eq!(package_manifest_path(&root), root.join(COMPILED_MANIFEST));
-        assert_eq!(
-            manifest_package_root(&root.join(COMPILED_MANIFEST)),
-            Some(root.as_path())
-        );
+        let compiled = output_root(&root).join("wamn.json");
+        assert_eq!(package_manifest_path(&root), compiled);
+        assert_eq!(manifest_package_root(&compiled), Some(root.as_path()));
         fs::remove_dir_all(&root).expect("remove the package");
     }
 

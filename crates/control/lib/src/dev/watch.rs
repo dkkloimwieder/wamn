@@ -269,8 +269,7 @@ impl PackageRoot {
     }
 
     fn owns_generated(&self, path: &Path) -> bool {
-        path.strip_prefix(&self.root)
-            .is_ok_and(|relative| relative.starts_with("generated"))
+        path.starts_with(wamn_schema_generator::output_root(&self.root))
     }
 
     /// SQLx metadata the loop itself prepares during Generate.
@@ -389,12 +388,13 @@ impl GeneratedNativeOutputs {
 }
 
 fn native_output_paths(package: &Path, manifest: &PackageManifest) -> Vec<PathBuf> {
-    let mut paths = vec![package.join("generated/client")];
+    let output = wamn_schema_generator::output_root(package);
+    let mut paths = vec![output.join("client")];
     for component in manifest.components.keys().filter(|name| {
         let mut parts = Path::new(name).components();
         matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
     }) {
-        let tui = package.join("generated").join(format!("{component}-tui"));
+        let tui = output.join(format!("{component}-tui"));
         paths.extend([tui.join("Cargo.toml"), tui.join("src")]);
     }
     paths

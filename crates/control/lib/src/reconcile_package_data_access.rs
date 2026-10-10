@@ -10,9 +10,9 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_schema_control::plan_package_migrations;
 use wamn_schema_generator::{
-    DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationFields,
-    EffectiveDataAccess, data_access_schemas, derive_effective_data_access,
-    render_effective_data_access_sql, validate_data_access_contribution,
+    DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationFields, EffectiveDataAccess,
+    data_access_schemas, derive_effective_data_access, render_effective_data_access_sql,
+    validate_data_access_contribution,
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
@@ -186,7 +186,8 @@ fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPac
             .context("validate package directory before data-access reconciliation")?;
         let schemas = data_access_schemas(&directory.manifest_bytes)
             .context("derive package data-access schema set")?;
-        let overlay_path = package_root.join(DATA_ACCESS_OVERLAY_PATH);
+        let overlay_path = wamn_schema_generator::output_root(package_root)
+            .join("platform-policy/data-access.json");
         let overlay_bytes = std::fs::read(&overlay_path)
             .with_context(|| format!("read {}", overlay_path.display()))?;
         let overlay = DataAccessOverlay::from_slice(&overlay_bytes)
@@ -886,7 +887,7 @@ fn quote_identifier(value: &str) -> String {
 mod tests {
     use std::path::PathBuf;
     use wamn_schema_control::plan_package_migrations;
-    use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, validate_data_access_contribution};
+    use wamn_schema_generator::validate_data_access_contribution;
 
     use super::{
         CoordinateHashes, UndeclaredResidue, prepare_local, render_undeclared_revocation,
@@ -974,7 +975,10 @@ mod tests {
         let source =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_fixture");
         let original = crate::apply_package::read_package_directory(&source).unwrap();
-        let overlay_bytes = std::fs::read(source.join(DATA_ACCESS_OVERLAY_PATH)).unwrap();
+        let overlay_bytes = std::fs::read(
+            wamn_schema_generator::output_root(&source).join("platform-policy/data-access.json"),
+        )
+        .unwrap();
         let root =
             std::env::temp_dir().join(format!("wamn-local-grant-evidence-{}", std::process::id()));
         std::fs::create_dir(&root).unwrap();
@@ -984,7 +988,8 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, &migration.bytes).unwrap();
         }
-        let path = root.join(DATA_ACCESS_OVERLAY_PATH);
+        let path =
+            wamn_schema_generator::output_root(&root).join("platform-policy/data-access.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, &overlay_bytes).unwrap();
         let prepared = prepare_local(std::slice::from_ref(&root)).unwrap();

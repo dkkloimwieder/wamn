@@ -34,6 +34,7 @@ mod generate;
 mod manifest;
 mod materialize;
 pub mod operation_reference;
+mod output;
 mod package_catalog;
 pub mod route_schema;
 mod rustfmt;
@@ -87,6 +88,7 @@ pub use materialize::{
     materialize_package_verified, materialize_package_verified_with_catalog,
     materialize_package_verified_with_existing_grants,
 };
+pub use output::output_root;
 pub use package_catalog::project_package_catalog;
 pub use sqlx_metadata::{
     SqlxMetadataMode, SqlxVerifier, package_database_url, stage_sqlx_verifier, verify_sqlx_metadata,

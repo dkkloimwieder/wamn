@@ -55,7 +55,7 @@ pub(super) fn read_package_manifests(
                 ),
             )
         })?;
-        let metadata_path = root.join("generated/package-identity.json");
+        let metadata_path = wamn_schema_generator::output_root(root).join("package-identity.json");
         let metadata_bytes = std::fs::read(&metadata_path).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::GeneratedPackageMetadata,
@@ -281,7 +281,7 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             error,
         )
     };
-    let contracts = root.join("generated/contracts");
+    let contracts = wamn_schema_generator::output_root(root).join("contracts");
     let models = match std::fs::read_dir(&contracts) {
         Ok(models) => models,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),

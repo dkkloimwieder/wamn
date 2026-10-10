@@ -229,7 +229,7 @@ pub fn read_operator(package_root: &Path, component: &str) -> io::Result<Option<
 /// Refuses missing manifests or a workspace that Cargo cannot locate.
 pub fn read_tui_workspace(package_root: &Path, component: &str) -> io::Result<String> {
     let root = package_root.canonicalize()?;
-    let generated = root.join("generated").join(format!("{component}-tui"));
+    let generated = crate::output_root(&root).join(format!("{component}-tui"));
     let manifest = [
         generated.join("Cargo.toml"),
         root.join("Cargo.toml"),

@@ -32,8 +32,9 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             let bytes = fs::read(cluster.artifacts.components.join(format!("{component}.wasm")))?;
             digests.insert(component.into(), json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))));
         }
-        let package: Value = serde_json::from_slice(&fs::read(cluster.resources.repository
-            .join("apps/wamn_receiving/generated/package-identity.json"))?)?;
+        let package: Value = serde_json::from_slice(&fs::read(
+            wamn_schema_generator::output_root(&cluster.resources.repository.join("apps/wamn_receiving"))
+                .join("package-identity.json"))?)?;
         let path = evidence.join("receiving-correctness.jsonl");
         let inputs = serde_json::from_value(json!({
             "project_pg_url":route.database_url,"route_endpoint":endpoint,

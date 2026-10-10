@@ -1613,7 +1613,10 @@ fn package_structure_inputs(manifest: &PackageManifest) -> Value {
 fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, ProductionDevStageError> {
     let mut files = Vec::new();
     for package in packages {
-        let mut roots = vec![("generated", package.root.join("generated"))];
+        let mut roots = vec![(
+            "generated",
+            wamn_schema_generator::output_root(&package.root),
+        )];
         if crate::delivery::sqlx::requires_verifier(&package.manifest) {
             roots.push(("sqlx", package.root.join("tests/.sqlx")));
         }
@@ -1684,7 +1687,7 @@ fn sqlx_metadata_inputs_on_disk(
 ) -> anyhow::Result<SqlxMetadataInputs> {
     let read = |path: PathBuf| fs::read(&path).with_context(|| format!("read {}", path.display()));
     sqlx_metadata_inputs(
-        &read(package.join(PACKAGE_IDENTITY))?,
+        &read(wamn_schema_generator::output_root(package).join("package-identity.json"))?,
         read(repository.join(RECORD_HISTORY_SQL))?,
         &read(repository.join("Cargo.lock"))?,
     )

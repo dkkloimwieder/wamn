@@ -615,8 +615,11 @@ impl SavedSource {
         )?;
         outputs.push(PathBuf::from(MIGRATIONS));
         for package in ["wamn_receiving", "client_acme_receiving"] {
-            for output in ["generated", "tests/.sqlx"] {
-                let relative = PathBuf::from("apps").join(package).join(output);
+            let package = PathBuf::from("apps").join(package);
+            for relative in [
+                wamn_schema_generator::output_root(&package),
+                package.join("tests/.sqlx"),
+            ] {
                 capture_tree(
                     repository,
                     &repository.join(&relative),

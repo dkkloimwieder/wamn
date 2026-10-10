@@ -125,7 +125,7 @@ pub fn pack_package(root: &Path, index: Option<&Path>) -> anyhow::Result<PackedP
         "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
         root.display()
     );
-    let manifest_path = root.join(COMPILED_MANIFEST);
+    let manifest_path = wamn_schema_generator::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
     let manifest = PackageManifest::from_slice(&manifest_bytes)
@@ -330,7 +330,11 @@ fn collect_files(
     relative: &str,
     files: &mut BTreeMap<String, PathBuf>,
 ) -> anyhow::Result<()> {
-    let path = root.join(relative);
+    // A `generated/` layer path names a file of the package's output root.
+    let path = match Path::new(relative).strip_prefix("generated") {
+        Ok(output) => wamn_schema_generator::output_root(root).join(output),
+        Err(_) => root.join(relative),
+    };
     let metadata = match std::fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -828,10 +832,9 @@ mod tests {
             b"{\"component\": \"jsonata\"}\n",
         );
         let root = apps.join("wamn_receiving");
-        let manifest = std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../apps/wamn_receiving/generated/wamn.json"),
-        )
+        let manifest = std::fs::read(wamn_schema_generator::package_manifest_path(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
+        ))
         .unwrap();
         write(&root, "wamn.k", b"# authored\n");
         write(&root, "generated/wamn.json", &manifest);

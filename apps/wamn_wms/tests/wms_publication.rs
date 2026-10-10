@@ -160,7 +160,10 @@ fn authored(
 
 /// One generated publication file of the package.
 fn generated(file: &str) -> Value {
-    read_json(&publication_root().join("..").join(file))
+    let output = Path::new(file)
+        .strip_prefix("generated")
+        .expect("a generated publication file lies under generated/");
+    read_json(&wamn_schema_generator::output_root(&publication_root().join("..")).join(output))
 }
 
 /// The authored attachments with the generated route entries.

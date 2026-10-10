@@ -183,8 +183,9 @@ pub(super) fn declared_dev_data_access_grants()
         .transpose()?;
     let mut expected = BTreeSet::new();
     for package in JOURNEY_PACKAGES {
-        let path = journey_package_root(package, inputs.as_ref())
-            .join("generated/platform-policy/data-access.json");
+        let path =
+            wamn_schema_generator::output_root(&journey_package_root(package, inputs.as_ref()))
+                .join("platform-policy/data-access.json");
         let policy = read_json(&path)?;
         anyhow::ensure!(
             policy["role"] == "wamn_app",

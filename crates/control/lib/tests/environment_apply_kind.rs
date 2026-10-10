@@ -656,19 +656,16 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     // The package and the release, pushed from this machine.
     let packages = work.join("apps");
     let package = packages.join("orders");
-    std::fs::create_dir_all(package.join("generated"))?;
+    let output = wamn_schema_generator::output_root(&package);
+    std::fs::create_dir_all(output.join("platform-policy"))?;
     std::fs::create_dir_all(package.join("migrations"))?;
     std::fs::create_dir_all(packages.join("target"))?;
     std::fs::write(
         package.join("wamn.k"),
         "# orders@1.0.0, the apply fixture\n",
     )?;
-    std::fs::write(package.join("generated/wamn.json"), PACKAGE_MANIFEST)?;
-    std::fs::create_dir_all(package.join("generated/platform-policy"))?;
-    std::fs::write(
-        package.join("generated/platform-policy/data-access.json"),
-        DATA_ACCESS,
-    )?;
+    std::fs::write(output.join("wamn.json"), PACKAGE_MANIFEST)?;
+    std::fs::write(output.join("platform-policy/data-access.json"), DATA_ACCESS)?;
     // The build index entry of the component: push-package lists it, and no
     // step pulls it.
     let component = packages.join("target/orders.wasm");

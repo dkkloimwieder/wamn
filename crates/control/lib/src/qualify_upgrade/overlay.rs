@@ -301,9 +301,8 @@ fn consumed_contract(
     );
     let mut contract = serde_json::Map::new();
     for section in ["operation", "input", "result", "errors"] {
-        let path = root.join(format!(
-            "generated/contracts/{module}/{name}.{section}.json"
-        ));
+        let path = wamn_schema_generator::output_root(root)
+            .join(format!("contracts/{module}/{name}.{section}.json"));
         // An operation without a result declaration has no result contract.
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
