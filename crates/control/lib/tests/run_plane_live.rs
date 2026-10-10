@@ -151,7 +151,8 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
          CREATE TABLE registry.project_envs ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
            secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, PRIMARY KEY (org, project, env)); \
+           instance_suffix text NOT NULL, policy_name text NOT NULL, \
+           PRIMARY KEY (org, project, env)); \
          RESET ROLE",
     )
     .await
@@ -167,8 +168,8 @@ async fn seed_system_env_policy(su: &Client, durability_class: &str) {
     .expect("seed system env policy");
     su.execute(
         "INSERT INTO registry.project_envs \
-           (org,project,env,secret_name,instance_suffix) \
-         VALUES ($1,$2,$3,'wamn-db-acme--billing--dev',$4)",
+           (org,project,env,secret_name,instance_suffix,policy_name) \
+         VALUES ($1,$2,$3,'wamn-db-acme--billing--dev',$4,$3)",
         &[&CLI_ORG, &CLI_PROJECT, &CLI_ENV, &CLI_INSTANCE],
     )
     .await
@@ -244,14 +245,15 @@ async fn seed_pre_durability_system_env_policy(su: &Client) {
          CREATE TABLE registry.project_envs ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
            secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, PRIMARY KEY (org, project, env)); \
+           instance_suffix text NOT NULL, policy_name text NOT NULL, \
+           PRIMARY KEY (org, project, env)); \
          INSERT INTO registry.env_policies \
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
             backup_cadence,wal_retention,hibernation) \
          VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off'); \
          INSERT INTO registry.project_envs \
-           (org,project,env,secret_name,instance_suffix) \
-         VALUES ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7'); \
+           (org,project,env,secret_name,instance_suffix,policy_name) \
+         VALUES ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7','dev'); \
          RESET ROLE",
     )
     .await

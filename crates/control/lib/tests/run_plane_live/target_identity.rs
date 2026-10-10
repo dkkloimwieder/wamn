@@ -16,12 +16,13 @@ async fn seed_target_guard_registry(su: &Client) {
          CREATE TABLE registry.project_envs ( \
            org text NOT NULL, project text NOT NULL, env text NOT NULL, \
            secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, PRIMARY KEY (org, project, env)); \
+           instance_suffix text NOT NULL, policy_name text NOT NULL, \
+           PRIMARY KEY (org, project, env)); \
          INSERT INTO registry.project_envs \
-           (org,project,env,secret_name,instance_suffix) VALUES \
-           ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7'), \
-           ('acme','accounts','dev','wamn-db-acme--accounts--dev','q80zdw41'), \
-           ('acme','billing','prod','wamn-db-acme--billing--prod','p7c4n2v8'); \
+           (org,project,env,secret_name,instance_suffix,policy_name) VALUES \
+           ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7','dev'), \
+           ('acme','accounts','dev','wamn-db-acme--accounts--dev','q80zdw41','dev'), \
+           ('acme','billing','prod','wamn-db-acme--billing--prod','p7c4n2v8','prod'); \
          RESET ROLE; \
          CREATE TABLE registry.env_policies ( \
            org text NOT NULL, name text NOT NULL, recovery_domain jsonb NOT NULL, \
