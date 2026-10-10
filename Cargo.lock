@@ -5746,16 +5746,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-client-acme-receiving-tui"
-version = "0.1.0"
-dependencies = [
- "tokio",
- "wamn-client-terminal",
- "wamn-generated-client-acme-receiving-tui",
- "wamn-receiving-tui",
-]
-
-[[package]]
 name = "wamn-client-terminal"
 version = "0.1.0"
 dependencies = [
@@ -5878,7 +5868,6 @@ dependencies = [
  "url",
  "wamn-authoring-model",
  "wamn-catalog",
- "wamn-client-terminal",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-engine",
@@ -5970,7 +5959,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
- "wamn-schema-generator",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wamn-workflow",
@@ -6128,7 +6116,6 @@ dependencies = [
 name = "wamn-fixture-package"
 version = "0.1.0"
 dependencies = [
- "serde_json",
  "tokio-postgres",
 ]
 
@@ -6170,104 +6157,6 @@ dependencies = [
  "wamn-runtime",
  "wamn-system-tests",
  "wash-runtime",
-]
-
-[[package]]
-name = "wamn-generated-client-acme-receiving-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde_json",
- "tokio",
- "uuid",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
-]
-
-[[package]]
-name = "wamn-generated-device-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde_json",
- "tokio",
- "uuid",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
-]
-
-[[package]]
-name = "wamn-generated-fixture-overlay-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde_json",
- "tokio",
- "uuid",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
-]
-
-[[package]]
-name = "wamn-generated-fixture-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde_json",
- "tokio",
- "uuid",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
-]
-
-[[package]]
-name = "wamn-generated-receiving-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde_json",
- "tokio",
- "uuid",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
-]
-
-[[package]]
-name = "wamn-generated-samples-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde_json",
- "tokio",
- "uuid",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
-]
-
-[[package]]
-name = "wamn-generated-wms-tui"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "rust_decimal",
- "serde_json",
- "tokio",
- "uuid",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
 ]
 
 [[package]]
@@ -6402,7 +6291,6 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-platform-identity",
  "wamn-project-state",
- "wamn-receiving-tui",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
@@ -6467,7 +6355,6 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "crossterm",
  "futures-util",
  "hex",
  "http-body-util",
@@ -6493,8 +6380,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-cdc-reader",
  "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
  "wamn-component-composer",
  "wamn-control",
  "wamn-control-provision",
@@ -6506,7 +6391,6 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-integration-tests",
  "wamn-platform-identity",
- "wamn-receiving-tui",
  "wamn-record-history",
  "wamn-run-state",
  "wamn-runtime",
@@ -6521,24 +6405,6 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wat",
-]
-
-[[package]]
-name = "wamn-receiving-tui"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "crossterm",
- "ratatui",
- "reqwest",
- "serde_json",
- "tokio",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
- "wamn-generated-client-acme-receiving-tui",
- "wamn-generated-receiving-tui",
- "wamn-record-history",
 ]
 
 [[package]]
@@ -6698,7 +6564,6 @@ dependencies = [
  "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
- "toml 1.1.6+spec-1.1.0",
  "url",
  "wamn-catalog",
  "wamn-event-wire",
@@ -6810,13 +6675,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
- "async-trait",
- "crossterm",
  "futures-util",
  "hex",
  "object_store",
  "pg_walstream",
- "ratatui",
  "reqwest",
  "ring",
  "serde_json",
@@ -6828,16 +6690,12 @@ dependencies = [
  "wamn-authoring-model",
  "wamn-catalog",
  "wamn-cdc-reader",
- "wamn-client",
- "wamn-client-terminal",
- "wamn-client-tui",
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-gate-harness",
- "wamn-generated-wms-tui",
  "wamn-integration-tests",
  "wamn-schema-generator",
  "wamn-test-infrastructure",

@@ -69,7 +69,6 @@ wasmparser = { workspace = true }
 async-trait = { workspace = true }
 proptest.workspace = true
 wamn-client = { workspace = true }
-wamn-receiving-tui = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wat = "=1.254.2"
 wamn-run-state = { workspace = true, features = ["test-util"] }

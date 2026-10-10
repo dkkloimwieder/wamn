@@ -1568,15 +1568,8 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let fixture = host_log_fixture();
-        let first = super::super::coordinator::operator_host_output_log(
-            &fixture.0.join("cache"),
-            "same-target",
-        );
-        let second = super::super::coordinator::operator_host_output_log(
-            &fixture.0.join("cache"),
-            "same-target",
-        );
-        assert_ne!(first, second);
+        let first = fixture.0.join("cache/first.log");
+        let second = fixture.0.join("cache/second.log");
         for log in [&first, &second] {
             let mut child = spawn_host_process(&host_log_spec(log))
                 .expect("spawn the replacement host into its own log");

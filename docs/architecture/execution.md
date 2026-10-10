@@ -425,12 +425,10 @@ Authentication deadlines bound new admission and do not cancel work already acce
 The [session token owner](../../crates/identity/session/src/token.rs) defines the token and time rules.
 The [session verifier](../../crates/identity/session/src/verifier.rs) takes its keys from a key source: the issuer over HTTPS in the cloud, or a key file on the edge.
 PAT exchange keeps no login record or renewal credential.
-The current terminal client retains its session token only in memory.
 The browser client holds no token. `@wamn/web-runtime` signs in with the cookie carrier and renews on load and before expiry.
 Password sessions have no PAT fallback. Renewal happens only when an application request needs a new access token.
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
 Failed renewal or login expiry requires explicit login and submission. Quitting clears local credentials and requests server logout.
-[Terminal login](../operations/development-loop.md#receiving-password-login) describes configuration and prompts.
 External federation and unbuilt identity design remain in the [identity plan](../plan/identity.md).
 
 ### Control sessions
@@ -575,12 +573,10 @@ It shares the login throttle and request deadline with session issuance.
 An unavailable authority read fails the whole request instead of returning an incomplete list.
 Session issuance repeats the access checks after selection. A discovery result grants no access.
 
-The terminal matches this list against deployment-owned application addresses.
-It opens one match directly and asks the user to select among several matches.
-An empty match refuses login. The issuer never supplies application addresses.
+The issuer never supplies application addresses.
 
 The development environment owns a separate identity process from startup until explicit teardown.
-Application builds and operator exits preserve that process, its identity database, and its signing keys.
+Application builds preserve that process, its identity database, and its signing keys.
 This process ownership does not add an external identity provider or change the planned OIDC adapter.
 
 Unknown accounts and incorrect passwords receive the same unauthorized response.
@@ -625,7 +621,6 @@ The [screen plan](../../crates/schema/generator/src/client_plan.rs) holds the sc
 It gives each callable operation one role: table, detail, form, delete, or none with a reason.
 It also states the columns, the operator inputs, the row source, the paging, and the screens that one row opens.
 It carries interaction meaning only, so no layout, styling, or framework concept enters it.
-The generated terminal emitter reads the plan.
 The terminal run time in `crates/client/tui` keeps its own copy of the same rules until a later epic moves it onto the plan.
 
 A package can also generate [TypeScript bindings](../../crates/schema/generator/src/client_ts.rs) for a browser.

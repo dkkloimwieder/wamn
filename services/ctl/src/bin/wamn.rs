@@ -19,8 +19,6 @@ enum Command {
     /// Run the package development loop, or stand up the environment it needs.
     #[command(args_conflicts_with_subcommands = true)]
     Dev(Box<DevArgs>),
-    /// Copy generated operator screens into developer-owned Rust.
-    Ui(wamn_ctl::ui::UiArgs),
     /// Build a web client and write it to a bucket.
     Web(wamn_ctl::web::WebArgs),
 }
@@ -74,7 +72,6 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
     match Cli::parse().command {
-        Command::Ui(args) => wamn_ctl::ui::run(args).await,
         Command::Web(args) => wamn_ctl::web::run(args).await,
         Command::Dev(dev) => match dev.environment {
             Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(*args).await,
@@ -127,18 +124,5 @@ mod tests {
         assert!(
             matches!(clean.command, Command::Dev(dev) if matches!(dev.environment, Some(DevEnvironmentCommand::CleanCheck(_))))
         );
-    }
-
-    #[test]
-    fn scaffold_parses_without_development_loop_flags() {
-        let cli =
-            Cli::try_parse_from(["wamn", "ui", "scaffold", "receiving", "purchase_order.get"])
-                .expect("parse a standalone scaffold command");
-        let Command::Ui(args) = cli.command else {
-            panic!("expected the ui command");
-        };
-        let wamn_ctl::ui::UiCommand::Scaffold(args) = args.command;
-        assert_eq!(args.package, "receiving");
-        assert_eq!(args.screen.as_deref(), Some("purchase_order.get"));
     }
 }

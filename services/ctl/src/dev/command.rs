@@ -34,13 +34,9 @@ pub struct DevCommandArgs {
     #[arg(long)]
     hold: bool,
 
-    /// Open the developer console, or the named component's operator terminal.
-    #[arg(long, num_args = 0..=1, value_name = "COMPONENT")]
-    #[allow(
-        clippy::option_option,
-        reason = "clap distinguishes omitted --tui, bare --tui, and --tui COMPONENT"
-    )]
-    tui: Option<Option<String>>,
+    /// Open the developer console.
+    #[arg(long)]
+    tui: bool,
 }
 
 impl DevCommandArgs {
@@ -51,7 +47,7 @@ impl DevCommandArgs {
             overlay_root,
             watch,
             hold: false,
-            tui: None,
+            tui: false,
         }
     }
 
@@ -64,8 +60,8 @@ impl DevCommandArgs {
 
     /// Select the interactive terminal client.
     #[must_use]
-    pub fn with_tui(mut self, tui: bool) -> Self {
-        self.tui = if tui { Some(None) } else { None };
+    pub const fn with_tui(mut self, tui: bool) -> Self {
+        self.tui = tui;
         self
     }
 
@@ -74,18 +70,7 @@ impl DevCommandArgs {
     }
 
     const fn tui(&self) -> bool {
-        matches!(self.tui, Some(None))
-    }
-
-    /// Select the generated terminal owned by this declared component.
-    #[must_use]
-    pub fn with_component_tui(mut self, component: String) -> Self {
-        self.tui = Some(Some(component));
-        self
-    }
-
-    fn operator_component(&self) -> Option<&str> {
-        self.tui.as_ref().and_then(Option::as_deref)
+        self.tui
     }
 }
 
@@ -138,24 +123,6 @@ impl DevWatchObserver for CommandObserver {
     }
 }
 
-// A failed initial run has no operator terminal to show its failure. Keep
-// errors visible there without writing over an existing operator session.
-struct OperatorObserver {
-    read: DevReadHandle,
-}
-
-impl DevWatchObserver for OperatorObserver {
-    fn completed(&mut self, outcome: DevWatchOutcome) {
-        if let Err(error) = outcome.into_result() {
-            if self.read.snapshot().runtime_endpoint().is_none() {
-                eprintln!("{error}");
-            } else {
-                tracing::warn!(%error, "watch run failed; the previous operator target remains active");
-            }
-        }
-    }
-}
-
 fn shutdown_signals(control: DevSessionControl) -> io::Result<JoinSet<()>> {
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
@@ -179,13 +146,11 @@ pub(super) async fn prepare(args: DevCommandArgs) -> anyhow::Result<(DevSession,
     let control = DevSessionControl::default();
     let signals = shutdown_signals(control.clone())
         .context("install development session shutdown signals")?;
-    let operator_component = args.operator_component().map(str::to_owned);
     let session = DevSession::prepare(
         DevSessionRequest {
             config: args.config,
             overlay_root: args.overlay_root,
             watch: args.watch,
-            operator_component,
         },
         control,
     )
@@ -199,14 +164,6 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
         // The interactive client holds a whole session future; box it so the
         // one-shot caller does not carry it on the stack.
         return Box::pin(super::tui::run(args)).await;
-    }
-    if args.operator_component().is_some() {
-        let (mut session, _signals) = prepare(args).await?;
-        let mut observer = OperatorObserver {
-            read: session.read_handle(),
-        };
-        session.run_with_observer(&mut observer, true).await?;
-        return Ok(());
     }
     let hold = args.hold();
     let (mut session, _signals) = prepare(args).await?;
@@ -309,7 +266,7 @@ mod tests {
             PathBuf::from("apps/platform_fixture_overlay")
         );
         assert!(parsed.args.watch);
-        assert!(parsed.args.tui.is_none());
+        assert!(!parsed.args.tui);
         assert!(!parsed.args.hold);
 
         let one_shot = TestCli::try_parse_from([
@@ -321,7 +278,7 @@ mod tests {
         ])
         .expect("parse the default one-shot command");
         assert!(!one_shot.args.watch);
-        assert!(one_shot.args.tui.is_none());
+        assert!(!one_shot.args.tui);
         assert!(!one_shot.args.hold);
 
         let tui = TestCli::try_parse_from([
@@ -367,7 +324,7 @@ mod tests {
         let hold = parse(&["--hold"]).expect("parse the held one-shot session");
         assert!(hold.hold);
         assert!(!hold.watch);
-        assert!(hold.tui.is_none());
+        assert!(!hold.tui);
 
         // Session mode and renderer are independent axes, so clap must accept
         // both pairings rather than declare a conflict. --hold is redundant
@@ -376,13 +333,6 @@ mod tests {
         let with_tui = parse(&["--hold", "--tui"]).expect("parse hold beside the terminal client");
         assert!(with_tui.hold);
         assert!(with_tui.tui());
-
-        let operator = parse(&["--watch", "--tui", "fixture"])
-            .expect("parse generated operator session without hold");
-        assert_eq!(operator.operator_component(), Some("fixture"));
-        assert!(!operator.tui());
-        assert!(!operator.hold());
-        assert!(operator.watch);
 
         let with_watch = parse(&["--hold", "--watch"]).expect("parse hold beside watch");
         assert!(with_watch.hold);

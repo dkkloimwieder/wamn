@@ -1,8 +1,6 @@
 //! WMS-owned deployment files and the released HTTP endpoint.
 
-use std::fs::{self, OpenOptions};
-use std::io::Write as _;
-use std::os::unix::fs::OpenOptionsExt as _;
+use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -355,17 +353,6 @@ pub(super) async fn expose_route(
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
     anyhow::bail!("the released route answered no HTTP status after 60 attempts")
-}
-
-pub(super) fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .with_context(|| format!("create private file {}", path.display()))?;
-    file.write_all(bytes)
-        .context("write private application input")
 }
 
 pub(super) fn kubectl(cluster: &str, work: &Path) -> Command {

@@ -3,7 +3,6 @@
 use super::*;
 
 mod local_delivery;
-mod password;
 
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_mins(12);
 /// The migrations the dev command installs, with each package version from
@@ -380,13 +379,11 @@ pub(super) async fn current_database_acl(
 }
 
 #[tokio::test]
-#[ignore = "requires: test-util identity binary, local invitation capture, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME, WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
+#[ignore = "requires: test-util identity binary, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME, WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
 async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "RESEND_API_KEY",
         "RESEND_FROM",
-        "WAMN_TEST_INVITATION_FILE",
-        "WAMN_TEST_RESEND_ENDPOINT",
         "WAMN_RECEIVING_DEV_BIN",
         "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
         "WAMN_DEV_ENV_MATERIALIZER_COMPONENT",
@@ -480,16 +477,11 @@ pub(super) async fn assert_dev_command(
         // The literal command emits this result only after native workload
         // stop and supervised host reaping have both succeeded.
         verify_dev_command_output(&output)?;
-        let login = password::Login::start(&environment, system_url).await?;
         let mut watch =
             local_delivery::Watch::start(&inputs.wamn_binary, &repository_root()?, &config)?;
-        let terminal = async {
-            let served = watch.served().await?;
-            login.terminal(&environment, &served, system_url).await
-        }
-        .await;
+        let served = watch.served().await;
         let stopped = watch.stop().await;
-        terminal?;
+        served?;
         stopped?;
         // Change only the input timestamp so Cargo recompiles the application
         // without changing authored source or its declared digest.
@@ -497,13 +489,14 @@ pub(super) async fn assert_dev_command(
             .set_modified(std::time::SystemTime::now())?;
         let rebuilt = run_dev_product_command(inputs, &config).await?;
         verify_dev_command_output(&rebuilt)?;
-        login.available().await?;
-        login.refuse_missing_membership(system_url).await?;
         let after: i64 = admin
             .query_one("SELECT count(*) FROM identity.pats", &[])
             .await?
             .get(0);
-        anyhow::ensure!(after == pat_count, "password access created a PAT");
+        anyhow::ensure!(
+            after == pat_count,
+            "the development lifecycle created a PAT"
+        );
         let (project, project_task) = connect(&environment.route.database_url).await?;
         let system_acl_after = current_database_acl(admin.as_ref()).await?;
         let durable_acl_after = current_database_acl(project.as_ref()).await?;
@@ -519,13 +512,13 @@ pub(super) async fn assert_dev_command(
         );
         verify_dev_target_package_and_acl_state(project.as_ref()).await?;
         project_task.abort();
-        Ok::<_, anyhow::Error>(login)
+        Ok::<_, anyhow::Error>(())
     }
     .await;
 
     let stopped = environment.issuer.stop().await;
     admin_task.abort();
-    let login = command_result?;
+    command_result?;
     stopped?;
-    login.stopped().await
+    Ok(())
 }

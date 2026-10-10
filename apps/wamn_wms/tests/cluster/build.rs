@@ -9,12 +9,7 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
 
-pub(super) async fn build(
-    repository: &Path,
-    target: &Path,
-    evidence: &Path,
-    generated_terminal: bool,
-) -> anyhow::Result<()> {
+pub(super) async fn build(repository: &Path, target: &Path, evidence: &Path) -> anyhow::Result<()> {
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         candidate.artifact_hashes()?;
         for name in [
@@ -62,20 +57,6 @@ pub(super) async fn build(
     native.arg("build-native").arg(target);
     prepare(&mut native, repository, target);
     run(&mut native, evidence, "native").await?;
-    if generated_terminal {
-        let mut terminal = Command::new("cargo");
-        terminal.args([
-            "build",
-            "--locked",
-            "--offline",
-            "-p",
-            "wamn-wms-tests",
-            "--example",
-            "wms_move",
-        ]);
-        prepare(&mut terminal, repository, target);
-        run(&mut terminal, evidence, "terminal").await?;
-    }
     let mut components = Vec::new();
     for directory in [
         target.join("wasm32-wasip2/release"),

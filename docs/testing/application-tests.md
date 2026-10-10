@@ -93,7 +93,6 @@ The Receiving tests observe stamps and the log through real routes and commands:
 - The materializer test also makes sure that CDC publishes no history table row. The purchase order entry and the line entry of the receipt carry the event `txid` in the low 32 bits of their transaction id.
 - The [data access test](../../apps/wamn_receiving/tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.
 - In the same test, an Acme overlay update logs a changed-column diff that folds to the effective base and overlay row. The Receiving history read returns only its base columns. An idempotent receipt replay appends no entry.
-- The [history panel tests](../../apps/wamn_receiving/ui/tests/history.rs) page a history read and fold its rows. They show a row at each entry, an unavailable row, a new read after the head position moves, and rows that do not fold.
 
 `wamn dev up` with a logging package remains unexecuted.
 The [dev command test](../../services/ctl/tests/dev_command.rs) runs it with `apps/wamn_receiving`, but its refusal comes before standup.
@@ -106,10 +105,8 @@ Use the [projection tests](../../crates/schema/generator/tests/client_projection
 The [request tests](../../crates/client/core/tests/request.rs) and [draft tests](../../crates/client/tui/tests/draft.rs) inspect typed inputs and outgoing bytes.
 The [submission tests](../../crates/client/tui/tests/submission.rs) and [screen tests](../../crates/client/tui/tests/screen.rs) own shared outcome behavior.
 
-The [Receiving UI tests](../../apps/wamn_receiving/ui/tests/) drive production events, requests, reducers, and rendered state in-process.
-They cover Receiving and Acme posting, separate optional reads, QC refusal, and route-specific recovery.
-The existing local component/PostgreSQL journey sends one Acme receipt through the real operator client.
-It reuses the backend fixture and its QC, rollback, and replay assertions.
+The local component and PostgreSQL journey sends Acme receipts through the published route.
+It uses the backend fixture and its QC, rollback, and replay assertions.
 Process tests retain terminal restoration, signals, and password masking.
 
 Retain these observations through generated and application-owned operator code:

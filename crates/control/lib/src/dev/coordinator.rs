@@ -231,11 +231,6 @@ pub struct ProductionDevStageRunner {
     local_admission_digest: Option<String>,
     activation: Option<DevActivation>,
     cdc_reader: Option<super::cdc_reader::CdcReaderProcess>,
-    operator: Option<(
-        super::native_tui::NativePackage,
-        super::operator::OperatorControl,
-    )>,
-    native_binaries: BTreeMap<String, PathBuf>,
     generated_native_outputs: Option<super::watch::GeneratedNativeOutputs>,
     generate_input_digest: Option<String>,
     generate_input_candidate: Option<String>,
@@ -311,8 +306,6 @@ impl ProductionDevStageRunner {
             local_admission_digest: None,
             activation: None,
             cdc_reader: None,
-            operator: None,
-            native_binaries: BTreeMap::new(),
             generated_native_outputs: None,
             generate_input_digest: None,
             generate_input_candidate: None,
@@ -377,15 +370,6 @@ impl ProductionDevStageRunner {
         self.release.as_ref()
     }
 
-    /// Select one operator package before this runner starts its first run.
-    pub(super) fn configure_operator(
-        &mut self,
-        package: super::native_tui::NativePackage,
-        control: super::operator::OperatorControl,
-    ) {
-        self.operator = Some((package, control));
-    }
-
     /// Share each successful package emission with the filesystem watcher.
     pub(super) fn configure_generated_native_outputs(
         &mut self,
@@ -397,23 +381,6 @@ impl ProductionDevStageRunner {
     /// Stop any active workload and local host owned by this runner.
     pub async fn shutdown(&mut self) -> Result<(), ProductionDevStageError> {
         self.read_publisher.clear_runtime_endpoint();
-        let operator_result = if let Some((_, control)) = &self.operator {
-            match control.stop("the target is unavailable").await {
-                Ok(()) => Ok(()),
-                Err(source) if source.process_stopped() => Err(ProductionDevStageError::owner(
-                    "operator terminal exited",
-                    source.into(),
-                )),
-                Err(source) => {
-                    return Err(ProductionDevStageError::owner(
-                        "stop the operator terminal before target shutdown",
-                        source.into(),
-                    ));
-                }
-            }
-        } else {
-            Ok(())
-        };
         // The reader stops first, so that a target replacement finds its
         // slot inactive.
         let reader_result = match self.cdc_reader.take() {
@@ -423,15 +390,14 @@ impl ProductionDevStageRunner {
                 .map_err(|source| ProductionDevStageError::owner("stop the CDC reader", source)),
             None => Ok(()),
         };
-        let operator_result = operator_result.and(reader_result);
         let Some(active) = self.activation.take() else {
-            return operator_result;
+            return reader_result;
         };
         let activation_result = active
             .shutdown()
             .await
             .map_err(|source| ProductionDevStageError::owner("clean up activation", source.into()));
-        operator_result.and(activation_result)
+        reader_result.and(activation_result)
     }
 
     async fn migrate(&mut self) -> Result<(), ProductionDevStageError> {
@@ -664,9 +630,6 @@ impl ProductionDevStageRunner {
             bytes: output.stdout.into_boxed_slice(),
             plan,
         });
-        self.native_binaries = super::native_tui::build(&roots).await.map_err(|source| {
-            ProductionDevStageError::owner("build native operator terminals", source.into())
-        })?;
         Ok(())
     }
 
@@ -1152,34 +1115,18 @@ impl ProductionDevStageRunner {
                 "the target creation is absent",
             )
         })?;
-        let host_output_log = self
-            .operator
-            .as_ref()
-            .map(|_| operator_host_output_log(self.config.wasmtime_cache_dir(), target_instance));
-        if let Some(path) = &host_output_log {
-            tracing::info!(path = %path.display(), "host diagnostics");
-        }
         let activation = activation::activate(DevActivationRequest {
             config: &self.config,
             release,
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
             wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
-            host_output_log: host_output_log.as_deref(),
+            host_output_log: None,
             local_admission_digest: self.local_admission_digest.as_deref(),
         })
         .await
         .map_err(|source| {
-            let context = host_output_log
-                .as_ref()
-                .map(|path| format!("{source}; host diagnostics: {}", path.display()));
-            let source = anyhow::Error::new(source);
-            let source = if let Some(context) = context {
-                source.context(context)
-            } else {
-                source
-            };
-            ProductionDevStageError::owner("activate local host and flow-http", source)
+            ProductionDevStageError::owner("activate local host and flow-http", source.into())
         })?;
         let endpoint = DevRuntimeEndpoint::new(
             activation.http_base_url(),
@@ -1208,74 +1155,7 @@ impl ProductionDevStageRunner {
                     })?,
             );
         }
-        self.read_publisher.set_runtime_endpoint(endpoint.clone());
-        if let Some((package, control)) = &self.operator {
-            let launched = async {
-                let executable = self
-                    .native_binaries
-                    .get(&package.component)
-                    .ok_or_else(|| {
-                        ProductionDevStageError::invalid(
-                            "launch operator terminal",
-                            "Build produced no selected native binary",
-                        )
-                    })?;
-                let authentication = if let Some(session) = self.config.session_identity() {
-                    let identity = self.config.activation_identity();
-                    let audience = wamn_control_provision::session_target::session_audience(
-                        &wamn_control_registry::Triple::new(
-                            &identity.org,
-                            &identity.project,
-                            identity.environment.as_str(),
-                        ),
-                        &session.instance_suffix,
-                    )
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("select operator audience", source.into())
-                    })?;
-                    super::operator::Authentication::Password {
-                        issuer: session.issuer.clone(),
-                        ca: session.ca.clone(),
-                        audience,
-                    }
-                } else {
-                    super::operator::Authentication::Pat(
-                        self.config
-                            .operator_bearer_token()
-                            .ok_or_else(|| {
-                                ProductionDevStageError::invalid(
-                                    "launch operator terminal",
-                                    "dev.json has no operator_bearer_token",
-                                )
-                            })?
-                            .to_owned(),
-                    )
-                };
-                control
-                    .start(super::operator::LaunchSpec {
-                        executable: executable.clone(),
-                        base_url: endpoint.base_url().to_owned(),
-                        route_host: endpoint.route_host().to_owned(),
-                        target_instance: endpoint.target_instance().to_owned(),
-                        authentication,
-                    })
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("launch operator terminal", source.into())
-                    })
-            }
-            .await;
-            if let Err(error) = launched {
-                if let Err(cleanup) = self.shutdown().await {
-                    return Err(ProductionDevStageError::owner(
-                        "clean up failed operator launch",
-                        anyhow::Error::new(error)
-                            .context(format!("activation cleanup also failed: {cleanup}")),
-                    ));
-                }
-                return Err(error);
-            }
-        }
+        self.read_publisher.set_runtime_endpoint(endpoint);
         Ok(())
     }
 
@@ -1484,21 +1364,6 @@ impl ProductionDevStageRunner {
             DevStage::Activate => {}
         }
     }
-}
-
-/// A fresh retained log for each activation, including saves on the same target.
-pub(super) fn operator_host_output_log(cache_directory: &Path, target_instance: &str) -> PathBuf {
-    // Wasmtime owns its cache contents; diagnostics use the existing sibling namespace.
-    let mut directory = cache_directory
-        .components()
-        .collect::<PathBuf>()
-        .into_os_string();
-    directory.push(".operator-logs");
-    let sequence = TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    PathBuf::from(directory).join(format!(
-        "operator-host-{}-{target_instance}-{sequence}.log",
-        std::process::id()
-    ))
 }
 
 fn file_digest(path: &Path) -> Result<String, ProductionDevStageError> {

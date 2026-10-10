@@ -4,9 +4,8 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use futures_util::TryStreamExt as _;
-use object_store::{ObjectStore as _, ObjectStoreExt as _, aws::AmazonS3};
+use object_store::{ObjectStore as _, aws::AmazonS3};
 use serde_json::{Value, json};
-use tokio::process::Command;
 use tokio_postgres::Client;
 use wamn_gate_harness::journey::{JourneyDocument, RuntimePhase};
 
@@ -343,94 +342,4 @@ pub(super) async fn partial_completion(
     );
     let rows = assert_committed_rows(project, &result).await?;
     write_result(evidence, "wms-partial-database.json", &rows)
-}
-
-/// Where one generated-terminal check reads its sources and writes its results.
-pub(super) struct TerminalPaths<'a> {
-    pub(super) repository: &'a Path,
-    pub(super) target: &'a Path,
-    pub(super) work: &'a Path,
-    pub(super) evidence: &'a Path,
-}
-
-pub(super) async fn generated_terminal(
-    inputs: &JourneyDocument,
-    paths: &TerminalPaths<'_>,
-    project_url: &str,
-    target_instance: &str,
-    mode: &str,
-    store: &AmazonS3,
-) -> anyhow::Result<()> {
-    use sha2::{Digest as _, Sha256};
-
-    let TerminalPaths {
-        repository,
-        target,
-        work,
-        evidence,
-    } = *paths;
-    let token =
-        wamn_control::provision_project_env::secret_value(&inputs.operator_secret_output, "token")?;
-    let token_path = work.join(format!("generated-tui-{mode}-pat"));
-    let database_path = work.join(format!("generated-tui-{mode}-database-url"));
-    super::deployment::write_private(&token_path, token.as_bytes())?;
-    super::deployment::write_private(&database_path, project_url.as_bytes())?;
-    let runtime = inputs
-        .runtime
-        .as_ref()
-        .context("the generated terminal requires the released route")?;
-    let output = evidence.join(format!("generated-tui-{mode}"));
-    super::deployment::checked(
-        Command::new("python3")
-            .arg(repository.join("apps/wamn_wms/tests/wms_pty.py"))
-            .arg("--binary")
-            .arg(target.join("debug/examples/wms_move"))
-            .arg("--operator-pat-file")
-            .arg(&token_path)
-            .arg("--target-postgres-url-file")
-            .arg(&database_path)
-            .arg("--endpoint")
-            .arg(&runtime.route_endpoint)
-            .arg("--host")
-            .arg(&inputs.route_host)
-            .arg("--target-instance")
-            .arg(target_instance)
-            .arg("--mode")
-            .arg(mode)
-            .arg("--evidence-dir")
-            .arg(&output),
-    )
-    .await?;
-    let result: Value = serde_json::from_slice(&std::fs::read(output.join("result.json"))?)?;
-    anyhow::ensure!(
-        result["passed"] == true && result["cleanup"] == true,
-        "the generated terminal did not complete its scenario and cleanup"
-    );
-    if mode == "success" {
-        // The terminal sees the committed move only. The label workflow stores
-        // the label under the packaging and its new revision after the move
-        // commits.
-        let label_key = result["label_key"]
-            .as_str()
-            .filter(|key| !key.is_empty())
-            .context("the generated terminal returns its move's label key")?;
-        let key = object_store::path::Path::from(format!("wms/{label_key}"));
-        let mut label = None;
-        for _ in 0..LABEL_WAIT_SECONDS {
-            if let Ok(object) = store.get(&key).await {
-                label = Some(object.bytes().await?);
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        }
-        let label = label.context("the label workflow stored no label for the terminal move")?;
-        std::fs::write(output.join("label.zpl"), &label)?;
-        anyhow::ensure!(label.starts_with(b"^XA"), "the stored label is not ZPL");
-        write_result(
-            &output,
-            "label.json",
-            &json!({"key": key.to_string(), "sha256": hex::encode(Sha256::digest(&label))}),
-        )?;
-    }
-    Ok(())
 }

@@ -8,14 +8,14 @@ use std::time::Duration;
 use anyhow::Context as _;
 use hyper::Method;
 use serde_json::{Value, json};
+use wamn_client::credentials::{SessionCredentials, SessionTarget};
 use wamn_client::{
     ClientError, CredentialProvider, HttpRequest, HttpResponse, ItemOutcome, RouteMetadata,
-    Transport, WamnClient,
+    StaticPat, Transport, WamnClient,
 };
 use wamn_engine::flow_http_routing::FlowHttpRouting;
 use wamn_execution_host::RouterDeliveryBridge;
 use wamn_platform_identity::{Principal, issue_pat, revoke_pat};
-use wamn_receiving_tui::login;
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 
@@ -103,8 +103,13 @@ pub(super) async fn login(
     });
     // This is the configured, CA-verified loopback port-forward used by the
     // existing live continuation; signed claims retain the actual cluster issuer.
-    let target = login::session_target(Some(endpoint.as_str()), Some(audience))?;
-    let credentials = login::credentials(pat.to_owned(), target, transport.clone()).await?;
+    let session = SessionCredentials::new(
+        SessionTarget::new(endpoint.as_str(), audience)?,
+        Arc::new(StaticPat::new(pat.to_owned())?),
+        transport.clone(),
+    );
+    session.login().await?;
+    let credentials: Arc<dyn CredentialProvider> = Arc::new(session);
     anyhow::ensure!(
         transport.calls.load(Ordering::SeqCst) == 1
             && transport.status.load(Ordering::SeqCst) == 200,
@@ -398,8 +403,12 @@ async fn refused_login(
         status: AtomicU16::new(0),
     });
     let before = application.calls();
-    let target = login::session_target(Some(&login.issuer), Some(&login.audience))?;
-    let result = login::credentials(pat.to_owned(), target, transport.clone()).await;
+    let session = SessionCredentials::new(
+        SessionTarget::new(&login.issuer, &login.audience)?,
+        Arc::new(StaticPat::new(pat.to_owned())?),
+        transport.clone(),
+    );
+    let result = session.login().await;
     anyhow::ensure!(
         result.is_err()
             && transport.calls.load(Ordering::SeqCst) == 1

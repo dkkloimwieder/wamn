@@ -1,13 +1,11 @@
-Receiving owns package `wamn_receiving`, its SQL, guest, generated code, operator application, and application tests.
+Receiving owns package `wamn_receiving`, its SQL, guest, generated code, and application tests.
 
 [Receiving scenario](receiving-scenario.md): Application behavior, limits, and source owners.
-[Operator guide](operator-guide.md): Sign-in, receipt entry, keyboard controls, history, recovery, and logout.
 [Manifest](wamn.k): Package identity and declared operations. The generator compiles it to `generated/wamn.json`.
 [Migrations](migrations/): Authored application schema.
 [Data access](data/): SQL-backed operation implementations.
 [Generated output](generated/): Derived contracts, SQL, and client code.
 [Component](component/): Application guest.
-[Operator application](ui/): Application-specific client composition.
 [Web application](web/README.md): The browser page, with its route table.
 [Tests](tests/): Application assertions and SQLx metadata.
 [Change walkthrough](tests/field-change-walkthrough.md): A Rust-only change through the development loop and its executed test.

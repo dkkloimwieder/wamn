@@ -67,9 +67,6 @@ fn frozen_predecessor(source: &Path, target: &Path) {
             fs::copy(output(source, &statement.path), path).unwrap();
         }
     }
-    let target_output = wamn_schema_generator::output_root(target);
-    assert!(!target_output.join("fixture-tui").exists());
-    assert!(!target_output.join("fixture_overlay-tui").exists());
 }
 
 async fn overlay_fixture(name: &str) -> OverlayFixture {
@@ -82,17 +79,6 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
             .join("platform_fixture_overlay"),
         &predecessor,
     );
-    let workspace_manifest =
-        wamn_schema_generator::output_root(&predecessor).join("fixture_overlay-tui/Cargo.toml");
-    let declaration = fs::read_to_string(&workspace_manifest).unwrap();
-    let workspace_entry = "workspace = \"../../../..\"";
-    assert_eq!(declaration.matches(workspace_entry).count(), 1);
-    let workspace = serde_json::to_string(&wamn_fixture_package::repository_root()).unwrap();
-    fs::write(
-        workspace_manifest,
-        declaration.replacen(workspace_entry, &format!("workspace = {workspace}"), 1),
-    )
-    .unwrap();
     crate::apply_package::apply_package(apply_request(base.source_database.url(), &predecessor))
         .await
         .unwrap();
@@ -895,12 +881,9 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
             )
             .unwrap();
         }
-        let workspace_manifest =
-            wamn_schema_generator::output_root(target).join("fixture_overlay-tui/Cargo.toml");
-        let workspace = fs::read(&workspace_manifest).unwrap();
-        fs::remove_dir_all(wamn_schema_generator::output_root(target)).unwrap();
-        fs::create_dir_all(workspace_manifest.parent().unwrap()).unwrap();
-        fs::write(workspace_manifest, workspace).unwrap();
+        let output = wamn_schema_generator::output_root(target);
+        fs::remove_dir_all(&output).unwrap();
+        fs::create_dir_all(&output).unwrap();
         compile(target);
     }
     let original_roots = vec![

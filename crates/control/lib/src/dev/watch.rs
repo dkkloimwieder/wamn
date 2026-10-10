@@ -235,7 +235,7 @@ impl PackageRoot {
         })?;
         Ok(Self {
             authored_inputs: authored_inputs(&root, &manifest),
-            native_outputs: native_output_paths(&root, &manifest),
+            native_outputs: native_output_paths(&root),
             root,
         })
     }
@@ -249,7 +249,6 @@ impl PackageRoot {
             return;
         };
         self.authored_inputs = authored_inputs(&self.root, &manifest);
-        self.native_outputs = native_output_paths(&self.root, &manifest);
     }
 
     fn is_input(&self, path: &Path) -> bool {
@@ -264,8 +263,6 @@ impl PackageRoot {
             || relative.starts_with("publication/components")
             || relative.starts_with("publication/wirings")
             || relative == Path::new("publication/attachments.json")
-            || relative == Path::new("ui")
-            || relative == Path::new("ui/Cargo.toml")
     }
 
     fn owns_generated(&self, path: &Path) -> bool {
@@ -387,17 +384,8 @@ impl GeneratedNativeOutputs {
     }
 }
 
-fn native_output_paths(package: &Path, manifest: &PackageManifest) -> Vec<PathBuf> {
-    let output = wamn_schema_generator::output_root(package);
-    let mut paths = vec![output.join("client")];
-    for component in manifest.components.keys().filter(|name| {
-        let mut parts = Path::new(name).components();
-        matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
-    }) {
-        let tui = output.join(format!("{component}-tui"));
-        paths.extend([tui.join("Cargo.toml"), tui.join("src")]);
-    }
-    paths
+fn native_output_paths(package: &Path) -> Vec<PathBuf> {
+    vec![wamn_schema_generator::output_root(package).join("client")]
 }
 
 fn affects_native_output(roots: &[PathBuf], path: &Path) -> bool {
@@ -1238,17 +1226,10 @@ mod tests {
             "publication/components/fixture.json.in",
             "publication/wirings/widget_get.json",
             "publication/attachments.json",
-            "ui",
-            "ui/Cargo.toml",
         ] {
             assert!(package.is_input(&root.join(input)), "{input} is an input");
         }
-        for other in [
-            "query/not-declared.sql",
-            "generated/wamn.rs",
-            "README.md",
-            "ui/src/lib.rs",
-        ] {
+        for other in ["query/not-declared.sql", "generated/wamn.rs", "README.md"] {
             assert!(
                 !package.is_input(&root.join(other)),
                 "{other} is not an input"
@@ -1293,13 +1274,6 @@ mod tests {
         assert!(source.roots.is_input(&manifest));
         assert!(source.roots.is_input(&native.join("src/lib.rs")));
         assert!(!source.roots.is_input(&repository.root.join("README.md")));
-        assert!(
-            !source.roots.is_input(
-                &repository
-                    .package()
-                    .join("generated/fixture-tui/src/main.rs")
-            )
-        );
 
         let added = repository.root.join("new-unrelated");
         fs::create_dir_all(added.join("nested"))
@@ -1483,12 +1457,10 @@ mod tests {
         [PathBuf; 3],
     ) {
         let paths = [
+            repository.package().join("generated/client/widget.rs"),
             repository
                 .package()
-                .join("generated/fixture-tui/Cargo.toml"),
-            repository
-                .package()
-                .join("generated/fixture-tui/src/lib.rs"),
+                .join("generated/client/widget_maker.rs"),
             repository.package().join("generated/client/location.rs"),
         ];
         for path in &paths {
@@ -1749,9 +1721,7 @@ mod tests {
             );
         }
 
-        let emitted = repository
-            .package()
-            .join("generated/fixture-tui/src/lib.rs");
+        let emitted = repository.package().join("generated/client/widget.rs");
         fs::create_dir_all(emitted.parent().expect("generated source parent"))
             .expect("create first generated native source directory");
         fs::write(emitted, "own first emission").expect("emit native source before Build");

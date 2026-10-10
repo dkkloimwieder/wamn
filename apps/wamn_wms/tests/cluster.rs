@@ -46,15 +46,6 @@ async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyh
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, python3"]
-async fn generated_wms_terminal_reports_a_committed_move() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "jq", "curl", "python3",
-    ]);
-    run_case(Case::GeneratedTerminal).await
-}
-
-#[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn restarted_wms_host_retains_compiled_code_and_serves_requests() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
@@ -65,7 +56,6 @@ async fn restarted_wms_host_retains_compiled_code_and_serves_requests() -> anyho
 enum Case {
     Routes,
     PartialCompletion,
-    GeneratedTerminal,
     Startup,
 }
 
@@ -76,8 +66,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             || matches!(case, Case::Routes | Case::PartialCompletion | Case::Startup),
         "supplied-artifact execution supports released routes, partial completion, and restart cases"
     );
-    let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
-    let generated_terminal = matches!(case, Case::GeneratedTerminal);
+    let partial_completion = matches!(case, Case::PartialCompletion);
     // A requested hold keeps the released routes case reachable from a browser.
     let browser =
         matches!(case, Case::Routes) && std::env::var_os("WAMN_JOURNEY_HOLD_SECONDS").is_some();
@@ -164,7 +153,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     let work = ScratchRoot(work_path);
     let mut run = Box::pin(
         std::panic::AssertUnwindSafe(async {
-            build::build(&repository, &target, &evidence, generated_terminal).await?;
+            build::build(&repository, &target, &evidence).await?;
             let files = bootstrap::prepare(&repository, work.path())?;
             let scope = Triple::new(
                 crate::environment::identity().org.as_str(),
@@ -314,7 +303,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         "result.json",
         &json!({
             "source":head,"cluster":cluster,"completed":matches!(&run, Ok(Ok(()))),
-            "partial_completion":partial_completion,"generated_terminal":generated_terminal,
+            "partial_completion":partial_completion,
             "startup":matches!(case, Case::Startup),"demo":browser,
             "failure_capture":failure_capture.as_ref().err().map(|error|format!("{error:#}")),
             "failure":match &run { Ok(Err(error)) => Some(format!("{error:#}")), Err(_) => Some("test panicked".to_owned()), _ => None },
@@ -424,12 +413,10 @@ async fn run_created(
         broker,
         source,
     } = *case_context;
-    let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
-    let generated_terminal = matches!(case, Case::GeneratedTerminal);
+    let partial_completion = matches!(case, Case::PartialCompletion);
     let measure_startup = matches!(case, Case::Startup);
     let postgres = deployment::inspect(lifecycle, &format!("{cluster}-postgres")).await?;
     let postgres_ip = bootstrap::kind_address(&postgres)?.to_string();
-    let postgres_port = bootstrap::postgres_host_port(&postgres)?;
     let registry = deployment::inspect(lifecycle, &format!("{cluster}-registry")).await?;
     let registry_authority = format!("{}:5000", bootstrap::kind_address(&registry)?);
     let nats = deployment::inspect(lifecycle, &format!("{cluster}-nats")).await?;
@@ -691,31 +678,6 @@ async fn run_created(
         .await?;
         workload::materializer_ready(cluster, work, &materializer_input, &hosts, evidence).await?;
         application::released_routes(&document, &store, evidence).await?;
-        let database: tokio_postgres::Config = route.database_url.parse()?;
-        let database_name = database
-            .get_dbname()
-            .context("the project URL names its database")?;
-        let loopback_url =
-            format!("postgresql://postgres:probe@127.0.0.1:{postgres_port}/{database_name}");
-        let instance = http["metadata"]["uid"]
-            .as_str()
-            .context("the HTTP workload has a UID")?;
-        if generated_terminal {
-            application::generated_terminal(
-                &document,
-                &application::TerminalPaths {
-                    repository,
-                    target,
-                    work,
-                    evidence,
-                },
-                &loopback_url,
-                instance,
-                "success",
-                &store,
-            )
-            .await?;
-        }
         if partial_completion {
             checked(
                 Command::new(lifecycle)
@@ -724,9 +686,6 @@ async fn run_created(
                     .arg(work),
             )
             .await?;
-            // The terminal's partial mode needs a route that answers a
-            // partial result. The WMS move is a plain route now, so only the
-            // terminal preflight exercises that mode.
             let result =
                 application::partial_completion(&mut document, project.as_ref(), evidence).await;
             let restored = checked(

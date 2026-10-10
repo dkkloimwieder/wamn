@@ -106,7 +106,7 @@ async fn run(
     share_kubeconfig(kept, &work)?;
     let owner = format!("{}-wms", kept.name);
     let lifecycle = repository.join("tools/wms-cluster-journey-run");
-    build::build(repository, target, evidence, false).await?;
+    build::build(repository, target, evidence).await?;
     let files = bootstrap::prepare(repository, &work)?;
     fs::copy(&kept.registry_auth, work.join("docker/config.json"))?;
     for directory in ["host-secrets", "wasmtime-cache"] {

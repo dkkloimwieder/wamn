@@ -25,7 +25,6 @@ pub struct DevSessionRequest {
     pub config: PathBuf,
     pub overlay_root: PathBuf,
     pub watch: bool,
-    pub operator_component: Option<String>,
 }
 
 const BUILD_COMPONENTS_TOOL: &str = "tools/build-components";
@@ -59,8 +58,6 @@ impl Error for CommandInvalidationError {
 
 struct NativeInvalidations {
     filesystem: FilesystemInvalidationSource,
-    repository_root: PathBuf,
-    package_roots: Vec<PathBuf>,
     config: DevConfig,
 }
 
@@ -93,30 +90,6 @@ impl DevInvalidationSource for NativeInvalidations {
     type Error = CommandInvalidationError;
 
     async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
-        // The engine calls next only after the prior run finishes. Metadata
-        // never competes with the Build stage, and the first run can Generate
-        // a missing native manifest before this refresh needs it.
-        let packages = super::native_tui::operator_packages(&self.package_roots)
-            .map_err(|source| CommandInvalidationError::new("read native package names", source))?;
-        if packages
-            .iter()
-            .all(|package| package.manifest_path.is_file())
-        {
-            match super::native_tui::native_dependency_roots(&self.repository_root, &packages).await
-            {
-                Ok(inputs) => {
-                    self.filesystem
-                        .replace_native_inputs(inputs.directories, inputs.files)
-                        .await
-                        .map_err(|source| {
-                            CommandInvalidationError::new("watch native build dependencies", source)
-                        })?;
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "retain the previous native watches until Cargo metadata parses");
-                }
-            }
-        }
         self.filesystem
             .replace_configuration_files(local_configuration_files(&self.config))
             .map_err(|source| {
@@ -239,23 +212,6 @@ impl DevSession {
         let bytes = fs::read(&args.config)
             .with_context(|| format!("read development config {}", args.config.display()))?;
         let config = parse_config(&bytes).context("validate development config")?;
-        let operator_component = if let Some(selected) = args.operator_component.as_deref() {
-            anyhow::ensure!(
-                config.operator_bearer_token().is_some(),
-                "--tui <component> requires operator_bearer_token in dev.json"
-            );
-            let packages = resolve_dev_packages(&config, &args.overlay_root)
-                .context("resolve operator package closure")?;
-            let roots = packages
-                .base_packages()
-                .iter()
-                .map(|package| package.root().to_owned())
-                .chain(std::iter::once(packages.overlay_root().to_owned()))
-                .collect::<Vec<_>>();
-            Some(super::native_tui::select_component(&roots, selected)?)
-        } else {
-            None
-        };
         preflight_config(&config)
             .await
             .context("reach configured development endpoints")?;
@@ -270,9 +226,6 @@ impl DevSession {
             .start_observations()
             .await
             .context("start development observation readers")?;
-        if let Some(package) = operator_component {
-            runner.configure_operator(package, super::operator::spawn(control.clone()));
-        }
 
         Ok(Self {
             config,
@@ -392,7 +345,7 @@ async fn run_watch_command(
     .map(|file| repository_root.join(file))
     .to_vec();
     let mut filesystem = FilesystemInvalidationSource::with_native_inputs(
-        package_roots.clone(),
+        package_roots,
         component_roots,
         [repository_root.join("crates/client")],
         native_files,
@@ -410,8 +363,6 @@ async fn run_watch_command(
     );
     let native = NativeInvalidations {
         filesystem,
-        repository_root,
-        package_roots,
         config: config.clone(),
     };
     let mut source = CommandInvalidations {

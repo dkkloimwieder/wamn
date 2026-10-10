@@ -64,11 +64,9 @@ The host starts it after the flow-http workload runs, and the loop waits until i
 The materializer restarts with the host on each loop change. Its JetStream consumers are durable, so a restart resumes them.
 
 The command starts `wamn-identity`, writes private `dev.json`, prints the next developer command, and exits.
-The identity process keeps running across application builds and operator exits.
+The identity process keeps running across application builds.
 Startup creates its signing key once. Application rebuilds preserve that key and the identity database.
 The `session_identity` field supplies the issuer address, certificate authority file, and environment instance to each application host.
-The operator terminal uses that issuer for password login and receives no PAT from the launcher.
-An older configuration without `session_identity` retains its explicit `operator_bearer_token` path.
 The identity process uses the existing [password configuration](deployment.md#identity-password-configuration), including `.env` in the working directory.
 
 At environment teardown, stop the owned identity process:
@@ -86,7 +84,7 @@ Use its emitted configuration:
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
-  --overlay-root "$PWD/apps/client_acme_receiving" --watch --tui receiving
+  --overlay-root "$PWD/apps/client_acme_receiving" --watch
 ```
 
 Use this Acme overlay command for an Acme change.
@@ -95,15 +93,12 @@ Then run the loop with Receiving as the overlay:
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
-  --overlay-root "$PWD/apps/wamn_receiving" --watch --tui receiving
+  --overlay-root "$PWD/apps/wamn_receiving" --watch
 ```
 
 This loop migrates, generates, builds, and releases only the Receiving package.
 
-For `[RECEIVING-TUI]` and `[GENERATED-TUI]`, `--tui receiving` opens the app-owned operator.
-Bare `--tui` opens the developer console. Without a terminal, `--hold` keeps the activation alive until interruption.
-The loop supplies the route, target instance, and private personal access token.
-Do not copy that token into command arguments.
+Add `--tui` to open the developer console. Without a terminal, `--hold` keeps the activation alive until interruption.
 
 The loop runs from a Git worktree.
 After changing generator code, rebuild `wamn` and restart the developer process.
@@ -130,7 +125,7 @@ Missing or changed generated files prevent reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
 Schema inputs include migrations, package identity, model structure, and internal relations.
-When these inputs change, the loop stops the operator and host before it applies them.
+When these inputs change, the loop stops the host before it applies them.
 
 These changes keep the target database and the rows it holds:
 
@@ -150,8 +145,6 @@ These changes recreate the target database:
 
 Before it recreates the target, the loop prints the reason.
 The new database receives a new target instance, the identity of one database creation.
-The operator clears records, revisions, cursors, drafts, and pending submissions for the previous instance.
-It does not replay interrupted mutations.
 
 Control store rows keyed by a non-empty target instance accumulate only within one `wamn dev up` standup.
 Nothing deletes them one at a time, and the immutability trigger stays unconditional.
@@ -162,7 +155,7 @@ For code and compatible SQL changes, the previous application remains available 
 Build, Gate, and binding failures keep that application running.
 A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.
-The loop replaces the host and operator only after the candidate passes preparation.
+The loop replaces the host only after the candidate passes preparation.
 The local Gate uses the same wiring rules as release authoring and authenticates the configured publisher.
 A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
 `tools/build-components` builds each palette component that a wiring of a selected package names.
@@ -172,7 +165,7 @@ That is the name that the operator passes to `bind-connection --store-alias` in 
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
 
 Local preparation limits each metadata or version command to 60 seconds.
-SQLx preparation, component builds, virtualization, and native operator builds each have a 45-minute limit.
+SQLx preparation, component builds, and virtualization each have a 45-minute limit.
 On interruption or expiry, the loop gives each command and its child processes five seconds to stop.
 After a forced stop, it waits up to five seconds for the command to exit.
 It allows another five seconds to close and collect output.
@@ -221,86 +214,6 @@ Restart the loop with the same configuration after reset.
 `wamn dev clean-check` runs the existing exact test for a change, independent of the retained developer database.
 It takes the arguments and result rules of the [change checks](delivery.md#change-checks).
 Local reuse does not establish [release qualification](delivery.md#candidate-qualification).
-
-Receiving and Acme screen tests run in-process through production events, submissions, and rendering:
-
-```bash
-cargo test --locked --offline -p wamn-receiving-tui
-```
-
-The local Receiving process test retains terminal restoration and signal assertions.
-It uses an HTTP fixture and requires its built operator:
-
-```bash
-cargo build --locked --offline -p wamn-receiving-tui
-python3 apps/wamn_receiving/tests/operator_pty.py --binary "$CARGO_TARGET_DIR/debug/wamn-receiving"
-```
-
-## Receiving password login
-
-The [Receiving operator guide](../../apps/wamn_receiving/operator-guide.md) covers sign-in, receipt entry, keyboard controls, history, recovery, and logout.
-
-Build `wamn-receiving` before starting the terminal.
-For Acme, build package `wamn-client-acme-receiving-tui` and start binary `wamn-client-acme-receiving`.
-Both launchers use the same connection and login variables.
-Configure `WAMN_BASE_URL`, `WAMN_HOST` when needed, and `WAMN_TARGET_INSTANCE` for the selected deployment.
-Set `WAMN_SESSION_ISSUER` to its HTTPS identity issuer and `WAMN_SESSION_AUDIENCE` to the exact provisioned environment audience.
-For a private issuer CA, set `WAMN_SESSION_CA` to its certificate bundle.
-The bundle replaces the default trust roots for identity requests.
-
-If `WAMN_TOKEN` is set, the terminal retains the existing PAT path.
-For password login, unset `WAMN_TOKEN` before launching `wamn-receiving`.
-Enter `I` to accept an invitation, `L` to log in, or `R` to recover your password.
-Invitation acceptance asks for one complete emailed code and a new password entered twice.
-The code carries the account binding. You do not copy a principal UUID or create a PAT.
-After enrollment, enter the email and password again to log in.
-Menu choices and email addresses are visible. Passwords and email secrets display only masking characters.
-Paste is supported, and Esc or Ctrl-C cancels.
-For recovery, enter your email, the emailed reset secret, and your new password twice.
-After reset, use normal login. A notification delivery failure does not undo the password change.
-Do not put user passwords or invitation secrets in arguments, environment variables, or files.
-
-For several environments, set `WAMN_RECEIVING_TARGETS` to a public JSON file with these fields:
-
-```json
-[
-  {
-    "audience": "<exact provisioned environment audience>",
-    "base_url": "https://receiving.example.com/",
-    "host": "receiving.example.com",
-    "target_instance": "<served activation instance>"
-  }
-]
-```
-
-Add one entry for each configured environment. The `host` field is optional.
-This file replaces the single-environment address and audience variables for password login.
-Keep `WAMN_SESSION_ISSUER` and any required `WAMN_SESSION_CA` configured.
-All entries use that issuer. The file contains no credentials.
-
-After password authentication, the terminal matches authorized environments against this file.
-One match opens directly. Several matches produce a numbered choice.
-No matches refuse login. The issuer repeats authorization when it issues the selected session.
-For PAT access, unset `WAMN_RECEIVING_TARGETS` and use the single-environment variables.
-
-The terminal keeps access and renewal credentials only in process memory.
-When an application request needs a new access token, the client renews once before submission.
-Concurrent requests share that renewal. Idle terminals send no renewal requests.
-After renewal failure, inactivity expiry, or absolute expiry, exit and log in again before explicitly submitting the operation.
-The client never replays an application operation automatically.
-Quitting clears local credentials and asks the issuer to revoke the login.
-If logout fails, the terminal reports that server revocation is unconfirmed.
-After server logout commits, issued password tokens fail the next request admission.
-All permitted application operations accept the renewable session without another password prompt.
-
-The password terminal test uses owned HTTPS and HTTP fixtures, plus OpenSSL for a disposable certificate:
-
-```bash
-python3 apps/wamn_receiving/tests/password_login_pty.py --binary "$CARGO_TARGET_DIR/debug/wamn-receiving"
-```
-
-This test covers hidden input, enrollment, login, environment selection, expiry, local logout, cancellation, and refusal.
-It does not establish the deployed Receiving journey.
 
 ## Issuer connection
 

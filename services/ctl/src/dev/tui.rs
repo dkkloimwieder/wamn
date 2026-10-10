@@ -4,10 +4,7 @@
 //! [`apply_key`] are pure: they turn one immutable [`DevSnapshot`] and one key
 //! press into a Ratatui buffer and new navigation state, with no terminal and
 //! no development-loop effects. Underneath is `wamn-client-terminal` — raw
-//! mode, the alternate screen, an event stream and restoration on panic. It
-//! was a private module here, naming nothing about this loop, until the
-//! `wamn-receiving` operator binary became the second caller and moved it out
-//! unchanged (wamn-10yt.5.9).
+//! mode, the alternate screen, an event stream and restoration on panic.
 //!
 //! [`run`] joins the two: it holds the activated environment open until the
 //! developer quits, and quitting leaves through the session's own native

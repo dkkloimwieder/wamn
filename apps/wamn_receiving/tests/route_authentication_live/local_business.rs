@@ -1,60 +1,13 @@
 //! Receiving business histories over the local runtime and disposable PostgreSQL.
 
 use std::fs;
-use std::sync::Arc;
 
 use anyhow::{Context as _, ensure};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
-use wamn_client::{ClientError, HttpRequest, HttpResponse, StaticPat, Transport, WamnClient};
-use wamn_client_terminal::operator::{Action, Application};
-use wamn_client_tui::screen::IntentValues;
-use wamn_client_tui::submission::SessionBinding;
 use wamn_integration_tests::local_application::{
     LocalApplication, LocalApplicationConfig, LocalPackage,
 };
-use wamn_receiving_tui::{Panel, ReceivingApplication};
 use wamn_test_infrastructure::scratch::ScratchRoot;
-
-#[derive(Debug)]
-struct LocalTransport {
-    http: reqwest::Client,
-}
-
-#[async_trait::async_trait]
-impl Transport for LocalTransport {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
-        let mut outgoing = self.http.request(
-            request.method.parse().map_err(|_| ClientError::Transport {
-                detail: "local UI request has an invalid method".to_owned(),
-            })?,
-            &request.url,
-        );
-        for (name, value) in request.headers {
-            outgoing = outgoing.header(name, value);
-        }
-        let response =
-            outgoing
-                .body(request.body)
-                .send()
-                .await
-                .map_err(|error| ClientError::Transport {
-                    detail: error.to_string(),
-                })?;
-        let status = response.status().as_u16();
-        let body = response
-            .text()
-            .await
-            .map_err(|error| ClientError::Transport {
-                detail: error.to_string(),
-            })?;
-        Ok(HttpResponse {
-            actor_labels: std::collections::BTreeMap::new(),
-            status,
-            body,
-        })
-    }
-}
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
@@ -207,61 +160,16 @@ async fn transactional_participation(
         }
     };
 
-    let client = WamnClient::new(
-        application.endpoint.clone(),
-        Some(application.route_host.clone()),
-        Arc::new(StaticPat::new(application.bearer.clone())?),
-        Arc::new(LocalTransport { http: http.clone() }),
-    );
-    let mut ui = ReceivingApplication::acme(
-        "Acme Receiving",
-        SessionBinding {
-            url: application.endpoint.clone(),
-            host: Some(application.route_host.clone()),
-            target_instance: "local-business".to_owned(),
-        },
-    );
-    let action = ui.next_action();
-    ui_dispatch(&mut ui, &client, action, "ui-orders").await?;
-    ui_select(
-        &mut ui,
-        Panel::Orders,
-        "id",
+    let none = invoke(
+        "/acme/receiving/record_receipt",
+        "part-none",
         "00000000-0000-0000-0000-000000000720",
-    )?;
-    ui_key(&mut ui, KeyCode::Enter);
-    let action = ui.next_action();
-    ui_dispatch(&mut ui, &client, action, "ui-lines").await?;
-    let action = ui.next_action();
-    ui_dispatch(&mut ui, &client, action, "ui-locations").await?;
-    ui_select(
-        &mut ui,
-        Panel::Lines,
-        "line_id",
         "00000000-0000-0000-0000-000000000820",
-    )?;
-    ui_key(&mut ui, KeyCode::Enter);
-    ui_type(&mut ui, "1");
-    ui_key(&mut ui, KeyCode::F(3));
-    ui_type(&mut ui, "ui-part-none");
-    ui_key(&mut ui, KeyCode::F(4));
-    ui_select(
-        &mut ui,
-        Panel::Locations,
-        "id",
-        "00000000-0000-0000-0000-000000000711",
-    )?;
-    ui_key(&mut ui, KeyCode::Enter);
-    let action = ui.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
-    ui_dispatch(&mut ui, &client, action, "part-none").await?;
+    )
+    .await?;
     ensure!(
-        ui.committed_result().is_some_and(|result| {
-            result["purchase_order_id"] == "00000000-0000-0000-0000-000000000720"
-                && result["purchase_order_status"] == "complete"
-                && result["row_version"] == 2
-                && result["receipt_id"].as_str().is_some()
-        }),
-        "the production UI did not show the committed receipt result"
+        none[0].get("value").is_some(),
+        "the receipt without inspection failed"
     );
     let no_qc_receipt = project
         .query_one(
@@ -272,18 +180,6 @@ async fn transactional_participation(
         .await?
         .get::<_, String>(0);
     ensure!(project.query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)", &[&no_qc_receipt]).await?.get::<_, bool>(0), "inspection-not-required wrote quality control state");
-    ui_key(&mut ui, KeyCode::Char('d'));
-    let action = ui.next_action();
-    ui_dispatch(&mut ui, &client, action, "ui-details").await?;
-    ensure!(
-        ui.panel() == Panel::Details
-            && ui
-                .screen(Panel::Details)
-                .rows()
-                .iter()
-                .any(|row| row["id"] == "00000000-0000-0000-0000-000000000720"),
-        "the production UI did not show the Acme purchase-order details"
-    );
 
     let approved = invoke(
         "/acme/receiving/record_receipt",
@@ -415,68 +311,6 @@ async fn transactional_participation(
         .await
         .context("join participation database connection")??;
     Ok(())
-}
-
-fn ui_key(application: &mut ReceivingApplication, code: KeyCode) -> Action {
-    application.key(KeyEvent::new(code, KeyModifiers::NONE))
-}
-
-fn ui_intent(id: &str) -> IntentValues {
-    IntentValues {
-        request_id: id.to_owned(),
-        idempotency_key: id.to_owned(),
-        occurred_at: "2026-09-20T12:00:00.000000Z".to_owned(),
-    }
-}
-
-async fn ui_dispatch(
-    application: &mut ReceivingApplication,
-    client: &WamnClient,
-    action: Action,
-    id: &str,
-) -> anyhow::Result<()> {
-    let request = application
-        .prepare(action, Some(&ui_intent(id)))
-        .map_err(|error| anyhow::anyhow!("prepare UI request {id}: {error}"))?;
-    let response = if request.fresh_only {
-        client
-            .submit_fresh(&request.route, &request.parameters, &request.body)
-            .await
-    } else {
-        client
-            .submit(&request.route, &request.parameters, &request.body)
-            .await
-    };
-    application.resolve(request.screen, request.attempt, response);
-    Ok(())
-}
-
-fn ui_select(
-    application: &mut ReceivingApplication,
-    panel: Panel,
-    field: &str,
-    expected: &str,
-) -> anyhow::Result<()> {
-    let index = application
-        .screen(panel)
-        .rows()
-        .iter()
-        .position(|row| row[field] == expected)
-        .with_context(|| format!("{panel:?} omitted {field}={expected}"))?;
-    while application.selected_row(panel) < index {
-        ui_key(application, KeyCode::Down);
-    }
-    while application.selected_row(panel) > index {
-        ui_key(application, KeyCode::Up);
-    }
-    Ok(())
-}
-
-fn ui_type(application: &mut ReceivingApplication, value: &str) {
-    for character in value.chars() {
-        ui_key(application, KeyCode::Char(character));
-    }
-    ui_key(application, KeyCode::Enter);
 }
 
 async fn histories(

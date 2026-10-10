@@ -17,19 +17,11 @@ An overlay declares its exact base dependency and owns its added definitions and
 A module organizes implementation within a package and creates no independent public identity.
 The [naming contract](naming.md) defines operation spelling, and [data access](data-access.md) defines ownership on shared relations.
 
-The repository root owns the native Cargo workspace, including native application UIs and tests.
+The repository root owns the native Cargo workspace, including native application tests.
 `apps/Cargo.toml` owns the guest workspace.
 `apps/platform/` holds shared guests and guest libraries.
 The separate `apps/platform/no-std/` workspace isolates its dependency features.
 Cargo owns membership, dependencies, features, and targets. Application manifests own component declarations.
-
-Receiving and Acme combine generated screens with the same application-owned Rust workflow.
-Each UI crate owns its entrypoint. Its generated crate supplies a library.
-Both launchers use the Receiving runtime for login and transport.
-Acme intentionally depends on `wamn-receiving-tui` for application composition.
-The generator creates no second launcher for either application.
-WMS still declares `wamn-wms-tui` in its generated UI crate.
-The development command selects the operator from its Cargo declaration.
 
 ## Control and publication
 

@@ -11,7 +11,7 @@ use object_store::aws::{AmazonS3, AmazonS3Builder};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
 use wamn_test_infrastructure::rendering::render_kind_cluster;
-pub(super) use wamn_test_infrastructure::workload::{kind_address, postgres_host_port};
+pub(super) use wamn_test_infrastructure::workload::kind_address;
 
 const REGISTRY_USERNAME: &str = "wamn-wms-journey";
 const MINIO_ACCESS_KEY: &str = "wamn-labels-store";

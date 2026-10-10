@@ -67,7 +67,6 @@ The following commands select individual test targets:
 
 ```bash
 cargo test --locked --offline -p wamn-schema-generator --test platform_generation
-cargo test --locked --offline -p wamn-receiving-tui
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
   -p wamn-receiving-data-access --all-targets
@@ -427,21 +426,9 @@ It tests the removed and kept runs, the refusals, and the grants of the generati
 
 ### Development identity lifecycle
 
-The development command case captures an operator invitation through the real Resend request code and a local HTTP fixture.
-The real terminal consumes that emailed secret, establishes the password, signs in, and reads a Receiving purchase order without a PAT.
-It also captures reset email and notification, changes the password through the terminal, and requires normal login afterward.
-A renewed session reads Receiving, logout refuses further renewal, and the previous password fails.
-The same case tests permission and membership refusal, consumed invitations, application rebuilds, unchanged signing keys, and owned process cleanup.
-Build `wamn-receiving` in the same debug target before this case.
+The development command case tests application rebuilds and owned process cleanup.
 Build the test identity binary with `cargo build --locked --offline -p wamn-identity --features test-util`.
 The `test-util` feature permits only a loopback mail endpoint with a dummy API key. Production builds do not include this path.
-Wrap the existing development test command with the mail capture:
-
-```bash
-python3 apps/wamn_receiving/tests/password_receiving_pty.py --capture-mail <development-test-command>
-```
-
-The wrapper supplies dummy Resend credentials and removes the private captured message at exit. It sends no real email.
 The focused identity case also covers application database recreation:
 
 ```bash
@@ -509,31 +496,6 @@ The case requires authenticated application results after code, SQL, and schema 
 It also requires retained data for compatible edits and for an appended migration.
 It requires refusal of invalid SQL, and a new database after a declared definition owner change.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
-This correctness case does not report performance measurements.
-
-### Live operator restart
-
-Use the owned worktree and build commands in [Local saved-edit acceptance](#local-saved-edit-acceptance).
-This case needs the native programs, infrastructure fixture, and HTTP guest, but no Rust test binary.
-Set `WAMN_OPERATOR_RESULTS` to an unused absolute directory outside the worktree.
-Run the Python operator case through both owned fixtures:
-
-```bash
-WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_route.wasm" \
-  "$CARGO_TARGET_DIR/debug/examples/delivery_timings" \
-  "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_OPERATOR_RESULTS" -- \
-  "$CARGO_TARGET_DIR/debug/wamn-test-postgres" \
-  --database wamn_system --url-env WAMN_DEV_ENV_SYSTEM_DATABASE_URL -- \
-  python3 "$SOURCE/apps/wamn_receiving/tests/generated_operator_environment.py"
-```
-
-The runner calls `wamn dev up` with Receiving and its Acme overlay.
-The test requires an empty purchase-order list, then inserts its sole owned order.
-A native source edit must restart the operator and host, retain the database, and clear the operator draft.
-The test reads each announced host log, including its activation sequence number.
-It also checks request traces, terminal restoration, child shutdown, and removal of its rows and source marker.
-The fixtures stop their own database and services after the command exits.
-Results and redacted diagnostics stay under `WAMN_OPERATOR_RESULTS/operator/result`.
 This correctness case does not report performance measurements.
 
 ### Bounded HTTP reuse

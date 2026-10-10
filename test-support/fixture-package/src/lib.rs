@@ -71,22 +71,6 @@ pub fn overlay_manifest_path() -> PathBuf {
 /// Panics if `root` already exists or a fixture file cannot be read or written.
 pub fn write_upgrade_package(root: &Path) -> PathBuf {
     copy_directory(&package_root(), root);
-    let tui_manifest_path = root.join("generated/fixture-tui/Cargo.toml");
-    let tui_manifest =
-        std::fs::read_to_string(&tui_manifest_path).expect("read copied fixture UI manifest");
-    let workspace_entry = "workspace = \"../../../..\"";
-    assert_eq!(
-        tui_manifest.matches(workspace_entry).count(),
-        1,
-        "the fixture UI manifest must declare its repository workspace once"
-    );
-    let workspace =
-        serde_json::to_string(&repository_root()).expect("quote fixture workspace path");
-    std::fs::write(
-        tui_manifest_path,
-        tui_manifest.replacen(workspace_entry, &format!("workspace = {workspace}"), 1),
-    )
-    .expect("point the copied fixture UI at its repository workspace");
     let authored_path = root.join("wamn.k");
     let authored = std::fs::read_to_string(&authored_path).expect("read copied authored manifest");
     let predecessor = "version = \"2.1.0\", predecessor_version = \"2.0.0\"";

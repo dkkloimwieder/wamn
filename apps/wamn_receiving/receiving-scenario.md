@@ -65,11 +65,6 @@ A stale `purchase_order.update` returns `concurrency_conflict` without changing 
 
 ## Client behavior
 
-The [operator application](ui/) composes generated screens with ordinary Rust.
-It uses generated request types and the shared submission state machine.
-The terminal owns no transaction or authorization decision.
-The `h` key on the order list opens the history panel of the selected order.
-The panel reads every page up to the head position, and it reads again from the start when the head position changes.
 It folds the rows with [`wamn-record-history`](../platform/data/record-history/src/lib.rs) and shows the order at the selected entry as present, absent, or unavailable.
 If the fold refuses the rows, the panel shows the refusal.
 
@@ -98,7 +93,6 @@ They also show that an Acme update logs a changed-column diff, and that the fold
 [Postcommit tests](tests/postcommit.rs) exercise the private Acme consumer through the native event broker.
 The materializer case shows that CDC publishes no history entry.
 It also shows that the low 32 bits of each entry transaction id of the receipt equal the event `txid`.
-[Terminal tests](tests/operator_pty.py) cover the Receiving workflow at the terminal boundary.
 The [test methods](../../docs/testing/application-tests.md#receiving-commands) distinguish these observations from compilation or an unexecuted case.
 
 The application does not support atomic client extensions across separate component invocations.

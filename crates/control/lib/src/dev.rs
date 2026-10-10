@@ -13,11 +13,7 @@ pub mod coordinator;
 pub mod edge_bundle;
 pub mod environment;
 #[cfg(target_os = "linux")]
-mod native_tui;
-#[cfg(target_os = "linux")]
 pub mod observations;
-#[cfg(target_os = "linux")]
-mod operator;
 pub mod pat_issuer;
 pub mod read;
 #[cfg(target_os = "linux")]

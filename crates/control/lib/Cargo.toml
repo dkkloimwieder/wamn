@@ -22,7 +22,6 @@ futures-util = { workspace = true }
 rcgen = { workspace = true }
 schemars = { workspace = true }
 wamn-authoring-model = { workspace = true }
-wamn-client-terminal = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }

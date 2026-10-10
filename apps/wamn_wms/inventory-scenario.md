@@ -82,9 +82,8 @@ One move stores one label. The move response carries the committed move only.
 ## Application observations
 
 The [cluster cases](tests/cluster.rs) exercise released routes, contention, replay, and the stored label.
-Separate cases exercise committed work while the label store is missing, terminal output, browser output, and host restart.
+Separate cases exercise committed work while the label store is missing, browser output, and host restart.
 The label cases read the label from the store after the workflow runs.
-The [terminal example](examples/wms_move.rs) uses generated screens and the common client submission layer.
 These owners replace the original proposal's earlier restriction against a WMS operator interface.
 
 The simulator's `scan_event` and `seed_inventory` profiles supply deterministic traffic shapes.

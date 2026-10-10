@@ -272,7 +272,6 @@ The issuer credential needs the current grants from `provision-identity-issuer -
 Use the current system schema on a fresh database, following the repository's schema installation contract.
 
 The route bodies and limits are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
-Use the [Receiving password login](development-loop.md#receiving-password-login) flow after provisioning the identity target and environment membership.
 
 ## User roles
 
@@ -372,7 +371,6 @@ The correction does not reactivate a disabled account or replace its password.
 
 After commit, ask the user to request normal recovery with the replacement email.
 The recovery endpoint and reset fields are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
-Use `R` in the [Receiving sign-in screen](development-loop.md#receiving-password-login) to request recovery.
 Keep reset secrets and passwords out of command arguments and logs.
 After reset, require normal login with the new email and password.
 Run the existing `reconcile-run-plane` procedure for affected environments to update their copied user rows.
