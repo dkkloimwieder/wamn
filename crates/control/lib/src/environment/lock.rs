@@ -3,7 +3,9 @@
 //! `apply`, `rollback` and `delete` take one session-level advisory lock in the
 //! system database, keyed by the coordinate, on a connection of their own, and
 //! hold it for the whole verb. A second verb on the same coordinate refuses at
-//! once. A killed verb releases the lock with its connection. No transaction is
+//! once. A verb that ends releases the lock before it returns, so a next verb
+//! in the same process finds it free. A killed verb releases the lock with its
+//! connection, when the server reads the closed socket. No transaction is
 //! open on the connection, so no row lock is held across the Helm call.
 //! `--dry-run` and `show` take no lock.
 
@@ -58,6 +60,33 @@ impl LifecycleLock {
             bail!("{DEPLOYMENT_IN_PROGRESS}: another verb holds the lifecycle lock of {triple}");
         }
         Ok(Self { client, connection })
+    }
+
+    /// Release the lock before the verb returns. The server releases it
+    /// anyway when the connection closes, but only once it reads the closed
+    /// socket, and a port forward delays that.
+    pub async fn release(self) {
+        let _ = self
+            .client
+            .execute("SELECT pg_advisory_unlock_all()", &[])
+            .await;
+    }
+
+    /// Run `verb` under the lock of `triple`, and release the lock when the
+    /// verb ends, with its result or its error.
+    ///
+    /// # Errors
+    ///
+    /// When the lock is held, or `verb` fails.
+    pub async fn hold<T>(
+        system_url: &str,
+        triple: &Triple,
+        verb: impl AsyncFnOnce(&Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let lock = Self::acquire(system_url, triple).await?;
+        let result = verb(&lock).await;
+        lock.release().await;
+        result
     }
 
     /// The connection that holds the lock. A phase may read on it, and must

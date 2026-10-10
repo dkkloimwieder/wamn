@@ -199,8 +199,12 @@ pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysi
 /// names the step.
 pub async fn apply(platform: &Platform, file: &Path) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
-    let _lock = LifecycleLock::acquire(&platform.system_database_url, &document.triple()).await?;
-    apply_locked(platform, &document, None).await
+    LifecycleLock::hold(
+        &platform.system_database_url,
+        &document.triple(),
+        async |_| apply_locked(platform, &document, None).await,
+    )
+    .await
 }
 
 /// `apply` of the environment's own document with `digest` as its release:
@@ -216,10 +220,12 @@ pub async fn apply_release(
     triple: &wamn_control_registry::Triple,
     digest: &str,
 ) -> anyhow::Result<Analysis> {
-    let _lock = LifecycleLock::acquire(&platform.system_database_url, triple).await?;
-    let mut document = show::show(platform, triple).await?;
-    document.release = document::DeclaredRelease::Digest(digest.to_owned());
-    apply_locked(platform, &document, None).await
+    LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
+        let mut document = show::show(platform, triple).await?;
+        document.release = document::DeclaredRelease::Digest(digest.to_owned());
+        apply_locked(platform, &document, None).await
+    })
+    .await
 }
 
 /// Steps 2 to 9 of §10.1 under a lifecycle lock the caller holds: analyse,

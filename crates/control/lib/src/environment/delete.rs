@@ -162,16 +162,27 @@ pub fn instance_roles(
 /// When the lock is held, pods are still live after the drain bound, a run is
 /// stranded and `data` is false, the replication slot is active, the event
 /// broker is needed and not configured, or a step fails.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one ordered sequence of if-present steps, as §12.3 lists them"
-)]
 pub async fn delete(
     platform: &Platform,
     triple: &Triple,
     data: bool,
 ) -> anyhow::Result<Vec<String>> {
-    let _lock = LifecycleLock::acquire(&platform.system_database_url, triple).await?;
+    LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
+        delete_locked(platform, triple, data).await
+    })
+    .await
+}
+
+/// The steps of [`delete`] under the lifecycle lock.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one ordered sequence of if-present steps, as §12.3 lists them"
+)]
+async fn delete_locked(
+    platform: &Platform,
+    triple: &Triple,
+    data: bool,
+) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (
         triple.org.as_str(),
         triple.project.as_str(),

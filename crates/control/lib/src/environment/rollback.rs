@@ -33,14 +33,16 @@ pub async fn rollback(
     reason: &str,
 ) -> anyhow::Result<Analysis> {
     ensure!(!reason.trim().is_empty(), "--reason is empty");
-    let _lock = LifecycleLock::acquire(&platform.system_database_url, triple).await?;
-    let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
-    let Some(previous) = previous_intended(platform, &name).await? else {
-        bail!("{NO_RETAINED_PRIOR_RELEASE} of {triple}; nothing was written");
-    };
-    let mut document = super::show::show(platform, triple).await?;
-    document.release = DeclaredRelease::Digest(previous);
-    super::apply_locked(platform, &document, Some(reason)).await
+    LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
+        let name = release_chart::release_name(&triple.org, &triple.project, triple.env.as_str())?;
+        let Some(previous) = previous_intended(platform, &name).await? else {
+            bail!("{NO_RETAINED_PRIOR_RELEASE} of {triple}; nothing was written");
+        };
+        let mut document = super::show::show(platform, triple).await?;
+        document.release = DeclaredRelease::Digest(previous);
+        super::apply_locked(platform, &document, Some(reason)).await
+    })
+    .await
 }
 
 /// The digest of the previous intended release, or none.
