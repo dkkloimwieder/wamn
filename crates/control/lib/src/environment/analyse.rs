@@ -119,7 +119,9 @@ pub struct Authorities {
     pub live: BTreeMap<String, usize>,
     /// Package id to the artifact of its declared floor version, for each
     /// declared floor of an installed package whose version is not registered.
-    pub floor_artifacts: BTreeMap<String, FloorArtifact>,
+    /// `None` under `--dry-run`, which pulls no artifact: `apply` checks the
+    /// lineage of such a floor.
+    pub floor_artifacts: Option<BTreeMap<String, FloorArtifact>>,
 }
 
 /// The result of analysis: the authorities and the differences to apply.
@@ -131,6 +133,7 @@ pub struct Analysis {
 }
 
 /// Read every authority and check the document against it (§10.1 steps 2 and 3).
+/// With `dry_run`, analysis pulls no artifact.
 ///
 /// # Errors
 ///
@@ -139,6 +142,7 @@ pub struct Analysis {
 pub async fn analyse(
     platform: &Platform,
     document: &EnvironmentDocument,
+    dry_run: bool,
 ) -> anyhow::Result<Analysis> {
     let release_name =
         release_chart::release_name(&document.org, &document.project, &document.env)?;
@@ -166,11 +170,9 @@ pub async fn analyse(
     };
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
-    let floor_artifacts = match &project {
-        Some(project) if document.release != DeclaredRelease::None => {
-            read_floor_artifacts(platform, document, project).await?
-        }
-        _ => BTreeMap::new(),
+    let floor_artifacts = match floors_to_pull(document, project.as_ref(), dry_run) {
+        Some(floors) => Some(read_floor_artifacts(platform, floors).await?),
+        None => None,
     };
     let authorities = Authorities {
         release_name,
@@ -195,22 +197,43 @@ pub async fn analyse(
     })
 }
 
-/// Read the verified artifact of each declared floor version of an installed
-/// package that the environment has not registered: its lineage is checked
-/// here, at analysis, not when step 9 applies it (R13, R16).
+/// The declared floor versions of installed packages that the environment has
+/// not registered, as `(package, version)`: analysis pulls their artifacts.
+/// `None` under `--dry-run`, which pulls no artifact.
+fn floors_to_pull<'a>(
+    document: &'a EnvironmentDocument,
+    project: Option<&ProjectState>,
+    dry_run: bool,
+) -> Option<Vec<(&'a str, &'a str)>> {
+    if dry_run {
+        return None;
+    }
+    let Some(project) = project.filter(|_| document.release != DeclaredRelease::None) else {
+        return Some(Vec::new());
+    };
+    Some(
+        document
+            .floors
+            .iter()
+            .filter(|(package, version)| {
+                project
+                    .installed
+                    .get(*package)
+                    .is_some_and(|installed| !installed.lineage.contains_key(*version))
+            })
+            .map(|(package, version)| (package.as_str(), version.as_str()))
+            .collect(),
+    )
+}
+
+/// Read the verified artifact of each floor of [`floors_to_pull`]: its lineage
+/// is checked here, at analysis, not when step 9 applies it (R13, R16).
 async fn read_floor_artifacts(
     platform: &Platform,
-    document: &EnvironmentDocument,
-    project: &ProjectState,
+    floors: Vec<(&str, &str)>,
 ) -> anyhow::Result<BTreeMap<String, FloorArtifact>> {
     let mut artifacts = BTreeMap::new();
-    for (package, version) in &document.floors {
-        let Some(installed) = project.installed.get(package) else {
-            continue;
-        };
-        if installed.lineage.contains_key(version) {
-            continue;
-        }
+    for (package, version) in floors {
         let opened = super::stage::open(platform, package, version).await?;
         let path = wamn_schema_generator::package_manifest_path(opened.root());
         let manifest = wamn_schema_generator::PackageManifest::from_slice(
@@ -218,9 +241,9 @@ async fn read_floor_artifacts(
         )
         .with_context(|| format!("parse {}", path.display()))?;
         artifacts.insert(
-            package.clone(),
+            package.to_owned(),
             FloorArtifact {
-                version: version.clone(),
+                version: version.to_owned(),
                 predecessor: manifest.package.predecessor_version.clone(),
                 contract: manifest.upgrade_stage.as_ref().is_some_and(|stage| {
                     stage.phase == wamn_schema_generator::UpgradeStagePhase::Contract
@@ -787,13 +810,16 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                 if document.release != DeclaredRelease::None
                     && !installed.lineage.contains_key(declared) =>
             {
-                refusals.extend(unregistered_floor(
-                    package,
-                    declared,
-                    installed,
-                    project.floors.get(package),
-                    authorities.floor_artifacts.get(package),
-                ));
+                // Under --dry-run no artifact was pulled: apply checks it.
+                if let Some(artifacts) = &authorities.floor_artifacts {
+                    refusals.extend(unregistered_floor(
+                        package,
+                        declared,
+                        installed,
+                        project.floors.get(package),
+                        artifacts.get(package),
+                    ));
+                }
             }
             Some(_) => {}
         }
@@ -923,6 +949,17 @@ fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String
             if project.floors.get(package) != Some(declared) {
                 plan.push(format!("contract {package} to floor {declared} when safe"));
             }
+            if authorities.floor_artifacts.is_none()
+                && project
+                    .installed
+                    .get(package)
+                    .is_some_and(|installed| !installed.lineage.contains_key(declared))
+            {
+                plan.push(format!(
+                    "floor {package}@{declared} is not registered: apply pulls its artifact \
+                     and checks its lineage"
+                ));
+            }
         }
     }
     if plan.is_empty() {
@@ -1038,7 +1075,7 @@ mod tests {
             release: None,
             revision: None,
             live: BTreeMap::new(),
-            floor_artifacts: BTreeMap::new(),
+            floor_artifacts: Some(BTreeMap::new()),
         }
     }
 
@@ -1101,7 +1138,7 @@ mod tests {
         // version as its predecessor.
         let artifact = |predecessor: Option<&str>, contract: bool| {
             let mut with = recorded.clone();
-            with.floor_artifacts.insert(
+            with.floor_artifacts.as_mut().unwrap().insert(
                 "wamn_wms".to_owned(),
                 FloorArtifact {
                     version: "2.5.0".to_owned(),
@@ -1133,6 +1170,34 @@ mod tests {
         assert!(
             none_first[0].contains("no floor advances"),
             "{none_first:?}"
+        );
+    }
+
+    #[test]
+    fn dry_run_pulls_no_floor_artifact() {
+        let digest = DeclaredRelease::Digest(format!("sha256:{}", "a".repeat(64)));
+        let unregistered = document(digest, &[("wamn_wms", "2.5.0")]);
+        let recorded = authorities(&[("wamn_wms", "2.3.0")]);
+        assert_eq!(
+            floors_to_pull(&unregistered, recorded.project.as_ref(), false),
+            Some(vec![("wamn_wms", "2.5.0")])
+        );
+        assert_eq!(
+            floors_to_pull(&unregistered, recorded.project.as_ref(), true),
+            None
+        );
+        // Without the artifact, analysis does not refuse the floor, and the
+        // plan says that apply checks its lineage.
+        let dry = Authorities {
+            floor_artifacts: None,
+            ..recorded
+        };
+        assert!(refusals(&unregistered, &dry).is_empty());
+        let plan = plan(&unregistered, &dry);
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("apply pulls its artifact and checks its lineage")),
+            "{plan:?}"
         );
     }
 }

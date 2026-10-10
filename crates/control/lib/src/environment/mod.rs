@@ -188,7 +188,7 @@ fn current_context(kubeconfig: &Path) -> anyhow::Result<String> {
 /// When the document is refused, or an authority cannot be read.
 pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
-    analyse::analyse(platform, &document).await
+    analyse::analyse(platform, &document, true).await
 }
 
 /// `env apply <file>`: take the lifecycle lock and run the steps of §10.1.
@@ -245,7 +245,7 @@ pub(crate) async fn apply_locked(
     document: &EnvironmentDocument,
     reason: Option<&str>,
 ) -> anyhow::Result<Analysis> {
-    let mut analysis = analyse::analyse(platform, document).await?;
+    let mut analysis = analyse::analyse(platform, document, false).await?;
     ensure::ensure(platform, document, &analysis)
         .await
         .context("step 4, ensure the substrate")?;
