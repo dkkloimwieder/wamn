@@ -1,9 +1,9 @@
 //! `wamn-ctl env apply` on kind (docs/plan/platform-deploy.md §10.1 steps 4
 //! to 7, §10.2, R6, R22, §3 A6, A7 and A12; issue `wamn-snz0.3`).
 //!
-//! The setup is the one of `release_chart_smoke.rs`, with CloudNativePG in
-//! place of the stand-in Postgres, because `apply` ensures the environment's
-//! `Database` CR: a fresh kind cluster `wamn-apply-<pid>` (epic decision D9),
+//! This is the one kind suite of the platform. `apply` ensures the
+//! environment's `Database` CR, so the suite runs CloudNativePG: a fresh kind
+//! cluster `wamn-apply-<pid>` (epic decision D9),
 //! cert-manager, the operator release, the CNPG operator and one `Cluster`,
 //! and a TLS registry with a password on the kind network. The system
 //! database lives on the CNPG cluster and the verb reaches it through a port
@@ -47,6 +47,13 @@
 //!    each route host reaches the route guest only under the Service's own
 //!    route host; the other host is not routed.
 //!
+//! Checks of the release chart (§9.2, A1), after check 1:
+//! 14. A1: the dev host's heartbeat carries `hostgroup` and `wamn.release`.
+//! 15. A WorkloadDeployment that selects another `wamn.release` is not
+//!     placed.
+//! 16. After every check, the operator release has its revision and its
+//!     Deployment's resourceVersion of before the first apply.
+//!
 //! A6 (kind half) needs a staged package upgrade; this fixture has none, and
 //! the report says so.
 //!
@@ -71,6 +78,7 @@ use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
 use wamn_control::push_release_manifest::push_manifest_bytes;
 use wamn_control::release_chart::{ImageSet, Target, release_name, stamp};
 use wamn_control_registry::{Template, Triple};
+use wamn_engine::release_manifest::release_label;
 
 const NAMESPACE: &str = "wamn-system";
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
@@ -84,8 +92,8 @@ const ORG: &str = "acme";
 const PROJECT: &str = "orders";
 /// The policy provision-org stamps for the trials template.
 const POLICY: &str = "dev";
-/// The canonical fixture of `release_chart_smoke.rs`: one package, no http
-/// attachment, no registration.
+/// The canonical fixture release, A: one package, no http attachment, no
+/// registration.
 const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 /// The second fixture release, B: the same package, another component digest.
 const MANIFEST_B: &[u8] = br#"{"attachments":{},"components":[{"component":"http-request","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","interface-version":"0.1","operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":5,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
@@ -192,6 +200,80 @@ impl Run {
         digests.sort();
         digests.dedup();
         Ok(digests)
+    }
+
+    /// The Host objects whose heartbeat names `group`.
+    async fn hosts(&self, group: &str) -> anyhow::Result<Vec<Value>> {
+        let hosts = self
+            .json(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "hosts",
+                    "-l",
+                    &format!("hostgroup={group}"),
+                    "-o",
+                    "json",
+                ],
+            )
+            .await?;
+        Ok(hosts["items"].as_array().cloned().unwrap_or_default())
+    }
+
+    /// The name and host of each Workload whose name starts with `prefix`.
+    async fn placements(&self, prefix: &str) -> anyhow::Result<Vec<Value>> {
+        let workloads = self
+            .json(
+                "kubectl",
+                &["-n", NAMESPACE, "get", "workloads", "-o", "json"],
+            )
+            .await?;
+        Ok(workloads["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|workload| {
+                workload["metadata"]["name"]
+                    .as_str()
+                    .is_some_and(|name| name.starts_with(prefix))
+            })
+            .map(|workload| {
+                json!({"name": workload["metadata"]["name"],
+                    "hostId": workload["status"]["hostId"],
+                    "conditions": workload["status"]["conditions"]})
+            })
+            .collect())
+    }
+
+    /// The operator release's revision and its Deployment's resourceVersion.
+    async fn operator(&self) -> anyhow::Result<Value> {
+        let releases = self
+            .json("helm", &["-n", NAMESPACE, "list", "-o", "json"])
+            .await?;
+        let revision = releases
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|release| release["name"] == "wamn")
+            .map(|release| release["revision"].clone());
+        let deployment = self
+            .json(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "deployment",
+                    "runtime-operator",
+                    "-o",
+                    "json",
+                ],
+            )
+            .await?;
+        Ok(json!({"revision": revision,
+            "resourceVersion": deployment["metadata"]["resourceVersion"]}))
     }
 
     async fn remove(&self) {
@@ -718,7 +800,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     }
     system_task.abort();
 
-    // The platform part of the host group: the registry mount, as the smoke.
+    // The platform part of the host group: the registry mount.
     std::fs::write(
         work.join("host-group.yaml"),
         serde_yaml::to_string(&json!({
@@ -771,6 +853,8 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     };
     let name = release_name(ORG, PROJECT, "dev")?;
 
+    let operator_before = run.operator().await?;
+
     // 1. The first apply creates the environment.
     let dev = document("dev", "dev.orders.example");
     apply(&dev, "dev-first").await?;
@@ -795,6 +879,71 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         json!({"row": row, "revisions": first}),
         row.is_some() && first == 1,
     );
+
+    // 14. A1: the heartbeat carries the host group and the release.
+    let label = release_label(&digest).context("label the fixture digest")?;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut hosts = run.hosts(&name).await?;
+    while hosts.len() != 1 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        hosts = run.hosts(&name).await?;
+    }
+    let labels: Vec<Value> = hosts
+        .iter()
+        .map(|host| host["metadata"]["labels"].clone())
+        .collect();
+    run.pass(
+        "A1 heartbeat labels",
+        &format!("kubectl -n {NAMESPACE} get hosts -l hostgroup={name} -o json"),
+        json!({"expected": {"hostgroup": name, "wamn.release": label}, "labels": labels}),
+        labels.len() == 1
+            && labels[0]["hostgroup"] == name.as_str()
+            && labels[0]["wamn.release"] == label.as_str(),
+    );
+
+    // 15. A WorkloadDeployment that selects another release is not placed.
+    let probe = format!("{name}-probe-wrong");
+    let mut wrong = label.clone();
+    let last = wrong.pop().context("the label is not empty")?;
+    wrong.push(if last == 'a' { 'b' } else { 'a' });
+    let selector = json!({"hostgroup": name, "wamn.release": wrong});
+    std::fs::write(
+        work.join("probe-wrong.json"),
+        serde_json::to_vec_pretty(&json!({
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "kind": "WorkloadDeployment",
+            "metadata": {"name": probe, "namespace": NAMESPACE},
+            "spec": {"replicas": 1, "template": {"spec": {
+                "hostSelector": selector,
+                "environment": NAMESPACE,
+                "components": [{"name": "probe", "image": UNPULLED}],
+            }}},
+        }))?,
+    )?;
+    run.run("kubectl", &["apply", "-f", &path("probe-wrong.json")])
+        .await?;
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    let workloads = run.placements(&probe).await?;
+    run.pass(
+        "not placed on a wrong wamn.release",
+        &format!("kubectl apply -f probe-wrong.json; sleep 120; kubectl -n {NAMESPACE} get workloads -o json (names {probe}*)"),
+        json!({"hostSelector": selector, "workloads": workloads}),
+        workloads
+            .iter()
+            .all(|workload| workload["hostId"].as_str().is_none_or(str::is_empty)),
+    );
+    run.run(
+        "kubectl",
+        &[
+            "-n",
+            NAMESPACE,
+            "delete",
+            "workloaddeployment",
+            &probe,
+            "--wait",
+        ],
+    )
+    .await?;
 
     // 2. The same document again writes no revision.
     apply(&dev, "dev-again").await?;
@@ -1335,6 +1484,15 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         "wamn-ctl env apply east-http.k west-http.k; curl -H 'Host: <route host>' http://<release>-http/no-such-route",
         json!({"release": digest_h, "answers": answers}),
         own_only,
+    );
+
+    // 16. The operator release is untouched.
+    let operator_after = run.operator().await?;
+    run.pass(
+        "operator release untouched",
+        &format!("helm -n {NAMESPACE} list -o json; kubectl -n {NAMESPACE} get deployment runtime-operator -o json"),
+        json!({"before": operator_before, "after": operator_after}),
+        operator_before == operator_after,
     );
     Ok(())
 }

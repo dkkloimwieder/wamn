@@ -127,17 +127,17 @@ A passing case first prints the route and the caller token file.
 Without the variable, the case does not hold.
 The startup case records requests, traces, recovery, and cache identity without asserting an overhead ratio.
 
-### Release chart smoke
+### Environment apply on kind
 
-The smoke installs the `release` chart on its own kind cluster with one host and no role.
-It checks the host heartbeat labels, placement by `hostSelector`, the operator release, and a clean uninstall.
-It also starts a registry and a stand-in Postgres, and it removes them and the cluster at the end.
-Build `wamn-identity`, then run the smoke with a local host image:
+`environment_apply_kind` is the one kind suite of the platform. It runs once per epic.
+It creates its own kind cluster `wamn-apply-<pid>` with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password.
+It runs `env apply`, rollback, release none and delete on two environments, and it checks the host heartbeat labels, placement by `hostSelector`, route host isolation and the operator release.
+It removes the cluster and the registry at the end.
+Run it with a local host image:
 
 ```bash
-cargo build -p wamn-identity
 WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> \
-  cargo test -p wamn-control --test release_chart_smoke -- --ignored --nocapture
+  cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture
 ```
 
 The test prints its work directory. `report.json` in that directory records each check with its command, output, and result.
