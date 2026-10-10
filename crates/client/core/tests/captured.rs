@@ -13,7 +13,7 @@ use wamn_client::{
     WamnClient,
 };
 
-#[path = "../../../../apps/platform_fixture/generated/client/widget.rs"]
+#[path = "../../../../apps/target/wamn/platform_fixture/client/widget.rs"]
 pub mod widget;
 
 #[derive(Debug, Default)]
@@ -176,7 +176,7 @@ async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blo
         transport.clone(),
     );
     let schema: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../apps/platform_fixture/generated/routes/widget/update.json"
+        "../../../../apps/target/wamn/platform_fixture/routes/widget/update.json"
     ))
     .expect("read the fixture serving schema");
     let schema = &schema;

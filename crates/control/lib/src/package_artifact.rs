@@ -1275,7 +1275,9 @@ async fn open_artifact(
 }
 
 /// Unpack `layers` into `root`: layer 0 to `generated/wamn.json`, the tars in
-/// place, and each descriptor to `descriptors/<name>.json`.
+/// place, and each descriptor to `descriptors/<name>.json`. An unpacked tree
+/// keeps the `generated/` layer paths, and the output root resolver reads its
+/// `generated/` directory as its build output.
 fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
     let tar_count = PACKAGE_TAR_LAYERS.len();
     ensure!(
@@ -1290,7 +1292,7 @@ fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
         layers[0].media_type
     );
     write_file(
-        &physical_path(root, wamn_schema_generator::COMPILED_MANIFEST),
+        &root.join(wamn_schema_generator::COMPILED_MANIFEST),
         &layers[0].bytes,
     )?;
     for layer in &layers[1..=tar_count] {
@@ -1321,7 +1323,7 @@ fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
             let mut data = Vec::new();
             std::io::Read::read_to_end(&mut entry, &mut data)
                 .with_context(|| format!("read tar entry {logical}"))?;
-            write_file(&physical_path(root, &logical), &data)?;
+            write_file(&root.join(&logical), &data)?;
         }
     }
     for layer in &layers[tar_count + 1..] {

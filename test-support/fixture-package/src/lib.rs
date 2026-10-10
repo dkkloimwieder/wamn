@@ -2,9 +2,9 @@
 //!
 //! The platform owns no application, so a platform test states no Receiving,
 //! WMS or Acme fact. It takes this fixture instead. The fixture is an
-//! application under `apps/`: it holds a manifest, authored SQL, migrations
-//! and a committed generated tree, and it builds the way every application
-//! builds.
+//! application under `apps/`: it holds a manifest, authored SQL and
+//! migrations, and it builds the way every application builds. `wamn build`
+//! writes its output to `apps/target/wamn/<package>`, outside Git.
 //!
 //! This crate carries paths and file contents. It depends on no platform
 //! crate, so any crate in the workspace can take it as a dev-dependency
@@ -44,17 +44,24 @@ pub fn overlay_root() -> PathBuf {
     repository_root().join("apps").join(OVERLAY_PACKAGE_ID)
 }
 
+/// The build output directory of `package`: the layout that the generator's
+/// `output_root` resolves for an application. This crate depends on no
+/// platform crate, so it spells the layout here.
+fn output_directory(package: &str) -> PathBuf {
+    repository_root().join("apps/target/wamn").join(package)
+}
+
 /// The compiled manifest of the fixture application. The fixture authors its
-/// manifest in `wamn.k`, and generation writes this file from it.
+/// manifest in `wamn.k`, and `wamn build` writes this file from it.
 #[must_use]
 pub fn manifest_path() -> PathBuf {
-    package_root().join("generated/wamn.json")
+    output_directory(PACKAGE_ID).join("wamn.json")
 }
 
 /// The compiled manifest of the overlay application.
 #[must_use]
 pub fn overlay_manifest_path() -> PathBuf {
-    overlay_root().join("generated/wamn.json")
+    output_directory(OVERLAY_PACKAGE_ID).join("wamn.json")
 }
 
 /// Copy the fixture into a test-owned 2.2.0 successor of 2.1.0.

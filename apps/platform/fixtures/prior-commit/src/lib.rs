@@ -19,7 +19,7 @@ mod bindings {
         path: [
             "../../../../crates/execution/workflow/router/wit",
             "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-            "../../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
+            "../../../target/wamn/wamn_receiving/wit/deps/wamn-receiving-receiving",
         ],
         generate_all,
         async: true,
@@ -36,7 +36,7 @@ mod receipt_codec {
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../wamn_receiving/generated/wit/receiving_record_receipt_codec.rs"
+        "/../../../target/wamn/wamn_receiving/wit/receiving_record_receipt_codec.rs"
     ));
 }
 

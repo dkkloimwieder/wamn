@@ -18,7 +18,7 @@ mod adjust {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/inventory_adjust_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_adjust_codec.rs"
         ));
     }
 
@@ -64,7 +64,7 @@ mod aggregate {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/inventory_aggregate_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_aggregate_codec.rs"
         ));
     }
 
@@ -113,7 +113,7 @@ mod merge {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/inventory_merge_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_merge_codec.rs"
         ));
     }
 
@@ -156,7 +156,7 @@ mod move_ {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/inventory_move_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_move_codec.rs"
         ));
     }
 
@@ -197,7 +197,7 @@ mod split {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/inventory_split_codec.rs"
+            "/../../target/wamn/wamn_wms/wit/inventory_split_codec.rs"
         ));
     }
 

@@ -1,10 +1,10 @@
 Acme owns package `client_acme_receiving`, its Receiving overlay, SQL, guest, generated client, and application tests.
 
 [Overlay scenario](overlay-scenario.md): Application behavior, limits, and source owners.
-[Manifest](wamn.k): Package identity and declared operations. The generator compiles it to `generated/wamn.json`.
+[Manifest](wamn.k): Package identity and declared operations. `wamn build` compiles it to `wamn.json` in the build output.
 [Migrations](migrations/): Authored application schema.
 [Data access](data/): SQL-backed operation implementations.
-[Generated output](generated/): Derived contracts, SQL, and client code.
+Generated output: Derived contracts, SQL, and client code. `wamn build` writes it to `apps/target/wamn/client_acme_receiving/`, outside Git.
 [Component](component/): Application guest.
 [Participant](participant/): Record-receipt participant guest. The base Receiving component calls it before commit.
 [Tests](tests/): Application assertions and SQLx metadata.

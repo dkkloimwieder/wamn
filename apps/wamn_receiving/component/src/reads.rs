@@ -30,7 +30,7 @@ pub(super) fn error_detail(
 pub(super) mod location_list {
     use super::{Connection, error_detail, read};
     use crate::exports::wamn_receiving::location::list as contract;
-    include!("../../generated/wit/location_list_codec.rs");
+    include!("../../../target/wamn/wamn_receiving/wit/location_list_codec.rs");
 
     pub(super) async fn execute(
         connection: &mut Connection,
@@ -55,7 +55,7 @@ pub(super) mod location_list {
 pub(super) mod receiving_load_receipt_screen {
     use super::{Connection, Uuid, error_detail, read};
     use crate::exports::wamn_receiving::receiving::load_receipt_screen as contract;
-    include!("../../generated/wit/receiving_load_receipt_screen_codec.rs");
+    include!("../../../target/wamn/wamn_receiving/wit/receiving_load_receipt_screen_codec.rs");
 
     pub(super) async fn execute(
         connection: &mut Connection,
@@ -86,7 +86,9 @@ pub(super) mod receiving_load_receipt_screen {
 pub(super) mod receiving_load_purchase_order_history {
     use super::{Connection, Uuid, error_detail, read};
     use crate::exports::wamn_receiving::receiving::load_purchase_order_history as contract;
-    include!("../../generated/wit/receiving_load_purchase_order_history_codec.rs");
+    include!(
+        "../../../target/wamn/wamn_receiving/wit/receiving_load_purchase_order_history_codec.rs"
+    );
 
     pub(super) async fn execute(
         connection: &mut Connection,

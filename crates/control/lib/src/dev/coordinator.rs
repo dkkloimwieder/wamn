@@ -34,7 +34,7 @@ use tokio_postgres::NoTls;
 use wamn_authoring_model::GateResult;
 use wamn_catalog::PackageCoordinate;
 use wamn_schema_control::BareSchemaName;
-use wamn_schema_generator::{MaterializeMode, PackageManifest};
+use wamn_schema_generator::PackageManifest;
 use wamn_schema_introspection::ir::CatalogIr;
 
 use super::activation::{self, DevActivation, DevActivationRequest};
@@ -50,7 +50,6 @@ use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
 use crate::print_release_env::ReleaseCarrier;
 
 const BUILD_TOOL: &str = "tools/build-components";
-const PACKAGE_IDENTITY: &str = "generated/package-identity.json";
 const RECORD_HISTORY_SQL: &str = "deploy/sql/record-history.sql";
 const RUN_SCHEMA: &str = "wamn_run";
 
@@ -517,7 +516,6 @@ impl ProductionDevStageRunner {
             // here shares one target database and re-introspecting would hand
             // this package the relations and fields its neighbours own.
             wamn_schema_generator::materialize_package_verified_with_catalog(
-                MaterializeMode::Write,
                 catalog,
                 self.config.target_database_url(),
                 &package.root,
@@ -561,14 +559,7 @@ impl ProductionDevStageRunner {
                         .map_err(|source| {
                             ProductionDevStageError::owner("read SQLx metadata inputs", source)
                         })?;
-                if sqlx_metadata_is_current(
-                    self.sqlx_metadata_inputs.get(package_id),
-                    self.git.repository_root(),
-                    &package.root,
-                    &current,
-                )
-                .await?
-                {
+                if sqlx_metadata_is_current(self.sqlx_metadata_inputs.get(package_id), &current) {
                     self.sqlx_metadata_inputs
                         .insert(package_id.clone(), Some(current));
                     continue;
@@ -579,7 +570,6 @@ impl ProductionDevStageRunner {
                     self.git.repository_root(),
                     &package.root,
                     self.config.target_database_url(),
-                    false,
                 );
                 let output = super::execute_preparation(&mut command, super::PREPARATION_TIMEOUT)
                     .await
@@ -1476,7 +1466,10 @@ fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, Product
             wamn_schema_generator::output_root(&package.root),
         )];
         if crate::delivery::sqlx::requires_verifier(&package.manifest) {
-            roots.push(("sqlx", package.root.join("tests/.sqlx")));
+            roots.push((
+                "sqlx",
+                wamn_schema_generator::output_root(&package.root).join(".sqlx"),
+            ));
         }
         for (kind, root) in roots {
             if !root.is_dir() {
@@ -1553,44 +1546,14 @@ fn sqlx_metadata_inputs_on_disk(
 
 /// Whether the verifier's SQLx metadata was prepared for `current`.
 ///
-/// In a session, the last preparation answers, and an unfinished one never
-/// matches. A new session compares with the committed files, whose metadata
-/// release qualification checks.
-async fn sqlx_metadata_is_current(
+/// The last preparation in this session answers, and an unfinished one never
+/// matches. A new session prepares once, because the metadata lies in build
+/// output that no commit records.
+fn sqlx_metadata_is_current(
     prepared: Option<&Option<SqlxMetadataInputs>>,
-    repository: &Path,
-    package: &Path,
     current: &SqlxMetadataInputs,
-) -> Result<bool, ProductionDevStageError> {
-    if let Some(prepared) = prepared {
-        return Ok(prepared.as_ref() == Some(current));
-    }
-    let (Some(weld), Some(record_history), Some(cargo_lock)) = (
-        committed_file(package, PACKAGE_IDENTITY).await?,
-        committed_file(repository, RECORD_HISTORY_SQL).await?,
-        committed_file(repository, "Cargo.lock").await?,
-    ) else {
-        return Ok(false);
-    };
-    Ok(sqlx_metadata_inputs(&weld, record_history, &cargo_lock)
-        .is_ok_and(|committed| committed == *current))
-}
-
-/// The bytes of `path`, relative to `directory`, at `HEAD`; `None` if `HEAD` lacks it.
-async fn committed_file(
-    directory: &Path,
-    path: &str,
-) -> Result<Option<Vec<u8>>, ProductionDevStageError> {
-    let output = super::execute_preparation(
-        Command::new("git")
-            .arg("-C")
-            .arg(directory)
-            .args(["show", &format!("HEAD:./{path}")]),
-        super::INPUT_COMMAND_TIMEOUT,
-    )
-    .await
-    .map_err(|source| ProductionDevStageError::owner("read a committed SQLx input", source))?;
-    Ok(output.status.success().then_some(output.stdout))
+) -> bool {
+    prepared.is_some_and(|prepared| prepared.as_ref() == Some(current))
 }
 
 /// Read every authored file of the package at `root`.
@@ -2645,13 +2608,16 @@ mod tests {
             std::process::id(),
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(root.join("generated/contracts")).unwrap();
-        fs::create_dir_all(root.join("tests/.sqlx")).unwrap();
-        fs::write(root.join("tests/.sqlx/query.json"), b"metadata").unwrap();
-        let path = root.join("generated/contracts/operation.json");
+        let package_root = root.join("demo");
+        let output = wamn_schema_generator::output_root(&package_root);
+        fs::create_dir_all(&package_root).unwrap();
+        fs::create_dir_all(output.join("contracts")).unwrap();
+        fs::create_dir_all(output.join(".sqlx")).unwrap();
+        fs::write(output.join(".sqlx/query.json"), b"metadata").unwrap();
+        let path = output.join("contracts/operation.json");
         fs::write(&path, b"original").unwrap();
         let package = PackageInput {
-            root: root.clone(),
+            root: package_root,
             manifest: PackageManifest::from_slice(include_bytes!(
                 "../../tests/support/dev_package/wamn.json"
             ))
@@ -2664,12 +2630,12 @@ mod tests {
             original
         );
         fs::write(&path, b"original").unwrap();
-        fs::write(root.join("generated/contracts/extra.json"), b"extra").unwrap();
+        fs::write(output.join("contracts/extra.json"), b"extra").unwrap();
         assert_ne!(
             generated_outputs_digest(std::slice::from_ref(&package)).unwrap(),
             original
         );
-        fs::remove_dir_all(root.join("generated")).unwrap();
+        fs::remove_dir_all(output.join("contracts")).unwrap();
         assert_ne!(generated_outputs_digest(&[package]).unwrap(), original);
         fs::remove_dir_all(root).unwrap();
     }
@@ -2721,18 +2687,19 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[tokio::test]
-    async fn sqlx_preparation_skips_a_rust_only_edit_and_runs_for_emitted_sql() {
+    #[test]
+    fn sqlx_preparation_skips_a_rust_only_edit_and_runs_for_emitted_sql() {
         let root = std::env::temp_dir().join(format!(
             "wamn-sqlx-inputs-{}-{}",
             std::process::id(),
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         let package = root.join("apps/demo");
+        let identity = wamn_schema_generator::output_root(&package).join("package-identity.json");
         let weld = include_bytes!("../../tests/support/dev_package/package-identity.json");
         let weld = weld.strip_suffix(b"\n").unwrap_or(weld);
         for (path, bytes) in [
-            (package.join(PACKAGE_IDENTITY), weld),
+            (identity.clone(), weld),
             (package.join("component/src/lib.rs"), b"pub fn value() {}"),
             (
                 root.join(RECORD_HISTORY_SQL),
@@ -2746,29 +2713,11 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, bytes).unwrap();
         }
-        let git = |args: &[&str]| {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(&root)
-                .args(args)
-                .status()
-                .unwrap();
-            assert!(status.success(), "fixture Git command failed: {args:?}");
-        };
-        git(&["init", "--quiet"]);
-        git(&["add", "."]);
-        git(&[
-            "-c",
-            "user.name=SQLx Inputs Test",
-            "-c",
-            "user.email=sqlx-inputs@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "--quiet",
-            "-m",
-            "fixture",
-        ]);
+        let prepared = sqlx_metadata_inputs_on_disk(&root, &package).unwrap();
+        assert!(
+            !sqlx_metadata_is_current(None, &prepared),
+            "a new session prepares once"
+        );
 
         fs::write(
             package.join("component/src/lib.rs"),
@@ -2777,10 +2726,8 @@ mod tests {
         .unwrap();
         let rust_only = sqlx_metadata_inputs_on_disk(&root, &package).unwrap();
         assert!(
-            sqlx_metadata_is_current(None, &root, &package, &rust_only)
-                .await
-                .unwrap(),
-            "a Rust-only edit keeps the committed SQLx metadata"
+            sqlx_metadata_is_current(Some(&Some(prepared)), &rust_only),
+            "a Rust-only edit keeps the prepared SQLx metadata"
         );
 
         let corpus = wamn_schema_generator::GeneratedPackageMetadata::from_slice(weld)
@@ -2790,18 +2737,14 @@ mod tests {
         let emitted = String::from_utf8(weld.to_vec())
             .unwrap()
             .replace(&corpus, &format!("sha256:{}", "0".repeat(64)));
-        fs::write(package.join(PACKAGE_IDENTITY), emitted).unwrap();
+        fs::write(&identity, emitted).unwrap();
         let sql = sqlx_metadata_inputs_on_disk(&root, &package).unwrap();
         assert!(
-            !sqlx_metadata_is_current(None, &root, &package, &sql)
-                .await
-                .unwrap(),
-            "emitted SQL that differs from the committed SQL prepares"
+            !sqlx_metadata_is_current(Some(&Some(rust_only)), &sql),
+            "emitted SQL that differs from the prepared SQL prepares"
         );
         assert!(
-            !sqlx_metadata_is_current(Some(&None), &root, &package, &sql)
-                .await
-                .unwrap(),
+            !sqlx_metadata_is_current(Some(&None), &sql),
             "an unfinished preparation runs again"
         );
         fs::remove_dir_all(root).unwrap();

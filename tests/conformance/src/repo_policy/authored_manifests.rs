@@ -1,8 +1,9 @@
 //! Every package under `apps/` authors its manifest in `wamn.k`.
 //!
-//! The generator compiles `wamn.k` to `generated/wamn.json`, so a `wamn.json`
-//! at a package root is refused (docs/plan/manifest-authoring.md §4.3, ruling
-//! 8). Test fixtures outside `apps/` stay JSON, so the lint reads only `apps/`.
+//! `wamn build` compiles `wamn.k` to `wamn.json` in the package's build
+//! output, so a `wamn.json` at a package root is refused
+//! (docs/plan/manifest-authoring.md §4.3, ruling 8). Test fixtures outside
+//! `apps/` stay JSON, so the lint reads only `apps/`.
 
 use std::path::Path;
 

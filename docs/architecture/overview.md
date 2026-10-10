@@ -8,7 +8,8 @@ This page describes the main owners. The [architecture index](README.md) links e
 ## Application ownership
 
 Each application lives under `apps/<exact-package-id>/`.
-Its home contains the manifest, migrations, authored SQL, generated output, components, operator application, and tests.
+Its home contains the manifest, migrations, authored SQL, components, operator application, and tests.
+`wamn build` writes its generated output to `apps/target/wamn/<exact-package-id>/`, and Git holds none of it (platform-deploy.md R10(1)).
 Receiving, WMS, and the Acme Receiving overlay have separate homes.
 The application README maps its package to its Cargo crates and components.
 

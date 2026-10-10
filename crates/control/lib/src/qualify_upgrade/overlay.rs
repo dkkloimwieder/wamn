@@ -532,7 +532,7 @@ mod tests {
     #[test]
     fn overlay_repin_refuses_authoring_and_dependency_changes() {
         let original = PackageManifest::from_slice(include_bytes!(
-            "../../../../../apps/platform_fixture_overlay/generated/wamn.json"
+            "../../../../../apps/target/wamn/platform_fixture_overlay/wamn.json"
         ))
         .unwrap();
         let mut candidate = original.clone();

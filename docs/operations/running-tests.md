@@ -70,9 +70,6 @@ cargo test --locked --offline -p wamn-schema-generator --test platform_generatio
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
   -p wamn-receiving-data-access --all-targets
-cargo test --locked --offline -p wamn-receiving-tests \
-  -p wamn-client-acme-receiving-tests -p wamn-wms-tests --lib \
-  committed_sqlx_metadata_compiles_offline -- --exact
 ```
 
 The application READMEs identify additional tests and binary owners.
@@ -535,78 +532,37 @@ It removes its cluster, registry container, images and private directory.
 
 Follow [test-database isolation](#test-database-isolation) before these database-backed commands.
 
-Run the generator under the `wamn-test-postgres` runner.
-Each run starts its own server, so each application gets a separate database.
-Receiving needs a base-only database, and Acme needs a separate base-plus-overlay database.
-Otherwise, introspection can write overlay fields into generated base files.
-The runner creates the schema, sets it as the search path of the database, and applies the migrations in order.
-The example reads the database URL from `DATABASE_URL`.
-To check Receiving, run:
+`wamn build` generates every application ([building](building.md#wamn-build)).
+Its output lies in `apps/target/wamn/<package>`, and Git holds none of it.
+Build every package before you compile the apps workspace, the application test crates, or an application web:
 
 ```bash
-cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
-  --database wamn_receiving --schema receiving \
-  --migration-dir apps/wamn_receiving/migrations \
-  --history-manifest apps/wamn_receiving/wamn.k \
-  --url-env DATABASE_URL -- \
-  cargo run --locked --offline -p wamn-schema-generator --example materialize_package \
-  -- check apps/wamn_receiving
+DATABASE_URL=postgres://postgres:<password>@127.0.0.1:<port>/postgres \
+  cargo run --locked --offline -p wamn-ctl --bin wamn -- build \
+  apps/platform_fixture apps/platform_fixture_overlay apps/wamn_receiving \
+  apps/client_acme_receiving apps/wamn_wms apps/edge_samples apps/edge_device
 ```
 
-`check` and `write` plan every authored and generated statement as `wamn_app` under the grants that the package declaration derives.
-They do this in one transaction and roll it back, so the database keeps its roles and privileges.
-If the server has no `wamn_app` role, that transaction creates it.
-The runner URL names the superuser of the fresh server, which can create roles, grant privileges, and set the role.
-
-`--history-manifest` creates the history table of each relation whose model declares a retention other than `"none"`.
-The runner does this after the migrations and before the command, so that `EXPLAIN` and SQLx prepare resolve authored SQL that names a history table.
-First it creates the `wamn_app` role and applies `deploy/sql/record-history.sql`.
-Then it applies `deploy/sql/record-history-app-grants.sql`, which grants the history read functions to `wamn_app`.
-Receiving logs `purchase_order` and `purchase_order_line`.
-Introspection leaves each history table out of the schema description.
-Acme and WMS declare no log of their own, so the runner creates no history table for them.
-
-`check` compares the complete generated path and byte set without changing it.
-For an intended declaration or SQL change, replace `check` with `write`.
-Review the generated files before building the guest and operator.
+The platform fixture is an application too, and it builds the same way.
+The platform owns it, and a platform test takes it instead of an application.
+The crate `wamn-fixture-package` states its paths, so a test reads them without a literal of its own.
 Do not edit generated Rust directly.
 
-For Acme, pass `--migration-dir apps/wamn_receiving/migrations` before `--migration-dir apps/client_acme_receiving/migrations`.
-Pass `--history-manifest apps/client_acme_receiving/wamn.k`, and use `apps/client_acme_receiving` as the generation input.
-For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
-Pass `--history-manifest apps/wamn_wms/wamn.k`, and use `apps/wamn_wms` as the input.
-
-The platform fixture is an application too, and it generates the same way.
-The platform owns it, and a platform test takes it instead of an application.
-For the fixture, pass `--schema inventory` and `--migration-dir apps/platform_fixture/migrations`.
-Pass `--history-manifest apps/platform_fixture/wamn.k`, and use `apps/platform_fixture` as the input.
-For the fixture overlay, pass `--schema inventory`, then the fixture migrations, then `--migration-dir apps/platform_fixture_overlay/migrations`.
-Pass `--history-manifest apps/platform_fixture_overlay/wamn.k`, and use `apps/platform_fixture_overlay` as the input.
-A package that authors its manifest in `wamn.k` passes that file to `--history-manifest`, and the runner compiles it first.
-The crate `wamn-fixture-package` states these paths, so a test reads them without a literal of its own.
-
-The platform verifier discovers queries and Rust types from generated source maps.
-It compiles the exact SQL through SQLx macros.
-The `compile` mode uses committed `tests/.sqlx/` metadata and needs no database.
-Each application retains a small offline acceptance test that calls this shared mechanism.
-A `DATABASE_URL` in the environment does not change this.
-A query that has no matching metadata fails to compile until the metadata is prepared again.
-`cargo sqlx prepare` sets `SQLX_OFFLINE=false` for its own build, so it still reaches its database.
-
-The development loop prepares metadata for every package with SQL declarations in its Generate stage.
+The development loop prepares SQLx metadata for every package with SQL declarations in its Generate stage.
+The platform verifier discovers queries and Rust types from generated source maps, and compiles the exact SQL through SQLx macros.
+It writes the metadata to `.sqlx` in the package's build output.
 It prepares an application only when one of these inputs changed:
 
-- the emitted SQL, `application_sql_corpus_identity` in `generated/package-identity.json`
+- the emitted SQL, `application_sql_corpus_identity` in the package's `package-identity.json`
 - the verified schema, `verified_schema_state_id` in the same file, which for Acme also changes with a Receiving migration
 - `deploy/sql/record-history.sql`
 - the locked SQLx crates in `Cargo.lock`
 
-The loop compares these inputs with the inputs of its last successful preparation.
-At the start of a session, it compares them with the committed files at `HEAD`.
-A failed or interrupted preparation runs again in the next cycle.
+The loop compares these inputs with the inputs of its last successful preparation in the session.
+A new session prepares once. A failed or interrupted preparation runs again in the next cycle.
 A Rust-only change does not prepare.
 
-To prepare metadata after a Receiving SQL change, run the platform verifier under the PostgreSQL runner.
+To prepare the metadata of Receiving by hand, run the platform verifier under the PostgreSQL runner.
 The verifier requires SQLx CLI 0.9.0 and reads the database URL from `DATABASE_URL`:
 
 ```bash
@@ -619,22 +575,9 @@ cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgre
     prepare apps/wamn_receiving
 ```
 
-For Acme or WMS, use the runner arguments above and pass the corresponding application directory.
-For a metadata comparison, replace `prepare` with `check`.
-That comparison writes temporary output under the target and preserves committed metadata.
-The platform verifier refuses missing, changed, and unused metadata.
-If it reports `potentially unused queries found in .sqlx`, prepare the metadata again.
-
-Release qualification runs this comparison against a fresh database for each verifier.
-To run that check without a candidate, run:
-
-```bash
-cargo test --locked --offline -p wamn-control --lib \
-  delivery::qualification::tests::sqlx_metadata_check_reaches_fresh_receiving_and_acme_databases \
-  -- --exact --ignored --nocapture
-```
-
-The test requires SQLx CLI 0.9.0 and the PostgreSQL 18 binaries.
+`--history-manifest` creates the history table of each relation whose model declares a retention other than `"none"`, so that SQLx prepare resolves authored SQL that names a history table.
+For Acme, pass `--migration-dir apps/wamn_receiving/migrations` before `--migration-dir apps/client_acme_receiving/migrations`.
+For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
 
 ### wamn build
 
@@ -644,7 +587,7 @@ The live build tests use the PostgreSQL 18 binaries and start their own server, 
 cargo test --locked --offline -p wamn-schema-generator --test build_live
 ```
 
-They copy the platform fixture without its `generated/` directory and build it.
+They copy the platform fixture and build it into their own output root.
 Two builds must give the same bytes and the same `build.json`.
 The tests also check that a left-out statement type is derived and that the nullability rule of [building](building.md#wamn-build) holds.
 

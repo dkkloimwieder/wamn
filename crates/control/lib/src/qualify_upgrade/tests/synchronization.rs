@@ -39,20 +39,12 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
         ),
     )
     .unwrap();
-    fs::write(
-        wamn_schema_generator::package_manifest_path(&candidate),
-        wamn_schema_generator::compile_manifest(&candidate).unwrap(),
-    )
-    .unwrap();
+    wamn_schema_generator::write_compiled_manifest(&candidate).unwrap();
     let generation = fixture.server.database("upgrade_generation").unwrap();
     connect(generation.url()).await.batch_execute(&format!("ALTER TABLE inventory.widget_maker DROP COLUMN note; SET ROLE wamn_db_owner; ALTER TABLE inventory.widget_tag ADD COLUMN mirror_note text; {sql}; RESET ROLE")).await.unwrap();
-    wamn_schema_generator::materialize_package_verified(
-        MaterializeMode::Write,
-        generation.url(),
-        &candidate,
-    )
-    .await
-    .unwrap();
+    wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
+        .await
+        .unwrap();
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:seed-mirror',true); INSERT INTO inventory.widget_tag(label) VALUES ('second tag'); COMMIT").await.unwrap();
     let original = state(&mut fixture.source).await;
     let qualified = qualify_upgrade_with_observer(

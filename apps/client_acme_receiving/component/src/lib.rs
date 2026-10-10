@@ -20,7 +20,7 @@ mod generated {
     use wamn_client_acme_receiving_data_access::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/component/mod.rs"
+        "/../../target/wamn/client_acme_receiving/component/mod.rs"
     ));
 }
 
@@ -29,7 +29,7 @@ mod create_codec {
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/wit/quality_create_inspection_codec.rs"
+        "/../../target/wamn/client_acme_receiving/wit/quality_create_inspection_codec.rs"
     ));
 }
 
@@ -38,8 +38,8 @@ wit_bindgen::generate!({
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-        "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
-        "../generated/wit",
+        "../../target/wamn/wamn_receiving/wit/deps/wamn-receiving-receiving",
+        "../../target/wamn/client_acme_receiving/wit",
         "wit",
     ],
     generate_all,
@@ -134,7 +134,7 @@ use wamn_receiving::receiving::record_receipt as contract;
 
 mod receipt_codec {
     use super::contract;
-    include!("../../generated/wit/receiving_record_receipt_codec.rs");
+    include!("../../../target/wamn/client_acme_receiving/wit/receiving_record_receipt_codec.rs");
 }
 
 impl RecordReceipt for Component {

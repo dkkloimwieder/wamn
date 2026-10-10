@@ -6,7 +6,7 @@ mod read {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/sample_read_codec.rs"
+            "/../../target/wamn/edge_device/wit/sample_read_codec.rs"
         ));
     }
 

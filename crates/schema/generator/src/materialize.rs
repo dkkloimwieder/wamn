@@ -14,8 +14,7 @@ mod synchronization;
 
 use crate::StatementTransactionality;
 use crate::authoring::{
-    COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, compiled_manifest_path,
-    is_authored, package_manifest_path,
+    COMPILED_MANIFEST, compile_manifest, compiled_manifest_path, is_authored, package_manifest_path,
 };
 use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
@@ -36,15 +35,6 @@ use crate::{
 pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
 pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
 
-/// Whether materialization writes generated artifacts or checks committed bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MaterializeMode {
-    /// Write the exact generated artifact set.
-    Write,
-    /// Refuse unless committed artifacts equal the generated artifact set.
-    Check,
-}
-
 #[derive(Debug)]
 pub(crate) struct SourceFile {
     pub(crate) path: String,
@@ -54,17 +44,9 @@ pub(crate) struct SourceFile {
 /// Materialize one package from its manifest, authored SQL, and migrated database.
 ///
 /// `database_url` names the already-migrated PostgreSQL database to introspect.
-pub async fn materialize_package(
-    mode: MaterializeMode,
-    database_url: &str,
-    package_root: &Path,
-) -> Result<()> {
-    materialize_after_introspection(
-        mode,
-        package_root,
-        introspect_package(database_url, package_root),
-    )
-    .await
+pub async fn materialize_package(database_url: &str, package_root: &Path) -> Result<()> {
+    materialize_after_introspection(package_root, introspect_package(database_url, package_root))
+        .await
 }
 
 /// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
@@ -364,17 +346,8 @@ fn plan_needs_transaction(plan: &serde_json::Value) -> bool {
 ///
 /// This stage reads the package's manifest and authored SQL, but performs no
 /// database access. The supplied catalog is the sole schema input.
-pub fn materialize_package_from_catalog(
-    mode: MaterializeMode,
-    catalog: &CatalogIr,
-    package_root: &Path,
-) -> Result<()> {
-    materialize_package_classified(
-        mode,
-        catalog,
-        package_root,
-        &StatementTransactionality::default(),
-    )
+pub fn materialize_package_from_catalog(catalog: &CatalogIr, package_root: &Path) -> Result<()> {
+    materialize_package_classified(catalog, package_root, &StatementTransactionality::default())
 }
 
 /// Materialize with PostgreSQL's verdict on which statements need a transaction.
@@ -385,7 +358,6 @@ pub fn materialize_package_from_catalog(
 /// the server gave for that corpus. The bit is contract-only and never reaches
 /// SQL bytes, so both passes produce an identical corpus.
 pub fn materialize_package_classified(
-    mode: MaterializeMode,
     catalog: &CatalogIr,
     package_root: &Path,
     transactional: &StatementTransactionality,
@@ -394,7 +366,7 @@ pub fn materialize_package_classified(
     let output_root = crate::output_root(package_root);
     // The route readers below read the compiled manifest from its file, so a
     // write puts the file in place before them.
-    if mode == MaterializeMode::Write && is_authored(package_root) {
+    if is_authored(package_root) {
         let (bytes, _) = load_compiled_manifest(package_root, catalog)?;
         let path = compiled_manifest_path(package_root);
         fs::create_dir_all(&output_root)
@@ -409,9 +381,6 @@ pub fn materialize_package_classified(
     // The compiled manifest is one more file of the owned set.
     let compiled_manifest = if is_authored(package_root) {
         let (bytes, _) = load_compiled_manifest(package_root, catalog)?;
-        if mode == MaterializeMode::Check {
-            check_compiled_manifest(package_root, &bytes)?;
-        }
         Some(bytes)
     } else {
         None
@@ -429,10 +398,7 @@ pub fn materialize_package_classified(
         expected.insert(relative.to_owned(), file.bytes());
     }
 
-    match mode {
-        MaterializeMode::Write => write_files(&output_root, &expected),
-        MaterializeMode::Check => check_files(&output_root, &expected),
-    }
+    write_files(&output_root, &expected)
 }
 
 /// The Rust client bindings this package's release publishes.
@@ -583,27 +549,19 @@ pub(crate) fn statement_corpus_from_manifest(
     Ok((corpus, derived_grants(&discovery)?))
 }
 
-async fn materialize_after_introspection<F>(
-    mode: MaterializeMode,
-    package_root: &Path,
-    introspection: F,
-) -> Result<()>
+async fn materialize_after_introspection<F>(package_root: &Path, introspection: F) -> Result<()>
 where
     F: std::future::Future<Output = Result<CatalogIr>>,
 {
     let catalog = introspection.await?;
-    materialize_package_from_catalog(mode, &catalog, package_root)
+    materialize_package_from_catalog(&catalog, package_root)
 }
 
 /// Materialize against a live migrated database, asking the server which
 /// statements need a transaction.
-pub async fn materialize_package_verified(
-    mode: MaterializeMode,
-    database_url: &str,
-    package_root: &Path,
-) -> Result<()> {
+pub async fn materialize_package_verified(database_url: &str, package_root: &Path) -> Result<()> {
     let catalog = introspect_package(database_url, package_root).await?;
-    materialize_package_verified_with_catalog(mode, &catalog, database_url, package_root).await
+    materialize_package_verified_with_catalog(&catalog, database_url, package_root).await
 }
 
 /// Materialize a catalog the caller already holds, asking the server which
@@ -614,7 +572,6 @@ pub async fn materialize_package_verified(
 /// hand the package every relation and field its neighbours installed, and the
 /// generated artifacts would claim them.
 pub async fn materialize_package_verified_with_catalog(
-    mode: MaterializeMode,
     catalog: &CatalogIr,
     database_url: &str,
     package_root: &Path,
@@ -635,7 +592,7 @@ pub async fn materialize_package_verified_with_catalog(
         .context("drive PostgreSQL connection")?;
     let verdicts = verdicts?;
 
-    materialize_package_classified(mode, catalog, package_root, &verdicts)
+    materialize_package_classified(catalog, package_root, &verdicts)
 }
 
 /// Materialize package artifacts against the runtime schema and existing grants.
@@ -644,7 +601,6 @@ pub async fn materialize_package_verified_with_catalog(
 /// complete root set's grants before calling. This check preserves those grants
 /// and plans every statement using the exact serving runtime schema.
 pub async fn materialize_package_verified_with_existing_grants(
-    mode: MaterializeMode,
     catalog: &CatalogIr,
     database_url: &str,
     package_root: &Path,
@@ -665,7 +621,7 @@ pub async fn materialize_package_verified_with_existing_grants(
         .context("drive PostgreSQL connection")?;
     let verdicts = verdicts?;
 
-    materialize_package_classified(mode, catalog, package_root, &verdicts)
+    materialize_package_classified(catalog, package_root, &verdicts)
 }
 
 /// The manifest bytes and their parse. A package authored in `wamn.k` compiles
@@ -698,8 +654,13 @@ fn load_compiled_manifest(
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
         .collect::<Vec<_>>();
-    let compiled = crate::derive_manifest(catalog, &bytes, &authored_sql)
+    let derived = crate::derive_manifest(catalog, &bytes, &authored_sql)
         .context("derive the compiled manifest")?;
+    // The canonical bytes (RFC 8785) that `wamn build` writes, so a package
+    // materialized here and the same package built carry one manifest digest.
+    let compiled = wamn_execution_contract::canonical_json_bytes(
+        &serde_json::from_slice(&derived).context("parse the derived manifest")?,
+    );
     let manifest = PackageManifest::from_slice(&compiled).context("parse package manifest")?;
     Ok((compiled, manifest))
 }
@@ -931,8 +892,9 @@ fn read_contract_files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(files)
 }
 
+/// Write each generated file. The output directory is build output: a file
+/// that this run does not generate, such as `build.json`, stays.
 fn write_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
-    refuse_unexpected(output_root, expected)?;
     for (relative, bytes) in expected {
         let path = output_root.join(relative);
         // An unchanged file keeps its modification time, so Cargo reuses the
@@ -948,32 +910,6 @@ fn write_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Resul
             .with_context(|| format!("create generated directory {}", parent.display()))?;
         fs::write(&path, *bytes)
             .with_context(|| format!("write generated artifact {}", path.display()))?;
-    }
-    Ok(())
-}
-
-fn check_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
-    refuse_unexpected(output_root, expected)?;
-    for (relative, expected_bytes) in expected {
-        let path = output_root.join(relative);
-        let actual = fs::read(&path)
-            .with_context(|| format!("missing generated artifact {}", path.display()))?;
-        ensure!(
-            actual.as_slice() == *expected_bytes,
-            "generated artifact differs: {}",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn refuse_unexpected(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
-    for relative in existing_files(output_root)? {
-        ensure!(
-            expected.contains_key(&relative),
-            "unexpected existing generated file: {}",
-            output_root.join(relative).display()
-        );
     }
     Ok(())
 }
@@ -1118,7 +1054,7 @@ mod tests {
         let catalog = catalog();
         let introspections = Cell::new(0_u8);
 
-        materialize_after_introspection(MaterializeMode::Write, &wrapper.root, async {
+        materialize_after_introspection(&wrapper.root, async {
             introspections.set(introspections.get() + 1);
             Ok(catalog.clone())
         })
@@ -1126,7 +1062,7 @@ mod tests {
         .expect("materialize through wrapper path");
         assert_eq!(introspections.get(), 1);
 
-        materialize_package_from_catalog(MaterializeMode::Write, &catalog, &split.root)
+        materialize_package_from_catalog(&catalog, &split.root)
             .expect("materialize split generation path");
         assert_eq!(
             introspections.get(),
@@ -1134,22 +1070,13 @@ mod tests {
             "generation unexpectedly repeated database introspection"
         );
         assert_eq!(wrapper.generated_snapshot(), split.generated_snapshot());
-
-        let generated = split.generated_snapshot();
-        let stale = generated.keys().next().expect("generated artifact exists");
-        fs::write(crate::output_root(&split.root).join(stale), b"stale")
-            .expect("write stale generated artifact");
-        let error = materialize_package_from_catalog(MaterializeMode::Check, &catalog, &split.root)
-            .expect_err("exact mode accepted stale output");
-        assert!(error.to_string().contains("generated artifact differs"));
     }
 
     #[test]
     fn rewriting_identical_bytes_keeps_the_modification_time_and_a_changed_byte_rewrites() {
         let package = TestPackage::new("unchanged-mtime");
         let catalog = catalog();
-        materialize_package_from_catalog(MaterializeMode::Write, &catalog, &package.root)
-            .expect("materialize the package");
+        materialize_package_from_catalog(&catalog, &package.root).expect("materialize the package");
         let generated = package.generated_snapshot();
         let (relative, original) = generated.iter().next().expect("generated artifact exists");
         let path = crate::output_root(&package.root).join(relative);
@@ -1168,7 +1095,7 @@ mod tests {
         };
 
         set_old_mtime();
-        materialize_package_from_catalog(MaterializeMode::Write, &catalog, &package.root)
+        materialize_package_from_catalog(&catalog, &package.root)
             .expect("materialize the unchanged package");
         assert_eq!(mtime(), old, "identical bytes were rewritten");
 
@@ -1176,7 +1103,7 @@ mod tests {
         *changed.last_mut().expect("generated artifact is not empty") ^= 1;
         fs::write(&path, &changed).expect("change one generated byte");
         set_old_mtime();
-        materialize_package_from_catalog(MaterializeMode::Write, &catalog, &package.root)
+        materialize_package_from_catalog(&catalog, &package.root)
             .expect("materialize over the changed byte");
         assert_ne!(mtime(), old, "a changed byte was not rewritten");
         assert_eq!(&fs::read(&path).expect("read the rewritten file"), original);

@@ -9,7 +9,7 @@ pub(crate) mod wamn {
     pub(crate) mod widget_archive {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/widget_archive.rs"
+            "/../../target/wamn/platform_fixture/wamn/widget_archive.rs"
         ));
     }
 
@@ -17,7 +17,7 @@ pub(crate) mod wamn {
     pub(crate) mod widget_list {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/widget_list.rs"
+            "/../../target/wamn/platform_fixture/wamn/widget_list.rs"
         ));
     }
 
@@ -25,7 +25,7 @@ pub(crate) mod wamn {
     pub(crate) mod widget_record_batch {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/widget_record_batch.rs"
+            "/../../target/wamn/platform_fixture/wamn/widget_record_batch.rs"
         ));
     }
 
@@ -33,7 +33,7 @@ pub(crate) mod wamn {
     pub(crate) mod widget_maker_list {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/widget_maker_list.rs"
+            "/../../target/wamn/platform_fixture/wamn/widget_maker_list.rs"
         ));
     }
 }

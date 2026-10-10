@@ -577,11 +577,7 @@ async fn platform_successor_without_qualification_preserves_predecessor_state() 
         fixture_root().with_file_name(format!("platform-fixture-upgrade-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&package);
     wamn_fixture_package::write_upgrade_package(&package);
-    std::fs::write(
-        wamn_schema_generator::package_manifest_path(&package),
-        wamn_schema_generator::compile_manifest(&package).expect("compile authored successor"),
-    )
-    .expect("write compiled successor manifest");
+    wamn_schema_generator::write_compiled_manifest(&package).unwrap();
     let predecessor = wamn_fixture_package::package_root();
     apply(&url, &predecessor)
         .await

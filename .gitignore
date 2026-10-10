@@ -6,7 +6,7 @@
 .beads-credential-key
 .beads/proxieddb/
 
-# Rust build artifacts
+# Rust build artifacts, and the wamn build output under apps/target/wamn
 /target
 /apps/target
 /apps/platform/no-std/target

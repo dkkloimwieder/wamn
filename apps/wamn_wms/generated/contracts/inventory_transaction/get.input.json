@@ -1,1 +1,0 @@
-{"id":{"required":true,"type":"uuid"},"server_owned_fields":{"fields":["id","created_at","created_by"],"if_supplied":"invalid_input"},"writable_fields":[]}

@@ -11,7 +11,6 @@ export default tseslint.config(
     ignores: [
       "**/node_modules/**",
       "**/dist/**",
-      "apps/*/generated/**",
       "web/components/fixture/**",
       "web/components/.vitest/**",
       "web/demo/**",

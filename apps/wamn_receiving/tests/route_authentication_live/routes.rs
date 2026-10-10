@@ -22,7 +22,23 @@ fn validate_p3_refusal(response: &hyper::Response<Bytes>) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// Copy the package at `source` to `destination`, with its build output.
+///
+/// The build output lies outside the package, in
+/// `<package>/../target/wamn/<package>`, so the copy takes it from the
+/// source's output root to the destination's.
 pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    copy_package_tree(source, destination)?;
+    let output = wamn_schema_generator::output_root(source);
+    if output.is_dir() {
+        let copied = wamn_schema_generator::output_root(destination);
+        std::fs::create_dir_all(copied.parent().context("an output root has a parent")?)?;
+        copy_package_tree(&output, &copied)?;
+    }
+    Ok(())
+}
+
+fn copy_package_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
@@ -33,7 +49,7 @@ pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyh
             continue;
         }
         if kind.is_dir() {
-            copy_fresh_only_package(&entry.path(), &target)?;
+            copy_package_tree(&entry.path(), &target)?;
         } else {
             anyhow::ensure!(
                 kind.is_file(),

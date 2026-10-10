@@ -132,7 +132,6 @@ pub(super) async fn install_journey_project(
         })?;
         if fresh_only && package.id == BASE_PACKAGE_ID {
             wamn_schema_generator::materialize_package_verified(
-                wamn_schema_generator::MaterializeMode::Write,
                 project_url,
                 &journey_package_root(package, Some(inputs)),
             )

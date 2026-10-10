@@ -2,7 +2,6 @@
 
 use super::*;
 use wamn_catalog::{ArtifactHash, ServingComponent, ServingComponentOperation, ServingRelease};
-use wamn_schema_generator::MaterializeMode;
 use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
 mod overlay;
@@ -110,21 +109,13 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
         )
         .unwrap();
     }
-    fs::write(
-        wamn_schema_generator::package_manifest_path(&candidate),
-        wamn_schema_generator::compile_manifest(&candidate).unwrap(),
-    )
-    .unwrap();
+    wamn_schema_generator::write_compiled_manifest(&candidate).unwrap();
     apply_qualification_package(apply_request(generation_database.url(), &candidate))
         .await
         .unwrap();
-    wamn_schema_generator::materialize_package_verified(
-        MaterializeMode::Write,
-        generation_database.url(),
-        &candidate,
-    )
-    .await
-    .unwrap();
+    wamn_schema_generator::materialize_package_verified(generation_database.url(), &candidate)
+        .await
+        .unwrap();
     Fixture {
         source,
         source_database,

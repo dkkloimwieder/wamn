@@ -22,7 +22,7 @@
       "@wamn/shell": ["../../../web/shell/src/index.ts"],
       "@wamn/control-client": ["../../../target/wamn/wamn_control/client-ts/index.ts"],
       "@wamn/control-org-client": ["../../../target/wamn/wamn_control/control/client-ts/index.ts"],
-      "@wamn/receiving-client/*": ["../generated/client-ts/*"],
+      "@wamn/receiving-client/*": ["../../target/wamn/wamn_receiving/client-ts/*"],
       "solid-js": ["./node_modules/solid-js"],
       "solid-js/*": ["./node_modules/solid-js/*"],
       "@solidjs/router": ["./node_modules/@solidjs/router"],

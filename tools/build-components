@@ -158,10 +158,11 @@ readonly WAMN_APPLICATION_LIST="$(printf '%s\n' "${WAMN_APPLICATIONS[@]}" | jq -
 
 # Application manifests declare the components that need virtualization.
 # The all argument selects every Cargo member and reads all application declarations.
-# A package authored in wamn.k reads its compiled generated/wamn.json.
+# A package authored in wamn.k reads its compiled wamn.json from its build
+# output, <package>/../target/wamn/<package>, which `wamn build` writes.
 application_manifest() {
   if [[ -f "$1/wamn.k" ]]; then
-    printf '%s\n' "$1/generated/wamn.json"
+    printf '%s\n' "$(dirname -- "$1")/target/wamn/$(basename -- "$1")/wamn.json"
   else
     printf '%s\n' "$1/wamn.json"
   fi
@@ -169,8 +170,12 @@ application_manifest() {
 # The package directory of an application manifest, compiled or authored.
 application_root() {
   local -r directory="$(dirname -- "$1")"
-  if [[ "$(basename -- "$1")" == wamn.json && "$(basename -- "$directory")" == generated && -f "$(dirname -- "$directory")/wamn.k" ]]; then
-    dirname -- "$directory"
+  local -r wamn="$(dirname -- "$directory")"
+  local -r target="$(dirname -- "$wamn")"
+  local -r candidate="$(dirname -- "$target")/$(basename -- "$directory")"
+  if [[ "$(basename -- "$1")" == wamn.json && "$(basename -- "$wamn")" == wamn \
+        && "$(basename -- "$target")" == target && -f "$candidate/wamn.k" ]]; then
+    printf '%s\n' "$candidate"
   else
     printf '%s\n' "$directory"
   fi
@@ -184,6 +189,9 @@ else
   for application in "$WAMN_REPOSITORY_ROOT"/apps/*/; do
     application="${application%/}"
     manifest="$(application_manifest "$application")"
+    if [[ -f "$application/wamn.k" && ! -f "$manifest" ]]; then
+      wamn_fail 65 "$application has no build output at $manifest. Run wamn build $application first."
+    fi
     [[ -f "$manifest" ]] || continue
     WAMN_APPLICATION_MANIFESTS+=("$manifest")
   done

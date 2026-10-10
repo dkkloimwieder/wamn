@@ -12,7 +12,7 @@ mod generated {
     use wamn_edge_samples_data_access::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/component/mod.rs"
+        "/../../target/wamn/edge_samples/component/mod.rs"
     ));
 }
 
@@ -21,7 +21,7 @@ wit_bindgen::generate!({
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-        "../generated/wit",
+        "../../target/wamn/edge_samples/wit",
         "wit",
     ],
     generate_all,

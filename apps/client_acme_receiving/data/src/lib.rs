@@ -10,6 +10,6 @@ pub use error::{AccessError, AccessErrorType};
 pub mod generated {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/data/mod.rs"
+        "/../../target/wamn/client_acme_receiving/data/mod.rs"
     ));
 }

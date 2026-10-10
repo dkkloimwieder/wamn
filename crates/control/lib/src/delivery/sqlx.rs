@@ -19,7 +19,7 @@ pub fn requires_verifier(manifest: &PackageManifest) -> bool {
 }
 
 /// Build the platform verifier command for one package.
-pub fn prepare_arguments(repository_root: &Path, package_root: &Path, check: bool) -> Vec<String> {
+pub fn prepare_arguments(repository_root: &Path, package_root: &Path) -> Vec<String> {
     vec![
         "cargo".to_owned(),
         "run".to_owned(),
@@ -32,7 +32,7 @@ pub fn prepare_arguments(repository_root: &Path, package_root: &Path, check: boo
         "--example".to_owned(),
         "sqlx_metadata".to_owned(),
         "--".to_owned(),
-        if check { "check" } else { "prepare" }.to_owned(),
+        "prepare".to_owned(),
         package_root.display().to_string(),
     ]
 }
@@ -49,26 +49,9 @@ pub fn require_cli_version(output: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Refuse committed metadata that holds query files no query uses.
-///
-/// The pinned CLI fails `prepare --check` for a missing or changed query file,
-/// but it only warns about an unused one.
-pub fn require_current_metadata(stdout: &[u8]) -> anyhow::Result<()> {
-    ensure!(
-        !String::from_utf8_lossy(stdout).contains("potentially unused queries found in .sqlx"),
-        "committed SQLx metadata has unused queries; re-run cargo sqlx prepare"
-    );
-    Ok(())
-}
-
 /// Configure preparation while leaving execution and cleanup to the caller.
-pub fn prepare_command(
-    repository_root: &Path,
-    package_root: &Path,
-    database_url: &str,
-    check: bool,
-) -> Command {
-    let arguments = prepare_arguments(repository_root, package_root, check);
+pub fn prepare_command(repository_root: &Path, package_root: &Path, database_url: &str) -> Command {
+    let arguments = prepare_arguments(repository_root, package_root);
     let mut command = Command::new(&arguments[0]);
     command
         .args(&arguments[1..])
@@ -129,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn prepare_and_check_use_the_platform_verifier_for_any_sql_package() {
+    fn preparation_uses_the_platform_verifier_for_any_sql_package() {
         let mut manifest = manifest();
         assert!(requires_verifier(&manifest));
         manifest.package.id = "another_package".to_owned();
@@ -143,8 +126,8 @@ mod tests {
         assert!(!requires_verifier(&manifest));
         let repository = Path::new("/repository");
         let package = Path::new("/application");
-        for check in [false, true] {
-            let arguments = prepare_arguments(repository, package, check);
+        {
+            let arguments = prepare_arguments(repository, package);
             assert_eq!(
                 arguments,
                 [
@@ -159,11 +142,11 @@ mod tests {
                     "--example",
                     "sqlx_metadata",
                     "--",
-                    if check { "check" } else { "prepare" },
+                    "prepare",
                     "/application"
                 ]
             );
-            let command = prepare_command(repository, package, "postgresql://verify", check);
+            let command = prepare_command(repository, package, "postgresql://verify");
             let command = command.as_std();
             assert_eq!(command.get_current_dir(), Some(repository));
             let envs: Vec<_> = command.get_envs().collect();
@@ -173,8 +156,5 @@ mod tests {
             )));
             assert!(envs.contains(&("SQLX_OFFLINE".as_ref(), Some("false".as_ref()))));
         }
-        let warning = b"warning: potentially unused queries found in .sqlx; you may want to re-run sqlx prepare\n";
-        assert!(require_current_metadata(warning).is_err());
-        assert!(require_current_metadata(b"").is_ok());
     }
 }

@@ -8,7 +8,7 @@ pub(crate) mod wamn {
     pub(crate) mod location_list {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/location_list.rs"
+            "/../../target/wamn/wamn_receiving/wamn/location_list.rs"
         ));
     }
 
@@ -16,7 +16,7 @@ pub(crate) mod wamn {
     pub(crate) mod receiving_record_receipt {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/receiving_record_receipt.rs"
+            "/../../target/wamn/wamn_receiving/wamn/receiving_record_receipt.rs"
         ));
     }
 
@@ -24,7 +24,7 @@ pub(crate) mod wamn {
     pub(crate) mod receiving_load_receipt_screen {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/receiving_load_receipt_screen.rs"
+            "/../../target/wamn/wamn_receiving/wamn/receiving_load_receipt_screen.rs"
         ));
     }
 
@@ -32,7 +32,7 @@ pub(crate) mod wamn {
     pub(crate) mod receiving_load_purchase_order_history {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/receiving_load_purchase_order_history.rs"
+            "/../../target/wamn/wamn_receiving/wamn/receiving_load_purchase_order_history.rs"
         ));
     }
 }

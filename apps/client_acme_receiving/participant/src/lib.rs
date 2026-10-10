@@ -30,8 +30,8 @@ wit_bindgen::generate!({
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-        "../../wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
-        "../generated/wit",
+        "../../target/wamn/wamn_receiving/wit/deps/wamn-receiving-receiving",
+        "../../target/wamn/client_acme_receiving/wit",
     ],
     generate_all,
     async: true,
@@ -86,7 +86,9 @@ fn participant_node_error(error: &AccessError) -> NodeError {
 
 mod receipt_participant_codec {
     use super::exports::client_acme_receiving::receiving::record_receipt_participant as contract;
-    include!("../../generated/wit/receiving_record_receipt_participant_codec.rs");
+    include!(
+        "../../../target/wamn/client_acme_receiving/wit/receiving_record_receipt_participant_codec.rs"
+    );
 }
 
 impl RecordReceiptParticipant for Component {

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
 use wamn_schema_generator::{
-    MaterializeMode, classify_statements_with_existing_grants,
+    classify_statements_with_existing_grants,
     classify_statements_with_existing_grants_in_transaction, materialize_package_verified,
 };
 
@@ -66,13 +66,16 @@ struct PlatformPackage {
 
 impl PlatformPackage {
     fn new() -> Self {
-        let package = std::env::temp_dir().join(format!(
+        // The package lies in its own scratch directory, beside the
+        // `target/wamn` directory that holds its build output.
+        let scratch = std::env::temp_dir().join(format!(
             "wamn-statement-check-platform-{}",
             std::process::id()
         ));
-        if package.exists() {
-            fs::remove_dir_all(&package).expect("remove stale test package");
+        if scratch.exists() {
+            fs::remove_dir_all(&scratch).expect("remove stale test package");
         }
+        let package = scratch.join("statement_fixture");
         fs::create_dir_all(package.join("query")).unwrap();
         fs::write(
             package.join("Cargo.toml"),
@@ -113,7 +116,9 @@ impl PlatformPackage {
 
 impl Drop for PlatformPackage {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.package);
+        if let Some(scratch) = self.package.parent() {
+            let _ = fs::remove_dir_all(scratch);
+        }
     }
 }
 
@@ -128,7 +133,7 @@ async fn generation_refuses_whole_row_references_as_the_application_role() {
     let copy = PlatformPackage::new();
     let before = authority_snapshot(&url).await;
 
-    materialize_package_verified(MaterializeMode::Write, &url, &copy.package)
+    materialize_package_verified(&url, &copy.package)
         .await
         .expect("the platform fixture passes the statement check");
 
@@ -179,7 +184,7 @@ async fn generation_refuses_whole_row_references_as_the_application_role() {
     )
     .expect("write the platform manifest");
 
-    let refusal = materialize_package_verified(MaterializeMode::Check, &url, &copy.package)
+    let refusal = materialize_package_verified(&url, &copy.package)
         .await
         .expect_err("the whole-row read must fail the statement check");
 

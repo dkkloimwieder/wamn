@@ -7,7 +7,7 @@ pub(crate) mod wamn {
     pub(crate) mod sample_record {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/sample_record.rs"
+            "/../../target/wamn/edge_samples/wamn/sample_record.rs"
         ));
     }
 }

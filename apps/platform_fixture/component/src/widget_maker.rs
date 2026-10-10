@@ -10,7 +10,7 @@ mod list {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/widget_maker_list_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_maker_list_codec.rs"
         ));
     }
 

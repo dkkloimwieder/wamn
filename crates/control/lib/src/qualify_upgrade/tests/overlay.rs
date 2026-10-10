@@ -27,11 +27,7 @@ fn copy_tree(source: &Path, target: &Path) {
 }
 
 fn compile(root: &Path) {
-    fs::write(
-        wamn_schema_generator::package_manifest_path(root),
-        wamn_schema_generator::compile_manifest(root).unwrap(),
-    )
-    .unwrap();
+    wamn_schema_generator::write_compiled_manifest(root).unwrap();
 }
 
 fn frozen_predecessor(source: &Path, target: &Path) {
@@ -72,12 +68,12 @@ fn frozen_predecessor(source: &Path, target: &Path) {
 async fn overlay_fixture(name: &str) -> OverlayFixture {
     let mut base = fixture(name, false).await;
     let predecessor = base.root.join("overlay-predecessor");
+    let overlay = wamn_fixture_package::overlay_root();
+    copy_tree(&overlay, &predecessor);
+    // The copy takes the overlay's build output too, which lies outside it.
     copy_tree(
-        &wamn_fixture_package::package_root()
-            .parent()
-            .unwrap()
-            .join("platform_fixture_overlay"),
-        &predecessor,
+        &wamn_schema_generator::output_root(&overlay),
+        &wamn_schema_generator::output_root(&predecessor),
     );
     crate::apply_package::apply_package(apply_request(base.source_database.url(), &predecessor))
         .await
@@ -117,7 +113,6 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     )
     .unwrap();
     wamn_schema_generator::materialize_package_verified_with_existing_grants(
-        MaterializeMode::Write,
         &projected,
         base.source_database.url(),
         &predecessor,
@@ -211,13 +206,9 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     apply_qualification_package(apply_request(generation.url(), &candidate))
         .await
         .unwrap();
-    wamn_schema_generator::materialize_package_verified(
-        MaterializeMode::Write,
-        generation.url(),
-        &candidate,
-    )
-    .await
-    .unwrap();
+    wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
+        .await
+        .unwrap();
     OverlayFixture {
         base,
         predecessor,
@@ -887,8 +878,8 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
             )
             .unwrap();
         }
+        // The copy holds no build output: it lies outside the package.
         let output = wamn_schema_generator::output_root(target);
-        fs::remove_dir_all(&output).unwrap();
         fs::create_dir_all(&output).unwrap();
         compile(target);
     }
@@ -927,12 +918,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         .unwrap();
     let projected =
         wamn_schema_generator::project_package_catalog(&catalog, manifest, &installed).unwrap();
-    wamn_schema_generator::materialize_package_from_catalog(
-        MaterializeMode::Write,
-        &projected,
-        &predecessor,
-    )
-    .unwrap();
+    wamn_schema_generator::materialize_package_from_catalog(&projected, &predecessor).unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: original_roots.clone(),
         database_url: fixture.base.source_database.url().to_owned(),
@@ -941,7 +927,6 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     .await
     .unwrap();
     wamn_schema_generator::materialize_package_verified_with_existing_grants(
-        MaterializeMode::Write,
         &projected,
         fixture.base.source_database.url(),
         &predecessor,
@@ -1042,12 +1027,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         .unwrap();
     let projected =
         wamn_schema_generator::project_package_catalog(&catalog, manifest, &installed).unwrap();
-    wamn_schema_generator::materialize_package_from_catalog(
-        MaterializeMode::Write,
-        &projected,
-        &candidate,
-    )
-    .unwrap();
+    wamn_schema_generator::materialize_package_from_catalog(&projected, &candidate).unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
         packages: successor_roots.clone(),
         database_url: generation.url().to_owned(),
@@ -1056,7 +1036,6 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     .await
     .unwrap();
     wamn_schema_generator::materialize_package_verified_with_existing_grants(
-        MaterializeMode::Write,
         &projected,
         generation.url(),
         &candidate,

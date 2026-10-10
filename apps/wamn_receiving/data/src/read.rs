@@ -206,8 +206,10 @@ mod tests {
 
     #[test]
     fn history_columns_are_the_declared_purchase_order_columns() {
-        let manifest: Value =
-            serde_json::from_str(include_str!("../../generated/wamn.json")).unwrap();
+        let manifest: Value = serde_json::from_str(include_str!(
+            "../../../target/wamn/wamn_receiving/wamn.json"
+        ))
+        .unwrap();
         // Generation derives the relation from the statement, in name order.
         let declared =
             manifest["custom_operations"]["receiving.load_purchase_order_history"]["relations"]

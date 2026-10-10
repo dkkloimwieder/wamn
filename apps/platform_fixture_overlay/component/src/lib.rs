@@ -22,12 +22,12 @@ mod generated {
     mod data {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/data/mod.rs"
+            "/../../target/wamn/platform_fixture_overlay/data/mod.rs"
         ));
     }
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/component/mod.rs"
+        "/../../target/wamn/platform_fixture_overlay/component/mod.rs"
     ));
 }
 
@@ -36,7 +36,7 @@ wit_bindgen::generate!({
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-        "../generated/wit",
+        "../../target/wamn/platform_fixture_overlay/wit",
         "wit",
     ],
     generate_all,

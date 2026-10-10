@@ -8,8 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Value, json};
 use wamn_schema_generator::{
-    COMPILED_MANIFEST, check_compiled_manifest, compile_manifest, output_root,
-    package_manifest_path, write_compiled_manifest,
+    COMPILED_MANIFEST, compile_manifest, package_manifest_path, write_compiled_manifest,
 };
 
 struct Package(PathBuf);
@@ -17,11 +16,15 @@ struct Package(PathBuf);
 impl Package {
     fn new(source: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "wamn-manifest-authoring-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        // The package lies in its own scratch directory, beside the
+        // `target/wamn` directory that holds its build output.
+        let root = std::env::temp_dir()
+            .join(format!(
+                "wamn-manifest-authoring-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ))
+            .join("package");
         std::fs::create_dir_all(&root).expect("create the package");
         std::fs::write(root.join("wamn.k"), source).expect("write wamn.k");
         Self(root)
@@ -46,7 +49,9 @@ impl Package {
 
 impl Drop for Package {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        if let Some(scratch) = self.0.parent() {
+            let _ = std::fs::remove_dir_all(scratch);
+        }
     }
 }
 
@@ -357,43 +362,6 @@ fn a_hand_written_wamn_json_beside_wamn_k_is_refused() {
 }
 
 #[test]
-fn a_hand_edited_compiled_manifest_fails_the_check() {
-    let package = Package::new(&source("", ""));
-    let compiled = compile_manifest(package.root()).expect("compile wamn.k");
-    assert_eq!(
-        package_manifest_path(package.root()),
-        output_root(package.root()).join("wamn.json")
-    );
-    let committed = package_manifest_path(package.root());
-    std::fs::create_dir_all(committed.parent().expect("generated/")).expect("create generated/");
-    std::fs::write(&committed, &compiled).expect("write generated/wamn.json");
-    check_compiled_manifest(package.root(), &compiled).expect("the committed bytes match");
-
-    let edited = String::from_utf8(compiled.clone())
-        .expect("UTF-8")
-        .replace("\"widget.get\"", "\"widget.read\"");
-    std::fs::write(&committed, edited).expect("edit generated/wamn.json");
-    let refusal = format!(
-        "{:#}",
-        check_compiled_manifest(package.root(), &compiled).expect_err("an edit must fail")
-    );
-    assert!(
-        refusal.ends_with("differs from wamn.k at .models.widget.operations.get.permission"),
-        "{refusal}"
-    );
-
-    let reformatted =
-        serde_json::to_vec(&serde_json::from_slice::<Value>(&compiled).expect("JSON"))
-            .expect("serialize");
-    std::fs::write(&committed, reformatted).expect("reformat generated/wamn.json");
-    let refusal = format!(
-        "{:#}",
-        check_compiled_manifest(package.root(), &compiled).expect_err("a reformat must fail")
-    );
-    assert!(refusal.ends_with("in its formatting only"), "{refusal}");
-}
-
-#[test]
 fn the_compiled_bytes_are_two_space_json_in_schema_order() {
     let package = Package::new(&source("", ""));
     let compiled =
@@ -413,11 +381,10 @@ fn the_compiled_bytes_are_two_space_json_in_schema_order() {
 fn an_edited_wamn_k_reaches_the_compiled_file_before_a_reader_reads_it() {
     let package = Package::new(&source("", ""));
     let compiled = package_manifest_path(package.root());
-    write_compiled_manifest(package.root()).expect("write generated/wamn.json");
-    assert_eq!(
-        std::fs::read(&compiled).expect("read generated/wamn.json"),
-        compile_manifest(package.root()).expect("compile wamn.k")
-    );
+    write_compiled_manifest(package.root()).expect("write the compiled wamn.json");
+    let written: Value =
+        serde_json::from_slice(&std::fs::read(&compiled).expect("read")).expect("JSON");
+    assert_eq!(written, package.compile());
 
     std::fs::write(
         package.root().join("wamn.k"),
@@ -464,8 +431,7 @@ fn a_compiled_file_keeps_its_derived_relations_until_wamn_k_changes() {
     )
     .expect("edit wamn.k");
     write_compiled_manifest(package.root()).expect("write the edited manifest");
-    assert_eq!(
-        std::fs::read(&path).expect("read generated/wamn.json"),
-        compile_manifest(package.root()).expect("compile wamn.k")
-    );
+    let written: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("JSON");
+    assert_eq!(written, package.compile());
 }

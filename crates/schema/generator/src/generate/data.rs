@@ -151,7 +151,7 @@ pub(super) fn emit_model_data(
          #[allow(unused_imports)]\n\
          use super::error::{{Constraints, Error}};\n\n\
          /// The statement accessors of the model.\n\
-         pub mod sql {{\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../generated/wamn/{model_name}.rs\"));\n}}\n\n\
+         pub mod sql {{\n    include!(\"../wamn/{model_name}.rs\");\n}}\n\n\
          pub use sql::{model_type}Row;"
     )
     .expect("writing to a String cannot fail");
@@ -592,12 +592,12 @@ pub(super) fn emit_package_data(
     let mut source = String::from(HEADER);
     source.push_str("// The generated data functions and their refusal.\n\n");
     source.push_str(
-        "/// The one refusal of every generated operation.\npub mod error {\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../generated/data/error.rs\"));\n}\n",
+        "/// The one refusal of every generated operation.\npub mod error {\n    include!(\"error.rs\");\n}\n",
     );
     for (model_name, _) in &models {
         writeln!(
             source,
-            "\n/// The generated `{model_name}` operations.\npub mod {model_name} {{\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../generated/data/{model_name}.rs\"));\n}}"
+            "\n/// The generated `{model_name}` operations.\npub mod {model_name} {{\n    include!(\"{model_name}.rs\");\n}}"
         )
         .expect("writing to a String cannot fail");
     }

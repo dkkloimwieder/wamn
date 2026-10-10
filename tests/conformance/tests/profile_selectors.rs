@@ -145,9 +145,10 @@ fn package_components(root: &Path) -> Vec<String> {
     let mut names = BTreeSet::new();
     for entry in fs::read_dir(root.join("apps")).expect("read application packages") {
         let package = entry.expect("read application entry").path();
-        // A package that authors wamn.k keeps its compiled manifest under generated/.
+        // A package that authors wamn.k has its compiled manifest in its build
+        // output, apps/target/wamn/<package>.
         let path = if package.join("wamn.k").is_file() {
-            package.join("generated/wamn.json")
+            build_output(&package).join("wamn.json")
         } else {
             package.join("wamn.json")
         };
@@ -161,6 +162,17 @@ fn package_components(root: &Path) -> Vec<String> {
         }
     }
     names.into_iter().collect()
+}
+
+/// The build output directory of the package at `package`, which
+/// `wamn build` writes: `<package>/../target/wamn/<package>`.
+fn build_output(package: &Path) -> PathBuf {
+    let name = package.file_name().expect("a package directory has a name");
+    package
+        .parent()
+        .expect("a package directory has a parent")
+        .join("target/wamn")
+        .join(name)
 }
 
 fn set(values: &[String]) -> BTreeSet<String> {
@@ -478,7 +490,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         let application_arguments = if profile == "app" { vec![app] } else { vec![] };
         let selected = if profile == "app" {
             let manifest: Value = serde_json::from_slice(
-                &fs::read(application_arguments[0].join("generated/wamn.json"))
+                &fs::read(build_output(&application_arguments[0]).join("wamn.json"))
                     .expect("read Receiving manifest"),
             )
             .expect("parse Receiving manifest");

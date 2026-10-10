@@ -121,7 +121,7 @@ The generator supplies fixed protocol rules. It rejects their former authored fi
 Receiving, Acme, and WMS use the same declaration format.
 
 Every package under `apps/` authors its manifest in `wamn.k`, a KCL file, and `tools/repo-lint` refuses a `wamn.json` at its root. Test fixtures outside `apps/` keep a hand-written `wamn.json`.
-The generator compiles it to `generated/wamn.json`, and every reader reads that compiled file.
+`wamn build` compiles it to `wamn.json` in the package's build output, and every reader reads that compiled file.
 The author states a fact once, in the place that owns it (R9 of the platform deployment plan).
 The schema module fills authoring defaults, and generation adds each member that the table below marks derived, so the compiled file states what an authored `wamn.json` states.
 The schema module and generation refuse a derived member that `wamn.k` states.
@@ -183,7 +183,7 @@ There is no universal runtime controller with unrestricted operation-ID authorit
 Command source uses generated accessors and named queries instead of adding unreviewed SQL strings.
 
 The generator derives native-async WIT contracts and Rust adapters from supported CRUD and custom-operation declarations.
-Each package owns its contracts under `generated/wit`.
+Each package owns its contracts under `wit/` in its build output.
 Names, fields, revision inputs, nested values, results, and error details follow the declarations.
 Separate operations over one table retain separate writable fields and permissions.
 
@@ -202,7 +202,7 @@ Application handlers of custom operations retain business rules, transaction seq
 ## Generated operations
 
 A generated CRUD operation needs no authored Rust, WIT, route entry, or declaration entry.
-Generation writes these files for each package:
+Generation writes these files for each package. A path below is a logical path: the file lies at the same path, without `generated/`, in the package's build output `apps/target/wamn/<package>`, which Git does not hold.
 
 1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.
 2. `generated/data/error.rs` holds that refusal type. It spells the closed vocabulary of the operation contracts, and its details are the declared detail fields.
@@ -212,7 +212,7 @@ Generation writes these files for each package:
 6. `generated/publication/component-operations.json` holds one declaration entry for each generated operation, keyed by component.
 
 The shared crate `wamn-data-access` holds the keyset cursor, the query page, and the scalar parsers that the data functions use.
-A data crate includes `generated/data/mod.rs` as its public module `generated`.
+A data crate includes `data/mod.rs` of its build output as its public module `generated`, through a path relative to the crate. The generated files include each other by paths relative to themselves.
 A component includes `generated/component/mod.rs` in a module that names that data module `data`.
 The fixture overlay has no data crate, so its component includes the data functions itself.
 

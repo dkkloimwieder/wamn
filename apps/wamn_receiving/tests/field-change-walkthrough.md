@@ -167,6 +167,7 @@ The save batch wrote six authored files:
 The loop then wrote thirteen generated files and two SQLx metadata files.
 `tests/.sqlx/query-35923fd6….json` went away and `tests/.sqlx/query-b5c60b00….json` arrived.
 The whole change set was 21 paths, all under `apps/wamn_receiving`.
+This run predates `wamn build`. Generated files and SQLx metadata now lie in the build output `apps/target/wamn/wamn_receiving`, outside Git, so the same change today touches only the authored paths.
 
 ### Results
 

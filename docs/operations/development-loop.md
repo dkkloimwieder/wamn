@@ -120,7 +120,7 @@ SQLx metadata is prepared again only when [its inputs](running-tests.md#applicat
 Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
 The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover, such as `web/dist`.
 The watcher uses the same ignore rules.
-In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `generated/wamn.json` as generated output.
+In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `wamn.json` in the build output, `apps/target/wamn/<package>`, as generated output.
 Missing or changed generated files prevent reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 

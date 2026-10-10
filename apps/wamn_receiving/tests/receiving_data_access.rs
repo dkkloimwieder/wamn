@@ -12,9 +12,9 @@ mod tests {
     use uuid::Uuid;
     use wamn_execution_contract::canonical_json_bytes;
 
-    const MANIFEST: &[u8] = include_bytes!("../../../apps/wamn_receiving/generated/wamn.json");
+    const MANIFEST: &[u8] = include_bytes!("../../../apps/target/wamn/wamn_receiving/wamn.json");
     const OVERLAY_MANIFEST: &[u8] =
-        include_bytes!("../../../apps/client_acme_receiving/generated/wamn.json");
+        include_bytes!("../../../apps/target/wamn/client_acme_receiving/wamn.json");
     const MIGRATION: &str =
         include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
@@ -30,7 +30,7 @@ mod tests {
     const HISTORY_SQL: &str =
         include_str!("../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
     const UPDATE_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/generated/sql/purchase_order/update.sql");
+        include_str!("../../../apps/target/wamn/wamn_receiving/sql/purchase_order/update.sql");
     const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
     /// The write log operation of `receiving.record_receipt`, without its version.
     const RECORD_RECEIPT_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
@@ -55,9 +55,10 @@ mod tests {
     const OVERLAY_INSPECTION_MIGRATION: &str =
         include_str!("../../../apps/client_acme_receiving/migrations/0002_quality_inspection.sql");
     const OVERLAY_GET_SQL: &str =
-        include_str!("../../../apps/client_acme_receiving/generated/sql/purchase_order/get.sql");
-    const OVERLAY_UPDATE_SQL: &str =
-        include_str!("../../../apps/client_acme_receiving/generated/sql/purchase_order/update.sql");
+        include_str!("../../../apps/target/wamn/client_acme_receiving/sql/purchase_order/get.sql");
+    const OVERLAY_UPDATE_SQL: &str = include_str!(
+        "../../../apps/target/wamn/client_acme_receiving/sql/purchase_order/update.sql"
+    );
     const OVERLAY_LOAD_DETAIL_SQL: &str =
         include_str!("../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql");
     const OVERLAY_APPROVE_INSPECTION_SQL: &str = include_str!(
@@ -73,7 +74,7 @@ mod tests {
     /// The generated get result of a purchase order. Its status values come
     /// from the column's CHECK.
     const PURCHASE_ORDER_RESULT: &[u8] = include_bytes!(
-        "../../../apps/wamn_receiving/generated/contracts/purchase_order/get.result.json"
+        "../../../apps/target/wamn/wamn_receiving/contracts/purchase_order/get.result.json"
     );
 
     #[derive(Debug, Deserialize)]
@@ -231,10 +232,10 @@ mod tests {
             .collect::<Vec<_>>();
         let overlays = [
             DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/wamn_receiving/generated/platform-policy/data-access.json"
+                "../../../apps/target/wamn/wamn_receiving/platform-policy/data-access.json"
             ))?,
             DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/client_acme_receiving/generated/platform-policy/data-access.json"
+                "../../../apps/target/wamn/client_acme_receiving/platform-policy/data-access.json"
             ))?,
         ];
         let authority = derive_effective_data_access(&relation_fields, &overlays)?;
@@ -400,10 +401,10 @@ mod tests {
             .collect::<Vec<_>>();
         let overlays = [
             DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/wamn_receiving/generated/platform-policy/data-access.json"
+                "../../../apps/target/wamn/wamn_receiving/platform-policy/data-access.json"
             ))?,
             DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/client_acme_receiving/generated/platform-policy/data-access.json"
+                "../../../apps/target/wamn/client_acme_receiving/platform-policy/data-access.json"
             ))?,
         ];
         let authority = derive_effective_data_access(&relation_fields, &overlays)?;

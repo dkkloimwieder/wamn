@@ -48,8 +48,8 @@ mod sqlx_metadata;
 mod upgrade_stage;
 
 pub use authoring::{
-    AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, check_compiled_manifest, compile_environment,
-    compile_manifest, is_authored, is_package_root, manifest_package_root, package_manifest_path,
+    AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, compile_environment, compile_manifest,
+    is_authored, is_package_root, manifest_package_root, package_manifest_path,
     write_compiled_manifest,
 };
 /// The write log's three fixed statements.
@@ -86,7 +86,7 @@ pub use manifest::{
     resolve_operation_reference, sealed_operation_reference, validate_operation_vocabulary,
 };
 pub use materialize::{
-    MaterializeMode, classify_statements_with_existing_grants,
+    classify_statements_with_existing_grants,
     classify_statements_with_existing_grants_in_transaction, introspect_package,
     materialize_host_route_client, materialize_package, materialize_package_from_catalog,
     materialize_package_verified, materialize_package_verified_with_catalog,
@@ -95,7 +95,7 @@ pub use materialize::{
 pub use output::output_root;
 pub use package_catalog::project_package_catalog;
 pub use sqlx_metadata::{
-    SqlxMetadataMode, SqlxVerifier, package_database_url, stage_sqlx_verifier, verify_sqlx_metadata,
+    SqlxVerifier, package_database_url, prepare_sqlx_metadata, stage_sqlx_verifier,
 };
 #[doc(inline)]
 pub use upgrade_stage::{

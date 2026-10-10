@@ -12,7 +12,7 @@ pub(super) mod detail_codec {
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/wit/quality_load_purchase_order_detail_codec.rs"
+        "/../../target/wamn/client_acme_receiving/wit/quality_load_purchase_order_detail_codec.rs"
     ));
 }
 
@@ -21,7 +21,7 @@ pub(super) mod approve_codec {
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/wit/quality_approve_inspection_codec.rs"
+        "/../../target/wamn/client_acme_receiving/wit/quality_approve_inspection_codec.rs"
     ));
 }
 

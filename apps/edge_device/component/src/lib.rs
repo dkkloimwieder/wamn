@@ -19,7 +19,7 @@ wit_bindgen::generate!({
     "#,
     path: [
         "../../../crates/execution/workflow/router/wit",
-        "../generated/wit",
+        "../../target/wamn/edge_device/wit",
     ],
     generate_all,
     async: true,

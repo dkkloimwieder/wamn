@@ -82,15 +82,13 @@ For a manifest-only change, inspect `cargo metadata --no-deps` before deciding w
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
 The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream, flow routing, and blobstore contracts.
 The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
-Application contracts remain under each package's `generated/wit` directory. Do not copy platform WIT into application directories.
+Application contracts lie under `wit/` in each package's build output, `apps/target/wamn/<package>/wit`, which `wamn build` writes. Do not copy platform WIT into application directories.
 
 ## Package manifests
 
 A package that holds `wamn.k` authors its manifest in KCL.
-The generator compiles `wamn.k` to `generated/wamn.json` before it generates anything else.
+`wamn build` compiles `wamn.k` to `wamn.json` in the package's build output before it generates anything else.
 Every reader, including `tools/build-components`, reads that compiled file.
-`write` puts the compiled file in place, and `check` refuses a compiled file that differs from the compile.
-The refusal names the first differing JSON path.
 A package that holds both `wamn.k` and an authored `wamn.json` is refused.
 
 The compile runs the KCL CLI that [`tools/install-kcl`](../../tools/install-kcl) installs.
@@ -127,8 +125,9 @@ The refusal names the operation, the statement, and the value.
 
 The build writes each package to `<output root>/<package id>/`.
 The default output root is `apps/target/wamn` for an application, and `--output-root` changes it.
-The layout is the same as the package's `generated/` directory, plus `build.json`.
-The committed `generated/` directory does not change.
+Below it, the layout keeps the logical `generated/` paths that contracts and releases name, without the `generated/` prefix, plus `build.json`.
+Git holds no build output (platform-deploy.md R10(1)), and the repository policy lint refuses a tracked `generated/` or `.sqlx` file under `apps/`.
+Build every package before you compile the apps workspace, the app test crates, or an app web: their sources include files from the build output.
 `build.json` is the build receipt, schema `wamn.build/v1`, in canonical JSON.
 It records the input files and their digest, the base packages, the generator identity, and the digest of each output.
 An overlay reads the `build.json` of each base package, so build the base first.

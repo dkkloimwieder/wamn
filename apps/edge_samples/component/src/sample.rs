@@ -16,7 +16,7 @@ mod read {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/sample_read_codec.rs"
+            "/../../target/wamn/edge_samples/wit/sample_read_codec.rs"
         ));
     }
 
@@ -54,7 +54,7 @@ mod record {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/sample_record_codec.rs"
+            "/../../target/wamn/edge_samples/wit/sample_record_codec.rs"
         ));
     }
 

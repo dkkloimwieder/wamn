@@ -9,7 +9,7 @@ use anyhow::{Context as _, ensure};
 use serde::Serialize;
 use tokio::process::Command;
 
-use super::{ApplicationResult, Candidate, CheckResult, Qualification, sqlx};
+use super::{ApplicationResult, Candidate, CheckResult, Qualification};
 use crate::git_source::{GitSourceState, discover_repository_root, read_status};
 
 const RECEIVING_CASES: &[&str] = &[
@@ -27,12 +27,6 @@ const WMS_CASES: &[&str] = &[
     "cluster::released_wms_routes_retain_committed_work_after_label_failure",
     "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
 ];
-const WMS_SCHEMAS: &[(&str, &str)] = &[("wamn_wms", "wms")];
-const RECEIVING_SCHEMAS: &[(&str, &str)] = &[
-    ("wamn_receiving", "receiving"),
-    ("client_acme_receiving", "receiving"),
-];
-const RECEIVING_BASE_SCHEMAS: &[(&str, &str)] = &[("wamn_receiving", "receiving")];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
@@ -116,7 +110,6 @@ impl Drop for TemporaryResults {
 struct Application {
     package: &'static str,
     cases: &'static [&'static str],
-    schemas: &'static [(&'static str, &'static str)],
     evidence_env: &'static str,
 }
 
@@ -140,19 +133,16 @@ fn application_for(packages: &[&str]) -> anyhow::Result<Application> {
         ["wamn_wms"] => Ok(Application {
             package: "wamn-wms-tests",
             cases: WMS_CASES,
-            schemas: WMS_SCHEMAS,
             evidence_env: "WAMN_WMS_EVIDENCE_DIR",
         }),
         ["wamn_receiving"] => Ok(Application {
             package: "wamn-receiving-tests",
             cases: RECEIVING_BASE_CASES,
-            schemas: RECEIVING_BASE_SCHEMAS,
             evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR",
         }),
         ["client_acme_receiving", "wamn_receiving"] => Ok(Application {
             package: "wamn-receiving-tests",
             cases: RECEIVING_CASES,
-            schemas: RECEIVING_SCHEMAS,
             evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR",
         }),
         _ => {
@@ -172,32 +162,6 @@ pub(super) fn require_complete_checks(result: &Qualification) -> anyhow::Result<
                 .any(|check| check.command.iter().any(|arg| arg == case)
                     && check.command.iter().any(|arg| arg == "--exact")),
             "qualification lacks required case {case}"
-        );
-    }
-    for (package, _) in app.schemas {
-        ensure!(
-            result.checks.iter().any(|check| check
-                .command
-                .iter()
-                .any(|arg| arg == "materialize_package")
-                && check.command.iter().any(|arg| arg == "check")
-                && check
-                    .command
-                    .iter()
-                    .any(|arg| arg.ends_with(&format!("apps/{package}")))),
-            "qualification lacks generated output comparison for {package}"
-        );
-        ensure!(
-            result.checks.iter().any(|check| check
-                .command
-                .iter()
-                .any(|arg| arg == "sqlx_metadata")
-                && check.command.iter().any(|arg| arg == "check")
-                && check
-                    .command
-                    .iter()
-                    .any(|arg| arg.ends_with(&format!("apps/{package}")))),
-            "qualification lacks SQLx metadata comparison for {package}"
         );
     }
     Ok(())
@@ -284,7 +248,6 @@ async fn qualify_candidate(
         "Rust differs from rust-toolchain.toml"
     );
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
-    check_generated_outputs(root, target, app.schemas, &mut result.checks).await?;
     // Existing build owners establish which source produced the candidate.
     run(
         root,
@@ -397,117 +360,6 @@ async fn qualify_candidate(
         "source changed during qualification"
     );
     require_complete_checks(result)
-}
-
-/// Compare generated files and SQLx metadata against a fresh database per package.
-async fn check_generated_outputs(
-    root: &Path,
-    target: &Path,
-    schemas: &[(&str, &str)],
-    checks: &mut Vec<CheckResult>,
-) -> anyhow::Result<()> {
-    let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
-    run(
-        root,
-        &strings(&[
-            "cargo",
-            "build",
-            "--locked",
-            "--offline",
-            "-p",
-            "wamn-test-infrastructure",
-            "--bin",
-            "wamn-test-postgres",
-        ]),
-        &target_env,
-        checks,
-    )
-    .await?;
-    if !schemas.is_empty() {
-        let sqlx = run(
-            root,
-            &strings(&["cargo", "sqlx", "--version"]),
-            &target_env,
-            checks,
-        )
-        .await?;
-        sqlx::require_cli_version(&sqlx.stdout)?;
-    }
-    for &(package, schema) in schemas {
-        let app_root = root.join("apps").join(package);
-        let mut prefix = schema_database_prefix(root, target, package, schema)?;
-        let mut generate = prefix.clone();
-        generate.extend(strings(&[
-            "cargo",
-            "run",
-            "--locked",
-            "--offline",
-            "-p",
-            "wamn-schema-generator",
-            "--example",
-            "materialize_package",
-            "--",
-            "check",
-        ]));
-        generate.push(app_root.display().to_string());
-        run(root, &generate, &target_env, checks).await?;
-        prefix.extend(sqlx::prepare_arguments(root, &app_root, true));
-        let mut prepare_env = target_env.clone();
-        prepare_env.push(("SQLX_OFFLINE".to_owned(), "false".to_owned()));
-        let output = run(root, &prefix, &prepare_env, checks).await?;
-        sqlx::require_current_metadata(&output.stdout)?;
-    }
-    Ok(())
-}
-
-/// Start a fresh database with the package's schema, migrations, and history tables.
-///
-/// The migrations of each base package the manifest declares run before the
-/// package's own.
-fn schema_database_prefix(
-    root: &Path,
-    target: &Path,
-    package: &str,
-    schema: &str,
-) -> anyhow::Result<Vec<String>> {
-    let app_root = root.join("apps").join(package);
-    let manifest_path = wamn_schema_generator::package_manifest_path(&app_root);
-    let manifest =
-        fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
-    let manifest = wamn_schema_generator::PackageManifest::from_slice(&manifest)
-        .with_context(|| format!("parse {}", manifest_path.display()))?;
-    let mut prefix = vec![
-        target
-            .join("debug/wamn-test-postgres")
-            .display()
-            .to_string(),
-        "--database".to_owned(),
-        "delivery_schema".to_owned(),
-        "--schema".to_owned(),
-        schema.to_owned(),
-    ];
-    for dependency in manifest.base_dependencies.values() {
-        prefix.extend([
-            "--migration-dir".to_owned(),
-            root.join("apps")
-                .join(&dependency.package)
-                .join("migrations")
-                .display()
-                .to_string(),
-        ]);
-    }
-    prefix.extend([
-        "--migration-dir".to_owned(),
-        app_root.join("migrations").display().to_string(),
-        "--history-manifest".to_owned(),
-        wamn_schema_generator::package_manifest_path(&app_root)
-            .display()
-            .to_string(),
-        "--url-env".to_owned(),
-        "DATABASE_URL".to_owned(),
-        "--".to_owned(),
-    ]);
-    Ok(prefix)
 }
 
 /// Execute exact selected tests and distinguish executed success from a skip.
@@ -909,98 +761,6 @@ mod tests {
         );
         assert!(member_workspace("wamn-absent-data-access", &split).is_err());
         assert!(member_workspace("same", &workspaces("same", "same")).is_err());
-    }
-
-    #[test]
-    fn sqlx_check_database_applies_base_before_overlay_for_each_fixture_verifier() {
-        let (root, target) = (wamn_fixture_package::repository_root(), Path::new("/t"));
-        let path = |relative: &str| root.join(relative).display().to_string();
-        assert_eq!(
-            schema_database_prefix(
-                &root,
-                target,
-                wamn_fixture_package::OVERLAY_PACKAGE_ID,
-                wamn_fixture_package::SCHEMA,
-            )
-            .unwrap(),
-            [
-                "/t/debug/wamn-test-postgres".to_owned(),
-                "--database".to_owned(),
-                "delivery_schema".to_owned(),
-                "--schema".to_owned(),
-                "inventory".to_owned(),
-                "--migration-dir".to_owned(),
-                path("apps/platform_fixture/migrations"),
-                "--migration-dir".to_owned(),
-                path("apps/platform_fixture_overlay/migrations"),
-                "--history-manifest".to_owned(),
-                wamn_schema_generator::package_manifest_path(&wamn_fixture_package::overlay_root())
-                    .display()
-                    .to_string(),
-                "--url-env".to_owned(),
-                "DATABASE_URL".to_owned(),
-                "--".to_owned(),
-            ]
-        );
-        let base = schema_database_prefix(
-            &root,
-            target,
-            wamn_fixture_package::PACKAGE_ID,
-            wamn_fixture_package::SCHEMA,
-        )
-        .unwrap();
-        assert_eq!(
-            base.iter()
-                .filter(|argument| argument.as_str() == "--migration-dir")
-                .count(),
-            1
-        );
-        assert!(base.contains(&path("apps/platform_fixture/migrations")));
-    }
-
-    #[tokio::test]
-    #[ignore = "requires: cargo-sqlx"]
-    async fn sqlx_metadata_check_reaches_fresh_fixture_and_overlay_databases() {
-        wamn_test_postgres::require_prerequisites(&["cargo-sqlx"]);
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .canonicalize()
-            .expect("resolve the repository root");
-        let target =
-            std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
-        let mut checks = Vec::new();
-        let schemas = [
-            (
-                wamn_fixture_package::PACKAGE_ID,
-                wamn_fixture_package::SCHEMA,
-            ),
-            (
-                wamn_fixture_package::OVERLAY_PACKAGE_ID,
-                wamn_fixture_package::SCHEMA,
-            ),
-        ];
-        check_generated_outputs(&root, &target, &schemas, &mut checks)
-            .await
-            .expect("the committed SQLx metadata matches fresh databases");
-        for (package, _) in schemas {
-            assert_eq!(
-                checks
-                    .iter()
-                    .filter(|check| check.result == "pass"
-                        && check.command.iter().any(|argument| argument == "check")
-                        && check
-                            .command
-                            .iter()
-                            .any(|argument| argument == "sqlx_metadata")
-                        && check
-                            .command
-                            .iter()
-                            .any(|argument| argument.ends_with(&format!("apps/{package}"))))
-                    .count(),
-                1,
-                "one passing SQLx metadata check for {package}"
-            );
-        }
     }
 
     #[test]

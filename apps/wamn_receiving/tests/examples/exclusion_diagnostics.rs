@@ -35,6 +35,22 @@ fn sql_paths(value: &Value, paths: &mut BTreeSet<String>) {
     }
 }
 
+fn copy_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)
+        .with_context(|| format!("read {}; run wamn build first", source.display()))?
+    {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
     let manifest_path = wamn_schema_generator::package_manifest_path(package);
     let manifest_bytes = std::fs::read(&manifest_path)?;
@@ -60,8 +76,14 @@ async fn generate_fixture(url: &str, package: &Path) -> anyhow::Result<()> {
         GenerationProvenance::new("exclusion-test", "repository-toolchain"),
         &StatementTransactionality::unclassified(),
     ))?;
+    // A generated file's logical path starts with `generated/`, and the file
+    // lies at the rest of that path in the package's build output.
+    let output = wamn_schema_generator::output_root(package);
     for file in generated.files() {
-        let path = package.join(file.path());
+        let relative = Path::new(file.path())
+            .strip_prefix("generated")
+            .context("a generated file lies under generated/")?;
+        let path = output.join(relative);
         std::fs::create_dir_all(path.parent().context("generated file parent")?)?;
         std::fs::write(path, file.bytes())?;
     }
@@ -113,6 +135,13 @@ async fn main() -> anyhow::Result<()> {
         std::fs::create_dir_all(destination.parent().context("fixture file parent")?)?;
         std::fs::copy(root.join(name), destination)?;
     }
+    // The build output lies outside Git. Copy Receiving's, which `wamn build`
+    // wrote, so the scratch package has its compiled manifest.
+    let receiving = root.join("apps/wamn_receiving");
+    copy_tree(
+        &wamn_schema_generator::output_root(&receiving),
+        &wamn_schema_generator::output_root(&scratch.path().join("apps/wamn_receiving")),
+    )?;
     let mut server = postgres::start(&[])?;
     let database = server.create_database("exclusion_diagnostics")?;
     let (client, connection) =

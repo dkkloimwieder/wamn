@@ -15,7 +15,7 @@ mod generated {
     use wamn_platform_fixture_data_access::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/component/mod.rs"
+        "/../../target/wamn/platform_fixture/component/mod.rs"
     ));
 }
 
@@ -24,7 +24,7 @@ wit_bindgen::generate!({
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-        "../generated/wit",
+        "../../target/wamn/platform_fixture/wit",
         "wit",
     ],
     generate_all,

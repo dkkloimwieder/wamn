@@ -18,7 +18,7 @@ mod generated {
     use wamn_receiving_data_access::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/component/mod.rs"
+        "/../../target/wamn/wamn_receiving/component/mod.rs"
     ));
 }
 
@@ -27,7 +27,7 @@ wit_bindgen::generate!({
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-        "../generated/wit",
+        "../../target/wamn/wamn_receiving/wit",
         "wit",
     ],
     generate_all,
@@ -44,7 +44,7 @@ mod receipt_codec {
 
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../generated/wit/receiving_record_receipt_codec.rs"
+        "/../../target/wamn/wamn_receiving/wit/receiving_record_receipt_codec.rs"
     ));
 }
 

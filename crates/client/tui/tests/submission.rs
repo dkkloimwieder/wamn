@@ -508,7 +508,7 @@ fn widget_update_validates_the_public_success_row_without_sql_bookkeeping_column
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let ir = ClientContractIr::from_release(
         "platform_fixture",
-        &root.join("apps/platform_fixture/generated/contracts"),
+        &root.join("apps/target/wamn/platform_fixture/contracts"),
         &root.join("apps/platform_fixture/publication/attachments.json"),
     )
     .expect("project the fixture release");

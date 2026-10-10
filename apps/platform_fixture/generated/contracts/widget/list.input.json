@@ -1,1 +1,0 @@
-{"fields":[{"nullable":false,"path":"selector","type":"json","values":[]},{"nullable":true,"path":"maker_id","references":{"model":"widget_maker"},"type":"uuid","values":[]}]}

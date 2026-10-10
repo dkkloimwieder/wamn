@@ -1,1 +1,0 @@
-{"fields":[{"label":"Purchase order","nullable":false,"path":"purchase_order_id","references":{"model":"purchase_order"},"type":"uuid","values":[]}]}

@@ -70,7 +70,7 @@ fn code_omission_stays_absent_while_explicit_null_is_refused() {
         },
     ];
     let schema: Value = serde_json::from_str(include_str!(
-        "../../../../apps/platform_fixture/generated/routes/widget/update.json"
+        "../../../../apps/target/wamn/platform_fixture/routes/widget/update.json"
     ))
     .expect("parse the fixture route schema");
     let schema = &schema;

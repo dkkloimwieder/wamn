@@ -1438,7 +1438,8 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
 
     #[test]
     fn throughput_statement_retains_the_generated_read_and_refuses_missing_substitutions() {
-        let generated = include_str!("../../../generated/sql/purchase_order/get.sql");
+        let generated =
+            include_str!("../../../../target/wamn/wamn_receiving/sql/purchase_order/get.sql");
         let sql = benchmark_sql(generated).unwrap();
         assert!(sql.contains("FROM receiving.purchase_order AS model"));
         assert!(sql.ends_with(&format!("= '{PURCHASE_ORDER_ID}'::uuid;")));

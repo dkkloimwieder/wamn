@@ -15,20 +15,17 @@ use crate::data_access_schemas;
 
 const SQLX_VERSION: &str = "0.9.0";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SqlxMetadataMode {
-    Compile,
-    Check,
-    Prepare,
-}
-
 #[derive(Debug, Eq, PartialEq)]
 pub struct SqlxVerifier {
     pub queries: usize,
     pub root: PathBuf,
 }
 
-pub fn verify_sqlx_metadata(mode: SqlxMetadataMode, package_root: &Path) -> Result<()> {
+/// Prepare the SQLx metadata of the package's generated verifier into
+/// `.sqlx` in the package's build output directory.
+///
+/// `DATABASE_URL` names the package's migrated PostgreSQL database.
+pub fn prepare_sqlx_metadata(package_root: &Path) -> Result<()> {
     let package_root = fs::canonicalize(package_root).context("resolve package root")?;
     let package_root = package_root.as_path();
     let repository_root = repository_root(package_root)?;
@@ -45,27 +42,6 @@ pub fn verify_sqlx_metadata(mode: SqlxMetadataMode, package_root: &Path) -> Resu
         "package has no generated SQLx queries"
     );
     let build_root = repository_root.join("target/wamn-sqlx-verifier-build");
-
-    if mode == SqlxMetadataMode::Compile {
-        ensure!(
-            verifier.root.join(".sqlx").is_dir(),
-            "package has no tests/.sqlx metadata"
-        );
-        let output = Command::new("cargo")
-            .current_dir(&verifier.root)
-            .args(["check", "--lib", "--locked", "--offline"])
-            .env("SQLX_OFFLINE", "true")
-            .env_remove("DATABASE_URL")
-            .env("CARGO_TARGET_DIR", &build_root)
-            .output()
-            .context("compile isolated SQLx verifier offline")?;
-        ensure!(
-            output.status.success(),
-            "offline SQLx verifier compilation failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        return Ok(());
-    }
 
     let database_url = std::env::var("DATABASE_URL")
         .context("DATABASE_URL must name the package's migrated PostgreSQL database")?;
@@ -88,11 +64,7 @@ pub fn verify_sqlx_metadata(mode: SqlxMetadataMode, package_root: &Path) -> Resu
     let mut command = Command::new("cargo");
     command
         .current_dir(&verifier.root)
-        .args(["sqlx", "prepare"]);
-    if mode == SqlxMetadataMode::Check {
-        command.arg("--check");
-    }
-    command
+        .args(["sqlx", "prepare"])
         .args(["--", "--lib", "--locked", "--offline"])
         .env("DATABASE_URL", database_url)
         .env("SQLX_OFFLINE", "false")
@@ -110,13 +82,10 @@ pub fn verify_sqlx_metadata(mode: SqlxMetadataMode, package_root: &Path) -> Resu
         "SQLx metadata contains unused queries:\n{stdout}{stderr}"
     );
 
-    if mode == SqlxMetadataMode::Prepare {
-        replace_metadata(
-            &verifier.root.join(".sqlx"),
-            &package_root.join("tests/.sqlx"),
-        )?;
-    }
-    Ok(())
+    replace_metadata(
+        &verifier.root.join(".sqlx"),
+        &crate::output_root(package_root).join(".sqlx"),
+    )
 }
 
 /// Add the package schemas to PostgreSQL's existing connection options.
@@ -163,7 +132,7 @@ pub fn stage_sqlx_verifier(
             .open(verifier_root.join("Cargo.lock"))?,
         "\n[[package]]\nname = \"wamn-generated-sqlx-verifier\"\nversion = \"0.0.0\"\ndependencies = [\n \"chrono\",\n \"rust_decimal\",\n \"serde_json\",\n \"sqlx\",\n \"uuid\",\n]\n"
     )?;
-    let metadata = package_root.join("tests/.sqlx");
+    let metadata = crate::output_root(package_root).join(".sqlx");
     if metadata.exists() {
         copy_tree(&metadata, &verifier_root.join(".sqlx"))?;
     }

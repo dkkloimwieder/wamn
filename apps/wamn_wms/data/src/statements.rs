@@ -23,7 +23,7 @@ pub(crate) mod wamn {
     pub(crate) mod inventory_adjust {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/inventory_adjust.rs"
+            "/../../target/wamn/wamn_wms/wamn/inventory_adjust.rs"
         ));
     }
 
@@ -31,7 +31,7 @@ pub(crate) mod wamn {
     pub(crate) mod inventory_aggregate {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/inventory_aggregate.rs"
+            "/../../target/wamn/wamn_wms/wamn/inventory_aggregate.rs"
         ));
     }
 
@@ -43,7 +43,7 @@ pub(crate) mod wamn {
     pub(crate) mod inventory_merge {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/inventory_merge.rs"
+            "/../../target/wamn/wamn_wms/wamn/inventory_merge.rs"
         ));
     }
 
@@ -55,7 +55,7 @@ pub(crate) mod wamn {
     pub(crate) mod inventory_move {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/inventory_move.rs"
+            "/../../target/wamn/wamn_wms/wamn/inventory_move.rs"
         ));
     }
 
@@ -67,7 +67,7 @@ pub(crate) mod wamn {
     pub(crate) mod inventory_split {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wamn/inventory_split.rs"
+            "/../../target/wamn/wamn_wms/wamn/inventory_split.rs"
         ));
     }
 }

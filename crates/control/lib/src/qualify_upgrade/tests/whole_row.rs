@@ -28,19 +28,11 @@ async fn whole_row_fixture(name: &str) -> Fixture {
         ),
     )
     .unwrap();
-    fs::write(
-        wamn_schema_generator::package_manifest_path(&candidate),
-        wamn_schema_generator::compile_manifest(&candidate).unwrap(),
-    )
-    .unwrap();
+    wamn_schema_generator::write_compiled_manifest(&candidate).unwrap();
     let generation = fixture.server.database("upgrade_generation").unwrap();
-    wamn_schema_generator::materialize_package_verified(
-        MaterializeMode::Write,
-        generation.url(),
-        &candidate,
-    )
-    .await
-    .unwrap();
+    wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
+        .await
+        .unwrap();
     fixture
 }
 

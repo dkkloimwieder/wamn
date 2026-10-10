@@ -51,7 +51,7 @@ fn widget_fields() -> Vec<FieldDescriptor> {
     let root = repository_root();
     let ir = ClientContractIr::from_release(
         "platform_fixture",
-        &root.join("apps/platform_fixture/generated/contracts"),
+        &root.join("apps/target/wamn/platform_fixture/contracts"),
         &root.join("apps/platform_fixture/publication/attachments.json"),
     )
     .expect("the fixture release projects");

@@ -114,12 +114,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         tenant: identity().tenant.clone(),
     })
     .await?;
-    wamn_schema_generator::materialize_package_verified(
-        wamn_schema_generator::MaterializeMode::Write,
-        test.project_url,
-        &package,
-    )
-    .await?;
+    wamn_schema_generator::materialize_package_verified(test.project_url, &package).await?;
     let counter_read = std::fs::read_to_string(
         wamn_schema_generator::output_root(&package).join("sql/counter/get.sql"),
     )?;
@@ -977,7 +972,7 @@ mod execution_tests {
             path: [
                 "../../../crates/execution/workflow/router/wit",
                 "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
-                "../../../apps/wamn_receiving/generated/wit/deps/wamn-receiving-receiving",
+                "../../../apps/target/wamn/wamn_receiving/wit/deps/wamn-receiving-receiving",
             ],
             additional_derives: [PartialEq],
             wasmtime_crate: wash_runtime::wasmtime,

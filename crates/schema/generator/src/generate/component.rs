@@ -89,7 +89,7 @@ pub(super) fn emit_model_component(
              use crate::exports::{namespace}::{package}::{name} as contract;\n\
              pub(crate) mod codec {{\n\
              use super::contract;\n\
-             include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../generated/wit/{model_name}_{name}_codec.rs\"));\n\
+             include!(\"../wit/{model_name}_{name}_codec.rs\");\n\
              }}\n\n\
              pub(crate) async fn handle({state}, request: contract::{contract}Request{signature}) -> Result<contract::{contract}{end}, contract::{contract}Error> {{\n\
              {body}\
@@ -243,7 +243,7 @@ pub(super) fn emit_package_component(
     for (model_name, _) in &models {
         writeln!(
             source,
-            "\n/// The generated `{model_name}` handlers.\npub mod {model_name} {{\n    include!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../generated/component/{model_name}.rs\"));\n}}"
+            "\n/// The generated `{model_name}` handlers.\npub mod {model_name} {{\n    include!(\"{model_name}.rs\");\n}}"
         )
         .expect("writing to a String cannot fail");
     }

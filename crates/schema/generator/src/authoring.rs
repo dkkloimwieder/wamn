@@ -1,9 +1,11 @@
-//! The authored manifest, `wamn.k`, and its compiled form, `generated/wamn.json`.
+//! The authored manifest, `wamn.k`, and its compiled form, `wamn.json` in the
+//! package's build output (logical path `generated/wamn.json`).
 //!
 //! A package authors its manifest in KCL. The generator compiles `wamn.k` with
 //! the pinned `kcl` CLI against the `manifest` schema module that ships in this
 //! crate. Generation adds the members it derives, such as each custom
-//! operation's relations, and writes the JSON to `generated/wamn.json`. The
+//! operation's relations, and writes the JSON to the package's
+//! [`output_root`]. The
 //! author states none of them. Every other reader reads
 //! that file and never `wamn.k` (docs/plan/manifest-authoring.md §4.3). Every
 //! package under `apps/` authors `wamn.k`, and the repository policy lint
@@ -45,8 +47,9 @@ pub fn is_authored(package_root: &Path) -> bool {
     package_root.join(AUTHORED_MANIFEST).is_file()
 }
 
-/// The manifest file that a reader of the package reads: `generated/wamn.json`
-/// for a package authored in `wamn.k`, otherwise `wamn.json`.
+/// The manifest file that a reader of the package reads: `wamn.json` in the
+/// package's [`output_root`] for a package authored in `wamn.k`, otherwise
+/// the package's own `wamn.json`.
 #[must_use]
 pub fn package_manifest_path(package_root: &Path) -> PathBuf {
     if is_authored(package_root) {
@@ -62,8 +65,10 @@ pub(crate) fn compiled_manifest_path(package_root: &Path) -> PathBuf {
 }
 
 /// The package root of a manifest path that [`package_manifest_path`] gives:
-/// the authored package whose [`output_root`] holds a compiled manifest,
-/// otherwise the manifest's own directory.
+/// the authored package whose `generated/` directory holds a compiled
+/// manifest, otherwise the manifest's own directory. A manifest in a build
+/// output directory, `target/wamn/<package>`, names that directory, which is
+/// its own [`output_root`].
 #[must_use]
 pub fn manifest_package_root(manifest: &Path) -> Option<&Path> {
     let directory = manifest.parent()?;
@@ -125,7 +130,7 @@ pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> 
     Ok(bytes)
 }
 
-/// Compile `wamn.k` and write `generated/wamn.json` when its authored members
+/// Compile `wamn.k` and write `wamn.json` in the build output when its authored members
 /// differ.
 ///
 /// Generation writes the same file with the members it derives, such as each
@@ -144,70 +149,22 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     let bytes = compile_manifest(package_root)?;
     let path = compiled_manifest_path(package_root);
     // A file that generation compiled from the same wamn.k is kept, with the
-    // members it derived.
+    // members it derived. The values are compared, not the bytes: `wamn build`
+    // writes the file in canonical JSON, and the compile is indented.
+    let compiled: Value = serde_json::from_slice(&bytes).context("parse the compiled manifest")?;
     let current = fs::read(&path)
         .ok()
-        .and_then(|compiled| without_derived_members(&compiled).ok());
-    if current.as_deref() != Some(bytes.as_slice()) {
+        .and_then(|written| without_derived_members(&written).ok())
+        .and_then(|written| serde_json::from_slice::<Value>(&written).ok());
+    if current.as_ref() != Some(&compiled) {
         let directory = output_root(package_root);
         fs::create_dir_all(&directory)
             .with_context(|| format!("create generated directory {}", directory.display()))?;
-        fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
+        // The canonical bytes (RFC 8785) that `wamn build` writes.
+        let canonical = wamn_execution_contract::canonical_json_bytes(&compiled);
+        fs::write(&path, canonical).with_context(|| format!("write {}", path.display()))?;
     }
     Ok(())
-}
-
-/// Refuse a committed `generated/wamn.json` that differs from the compiled bytes.
-///
-/// # Errors
-///
-/// When the committed file is missing, or differs from `compiled`. The error
-/// names the first JSON path that differs, or says that only the formatting does.
-pub fn check_compiled_manifest(package_root: &Path, compiled: &[u8]) -> Result<()> {
-    let path = compiled_manifest_path(package_root);
-    let committed = fs::read(&path).with_context(|| format!("missing {}", path.display()))?;
-    if committed == compiled {
-        return Ok(());
-    }
-    let expected: Value =
-        serde_json::from_slice(compiled).context("parse the compiled manifest")?;
-    let Ok(actual) = serde_json::from_slice::<Value>(&committed) else {
-        bail!("{} differs from wamn.k: it is not JSON", path.display());
-    };
-    match first_difference("", &expected, &actual) {
-        Some(at) => bail!("{} differs from wamn.k at {at}", path.display()),
-        None => bail!(
-            "{} differs from wamn.k in its formatting only",
-            path.display()
-        ),
-    }
-}
-
-/// The JSON path of the first difference between two documents, if any.
-fn first_difference(at: &str, expected: &Value, actual: &Value) -> Option<String> {
-    match (expected, actual) {
-        (Value::Object(expected), Value::Object(actual)) => expected
-            .keys()
-            .chain(actual.keys().filter(|key| !expected.contains_key(*key)))
-            .find_map(|key| match (expected.get(key), actual.get(key)) {
-                (Some(expected), Some(actual)) => {
-                    first_difference(&format!("{at}.{key}"), expected, actual)
-                }
-                _ => Some(format!("{at}.{key}")),
-            }),
-        (Value::Array(expected), Value::Array(actual)) if expected.len() == actual.len() => {
-            expected
-                .iter()
-                .zip(actual)
-                .enumerate()
-                .find_map(|(index, (expected, actual))| {
-                    first_difference(&format!("{at}[{index}]"), expected, actual)
-                })
-        }
-        _ if expected == actual => None,
-        _ if at.is_empty() => Some(".".to_owned()),
-        _ => Some(at.to_owned()),
-    }
 }
 
 /// Compile an environment document (docs/plan/platform-deploy.md §10.1) to JSON.
@@ -567,7 +524,6 @@ impl<'de> serde::Deserialize<'de> for OrderedJson {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn re_indents_to_two_spaces() {
@@ -578,41 +534,31 @@ mod tests {
     }
 
     #[test]
-    fn names_the_first_differing_path() {
-        let expected = json!({"models": {"widget": {"operations": {"get": {"result": "one"}}}}});
-        let actual = json!({"models": {"widget": {"operations": {"get": {"result": "page"}}}}});
-        assert_eq!(
-            first_difference("", &expected, &actual).as_deref(),
-            Some(".models.widget.operations.get.result")
-        );
-        assert_eq!(
-            first_difference("", &json!({"a": [1, 2]}), &json!({"a": [1, 3]})).as_deref(),
-            Some(".a[1]")
-        );
-        assert_eq!(
-            first_difference("", &json!({"a": 1}), &json!({"a": 1, "b": 2})).as_deref(),
-            Some(".b")
-        );
-        assert_eq!(
-            first_difference("", &json!({"a": 1}), &json!({"a": 1})),
-            None
-        );
-    }
-
-    #[test]
-    fn a_compiled_manifest_belongs_to_the_package_above_generated() {
-        let root = std::env::temp_dir().join(format!("wamn-authoring-root-{}", std::process::id()));
-        fs::create_dir_all(output_root(&root)).expect("create the package");
+    fn a_compiled_manifest_belongs_to_its_build_output_or_its_unpacked_package() {
+        let scratch =
+            std::env::temp_dir().join(format!("wamn-authoring-root-{}", std::process::id()));
+        let root = scratch.join("package");
+        fs::create_dir_all(&root).expect("create the package");
         assert_eq!(package_manifest_path(&root), root.join("wamn.json"));
         assert_eq!(
             manifest_package_root(&root.join("wamn.json")),
             Some(root.as_path())
         );
+
         fs::write(root.join(AUTHORED_MANIFEST), "").expect("write wamn.k");
         let compiled = output_root(&root).join("wamn.json");
+        assert_eq!(compiled, scratch.join("target/wamn/package/wamn.json"));
         assert_eq!(package_manifest_path(&root), compiled);
-        assert_eq!(manifest_package_root(&compiled), Some(root.as_path()));
-        fs::remove_dir_all(&root).expect("remove the package");
+        let output = manifest_package_root(&compiled).expect("a build output directory");
+        assert_eq!(output, scratch.join("target/wamn/package"));
+        assert_eq!(output_root(output), output);
+
+        // An unpacked package artifact keeps its generated/ layer paths.
+        fs::create_dir_all(root.join("generated")).expect("create generated/");
+        let unpacked = root.join("generated/wamn.json");
+        assert_eq!(package_manifest_path(&root), unpacked);
+        assert_eq!(manifest_package_root(&unpacked), Some(root.as_path()));
+        fs::remove_dir_all(&scratch).expect("remove the package");
     }
 
     #[test]

@@ -268,12 +268,6 @@ impl PackageRoot {
     fn owns_generated(&self, path: &Path) -> bool {
         path.starts_with(wamn_schema_generator::output_root(&self.root))
     }
-
-    /// SQLx metadata the loop itself prepares during Generate.
-    fn owns_sqlx_metadata(&self, path: &Path) -> bool {
-        path.strip_prefix(&self.root)
-            .is_ok_and(|relative| relative.starts_with("tests/.sqlx"))
-    }
 }
 
 fn authored_inputs(root: &Path, manifest: &PackageManifest) -> BTreeSet<PathBuf> {
@@ -591,12 +585,7 @@ impl WatchRoots {
         // An excluded directory is unwatched, so nothing inside it can arrive
         // here; the directory ITSELF still can, through its watched parent,
         // when a build creates or replaces it.
-        if self.is_excluded(path)
-            || self
-                .packages
-                .iter()
-                .any(|package| package.owns_sqlx_metadata(path))
-        {
+        if self.is_excluded(path) {
             return false;
         }
         if self
@@ -1155,10 +1144,6 @@ mod tests {
             fs::create_dir_all(self.package().join("publication/wirings"))
                 .expect("create wiring declarations root");
             fs::create_dir_all(self.package().join("migrations")).expect("create migrations root");
-            fs::create_dir_all(self.package().join("tests/.sqlx"))
-                .expect("create SQLx metadata root");
-            fs::write(self.package().join("tests/.sqlx/query.json"), "{}")
-                .expect("write SQLx metadata");
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
             fs::write(
                 self.package().join("wamn.json"),
@@ -1862,13 +1847,11 @@ mod tests {
                 .all(|event| *event == DevInvalidation::Ignore)
         );
 
-        // The loop writes SQLx metadata during Generate, so its own output
-        // inside a component root does not rerun the loop.
-        fs::write(
-            repository.package().join("tests/.sqlx/query.json"),
-            "{\"x\":1}",
-        )
-        .expect("write SQLx metadata");
+        // The loop writes SQLx metadata into the build output during
+        // Generate, so its own output does not rerun the loop.
+        let metadata = wamn_schema_generator::output_root(&repository.package()).join(".sqlx");
+        fs::create_dir_all(&metadata).expect("create SQLx metadata root");
+        fs::write(metadata.join("query.json"), "{\"x\":1}").expect("write SQLx metadata");
         let first = tokio::time::timeout(Duration::from_secs(2), source.next())
             .await
             .expect("SQLx metadata event arrived")

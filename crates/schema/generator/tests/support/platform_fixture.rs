@@ -447,7 +447,7 @@ pub(crate) fn catalog_with_unread_table() -> CatalogIr {
 /// The fixture manifest, as the fixture application authors it.
 ///
 /// `apps/platform_fixture/wamn.k` is the one authority, compiled to
-/// `apps/platform_fixture/generated/wamn.json`. A test that needs
+/// `apps/target/wamn/platform_fixture/wamn.json`. A test that needs
 /// a different shape changes this value on its own copy.
 ///
 /// # Panics

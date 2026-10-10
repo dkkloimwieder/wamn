@@ -3,11 +3,11 @@ Its command `sample.record` takes one item per sample, `{"request_id", "value": 
 The edge sample key is the idempotency key, so a repeated forward answers the first `sample_id` and records no second row.
 The stateless command `sample.read` is the device operation of an edge box: it turns one frame into one sample and declares no SQL.
 
-[Manifest](wamn.k): Package identity and declared operations. The generator compiles it to `generated/wamn.json`.
+[Manifest](wamn.k): Package identity and declared operations. `wamn build` compiles it to `wamn.json` in the build output.
 [Migrations](migrations/): Authored application schema.
 [Command SQL](command/): The record statement of `sample.record`. The generated codec claims its key in the platform write log.
 [Data access](data/): SQL-backed operation implementations.
-[Generated output](generated/): Derived contracts, SQL, and client code.
+Generated output: Derived contracts, SQL, and client code. `wamn build` writes it to `apps/target/wamn/edge_samples/`, outside Git.
 [Component](component/): Application guest.
 [Publication](publication/): The two routes, `/sample/get` and `/sample/record`.
 [Running tests](../../docs/operations/running-tests.md): The edge forward run against this application.

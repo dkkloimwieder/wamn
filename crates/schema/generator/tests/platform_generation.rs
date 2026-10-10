@@ -1909,7 +1909,7 @@ fn authored_sql_for_a_query_generation_writes_refuses() {
     });
     // The statement generation writes for this query, authored as is.
     let one_table = include_str!(
-        "../../../../apps/platform_fixture/generated/sql/widget/query_created_at_ascending.sql"
+        "../../../../apps/target/wamn/platform_fixture/sql/widget/query_created_at_ascending.sql"
     );
     let sources = |sql: &str| {
         fixture::authored_sql()

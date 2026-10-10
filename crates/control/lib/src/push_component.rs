@@ -1172,10 +1172,22 @@ fn read_package_owned_file(
             ),
         ));
     }
-    // A `generated/` path names a file of the package's output root.
-    let candidate = match path.strip_prefix("generated") {
-        Ok(output) => wamn_schema_generator::output_root(package_root).join(output),
-        Err(_) => package_root.join(path),
+    // A `generated/` path names a file of the package's output root, which
+    // lies outside the package. It must stay inside that output root.
+    let (candidate, owner) = match path.strip_prefix("generated") {
+        Ok(output) => {
+            let output_root = wamn_schema_generator::output_root(package_root);
+            let owner = output_root.canonicalize().map_err(|error| {
+                ComponentProjectionError::new(
+                    ComponentProjectionErrorType::StatementPathInvalid,
+                    format!(
+                        "{subject} cannot resolve the build output of {relative_path:?}: {error}"
+                    ),
+                )
+            })?;
+            (output_root.join(output), owner)
+        }
+        Err(_) => (package_root.join(path), canonical_root.to_owned()),
     };
     let metadata = std::fs::symlink_metadata(&candidate).map_err(|error| {
         ComponentProjectionError::new(
@@ -1195,7 +1207,7 @@ fn read_package_owned_file(
             format!("{subject} cannot resolve path {relative_path:?}: {error}"),
         )
     })?;
-    if !canonical_candidate.starts_with(canonical_root) {
+    if !canonical_candidate.starts_with(&owner) {
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementPathInvalid,
             format!("{subject} path {relative_path:?} escapes the package"),

@@ -988,8 +988,9 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, &migration.bytes).unwrap();
         }
-        let path =
-            wamn_schema_generator::output_root(&root).join("platform-policy/data-access.json");
+        // A hand-written package keeps its evidence under `generated/`, which
+        // the output root resolver reads, so nothing lands outside `root`.
+        let path = root.join("generated/platform-policy/data-access.json");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, &overlay_bytes).unwrap();
         let prepared = prepare_local(std::slice::from_ref(&root)).unwrap();

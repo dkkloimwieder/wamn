@@ -26,24 +26,16 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
         ),
     )
     .unwrap();
-    fs::write(
-        wamn_schema_generator::package_manifest_path(&candidate),
-        wamn_schema_generator::compile_manifest(&candidate).unwrap(),
-    )
-    .unwrap();
+    wamn_schema_generator::write_compiled_manifest(&candidate).unwrap();
     let generation = fixture.server.database("upgrade_generation").unwrap();
     connect(generation.url())
         .await
         .batch_execute("ALTER TABLE inventory.widget_maker DROP COLUMN note")
         .await
         .unwrap();
-    wamn_schema_generator::materialize_package_verified(
-        MaterializeMode::Write,
-        generation.url(),
-        &candidate,
-    )
-    .await
-    .unwrap();
+    wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
+        .await
+        .unwrap();
     let original = state(&mut fixture.source).await;
     let result = qualify_upgrade_with_observer(
         request(&fixture, "backfill.json"),
@@ -107,6 +99,7 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
         serde_json::from_slice(&wamn_schema_generator::compile_manifest(&competing).unwrap())
             .unwrap();
     competing_manifest["package"]["version"] = json!("2.3.0");
+    fs::create_dir_all(wamn_schema_generator::output_root(&competing)).unwrap();
     fs::write(
         wamn_schema_generator::package_manifest_path(&competing),
         serde_json::to_vec(&competing_manifest).unwrap(),
@@ -228,13 +221,9 @@ async fn expand_conditions_preserve_rows_stop_on_lock_and_commit_with_evidence()
     )
     .unwrap();
     let generation = fixture.server.database("upgrade_generation").unwrap();
-    wamn_schema_generator::materialize_package_verified(
-        MaterializeMode::Write,
-        generation.url(),
-        &candidate,
-    )
-    .await
-    .unwrap();
+    wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
+        .await
+        .unwrap();
     let result = qualify_upgrade_with_observer(
         request(&fixture, "expand.json"),
         WorkloadObserver::Captured(fixture.serving.clone()),

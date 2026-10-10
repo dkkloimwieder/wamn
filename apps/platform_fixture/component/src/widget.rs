@@ -10,7 +10,7 @@ mod archive {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/widget_archive_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_archive_codec.rs"
         ));
     }
 
@@ -43,7 +43,7 @@ mod list {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/widget_list_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_list_codec.rs"
         ));
     }
 
@@ -84,7 +84,7 @@ mod record_batch {
         use super::contract;
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../generated/wit/widget_record_batch_codec.rs"
+            "/../../target/wamn/platform_fixture/wit/widget_record_batch_codec.rs"
         ));
     }
 

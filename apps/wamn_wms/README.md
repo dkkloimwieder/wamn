@@ -1,10 +1,10 @@
 WMS owns package `wamn_wms`, its SQL, guest, generated client, and application tests.
 
 [Inventory scenario](inventory-scenario.md): Application behavior, limits, and source owners.
-[Manifest](wamn.k): Package identity and declared operations. The generator compiles it to `generated/wamn.json`.
+[Manifest](wamn.k): Package identity and declared operations. `wamn build` compiles it to `wamn.json` in the build output.
 [Migrations](migrations/): Authored application schema.
 [Data access](data/): SQL-backed operation implementations.
-[Generated output](generated/): Derived contracts, SQL, and client code.
+Generated output: Derived contracts, SQL, and client code. `wamn build` writes it to `apps/target/wamn/wamn_wms/`, outside Git.
 [Component](component/): Application guest.
 [Web application](web/README.md): The browser page, with its route table.
 [Tests](tests/): Application assertions.
