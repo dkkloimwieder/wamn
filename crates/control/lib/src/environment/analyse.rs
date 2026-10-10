@@ -95,6 +95,17 @@ impl Revision {
     }
 }
 
+/// What the verified artifact of a declared floor version that the
+/// environment has not registered says about it (R13, R16).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FloorArtifact {
+    pub version: String,
+    /// The artifact's `predecessor_version`.
+    pub predecessor: Option<String>,
+    /// Whether the artifact is a contract-phase version.
+    pub contract: bool,
+}
+
 /// Everything analysis read.
 #[derive(Debug, Clone)]
 pub struct Authorities {
@@ -106,6 +117,9 @@ pub struct Authorities {
     pub revision: Option<Revision>,
     /// Release digest to the count of host pods that are not terminated.
     pub live: BTreeMap<String, usize>,
+    /// Package id to the artifact of its declared floor version, for each
+    /// declared floor of an installed package whose version is not registered.
+    pub floor_artifacts: BTreeMap<String, FloorArtifact>,
 }
 
 /// The result of analysis: the authorities and the differences to apply.
@@ -152,6 +166,12 @@ pub async fn analyse(
     };
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
+    let floor_artifacts = match &project {
+        Some(project) if document.release != DeclaredRelease::None => {
+            read_floor_artifacts(platform, document, project).await?
+        }
+        _ => BTreeMap::new(),
+    };
     let authorities = Authorities {
         release_name,
         policy,
@@ -160,6 +180,7 @@ pub async fn analyse(
         release,
         revision,
         live,
+        floor_artifacts,
     };
     let actor = actor();
     let refusals = refusals(document, &authorities);
@@ -172,6 +193,42 @@ pub async fn analyse(
         actor,
         plan,
     })
+}
+
+/// Read the verified artifact of each declared floor version of an installed
+/// package that the environment has not registered: its lineage is checked
+/// here, at analysis, not when step 9 applies it (R13, R16).
+async fn read_floor_artifacts(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    project: &ProjectState,
+) -> anyhow::Result<BTreeMap<String, FloorArtifact>> {
+    let mut artifacts = BTreeMap::new();
+    for (package, version) in &document.floors {
+        let Some(installed) = project.installed.get(package) else {
+            continue;
+        };
+        if installed.lineage.contains_key(version) {
+            continue;
+        }
+        let opened = super::stage::open(platform, package, version).await?;
+        let path = wamn_schema_generator::package_manifest_path(opened.root());
+        let manifest = wamn_schema_generator::PackageManifest::from_slice(
+            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+        )
+        .with_context(|| format!("parse {}", path.display()))?;
+        artifacts.insert(
+            package.clone(),
+            FloorArtifact {
+                version: version.clone(),
+                predecessor: manifest.package.predecessor_version.clone(),
+                contract: manifest.upgrade_stage.as_ref().is_some_and(|stage| {
+                    stage.phase == wamn_schema_generator::UpgradeStagePhase::Contract
+                }),
+            },
+        );
+    }
+    Ok(artifacts)
 }
 
 /// The actor: the identity principal the CLI authenticates as, or `$USER`
@@ -699,8 +756,8 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                     "floor {package}@{declared}: with release none no floor advances from {recorded}"
                 ));
             }
-            // A version not registered yet is a successor step 9 applies from
-            // its artifact; it cannot be an ancestor of a registered floor.
+            // A version not registered yet is checked against its artifact
+            // below.
             Some(declared)
                 if lineage.is_some_and(|lineage| {
                     lineage.contains_key(declared) && !descends(lineage, recorded, declared)
@@ -726,8 +783,18 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
                     "floor {package}@{declared}: with release none no floor advances"
                 ));
             }
-            // Step 9 applies a version not registered yet from its verified
-            // artifact, when its predecessor is the installed version.
+            Some(installed)
+                if document.release != DeclaredRelease::None
+                    && !installed.lineage.contains_key(declared) =>
+            {
+                refusals.extend(unregistered_floor(
+                    package,
+                    declared,
+                    installed,
+                    project.floors.get(package),
+                    authorities.floor_artifacts.get(package),
+                ));
+            }
             Some(_) => {}
         }
     }
@@ -755,6 +822,45 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
         }
     }
     refusals
+}
+
+/// The refusal of a declared floor version the environment has not
+/// registered, from its verified artifact (R13, R16). Step 9 applies the
+/// version, so it must be a contract-phase version whose predecessor is the
+/// installed version, and with that link it must descend from the recorded
+/// floor.
+fn unregistered_floor(
+    package: &str,
+    declared: &str,
+    installed: &Installed,
+    recorded: Option<&String>,
+    artifact: Option<&FloorArtifact>,
+) -> Option<String> {
+    let Some(artifact) = artifact.filter(|artifact| artifact.version == declared) else {
+        return Some(format!(
+            "floor {package}@{declared} is not registered and its artifact was not read"
+        ));
+    };
+    if !artifact.contract {
+        return Some(format!(
+            "floor {package}@{declared} is not a contract-phase version"
+        ));
+    }
+    if artifact.predecessor.as_deref() != Some(installed.current.as_str()) {
+        return Some(format!(
+            "floor {package}@{declared} is outside the lineage: its predecessor {:?} is not \
+             the installed version {}",
+            artifact.predecessor, installed.current
+        ));
+    }
+    let mut lineage = installed.lineage.clone();
+    lineage.insert(declared.to_owned(), artifact.predecessor.clone());
+    match recorded {
+        Some(recorded) if !descends(&lineage, recorded, declared) => Some(format!(
+            "floor {package}@{declared} does not descend from the recorded floor {recorded}"
+        )),
+        _ => None,
+    }
 }
 
 /// The differences from each authority (§10.1 step 3, the plan).
@@ -932,6 +1038,7 @@ mod tests {
             release: None,
             revision: None,
             live: BTreeMap::new(),
+            floor_artifacts: BTreeMap::new(),
         }
     }
 
@@ -990,9 +1097,35 @@ mod tests {
         );
         assert!(first.is_empty(), "{first:?}");
         // A version not registered yet is the contract-phase successor that
-        // step 9 applies from its artifact.
-        let successor = refusals(&document(digest, &[("wamn_wms", "2.5.0")]), &recorded);
-        assert!(successor.is_empty(), "{successor:?}");
+        // step 9 applies from its artifact: its artifact names the installed
+        // version as its predecessor.
+        let artifact = |predecessor: Option<&str>, contract: bool| {
+            let mut with = recorded.clone();
+            with.floor_artifacts.insert(
+                "wamn_wms".to_owned(),
+                FloorArtifact {
+                    version: "2.5.0".to_owned(),
+                    predecessor: predecessor.map(str::to_owned),
+                    contract,
+                },
+            );
+            refusals(&document(digest.clone(), &[("wamn_wms", "2.5.0")]), &with)
+        };
+        assert!(artifact(Some("2.4.0"), true).is_empty());
+        // R13, R16: a declared floor outside the lineage is refused here, not
+        // at step 9.
+        for (predecessor, reason) in [
+            (Some("2.3.0"), "outside the lineage"),
+            (Some("9.9.9"), "outside the lineage"),
+            (None, "outside the lineage"),
+        ] {
+            let refused = artifact(predecessor, true);
+            assert!(refused[0].contains(reason), "{refused:?}");
+        }
+        let expand = artifact(Some("2.4.0"), false);
+        assert!(expand[0].contains("not a contract-phase"), "{expand:?}");
+        let unread = refusals(&document(digest, &[("wamn_wms", "2.5.0")]), &recorded);
+        assert!(unread[0].contains("artifact was not read"), "{unread:?}");
         let none_first = refusals(
             &document(DeclaredRelease::None, &[("wamn_wms", "2.4.0")]),
             &authorities(&[]),
