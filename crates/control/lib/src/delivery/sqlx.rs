@@ -2,8 +2,7 @@
 
 use std::path::Path;
 
-use anyhow::ensure;
-use tokio::process::Command;
+use anyhow::{Context as _, ensure};
 use wamn_schema_generator::PackageManifest;
 
 /// Select SQL verification from declarations rather than package identity.
@@ -18,23 +17,16 @@ pub fn requires_verifier(manifest: &PackageManifest) -> bool {
             .any(|operation| !operation.statements.is_empty())
 }
 
-/// Build the platform verifier command for one package.
-pub fn prepare_arguments(repository_root: &Path, package_root: &Path) -> Vec<String> {
-    vec![
-        "cargo".to_owned(),
-        "run".to_owned(),
-        "--manifest-path".to_owned(),
-        repository_root.join("Cargo.toml").display().to_string(),
-        "--locked".to_owned(),
-        "--offline".to_owned(),
-        "-p".to_owned(),
-        "wamn-schema-generator".to_owned(),
-        "--example".to_owned(),
-        "sqlx_metadata".to_owned(),
-        "--".to_owned(),
-        "prepare".to_owned(),
-        package_root.display().to_string(),
-    ]
+/// Prepare the SQLx metadata of the package's generated verifier into its
+/// build output, against the migrated database at `database_url`.
+pub async fn prepare(package_root: &Path, database_url: &str) -> anyhow::Result<()> {
+    let package_root = package_root.to_owned();
+    let database_url = database_url.to_owned();
+    tokio::task::spawn_blocking(move || {
+        wamn_schema_generator::prepare_sqlx_metadata(&package_root, &database_url)
+    })
+    .await
+    .context("join the SQLx metadata preparation")?
 }
 
 /// Require the pinned CLI version before preparing metadata.
@@ -47,19 +39,6 @@ pub fn require_cli_version(output: &[u8]) -> anyhow::Result<()> {
         "SQLx CLI 0.9.0 is required"
     );
     Ok(())
-}
-
-/// Configure preparation while leaving execution and cleanup to the caller.
-pub fn prepare_command(repository_root: &Path, package_root: &Path, database_url: &str) -> Command {
-    let arguments = prepare_arguments(repository_root, package_root);
-    let mut command = Command::new(&arguments[0]);
-    command
-        .args(&arguments[1..])
-        .current_dir(repository_root)
-        .env("DATABASE_URL", database_url)
-        .env("SQLX_OFFLINE", "false")
-        .env("CARGO_NET_OFFLINE", "true");
-    command
 }
 
 #[cfg(test)]
@@ -112,7 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn preparation_uses_the_platform_verifier_for_any_sql_package() {
+    fn every_sql_package_requires_the_platform_verifier() {
         let mut manifest = manifest();
         assert!(requires_verifier(&manifest));
         manifest.package.id = "another_package".to_owned();
@@ -124,37 +103,5 @@ mod tests {
             .operations
             .clear();
         assert!(!requires_verifier(&manifest));
-        let repository = Path::new("/repository");
-        let package = Path::new("/application");
-        {
-            let arguments = prepare_arguments(repository, package);
-            assert_eq!(
-                arguments,
-                [
-                    "cargo",
-                    "run",
-                    "--manifest-path",
-                    "/repository/Cargo.toml",
-                    "--locked",
-                    "--offline",
-                    "-p",
-                    "wamn-schema-generator",
-                    "--example",
-                    "sqlx_metadata",
-                    "--",
-                    "prepare",
-                    "/application"
-                ]
-            );
-            let command = prepare_command(repository, package, "postgresql://verify");
-            let command = command.as_std();
-            assert_eq!(command.get_current_dir(), Some(repository));
-            let envs: Vec<_> = command.get_envs().collect();
-            assert!(envs.contains(&(
-                "DATABASE_URL".as_ref(),
-                Some("postgresql://verify".as_ref())
-            )));
-            assert!(envs.contains(&("SQLX_OFFLINE".as_ref(), Some("false".as_ref()))));
-        }
     }
 }

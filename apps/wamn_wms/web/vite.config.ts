@@ -8,6 +8,7 @@ export default defineConfig(({ command }) => {
   const application = applicationConfig({
     root: import.meta.url,
     client: { name: "@wamn/wms-client", path: "../../target/wamn/wamn_wms/client-ts" },
+    outDir: "../../target/wamn/wamn_wms/web",
     port: 5181,
     command,
   });

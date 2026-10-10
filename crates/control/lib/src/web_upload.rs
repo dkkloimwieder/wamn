@@ -4,8 +4,9 @@
 //! an environment serves, under `<prefix>/<package_id>/<release hex>/`, every
 //! built file create-only, then `config.json`, and the index last. The release
 //! must be the one the newest successful revision of the environment's release
-//! chart installed, and the built files are the `web/dist` layer of each
-//! package artifact (docs/plan/platform-deploy.md §13, §7.2).
+//! chart installed, and the built files are the `web` layer of each package
+//! artifact, which unpacks to the web build of its output root
+//! (docs/plan/platform-deploy.md §13, §7.2, §7.1 step 8).
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,7 @@ use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutM
 use wamn_control_registry::Triple;
 
 use crate::environment::Platform;
-use crate::package_artifact::{PackageRegistry, PackageSource, open_package_source};
+use crate::package_artifact::{PackageRegistry, PackageSource, open_package_source, web_build};
 use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE, scope_file_bytes};
 
 /// A built file name carries its content hash, so a browser keeps it.
@@ -93,7 +94,7 @@ pub async fn upload_release(
             continue;
         };
         let project = client_project(client)?;
-        let dist = opened.root().join("web/dist");
+        let dist = web_build(opened.root());
         let root = client_root(sink.prefix, package.package_id(), hex);
         let location = format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket);
         let index = object_store::path::Path::from(format!("{root}/index.html"));
@@ -110,7 +111,7 @@ pub async fn upload_release(
             .with_context(|| format!("the package artifact {tag} holds no built web client"))?;
         ensure!(
             files.iter().any(|file| file == &dist.join("index.html")),
-            "the package artifact {tag} holds no web/dist/index.html"
+            "the package artifact {tag} holds no web client index.html"
         );
         write_files(
             store.as_ref(),

@@ -49,6 +49,8 @@ export interface ApplicationConfig {
     readonly proxy?: Record<string, Proxy>;
     readonly fs: { readonly allow: string[] };
   };
+  /** The build writes into the package's build output directory, which it owns. */
+  readonly build: { readonly outDir: string; readonly emptyOutDir: boolean };
 }
 
 /** What one application states about itself. */
@@ -57,6 +59,8 @@ export interface ApplicationOptions {
   readonly root: string;
   /** The generated client: its package name and its directory, relative to the root. */
   readonly client: { readonly name: string; readonly path: string };
+  /** The directory of the built files, `target/wamn/<package>/web`, relative to the root. */
+  readonly outDir: string;
   /** The port of the dev server. */
   readonly port: number;
   /** `serve` for the dev server, `build` for static files. Only `serve` reads `dev.json`. A build reads nothing about the deployment. */
@@ -159,5 +163,6 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
       // installed package once, under the repository root's node_modules.
       fs: { allow: [at("."), web, at(options.client.path), control, controlOrg, store] },
     },
+    build: { outDir: at(options.outDir), emptyOutDir: true },
   };
 }

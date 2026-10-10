@@ -131,7 +131,11 @@ Build every package before you compile the apps workspace, the app test crates, 
 `build.json` is the build receipt, schema `wamn.build/v1`, in canonical JSON.
 It records the input files and their digest, the base packages, the generator identity, and the digest of each output.
 An overlay reads the `build.json` of each base package, so build the base first.
-The build does not compile components or the web client yet.
+For a package that has a `web/` directory, the build then runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web` (platform-deploy.md §7.1 step 8).
+Run `pnpm install` at the repository root first.
+`build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.
+Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.
+The build does not compile components yet.
 
 ## Host route clients
 

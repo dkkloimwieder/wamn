@@ -120,7 +120,7 @@ Generate runs [`wamn build`](building.md#wamn-build) for each package, the base 
 Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
 SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
 Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
-The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover, such as `web/dist`.
+The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover.
 The watcher uses the same ignore rules.
 The watcher watches the package directories, the component build roots, and the local configuration files of `dev.json`.
 Nothing in the loop builds natively, so the root Cargo files and `crates/client` are not inputs.

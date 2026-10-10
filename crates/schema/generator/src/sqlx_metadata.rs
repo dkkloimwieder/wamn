@@ -24,8 +24,8 @@ pub struct SqlxVerifier {
 /// Prepare the SQLx metadata of the package's generated verifier into
 /// `.sqlx` in the package's build output directory.
 ///
-/// `DATABASE_URL` names the package's migrated PostgreSQL database.
-pub fn prepare_sqlx_metadata(package_root: &Path) -> Result<()> {
+/// `database_url` names the package's migrated PostgreSQL database.
+pub fn prepare_sqlx_metadata(package_root: &Path, database_url: &str) -> Result<()> {
     let package_root = fs::canonicalize(package_root).context("resolve package root")?;
     let package_root = package_root.as_path();
     let repository_root = repository_root(package_root)?;
@@ -43,12 +43,10 @@ pub fn prepare_sqlx_metadata(package_root: &Path) -> Result<()> {
     );
     let build_root = repository_root.join("target/wamn-sqlx-verifier-build");
 
-    let database_url = std::env::var("DATABASE_URL")
-        .context("DATABASE_URL must name the package's migrated PostgreSQL database")?;
     let manifest =
         fs::read(crate::package_manifest_path(package_root)).context("read package manifest")?;
     let manifest = PackageManifest::from_slice(&manifest).context("parse package manifest")?;
-    let database_url = package_database_url(&database_url, &manifest)?;
+    let database_url = package_database_url(database_url, &manifest)?;
 
     let version = Command::new("cargo")
         .args(["sqlx", "--version"])

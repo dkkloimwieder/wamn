@@ -527,17 +527,11 @@ impl ProductionDevStageRunner {
                 }
                 // Until a preparation succeeds, the metadata on disk is unknown.
                 self.sqlx_metadata_inputs.insert(package_id.clone(), None);
-                let mut command = crate::delivery::sqlx::prepare_command(
-                    self.git.repository_root(),
-                    &package.root,
-                    self.config.target_database_url(),
-                );
-                let output = super::execute_preparation(&mut command, super::PREPARATION_TIMEOUT)
+                crate::delivery::sqlx::prepare(&package.root, self.config.target_database_url())
                     .await
                     .map_err(|source| {
                         ProductionDevStageError::owner("refresh selected SQLx metadata", source)
                     })?;
-                require_command_success("prepare selected SQLx verifier", &output)?;
                 self.sqlx_metadata_inputs
                     .insert(package_id.clone(), Some(current));
             }
@@ -1489,7 +1483,7 @@ fn sqlx_metadata_is_current(
 /// Read every authored file of the package at `root`.
 ///
 /// The walk skips the generated subtree, `node_modules`, and each directory
-/// that the ignore rules of `repository` cover, such as `web/dist`. Those hold
+/// that the ignore rules of `repository` cover. Those hold
 /// installed packages and build output, not package source, and a package
 /// manager can fill them with links to directories (wamn-qjuy). The watcher
 /// bounds itself by the same ignore rules.

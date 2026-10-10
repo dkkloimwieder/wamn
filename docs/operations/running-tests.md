@@ -560,22 +560,9 @@ The loop compares these inputs with the inputs of its last successful preparatio
 A new session prepares once. A failed or interrupted preparation runs again in the next cycle.
 A Rust-only change does not prepare.
 
-To prepare the metadata of Receiving by hand, run the platform verifier under the PostgreSQL runner.
-The verifier requires SQLx CLI 0.9.0 and reads the database URL from `DATABASE_URL`:
-
-```bash
-cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
-  --database wamn_receiving --schema receiving \
-  --migration-dir apps/wamn_receiving/migrations \
-  --history-manifest apps/wamn_receiving/wamn.k \
-  --url-env DATABASE_URL -- \
-  cargo run --locked --offline -p wamn-schema-generator --example sqlx_metadata -- \
-    prepare apps/wamn_receiving
-```
-
-`--history-manifest` creates the history table of each relation whose model declares a retention other than `"none"`, so that SQLx prepare resolves authored SQL that names a history table.
-For Acme, pass `--migration-dir apps/wamn_receiving/migrations` before `--migration-dir apps/client_acme_receiving/migrations`.
-For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
+The loop calls `wamn_schema_generator::prepare_sqlx_metadata` in its own process, with the URL of the target database.
+The verifier requires SQLx CLI 0.9.0.
+No separate command prepares the metadata by hand.
 
 ### wamn build
 

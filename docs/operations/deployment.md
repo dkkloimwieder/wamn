@@ -202,7 +202,7 @@ A CI completion order does not set deployment precedence.
 ## Web client files
 
 `wamn web upload` writes the built web client of each package of the release that an environment serves to a bucket.
-The built files are the `web/dist` layer of each package artifact, so `push-package` must run after the client is built.
+The built files are the `web` layer of each package artifact. `push-package` reads them from `apps/target/wamn/<package>/web`, which `wamn build` writes, so it must run after the build.
 Pass the coordinate and the manifest digest of the release. The command refuses a release that is not the one the newest successful revision of the environment's release chart installed.
 It reads the platform inputs of `wamn-ctl env`, including `WAMN_PACKAGE_ARTIFACT_BASE`.
 

@@ -97,8 +97,9 @@ pub struct ReceiptOutputs {
     pub files: BTreeMap<String, String>,
     /// The package's components. Empty until the build compiles them.
     pub components: Vec<ReceiptComponent>,
-    /// The digest of the web client build, or `null` while the build does
-    /// not make one.
+    /// The digest of the web client build (§7.1 step 8): the canonical JSON
+    /// of each built file's `sha256:` digest by its path below `web/`, or
+    /// `null` for a package without a web client.
     pub web: Option<String>,
 }
 

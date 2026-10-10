@@ -77,9 +77,14 @@ const COMPONENT_DIGEST_ANNOTATION: &str = "wamn.component.digest";
 /// Title of layer 0.
 const MANIFEST_TITLE: &str = "wamn.json";
 
-/// The tar layers in order: title and the package paths each carries. A path
-/// that a package does not have is left out, and a layer with no file is an
-/// empty tar.
+/// The logical path of the web client build in the `web` layer. Its files lie
+/// in the web build of the package's output root (§7.1 step 8, C10).
+const WEB_LAYER_PATH: &str = "web/dist";
+
+/// The tar layers in order: title and the logical package paths each carries.
+/// A path that a package does not have is left out, and a layer with no file is
+/// an empty tar. A `generated/` path and the `web/dist` path name files of the
+/// package's output root (`physical_path`).
 pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
     ("migrations", &["migrations"]),
     ("publication", &["publication"]),
@@ -97,7 +102,7 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
             "generated/package-identity.json",
         ],
     ),
-    ("web", &["web/dist"]),
+    ("web", &[WEB_LAYER_PATH]),
 ];
 
 /// Where an unpacked artifact keeps its component descriptors, one
@@ -391,12 +396,25 @@ fn tar_layer(title: &str, entries: &BTreeMap<String, Vec<u8>>) -> anyhow::Result
 }
 
 /// The file of the package-relative `logical` path. A `generated/` path names
-/// a file of the package's output root.
+/// a file of the package's output root, and a [`WEB_LAYER_PATH`] path a file of
+/// the output root's web build.
 fn physical_path(root: &Path, logical: &str) -> PathBuf {
-    match Path::new(logical).strip_prefix("generated") {
-        Ok(output) => wamn_schema_generator::output_root(root).join(output),
-        Err(_) => root.join(logical),
+    let logical = Path::new(logical);
+    if let Ok(output) = logical.strip_prefix("generated") {
+        wamn_schema_generator::output_root(root).join(output)
+    } else if let Ok(web) = logical.strip_prefix(WEB_LAYER_PATH) {
+        wamn_schema_generator::output_root(root)
+            .join(wamn_schema_generator::build::WEB_OUTPUT)
+            .join(web)
+    } else {
+        root.join(logical)
     }
+}
+
+/// The web client build of the package tree at `root`: the web build of its
+/// output root, which a source tree and an unpacked artifact both have there.
+pub fn web_build(root: &Path) -> PathBuf {
+    physical_path(root, WEB_LAYER_PATH)
 }
 
 /// Add every regular file under `relative` to `files`, keyed by its path
@@ -1277,7 +1295,8 @@ async fn open_artifact(
 /// Unpack `layers` into `root`: layer 0 to `generated/wamn.json`, the tars in
 /// place, and each descriptor to `descriptors/<name>.json`. An unpacked tree
 /// keeps the `generated/` layer paths, and the output root resolver reads its
-/// `generated/` directory as its build output.
+/// `generated/` directory as its build output. So the `web/dist` entries go to
+/// the web build of that output root, `generated/web`.
 fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
     let tar_count = PACKAGE_TAR_LAYERS.len();
     ensure!(
@@ -1323,7 +1342,7 @@ fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
             let mut data = Vec::new();
             std::io::Read::read_to_end(&mut entry, &mut data)
                 .with_context(|| format!("read tar entry {logical}"))?;
-            write_file(&root.join(&logical), &data)?;
+            write_file(&physical_path(root, &logical), &data)?;
         }
     }
     for layer in &layers[tar_count + 1..] {
@@ -1432,7 +1451,8 @@ mod tests {
             "publication/wirings/store.json",
             b"{\"nodes\": {\"a\": {\"component\": \"receiving\"}, \"b\": {\"component\": \"blob-put\", \"params\": {\"store_alias\": \"labels\"}}}}\n",
         );
-        write(&root, "web/dist/index.html", b"<html></html>\n");
+        write(&root, "generated/web/index.html", b"<html></html>\n");
+        write(&root, "web/dist/stale.html", b"left out\n");
         write(&root, "web/src/main.ts", b"left out\n");
         write(&root, "generated/client/left-out.ts", b"left out\n");
         root
@@ -1577,7 +1597,7 @@ mod tests {
     fn a_changed_file_changes_the_digest() {
         let root = package_tree("changed");
         let first = pack_package(&root).unwrap();
-        std::fs::write(root.join("web/dist/index.html"), b"<html>2</html>\n").unwrap();
+        std::fs::write(root.join("generated/web/index.html"), b"<html>2</html>\n").unwrap();
         assert_ne!(first.digest, pack_package(&root).unwrap().digest);
         remove(&root);
     }
@@ -1741,6 +1761,9 @@ mod tests {
                 .join("publication/components/blob-put.json.in")
                 .is_file()
         );
+        assert_eq!(web_build(&unpacked), unpacked.join("generated/web"));
+        assert!(unpacked.join("generated/web/index.html").is_file());
+        assert!(!unpacked.join("web").exists());
         let repacked = pack_package(&unpacked).unwrap();
         assert_eq!(repacked.digest, packed.digest);
         assert_eq!(repacked.manifest, packed.manifest);

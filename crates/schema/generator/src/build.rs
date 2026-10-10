@@ -5,8 +5,9 @@
 //! derives the statement types and relations, and emits the canonical
 //! `wamn.json` (RFC 8785, hashed once). Pass two generates every consumer from
 //! those bytes and writes them, with `build.json`, to the package's build
-//! output directory. Steps 7 and 8 (component and web client builds) are not
-//! part of this build yet.
+//! output directory. Step 8 builds the web client of a package that has one
+//! into `web/` of the same directory. Step 7, the component build, is not part
+//! of this build yet.
 //!
 //! The verification database is created on the PostgreSQL server that the
 //! request names and dropped when the build ends. The server keeps the
@@ -48,6 +49,11 @@ const PLACEHOLDER_TYPE: &str = "text";
 /// The SQLx metadata of the generated verifier. It is prepared into the build
 /// output after the build (§7.1 step 7), so a build keeps it.
 const SQLX_METADATA: &str = ".sqlx";
+/// The web client's source directory, relative to the package root.
+const WEB_SOURCE: &str = "web";
+/// The web client build, relative to the package's build output directory
+/// (§7.1 step 8, C10).
+pub const WEB_OUTPUT: &str = "web";
 
 /// One package build.
 #[derive(Debug, Clone)]
@@ -115,7 +121,8 @@ pub async fn build_package(request: &BuildRequest) -> Result<BuildReceipt> {
     let (canonical, files) = built?;
 
     let package_output = package_output(&request.output_root, &provisional.package.id);
-    let outputs = write_outputs(&package_output, &canonical, &files)?;
+    let mut outputs = write_outputs(&package_output, &canonical, &files)?;
+    outputs.web = build_web(package_root, &package_output).await?;
     let receipt = BuildReceipt {
         schema: RECEIPT_SCHEMA.to_owned(),
         package: ReceiptPackage {
@@ -644,6 +651,54 @@ fn write_outputs(
         components: Vec::new(),
         web: None,
     })
+}
+
+/// Step 8: `pnpm build` the web client of the package, when it has one, into
+/// [`WEB_OUTPUT`] of its build output directory, and return the digest of the
+/// built files. The web client resolves its client package in the default
+/// output root, `target/wamn/<package>/client-ts`, which pass two writes when
+/// the request names that root. `write_outputs` removed the previous web build.
+async fn build_web(package_root: &Path, package_output: &Path) -> Result<Option<String>> {
+    let source = package_root.join(WEB_SOURCE);
+    if !source.join("package.json").is_file() {
+        return Ok(None);
+    }
+    let web = std::path::absolute(package_output.join(WEB_OUTPUT))
+        .with_context(|| format!("resolve {}", package_output.display()))?;
+    let output = tokio::process::Command::new("pnpm")
+        .current_dir(&source)
+        .args(["run", "build", "--outDir"])
+        .arg(&web)
+        .arg("--emptyOutDir")
+        .output()
+        .await
+        .with_context(|| format!("run pnpm build in {}", source.display()))?;
+    ensure!(
+        output.status.success(),
+        "pnpm build in {} failed:\n{}{}",
+        source.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut files = BTreeMap::new();
+    for relative in existing_files(&web)? {
+        let path = web.join(&relative);
+        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        let key = relative
+            .to_str()
+            .with_context(|| format!("web path is not UTF-8: {}", relative.display()))?
+            .to_owned();
+        files.insert(key, sha256(&bytes));
+    }
+    ensure!(
+        !files.is_empty(),
+        "pnpm build in {} wrote no file to {}",
+        source.display(),
+        web.display()
+    );
+    Ok(Some(sha256(&canonical_json_bytes(&serde_json::json!(
+        files
+    )))))
 }
 
 #[cfg(test)]

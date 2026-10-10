@@ -2064,7 +2064,7 @@ done
 tools/build-components app apps/wamn_wms
 ```
 
-This record predates `wamn build`. The `materialize_package` example and the SQLx `check` mode no longer exist: `wamn build apps/wamn_wms` now generates the package into `apps/target/wamn/wamn_wms`, outside Git ([building](building.md#wamn-build)).
+This record predates `wamn build`. The `materialize_package` and `sqlx_metadata` examples no longer exist: `wamn build apps/wamn_wms` now generates the package into `apps/target/wamn/wamn_wms`, outside Git ([building](building.md#wamn-build)).
 
 Review generated changes and require both generation and SQLx checks to pass before building. Then follow [package upgrades](deployment.md#package-upgrades) for live qualification, evidence-bound application, privilege reconciliation, release qualification, publication, selection, and rollout. Record the actual workload schema and identities, retained-row checks, authenticated WMS operation results, and release digests for each stage. Rollback selects the immediate predecessor on the upgraded database; it does not reverse the migration. None of these final-cycle results is claimed here.
 
