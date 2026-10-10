@@ -227,7 +227,7 @@ For Docker fixtures, choose a new container name and an unused loopback port.
 Make sure that a real query succeeds through the same connection path that the command uses.
 
 The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling and the manual generation commands below.
-Release qualification uses it for the generation database and the SQLx metadata check.
+Release qualification uses it for the server that `wamn build` uses.
 It starts a server, creates the named database, and optionally applies migrations and history tables.
 It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
 It stops the command's process group and removes its server on completion, failure, or handled interruption.

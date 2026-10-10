@@ -66,8 +66,10 @@ wamn-ctl qualify-release --repository "$SOURCE" --revision main \
 
 The checkout must match the selected revision and stay clean through all checks.
 A release tag or explicit revision can replace `main`.
-Qualification reconstructs fresh application schemas, compares generated output, and uses SQLx CLI 0.9.0 through the shared platform verifier.
-It refuses committed SQLx metadata that is missing, changed, or holds query files that no query uses.
+Qualification first runs `wamn build` of every package, base packages first, against a fresh PostgreSQL server from `wamn-test-postgres`.
+The repository holds no build output, and the component, native and test builds read it.
+It builds every package, not only the packages of the candidate, because `tools/build-components all` reads the output of every package.
+The result must record a `wamn build` of each package of the candidate.
 It rebuilds through Cargo, then refuses artifacts that differ from the candidate.
 It pulls each image by the digest that the candidate names and records its image ID. It builds no image.
 The application cases consume the supplied artifacts without replacement builds.

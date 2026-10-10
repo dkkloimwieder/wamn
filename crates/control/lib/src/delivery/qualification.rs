@@ -27,6 +27,18 @@ const WMS_CASES: &[&str] = &[
     "cluster::released_wms_routes_retain_committed_work_after_label_failure",
     "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
 ];
+/// Every package that `wamn build` builds, each base before its overlays.
+/// `tools/build-components all` reads the build output of every package, so
+/// qualification builds them all, not only the packages of the candidate.
+const BUILD_PACKAGES: &[&str] = &[
+    "platform_fixture",
+    "platform_fixture_overlay",
+    "wamn_receiving",
+    "client_acme_receiving",
+    "wamn_wms",
+    "edge_samples",
+    "edge_device",
+];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
@@ -114,16 +126,21 @@ struct Application {
 }
 
 fn application(candidate: &Candidate) -> anyhow::Result<Application> {
+    let packages = candidate_packages(candidate)?;
+    application_for(&packages.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// The package ids of the candidate release, sorted and without repeats.
+fn candidate_packages(candidate: &Candidate) -> anyhow::Result<Vec<String>> {
     let (manifest, _) = candidate.manifest()?;
-    let packages: Vec<_> = manifest
+    Ok(manifest
         .release
         .packages
         .iter()
-        .map(wamn_catalog::PackageCoordinate::package_id)
+        .map(|package| package.package_id().to_owned())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
-        .collect();
-    application_for(&packages)
+        .collect())
 }
 
 /// The cases that qualify a release, chosen by its exact package set in
@@ -162,6 +179,24 @@ pub(super) fn require_complete_checks(result: &Qualification) -> anyhow::Result<
                 .any(|check| check.command.iter().any(|arg| arg == case)
                     && check.command.iter().any(|arg| arg == "--exact")),
             "qualification lacks required case {case}"
+        );
+    }
+    require_built_packages(&result.checks, &candidate_packages(&result.candidate)?)
+}
+
+/// Refuse a result without a `wamn build` of each candidate package.
+fn require_built_packages(checks: &[CheckResult], packages: &[String]) -> anyhow::Result<()> {
+    for package in packages {
+        ensure!(
+            checks.iter().any(|check| check
+                .command
+                .windows(2)
+                .any(|pair| pair[0].ends_with("/wamn") && pair[1] == "build")
+                && check
+                    .command
+                    .iter()
+                    .any(|arg| arg.ends_with(&format!("/apps/{package}")))),
+            "qualification lacks a wamn build of {package}"
         );
     }
     Ok(())
@@ -248,6 +283,7 @@ async fn qualify_candidate(
         "Rust differs from rust-toolchain.toml"
     );
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
+    build_packages(root, target, &mut result.checks).await?;
     // Existing build owners establish which source produced the candidate.
     run(
         root,
@@ -360,6 +396,63 @@ async fn qualify_candidate(
         "source changed during qualification"
     );
     require_complete_checks(result)
+}
+
+/// Build every package with `wamn build` against a fresh PostgreSQL server.
+///
+/// The repository holds no build output, so the component, native and test
+/// builds after this step need it first (platform-deploy.md §7.1, C15).
+async fn build_packages(
+    root: &Path,
+    target: &Path,
+    checks: &mut Vec<CheckResult>,
+) -> anyhow::Result<()> {
+    let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
+    for (package, binary) in [
+        ("wamn-test-infrastructure", "wamn-test-postgres"),
+        ("wamn-ctl", "wamn"),
+    ] {
+        run(
+            root,
+            &strings(&[
+                "cargo",
+                "build",
+                "--locked",
+                "--offline",
+                "-p",
+                package,
+                "--bin",
+                binary,
+            ]),
+            &target_env,
+            checks,
+        )
+        .await?;
+    }
+    run(root, &build_command(root, target), &target_env, checks).await?;
+    Ok(())
+}
+
+/// The `wamn build` of every package under the PostgreSQL runner, which sets
+/// `DATABASE_URL` to a superuser URL of its own server.
+fn build_command(root: &Path, target: &Path) -> Vec<String> {
+    let debug = target.join("debug");
+    let mut command = vec![
+        debug.join("wamn-test-postgres").display().to_string(),
+        "--database".to_owned(),
+        "delivery_build".to_owned(),
+        "--url-env".to_owned(),
+        "DATABASE_URL".to_owned(),
+        "--".to_owned(),
+        debug.join("wamn").display().to_string(),
+        "build".to_owned(),
+    ];
+    command.extend(
+        BUILD_PACKAGES
+            .iter()
+            .map(|package| root.join("apps").join(package).display().to_string()),
+    );
+    command
 }
 
 /// Execute exact selected tests and distinguish executed success from a skip.
@@ -761,6 +854,45 @@ mod tests {
         );
         assert!(member_workspace("wamn-absent-data-access", &split).is_err());
         assert!(member_workspace("same", &workspaces("same", "same")).is_err());
+    }
+
+    #[test]
+    fn qualification_builds_every_package_and_requires_each_candidate_package() {
+        let root = wamn_fixture_package::repository_root();
+        let mut authored: Vec<String> = fs::read_dir(root.join("apps"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.join("wamn.k").is_file())
+            .map(|path| path.file_name().unwrap().to_str().unwrap().to_owned())
+            .collect();
+        authored.sort_unstable();
+        let mut built = BUILD_PACKAGES.to_vec();
+        built.sort_unstable();
+        assert_eq!(
+            built, authored,
+            "qualification builds every authored package"
+        );
+
+        let command = build_command(&root, Path::new("/t"));
+        assert_eq!(command[0], "/t/debug/wamn-test-postgres");
+        let checks = vec![CheckResult {
+            command,
+            result: "pass".to_owned(),
+            cause: None,
+        }];
+        let packages = |ids: &[&str]| ids.iter().map(|&id| id.to_owned()).collect::<Vec<_>>();
+        require_built_packages(
+            &checks,
+            &packages(&["client_acme_receiving", "wamn_receiving"]),
+        )
+        .unwrap();
+        assert_eq!(
+            require_built_packages(&checks, &packages(&["wamn_absent"]))
+                .unwrap_err()
+                .to_string(),
+            "qualification lacks a wamn build of wamn_absent"
+        );
+        assert!(require_built_packages(&[], &packages(&["wamn_wms"])).is_err());
     }
 
     #[test]

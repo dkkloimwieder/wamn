@@ -377,7 +377,10 @@ fn control_group(application: &Value) -> anyhow::Result<Value> {
         ("name", "WAMN_CONTROL_ADMINISTRATION_DIR"),
         ("value", "/etc/wamn-control-administration"),
     ]));
-    env.push(entry(&[("name", "WAMN_DRAIN_BOUND_SECONDS"), ("value", "70")]));
+    env.push(entry(&[
+        ("name", "WAMN_DRAIN_BOUND_SECONDS"),
+        ("value", "70"),
+    ]));
     group.insert("env".into(), Value::Sequence(env));
     group.insert(
         "volumes".into(),
