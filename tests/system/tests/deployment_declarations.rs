@@ -335,6 +335,7 @@ platform:
 runtime-operator:
   runtime:
     image: {{repository: wamn-host, tag: 'dev@sha256:{one}'}}
+    terminationGracePeriodSeconds: 300
     podLabels: {{wamn.release: {LABEL}}}
     podAnnotations: {{wamn.release-digest: '{DIGEST}', wamn.environment: acme/wms/dev}}
 ",
