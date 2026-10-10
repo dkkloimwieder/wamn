@@ -134,6 +134,22 @@ It records the input files and their digest, the base packages, the generator id
 An overlay reads the `build.json` of each base package, so build the base first.
 The build does not compile components or the web client yet.
 
+## Host route clients
+
+The TypeScript clients of the host routes, `@wamn/control-client` and `@wamn/control-org-client`, are build output, and Git does not hold them.
+The generator makes them from the contracts in `crates/catalog/model/src/host_route`.
+It writes them to `target/wamn/wamn_control/client-ts` and `target/wamn/wamn_control/control/client-ts` at the repository root.
+`CARGO_TARGET_DIR` does not move them.
+
+The web scripts write the clients before they read them.
+`pnpm -r build`, `pnpm run check`, `pnpm test` and `pnpm run dev` each run `web/host-route-clients.mjs` first, which runs this command from the repository root:
+
+```bash
+cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client
+```
+
+The command writes only a changed file, and it removes a file that the contracts no longer generate.
+
 ## The edge box binary
 
 The edge box is an aarch64 Linux computer, for example a Raspberry Pi 3B.

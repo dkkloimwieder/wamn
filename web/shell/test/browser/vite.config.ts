@@ -29,7 +29,7 @@ function required(name: string): string {
   return value;
 }
 
-const CLIENTS = "../../../../crates/catalog/model/src/host_route";
+const CLIENTS = "../../../../target/wamn/wamn_control";
 
 export default defineConfig({
   root: local("."),
@@ -51,8 +51,8 @@ export default defineConfig({
       { find: "@wamn/web-runtime", replacement: local("../../../runtime/src/index.ts") },
       { find: /^@wamn\/ui$/, replacement: local("../../../ui/src/index.ts") },
       { find: /^@wamn\/ui\/admin$/, replacement: local("../../../ui/src/admin/index.ts") },
-      { find: /^@wamn\/control-client$/, replacement: local(`${CLIENTS}/generated/client-ts/index.ts`) },
-      { find: /^@wamn\/control-org-client$/, replacement: local(`${CLIENTS}/control/generated/client-ts/index.ts`) },
+      { find: /^@wamn\/control-client$/, replacement: local(`${CLIENTS}/client-ts/index.ts`) },
+      { find: /^@wamn\/control-org-client$/, replacement: local(`${CLIENTS}/control/client-ts/index.ts`) },
     ],
     // web/ui installs its own libraries, and they import solid-js. Two
     // copies of solid-js break context and reactivity.

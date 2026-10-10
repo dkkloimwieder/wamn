@@ -635,17 +635,24 @@ fn a_described_member_carries_its_description_and_the_rest_are_unchanged() {
     );
 }
 
-/// The committed client of the application host routes is the one their
-/// contracts generate (docs/plan/platform-ui.md §4.6). After a contract
-/// change, run `cargo run -p wamn-schema-generator --example
-/// materialize_host_route_client -- write`.
+/// Both host route clients are written below the output root, and a file
+/// that the contracts no longer generate is removed (docs/plan/platform-ui.md
+/// §4.6, docs/plan/platform-deploy.md R10(1)).
 #[test]
-fn the_host_route_client_is_current() {
-    let root =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog/model/src/host_route");
-    wamn_schema_generator::materialize_host_route_client(
-        wamn_schema_generator::MaterializeMode::Check,
-        &root,
-    )
-    .expect("the committed host route client is current");
+fn the_host_route_clients_are_written_below_the_output_root() {
+    let root = std::env::temp_dir().join(format!("wamn-host-route-client-{}", std::process::id()));
+    let stale = root.join("wamn_control/client-ts/stale.ts");
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, "stale").unwrap();
+    wamn_schema_generator::materialize_host_route_client(&root).unwrap();
+    for client in ["wamn_control/client-ts", "wamn_control/control/client-ts"] {
+        for file in ["index.ts", "package.json"] {
+            assert!(root.join(client).join(file).is_file(), "{client}/{file}");
+        }
+    }
+    assert!(
+        !stale.exists(),
+        "a file the contracts do not generate is removed"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }

@@ -781,20 +781,34 @@ pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<Path
         .collect()
 }
 
-/// Write or check the generated TypeScript clients of the host routes
+/// Write the generated TypeScript clients of the host routes
 /// (docs/plan/platform-ui.md §4.4 to §4.6).
 ///
-/// `contract_root` is the directory of the control contract. The application
-/// set's authored `contracts/` hold one operation, input, result and errors
-/// file per route, and its `generated/` is the one owned output set, as a
-/// package's is. The control set has the same layout under `control/`. The
-/// routes come from the catalog's set, so each operation reaches the path
-/// the host serves it at.
-pub fn materialize_host_route_client(mode: MaterializeMode, contract_root: &Path) -> Result<()> {
-    materialize_host_route_set(mode, contract_root, wamn_catalog::HostRouteSet::Application)?;
+/// The clients are build output, so Git does not hold them
+/// (docs/plan/platform-deploy.md R10(1)). The contract is the directory
+/// `crates/catalog/model/src/host_route`. The application set's authored
+/// `contracts/` hold one operation, input, result and errors file per route.
+/// The control set has the same layout under `control/`. The routes come from
+/// the catalog's set, so each operation reaches the path the host serves it
+/// at.
+///
+/// `output_root` is a build output root, `target/wamn` at the repository root
+/// for the web packages. The application client goes to
+/// `<output_root>/wamn_control/client-ts` and the control client to
+/// `<output_root>/wamn_control/control/client-ts`. A file there that the
+/// contracts no longer generate is removed.
+pub fn materialize_host_route_client(output_root: &Path) -> Result<()> {
+    let contract_root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog/model/src/host_route");
+    let output = output_root.join(wamn_catalog::host_route_package());
     materialize_host_route_set(
-        mode,
+        &contract_root,
+        &output,
+        wamn_catalog::HostRouteSet::Application,
+    )?;
+    materialize_host_route_set(
         &contract_root.join("control"),
+        &output.join("control"),
         wamn_catalog::HostRouteSet::Control,
     )
 }
@@ -802,8 +816,8 @@ pub fn materialize_host_route_client(mode: MaterializeMode, contract_root: &Path
 /// One set's client. The two sets share operation ids, such as `user.list`,
 /// so each set has its own contracts, output and package.
 fn materialize_host_route_set(
-    mode: MaterializeMode,
     contract_root: &Path,
+    output: &Path,
     set: wamn_catalog::HostRouteSet,
 ) -> Result<()> {
     let contracts = read_contract_files(&contract_root.join("contracts"))?;
@@ -851,15 +865,55 @@ fn materialize_host_route_set(
     let mut expected = BTreeMap::new();
     for file in &files {
         let relative = Path::new(file.path())
-            .strip_prefix("generated")
+            .strip_prefix("generated/client-ts")
             .with_context(|| format!("client binding escaped output root: {}", file.path()))?;
         expected.insert(relative.to_owned(), file.bytes());
     }
-    let output_root = contract_root.join("generated");
-    match mode {
-        MaterializeMode::Write => write_files(&output_root, &expected),
-        MaterializeMode::Check => check_files(&output_root, &expected),
+    write_build_output(&output.join("client-ts"), &expected)
+}
+
+/// Write `expected` below `directory` and remove every other file there.
+///
+/// Each web package writes the host route clients before it reads them, and
+/// `pnpm -r` runs the packages at the same time. So a changed file is written
+/// beside its path and renamed over it, and a reader never sees a partial
+/// file. An unchanged file keeps its modification time.
+fn write_build_output(directory: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
+    for relative in existing_files(directory)? {
+        // A partial file belongs to a writer that is still running.
+        let partial = relative
+            .extension()
+            .is_some_and(|extension| extension == "partial");
+        if !partial && !expected.contains_key(&relative) {
+            let path = directory.join(relative);
+            // Another package's writer can remove the same file first.
+            match fs::remove_file(&path) {
+                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                    return Err(error)
+                        .with_context(|| format!("remove stale build output {}", path.display()));
+                }
+                _ => {}
+            }
+        }
     }
+    for (relative, bytes) in expected {
+        let path = directory.join(relative);
+        if fs::read(&path).is_ok_and(|actual| actual.as_slice() == *bytes) {
+            continue;
+        }
+        let parent = path
+            .parent()
+            .context("build output path must have a parent")?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create build output directory {}", parent.display()))?;
+        let mut partial = path.clone().into_os_string();
+        partial.push(format!(".{}.partial", std::process::id()));
+        fs::write(&partial, *bytes)
+            .with_context(|| format!("write build output {}", path.display()))?;
+        fs::rename(&partial, &path)
+            .with_context(|| format!("write build output {}", path.display()))?;
+    }
+    Ok(())
 }
 
 /// Every file under `root`, keyed by its path relative to `root`.

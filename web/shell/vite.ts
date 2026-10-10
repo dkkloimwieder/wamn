@@ -122,12 +122,8 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const web = fileURLToPath(new URL("..", import.meta.url));
   // The clients of the host-run routes: the shell reads `permission.mine`
   // through the first and `control.mine` through the second.
-  const control = fileURLToPath(
-    new URL("../../crates/catalog/model/src/host_route/generated/client-ts/", import.meta.url),
-  );
-  const controlOrg = fileURLToPath(
-    new URL("../../crates/catalog/model/src/host_route/control/generated/client-ts/", import.meta.url),
-  );
+  const control = fileURLToPath(new URL("../../target/wamn/wamn_control/client-ts/", import.meta.url));
+  const controlOrg = fileURLToPath(new URL("../../target/wamn/wamn_control/control/client-ts/", import.meta.url));
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const installed = (name: string) => at(`node_modules/${name}`);
   const dev = options.command === "serve" ? devConfiguration() : undefined;

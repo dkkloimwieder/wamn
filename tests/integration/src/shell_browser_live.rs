@@ -364,6 +364,10 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
 
     // The page, on one origin, and the journey in Chrome.
     let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/shell");
+    // `pnpm exec` runs no package script, so the clients are written here.
+    wamn_schema_generator::materialize_host_route_client(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wamn"),
+    )?;
     let port = free_port()?;
     let mut vite = tokio::process::Command::new("pnpm")
         .current_dir(&shell)

@@ -8,8 +8,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "tsc --project tsconfig.json",
-    "test": "vitest run"
+    "check": "node ../host-route-clients.mjs && tsc --project tsconfig.json",
+    "test": "node ../host-route-clients.mjs && vitest run"
   },
   "dependencies": {
     "@solidjs/router": "^1.0.0",

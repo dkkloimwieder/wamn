@@ -38,11 +38,11 @@ export default defineConfig({
       { find: "@wamn/ui/admin", replacement: local("../../ui/src/admin/index.ts") },
       {
         find: "@wamn/control-client",
-        replacement: local("../../../crates/catalog/model/src/host_route/generated/client-ts/index.ts"),
+        replacement: local("../../../target/wamn/wamn_control/client-ts/index.ts"),
       },
       {
         find: "@wamn/control-org-client",
-        replacement: local("../../../crates/catalog/model/src/host_route/control/generated/client-ts/index.ts"),
+        replacement: local("../../../target/wamn/wamn_control/control/client-ts/index.ts"),
       },
     ],
     // A folder alias for solid-js would select its server build, so the
@@ -55,8 +55,8 @@ export default defineConfig({
     fs: {
       allow: [
         local("../.."),
-        local("../../../crates/catalog/model/src/host_route/generated/client-ts"),
-        local("../../../crates/catalog/model/src/host_route/control/generated/client-ts"),
+        local("../../../target/wamn/wamn_control/client-ts"),
+        local("../../../target/wamn/wamn_control/control/client-ts"),
       ],
     },
   },

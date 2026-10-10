@@ -4,9 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "check": "tsc --project tsconfig.json"
+    "dev": "node ../../../web/host-route-clients.mjs && vite",
+    "build": "node ../../../web/host-route-clients.mjs && vite build",
+    "check": "node ../../../web/host-route-clients.mjs && tsc --project tsconfig.json"
   },
   "dependencies": {
     "@solidjs/router": "^1.0.0",

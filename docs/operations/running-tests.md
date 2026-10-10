@@ -665,15 +665,19 @@ The command reads `tsc` from `PATH`. If `tsc` is absent, the command refuses and
 It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
 The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
 
-The client of the application host routes is committed in `crates/catalog/model/src/host_route/generated/client-ts`, and the client of the control routes in `host_route/control/generated/client-ts`.
-`the_host_route_client_is_current` refuses a committed client that its contracts do not generate.
-After you change a contract in `host_route/contracts` or `host_route/control/contracts`, write the clients again:
+The clients of the host routes are build output, and Git does not hold them.
+The generator writes the client of the application host routes, `@wamn/control-client`, to `target/wamn/wamn_control/client-ts` at the repository root.
+It writes the client of the control routes, `@wamn/control-org-client`, to `target/wamn/wamn_control/control/client-ts`.
+It makes them from the contracts in `crates/catalog/model/src/host_route/contracts` and `host_route/control/contracts`.
+Every web script that reads the clients writes them first through `web/host-route-clients.mjs`, so you do not need to write them yourself.
+To write them without a web script, run:
 
 ```bash
-cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client -- write
+cargo run --locked --offline -p wamn-schema-generator --example materialize_host_route_client
 ```
 
 `pnpm run check` in `web/components` type-checks them, because that package maps `@wamn/control-client` and `@wamn/control-org-client` to them.
+The repository policy lint refuses a tracked file in a `client-ts` directory outside `apps/`.
 
 ### Web packages
 
@@ -687,6 +691,8 @@ pnpm install
 ```
 
 The workspace has one lock file, `pnpm-lock.yaml`, at the repository root.
+The scripts of `web/components`, `web/shell`, `web/ui` and the application web packages write the host route clients with Cargo before they run.
+So these scripts need the Rust toolchain, and the first run compiles the generator.
 
 Prettier formats the hand-written web code, and ESLint lints it.
 One configuration for each tool is at the repository root: `.prettierrc.json`, `.prettierignore` and `eslint.config.js`.

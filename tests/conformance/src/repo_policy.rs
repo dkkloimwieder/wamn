@@ -6,6 +6,7 @@
 
 mod authored_manifests;
 mod docker_provenance;
+mod generated_clients;
 mod run_state_projection;
 mod session_claims;
 mod system_cluster;
@@ -18,6 +19,7 @@ pub fn check(root: &Path) -> Vec<String> {
     let mut problems = Problems::default();
     authored_manifests::check(root, &mut problems);
     docker_provenance::check(root, &mut problems);
+    generated_clients::check(root, &mut problems);
     version_identity::check(root, &mut problems);
     session_claims::check(root, &mut problems);
     system_cluster::check(root, &mut problems);

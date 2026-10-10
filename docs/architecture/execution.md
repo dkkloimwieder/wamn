@@ -109,7 +109,7 @@ The writes are the functions of [`wamn_platform_identity::application`](../../cr
 `user_role.revoke` reads `project-admin` through the identity reader of the host, because `org-admin` writes `project-admin` in every project of the org.
 `permission.grant` writes the permission root; each host expands the roots through the release it loaded.
 An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `release_not_current`, `permission_not_held`, `permission_not_selected` (with `required_by`), `user_not_found` or `admin_covered`.
-The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `host_route/generated/client-ts`.
+The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
 The web screens `RoleGrid` and `UserGrid` of [`@wamn/ui/admin`](../../web/ui/README.md#the-platform-exports) call these routes through that client and write no database directly.
 `RoleGrid` shows one role's operations from `permission.list`, and `UserGrid` shows one user's roles from `user.list` and their permissions from `permission.list`.
 `control.mine` reads `wamn_system` through the `control` login of the org.
@@ -132,7 +132,7 @@ Data, membership and role rows do not change with the status, and CDC stays atta
 `user.invite` calls identity `POST /users` and `POST /invitations` with the operator certificate of `--pat-issuer`, `--pat-client-cert`, `--pat-client-key` and `--pat-server-ca`, through [`wamn-identity-client`](../../crates/identity/client/src/lib.rs).
 It writes the membership and the grants between the two calls, and it calls `/invitations` only when the user has no password.
 The host refuses an email or a display name that the identity rules refuse before it calls identity, and answers `user_refused` when identity refuses the user.
-The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `host_route/control/generated/client-ts`.
+The contracts of the control routes live in [`host_route/control/contracts`](../../crates/catalog/model/src/host_route/control/contracts), and the generator projects them into the TypeScript client `@wamn/control-org-client` in `target/wamn/wamn_control/control/client-ts`.
 The control set has its own client because both sets serve `user.list`.
 
 The control serving root has no package, component, route, database or guest connection.
