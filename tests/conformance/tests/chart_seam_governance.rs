@@ -827,9 +827,13 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         "Receiving overlay must add only the two release arguments"
     );
 
+    // The chart sets WASMCLOUD_HOST_ENVIRONMENT to the pod namespace. The
+    // overlay repeats it with the real environment name (R1), and the later
+    // entry wins.
     let receiving_names = [
         "WAMN_ORG",
         "WAMN_PROJECT",
+        "WASMCLOUD_HOST_ENVIRONMENT",
         "WAMN_SCHEMA",
         "WAMN_SYSTEM_URL",
         "WAMN_EXECUTOR_PLATFORM_PG_URL",
@@ -870,8 +874,19 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
         base_env
             .iter()
             .filter(|entry| !is_event_identity(entry))
+            .filter(|entry| entry["name"] != "WASMCLOUD_HOST_ENVIRONMENT")
             .collect::<Vec<_>>(),
         "Receiving overlay changed or dropped a generic host environment entry"
+    );
+    assert_eq!(
+        receiving_container["env"]
+            .as_array()
+            .expect("rendered Receiving host carries env")
+            .iter()
+            .rfind(|entry| entry["name"] == "WASMCLOUD_HOST_ENVIRONMENT")
+            .and_then(|entry| entry["value"].as_str()),
+        Some("dev"),
+        "Receiving host must name its real environment last"
     );
     for (name, expected) in event_identity {
         assert!(
@@ -892,7 +907,7 @@ fn receiving_pat_overlay_renders_a_complete_scoped_host() {
             .expect("rendered Receiving host carries env")
             .len(),
         base_env.len() + receiving_names.len(),
-        "Receiving overlay must add exactly its eight scoped environment entries"
+        "Receiving overlay must add exactly its nine scoped environment entries"
     );
 
     for (name, expected) in [
