@@ -14,14 +14,13 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
-use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, AttachmentTarget,
-    ComponentConnection, ComponentPackageScope, ManifestDigest, OperationType, PackageCoordinate,
-    RouteCanonicalization, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent,
-    ServingManifest, ServingRegistration, ServingRelation, ServingRelease, ServingRoute,
-    ServingWiring, WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
+    AdmittedComponent, AttachmentTarget, ComponentConnection, ComponentPackageScope,
+    ManifestDigest, OperationType, PackageCoordinate, RouteCanonicalization,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingComponent, ServingManifest,
+    ServingRegistration, ServingRelation, ServingRelease, ServingRoute, ServingWiring,
+    WiringDocument, WorkflowSection, validate_resolved_wiring_compatibility,
 };
 use wamn_control_registry::Triple;
 use wamn_engine::release_manifest::ReleaseScope;
@@ -58,12 +57,6 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const SELECT_APPLIED_PACKAGE_MANIFEST_SQL: &str = "\
 SELECT manifest_sha256 FROM catalog.packages \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 FOR SHARE";
-const SELECT_COMPONENT_FACTS_SQL: &str = "\
-SELECT component, interface_version, operations::text, component_digest, \
-       imports::text, imports_fingerprint, effects::text \
-  FROM catalog.component_library \
- WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
- ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\" FOR SHARE";
 const SELECT_WIRING_SQL: &str = "\
 SELECT wiring_hash, graph_json::text \
   FROM catalog.wirings \
@@ -1509,67 +1502,6 @@ fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
     (attachments, manifests)
 }
 
-/// The admitted component facts of one package in `component_library`, for
-/// wiring authorship. A release reads its components from the descriptors of
-/// its package artifacts.
-pub async fn load_component_facts(
-    transaction: &Transaction<'_>,
-    scope: &ComponentPackageScope,
-) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
-    transaction
-        .query(
-            SELECT_COMPONENT_FACTS_SQL,
-            &[&scope.tenant_id, &scope.package_id, &scope.package_version],
-        )
-        .await
-        .map_err(|error| storage("read admitted component facts", error))?
-        .into_iter()
-        .map(|row| {
-            let component: String = row.get(0);
-            let decoded = AdmittedComponent {
-                scope: scope.clone(),
-                component: component.clone(),
-                interface_version: row.get(1),
-                operations: decode_json::<BTreeMap<String, AdmittedComponentOperation>>(
-                    row.get(2),
-                    &component,
-                    "operations",
-                )?,
-                component_digest: row.get(3),
-                imports: decode_json(row.get(4), &component, "imports")?,
-                imports_fingerprint: row.get(5),
-                effects: decode_json::<Vec<AdmittedComponentEffect>>(
-                    row.get(6),
-                    &component,
-                    "effects",
-                )?,
-            };
-            wamn_catalog::verify_stored_effect_projection(&decoded).map_err(|error| {
-                PublishManifestError::with_source(
-                    PublishManifestErrorType::Component,
-                    format!("component {component:?} stores an invalid effect projection"),
-                    error,
-                )
-            })?;
-            Ok(decoded)
-        })
-        .collect()
-}
-
-fn decode_json<T: DeserializeOwned>(
-    stored: &str,
-    component: &str,
-    field: &'static str,
-) -> Result<T, PublishManifestError> {
-    serde_json::from_str(stored).map_err(|error| {
-        PublishManifestError::with_source(
-            PublishManifestErrorType::Component,
-            format!("component {component:?} stores unreadable {field}"),
-            error,
-        )
-    })
-}
-
 /// Refuse a registration whose source package is absent from the release or
 /// does not own its entity. `subject` names the handler or workflow.
 fn check_registration_source(
@@ -1991,6 +1923,7 @@ mod effective_release_live;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_catalog::{AdmittedComponentEffect, AdmittedComponentOperation};
 
     #[tokio::test]
     async fn database_diagnostics_omit_row_detail_and_hint() -> anyhow::Result<()> {

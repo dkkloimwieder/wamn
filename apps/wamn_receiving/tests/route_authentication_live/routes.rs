@@ -257,6 +257,9 @@ async fn receiving_release_journey(
     push_journey_components(inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
+    // The gate and authorship read component facts from the verified package
+    // artifacts, so the packages are pushed before the gate starts.
+    super::environment::push_journey_packages(inputs, &system_url).await?;
 
     // One gate-launch path for both live gates: the Gate is a spawned
     // `wamn-scenario-worker serve`, never a task in this process
@@ -267,6 +270,7 @@ async fn receiving_release_journey(
         scenario_worker,
         &credentials,
         &credentials.management_admitter,
+        &super::environment::journey_package_registry(inputs, &system_url)?,
         if inputs.host_secret_namespace == "wamn-receiving-correctness" {
             "127.0.0.1:18090"
         } else {

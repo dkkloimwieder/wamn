@@ -9,8 +9,10 @@
 //! Every refusal here belongs to a validator that already exists.
 //! [`WiringDocument::parse`] owns document shape,
 //! [`validate_wiring_compatibility`] owns compatibility against the gate
-//! scope's admitted `catalog.component_library` facts, and the
-//! `catalog.wirings` constraints own storage. The CLI adds no rule of its own,
+//! scope's admitted component facts, and the `catalog.wirings` constraints own
+//! storage. The facts are the descriptors of the package's verified artifact
+//! (R2), read the way publish reads them
+//! ([`wamn_package_artifact::load_component_facts`]). The CLI adds no rule of its own,
 //! so a wiring authored here and a wiring promoted into this environment are
 //! admitted by exactly the same predicates.
 //!
@@ -41,7 +43,7 @@ use wamn_catalog::{
     validate_wiring_compatibility,
 };
 
-use crate::publish_release::load_component_facts;
+use wamn_package_artifact::{PackageRegistry, load_component_facts};
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
@@ -166,17 +168,39 @@ pub struct AuthorWiringRequest<'a> {
     pub package_id: &'a str,
     pub package_version: &'a str,
     pub document: &'a WiringDocument,
+    /// The admitted component facts of the package, which
+    /// [`load_component_facts`] reads from its verified artifact.
+    pub components: &'a [AdmittedComponent],
 }
 
-/// Author one gated wiring version over its own project and control connections.
+/// Author one gated wiring version over its own project and control
+/// connections, gated by the component facts of the package's verified
+/// artifact in `registry`.
 ///
 /// The project connection holds the authoring transaction, and the control
 /// connection reads the gate report [`author_wiring`] requires.
 pub async fn author_wiring_in_databases(
     database_url: &str,
     control_database_url: &str,
-    request: &AuthorWiringRequest<'_>,
+    registry: &PackageRegistry,
+    tenant_id: &str,
+    package_id: &str,
+    package_version: &str,
+    document: &WiringDocument,
 ) -> anyhow::Result<DefinitionHash> {
+    let scope = ComponentPackageScope::new(tenant_id, package_id, package_version)
+        .context("name the wiring's package scope")?;
+    let components = load_component_facts(registry, &scope)
+        .await
+        .context("read the gate scope's component facts from its verified package artifact")?;
+    let request = AuthorWiringRequest {
+        tenant_id,
+        package_id,
+        package_version,
+        document,
+        components: &components,
+    };
+    let request = &request;
     let (control, control_connection) = tokio_postgres::connect(control_database_url, NoTls)
         .await
         .context("connect to the control store holding the gate reports")?;
@@ -222,6 +246,9 @@ pub struct AuthorWiringDocumentRequest {
     pub database_url: String,
     /// Owner URL to the control database holding `wamn_run.gate_reports`.
     pub control_database_url: String,
+    /// The registry of the package's verified artifact, whose descriptors are
+    /// the component facts that gate the wiring.
+    pub registry: PackageRegistry,
     /// Tenant claim carried by the authored wiring.
     pub tenant: String,
     /// Package identity the wiring is authored into.
@@ -240,12 +267,11 @@ pub async fn author_wiring_document(
     author_wiring_in_databases(
         &request.database_url,
         &request.control_database_url,
-        &AuthorWiringRequest {
-            tenant_id: &request.tenant,
-            package_id: &request.package_id,
-            package_version: &request.package_version,
-            document: &document,
-        },
+        &request.registry,
+        &request.tenant,
+        &request.package_id,
+        &request.package_version,
+        &document,
     )
     .await
 }
@@ -376,6 +402,10 @@ fn require_green_report(
 
 /// Gate and append one immutable wiring definition in the caller's transaction.
 ///
+/// The gate judges the document against `request.components`, the facts the
+/// caller read with [`load_component_facts`]. Publish checks every wiring
+/// against the same descriptors again, so other facts cannot reach a release.
+///
 /// `control` is the CONTROL-database connection the gate report is read on. It
 /// is a parameter and not an option: the read happens on every call, between the
 /// compatibility gate and the INSERT, so no caller can author a wiring the
@@ -395,16 +425,7 @@ pub async fn author_wiring(
         package_id: request.package_id.to_string(),
         package_version: request.package_version.to_string(),
     };
-    let components = load_component_facts(transaction, &scope)
-        .await
-        .map_err(|error| {
-            AuthorWiringError::with_source(
-                AuthorWiringErrorType::Storage,
-                "read the gate scope's admitted component facts",
-                error,
-            )
-        })?;
-    let wiring_hash = gate_wiring_document(request.document, &scope, &components)?;
+    let wiring_hash = gate_wiring_document(request.document, &scope, request.components)?;
     let verdict = read_gate_verdict(control, request.tenant_id, &wiring_hash).await?;
     require_green_report(verdict, request.document, &wiring_hash)?;
 

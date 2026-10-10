@@ -105,6 +105,12 @@ It grants and revokes them in the transaction that writes the log triggers.
 Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access`.
 Publish the selected component bytes with `wamn-ctl push-component`.
 If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
+Push the package with `wamn-ctl push-package` before you gate or submit a wiring.
+`author-wiring` and the management gate read the component facts of the package from the descriptors of its verified artifact, the way `publish-release` reads them.
+`author-wiring` takes the same registry arguments as `publish-release`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
+The scenario worker reads the artifact with a pull-only registry credential scoped to the package repositories.
+It mounts that credential from the Secret `wamn-registry-package-pull` the same way the host mounts `wamn-registry-pull` ([`scenario-worker.yaml`](../../deploy/platform/scenario-worker.yaml), [`registry-credentials.example.yaml`](../../deploy/platform/registry-credentials.example.yaml)).
+It reads the artifact record on its control-author connection, so the control author may read `catalog.package_artifacts` (system migration 0024).
 Submit their wiring with `wamn-ctl author-wiring`, and bind declared connection aliases with `wamn-ctl bind-connection`.
 Repeating `bind-connection` with identical inputs changes no records.
 Changed definitions or credential references create an immutable generation and activate it in the same transaction.

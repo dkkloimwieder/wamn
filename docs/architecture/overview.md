@@ -32,12 +32,14 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-control-provision` | Provisioning SQL, credential roles, and native broker declarations |
 | `wamn-schema-control` | Package migration decisions and run storage declarations |
 | `wamn-catalog` | Component, wiring, and release facts |
+| `wamn-package-artifact` | Reading verified package artifacts and their component descriptors |
 | `wamn-control` | Control operations, delivery, development orchestration, and process supervision |
 | `wamn-ctl` | Command-line and terminal clients of `wamn-control` |
 | `wamn-scenario-worker` | The authoring admission API |
 
 The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control` calls the lower libraries.
 `wamn-control` never depends on `wamn-ctl`.
+A deployed service never depends on `wamn-control`. The scenario worker reads component facts through `wamn-package-artifact`, as publish does.
 A `wamn-control` operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 
 `wamn-control` lives at `crates/control/lib` and owns every control verb.

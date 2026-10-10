@@ -281,8 +281,13 @@ async fn admit_components(
     (digests, release_components)
 }
 
-/// Author one base-package wiring of the fixture get operation, with no edges.
-async fn author_one_node_wiring(project: &mut Client, control: &Client) -> ReleaseWiringTarget {
+/// Author one base-package wiring of the fixture get operation, with no edges,
+/// gated by the base package's admitted `components`.
+async fn author_one_node_wiring(
+    project: &mut Client,
+    control: &Client,
+    components: &[AdmittedComponent],
+) -> ReleaseWiringTarget {
     let document = wamn_catalog::WiringDocument::parse(&serde_json::json!({
         "format-version": "0.1",
         "wiring-id": "widget_get",
@@ -322,6 +327,7 @@ async fn author_one_node_wiring(project: &mut Client, control: &Client) -> Relea
             package_id: wamn_fixture_package::PACKAGE_ID,
             package_version: package_version(),
             document: &document,
+            components,
         },
     )
     .await
@@ -566,7 +572,12 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
 
     // A graph with no edges is a route, so publish refuses a one-node wiring
     // that no registration names.
-    let one_node = BTreeSet::from([author_one_node_wiring(&mut project, &control).await]);
+    let base_components = &components.facts[&(
+        wamn_fixture_package::PACKAGE_ID.to_owned(),
+        package_version().to_owned(),
+    )];
+    let one_node =
+        BTreeSet::from([author_one_node_wiring(&mut project, &control, base_components).await]);
     let transaction = project.transaction().await.expect("begin refused publish");
     let refusal = publish_release_with_package_manifests(
         &transaction,

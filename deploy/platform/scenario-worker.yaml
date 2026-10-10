@@ -75,6 +75,25 @@
 #                        so a URL naming the control database, or carrying the
 #                        shared `wamn_app` role, crash-loops instead of serving.
 #
+# PACKAGE REGISTRY (wamn-vavs4.6): the gate and `publish` judge a wiring against
+# the component facts of its package, and those facts are the descriptors of
+# the package's verified artifact (docs/plan/platform-deploy.md R2). The surface
+# reads them the way publish-release does: the digest and verified_at that
+# catalog.package_artifacts records, read on the control-author connection
+# above, then the artifact from WAMN_PACKAGE_ARTIFACT_BASE.
+#   WAMN_REGISTRY_AUTH_FILE
+#                        a pull-only registry credential, scoped to the package
+#                        repositories. It comes through the same Secret path as
+#                        the host's `wamn-registry-pull`
+#                        (deploy/platform/values-host-default.yaml): a
+#                        kubernetes.io/dockerconfigjson Secret whose
+#                        `.dockerconfigjson` key is mounted as
+#                        /etc/wamn/registry/config.json. The Secret is
+#                        `wamn-registry-package-pull`
+#                        (deploy/platform/registry-credentials.example.yaml).
+#   WASH_OCI_CA_PATHS    the registry CA, the `ca.crt` key of
+#                        `wamn-registry-tls` (deploy/platform/registry.yaml).
+#
 # THE ADMISSION SECRET IS NOT MINTED FOR THIS ENVIRONMENT YET, exactly as the
 # identity-reader Secret above is not. `wamn-ctl provision-project-env
 # --prepare-management-admitter-generation <a|b>
@@ -155,12 +174,40 @@ spec:
                 secretKeyRef:
                   name: wamn-mgmt-admitter-acme--receiving--dev
                   key: url
+            - name: WAMN_PACKAGE_ARTIFACT_BASE
+              value: registry.wamn-system.svc.cluster.local:5000/wamn/packages
+            - name: WAMN_REGISTRY_AUTH_FILE
+              value: /etc/wamn/registry/config.json
+            - name: WASH_OCI_CA_PATHS
+              value: /etc/wamn/registry-ca/ca.crt
+          volumeMounts:
+            - name: registry-package-pull
+              mountPath: /etc/wamn/registry
+              readOnly: true
+            - name: registry-ca
+              mountPath: /etc/wamn/registry-ca
+              readOnly: true
           ports:
             - name: management
               containerPort: 8088
           resources:
             requests: { cpu: 100m, memory: 128Mi }
             limits: { memory: 512Mi }
+      volumes:
+        - name: registry-package-pull
+          secret:
+            secretName: wamn-registry-package-pull
+            optional: false
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+        - name: registry-ca
+          secret:
+            secretName: wamn-registry-tls
+            optional: false
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: v1
 kind: Service

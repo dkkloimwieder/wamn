@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use wamn_authoring_model::AuthoringScope;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, RequirementType};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::author_wiring::{self, AuthorWiringRequest};
+use wamn_control::author_wiring;
 use wamn_control::bind_connection::{self, BindConnectionRequest};
 use wamn_control::component_declaration::declared_platform_packages;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
@@ -569,38 +569,8 @@ pub async fn publish(
         serde_json::to_vec_pretty(&json!({"wms":wms_digest,"label-render":label_digest,
             "blob-put":blob_digest,"jsonata":jsonata_digest}))?,
     )?;
-    let mut wirings = fs::read_dir(root.join("publication/wirings"))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?;
-    wirings.retain(|path| {
-        path.extension()
-            .is_some_and(|extension| extension == "json")
-    });
-    wirings.sort();
-    author_wirings(
-        inputs,
-        route,
-        credentials,
-        scenario_worker,
-        &package,
-        &wirings,
-        evidence,
-    )
-    .await?;
-    let targets = wirings
-        .iter()
-        .map(|path| {
-            let document = author_wiring::read_wiring_document(path)?;
-            Ok(ReleaseWiringTarget {
-                package_id: package.package_id().to_string(),
-                package_version: package.package_version().to_string(),
-                wiring_id: document.wiring_id,
-                wiring_version: document.version,
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    // The release composes the verified package artifact, beside the
-    // component artifacts.
+    // The gate, authorship and the release read the component facts from
+    // the verified package artifact, beside the component artifacts.
     let (artifact_parent, _) = inputs
         .component_artifact_base
         .rsplit_once('/')
@@ -620,6 +590,36 @@ pub async fn publish(
     })
     .await
     .context("push the WMS package artifact")?;
+    let mut wirings = fs::read_dir(root.join("publication/wirings"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    wirings.retain(|path| {
+        path.extension()
+            .is_some_and(|extension| extension == "json")
+    });
+    wirings.sort();
+    author_wirings(
+        route,
+        credentials,
+        scenario_worker,
+        &package,
+        &registry,
+        &wirings,
+        evidence,
+    )
+    .await?;
+    let targets = wirings
+        .iter()
+        .map(|path| {
+            let document = author_wiring::read_wiring_document(path)?;
+            Ok(ReleaseWiringTarget {
+                package_id: package.package_id().to_string(),
+                package_version: package.package_version().to_string(),
+                wiring_id: document.wiring_id,
+                wiring_version: document.version,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     let release_digest = publish_release::publish_release(
         PublishReleaseRequest {
             database_url: route.database_url.clone(),
@@ -697,11 +697,11 @@ pub async fn publish(
 }
 
 async fn author_wirings(
-    inputs: &JourneyDocument,
     route: &ProvisionedRoute,
     credentials: &JourneyCredentials,
     binary: &Path,
     package: &PackageCoordinate,
+    registry: &PackageRegistry,
     wirings: &[PathBuf],
     evidence: &Path,
 ) -> anyhow::Result<()> {
@@ -711,7 +711,9 @@ async fn author_wirings(
     drop(listener);
     let log = fs::File::create(evidence.join("authoring-gate.log"))?;
     let mut child = tokio::process::Command::new(binary)
-        .args(["serve", "--bind", bind])
+        .args(["serve", "--bind", bind, "--insecure-registry"])
+        .env("WAMN_PACKAGE_ARTIFACT_BASE", &registry.artifact_base)
+        .env("WAMN_REGISTRY_AUTH_FILE", &registry.registry_auth_file)
         .env("WAMN_SYSTEM_URL", &credentials.identity_reader)
         .env("WAMN_CONTROL_AUTHORING_PG_URL", &credentials.control_author)
         .env(
@@ -794,13 +796,12 @@ async fn author_wirings(
             );
             author_wiring::author_wiring_in_databases(
                 &route.database_url,
-                &inputs.system_pg_url,
-                &AuthorWiringRequest {
-                    tenant_id: identity().tenant.as_str(),
-                    package_id: package.package_id(),
-                    package_version: package.package_version(),
-                    document: &document,
-                },
+                &registry.control_database_url,
+                registry,
+                identity().tenant.as_str(),
+                package.package_id(),
+                package.package_version(),
+                &document,
             )
             .await?;
         }

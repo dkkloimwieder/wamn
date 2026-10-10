@@ -529,6 +529,7 @@ pub(super) async fn author_journey_wirings(
     project_url: &str,
     system_url: &str,
 ) -> anyhow::Result<()> {
+    let registry = journey_package_registry(inputs, system_url)?;
     for package in released_journey_packages() {
         for wiring in package.wirings {
             let document = author_wiring::read_wiring_document(
@@ -540,12 +541,11 @@ pub(super) async fn author_journey_wirings(
             author_wiring::author_wiring_in_databases(
                 project_url,
                 system_url,
-                &AuthorWiringRequest {
-                    tenant_id: identity().tenant.as_str(),
-                    package_id: package.id,
-                    package_version: package.version(),
-                    document: &document,
-                },
+                &registry,
+                identity().tenant.as_str(),
+                package.id,
+                package.version(),
+                &document,
             )
             .await
             .with_context(|| format!("author gated wiring {}::{wiring}", package.id))?;
@@ -581,6 +581,29 @@ pub(super) fn journey_package_registry(
     })
 }
 
+/// Push the verified package artifact of every released journey package and
+/// return their registry. The gate, authorship and publish read component
+/// facts from these artifacts.
+pub(super) async fn push_journey_packages(
+    inputs: &JourneyDocument,
+    system_url: &str,
+) -> anyhow::Result<wamn_control::package_artifact::PackageRegistry> {
+    let registry = journey_package_registry(inputs, system_url)?;
+    for package in released_journey_packages() {
+        wamn_control::package_artifact::push_package(
+            &wamn_control::package_artifact::PushPackageRequest {
+                package: journey_package_root(package, Some(inputs)),
+                registry: registry.clone(),
+                component_artifact_base: inputs.component_artifact_base.clone(),
+                source_commit: None,
+            },
+        )
+        .await
+        .with_context(|| format!("push the {} package artifact", package.id))?;
+    }
+    Ok(registry)
+}
+
 pub(super) async fn publish_journey_release(
     inputs: &JourneyDocument,
     target: JourneyReleaseTarget<'_>,
@@ -602,20 +625,8 @@ pub(super) async fn publish_journey_release(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     // The release composes the verified package artifacts, which live beside
-    // the component artifacts.
-    let registry = journey_package_registry(inputs, system_url)?;
-    for package in released_journey_packages() {
-        wamn_control::package_artifact::push_package(
-            &wamn_control::package_artifact::PushPackageRequest {
-                package: journey_package_root(package, Some(inputs)),
-                registry: registry.clone(),
-                component_artifact_base: inputs.component_artifact_base.clone(),
-                source_commit: None,
-            },
-        )
-        .await
-        .with_context(|| format!("push the {} package artifact", package.id))?;
-    }
+    // the component artifacts. A package pushed before is already present.
+    let registry = push_journey_packages(inputs, system_url).await?;
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
             database_url: project_url.to_owned(),

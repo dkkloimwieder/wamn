@@ -74,7 +74,6 @@ use wamn_catalog::{
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring::{AuthorWiringErrorType, AuthorWiringRequest, author_wiring};
-use wamn_control::push_component::admitted_projection_hash;
 
 const TENANT: &str = "gate-report-tenant";
 const PACKAGE: &str = "wamn_inventory";
@@ -121,31 +120,12 @@ fn wiring_at(id: &str, version: u32, node: &str) -> WiringDocument {
     .expect("fixture wiring is structurally valid")
 }
 
-/// Install the production catalog schema and the facts one wiring gates against.
-async fn provision_project(project: &Client, project_url: &str) {
-    project
-        .batch_execute(
-            // `apply_package` runs the migrations as `wamn_db_owner`, so that
-            // role must own this database, as provisioning sets it.
-            "DO $$ BEGIN \
-               EXECUTE format('ALTER DATABASE %I OWNER TO wamn_db_owner', \
-                              pg_catalog.current_database()); \
-             END $$;",
-        )
-        .await
-        .expect("give the project database to the package owner");
-    apply_package::apply_package(ApplyPackageRequest {
-        package: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base"),
-        database_url: project_url.to_string(),
-        tenant: TENANT.to_string(),
-    })
-    .await
-    .expect("apply the package fixture");
-    project
-        .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
-        .await
-        .expect("scope the project seed session");
-    let component = AdmittedComponent {
+/// The admitted component every fixture wiring names. Authorship reads the
+/// facts of a package from its verified package artifact
+/// (`wamn_package_artifact::load_component_facts`); this test is about the gate
+/// report, so it passes the facts that read would return.
+fn fixture_component() -> AdmittedComponent {
+    AdmittedComponent {
         scope: ComponentPackageScope {
             tenant_id: TENANT.to_owned(),
             package_id: PACKAGE.to_owned(),
@@ -172,38 +152,29 @@ async fn provision_project(project: &Client, project_url: &str) {
         imports: Vec::new(),
         imports_fingerprint: FACT_FINGERPRINT.to_owned(),
         effects: Vec::new(),
-    };
-    let projection_hash =
-        admitted_projection_hash(&component, &[]).expect("hash admitted fixture projection");
+    }
+}
+
+/// Install the production catalog schema and the package the wirings belong to.
+async fn provision_project(project: &Client, project_url: &str) {
     project
-        .execute(
-            "INSERT INTO catalog.component_digest_owners \
-                   (tenant_id, component_digest, package_id) \
-             VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&TENANT, &COMPONENT, &PACKAGE],
+        .batch_execute(
+            // `apply_package` runs the migrations as `wamn_db_owner`, so that
+            // role must own this database, as provisioning sets it.
+            "DO $$ BEGIN \
+               EXECUTE format('ALTER DATABASE %I OWNER TO wamn_db_owner', \
+                              pg_catalog.current_database()); \
+             END $$;",
         )
         .await
-        .expect("seed the component digest owner");
-    project
-        .execute(
-            "INSERT INTO catalog.component_library \
-                   (tenant_id, package_id, package_version, component, interface_version, \
-                    operations, component_digest, projection_hash, imports, \
-                    imports_fingerprint, effects) \
-             VALUES ($1, $2, $3, 'inventory_data', '0.1', \
-                     '{\"wamn-inventory:panel/get@1.0.0\":{\"registered-operation\":\"wamn-inventory:panel/get@1.0.0\",\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}'::jsonb, \
-                     $4, $5, '[]'::jsonb, $6, '[]'::jsonb)",
-            &[
-                &TENANT,
-                &PACKAGE,
-                &PACKAGE_VERSION,
-                &COMPONENT,
-                &projection_hash,
-                &FACT_FINGERPRINT,
-            ],
-        )
-        .await
-        .expect("seed the admitted component fact every fixture wiring names");
+        .expect("give the project database to the package owner");
+    apply_package::apply_package(ApplyPackageRequest {
+        package: Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base"),
+        database_url: project_url.to_string(),
+        tenant: TENANT.to_string(),
+    })
+    .await
+    .expect("apply the package fixture");
 }
 
 /// Prepare the production control store the gate report is read from.
@@ -273,6 +244,7 @@ async fn author(
             package_id: PACKAGE,
             package_version: PACKAGE_VERSION,
             document,
+            components: &[fixture_component()],
         },
     )
     .await;

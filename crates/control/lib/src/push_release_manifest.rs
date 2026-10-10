@@ -15,15 +15,15 @@ use std::time::Duration;
 use crate::publish_release::{DeploymentCoordinate, read_release, report_deployment_coordinate};
 use anyhow::Context as _;
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
-use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
 use wamn_engine::release_manifest::ReleaseScope;
+pub(crate) use wamn_package_artifact::{artifact_is_absent, registry_auth};
 use wamn_runtime::component_artifact_source::read_ca_bundles;
-use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_push_credentials};
+use wamn_runtime::registry_credentials::read_registry_push_credentials;
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
     release_manifest_artifact_reference, verify_release_manifest_artifact_layout,
@@ -457,16 +457,6 @@ pub(crate) fn registry_client(
     })
 }
 
-/// No credential: the auth file states an anonymous push for this registry.
-pub(crate) fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth {
-    credentials.map_or(RegistryAuth::Anonymous, |credentials| {
-        RegistryAuth::Basic(
-            credentials.username().to_owned(),
-            credentials.password().to_owned(),
-        )
-    })
-}
-
 async fn probe_exact_artifact(
     client: &OciClient,
     reference: &Reference,
@@ -542,25 +532,6 @@ fn verify_manifest_layout<'a>(
 ) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestPushError> {
     verify_release_manifest_artifact_layout(manifest, expected_digest, Some(expected_size))
         .map_err(|refusal| conflict(reference, refusal.refusal()))
-}
-
-pub(crate) fn artifact_is_absent(error: &OciDistributionError) -> bool {
-    match error {
-        OciDistributionError::RegistryError { envelope, .. } => {
-            !envelope.errors.is_empty()
-                && envelope.errors.iter().all(|error| {
-                    matches!(
-                        error.code,
-                        OciErrorCode::ManifestUnknown
-                            | OciErrorCode::NameUnknown
-                            | OciErrorCode::NotFound
-                    )
-                })
-        }
-        OciDistributionError::ImageManifestNotFoundError(_)
-        | OciDistributionError::ServerError { code: 404, .. } => true,
-        _ => false,
-    }
 }
 
 fn conflict(reference: &Reference, refusal: &'static str) -> ReleaseManifestPushError {

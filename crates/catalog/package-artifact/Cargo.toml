@@ -1,0 +1,22 @@
+[package]
+name = "wamn-package-artifact"
+description = "Reads verified package artifacts and their component descriptors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+hex = { workspace = true }
+oci-client = { workspace = true }
+ring = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-engine = { workspace = true }
+wamn-execution-contract = { workspace = true }
+wamn-runtime = { workspace = true }
+
+[lints]
+workspace = true

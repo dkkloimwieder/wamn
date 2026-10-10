@@ -45,7 +45,7 @@ use tokio_postgres::Client;
 use tracing_subscriber::layer::SubscriberExt;
 use wamn_catalog::{AttachmentType, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::author_wiring::{self, AuthorWiringRequest};
+use wamn_control::author_wiring;
 use wamn_control::dev::watch::GitSource;
 use wamn_control::git_source::GitSourceState;
 use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};

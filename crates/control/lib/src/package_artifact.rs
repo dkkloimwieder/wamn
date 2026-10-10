@@ -29,21 +29,17 @@ use std::path::{Component as PathComponent, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, bail, ensure};
-use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
-use oci_client::secrets::RegistryAuth;
-use oci_client::{Client as OciClient, Reference};
+use oci_client::Reference;
+use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use tokio_postgres::Client as PgClient;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
     ComponentPackageScope,
 };
 use wamn_engine::component_artifact::{
-    component_artifact_config_bytes, component_artifact_reference, parse_component_artifact_base,
+    component_artifact_config_bytes, component_artifact_reference,
 };
-use wamn_runtime::component_artifact_source::read_ca_bundles;
-use wamn_runtime::registry_credentials::{
-    read_registry_credentials, read_registry_push_credentials,
-};
+use wamn_runtime::registry_credentials::read_registry_push_credentials;
 use wamn_schema_generator::{AUTHORED_MANIFEST, PackageManifest, PolicyContractState};
 
 use crate::component_declaration::{
@@ -51,20 +47,17 @@ use crate::component_declaration::{
     render_palette_declaration,
 };
 use crate::push_component::{AdmitComponentRequest, admit_component, publish_and_verify};
-use crate::push_release_manifest::{artifact_is_absent, registry_auth, registry_client};
-
-/// Artifact type of a package artifact.
-pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v2";
+pub use wamn_package_artifact::{
+    COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoVerifiedArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
+    PackedLayer,
+};
+use wamn_package_artifact::{Repository, ensure_tag, sha256_digest};
 
 /// Media type of the four tar layers.
 pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
 
 /// Media type of layer 0, the exact `generated/wamn.json` bytes.
 pub const PACKAGE_MANIFEST_MEDIA_TYPE: &str = "application/vnd.wamn.package.manifest.v1+json";
-
-/// Media type of a component descriptor layer.
-pub const COMPONENT_DESCRIPTOR_MEDIA_TYPE: &str =
-    "application/vnd.wamn.component.descriptor.v1+json";
 
 const EMPTY_CONFIG_MEDIA_TYPE: &str = "application/vnd.oci.empty.v1+json";
 const EMPTY_CONFIG: &[u8] = b"{}";
@@ -131,17 +124,6 @@ struct IndexedComponent {
     file: PathBuf,
     sha256: String,
     recorded_at: u64,
-}
-
-/// One layer of a package artifact.
-#[derive(Debug, Clone)]
-pub struct PackedLayer {
-    /// The layer media type.
-    pub media_type: String,
-    /// The layer annotations.
-    pub annotations: BTreeMap<String, String>,
-    /// The layer bytes.
-    pub bytes: Vec<u8>,
 }
 
 /// One package tree packed into its layers and image manifest.
@@ -447,28 +429,6 @@ fn collect_files(
             path.display()
         );
     }
-    Ok(())
-}
-
-fn sha256_digest(bytes: &[u8]) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
-    )
-}
-
-/// Refuse a tag that the OCI distribution grammar does not admit.
-fn ensure_tag(tag: &str) -> anyhow::Result<()> {
-    let bytes = tag.as_bytes();
-    ensure!(
-        !bytes.is_empty()
-            && bytes.len() <= 128
-            && (bytes[0].is_ascii_alphanumeric() || bytes[0] == b'_')
-            && bytes
-                .iter()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-')),
-        "package tag {tag:?} is not an OCI tag"
-    );
     Ok(())
 }
 
@@ -827,148 +787,30 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     })
 }
 
-/// The registry inputs that `push-package` and `apply-package
-/// --package-artifact` share.
-#[derive(Debug, Clone)]
-pub struct PackageRegistry {
-    /// Explicit `<registry>/<repository>` base for package artifacts.
-    pub artifact_base: String,
-    /// `.dockerconfigjson` file carrying the registry credential.
-    pub registry_auth_file: PathBuf,
-    /// Use plain HTTP for exactly the registry in `artifact_base`.
-    pub insecure_registry: bool,
-    /// PEM CA bundles trusted for the registry.
-    pub oci_ca_paths: Vec<PathBuf>,
-    /// Owner URL of the control database that holds `catalog.package_artifacts`.
-    pub control_database_url: String,
-}
-
-/// One open registry repository and the tag of one package.
-struct Repository {
-    client: OciClient,
-    auth: RegistryAuth,
-    reference: Reference,
-}
-
-impl Repository {
-    fn open(registry: &PackageRegistry, tag: &str) -> anyhow::Result<Self> {
-        ensure_tag(tag)?;
-        let base = parse_component_artifact_base(&registry.artifact_base)
-            .context("read the package artifact base")?;
-        let credentials = read_registry_credentials(&registry.registry_auth_file, base.registry())
-            .with_context(|| format!("load the credential for registry {}", base.registry()))?;
-        let ca_bundles = read_ca_bundles(&registry.oci_ca_paths)
-            .with_context(|| format!("read CA bundles for registry {}", base.registry()))?;
-        let client = registry_client(base.registry(), registry.insecure_registry, ca_bundles)?;
-        Ok(Self {
-            client,
-            auth: registry_auth(Some(&credentials)),
-            reference: Reference::with_tag(
-                base.registry().to_owned(),
-                base.repository().to_owned(),
-                tag.to_owned(),
-            ),
-        })
-    }
-
-    /// The manifest bytes and digest of the tag, or `None` when the tag does
-    /// not exist.
-    async fn manifest(&self) -> anyhow::Result<Option<(Vec<u8>, String)>> {
-        match self
+/// Push every blob of `packed` to `repository`, then its manifest bytes.
+async fn push_artifact(repository: &Repository, packed: &PackedPackage) -> anyhow::Result<()> {
+    for bytes in packed
+        .layers
+        .iter()
+        .map(|layer| layer.bytes.as_slice())
+        .chain([EMPTY_CONFIG])
+    {
+        repository
             .client
-            .pull_manifest_raw(&self.reference, &self.auth, &[OCI_IMAGE_MEDIA_TYPE])
+            .push_blob(&repository.reference, bytes.to_vec(), &sha256_digest(bytes))
             .await
-        {
-            Ok((bytes, digest)) => {
-                ensure!(
-                    sha256_digest(&bytes) == digest,
-                    "the manifest of package artifact {} does not hash to {digest}",
-                    self.reference
-                );
-                Ok(Some((bytes.to_vec(), digest)))
-            }
-            Err(error) if artifact_is_absent(&error) => Ok(None),
-            Err(error) => {
-                Err(error).with_context(|| format!("read package artifact {}", self.reference))
-            }
-        }
+            .with_context(|| format!("push a blob of package artifact {}", repository.reference))?;
     }
-
-    /// Push every blob of `packed`, then its manifest bytes.
-    async fn push(&self, packed: &PackedPackage) -> anyhow::Result<()> {
-        for bytes in packed
-            .layers
-            .iter()
-            .map(|layer| layer.bytes.as_slice())
-            .chain([EMPTY_CONFIG])
-        {
-            self.client
-                .push_blob(&self.reference, bytes.to_vec(), &sha256_digest(bytes))
-                .await
-                .with_context(|| format!("push a blob of package artifact {}", self.reference))?;
-        }
-        self.client
-            .push_manifest_raw(
-                &self.reference,
-                packed.manifest.clone(),
-                reqwest::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
-            )
-            .await
-            .with_context(|| format!("push package artifact {}", self.reference))?;
-        Ok(())
-    }
-
-    /// The layers of the artifact under the tag, whose manifest digest must be
-    /// `digest`.
-    async fn pull(&self, digest: &str) -> anyhow::Result<Vec<PackedLayer>> {
-        let (bytes, found) = self
-            .manifest()
-            .await?
-            .with_context(|| format!("package artifact {} does not exist", self.reference))?;
-        ensure!(
-            found == digest,
-            "package artifact {} has digest {found}, but catalog.package_artifacts records {digest}",
-            self.reference
-        );
-        let manifest: OciImageManifest = serde_json::from_slice(&bytes).with_context(|| {
-            format!("parse the manifest of package artifact {}", self.reference)
-        })?;
-        ensure!(
-            manifest.artifact_type.as_deref() == Some(PACKAGE_ARTIFACT_TYPE)
-                && manifest.layers.len() > PACKAGE_TAR_LAYERS.len(),
-            "{} is not a {PACKAGE_ARTIFACT_TYPE} package artifact",
-            self.reference
-        );
-        let mut layers = Vec::new();
-        for layer in &manifest.layers {
-            layers.push(self.pull_layer(layer).await?);
-        }
-        Ok(layers)
-    }
-
-    async fn pull_layer(&self, layer: &OciDescriptor) -> anyhow::Result<PackedLayer> {
-        let mut bytes = Vec::new();
-        self.client
-            .pull_blob(&self.reference, layer, &mut bytes)
-            .await
-            .with_context(|| format!("pull a layer of package artifact {}", self.reference))?;
-        ensure!(
-            sha256_digest(&bytes) == layer.digest,
-            "a layer of package artifact {} does not hash to {}",
-            self.reference,
-            layer.digest
-        );
-        Ok(PackedLayer {
-            media_type: layer.media_type.clone(),
-            annotations: layer
-                .annotations
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-            bytes,
-        })
-    }
+    repository
+        .client
+        .push_manifest_raw(
+            &repository.reference,
+            packed.manifest.clone(),
+            reqwest::header::HeaderValue::from_static(OCI_IMAGE_MEDIA_TYPE),
+        )
+        .await
+        .with_context(|| format!("push package artifact {}", repository.reference))?;
+    Ok(())
 }
 
 /// Inputs of one `push-package` run.
@@ -1053,7 +895,7 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
                     packed.digest
                 ),
                 None => {
-                    repository.push(packed).await?;
+                    push_artifact(&repository, packed).await?;
                     let pulled = repository.manifest().await?;
                     ensure!(
                         pulled.as_ref().map(|(_, digest)| digest.as_str())
@@ -1224,33 +1066,15 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
 ///
 /// # Errors
 ///
-/// When no verified artifact is recorded for the package (run
-/// `push-package`), or the artifact cannot be fetched or does not unpack to
-/// its digest.
+/// [`NoVerifiedArtifact`] when no verified artifact is recorded for the
+/// package, or an error when the artifact cannot be fetched or does not
+/// unpack to its digest.
 pub async fn open_verified_package(
     registry: &PackageRegistry,
     package_id: &str,
     version: &str,
 ) -> anyhow::Result<OpenedPackage> {
-    let digest =
-        crate::publish_release::on_control_plane(&registry.control_database_url, async |control| {
-            let row = control
-                .query_opt(
-                    "SELECT digest, verified_at IS NOT NULL FROM catalog.package_artifacts \
-                      WHERE package_id = $1 AND version = $2",
-                    &[&package_id, &version],
-                )
-                .await
-                .context("read catalog.package_artifacts")?;
-            match row {
-                Some(row) if row.get::<_, bool>(1) => Ok(row.get::<_, String>(0)),
-                _ => bail!(
-                    "package {package_id}@{version} has no verified artifact in \
-                     catalog.package_artifacts; run push-package"
-                ),
-            }
-        })
-        .await?;
+    let digest = wamn_package_artifact::verified_digest(registry, package_id, version).await?;
     open_artifact(registry, &format!("{package_id}-{version}"), &digest).await
 }
 

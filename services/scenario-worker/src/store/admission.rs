@@ -15,12 +15,18 @@
 //! on the one connection it still needs, and it opens no transaction at all.
 //!
 //! The surface is deliberately narrow: gate reads the two postures that can
-//! refuse a document, while Publish reads current component facts and appends
-//! exactly seven `catalog.wirings` columns after the control-store green-report
-//! guard. That is the whole of what the admitter credential is granted
-//! (`MANAGEMENT_ADMITTER_*` in `crates/control/provision/src/sql.rs`). A column
-//! absent from those lists is DENIED, not merely unmentioned, so a wider query
-//! fails closed at runtime rather than compile-time.
+//! refuse a document, while Publish appends exactly seven `catalog.wirings`
+//! columns after the control-store green-report guard. That is the whole of
+//! what the admitter credential is used for (`MANAGEMENT_ADMITTER_*` in
+//! `crates/control/provision/src/sql.rs`). A column absent from those lists is
+//! DENIED, not merely unmentioned, so a wider query fails closed at runtime
+//! rather than compile-time.
+//!
+//! Both read the component facts of the package from its verified package
+//! artifact (wamn-vavs4.6, R2), not from this connection: the digest and
+//! `verified_at` that the control store's `catalog.package_artifacts` records,
+//! then the descriptor layers of that artifact, with a pull-only registry
+//! credential. That is the read publish makes.
 //!
 //! # How this connection reaches a governed row at all (`wamn-0h0g.22.17`)
 //!
@@ -41,7 +47,6 @@ use std::fmt;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::time::{sleep, timeout};
 use tokio_postgres::config::Host;
@@ -52,12 +57,12 @@ use tokio_postgres::{Client, Config, NoTls, Row};
 use wamn_authoring_model::GateRefusal;
 use wamn_authoring_model::gate::{judge_gate_document, validate_gate_cases};
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
-    WiringDocument, validate_wiring_compatibility,
+    AdmittedComponent, ComponentPackageScope, WiringDocument, validate_wiring_compatibility,
 };
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
 };
+use wamn_package_artifact::{NoVerifiedArtifact, PackageRegistry, load_component_facts};
 use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialExactnessProbe,
     CredentialProbeError, ExpectedCredentialIdentity, MembershipExpectation, MembershipMode,
@@ -102,15 +107,6 @@ const ADMISSION_CONNECT_ATTEMPTS: usize = 3;
 const ADMISSION_OPERATION_ATTEMPTS: usize = ADMISSION_CONNECT_ATTEMPTS;
 const ADMISSION_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 const ADMISSION_RETRY_DELAY: Duration = Duration::from_millis(100);
-
-/// Read the same complete admitted component facts the compatibility validator
-/// receives on the CLI authoring path.
-const SELECT_COMPONENT_FACTS_SQL: &str = "\
-SELECT component, interface_version, operations::text, component_digest, \
-       imports::text, imports_fingerprint, effects::text \
-  FROM catalog.component_library \
- WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
- ORDER BY component COLLATE \"C\", interface_version COLLATE \"C\"";
 
 /// Append exactly the seven columns management `Publish` is granted.
 const INSERT_WIRING_SQL: &str = "\
@@ -263,6 +259,9 @@ pub struct AdmissionSurface {
     connection: Option<AdmissionConnection>,
     sanitized_endpoint: Box<str>,
     tenant_id: Box<str>,
+    /// Where the component facts of a package are read: its verified package
+    /// artifact, the way publish reads them (R2).
+    package_registry: PackageRegistry,
 }
 
 impl AdmissionSurface {
@@ -285,6 +284,7 @@ impl AdmissionSurface {
         project: &str,
         environment: &str,
         tenant_id: &str,
+        package_registry: PackageRegistry,
     ) -> anyhow::Result<Self> {
         let connection = parse_management_admission_url(
             management_admission_database_url,
@@ -312,6 +312,7 @@ impl AdmissionSurface {
             connection: None,
             sanitized_endpoint,
             tenant_id: tenant_id.into(),
+            package_registry,
         };
         surface.reconnect().await?;
         Ok(surface)
@@ -402,36 +403,6 @@ impl AdmissionSurface {
             return Ok(());
         }
         self.reconnect().await
-    }
-
-    async fn query(
-        &mut self,
-        statement: &str,
-        parameters: &[&(dyn ToSql + Sync)],
-        action: &'static str,
-    ) -> anyhow::Result<Vec<Row>> {
-        for attempt in 1..=ADMISSION_OPERATION_ATTEMPTS {
-            self.ensure_connection().await?;
-            let result = self
-                .connection
-                .as_ref()
-                .expect("ensure_connection installs a connection")
-                .client
-                .query(statement, parameters)
-                .await;
-            match result {
-                Ok(rows) => return Ok(rows),
-                Err(error) if connection_was_lost(&error) => {
-                    self.connection.take();
-                    tracing::warn!(attempt, %error, "project admission query lost its connection");
-                    if attempt < ADMISSION_OPERATION_ATTEMPTS {
-                        sleep(ADMISSION_RETRY_DELAY).await;
-                    }
-                }
-                Err(error) => return Err(error).context(action),
-            }
-        }
-        Err(self.endpoint_unavailable().into())
     }
 
     async fn query_one(
@@ -531,7 +502,14 @@ impl AdmissionSurface {
             package_version.to_owned(),
         )
         .context("publication package coordinate is invalid")?;
-        let components = self.component_facts(&scope).await?;
+        let components = match self.component_facts(&scope).await? {
+            Ok(components) => components,
+            Err(refusal) => {
+                return Ok(PreparePublishResult::InvalidDocument {
+                    detail: refusal.to_string(),
+                });
+            }
+        };
         let wiring_hash = document.wiring_hash().as_str().to_owned();
         if validate_wiring_compatibility(&document, &scope, &components).is_err() {
             return Ok(PreparePublishResult::ExecutableDrift);
@@ -595,45 +573,21 @@ impl AdmissionSurface {
         })
     }
 
+    /// The admitted component facts of `scope`: the descriptors of the
+    /// package's verified artifact, read the way publish reads them. A
+    /// package with no verified artifact is the inner `Err`, which the gate
+    /// and `publish` answer with a typed refusal.
     async fn component_facts(
-        &mut self,
+        &self,
         scope: &ComponentPackageScope,
-    ) -> anyhow::Result<Vec<AdmittedComponent>> {
-        let rows = self
-            .query(
-                SELECT_COMPONENT_FACTS_SQL,
-                &[&scope.tenant_id, &scope.package_id, &scope.package_version],
-                "read the publication scope's admitted component facts",
-            )
-            .await?;
-        rows.into_iter()
-            .map(|row| {
-                let component: String = row.get(0);
-                let decoded = AdmittedComponent {
-                    scope: scope.clone(),
-                    component: component.clone(),
-                    interface_version: row.get(1),
-                    operations: decode_component_json::<
-                        std::collections::BTreeMap<String, AdmittedComponentOperation>,
-                    >(row.get(2), &component, "operations")?,
-                    component_digest: row.get(3),
-                    imports: decode_component_json(row.get(4), &component, "imports")?,
-                    imports_fingerprint: row.get(5),
-                    effects: decode_component_json::<Vec<AdmittedComponentEffect>>(
-                        row.get(6),
-                        &component,
-                        "effects",
-                    )?,
-                };
-                wamn_catalog::verify_stored_effect_projection(&decoded).with_context(|| {
-                    format!(
-                        "component {component:?} stores an effect projection its audited imports \
-                         do not derive"
-                    )
-                })?;
-                Ok(decoded)
-            })
-            .collect()
+    ) -> anyhow::Result<Result<Vec<AdmittedComponent>, NoVerifiedArtifact>> {
+        match load_component_facts(&self.package_registry, scope).await {
+            Ok(components) => Ok(Ok(components)),
+            Err(error) => match NoVerifiedArtifact::find(&error) {
+                Some(refusal) => Ok(Err(refusal.clone())),
+                None => Err(error),
+            },
+        }
     }
 }
 
@@ -665,15 +619,6 @@ fn connection_was_lost(error: &tokio_postgres::Error) -> bool {
             ]
             .contains(code)
         })
-}
-
-fn decode_component_json<T: DeserializeOwned>(
-    stored: &str,
-    component: &str,
-    field: &'static str,
-) -> anyhow::Result<T> {
-    serde_json::from_str(stored)
-        .with_context(|| format!("component {component:?} stores unreadable {field}"))
 }
 
 /// Bind the parsed admission input to the exact facts the server must report.
@@ -846,7 +791,14 @@ pub async fn run_gate(
             }));
         }
     };
-    let components = admission.component_facts(&scope).await?;
+    let components = match admission.component_facts(&scope).await? {
+        Ok(components) => components,
+        Err(refusal) => {
+            return Ok(GateJudgment::Refused(GateRefusal::InvalidDocument {
+                detail: refusal.to_string(),
+            }));
+        }
+    };
     if let Err(refusal) = judge_gate_document(document, &scope, &components) {
         return Ok(GateJudgment::Refused(refusal));
     }

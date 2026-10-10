@@ -198,6 +198,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0023_package_artifact_verification.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0024_control_author_package_artifacts.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0024_control_author_package_artifacts.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

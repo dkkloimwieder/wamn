@@ -917,6 +917,7 @@ pub async fn spawn_journey_management_gate(
     scenario_worker_binary: &Path,
     credentials: &JourneyCredentials,
     management_admission_database_url: &str,
+    package_registry: &crate::package_artifact::PackageRegistry,
     bind: &str,
 ) -> anyhow::Result<JourneyManagementGate> {
     let address = gate_listen_address(bind)?;
@@ -936,6 +937,11 @@ pub async fn spawn_journey_management_gate(
 
     let mut child = tokio::process::Command::new(scenario_worker_binary)
         .arg("serve")
+        .args(
+            package_registry
+                .insecure_registry
+                .then_some("--insecure-registry"),
+        )
         .env("WAMN_MANAGEMENT_BIND", bind)
         .env("WAMN_SYSTEM_URL", &credentials.identity_reader)
         .env("WAMN_CONTROL_AUTHORING_PG_URL", &credentials.control_author)
@@ -947,6 +953,15 @@ pub async fn spawn_journey_management_gate(
         .env("WAMN_MANAGEMENT_PROJECT", &scope.project)
         .env("WAMN_MANAGEMENT_ENVIRONMENT", &scope.environment)
         .env("WAMN_MANAGEMENT_TENANT", &scope.tenant)
+        // The gate reads component facts from verified package artifacts.
+        .env(
+            "WAMN_PACKAGE_ARTIFACT_BASE",
+            &package_registry.artifact_base,
+        )
+        .env(
+            "WAMN_REGISTRY_AUTH_FILE",
+            &package_registry.registry_auth_file,
+        )
         // A panicking caller must not leave a Gate holding the port.
         .kill_on_drop(true)
         .spawn()

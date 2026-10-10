@@ -46,6 +46,22 @@ pub struct AuthorWiringArgs {
     /// The wiring document to submit; it carries its own id and version.
     #[arg(long)]
     pub wiring_document: PathBuf,
+
+    /// Explicit `<registry>/<repository>` base for package artifacts. The
+    /// component facts that gate the wiring are the descriptors of the
+    /// package's verified artifact, read the way `publish-release` reads them.
+    #[arg(long)]
+    pub artifact_base: String,
+    /// `.dockerconfigjson` file carrying the registry pull credential.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: PathBuf,
+    /// Use plain HTTP for exactly the registry in `--artifact-base`.
+    #[arg(long, default_value_t = false)]
+    pub insecure_registry: bool,
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in
+    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
+    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
 }
 
 /// Arguments for the release publish verb. Each package is the verified
@@ -170,6 +186,13 @@ pub struct TerminalizeEffectUncertainArgs {
 pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
     let hash = author_wiring::author_wiring_document(AuthorWiringDocumentRequest {
         database_url: args.database_url,
+        registry: PackageRegistry {
+            artifact_base: args.artifact_base,
+            registry_auth_file: args.registry_auth_file,
+            insecure_registry: args.insecure_registry,
+            oci_ca_paths: args.oci_ca_paths,
+            control_database_url: args.control_database_url.clone(),
+        },
         control_database_url: args.control_database_url,
         tenant: args.tenant,
         package_id: args.package_id,
@@ -322,7 +345,7 @@ mod tests {
         args: AuthorWiringArgs,
     }
 
-    const COORDINATE: [&str; 10] = [
+    const COORDINATE: [&str; 13] = [
         "--database-url",
         "postgres://author.invalid/env",
         "--control-database-url",
@@ -333,6 +356,9 @@ mod tests {
         "orders",
         "--package-version",
         "3.0.0",
+        "--artifact-base",
+        "registry.invalid/wamn/packages",
+        "--registry-auth-file=config.json",
     ];
 
     fn parse(submission: &[&str]) -> Result<AuthorWiringArgs, clap::Error> {

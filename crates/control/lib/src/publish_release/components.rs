@@ -1,9 +1,11 @@
 //! Exact component facts and their operation dependencies.
 
+use wamn_catalog::AdmittedComponentOperation;
+
 use super::{
-    AdmittedComponent, AdmittedComponentOperation, BTreeMap, BTreeSet, ComponentPackageScope,
-    DependencyDigestRule, PublishManifestError, PublishManifestErrorType, ReleaseWiringTarget,
-    ServingAttachment, ServingComponent, VecDeque, WiringDocument,
+    AdmittedComponent, BTreeMap, BTreeSet, ComponentPackageScope, DependencyDigestRule,
+    PublishManifestError, PublishManifestErrorType, ReleaseWiringTarget, ServingAttachment,
+    ServingComponent, VecDeque, WiringDocument,
 };
 
 pub(super) fn resolve_wiring_components(

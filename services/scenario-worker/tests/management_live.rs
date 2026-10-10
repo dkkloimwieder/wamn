@@ -299,6 +299,207 @@ async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<(
     Ok((client, task))
 }
 
+#[path = "../../../crates/control/lib/tests/support/local_registry.rs"]
+mod local_registry;
+use local_registry::LocalRegistry;
+
+/// The repository of the synthetic package artifacts in the local registry.
+const PACKAGE_REPOSITORY: &str = "wamn/packages";
+
+/// A local `registry:2` holding a verified package artifact for each seeded
+/// package, and their `catalog.package_artifacts` rows in the control store.
+///
+/// The gate and `publish` read component facts from the verified package
+/// artifact (wamn-vavs4.6), the way publish-release does. These artifacts carry
+/// exactly the descriptors the seeded facts describe; the components behind
+/// the digests do not exist, and nothing here pulls them.
+struct ArtifactRegistry {
+    local: LocalRegistry,
+    directory: std::path::PathBuf,
+}
+
+impl Drop for ArtifactRegistry {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
+impl ArtifactRegistry {
+    async fn start(label: &str, admin: &Client) -> anyhow::Result<Self> {
+        let local = LocalRegistry::start(&format!("management-{label}"));
+        local.ready().await;
+        let directory = std::env::temp_dir().join(format!(
+            "wamn-management-live-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory)?;
+        std::fs::write(
+            directory.join("config.json"),
+            format!(
+                r#"{{"auths":{{"{}":{{"username":"wamn","password":"wamn"}}}}}}"#,
+                local.address
+            ),
+        )?;
+        let registry = Self { local, directory };
+        for (package, descriptors) in [
+            (CANDIDATE_PACKAGE, candidate_descriptors()),
+            (EFFECTFUL_PACKAGE, vec![effectful_descriptor()]),
+        ] {
+            let digest = registry.push(package, &descriptors).await?;
+            admin
+                .execute(
+                    "INSERT INTO catalog.package_artifacts (package_id, version, digest) \
+                     VALUES ($1, $2, $3)",
+                    &[&package, &CANDIDATE_PACKAGE_VERSION, &digest],
+                )
+                .await
+                .with_context(|| format!("record the verified artifact of {package}"))?;
+        }
+        Ok(registry)
+    }
+
+    fn artifact_base(&self) -> String {
+        format!("{}/{PACKAGE_REPOSITORY}", self.local.address)
+    }
+
+    fn auth_file(&self) -> std::path::PathBuf {
+        self.directory.join("config.json")
+    }
+
+    /// Pack one synthetic package tree with `descriptors` and push it under
+    /// `<package>-<version>`. Returns the artifact digest.
+    async fn push(
+        &self,
+        package: &str,
+        descriptors: &[serde_json::Value],
+    ) -> anyhow::Result<String> {
+        let root = self.directory.join(package);
+        std::fs::create_dir_all(root.join("generated"))?;
+        std::fs::create_dir_all(root.join("descriptors"))?;
+        std::fs::write(root.join("wamn.k"), "# synthetic management_live package\n")?;
+        std::fs::write(
+            root.join("generated/wamn.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "package": {"id": package, "version": CANDIDATE_PACKAGE_VERSION},
+            }))?,
+        )?;
+        for descriptor in descriptors {
+            let parsed: wamn_catalog::ComponentDescriptor =
+                serde_json::from_value(descriptor.clone())
+                    .context("the synthetic descriptor is a component descriptor")?;
+            std::fs::write(
+                root.join(format!("descriptors/{}.json", parsed.component)),
+                wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&parsed)?),
+            )?;
+        }
+        let packed = wamn_control::package_artifact::pack_package(&root)?;
+        let http = reqwest::Client::new();
+        let base = format!("http://{}/v2/{PACKAGE_REPOSITORY}", self.local.address);
+        for bytes in packed
+            .layers
+            .iter()
+            .map(|layer| layer.bytes.as_slice())
+            .chain([b"{}".as_slice()])
+        {
+            let started = http
+                .post(format!("{base}/blobs/uploads/"))
+                .send()
+                .await?
+                .error_for_status()?;
+            let location = started
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .context("the registry names an upload location")?
+                .to_str()?
+                .to_owned();
+            let location = if location.starts_with('/') {
+                format!("http://{}{location}", self.local.address)
+            } else {
+                location
+            };
+            let separator = if location.contains('?') { '&' } else { '?' };
+            let digest = <sha2::Sha256 as sha2::Digest>::digest(bytes).iter().fold(
+                String::from("sha256:"),
+                |mut digest, byte| {
+                    write!(digest, "{byte:02x}").expect("writing to a String cannot fail");
+                    digest
+                },
+            );
+            http.put(format!("{location}{separator}digest={digest}"))
+                .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                .body(bytes.to_vec())
+                .send()
+                .await?
+                .error_for_status()?;
+        }
+        http.put(format!("{base}/manifests/{}", packed.tag()))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/vnd.oci.image.manifest.v1+json",
+            )
+            .body(packed.manifest.clone())
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(packed.digest)
+    }
+}
+
+/// The descriptors of the candidate package: the facts [`seed_candidate`]
+/// describes.
+fn candidate_descriptors() -> Vec<serde_json::Value> {
+    let no_ports = serde_json::json!({"input-ports": [], "output-ports": [], "parameters": []});
+    vec![
+        serde_json::json!({
+            "component": "entity",
+            "interface-version": "0.1",
+            "component-digest": CANDIDATE_COMPONENT_DIGEST,
+            "operations": {"create": no_ports},
+            "imports": [],
+            "imports-fingerprint": CANDIDATE_IMPORTS_FINGERPRINT,
+            "effects": [],
+            "connections": [],
+        }),
+        serde_json::json!({
+            "component": BLOBSTORE_COMPONENT,
+            "interface-version": "0.1",
+            "component-digest": BLOBSTORE_COMPONENT_DIGEST,
+            "operations": {"put": no_ports},
+            "imports": ["wasmcloud:blobstore/blobstore@0.1.0"],
+            "imports-fingerprint": BLOBSTORE_IMPORTS_FINGERPRINT,
+            "effects": [{
+                "package": "wasmcloud:blobstore",
+                "provenance": "imported",
+                "interfaces": ["wasmcloud:blobstore/blobstore@0.1.0"],
+            }],
+            "connections": [],
+        }),
+    ]
+}
+
+/// The descriptor of the effectful package: the facts
+/// [`seed_effectful_unreleased_candidate`] describes.
+fn effectful_descriptor() -> serde_json::Value {
+    let imports = serde_json::json!([HTTP_IMPORT]);
+    serde_json::json!({
+        "component": EFFECTFUL_COMPONENT,
+        "interface-version": "0.1",
+        "component-digest": EFFECTFUL_COMPONENT_DIGEST,
+        "operations": {
+            EFFECTFUL_OPERATION: {"input-ports": [], "output-ports": [], "parameters": []},
+        },
+        "imports": imports,
+        "imports-fingerprint": wamn_execution_contract::canonical_json_sha256(&imports),
+        "effects": [{
+            "package": "wamn:connection",
+            "provenance": "imported",
+            "interfaces": [HTTP_IMPORT],
+        }],
+        "connections": [{"store-alias": EFFECTFUL_STORE_ALIAS, "requirement-type": "http"}],
+    })
+}
+
 /// The database the admin URL names — half of the author generation's scope.
 fn database_of(url: &str) -> String {
     let parsed = url::Url::parse(url).expect("the admin PG URL parses");
@@ -429,7 +630,10 @@ fn sanitized_admission_endpoint(admin_url: &str) -> String {
     )
 }
 
-async fn start_management_surface(admin_url: &str) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+async fn start_management_surface(
+    admin_url: &str,
+    artifacts: &ArtifactRegistry,
+) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     let (readiness_tx, readiness_rx) = tokio::sync::oneshot::channel();
     let mut surface = tokio::spawn(wamn_scenario_worker::management::serve_with_readiness(
         wamn_scenario_worker::management::ManagementServeArgs {
@@ -437,6 +641,12 @@ async fn start_management_surface(admin_url: &str) -> tokio::task::JoinHandle<an
             system_url: identity_reader_url(admin_url),
             control_authoring_database_url: author_url(admin_url),
             management_admission_database_url: admission_url(admin_url),
+            // The gate and publish read component facts from the verified
+            // package artifacts of the local registry (wamn-vavs4.6).
+            package_artifact_base: artifacts.artifact_base(),
+            registry_auth_file: artifacts.auth_file(),
+            insecure_registry: true,
+            oci_ca_paths: Vec::new(),
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             environment: ENVIRONMENT.to_owned(),
@@ -1190,7 +1400,52 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
     )
     .await
     .expect("admit the connection Gate principal");
-    let surface = start_management_surface(url).await;
+    let artifacts = ArtifactRegistry::start("connection", &admin)
+        .await
+        .expect("push the verified package artifacts");
+    let surface = start_management_surface(url, &artifacts).await;
+
+    // A package with no verified artifact is a typed refusal in the gate and
+    // in publish, never an internal error (wamn-vavs4.6).
+    let absent = candidate_graph(CANDIDATE_WIRING, "entity", "create");
+    let gate = post(
+        "/authoring",
+        Some(principal.token()),
+        &[],
+        &gate_document_for_package_in("gate-absent-package", PROJECT, "absent_package", &absent),
+    )
+    .await;
+    let publish = post(
+        "/authoring",
+        Some(principal.token()),
+        &[],
+        &publish_document_in("publish-absent-package", PROJECT, &absent)
+            .replace(CANDIDATE_PACKAGE, "absent_package"),
+    )
+    .await;
+    for (command, response) in [("gate", gate), ("publish", publish)] {
+        assert_eq!(response.status, 200, "{}", response.body);
+        let refusal = outcome(&response.body)["value"].clone();
+        assert_eq!(
+            refusal["command"],
+            serde_json::json!(command),
+            "{}",
+            response.body
+        );
+        assert_eq!(
+            refusal["reason"]["type"],
+            serde_json::json!("invalid-document"),
+            "{}",
+            response.body
+        );
+        assert!(
+            refusal["reason"]["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("has no verified artifact")),
+            "{}",
+            response.body
+        );
+    }
 
     match case {
         ConnectionGateCase::EmptyCases => {
@@ -1245,7 +1500,10 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
     let principal = admitted_user(&admin, "reconnect@example.com", PROJECT, "project-author")
         .await
         .expect("admit the reconnect test principal");
-    let surface = start_management_surface(url).await;
+    let artifacts = ArtifactRegistry::start("reconnect", &admin)
+        .await
+        .expect("push the verified package artifacts");
+    let surface = start_management_surface(url, &artifacts).await;
 
     let before = post(
         "/authoring",
@@ -1256,6 +1514,9 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
     .await;
     assert_eq!(before.status, 200, "{}", before.body);
     assert_eq!(outcome(&before.body)["status"], "completed");
+    // The gate reads component facts from the verified package artifact, not
+    // from the verification database (wamn-vavs4.6). `publish` appends to that
+    // database, so it is the command that crosses the recreate below.
 
     drop(project);
     project_task.abort();
@@ -1266,7 +1527,7 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
         .await
         .expect("drop the verification database beneath the external Gate");
 
-    let command = gate_document("gate-across-verification-recreate");
+    let command = publish_document("publish-across-verification-recreate");
     let unavailable = post("/authoring", Some(principal.token()), &[], &command).await;
     assert_eq!(unavailable.status, 503, "{}", unavailable.body);
     assert_eq!(
@@ -1384,7 +1645,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("age one token past its expiry");
 
-    let surface = start_management_surface(url).await;
+    let artifacts = ArtifactRegistry::start("authenticates", &admin)
+        .await
+        .expect("push the verified package artifacts");
+    let surface = start_management_surface(url, &artifacts).await;
 
     // ---- every untrusted presenter refuses, identically, before any command --
     let forged = format!("{PAT_TOKEN_PREFIX}0123456789abcdef_{}", "0".repeat(64));

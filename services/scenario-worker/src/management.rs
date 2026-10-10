@@ -17,6 +17,7 @@
 use std::convert::Infallible;
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -488,6 +489,36 @@ pub struct ManagementServeArgs {
     )]
     pub management_admission_database_url: String,
 
+    /// Explicit `<registry>/<repository>` base for package artifacts.
+    ///
+    /// The gate and `publish` judge a wiring against the component facts of
+    /// its package, and those facts are the descriptors of the package's
+    /// verified artifact (R2). The surface reads them the way
+    /// `publish-release` does: the digest and `verified_at` that
+    /// `catalog.package_artifacts` records, read on the control-authoring
+    /// connection, then the artifact from this base.
+    #[arg(long = "package-artifact-base", env = "WAMN_PACKAGE_ARTIFACT_BASE")]
+    pub package_artifact_base: String,
+
+    /// `.dockerconfigjson` file carrying a pull-only registry credential,
+    /// scoped to the package repositories. It is mounted from a Secret the
+    /// same way as the host's registry credential.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: PathBuf,
+
+    /// Use plain HTTP for exactly the registry in `--package-artifact-base`.
+    #[arg(long, default_value_t = false)]
+    pub insecure_registry: bool,
+
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in
+    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
+    #[arg(
+        long = "oci-ca-path",
+        env = wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV,
+        value_delimiter = ','
+    )]
+    pub oci_ca_paths: Vec<PathBuf>,
+
     /// Organization whose project roles admit a caller.
     #[arg(long, env = "WAMN_MANAGEMENT_ORG")]
     pub org: String,
@@ -668,6 +699,13 @@ async fn serve_inner(
         &scope.project,
         &scope.environment,
         &scope.tenant_id,
+        wamn_package_artifact::PackageRegistry {
+            artifact_base: args.package_artifact_base.clone(),
+            registry_auth_file: args.registry_auth_file.clone(),
+            insecure_registry: args.insecure_registry,
+            oci_ca_paths: args.oci_ca_paths.clone(),
+            control_database_url: args.control_authoring_database_url.clone(),
+        },
     )
     .await?;
     let surface = Arc::new(Surface {
@@ -1434,6 +1472,10 @@ mod tests {
                 "postgres://{authoring}:secret@control.invalid:5432/{CONTROL_DATABASE}"
             ),
             management_admission_database_url: admission_url.to_owned(),
+            package_artifact_base: "registry.invalid/wamn/packages".to_owned(),
+            registry_auth_file: PathBuf::from("config.json"),
+            insecure_registry: false,
+            oci_ca_paths: Vec::new(),
             org: SCOPE_ORG.to_owned(),
             project: SCOPE_PROJECT.to_owned(),
             environment: SCOPE_ENVIRONMENT.to_owned(),

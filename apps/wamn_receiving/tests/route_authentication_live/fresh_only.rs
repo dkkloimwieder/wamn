@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::author_wiring::{self, AuthorWiringRequest};
+use wamn_control::author_wiring;
 use wamn_control::dev::environment::{JourneyCredentials, connect, spawn_journey_management_gate};
 use wamn_control::provision_project_env::secret_value;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
@@ -215,25 +215,6 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         },
     )
     .await?;
-    let wiring = json!({"format-version": "0.1", "wiring-id": WIRING, "version": 1,
-        "entry": "parent", "nodes": {"parent": {"component": WIRING,
-            "interface-version": "0.1.0", "operation": OPERATION, "terminal": "respond"}}});
-    let wiring_path = root.join("wiring.json");
-    write_json(&wiring_path, &wiring)?;
-    gate_wiring(&test, &wiring).await?;
-    let document = author_wiring::read_wiring_document(&wiring_path)?;
-    author_wiring::author_wiring_in_databases(
-        test.project_url,
-        &test.inputs.system_pg_url,
-        &AuthorWiringRequest {
-            tenant_id: identity().tenant.as_str(),
-            package_id: PACKAGE,
-            package_version: VERSION,
-            document: &document,
-        },
-    )
-    .await?;
-
     let definition = json!({"id": WIRING, "kind": "http",
         "route": {"path": ROUTE},
         "raw-body-bytes": {"maximum": 1_048_576},
@@ -249,14 +230,9 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             "definition": definition, "auth-policy": {"modes": ["pat", "session"]}
         }}),
     )?;
-    // Acme's event handler is outside this wiring's actual dependency closure.
-    // Including that package would also require its unrelated handler wiring.
-    let packages = vec![
-        PackageCoordinate::new(BASE_PACKAGE_ID, *BASE_PACKAGE_VERSION)?,
-        PackageCoordinate::new(PACKAGE, VERSION)?,
-    ];
-    // The release composes verified package artifacts: the base was pushed
-    // with the journey release, and the fixture package is pushed here.
+    // The gate, authorship and the release read verified package artifacts:
+    // the base was pushed with the journey release, and the fixture package
+    // is pushed here, before its wiring is gated.
     let registry =
         super::environment::journey_package_registry(test.inputs, &test.inputs.system_pg_url)?;
     wamn_control::package_artifact::push_package(
@@ -269,6 +245,30 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     )
     .await
     .context("push the prior-commit fixture package artifact")?;
+    let wiring = json!({"format-version": "0.1", "wiring-id": WIRING, "version": 1,
+        "entry": "parent", "nodes": {"parent": {"component": WIRING,
+            "interface-version": "0.1.0", "operation": OPERATION, "terminal": "respond"}}});
+    let wiring_path = root.join("wiring.json");
+    write_json(&wiring_path, &wiring)?;
+    gate_wiring(&test, &wiring).await?;
+    let document = author_wiring::read_wiring_document(&wiring_path)?;
+    author_wiring::author_wiring_in_databases(
+        test.project_url,
+        &test.inputs.system_pg_url,
+        &registry,
+        identity().tenant.as_str(),
+        PACKAGE,
+        VERSION,
+        &document,
+    )
+    .await?;
+
+    // Acme's event handler is outside this wiring's actual dependency closure.
+    // Including that package would also require its unrelated handler wiring.
+    let packages = vec![
+        PackageCoordinate::new(BASE_PACKAGE_ID, *BASE_PACKAGE_VERSION)?,
+        PackageCoordinate::new(PACKAGE, VERSION)?,
+    ];
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
             database_url: test.project_url.to_owned(),
@@ -788,6 +788,7 @@ async fn gate_wiring(test: &PriorCommitTest<'_>, wiring: &Value) -> anyhow::Resu
         &journey_scenario_worker_binary()?,
         &credentials,
         &credentials.management_admitter,
+        &super::environment::journey_package_registry(test.inputs, &test.inputs.system_pg_url)?,
         ROUTE_JOURNEY_GATE_BIND,
     )
     .await?;

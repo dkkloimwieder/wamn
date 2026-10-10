@@ -488,6 +488,12 @@ REVOKE ALL PRIVILEGES ON catalog.effective_releases, catalog.connection_requirem
 GRANT SELECT ON catalog.effective_releases, catalog.connection_requirements
     TO wamn_control_author;
 
+-- The management surface reads the digest and verified_at of a package
+-- artifact here before it reads the component facts from that artifact, as
+-- publish-release does (wamn-vavs4.6).
+REVOKE ALL PRIVILEGES ON catalog.package_artifacts FROM wamn_control_author;
+GRANT SELECT ON catalog.package_artifacts TO wamn_control_author;
+
 REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports
     FROM wamn_control_author;
 GRANT SELECT, INSERT ON catalog.authoring_command_audit, wamn_run.gate_reports
@@ -544,6 +550,7 @@ BEGIN
              SELECT 1 FROM (VALUES
                  ('catalog', 'effective_releases', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
+                 ('catalog', 'package_artifacts', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),
                  ('wamn_run', 'gate_reports', 'SELECT'),

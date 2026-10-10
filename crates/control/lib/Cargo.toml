@@ -45,6 +45,7 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_
 tracing = { workspace = true }
 url = { workspace = true }
 wamn-catalog = { workspace = true }
+wamn-package-artifact = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-reg = { workspace = true }

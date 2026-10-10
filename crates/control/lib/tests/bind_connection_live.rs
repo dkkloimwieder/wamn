@@ -49,10 +49,13 @@ const HTTP_SIDECAR: &str =
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
 /// The fixture release: its packages, nested ones included, and the
-/// component digests it serves.
+/// components it serves, each with its admitted descriptor, which is where the
+/// runtime reads component facts (wamn-vavs4.3).
 const RELEASE_BYTES: &str = concat!(
-    r#"{"components":[{"digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},"#,
-    r#"{"digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333"}],"#,
+    r#"{"components":["#,
+    r#"{"component":"blob-put","descriptor":{"component":"blob-put","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[{"requirement-type":"blobstore","store-alias":"labels"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","interface-version":"0.1.0","package-id":"bind_connection_fixture"},"#,
+    r#"{"component":"http-sidecar","descriptor":{"component":"http-sidecar","component-digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","connections":[{"requirement-type":"http","store-alias":"erp"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","interface-version":"0.1.0","package-id":"bind_connection_fixture"},"#,
+    r#"{"component":"nested-origin","descriptor":{"component":"nested-origin","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[{"requirement-type":"http","store-alias":"origin-http"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"origin-call":{"input-ports":[],"output-ports":[],"parameters":[]}}},"digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","interface-version":"0.1.0","package-id":"nested_origin"}],"#,
     r#""release":{"packages":[{"package-id":"bind_connection_fixture","package-version":"1.0.0"},"#,
     r#"{"package-id":"nested_origin","package-version":"1.0.0"},"#,
     r#"{"package-id":"nested_wiring","package-version":"1.0.0"}]}}"#
@@ -105,7 +108,9 @@ fn wiring() -> WiringDocument {
 
 /// One admitted component with one declared connection, recorded the way
 /// push-component records it: the library row, then the requirement row built
-/// by the control library from the platform's own descriptor.
+/// by the control library from the platform's own descriptor. It returns the
+/// admitted facts, which authorship reads from the verified package artifact
+/// in production (`wamn_package_artifact::load_component_facts`).
 async fn admit_component(
     project: &Client,
     package_id: &str,
@@ -114,7 +119,7 @@ async fn admit_component(
     operation: &str,
     store_alias: &str,
     descriptor: ConnectionTypeDescriptor,
-) {
+) -> AdmittedComponent {
     let admitted = AdmittedComponent {
         scope: ComponentPackageScope {
             tenant_id: TENANT.to_owned(),
@@ -192,9 +197,11 @@ async fn admit_component(
         )
         .await
         .expect("record the fixture component's connection requirement");
+    admitted
 }
 
-async fn provision_project(project: &Client, project_url: &str) {
+/// Provision the project and return the admitted components of the package.
+async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedComponent> {
     // apply-package narrows migration authority to wamn_db_owner, a
     // CLUSTER-wide role. On a fresh server it does not exist; the sibling
     // fixture that omits this passes only where an earlier run left the role
@@ -232,7 +239,7 @@ async fn provision_project(project: &Client, project_url: &str) {
         .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
         .expect("scope the project seed session");
-    admit_component(
+    let blob_put = admit_component(
         project,
         PACKAGE,
         "blob-put",
@@ -243,7 +250,7 @@ async fn provision_project(project: &Client, project_url: &str) {
     )
     .await;
     // A second alias of a DIFFERENT type, for the mismatch control.
-    admit_component(
+    let http_sidecar = admit_component(
         project,
         PACKAGE,
         "http-sidecar",
@@ -265,6 +272,7 @@ async fn provision_project(project: &Client, project_url: &str) {
         )
         .await
         .expect("publish the fixture release");
+    vec![blob_put, http_sidecar]
 }
 
 async fn provision_control(control: &Client) {
@@ -285,7 +293,12 @@ async fn record_green_report(control: &Client, wiring_hash: &DefinitionHash) {
         .expect("record a green gate report at the wiring's own hash");
 }
 
-async fn author(control: &Client, project: &mut Client, document: &WiringDocument) {
+async fn author(
+    control: &Client,
+    project: &mut Client,
+    document: &WiringDocument,
+    components: &[AdmittedComponent],
+) {
     let transaction = project
         .transaction()
         .await
@@ -298,6 +311,7 @@ async fn author(control: &Client, project: &mut Client, document: &WiringDocumen
             package_id: PACKAGE,
             package_version: PACKAGE_VERSION,
             document,
+            components,
         },
     )
     .await
@@ -528,11 +542,11 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     let control_url = control_database.url().to_owned();
     let (mut project, project_task) = connect(&project_url).await;
     let (control, control_task) = connect(&control_url).await;
-    provision_project(&project, &project_url).await;
+    let components = provision_project(&project, &project_url).await;
     provision_control(&control).await;
     let document = wiring();
     record_green_report(&control, &document.wiring_hash()).await;
-    author(&control, &mut project, &document).await;
+    author(&control, &mut project, &document, &components).await;
     // No tempfile dev-dependency in this crate: a pid-named scratch directory,
     // removed at the end.
     let scratch_dir =

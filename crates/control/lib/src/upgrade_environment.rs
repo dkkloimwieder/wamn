@@ -790,7 +790,6 @@ impl Run {
     async fn packages(&self, record: &RunRecord) -> Outcome {
         use crate::release_composition::{
             ComponentBuildPlan, PackageInput, load_wirings, select_component_artifacts,
-            select_palette_artifacts, wiring_store_alias,
         };
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
@@ -827,7 +826,6 @@ impl Run {
             serde_json::from_str(&self.command("build-plan", &mut plan).await?)
                 .context("decode the build plan")?;
         let artifacts = select_component_artifacts(&packages, &plan.virtualization.artifacts)?;
-        let palette = select_palette_artifacts(&packages, &plan.palette)?;
         let wirings = load_wirings(&packages)?;
 
         let registry = Registry::login(&environment.registry, &self.work).await?;
@@ -863,83 +861,27 @@ impl Run {
             .await?;
         }
 
-        let publish = || crate::push_component::PublishAdmittedComponentRequest {
-            artifact_base: format!("{}/components", environment.registry),
+        // push-package pushed every component of each package with its
+        // artifact, so the component digests are the descriptors of the
+        // verified artifacts, read the way publish reads them.
+        let package_registry = crate::package_artifact::PackageRegistry {
+            artifact_base: format!("{}/packages", environment.registry),
             registry_auth_file: registry.auth_file(),
             insecure_registry: false,
             oci_ca_paths: Vec::new(),
-            project_database_url: project_url.clone(),
             control_database_url: system_url.clone(),
         };
         let mut pushed = BTreeMap::<String, String>::new();
-        for artifact in &artifacts {
-            let package = packages
-                .iter()
-                .find(|package| package.manifest.package.id == *artifact.package_id)
-                .context("a selected artifact has no package")?;
-            let template = package
-                .root
-                .join("publication/components")
-                .join(format!("{}.json.in", artifact.component));
-            let base = crate::component_declaration::authored_base_digests(&package.root)?;
-            let document = crate::component_declaration::render_declaration_document(
-                &template, &tenant, &base,
-            )?;
-            let declaration = self
-                .release_files()
-                .join(format!("{}.declaration.json", artifact.component));
-            fs::write(&declaration, serde_json::to_vec(&document)?)?;
-            let outcome = crate::push_component::push_component(
-                crate::push_component::AdmitComponentRequest {
-                    package: package.root.clone(),
-                    component_bytes: artifact.path.clone(),
-                    declaration,
-                    admitted_platform_packages: vec![
-                        "wamn:node".to_owned(),
-                        "wamn:postgres".to_owned(),
-                    ],
-                },
-                publish(),
+        for package in &packages {
+            let opened = crate::package_artifact::open_verified_package(
+                &package_registry,
+                &package.manifest.package.id,
+                &package.manifest.package.version,
             )
             .await?;
-            pushed.insert(artifact.component.to_string(), outcome.component_digest);
-        }
-        for selected in &palette {
-            let artifact = &selected.artifact;
-            let package = packages
-                .iter()
-                .find(|package| package.manifest.package.id == *artifact.package_id)
-                .context("a palette artifact has no package")?;
-            let scope = wamn_catalog::ComponentPackageScope {
-                tenant_id: tenant.clone(),
-                package_id: artifact.package_id.to_string(),
-                package_version: artifact.package_version.to_string(),
-            };
-            let alias = wiring_store_alias(&wirings, artifact)?;
-            let document = crate::component_declaration::render_palette_declaration(
-                &selected.declaration,
-                &scope,
-                alias.as_deref(),
-            )?;
-            let admitted = crate::component_declaration::declared_platform_packages(
-                &selected.declaration,
-                &document,
-            )?;
-            let declaration = self
-                .release_files()
-                .join(format!("{}.declaration.json", artifact.component));
-            fs::write(&declaration, serde_json::to_vec(&document)?)?;
-            let outcome = crate::push_component::push_component(
-                crate::push_component::AdmitComponentRequest {
-                    package: package.root.clone(),
-                    component_bytes: artifact.path.clone(),
-                    declaration,
-                    admitted_platform_packages: admitted,
-                },
-                publish(),
-            )
-            .await?;
-            pushed.insert(artifact.component.to_string(), outcome.component_digest);
+            for descriptor in crate::package_artifact::read_descriptors(opened.root())? {
+                pushed.insert(descriptor.component, descriptor.component_digest);
+            }
         }
         for (component, digest) in &pushed {
             outputs.insert(format!("component {component}"), digest.clone());
@@ -966,6 +908,7 @@ impl Run {
                 &gate.control_author_url,
                 &gate.management_admitter_url,
                 &databases,
+                &package_registry,
             )
             .await?;
             for input in &wirings {
@@ -991,6 +934,7 @@ impl Run {
                     crate::author_wiring::AuthorWiringDocumentRequest {
                         database_url: project_url.clone(),
                         control_database_url: system_url.clone(),
+                        registry: package_registry.clone(),
                         tenant: tenant.clone(),
                         package_id: input.package_id.to_string(),
                         package_version: input.package_version.to_string(),
@@ -1031,13 +975,7 @@ impl Run {
                     .collect::<Result<_, _>>()?,
                 wirings: targets,
             },
-            &crate::package_artifact::PackageRegistry {
-                artifact_base: format!("{}/packages", environment.registry),
-                registry_auth_file: registry.auth_file(),
-                insecure_registry: false,
-                oci_ca_paths: Vec::new(),
-                control_database_url: system_url.clone(),
-            },
+            &package_registry,
         )
         .await?;
         outputs.insert("release digest".to_owned(), digest.to_string());
@@ -1428,7 +1366,22 @@ impl Run {
         if !retire.is_empty() {
             // A retire needs a live session of the replacement generation
             // (owner ruling on wamn-ld93.25), so the gate service holds one.
-            let service = GateService::start(self, &control_url, &admitter_url, &databases).await?;
+            let registry = Registry::login(&environment.registry, &self.work).await?;
+            let package_registry = crate::package_artifact::PackageRegistry {
+                artifact_base: format!("{}/packages", environment.registry),
+                registry_auth_file: registry.auth_file(),
+                insecure_registry: false,
+                oci_ca_paths: Vec::new(),
+                control_database_url: databases.system_url(),
+            };
+            let service = GateService::start(
+                self,
+                &control_url,
+                &admitter_url,
+                &databases,
+                &package_registry,
+            )
+            .await?;
             tokio::time::sleep(Duration::from_secs(3)).await;
             for (family, old, target) in retire {
                 run_workload_action(&WorkloadActionRequest {
@@ -1997,6 +1950,7 @@ impl GateService {
         control_author_url: &str,
         management_admitter_url: &str,
         databases: &Databases,
+        package_registry: &crate::package_artifact::PackageRegistry,
     ) -> anyhow::Result<Self> {
         let arguments = &run.arguments;
         let reader = wamn_control_provision::workload_secret_name(
@@ -2035,6 +1989,14 @@ impl GateService {
             .env("WAMN_MANAGEMENT_PROJECT", &arguments.project)
             .env("WAMN_MANAGEMENT_ENVIRONMENT", &arguments.environment)
             .env("WAMN_MANAGEMENT_TENANT", &databases.tenant)
+            .env(
+                "WAMN_PACKAGE_ARTIFACT_BASE",
+                &package_registry.artifact_base,
+            )
+            .env(
+                "WAMN_REGISTRY_AUTH_FILE",
+                &package_registry.registry_auth_file,
+            )
             .stdin(Stdio::null())
             .stdout(output.try_clone()?)
             .stderr(output)
@@ -2145,16 +2107,17 @@ async fn bound_release(
 }
 
 /// Copies each active binding of the current release of the environment to
-/// the new release, with the digest that this run pushed for the same
-/// component (owner ruling of 2026-10-02 on `wamn-m511.5`). The current
-/// release is the one the active bindings name, other than the new release.
+/// the new release, with the digest that the verified package artifacts
+/// carry for the same component (owner ruling of 2026-10-02 on `wamn-m511.5`).
+/// The current release is the one the active bindings name, other than the
+/// new release. Its manifest names the component of each bound digest.
 async fn copy_bindings(
     run: &Run,
     databases: &Databases,
     release: &str,
     pushed: &BTreeMap<String, String>,
 ) -> anyhow::Result<Vec<(String, String)>> {
-    let client = databases.project().await?;
+    let mut client = databases.project().await?;
     // An environment with no active binding binds nothing yet.
     let Some(current) = bound_release(
         &client,
@@ -2166,13 +2129,17 @@ async fn copy_bindings(
     else {
         return Ok(Vec::new());
     };
+    let transaction = client.transaction().await?;
+    let bytes = crate::publish_release::read_release(&transaction, &databases.tenant, &current)
+        .await?
+        .with_context(|| format!("catalog.releases holds no release {current}"))?;
+    transaction.commit().await?;
+    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
+        .with_context(|| format!("read the manifest of release {current}"))?;
     let rows = client
         .query(
             "SELECT b.component_digest, b.store_alias, b.instance_id,
-                    i.requirement_type, g.definition_json::text, g.credential_set_handle,
-                    (SELECT l.component FROM catalog.component_library AS l
-                      WHERE l.tenant_id = b.tenant_id AND l.component_digest = b.component_digest
-                      ORDER BY l.admitted_at DESC LIMIT 1)
+                    i.requirement_type, g.definition_json::text, g.credential_set_handle
                FROM catalog.connection_bindings AS b
                JOIN catalog.connection_instances AS i
                  ON i.tenant_id = b.tenant_id AND i.environment = b.environment
@@ -2194,12 +2161,15 @@ async fn copy_bindings(
         let requirement: String = row.get(3);
         let definition: String = row.get(4);
         let credential_handle: Option<String> = row.get(5);
-        let component: Option<String> = row.get(6);
-        let component = component
-            .with_context(|| format!("no component of the tenant has the digest {old_digest}"))?;
-        let new_digest = pushed.get(&component).with_context(|| {
+        let component = &manifest
+            .components
+            .iter()
+            .find(|component| component.digest.as_str() == old_digest)
+            .with_context(|| format!("release {current} names no component {old_digest}"))?
+            .component;
+        let new_digest = pushed.get(component).with_context(|| {
             format!(
-                "release {current} binds {instance_id} to the component {component}, which this run did not push"
+                "release {current} binds {instance_id} to the component {component}, which no package artifact of this run carries"
             )
         })?;
         let bound = crate::bind_connection::bind(&crate::bind_connection::BindConnectionRequest {

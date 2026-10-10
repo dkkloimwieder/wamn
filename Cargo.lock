@@ -5876,6 +5876,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-fixture-package",
  "wamn-identity-client",
+ "wamn-package-artifact",
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-project-state",
@@ -6310,6 +6311,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-package-artifact"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "oci-client",
+ "ring",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "wamn-catalog",
+ "wamn-engine",
+ "wamn-execution-contract",
+ "wamn-runtime",
+]
+
+[[package]]
 name = "wamn-pg-core"
 version = "0.1.0"
 
@@ -6517,6 +6535,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -6526,9 +6545,11 @@ dependencies = [
  "url",
  "wamn-authoring-model",
  "wamn-catalog",
+ "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-execution-contract",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-schema-control",

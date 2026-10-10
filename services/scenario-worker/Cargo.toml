@@ -16,6 +16,10 @@ wamn-catalog = { workspace = true }
 # or K8s client. Both sides of the credential must derive the same generation
 # name, so the contract lives in one crate rather than being restated here.
 wamn-control-provision = { workspace = true }
+# wamn-vavs4.6: the gate and publish read component facts from the verified
+# package artifact, the way publish-release reads them (R2). A deployed service
+# never depends on `wamn-control`, so the reader is its own small crate.
+wamn-package-artifact = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
@@ -47,6 +51,12 @@ wamn-catalog = { workspace = true }
 # rewrite the admin URL's identity rather than taking a second URL input.
 url = { workspace = true }
 wamn-test-postgres = { workspace = true }
+# The live gates push synthetic verified package artifacts to a local
+# registry:2 (crates/control/lib/tests/support/local_registry.rs).
+reqwest = { workspace = true, features = ["rustls"] }
+# The live gates pack their synthetic package artifacts with the production
+# packer. A dev-dependency only: the deployed binary does not link it.
+wamn-control = { workspace = true }
 
 [lints]
 workspace = true
