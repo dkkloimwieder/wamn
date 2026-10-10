@@ -5,9 +5,9 @@
 //! derives the statement types and relations, and emits the canonical
 //! `wamn.json` (RFC 8785, hashed once). Pass two generates every consumer from
 //! those bytes and writes them, with `build.json`, to the package's build
-//! output directory. Step 8 builds the web client of a package that has one
-//! into `web/` of the same directory. Step 7, the component build, is not part
-//! of this build yet.
+//! output directory. Step 7 compiles the package's components
+//! ([`build_components`]), and step 8 builds the web client of a package that
+//! has one into `web/` of the same directory.
 //!
 //! The verification database is created on the PostgreSQL server that the
 //! request names and dropped when the build ends. The server keeps the
@@ -26,6 +26,7 @@ use tokio_postgres::NoTls;
 use wamn_execution_contract::canonical_json_bytes;
 
 use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest, is_authored};
+pub use crate::components::{build_components, build_guest};
 use crate::data_access::application_schemas;
 use crate::describe::{DescribedStatement, column_type, describe_statements};
 use crate::generate::sha256;
@@ -58,8 +59,8 @@ pub const WEB_OUTPUT: &str = "web";
 /// One package build.
 #[derive(Debug, Clone)]
 pub struct BuildRequest {
-    package_root: PathBuf,
-    output_root: PathBuf,
+    pub(crate) package_root: PathBuf,
+    pub(crate) output_root: PathBuf,
     database_url: String,
 }
 
@@ -96,7 +97,19 @@ pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
 }
 
 /// Build one package and return its receipt, which is also written to
-/// `build.json` in the package's build output directory.
+/// `build.json` in the package's build output directory: [`generate_package`],
+/// then [`build_components`].
+///
+/// # Errors
+///
+/// When [`generate_package`] or [`build_components`] refuses.
+pub async fn build_package(request: &BuildRequest) -> Result<BuildReceipt> {
+    let receipt = generate_package(request).await?;
+    build_components(request, &receipt.package.id).await
+}
+
+/// Every step of [`build_package`] except the component build (step 7): the
+/// receipt it writes records no component.
 ///
 /// # Errors
 ///
@@ -105,7 +118,7 @@ pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
 /// a statement does not describe or a declared statement type is wider than
 /// the described one, when generation refuses, or when the output cannot be
 /// written.
-pub async fn build_package(request: &BuildRequest) -> Result<BuildReceipt> {
+pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
     let package_root = request.package_root.as_path();
     let inputs = crate::receipt::inputs(package_root)?;
     let mut authored: Value = serde_json::from_slice(&authored_manifest(package_root)?)

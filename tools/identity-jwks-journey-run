@@ -188,7 +188,7 @@ run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Do
 # Cache-only output retains no extra image or tag.
 run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
   --target component-builder --output=type=cacheonly "$repo_root" \
-  2>&1 | tee "$evidence_dir/build-components.log"
+  2>&1 | tee "$evidence_dir/build-component-builder.log"
 gates_owned=true
 run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
   --target gates --tag "$gates_image" --label "wamn.dev/source-head=$head" "$repo_root" \

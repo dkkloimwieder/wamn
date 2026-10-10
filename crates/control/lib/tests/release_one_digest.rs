@@ -10,7 +10,6 @@
 //! each environment's route host, runs in `environment_apply_kind`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use wamn_catalog::edge_bundle::COMPONENTS_FILE_NAME;
 use wamn_catalog::{
@@ -39,21 +38,10 @@ fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
-/// Build `apps/edge_device` with the repository's guest build and return its
-/// component.
+/// The component of `apps/edge_device` that its `wamn build` compiled. Run
+/// `wamn build apps/edge_device` first.
 fn device_component() -> PathBuf {
-    let repository = repository();
-    let output = Command::new(repository.join("tools/build-components"))
-        .current_dir(&repository)
-        .args(["app", "apps/edge_device"])
-        .output()
-        .expect("start tools/build-components");
-    assert!(
-        output.status.success(),
-        "tools/build-components failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    repository.join("apps/target/virtualized/std-empty-environment/device.wasm")
+    repository().join("apps/target/wamn/edge_device/components/device.wasm")
 }
 
 /// Admit the component and assemble the release of `apps/edge_device` for

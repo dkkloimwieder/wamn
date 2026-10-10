@@ -48,10 +48,39 @@ pub(super) async fn build(repository: &Path, target: &Path, evidence: &Path) -> 
         }
         return Ok(());
     }
-    let mut guests = Command::new(repository.join("tools/build-components"));
-    guests.arg("all");
+    // `wamn build` of the package compiles its components into the target
+    // directory, against a PostgreSQL server of its own. The workload guests
+    // are no package's.
+    let mut guests = Command::new("cargo");
+    guests
+        .args([
+            "run",
+            "--locked",
+            "--offline",
+            "-p",
+            "wamn-test-infrastructure",
+            "--bin",
+            "wamn-test-postgres",
+            "--",
+            "--database",
+            "wms_cluster_build",
+            "--url-env",
+            "DATABASE_URL",
+            "--",
+        ])
+        .args(["cargo", "run", "--locked", "--offline", "-p", "wamn-ctl"])
+        .args(["--bin", "wamn", "--", "build", "apps/wamn_wms"]);
     prepare(&mut guests, repository, target);
     run(&mut guests, evidence, "guests").await?;
+    for package in ["http-route", "materializer"] {
+        wamn_schema_generator::build::build_guest(
+            repository,
+            &repository.join("apps/Cargo.toml"),
+            package,
+            Some(target),
+        )
+        .await?;
+    }
 
     let mut native = Command::new(repository.join("tools/delivery-owned"));
     native.arg("build-native").arg(target);

@@ -226,13 +226,13 @@ async fn event_run(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: tools/build-components all (the virtualized jsonata node)"]
+#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
 async fn the_jsonata_node_shapes_a_row_through_the_queue() -> anyhow::Result<()> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../apps/target/virtualized/std-empty-environment/jsonata_expression.wasm"
+        "/../../../apps/target/wamn/wamn_wms/components/jsonata.wasm"
     );
     let bytes = std::fs::read(path)
-        .map_err(|error| anyhow::anyhow!("read {path}; run tools/build-components all: {error}"))?;
+        .map_err(|error| anyhow::anyhow!("read {path}; run wamn build apps/wamn_wms: {error}"))?;
     super::run_automation(super::Mode::Jsonata(bytes)).await
 }

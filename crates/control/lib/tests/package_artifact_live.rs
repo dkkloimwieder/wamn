@@ -2,8 +2,8 @@
 //! (wamn-vavs4.1, docs/plan/platform-deploy.md section 7.2) against a local
 //! `registry:2` that each test starts and removes, and a disposable control
 //! database. The packages are the built packages under `apps/`: run
-//! `wamn build` and then `tools/build-components` first, so the `build.json`
-//! of each package names its components.
+//! `wamn build` first, so the `build.json` of each package names its
+//! components.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -197,9 +197,8 @@ async fn push_repeat_fetch_and_refusals() {
     assert!(!unpacked.exists(), "the unpacked package is removed");
 
     let descriptor = fixture.pulled_descriptor(&first.tag, "receiving").await;
-    let built =
-        std::fs::read(apps().join("target/virtualized/std-empty-environment/receiving.wasm"))
-            .expect("read the built receiving component");
+    let built = std::fs::read(apps().join("target/wamn/wamn_receiving/components/receiving.wasm"))
+        .expect("read the built receiving component");
     assert_eq!(
         descriptor.component_digest,
         format!(

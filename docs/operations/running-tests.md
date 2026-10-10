@@ -24,12 +24,12 @@ It includes committed, staged, unstaged, deleted, and untracked files.
   A Markdown file below another directory follows the rules above.
 
 Selected packages run their default tests with the required features of their targets.
-Use `tools/build-components` or `tools/repo-lint` to compile guest targets that disable Cargo tests.
+Use [`wamn build`](building.md#wamn-build) or `tools/repo-lint` to compile guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
-If the change set selects a guest of the host image, `tools/test-changes` also runs `tools/build-components all` and `docker build --target component-builder`.
+If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder`.
 These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
-Both builds run because the two builds diverged once (`wamn-lt7y`).
-`tools/test-changes --cluster` runs neither build.
+The stage checks the router pin, as the guest build of `wamn build` does, because the two builds diverged once (`wamn-lt7y`).
+`tools/test-changes --cluster` runs no guest build.
 Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
 Run the reading package's tests for such a change.
 `tools/test-changes dry-run` prints the selected commands.
@@ -95,16 +95,16 @@ They share the in-process runtime setup in `tests/integration/src/local_applicat
 These tests need no registry, broker, cluster, gate binary, or container image.
 Deployment tests retain startup, restart, queue, CDC/materializer, and label delivery assertions.
 
-Build only the components that these tests use:
+Build the packages that these tests use, with a PostgreSQL server URL in `DATABASE_URL` ([building](building.md#wamn-build)), and the route guest:
 
 ```bash
-tools/build-components app apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
+target/debug/wamn build apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
 cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p http-route
 ```
 
-The tool composes Acme with the Receiving base and the Acme participant into one component.
-It writes the application components to `apps/target/virtualized/std-empty-environment`.
+The build composes Acme with the Receiving base and the Acme participant into one component.
+It writes the virtualized application components to `apps/target/virtualized/std-empty-environment`.
 These paths use the default Cargo target directories.
 If you set `CARGO_TARGET_DIR`, use that directory for both workspace build outputs.
 
@@ -127,7 +127,7 @@ WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" 
 
 The edge route, device and forward tests run in the workspace run.
 Each test binary builds the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once, when its first test starts.
-`tools/build-components` builds the component, and Cargo builds the `http-route` guest as the Dockerfile does. The guest must match its pin.
+It reads the component from the build output of `wamn build apps/edge_device`, so run that build first. Cargo builds the `http-route` guest as the Dockerfile does. The guest must match its pin.
 The dev loop's bundle writer admits the component and writes the bundle, with no session.
 The tests sign their own sessions.
 The device test writes scale frames into a pseudo-terminal pair, which is its virtual serial port.
@@ -157,10 +157,10 @@ Count the rows of that tag in `edge_samples.sample` of the session's target data
 
 Run the prior-commit fixture admission and exact forwarding assertions.
 The tests compose the fixture with the built Receiving base and its no-op participant.
-`tools/build-components` reads the no-op participant from the Receiving build output, so build Receiving first with `wamn build apps/wamn_receiving` and a PostgreSQL server URL in `DATABASE_URL`.
+Build Receiving first with `wamn build apps/wamn_receiving` and a PostgreSQL server URL in `DATABASE_URL`. The build compiles the Receiving component and its no-op participant.
 
 ```bash
-tools/build-components app apps/wamn_receiving
+target/debug/wamn build apps/wamn_receiving
 cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p prior-commit
 cargo build --locked --offline -p wamn-component-virtualizer
@@ -447,7 +447,7 @@ Run this case alone.
 The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
 The case also requires SQLx CLI 0.9.0 as `cargo-sqlx` and `jq` on `PATH`.
 
-Build the native programs, fixture, HTTP guest, and exact test binary from that worktree:
+Build the native programs, the packages, the HTTP and materializer guests, and the exact test binary from that worktree, with a PostgreSQL server URL in `DATABASE_URL`:
 
 ```bash
 cd "$SOURCE"
@@ -456,11 +456,13 @@ cargo build --locked --offline \
   -p wamn-test-infrastructure -p wamn-receiving-tests --bins --example delivery_timings
 cargo build --locked --offline --manifest-path apps/Cargo.toml \
   --target wasm32-wasip2 -p http-route
-tools/build-components all
+RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
+  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p materializer
+target/debug/wamn build apps/wamn_receiving apps/client_acme_receiving
 cargo test --locked --offline -p wamn-receiving-tests --lib --no-run
 ```
 
-Set `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` to the absolute path of the `materializer.wasm` that `tools/build-components` writes.
+Set `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` to the absolute path of that `materializer.wasm`, `apps/target/wasm32-wasip2/release/materializer.wasm`.
 
 Set `WAMN_LOCAL_TEST_BINARY` to the absolute executable path printed by the last command.
 Set `WAMN_LOCAL_RESULTS` to an unused private directory outside the worktree.

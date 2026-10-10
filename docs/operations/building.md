@@ -24,40 +24,40 @@ cargo build --locked --offline -p wamn-ctl --features ops --bin wamn-ctl-ops
 `wamn-ctl-ops` owns database maintenance and retained event advisory commands.
 The local identity issuer needs `wamn-identity` beside the CLI or at the explicit `WAMN_IDENTITY_BINARY` path.
 
-Build only the declared applications that the caller needs:
-
-```bash
-tools/build-components app apps/wamn_receiving
-tools/build-components app apps/wamn_receiving apps/client_acme_receiving
-tools/build-components all
-```
-
-These are alternative selections. The last command selects every guest from Cargo metadata.
-Each selected guest gets one Cargo invocation, with the retained release profile and virtualization step.
-A selected application also builds each palette component that its wirings name.
-The tool finds a palette component by the `component` of its `declaration.json.in` under `apps/platform/*/*/`, and builds the crate in that directory.
-Pass the resolved base app directories when building an overlay.
-If an overlay is composed and its base app is not in the selection, the build fails.
-Do not combine guests into a new grouped Cargo invocation.
+[`wamn build`](#wamn-build) compiles the components of each package it builds (platform-deploy.md §7.1 step 7).
+Each guest gets its own Cargo invocation, with the release profile, for `wasm32-wasip2`.
+Do not combine guests into one Cargo invocation.
 Cargo combines dependency features within each invocation, which can change artifact bytes.
+A package build compiles these guests:
+
+- each component that the package owns;
+- each participant crate that [`tools/component-composition.json`](../../tools/component-composition.json) names for the package under `participants`;
+- each no-op participant crate that the build generated into the package's build output;
+- each palette component that a wiring of the package names. The build finds it by the `component` of its `declaration.json.in` under `apps/platform/*/*/`, and builds the crate in that directory.
+
+A package outside a Cargo workspace, with no `../Cargo.toml`, has no component to compile.
+Cargo writes the guests to its target directory, `apps/target` unless `CARGO_TARGET_DIR` names another.
 
 [`tools/guest-rustflags`](../../tools/guest-rustflags) sets the RUSTFLAGS of every guest build.
 It maps the repository to `/wamn` and the Cargo home to `/cargo`, so no guest carries a local path.
 It also maps the toolchain's `rust-src` tree to `/rustc/<commit-hash>`, so a toolchain with and without `rust-src` gives one digest.
-`tools/build-components` and the Dockerfile `component-builder` stage call it. Nothing else sets guest RUSTFLAGS.
-The build tool refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
+`wamn build` and the Dockerfile `component-builder` stage call it. Nothing else sets guest RUSTFLAGS.
+The build refuses a built guest that contains `/home/`, the Cargo home, or the repository path.
 A guest crate can hold a pin file beside its `Cargo.toml`, named for the artifact, for example `http_route.wasm.sha256`.
-The build tool and the Dockerfile stage refuse a guest that does not match its pin.
+The build and the Dockerfile stage refuse a guest that does not match its pin.
 If you change the router on purpose, write its new digest to `apps/platform/ingress/http-route/http_route.wasm.sha256`.
-A plain `cargo build` of a guest does not use the script, so its bytes depend on the machine. Do not pin such a guest.
+A plain `cargo build` of a guest does not use the guest RUSTFLAGS, so its bytes depend on the machine. Do not pin such a guest.
+The workload guests `http-route` and `materializer` belong to no package. Release qualification and the cluster cases build each one with the same guest build, through `wamn_schema_generator::build::build_guest`.
 
-After virtualization, the tool composes each overlay whose component declaration names a base operation dependency.
+The build virtualizes each component that the package owns, each no-op participant, and each crate that [`tools/component-virtualization.json`](../../tools/component-virtualization.json) lists under `packages`.
+It writes the virtualized guest to `virtualized/std-empty-environment` in the Cargo target directory.
+The list is an allowlist, not discovery: a std guest that it does not name stays raw and fails its own admission.
+
+The build then composes an overlay whose component declaration names a base operation dependency.
 `wamn-component-composer` joins the overlay component, each base component, and each participant component into one component.
-[`tools/component-composition.json`](../../tools/component-composition.json) names the participant crates of each overlay package under `participants`.
-It names the generated no-op participant crates of each base package under `no_op_participants`.
-A no-op participant crate is not an apps workspace member. It is a standalone crate in the build output of its package, `apps/target/wamn/<package>/`, so run `wamn build` of the base package first.
-The tool copies `apps/Cargo.lock` beside the crate, lets Cargo trim it to the crate, builds the crate by `--manifest-path` with `--locked`, and puts its output in the apps target directory.
-A selected application also builds the crates named for it.
+It reads each base component and each base no-op participant from the base's `build.json`, so build the base first.
+A no-op participant crate is not an apps workspace member. It is a standalone crate in the build output of its base package, `apps/target/wamn/<package>/`.
+The build copies `apps/Cargo.lock` beside the crate, lets Cargo trim it to the crate, and builds the crate by `--manifest-path` with `--locked` into the apps target directory.
 The declarations give each link.
 The overlay imports each base operation that it depends on, and the base supplies that operation.
 The base imports its pre-commit interface, and the participant that the overlay dependency names supplies it.
@@ -66,18 +66,12 @@ Composition refuses a required slot that has no participant.
 The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.
 Each member is embedded with its bytes unchanged.
-The composed component replaces the overlay output in `virtualized/std-empty-environment`.
+The composed component replaces the overlay's virtualized output.
 The composer does not compare the base bytes with the digest pin in `wamn.json`. Publication checks the pin.
 
-The build tool requires `jq` and `sha256sum`.
-`build-only app APP_DIRECTORY...` and `build-only all` emit an artifact plan to stdout.
-Its `palette` list gives each palette component, its declaration, and its artifact: the virtualized output when the allowlist names the crate, and the raw guest otherwise.
-`virtualize-only ARTIFACT_PLAN` refuses changed inputs or raw hashes before it updates outputs. It then composes the overlays.
-After it composes, the tool copies the components of each selected package to `components/<name>.wasm` in the package's build output: the components that the package owns and the palette components that its wirings name. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
-`wamn-ctl push-package` reads `build.json` for the bytes of each component it admits and pushes. It refuses a `build.json` whose `inputs.digest` differs from the package tree, a component without an entry, and a file whose digest differs from its entry. It never compares file times.
-`watch-roots app APP_DIRECTORY...` lists selected source dependencies without building them.
-It also includes the shared platform WIT sources, so interface edits rebuild the selected components.
-For a manifest-only change, inspect `cargo metadata --no-deps` before deciding whether compilation is needed.
+Last, the build copies each component that the package owns, each palette component that its wirings name, and each no-op participant to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
+`wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component. `push-package` refuses a `build.json` whose `inputs.digest` differs from the package tree, a component without an entry, and a file whose digest differs from its entry. It never compares file times.
+The dev loop watches the package roots, `apps/platform`, and the shared platform WIT sources, so an edit of any of them rebuilds the components.
 
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
 The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream, flow routing, and blobstore contracts.
@@ -88,7 +82,7 @@ Application contracts lie under `wit/` in each package's build output, `apps/tar
 
 A package that holds `wamn.k` authors its manifest in KCL.
 `wamn build` compiles `wamn.k` to `wamn.json` in the package's build output before it generates anything else.
-Every reader, including `tools/build-components`, reads that compiled file.
+Every reader reads that compiled file.
 A package that holds both `wamn.k` and an authored `wamn.json` is refused.
 
 The compile runs the KCL CLI that [`tools/install-kcl`](../../tools/install-kcl) installs.
@@ -138,7 +132,7 @@ For a package that has a `web/` directory, the build then runs `pnpm run build` 
 Run `pnpm install` at the repository root first.
 `build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.
 Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.
-The build does not compile components yet.
+The build compiles the package's components as [above](#native-programs-and-app-components) describes.
 
 ## Host route clients
 
@@ -181,8 +175,8 @@ Keep large build targets off temporary memory filesystems.
 
 Use two clean worktrees at the same commit to test checkout independence.
 Give each worktree its own target and empty `RUSTC_WRAPPER`.
-Run `tools/build-components all` in each worktree.
-Then pass their `target/virtualized/std-empty-environment` paths to the existing comparison:
+Run `wamn build` of every package in each worktree.
+Then pass their `virtualized/std-empty-environment` directories of the Cargo target to the existing comparison:
 
 ```bash
 WAMN_DIGEST_REPRO_A="$GUEST_REPRO_FIRST_ARTIFACTS" \
@@ -192,23 +186,8 @@ WAMN_DIGEST_REPRO_B="$GUEST_REPRO_SECOND_ARTIFACTS" \
   -- --include-ignored --exact --nocapture
 ```
 
-To compare app and full selections, build the same commit into separate targets.
-Set `WAMN_TREE` to the chosen worktree and `WAMN_RESULTS` to an [output directory](running-tests.md#capture-a-run):
-
-```bash
-CARGO_TARGET_DIR="$WAMN_TREE/app-target" RUSTC_WRAPPER='' \
-  tools/build-components build-only app apps/wamn_receiving > "$WAMN_RESULTS/app-plan.json"
-CARGO_TARGET_DIR="$WAMN_TREE/all-target" RUSTC_WRAPPER='' \
-  tools/build-components build-only all > "$WAMN_RESULTS/all-plan.json"
-WAMN_DIGEST_PROFILE_APP_PLAN="$WAMN_RESULTS/app-plan.json" \
-WAMN_DIGEST_PROFILE_ALL_PLAN="$WAMN_RESULTS/all-plan.json" \
-  cargo test --locked --offline -p wamn-conformance-tests --test guest_workspace_closure \
-  one_commit_built_under_two_profiles_yields_identical_guest_digests \
-  -- --include-ignored --exact --nocapture
-```
-
-Both comparisons use one Cargo home, so they do not test the Cargo home mapping.
+The comparison uses one Cargo home, so it does not test the Cargo home mapping.
 To test it, build one guest with a second `CARGO_HOME` path and compare its digest.
 
-Inspect the plans and comparison output before changing digest pins.
+Inspect the comparison output before changing digest pins.
 Use these comparisons when guest dependencies, selected features, workspace membership, or build flags change.

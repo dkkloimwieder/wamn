@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints the RUSTFLAGS of every guest build (wamn-rie7). This is the one place
-# that sets them: tools/build-components and the Dockerfile component-builder
-# stage call it, and nothing else sets guest RUSTFLAGS.
+# that sets them: wamn build and the Dockerfile component-builder stage call
+# it, and nothing else sets guest RUSTFLAGS.
 #
 # A guest carries file!() and panic-location strings of its own sources and of
 # every registry crate, as absolute paths. Mapping the repository to /wamn and

@@ -1,10 +1,11 @@
 //! The release bundle of `apps/edge_device` and the session keys that the
 //! edge tests share.
 //!
-//! Each test binary builds the bundle once. `tools/build-components` builds
-//! the `edge_device` component, and Cargo builds the http-route guest as the
-//! Dockerfile does, which must match its pin. `write_package`, the dev loop's
-//! bundle writer, admits the component and writes the bundle.
+//! Each test binary builds the bundle once. It reads the `edge_device`
+//! component from the package's build output, so run
+//! `wamn build apps/edge_device` first. Cargo builds the http-route guest as
+//! the Dockerfile does, which must match its pin. `write_package`, the dev
+//! loop's bundle writer, admits the component and writes the bundle.
 
 #![allow(
     dead_code,
@@ -111,14 +112,11 @@ pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, String) {
     (directory, file_digest(&bundle))
 }
 
-/// Build the component and the route guest, and write the bundle of
-/// `apps/edge_device` into a new directory of this test binary.
+/// Build the route guest, and write the bundle of `apps/edge_device`, with the
+/// component of its build, into a new directory of this test binary.
 fn build_bundle() -> PathBuf {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let package = repository.join("apps/edge_device");
-    run(Command::new(repository.join("tools/build-components"))
-        .current_dir(&repository)
-        .args(["app", "apps/edge_device"]));
     let flags = run(&mut Command::new(repository.join("tools/guest-rustflags")));
     run(Command::new(env!("CARGO"))
         .current_dir(repository.join("apps"))
@@ -142,7 +140,7 @@ fn build_bundle() -> PathBuf {
     write_package(
         &package,
         "device",
-        &repository.join("apps/target/virtualized/std-empty-environment/device.wasm"),
+        &repository.join("apps/target/wamn/edge_device/components/device.wasm"),
         &ingress,
         &PackageRelease {
             scope: EdgeScope {

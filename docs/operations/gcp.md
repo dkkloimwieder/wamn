@@ -925,10 +925,13 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
 
 ### 3.20 HTTP and materializer workloads
 
-Build every component. The HTTP ingress and the materializer land in `apps/target/wasm32-wasip2/release`:
+Build the HTTP ingress and the materializer with the guest RUSTFLAGS ([building](building.md#native-programs-and-app-components)). They land in `apps/target/wasm32-wasip2/release`:
 
 ```bash
-tools/build-components all
+for guest in http-route materializer; do
+  RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
+    --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p "$guest"
+done
 ```
 
 Push both with `wash`, as the kind cases do. Write the push credential into a mode 0600 file of a private directory `D`, and delete the directory after the push:
@@ -1407,7 +1410,7 @@ On 2026-09-27 the project environment took 3 seconds and its apply 9 seconds. `r
 
 ### 5.3 WMS components, wiring and release
 
-Build every component with `tools/build-components all`. The WMS components land in `apps/target/virtualized/std-empty-environment`, and `label_render.wasm` lands in `apps/platform/no-std/target/wasm32-wasip2/release`. Render the three platform declarations with tenant `wms`, package `wamn_wms` `1.0.0`, and the store alias `labels` for `blob-put`, as the WMS cluster case does:
+Build the package with `wamn build apps/wamn_wms`, which compiles its components. The WMS components land in `apps/target/virtualized/std-empty-environment`, and `label_render.wasm` lands in `apps/platform/no-std/target/wasm32-wasip2/release`. Render the three platform declarations with tenant `wms`, package `wamn_wms` `1.0.0`, and the store alias `labels` for `blob-put`, as the WMS cluster case does:
 
 ```bash
 for pair in label-render:apps/platform/no-std/label-render/declaration.json.in \

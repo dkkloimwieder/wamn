@@ -343,13 +343,17 @@ impl Run {
                 .arg(&delivery),
         )
         .await?;
-        self.command(
-            "build-components",
-            Command::new(self.checkout.join("tools/build-components"))
-                .arg("all")
-                .env("CARGO_TARGET_DIR", &delivery),
-        )
-        .await?;
+        // The workload guests, each built as `wamn build` builds a guest. The
+        // components of a package come from its `wamn build`.
+        for package in ["http-route", "materializer"] {
+            wamn_schema_generator::build::build_guest(
+                &self.checkout,
+                &self.checkout.join("apps/Cargo.toml"),
+                package,
+                Some(&delivery),
+            )
+            .await?;
+        }
         let mut outputs = BTreeMap::new();
         let guests = delivery.join("wasm32-wasip2/release");
         let mut files: Vec<PathBuf> = fs::read_dir(&guests)
@@ -828,9 +832,7 @@ impl Run {
     /// Stage 7: packages, components, gated wirings, the release, and the
     /// bindings of the current release copied to it.
     async fn packages(&self, record: &RunRecord) -> Outcome {
-        use crate::release_composition::{
-            ComponentBuildPlan, PackageInput, load_wirings, select_component_artifacts,
-        };
+        use crate::release_composition::{PackageInput, load_wirings, select_component_artifacts};
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
@@ -857,15 +859,8 @@ impl Run {
                 manifest,
             });
         }
-        // The release composition of the dev loop, over the stage 2 build.
-        let mut plan = Command::new(self.checkout.join("tools/build-components"));
-        plan.args(["build-only", "app"])
-            .args(&roots)
-            .env("CARGO_TARGET_DIR", self.delivery());
-        let plan: ComponentBuildPlan =
-            serde_json::from_str(&self.command("build-plan", &mut plan).await?)
-                .context("decode the build plan")?;
-        let artifacts = select_component_artifacts(&packages, &plan.virtualization.artifacts)?;
+        // The release composition of the dev loop, over each package's build.
+        let artifacts = select_component_artifacts(&packages)?;
         let wirings = load_wirings(&packages)?;
 
         let registry = Registry::login(&environment.registry, &self.work).await?;

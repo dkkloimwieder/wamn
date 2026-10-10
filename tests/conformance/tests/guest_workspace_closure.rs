@@ -33,7 +33,6 @@
 //! The cross-profile arm compares declared application guests with all workspace
 //! guests to check that the selection does not change their bytes.
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -109,7 +108,7 @@ fn table_name(kind: DependencyKind) -> &'static str {
 /// One cost applies to every kind. Cargo reads every member manifest before it
 /// builds one guest, so the escaped directory has to be present wherever a guest
 /// is built. The digest cost is narrower: it needs the escaped crate to be
-/// COMPILED into a guest, and `tools/build-components` builds lib targets only,
+/// COMPILED into a guest, and `wamn build` builds lib targets only,
 /// under resolver 2, so a dev-dependency reaches no guest byte. `wamn-98hz`
 /// measured that: built at two absolute roots, `wamn-event-reg` kept
 /// `-C metadata=cddb1d4d2d3d1541` and a byte-identical rlib, and the escaped
@@ -364,107 +363,5 @@ fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
         "the same commit produced different guest digests in two checkouts, so a component \
          digest is still a claim about the build directory rather than about the source \
          (wamn-10yt.10.29)"
-    );
-}
-
-/// Artifact plans printed by `tools/build-components build-only app APP_DIRECTORY...`
-/// and `tools/build-components build-only all`.
-const PROFILE_APP_PLAN_ENV: &str = "WAMN_DIGEST_PROFILE_APP_PLAN";
-const PROFILE_ALL_PLAN_ENV: &str = "WAMN_DIGEST_PROFILE_ALL_PLAN";
-
-/// `package -> sha256` from one artifact plan, refusing a plan for another profile.
-///
-/// The plan is the build tool's own output and already carries the raw digest of
-/// every artifact it declares, so this reads the bytes the profile produced
-/// without re-hashing them and without a virtualization pass.
-fn artifact_plan_digests(path: &Path, expected_profile: &str) -> BTreeMap<String, String> {
-    let source =
-        fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    let plan: serde_json::Value = serde_json::from_str(&source)
-        .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
-    assert_eq!(
-        plan.get("profile").and_then(serde_json::Value::as_str),
-        Some(expected_profile),
-        "{} is not the {expected_profile} artifact plan; comparing a profile against itself \
-         does not test both profiles, which is exactly how this defect stayed invisible (wamn-10yt.61)",
-        path.display()
-    );
-    let artifacts = plan
-        .pointer("/virtualization/artifacts")
-        .and_then(serde_json::Value::as_array)
-        .unwrap_or_else(|| panic!("{} carries no virtualization artifacts", path.display()));
-    let mut digests = BTreeMap::new();
-    for artifact in artifacts {
-        let package = artifact
-            .get("package")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_else(|| panic!("{} has an artifact with no package", path.display()));
-        let digest = artifact
-            .get("sha256")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_else(|| panic!("{} has no sha256 for {package}", path.display()));
-        assert!(
-            digests
-                .insert(package.to_owned(), digest.to_owned())
-                .is_none(),
-            "{} declares {package} twice",
-            path.display()
-        );
-    }
-    digests
-}
-
-/// One commit must produce the same guest bytes for the application and all selections.
-///
-/// `docs/operations/building.md#guest-artifact-comparisons` builds
-/// the same tree with both selections and supplies their artifact plans.
-/// The application selection names declared guests. The all selection includes
-/// every workspace guest. Each guest uses its own Cargo invocation to keep its
-/// features independent of other selected packages.
-/// This test compares shared packages and refuses missing artifacts from the all selection.
-#[test]
-#[ignore = "requires: WAMN_DIGEST_PROFILE_APP_PLAN, WAMN_DIGEST_PROFILE_ALL_PLAN"]
-fn one_commit_built_under_two_profiles_yields_identical_guest_digests() {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_DIGEST_PROFILE_APP_PLAN",
-        "WAMN_DIGEST_PROFILE_ALL_PLAN",
-    ]);
-    let app_plan = std::env::var(PROFILE_APP_PLAN_ENV)
-        .unwrap_or_else(|_| panic!("{PROFILE_APP_PLAN_ENV} must name the app artifact plan"));
-    let all_plan = std::env::var(PROFILE_ALL_PLAN_ENV)
-        .unwrap_or_else(|_| panic!("{PROFILE_ALL_PLAN_ENV} must name the all artifact plan"));
-    assert_ne!(
-        app_plan, all_plan,
-        "the two artifact plans must come from different profile builds"
-    );
-
-    let app = artifact_plan_digests(Path::new(&app_plan), "app");
-    let all = artifact_plan_digests(Path::new(&all_plan), "all");
-    assert!(
-        !app.is_empty(),
-        "{app_plan} declares no artifacts to compare"
-    );
-
-    let mut drifted = Vec::new();
-    for (package, digest) in &app {
-        let Some(other) = all.get(package) else {
-            panic!(
-                "the all selection does not include {package}, which app does; the all \
-                 selection is meant to be the wider one"
-            );
-        };
-        if other != digest {
-            drifted.push(format!("{package}: app {digest} != all {other}"));
-        }
-    }
-    assert!(
-        drifted.is_empty(),
-        "the same commit produced different guest bytes under the app and all component \
-         profiles, so a component digest is a claim about WHICH PROFILE built it and a pin \
-         minted under one profile cannot be reproduced under the other (wamn-10yt.61). The \
-         cause is a feature the two selections resolve differently: diff the `features` field \
-         of the two target directories' `.fingerprint/*/lib-*.json` to name the crate, then \
-         find which requester adds it, which may be a dependency's own manifest and not \
-         anything this repository declares: {drifted:#?}"
     );
 }

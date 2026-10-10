@@ -22,9 +22,9 @@ use crate::component_declaration::{
 use crate::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use crate::reconcile_package_data_access;
 use crate::release_composition::{
-    ComponentBuildPlan, CompositionError, CompositionErrorKind, PackageInput,
-    SelectedComponentArtifact, SelectedPaletteArtifact, WiringInput, load_wirings,
-    select_component_artifacts, select_palette_artifacts,
+    CompositionError, CompositionErrorKind, PackageInput, SelectedComponentArtifact,
+    SelectedPaletteArtifact, WiringInput, load_wirings, select_component_artifacts,
+    select_palette_artifacts,
 };
 use anyhow::Context as _;
 use serde::Deserialize;
@@ -49,7 +49,6 @@ use super::watch::{GitSource, git_ignored};
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
 use crate::print_release_env::ReleaseCarrier;
 
-const BUILD_TOOL: &str = "tools/build-components";
 const RUN_SCHEMA: &str = "wamn_run";
 
 /// Stable code for the notice a run emits when it built past an authored pin.
@@ -179,12 +178,6 @@ impl Error for ProductionDevStageError {
     }
 }
 
-#[derive(Debug)]
-struct BuildStageOutput {
-    bytes: Box<[u8]>,
-    plan: ComponentBuildPlan,
-}
-
 fn project_catalog_for_package(
     catalog: &CatalogIr,
     target: &PackageManifest,
@@ -213,7 +206,6 @@ pub struct ProductionDevStageRunner {
     git: GitSource,
     packages: Option<ResolvedDevPackages>,
     catalogs: BTreeMap<String, CatalogIr>,
-    build: Option<BuildStageOutput>,
     artifacts: Vec<SelectedComponentArtifact>,
     palette_artifacts: Vec<SelectedPaletteArtifact>,
     verified_base_digests: Vec<VerifiedBaseComponentDigest>,
@@ -287,7 +279,6 @@ impl ProductionDevStageRunner {
             git,
             packages: None,
             catalogs: BTreeMap::new(),
-            build: None,
             artifacts: Vec::new(),
             palette_artifacts: Vec::new(),
             verified_base_digests: Vec::new(),
@@ -486,13 +477,14 @@ impl ProductionDevStageRunner {
 
     async fn generate(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Generate);
-        // `wamn build` of each package, bases first: an overlay's build reads
-        // the build.json of each of its bases. Every build describes its
-        // statements against its own fresh database on the target's server.
+        // `wamn build` of each package, bases first, without its components:
+        // an overlay's build reads the build.json of each of its bases. Every
+        // build describes its statements against its own fresh database on the
+        // target's server. The Build stage compiles the components.
         let mut receipts = BTreeMap::new();
         for package in self.package_inputs()? {
             let output_root = wamn_schema_generator::build::default_output_root(&package.root);
-            let receipt = wamn_schema_generator::build::build_package(
+            let receipt = wamn_schema_generator::build::generate_package(
                 &wamn_schema_generator::build::BuildRequest::new(
                     &package.root,
                     &output_root,
@@ -552,63 +544,30 @@ impl ProductionDevStageRunner {
 
     async fn build(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Build);
-        let roots = self
-            .package_inputs()?
-            .into_iter()
-            .map(|package| package.root)
-            .collect::<Vec<_>>();
-        let tool = self.git.repository_root().join(BUILD_TOOL);
-        let output = super::execute_preparation(
-            Command::new(&tool).args(["build-only", "app"]).args(&roots),
-            super::PREPARATION_TIMEOUT,
-        )
-        .await
-        .map_err(|source| {
-            ProductionDevStageError::owner("start the production component build", source)
-        })?;
-        require_command_success("build production components", &output)?;
-        let plan = serde_json::from_slice(&output.stdout).map_err(|source| {
-            ProductionDevStageError::owner(
-                "decode the production build artifact plan",
-                source.into(),
+        // Step 7 of `wamn build` for each package, bases first: an overlay
+        // composes with the components its bases recorded.
+        for package in self.package_inputs()? {
+            let output_root = wamn_schema_generator::build::default_output_root(&package.root);
+            wamn_schema_generator::build::build_components(
+                &wamn_schema_generator::build::BuildRequest::new(
+                    &package.root,
+                    &output_root,
+                    self.config.target_database_url(),
+                ),
+                &package.manifest.package.id,
             )
-        })?;
-        self.build = Some(BuildStageOutput {
-            bytes: output.stdout.into_boxed_slice(),
-            plan,
-        });
+            .await
+            .map_err(|source| ProductionDevStageError::owner("build components", source))?;
+        }
         Ok(())
     }
 
-    async fn virtualize(&mut self) -> Result<(), ProductionDevStageError> {
+    fn virtualize(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Virtualize);
-        let build = self.build.as_ref().ok_or_else(|| {
-            ProductionDevStageError::invalid(
-                "virtualize components",
-                "the Build stage produced no artifact plan",
-            )
-        })?;
-        let plan_file = TemporaryFile::write(&build.bytes).map_err(|source| {
-            ProductionDevStageError::owner("write the build artifact-plan handoff", source)
-        })?;
-        let tool = self.git.repository_root().join(BUILD_TOOL);
-        let output = super::execute_preparation(
-            Command::new(&tool)
-                .arg("virtualize-only")
-                .arg(plan_file.path()),
-            super::PREPARATION_TIMEOUT,
-        )
-        .await
-        .map_err(|source| {
-            ProductionDevStageError::owner("start the production component virtualizer", source)
-        })?;
-        require_command_success("virtualize production components", &output)?;
-        self.artifacts = select_component_artifacts(
-            &self.package_inputs()?,
-            &build.plan.virtualization.artifacts,
-        )?;
-        self.palette_artifacts =
-            select_palette_artifacts(&self.package_inputs()?, &build.plan.palette)?;
+        // The Build stage virtualized each component; this stage selects the
+        // components that each package's build.json records.
+        self.artifacts = select_component_artifacts(&self.package_inputs()?)?;
+        self.palette_artifacts = select_palette_artifacts(&self.package_inputs()?)?;
 
         let packages = self
             .packages
@@ -1127,7 +1086,6 @@ impl ProductionDevStageRunner {
             "rust-toolchain.toml",
             ".cargo/config.toml",
             ".cargo/config",
-            "tools/build-components",
         ] {
             let path = self.git.repository_root().join(relative);
             if path.exists() {
@@ -1263,7 +1221,6 @@ impl ProductionDevStageRunner {
         match stage {
             DevStage::Migrate | DevStage::Introspect => {
                 self.catalogs.clear();
-                self.build = None;
                 self.artifacts.clear();
                 self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
@@ -1271,16 +1228,7 @@ impl ProductionDevStageRunner {
                 self.gated_wirings.clear();
                 self.release = None;
             }
-            DevStage::Generate | DevStage::Build => {
-                self.build = None;
-                self.artifacts.clear();
-                self.palette_artifacts.clear();
-                self.verified_base_digests.clear();
-                self.admissions.clear();
-                self.gated_wirings.clear();
-                self.release = None;
-            }
-            DevStage::Virtualize => {
+            DevStage::Generate | DevStage::Build | DevStage::Virtualize => {
                 self.artifacts.clear();
                 self.palette_artifacts.clear();
                 self.verified_base_digests.clear();
@@ -1768,7 +1716,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             DevStage::Introspect => self.introspect().await,
             DevStage::Generate => self.generate().await,
             DevStage::Build => self.build().await,
-            DevStage::Virtualize => self.virtualize().await,
+            DevStage::Virtualize => self.virtualize(),
             DevStage::Admit => self.admit().await,
             DevStage::Gate => self.gate().await,
             DevStage::Acl => self.acl().await,
@@ -2235,7 +2183,6 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release_composition::ComponentArtifactPlan;
     use wamn_catalog::WiringDocument;
     use wamn_schema_introspection::ir::{
         Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
@@ -2848,38 +2795,72 @@ mod tests {
     }
 
     #[test]
-    fn canonical_component_name_selects_one_artifact_per_package() {
+    fn each_package_selects_the_component_its_build_records() {
+        use wamn_schema_generator::receipt;
         let directory = std::env::temp_dir().join(format!(
             "wamn-dev-selection-{}-{}",
             std::process::id(),
             TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir(&directory).expect("create fixture directory");
-        let base = directory.join("inventory.wasm");
-        let overlay = directory.join("client-north-inventory.wasm");
-        fs::write(&base, b"base").expect("write base fixture");
-        fs::write(&overlay, b"overlay").expect("write overlay fixture");
-        let plan = vec![
-            ComponentArtifactPlan {
-                package: "client-north-inventory".to_owned(),
-                output: overlay,
-            },
-            ComponentArtifactPlan {
-                package: "inventory".to_owned(),
-                output: base,
-            },
-        ];
-        let selected = select_component_artifacts(
-            &[
-                package("platform_inventory", "1.0.0", "inventory"),
-                package("client_north_inventory", "3.0.0", "client_north_inventory"),
-            ],
-            &plan,
-        )
-        .expect("canonical names select both artifacts");
+        let packages = [
+            ("platform_inventory", "1.0.0", "inventory"),
+            ("client_north_inventory", "3.0.0", "client_north_inventory"),
+        ]
+        .map(|(id, version, component)| {
+            let mut input = package(id, version, component);
+            input.root = directory.join(id);
+            // An unpacked layout: the build output is `generated/`.
+            let output = input.root.join("generated");
+            fs::create_dir_all(output.join("components")).expect("create fixture output");
+            let path = format!("components/{component}.wasm");
+            fs::write(output.join(&path), component).expect("write fixture component");
+            let built = receipt::BuildReceipt {
+                schema: receipt::RECEIPT_SCHEMA.to_owned(),
+                package: receipt::ReceiptPackage {
+                    id: id.to_owned(),
+                    version: version.to_owned(),
+                },
+                inputs: receipt::ReceiptInputs {
+                    digest: "sha256:inputs".to_owned(),
+                    files: BTreeMap::new(),
+                },
+                dependencies: Vec::new(),
+                generator: receipt::ReceiptGenerator {
+                    id: "generator".to_owned(),
+                    toolchain: "toolchain".to_owned(),
+                    sqlx: "0.9.0".to_owned(),
+                },
+                outputs: receipt::ReceiptOutputs {
+                    manifest: "sha256:manifest".to_owned(),
+                    files: BTreeMap::new(),
+                    components: vec![receipt::ReceiptComponent {
+                        name: component.to_owned(),
+                        path,
+                        sha256: wamn_engine::component_admission::component_digest(
+                            component.as_bytes(),
+                        ),
+                    }],
+                    web: None,
+                },
+            };
+            fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes())
+                .expect("write fixture receipt");
+            input
+        });
+        let selected = select_component_artifacts(&packages).expect("select both artifacts");
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].component.as_ref(), "inventory");
         assert_eq!(selected[1].component.as_ref(), "client_north_inventory");
+
+        fs::write(
+            packages[0].root.join("generated/components/inventory.wasm"),
+            b"changed",
+        )
+        .expect("change a component");
+        let refusal = select_component_artifacts(&packages)
+            .expect_err("a changed component is refused")
+            .to_string();
+        assert!(refusal.contains("build.json records"), "{refusal}");
         fs::remove_dir_all(directory).expect("remove fixture directory");
     }
 

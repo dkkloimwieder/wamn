@@ -24,7 +24,6 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_CARGO="${CARGO:-cargo}"
-readonly WAMN_BUILD_COMPONENTS="${WAMN_BUILD_COMPONENTS:-$WAMN_TOOL_DIRECTORY/build-components}"
 readonly WAMN_DOCKER="${DOCKER:-docker}"
 # The Dockerfile stage that builds the guests of the host image.
 readonly WAMN_GUEST_STAGE='component-builder'
@@ -258,8 +257,8 @@ while IFS=$'\t' read -r index full trigger packages features; do
 done <<<"$WAMN_PLAN"
 
 # A change set that selects a guest of the host image also builds the guests
-# with tools/build-components and with the Dockerfile guest stage, because the
-# two builds diverged once (wamn-lt7y). The guests are the packages that the
+# with the Dockerfile guest stage, which checks the router pin that a local
+# guest build also checks (wamn-lt7y). The guests are the packages that the
 # stage builds, and they belong to the apps workspace.
 wamn_guest_check() {
   local -r label="$1"
@@ -299,7 +298,6 @@ if [[ "$WAMN_CLUSTER" != true ]]; then
     done
   done <<<"$WAMN_PLAN"
   if [[ "$guest_selected" == true ]]; then
-    wamn_guest_check 'guests (build-components)' "$WAMN_BUILD_COMPONENTS" all
     wamn_guest_check "guests (Dockerfile $WAMN_GUEST_STAGE)" \
       "$WAMN_DOCKER" build --target "$WAMN_GUEST_STAGE" "$WAMN_REPOSITORY_ROOT"
   fi

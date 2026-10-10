@@ -1,16 +1,7 @@
 {
-  "tool": {
-    "manifest": "Cargo.toml",
-    "package": "wamn-component-composer"
-  },
   "participants": {
     "client_acme_receiving": [
       "client-acme-receiving-participant"
-    ]
-  },
-  "no_op_participants": {
-    "wamn_receiving": [
-      "wamn-receiving-receiving-record-receipt-no-op"
     ]
   }
 }

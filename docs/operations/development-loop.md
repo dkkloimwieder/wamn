@@ -25,7 +25,7 @@ Read the current required arguments from the existing command:
 
 Supply an explicit environment directory, package roots, built binaries, and service endpoints.
 Supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
-Supply `--materializer-component` with the absolute path to the `materializer.wasm` that `tools/build-components` builds.
+Supply `--materializer-component` with the absolute path to a `materializer.wasm` built with the guest RUSTFLAGS of [building](building.md#native-programs-and-app-components).
 The emitted `local_artifacts` configuration names the local output directory and these components.
 For declared connections, pass `--local-bindings` with an absolute path to the selection file.
 The emitted configuration stores that path in `local_artifacts.bindings`.
@@ -116,13 +116,14 @@ Otherwise the first run of the new process recreates the target.
 Rust code saves reuse the schema, database rows, and unchanged generated files.
 Cargo controls which selected components need compilation.
 Named SQL and operation contract changes run the Generate stage again.
-Generate runs [`wamn build`](building.md#wamn-build) for each package, the base packages first.
+Generate runs [`wamn build`](building.md#wamn-build) for each package, the base packages first, without the component build.
 Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
+The Build stage then runs the component build of `wamn build` for each package, and the Virtualize stage selects the components that each `build.json` records.
 SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
 Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
 The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover.
 The watcher uses the same ignore rules.
-The watcher watches the package directories, the component build roots, and the local configuration files of `dev.json`.
+The watcher watches the package directories, `apps/platform`, the shared platform WIT sources, and the local configuration files of `dev.json`.
 Nothing in the loop builds natively, so the root Cargo files and `crates/client` are not inputs.
 In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `wamn.json` in the build output, `apps/target/wamn/<package>`, as generated output.
 Missing or changed generated files prevent reuse.
@@ -162,14 +163,13 @@ The printed line names the refusal that stopped the stage.
 The loop replaces the host only after the candidate passes preparation.
 The local Gate uses the same wiring rules as release authoring and authenticates the configured publisher.
 A wiring can name a palette component, which is a platform component with a `declaration.json.in` under `apps/platform/*/*/`.
-`tools/build-components` builds each palette component that a wiring of a selected package names.
+The `wamn build` of a package builds each palette component that a wiring of the package names.
 The loop admits it into the scope of that package, with the platform packages that its declaration states.
 A `__STORE_ALIAS__` connection takes the `store-alias` of the component's selection in `--local-bindings`.
 That is the name that the operator passes to `bind-connection --store-alias` in the cluster.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
 
 Local preparation limits each metadata or version command to 60 seconds.
-SQLx preparation, component builds, and virtualization each have a 45-minute limit.
 On interruption or expiry, the loop gives each command and its child processes five seconds to stop.
 After a forced stop, it waits up to five seconds for the command to exit.
 It allows another five seconds to close and collect output.

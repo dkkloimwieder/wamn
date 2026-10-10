@@ -3,11 +3,9 @@
 use std::error::Error;
 use std::fmt;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use serde::Deserialize;
-use tokio::process::Command;
 use tokio::sync::watch;
 
 use super::config::{DevConfig, parse_config, preflight_config, resolve_dev_packages};
@@ -27,7 +25,13 @@ pub struct DevSessionRequest {
     pub watch: bool,
 }
 
-const BUILD_COMPONENTS_TOOL: &str = "tools/build-components";
+/// The platform WIT sources that every component build reads, from the
+/// repository root.
+const SHARED_WIT_ROOTS: [&str; 3] = [
+    "crates/execution/host/wit/deps/wamn-router-delivery-0.3",
+    "crates/execution/workflow/router/wit",
+    "crates/platform/runtime/wit/deps",
+];
 
 #[derive(Debug)]
 struct CommandInvalidationError {
@@ -183,13 +187,6 @@ impl DevSessionControl {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BuildWatchRoots {
-    profile: String,
-    roots: Vec<PathBuf>,
-}
-
 /// Prepared development-loop engine shared by CLI and console clients.
 #[derive(Debug)]
 pub struct DevSession {
@@ -331,8 +328,7 @@ async fn run_watch_command(
                 .map(|package| package.root().to_owned()),
         )
         .collect::<Vec<_>>();
-    let component_roots =
-        component_build_watch_roots(git.repository_root(), &package_roots).await?;
+    let component_roots = component_build_watch_roots(git.repository_root(), &package_roots);
     let mut filesystem =
         FilesystemInvalidationSource::new(package_roots, component_roots, git.clone())
             .await
@@ -366,54 +362,19 @@ async fn wait_for_shutdown(receiver: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn component_build_watch_roots(
-    repository_root: &Path,
-    package_roots: &[PathBuf],
-) -> anyhow::Result<Vec<PathBuf>> {
-    let tool = repository_root.join(BUILD_COMPONENTS_TOOL);
-    let output = super::execute_preparation(
-        Command::new(&tool)
-            .args(["watch-roots", "app"])
-            .args(package_roots),
-        super::INPUT_COMMAND_TIMEOUT,
-    )
-    .await
-    .with_context(|| format!("start production build owner {}", tool.display()))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "production build owner {} exited with {}: {}",
-            tool.display(),
-            output.status,
-            stderr.trim()
-        );
-    }
-    let roots: BuildWatchRoots = serde_json::from_slice(&output.stdout)
-        .context("decode production component-build watch roots")?;
-    anyhow::ensure!(
-        roots.profile == "app",
-        "production build owner returned profile {:?} instead of app",
-        roots.profile
-    );
-    anyhow::ensure!(
-        !roots.roots.is_empty(),
-        "production build owner returned no component watch roots"
-    );
+/// The inputs of the component builds besides the package roots: the
+/// platform crates of the packages' Cargo workspace, `<package>/../platform`,
+/// and the shared platform WIT sources.
+fn component_build_watch_roots(repository_root: &Path, package_roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut roots = package_roots
+        .iter()
+        .filter_map(|root| root.parent())
+        .map(|workspace| workspace.join("platform"))
+        .chain(SHARED_WIT_ROOTS.map(|root| repository_root.join(root)))
+        .collect::<Vec<_>>();
+    roots.sort();
+    roots.dedup();
     roots
-        .roots
-        .into_iter()
-        .map(|root| {
-            anyhow::ensure!(
-                !root.is_absolute()
-                    && root
-                        .components()
-                        .all(|component| matches!(component, Component::Normal(_))),
-                "production build owner returned unsafe component watch root {}",
-                root.display()
-            );
-            Ok(repository_root.join(root))
-        })
-        .collect()
 }
 
 fn finish_with_cleanup<T>(

@@ -42,15 +42,45 @@ pub(super) async fn components_and_tools(
         })
         .unwrap_or_else(|| repository.join("target"));
     if candidate.is_none() {
-        let mut guests = Command::new(repository.join("tools/build-components"));
-        guests.arg("all");
+        // `wamn build` of the packages compiles their components into the
+        // target directory, against a PostgreSQL server of its own. The
+        // workload guests are no package's.
+        let mut packages = Command::new("cargo");
+        packages
+            .args([
+                "run",
+                "--locked",
+                "--offline",
+                "-p",
+                "wamn-test-infrastructure",
+                "--bin",
+                "wamn-test-postgres",
+                "--",
+                "--database",
+                "receiving_cluster_build",
+                "--url-env",
+                "DATABASE_URL",
+                "--",
+            ])
+            .args(["cargo", "run", "--locked", "--offline", "-p", "wamn-ctl"])
+            .args(["--bin", "wamn", "--", "build"])
+            .args(["apps/wamn_receiving", "apps/client_acme_receiving"]);
         run_build(
-            &mut guests,
+            &mut packages,
             repository,
             &target,
-            &evidence.join("build-components.log"),
+            &evidence.join("wamn-build.log"),
         )
         .await?;
+        for package in ["http-route", "materializer"] {
+            wamn_schema_generator::build::build_guest(
+                repository,
+                &repository.join("apps/Cargo.toml"),
+                package,
+                Some(&target),
+            )
+            .await?;
+        }
         if startup_burst {
             // The startup burst runs a host process on this machine, beside the
             // cluster, so it needs the binary itself and not the image that

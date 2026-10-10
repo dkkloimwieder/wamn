@@ -589,7 +589,7 @@ fn wiring_components(root: &Path) -> anyhow::Result<BTreeMap<String, BTreeSet<St
 /// The declaration template of the platform component `name`: the one
 /// `declaration.json.in` under [`PLATFORM_DIRECTORY`] whose `component` is
 /// `name`.
-fn platform_template(root: &Path, name: &str) -> anyhow::Result<(PathBuf, Vec<u8>)> {
+pub(crate) fn platform_template(root: &Path, name: &str) -> anyhow::Result<(PathBuf, Vec<u8>)> {
     let platform = root.join(PLATFORM_DIRECTORY);
     let mut found = Vec::new();
     for area in

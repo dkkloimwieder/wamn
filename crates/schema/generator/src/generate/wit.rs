@@ -1658,7 +1658,7 @@ fn emit_no_op_participant(
         files,
         &format!("{directory}/Cargo.toml"),
         format!(
-            "# @generated; do not edit.\n#\n# A standalone crate: tools/build-components builds it with --manifest-path\n# from the package's build output, outside the apps workspace. The\n# dependency and the release profile equal the apps workspace's.\n\n[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\ndescription = \"No-op participant for {slot}\"\nlicense = \"Apache-2.0\"\n\n[dependencies]\nwit-bindgen = {{ version = \"0.62.0\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }}\n\n[lib]\ncrate-type = [\"cdylib\"]\nbench = false\n\n[workspace]\n\n[profile.release]\nopt-level = \"s\"\nstrip = true\n"
+            "# @generated; do not edit.\n#\n# A standalone crate: wamn build builds it with --manifest-path from\n# the package's build output, outside the apps workspace. The\n# dependency and the release profile equal the apps workspace's.\n\n[package]\nname = \"{crate_name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\ndescription = \"No-op participant for {slot}\"\nlicense = \"Apache-2.0\"\n\n[dependencies]\nwit-bindgen = {{ version = \"0.62.0\", default-features = false, features = [\"async\", \"macros\", \"realloc\"] }}\n\n[lib]\ncrate-type = [\"cdylib\"]\nbench = false\n\n[workspace]\n\n[profile.release]\nopt-level = \"s\"\nstrip = true\n"
         )
         .into_bytes(),
     )?;

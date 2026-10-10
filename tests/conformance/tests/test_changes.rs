@@ -41,8 +41,8 @@ fi
 printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "${WAMN_FAKE_PASSED:-1}"
 "#;
 
-/// Stands in for `tools/build-components` and `docker`: records its name and
-/// arguments, and fails when `WAMN_FAKE_GUEST_FAIL` names it.
+/// Stands in for `docker`: records its name and arguments, and fails when
+/// `WAMN_FAKE_GUEST_FAIL` names it.
 const FAKE_GUEST_BUILD: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 name="$(basename -- "$0")"
@@ -91,10 +91,6 @@ impl Fixture {
             &fs::read_to_string(repository_root().join(required)).unwrap(),
         );
         executable(&fixture.directory.join("fake cargo"), FAKE_CARGO);
-        executable(
-            &fixture.directory.join("build-components"),
-            FAKE_GUEST_BUILD,
-        );
         executable(&fixture.directory.join("docker"), FAKE_GUEST_BUILD);
         fs::create_dir(fixture.directory.join("metadata")).unwrap();
         for file in [
@@ -258,10 +254,6 @@ impl Fixture {
             .env("WAMN_FAKE_ROOT", &self.root)
             .env("WAMN_FAKE_METADATA", self.directory.join("metadata"))
             .env("WAMN_FAKE_CARGO_LOG", self.directory.join("cargo calls"))
-            .env(
-                "WAMN_BUILD_COMPONENTS",
-                self.directory.join("build-components"),
-            )
             .env("DOCKER", self.directory.join("docker"))
             .env("WAMN_FAKE_GUEST_LOG", self.directory.join("guest calls"))
             .env("GIT_CONFIG_GLOBAL", "/dev/null");
@@ -324,18 +316,15 @@ impl Fixture {
             .collect()
     }
 
-    /// The two guest builds that a change set selecting a guest runs.
+    /// The guest build that a change set selecting a guest runs.
     fn guest_builds(&self) -> Vec<Vec<String>> {
-        vec![
-            vec!["build-components".to_owned(), "all".to_owned()],
-            vec![
-                "docker".to_owned(),
-                "build".to_owned(),
-                "--target".to_owned(),
-                "component-builder".to_owned(),
-                self.root.display().to_string(),
-            ],
-        ]
+        vec![vec![
+            "docker".to_owned(),
+            "build".to_owned(),
+            "--target".to_owned(),
+            "component-builder".to_owned(),
+            self.root.display().to_string(),
+        ]]
     }
 
     fn command(&self, manifest: &str, selection: &[&str]) -> Vec<String> {
@@ -710,31 +699,23 @@ fn a_dry_run_prints_the_guest_builds_and_a_failed_build_fails_the_run() {
     assert!(!fixture.directory.join("guest calls").exists());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 6, "{stdout}");
+    assert_eq!(lines.len(), 5, "{stdout}");
     assert!(
-        lines[4].starts_with("guests (build-components): ") && lines[4].ends_with(" all"),
-        "{stdout}"
-    );
-    assert!(
-        lines[5].starts_with("guests (Dockerfile component-builder): ")
-            && lines[5].contains(" build --target component-builder "),
+        lines[4].starts_with("guests (Dockerfile component-builder): ")
+            && lines[4].contains(" build --target component-builder "),
         "{stdout}"
     );
 
     let output = fixture
         .tool_command(&["run"])
-        .env("WAMN_FAKE_GUEST_FAIL", "build-components")
+        .env("WAMN_FAKE_GUEST_FAIL", "docker")
         .output()
         .expect("run test-changes");
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(fixture.guest_calls(), fixture.guest_builds());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("FAIL: guests (build-components) (exit 29)"),
-        "{stderr}"
-    );
-    assert!(
-        stderr.contains("PASS: guests (Dockerfile component-builder)"),
+        stderr.contains("FAIL: guests (Dockerfile component-builder) (exit 29)"),
         "{stderr}"
     );
 }

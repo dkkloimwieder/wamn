@@ -28,8 +28,7 @@ const WMS_CASES: &[&str] = &[
     "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
 ];
 /// Every package that `wamn build` builds, each base before its overlays.
-/// `tools/build-components all` reads the build output of every package, so
-/// qualification builds them all, not only the packages of the candidate.
+/// Qualification builds them all, not only the packages of the candidate.
 const BUILD_PACKAGES: &[&str] = &[
     "platform_fixture",
     "platform_fixture_overlay",
@@ -39,6 +38,8 @@ const BUILD_PACKAGES: &[&str] = &[
     "edge_samples",
     "edge_device",
 ];
+/// The guests of the platform workloads that the cluster cases deploy.
+const WORKLOAD_GUESTS: [&str; 2] = ["http-route", "materializer"];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
@@ -283,15 +284,18 @@ async fn qualify_candidate(
         "Rust differs from rust-toolchain.toml"
     );
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
+    // `wamn build` compiles the components of every package into the
+    // candidate's target directory. The workload guests are no package's.
     build_packages(root, target, &mut result.checks).await?;
-    // Existing build owners establish which source produced the candidate.
-    run(
-        root,
-        &strings(&["bash", "tools/build-components", "all"]),
-        &target_env,
-        &mut result.checks,
-    )
-    .await?;
+    for package in WORKLOAD_GUESTS {
+        wamn_schema_generator::build::build_guest(
+            root,
+            &root.join("apps/Cargo.toml"),
+            package,
+            Some(target),
+        )
+        .await?;
+    }
     run(
         root,
         &[

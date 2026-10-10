@@ -1,5 +1,6 @@
 //! The components, palette components and wirings of a release, derived from
-//! the package manifests and the build plan of `tools/build-components`.
+//! the package manifests and the `build.json` of each package, whose
+//! `outputs.components` names the bytes `wamn build` compiled.
 //!
 //! The dev loop and `wamn-ctl upgrade-environment` both call this derivation
 //! (owner ruling of 2026-10-02 on `wamn-m511.5`). No second file lists the
@@ -12,7 +13,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use serde::Deserialize;
 use serde_json::Value;
 use wamn_catalog::WiringDocument;
 use wamn_schema_generator::PackageManifest;
@@ -69,32 +69,6 @@ impl Error for CompositionError {
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ComponentBuildPlan {
-    pub virtualization: ComponentVirtualizationPlan,
-    pub palette: Vec<PaletteArtifactPlan>,
-}
-
-/// One palette component that a wiring of a selected package names, as
-/// `tools/build-components` found and built it (wamn-hw3n).
-#[derive(Clone, Debug, Deserialize)]
-pub struct PaletteArtifactPlan {
-    pub component: String,
-    pub declaration: PathBuf,
-    pub artifact: PathBuf,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ComponentVirtualizationPlan {
-    pub artifacts: Vec<ComponentArtifactPlan>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub struct ComponentArtifactPlan {
-    pub package: String,
-    pub output: PathBuf,
-}
-
 #[derive(Clone, Debug)]
 pub struct SelectedComponentArtifact {
     pub package_id: Box<str>,
@@ -130,10 +104,8 @@ pub struct WiringInput {
 
 pub fn select_component_artifacts(
     packages: &[PackageInput],
-    plan: &[ComponentArtifactPlan],
 ) -> Result<Vec<SelectedComponentArtifact>, CompositionError> {
     let mut selected = Vec::with_capacity(packages.len());
-    let mut build_packages = BTreeSet::new();
     for package in packages {
         if package.manifest.components.len() != 1 {
             return Err(CompositionError::invalid(
@@ -150,107 +122,98 @@ pub fn select_component_artifacts(
             .keys()
             .next()
             .expect("one package component was required above");
-        let build_package = canonical_component_build_package(component);
-        if !build_packages.insert(build_package.clone()) {
-            return Err(CompositionError::invalid(
-                "select package component artifact",
-                format!("more than one package derives build identity {build_package}"),
-            ));
-        }
-        let matches = plan
-            .iter()
-            .filter(|artifact| artifact.package == build_package)
-            .collect::<Vec<_>>();
-        let [artifact] = matches.as_slice() else {
-            return Err(CompositionError::invalid(
-                "select package component artifact",
-                format!(
-                    "{}@{} component {} derived build package {} with {} artifact matches",
-                    package.manifest.package.id,
-                    package.manifest.package.version,
-                    component,
-                    build_package,
-                    matches.len()
-                ),
-            ));
-        };
-        let bytes = fs::read(&artifact.output).map_err(|source| {
-            CompositionError::owner(
-                "read virtualized component output",
-                anyhow!(source).context(format!("read {}", artifact.output.display())),
-            )
-        })?;
-        if bytes.is_empty() {
-            return Err(CompositionError::invalid(
-                "read virtualized component output",
-                format!("{} is empty", artifact.output.display()),
-            ));
-        }
-        selected.push(SelectedComponentArtifact {
-            package_id: package.manifest.package.id.clone().into_boxed_str(),
-            package_version: package.manifest.package.version.clone().into_boxed_str(),
-            component: component.clone().into_boxed_str(),
-            path: artifact.output.clone(),
-            digest: wamn_engine::component_admission::component_digest(&bytes).into_boxed_str(),
-        });
+        selected.push(built_component(package, component)?);
     }
     Ok(selected)
 }
 
-/// The palette components that the wirings of each package name. A node
-/// component that the plan does not list as palette is a package component, or
-/// Gate refuses it.
+/// The palette components that the wirings of each package name: each node
+/// component that is not a component of the package.
 pub fn select_palette_artifacts(
     packages: &[PackageInput],
-    plan: &[PaletteArtifactPlan],
 ) -> Result<Vec<SelectedPaletteArtifact>, CompositionError> {
-    let mut named = BTreeSet::<(Box<str>, Box<str>, usize)>::new();
+    let mut named = BTreeSet::<(usize, String)>::new();
     let wirings = load_wirings(packages)?;
     for input in &wirings {
+        let index = packages
+            .iter()
+            .position(|package| {
+                *package.manifest.package.id == *input.package_id
+                    && *package.manifest.package.version == *input.package_version
+            })
+            .expect("every wiring belongs to one of the packages");
         for node in input.wiring.nodes.values() {
-            if let Some(palette) = plan
-                .iter()
-                .position(|palette| palette.component == node.component)
+            if !packages[index]
+                .manifest
+                .components
+                .contains_key(&node.component)
             {
-                named.insert((
-                    input.package_id.clone(),
-                    input.package_version.clone(),
-                    palette,
-                ));
+                named.insert((index, node.component.clone()));
             }
         }
     }
     let mut selected = Vec::with_capacity(named.len());
-    for (package_id, package_version, palette) in named {
-        let palette = &plan[palette];
-        let bytes = fs::read(&palette.artifact).map_err(|source| {
-            CompositionError::owner(
-                "read palette component output",
-                anyhow!(source).context(format!("read {}", palette.artifact.display())),
-            )
-        })?;
-        if bytes.is_empty() {
-            return Err(CompositionError::invalid(
-                "read palette component output",
-                format!("{} is empty", palette.artifact.display()),
-            ));
-        }
+    for (index, component) in named {
+        let package = &packages[index];
+        let (declaration, _) =
+            crate::package_artifact::platform_template(&package.root, &component)
+                .map_err(|source| CompositionError::owner("find palette declaration", source))?;
         selected.push(SelectedPaletteArtifact {
-            artifact: SelectedComponentArtifact {
-                package_id,
-                package_version,
-                component: palette.component.clone().into_boxed_str(),
-                path: palette.artifact.clone(),
-                digest: wamn_engine::component_admission::component_digest(&bytes).into_boxed_str(),
-            },
-            declaration: palette.declaration.clone(),
+            artifact: built_component(package, &component)?,
+            declaration,
         });
     }
     Ok(selected)
 }
 
-pub fn canonical_component_build_package(component: &str) -> String {
-    component.replace('_', "-")
+/// The component `component` that `outputs.components` of the package's
+/// `build.json` records, checked against its digest.
+fn built_component(
+    package: &PackageInput,
+    component: &str,
+) -> Result<SelectedComponentArtifact, CompositionError> {
+    let output = wamn_schema_generator::output_root(&package.root);
+    let receipt = wamn_schema_generator::receipt::read(&output)
+        .map_err(|source| CompositionError::owner("read the package build", source))?;
+    let entry = receipt
+        .outputs
+        .components
+        .iter()
+        .find(|entry| entry.name == component)
+        .ok_or_else(|| {
+            CompositionError::invalid(
+                "select component artifact",
+                format!(
+                    "the build of {}@{} records no component {component}; run wamn build",
+                    package.manifest.package.id, package.manifest.package.version
+                ),
+            )
+        })?;
+    let path = output.join(&entry.path);
+    let bytes = fs::read(&path).map_err(|source| {
+        CompositionError::owner(
+            "read built component",
+            anyhow!(source).context(format!("read {}", path.display())),
+        )
+    })?;
+    let digest = wamn_engine::component_admission::component_digest(&bytes);
+    if digest != entry.sha256 {
+        return Err(CompositionError::invalid(
+            "read built component",
+            format!(
+                "{} is {digest}, and build.json records {}; run wamn build",
+                path.display(),
+                entry.sha256
+            ),
+        ));
+    }
+    Ok(SelectedComponentArtifact {
+        package_id: package.manifest.package.id.clone().into_boxed_str(),
+        package_version: package.manifest.package.version.clone().into_boxed_str(),
+        component: component.into(),
+        path,
+        digest: digest.into_boxed_str(),
+    })
 }
 
 /// The wiring documents of every package. A package whose operations are all

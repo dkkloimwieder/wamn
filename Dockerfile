@@ -128,8 +128,8 @@ COPY tools/guest-rustflags /build/tools/guest-rustflags
 WORKDIR /build/apps
 
 # tools/guest-rustflags maps /build to /wamn and the Cargo home to /cargo, so
-# each guest here has the digest of the same guest built by tools/build-components.
-# The router must match the pin beside its crate, as in tools/build-components.
+# each guest here has the digest of the same guest built by wamn build.
+# The router must match the pin beside its crate, as in wamn build.
 FROM component-toolchain AS component-builder
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \

@@ -29,9 +29,8 @@ use std::time::{Duration, Instant};
 
 use read::DevRuntimeEndpoint;
 
-// Cold local builds may take longer than edits. Metadata probes have their own
-// smaller bound; neither kind can prevent cooperative shutdown indefinitely.
-const PREPARATION_TIMEOUT: Duration = Duration::from_mins(45);
+// An input command has a bound, so it cannot prevent cooperative shutdown
+// indefinitely.
 const INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
 
 async fn execute_preparation(
