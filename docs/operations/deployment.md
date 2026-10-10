@@ -139,7 +139,7 @@ wamn-ctl publish-release \
   --package-manifest apps/wamn_receiving/generated/wamn.json
 
 wamn-ctl publish-qualified-release \
-  --qualification "$DELIVERY_QUALIFICATION" \
+  --qualification "$DELIVERY_QUALIFICATION" --release-chart "$WAMN_RELEASE_CHART" \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
   --tenant "$TENANT" --release-digest "$RELEASE_DIGEST" \
   --org "$ORG" --project "$PROJECT" --environment "$ENVIRONMENT" \
@@ -161,7 +161,7 @@ Set the host variables `WAMN_ORG`, `WAMN_PROJECT`, `WASMCLOUD_HOST_ENVIRONMENT` 
 The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
 It takes the same `--oci-ca-path` input as `push-component`.
 `print-release-env` prints the host release settings without editing files.
-A deployment that is not a qualification pushes the published manifest with `wamn-ctl push-release-manifest`, which takes the same arguments as `publish-qualified-release` without `--qualification`. It attests the push in the control database and records no source commit.
+A deployment that is not a qualification pushes the published manifest with `wamn-ctl push-release-manifest`, which takes the same arguments as `publish-qualified-release` without `--qualification` and `--release-chart`. It attests the push in the control database and records no source commit.
 
 Copy its output into the selected complete host overlay.
 Commit those configuration changes together.

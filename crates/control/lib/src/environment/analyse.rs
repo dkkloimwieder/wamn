@@ -18,7 +18,7 @@ use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::Platform;
 use super::document::{DeclaredRelease, EnvironmentDocument};
-use crate::delivery::selection::{image_digest, package_set};
+use crate::delivery::selection::{image_set_digests, package_set};
 use crate::release_chart;
 
 /// The policy facts `apply` uses.
@@ -402,14 +402,16 @@ async fn read_release(
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
         .await
         .context("claim the release's tenant")?;
+    // R12: the key is the package set and every digest of the chart's
+    // platform image set, the host and each role component.
     let qualification: Option<String> = system
         .query_opt(
             "SELECT qualification_sha256 FROM catalog.qualifications \
-              WHERE package_set = $1::text::jsonb AND image_digests ->> 'host' = $2 \
+              WHERE package_set = $1::text::jsonb AND image_digests @> $2::text::jsonb \
               ORDER BY recorded_at DESC LIMIT 1",
             &[
                 &serde_json::to_string(&package_set(&manifest)?)?,
-                &image_digest(&image_set.host)?,
+                &serde_json::to_string(&image_set_digests(&image_set)?)?,
             ],
         )
         .await
@@ -417,8 +419,9 @@ async fn read_release(
         .map(|row| row.get(0));
     let qualification = qualification.with_context(|| {
         format!(
-            "refused: release {digest} has no qualification on the chart's host image {}",
-            image_set.host
+            "refused: release {digest} has no qualification on the chart's image set: \
+             host {}, http {}, materializer {}",
+            image_set.host, image_set.http, image_set.materializer
         )
     })?;
     let components: Vec<String> = manifest

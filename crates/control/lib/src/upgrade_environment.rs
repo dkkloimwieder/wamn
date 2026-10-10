@@ -1121,7 +1121,8 @@ impl Run {
             oci_ca_paths: Vec::new(),
             control_database_url: databases.system_url(),
         };
-        let pushed = crate::delivery::publication::publish(&qualification, &request)
+        let chart = platform(&environment)?.chart;
+        let pushed = crate::delivery::publication::publish(&qualification, &request, &chart)
             .await
             .context(StopRun("the qualified publication refused the bytes"))?;
         let outputs = BTreeMap::from([

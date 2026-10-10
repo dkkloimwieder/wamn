@@ -3,10 +3,12 @@
 //!
 //! A qualification proves bytes, not names. Its key is the package set, the
 //! exact `(package_id, version, component_digest)` triples of the release, and
-//! the `@sha256` digests of the host, gates and identity images, with the
-//! registry names ignored. `publish-qualified-release` records a passing file
-//! in `catalog.qualifications`, and `env apply` reads it by the package set
-//! and the host image digest of the release chart.
+//! the platform image set of the release chart: the `@sha256` digests of the
+//! host image and of each role component (R12, R15), with the registry names
+//! ignored. The gates and identity digests the qualification ran with are
+//! recorded beside them and are not part of the key. `publish-qualified-release`
+//! records a passing file in `catalog.qualifications`, and `env apply` reads it
+//! by the package set and every digest of the release chart's image set.
 
 use std::collections::BTreeMap;
 
@@ -16,6 +18,7 @@ use tokio_postgres::Transaction;
 use wamn_catalog::ServingManifest;
 
 use super::Qualification;
+use crate::release_chart::ImageSet;
 
 /// One `(package_id, version, component_digest)` triple of a release.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -30,18 +33,19 @@ pub struct PackageTriple {
 pub struct QualificationKey {
     /// Sorted triples of the release.
     pub package_set: Vec<PackageTriple>,
-    /// `host`, `gates` and `identity` to `sha256:<hex>`, for the images given.
+    /// `host`, `http`, `materializer`, `gates` and `identity` to
+    /// `sha256:<hex>`, for the images given.
     pub image_digests: BTreeMap<&'static str, String>,
 }
 
 impl QualificationKey {
     fn new(
         manifest: &ServingManifest,
-        host: &str,
+        image_set: &ImageSet,
         gates: Option<&str>,
         identity: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let mut image_digests = BTreeMap::from([("host", image_digest(host)?)]);
+        let mut image_digests = image_set_digests(image_set)?;
         for (name, image) in [("gates", gates), ("identity", identity)] {
             if let Some(image) = image {
                 image_digests.insert(name, image_digest(image)?);
@@ -86,6 +90,16 @@ pub fn package_set(manifest: &ServingManifest) -> anyhow::Result<Vec<PackageTrip
     Ok(triples)
 }
 
+/// The `sha256:<hex>` of each image of the platform image set, by its key in
+/// `catalog.qualifications.image_digests`: the host and every role component.
+pub fn image_set_digests(image_set: &ImageSet) -> anyhow::Result<BTreeMap<&'static str, String>> {
+    Ok(BTreeMap::from([
+        ("host", image_digest(&image_set.host)?),
+        ("http", image_digest(&image_set.http)?),
+        ("materializer", image_digest(&image_set.materializer)?),
+    ]))
+}
+
 /// The `sha256:<hex>` of an image reference. A reference without an
 /// `@sha256` digest is refused, so the lookup is by bytes.
 pub fn image_digest(reference: &str) -> anyhow::Result<String> {
@@ -105,17 +119,27 @@ pub fn image_digest(reference: &str) -> anyhow::Result<String> {
 
 /// Record a passing qualification in `catalog.qualifications` on the
 /// control transaction, and return its SHA-256. A recorded file is kept.
+///
+/// `image_set` is the release chart's image set. Its host image must be the
+/// one the qualification ran on.
 pub(super) async fn record(
     control: &Transaction<'_>,
     qualification: &Qualification,
     bytes: &[u8],
+    image_set: &ImageSet,
 ) -> anyhow::Result<String> {
     qualification.require_pass()?;
     let (qualified, _) = qualification.candidate.manifest()?;
     let candidate = &qualification.candidate;
+    ensure!(
+        image_digest(&candidate.host_image)? == image_digest(&image_set.host)?,
+        "the qualification ran on host image {}, and the release chart names {}",
+        candidate.host_image,
+        image_set.host
+    );
     let key = QualificationKey::new(
         &qualified,
-        &candidate.host_image,
+        image_set,
         candidate.gates_image.as_deref(),
         candidate.identity_image.as_deref(),
     )?;
@@ -172,21 +196,19 @@ mod tests {
             ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
         assert_eq!(manifest_digest.as_str(), vector::DIGEST);
         let digest = "b".repeat(64);
-        let key = QualificationKey::new(
-            &manifest,
-            &format!("one.example/host@sha256:{digest}"),
-            None,
-            None,
-        )
-        .unwrap();
-        let other = QualificationKey::new(
-            &manifest,
-            &format!("two.example/other/host@sha256:{digest}"),
-            None,
-            None,
-        )
-        .unwrap();
+        let set = |registry: &str| ImageSet {
+            host: format!("{registry}/host:1@sha256:{digest}"),
+            http: format!("{registry}/http@sha256:{}", "c".repeat(64)),
+            materializer: format!("{registry}/materializer@sha256:{}", "d".repeat(64)),
+        };
+        let key = QualificationKey::new(&manifest, &set("one.example"), None, None).unwrap();
+        let other =
+            QualificationKey::new(&manifest, &set("two.example/other"), None, None).unwrap();
         assert_eq!(key, other);
         assert!(!key.package_set.is_empty());
+        assert_eq!(
+            key.image_digests.keys().copied().collect::<Vec<_>>(),
+            ["host", "http", "materializer"]
+        );
     }
 }

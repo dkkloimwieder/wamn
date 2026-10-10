@@ -8,10 +8,11 @@
 //! 1. The host, identity and gates images go to an owned native registry.
 //!    `prepare-release` writes the candidate, the nodes pull the images, and
 //!    `qualify-release` runs the application's qualifying cases.
-//! 2. `publish-qualified-release` pushes the manifest to the TLS registry and
-//!    records the qualification that `env apply` reads (R12).
-//! 3. The role images are pushed, and a copy of the release chart is stamped
+//! 2. The role images are pushed, and a copy of the release chart is stamped
 //!    with the host image and the role images (R15).
+//! 3. `publish-qualified-release` pushes the manifest to the TLS registry and
+//!    records the qualification on the chart's image set, which `env apply`
+//!    reads (R12).
 //! 4. The host group's platform part is the fixture's overlay group less what
 //!    `apply` derives. The document is `env show` of the environment with the
 //!    release digest and the route host, and `wamn-ctl env apply` runs on it.
@@ -189,7 +190,20 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     let host_image = app.native("host")?;
     let (candidate, manifest, qualification) = qualify(app, &host_image).await?;
 
-    // The manifest goes to the TLS registry, and the qualification is recorded.
+    // The platform image set: the qualified host image and the role images.
+    let (http, materializer) = push_roles(app).await?;
+    let chart = stamp(
+        &app.repository.join("deploy/platform/release"),
+        &ImageSet {
+            host: host_image.clone(),
+            http,
+            materializer,
+        },
+        &app.work.join("release-chart"),
+    )?;
+
+    // The manifest goes to the TLS registry, and the qualification is recorded
+    // on the chart's image set (R12).
     let tls_releases = format!("{}/wamn/releases", app.kept.registry);
     let ca = app.kept.ca.to_string_lossy().into_owned();
     step(
@@ -220,21 +234,11 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
                 &ca,
             ])
             .arg("--registry-auth-file")
-            .arg(&app.kept.registry_auth),
+            .arg(&app.kept.registry_auth)
+            .arg("--release-chart")
+            .arg(&chart),
     )
     .await?;
-
-    // The platform image set: the qualified host image and the role images.
-    let (http, materializer) = push_roles(app).await?;
-    let chart = stamp(
-        &app.repository.join("deploy/platform/release"),
-        &ImageSet {
-            host: host_image.clone(),
-            http,
-            materializer,
-        },
-        &app.work.join("release-chart"),
-    )?;
     let platform = Platform {
         system_database_url: app.system_database_url.to_owned(),
         target: Target {

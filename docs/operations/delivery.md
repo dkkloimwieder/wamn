@@ -115,7 +115,8 @@ release_args=(
   --registry-auth-file "$DELIVERY_REGISTRY_AUTH_FILE"
 )
 wamn-ctl publish-qualified-release \
-  --qualification "$DELIVERY_QUALIFICATION" "${release_args[@]}"
+  --qualification "$DELIVERY_QUALIFICATION" \
+  --release-chart "$WAMN_RELEASE_CHART" "${release_args[@]}"
 ```
 
 If the registry certificate chains to a private CA, add `--oci-ca-path` with that CA to `release_args`, or set `WASH_OCI_CA_PATHS`.
@@ -126,8 +127,10 @@ Different release bytes require a different identity through the existing releas
 ## Qualification record and deployment
 
 `publish-qualified-release` records the passing qualification file in `catalog.qualifications` in the control database, after the push.
-The key is the package set of the release, its `(package_id, version, component_digest)` triples, and the `@sha256` digests of the host, gates and identity images.
-`wamn-ctl env apply` deploys a release: the environment document names its digest, and `apply` refuses a release with no recorded qualification on the host image of the release chart.
+The key is the package set of the release, its `(package_id, version, component_digest)` triples, and the platform image set of the stamped release chart that `--release-chart` names: the `@sha256` digests of the host image and of each role component (R12).
+The verb refuses a chart whose host image is not the one the qualification ran on.
+The row also records the gates and identity digests the qualification ran with; they are not part of the key.
+`wamn-ctl env apply` deploys a release: the environment document names its digest, and `apply` refuses a release with no recorded qualification on the image set of the release chart.
 See [deployment](deployment.md) for the environment verbs.
 
 Receiving and WMS qualification require a supplied identity image through `--identity-image`, because their published application routes accept sessions.

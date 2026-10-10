@@ -11,13 +11,18 @@ use crate::print_release_env::{ReleaseSnapshot, lookup_release_snapshot};
 use crate::push_release_manifest::{self, PushReleaseManifestRequest, PushedReleaseManifest};
 
 /// Publish an already qualified candidate through the existing OCI publisher.
+///
+/// `chart` is the stamped release chart whose default values name the
+/// platform image set the qualification ran on (R12, R15).
 pub async fn publish(
     qualification: &Path,
     publication: &PushReleaseManifestRequest,
+    chart: &Path,
 ) -> anyhow::Result<PushedReleaseManifest> {
     let bytes = std::fs::read(qualification).context("read the qualification result")?;
     let qualification = Qualification::read(qualification)?;
     checked_snapshot(&qualification, publication).await?;
+    let image_set = crate::release_chart::image_set(chart).await?;
     // The existing publisher rereads the sealed snapshot, preserves exact
     // retries, and records its upload with the same source attribution.
     qualification.assert_artifacts()?;
@@ -28,7 +33,7 @@ pub async fn publish(
     .await?;
     crate::publish_release::on_control_plane(&publication.control_database_url, async |control| {
         let control = control.transaction().await?;
-        super::selection::record(&control, &qualification, &bytes).await?;
+        super::selection::record(&control, &qualification, &bytes, &image_set).await?;
         control
             .commit()
             .await

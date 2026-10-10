@@ -163,6 +163,10 @@ pub struct PrepareReleaseArgs {
 pub struct PublishArgs {
     #[arg(long)]
     pub qualification: PathBuf,
+    /// The stamped release chart whose default values name the platform image
+    /// set the release was qualified on (R12, R15).
+    #[arg(long, env = "WAMN_RELEASE_CHART")]
+    pub release_chart: PathBuf,
     #[command(flatten)]
     pub publication: PushReleaseManifestArgs,
 }
@@ -264,8 +268,12 @@ pub async fn push_release_manifest(args: PushReleaseManifestArgs) -> anyhow::Res
 
 /// Publish only the release that passed required qualification.
 pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
-    let published =
-        publication::publish(&args.qualification, &args.publication.into_request()).await?;
+    let published = publication::publish(
+        &args.qualification,
+        &args.publication.into_request(),
+        &args.release_chart,
+    )
+    .await?;
     println!("{}", published.digest);
     Ok(())
 }
