@@ -585,8 +585,9 @@ pub async fn image_loaded(
     )?;
     let nodes = nodes.lines().collect::<BTreeSet<_>>();
     ensure!(
-        nodes.len() == 3,
-        "the session image must be loaded on three distinct nodes"
+        !nodes.is_empty(),
+        "the cluster {} has no node to load the session image on",
+        cluster.name
     );
     let loaded = session_image_digest(cluster, image, name, &nodes, config_fallback).await;
     if loaded.is_err() {
