@@ -16,7 +16,6 @@ use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::author_wiring;
-use wamn_control::component_admission::{self, AdmitComponentRequest};
 use wamn_control::dev::environment::{JourneyCredentials, connect, spawn_journey_management_gate};
 use wamn_control::provision_project_env::secret_value;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
@@ -80,6 +79,14 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     let package = root.join(PACKAGE);
     std::fs::create_dir(&package)?;
     std::fs::create_dir(package.join("migrations"))?;
+    // An authored package: push-package takes a tree with wamn.k and the
+    // build.json of its build. This test writes the build output itself.
+    std::fs::write(
+        package.join("wamn.k"),
+        "# fresh_only_probe, the prior-commit fixture. The test writes its build output.\n",
+    )?;
+    let output = wamn_schema_generator::output_root(&package);
+    std::fs::create_dir_all(output.join("components"))?;
     let snapshots = release_snapshots(test.project).await?;
     anyhow::ensure!(
         snapshots.len() == 3,
@@ -101,7 +108,10 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     );
     let base_digest = base.descriptor.component_digest.as_str();
     let manifest = fixture_manifest(base_digest);
-    write_json(&package.join("wamn.json"), &manifest)?;
+    write_json(
+        &wamn_schema_generator::package_manifest_path(&package),
+        &manifest,
+    )?;
     std::fs::write(
         package.join("migrations/0001_counter.sql"),
         "CREATE TABLE fresh_only_probe.counter (\n\
@@ -168,8 +178,18 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             "parameters": []
         }}
     });
-    let declaration_path = root.join("parent.json");
-    write_json(&declaration_path, &declaration)?;
+    // The package's own declaration template: push-package renders it with
+    // the admission tenant and the base digest of wamn.json, and admits the
+    // composed parent against it.
+    let mut template = declaration.clone();
+    template["scope"]["tenant-id"] = json!("__TENANT_ID__");
+    template["operations"][OPERATION]["dependencies"][0]["digest"] =
+        json!(wamn_control::component_declaration::COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER);
+    std::fs::create_dir_all(package.join("publication/components"))?;
+    write_json(
+        &package.join(format!("publication/components/{WIRING}.json.in")),
+        &template,
+    )?;
     let fixture_path = test.inputs.component_directory.join("prior_commit.wasm");
     let bytes = std::fs::read(&fixture_path).with_context(|| {
         format!(
@@ -201,16 +221,8 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     )
     .context("compose the prior-commit fixture with the released base")?;
     let parent_digest = wamn_engine::component_admission::component_digest(&bytes);
-    let component_path = root.join("parent.wasm");
-    std::fs::write(&component_path, bytes)?;
-    // Admission checks the composed parent against its declaration.
-    // push-package pushes the components of the package artifact.
-    component_admission::admit_component(AdmitComponentRequest {
-        package: package.clone(),
-        component_bytes: component_path,
-        declaration: declaration_path,
-        admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-    })?;
+    let component_file = format!("components/{WIRING}.wasm");
+    std::fs::write(output.join(&component_file), bytes)?;
     let definition = json!({"id": WIRING, "kind": "http",
         "route": {"path": ROUTE},
         "raw-body-bytes": {"maximum": 1_048_576},
@@ -226,6 +238,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             "definition": definition, "auth-policy": {"modes": ["pat", "session"]}
         }}),
     )?;
+    write_receipt(&package, &output, &component_file, &parent_digest)?;
     // The gate, authorship and the release read verified package artifacts:
     // the base was pushed with the journey release, and the fixture package
     // is pushed here, before its wiring is gated.
@@ -827,6 +840,47 @@ async fn gate_wiring(test: &PriorCommitTest<'_>, wiring: &Value) -> anyhow::Resu
     Ok(())
 }
 
+/// The build.json of the fixture package, written last: its input digest
+/// covers every file of the package tree, and push-package refuses a stale one.
+fn write_receipt(
+    package: &std::path::Path,
+    output: &std::path::Path,
+    component: &str,
+    component_digest: &str,
+) -> anyhow::Result<()> {
+    use wamn_schema_generator::receipt;
+    let manifest = std::fs::read(wamn_schema_generator::package_manifest_path(package))?;
+    let receipt = receipt::BuildReceipt {
+        schema: receipt::RECEIPT_SCHEMA.to_owned(),
+        package: receipt::ReceiptPackage {
+            id: PACKAGE.to_owned(),
+            version: VERSION.to_owned(),
+        },
+        inputs: receipt::ReceiptInputs {
+            digest: receipt::input_digest(package)?,
+            files: std::collections::BTreeMap::new(),
+        },
+        dependencies: Vec::new(),
+        generator: receipt::ReceiptGenerator {
+            id: "prior-commit-fixture".to_owned(),
+            toolchain: "prior-commit-fixture".to_owned(),
+            sqlx: "0.9.0".to_owned(),
+        },
+        outputs: receipt::ReceiptOutputs {
+            manifest: wamn_engine::component_admission::component_digest(&manifest),
+            files: std::collections::BTreeMap::new(),
+            components: vec![receipt::ReceiptComponent {
+                name: WIRING.to_owned(),
+                path: component.to_owned(),
+                sha256: component_digest.to_owned(),
+            }],
+            web: None,
+        },
+    };
+    std::fs::write(output.join(receipt::RECEIPT_FILE), receipt.to_bytes())?;
+    Ok(())
+}
+
 fn write_json(path: &std::path::Path, value: &Value) -> anyhow::Result<()> {
     std::fs::write(path, serde_json::to_vec(value)?)?;
     Ok(())
@@ -847,7 +901,7 @@ fn fixture_manifest(base_digest: &str) -> Value {
                 "permission": "counter.get", "result": "one"}}
         }},
         "connections": ["postgres"],
-        "components": {"data": {"connections": ["postgres"]}}
+        "components": {(WIRING): {"connections": ["postgres"]}}
     })
 }
 

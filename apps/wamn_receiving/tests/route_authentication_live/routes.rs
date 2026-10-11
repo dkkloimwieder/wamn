@@ -27,8 +27,19 @@ fn validate_p3_refusal(response: &hyper::Response<Bytes>) -> anyhow::Result<()> 
 /// The build output lies outside the package, in
 /// `<package>/../target/wamn/<package>`, so the copy takes it from the
 /// source's output root to the destination's.
+///
+/// The build's input digest covers the lock file of the enclosing workspace,
+/// `<package>/../Cargo.lock`, so the copy takes it too. Without it the copy's
+/// tree differs from its `build.json` and push-package refuses it as stale.
 pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
     copy_package_tree(source, destination)?;
+    let lock = |root: &Path| root.parent().map(|parent| parent.join("Cargo.lock"));
+    if let (Some(from), Some(to)) = (lock(source), lock(destination))
+        && from.is_file()
+        && !to.exists()
+    {
+        std::fs::copy(from, to)?;
+    }
     let output = wamn_schema_generator::output_root(source);
     if output.is_dir() {
         let copied = wamn_schema_generator::output_root(destination);
