@@ -1335,12 +1335,11 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
         assert!(properties.contains_key(field), "schema lacks {field}");
         assert!(required.contains(&field), "schema does not require {field}");
     }
-    assert_eq!(properties.len(), example.scalars().len() + 5);
+    assert_eq!(properties.len(), example.scalars().len() + 4);
     for phase in [
         "materializer",
         "runtime",
         "fresh_only_packages",
-        "overlay_compatibility",
         "postcommit",
     ] {
         assert!(properties.contains_key(phase));

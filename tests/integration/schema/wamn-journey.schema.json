@@ -2,33 +2,6 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
-    "BaseCandidate": {
-      "enum": [
-        "baseline",
-        "additive"
-      ],
-      "type": "string"
-    },
-    "CompatibilityPhase": {
-      "additionalProperties": false,
-      "properties": {
-        "base": {
-          "$ref": "#/definitions/BaseCandidate"
-        },
-        "evidence_file": {
-          "type": "string"
-        },
-        "package_directory": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "base",
-        "evidence_file",
-        "package_directory"
-      ],
-      "type": "object"
-    },
     "MaterializerPhase": {
       "additionalProperties": false,
       "description": "The materializer phase's inputs: the project-environment database the route phase provisioned, the event stream it subscribes to, and the receipt the trigger produced. The NATS URL is known from the start, but the only reader that needs it is this phase's, so it rides here rather than being a required top-level field a route-only run would have to invent.",
@@ -71,9 +44,6 @@
         "route_endpoint": {
           "type": "string"
         },
-        "source_commit": {
-          "type": "string"
-        },
         "statement_timeout_ms": {
           "format": "uint64",
           "minimum": 0.0,
@@ -87,7 +57,6 @@
         "materializer_workload",
         "namespace",
         "route_endpoint",
-        "source_commit",
         "statement_timeout_ms"
       ],
       "type": "object"
@@ -157,17 +126,6 @@
     },
     "operator_secret_output": {
       "type": "string"
-    },
-    "overlay_compatibility": {
-      "anyOf": [
-        {
-          "$ref": "#/definitions/CompatibilityPhase"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "Fresh-install test with unchanged overlay artifacts."
     },
     "postcommit": {
       "anyOf": [

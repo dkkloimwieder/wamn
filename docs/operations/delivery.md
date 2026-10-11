@@ -58,8 +58,7 @@ It pulls the host, gates, identity and runner images by digest.
 It runs each case in the chart's runner image with `docker run`: the runner carries the case executables, the repository files they read, and pinned `docker`, `kind`, `kubectl` and `helm`.
 The runner uses the Docker daemon of this machine through its socket and the host network.
 Each case runs on its own kind cluster with the image set of the chart.
-A WMS case installs the candidate's packages from the package repository beside the release repository through the package stage of `apply`, and publishes nothing.
-A Receiving case still publishes its own release from a checkout, so it does not run in the runner yet.
+Each case installs the candidate's packages from the package repository beside the release repository through the package stage of `apply`, and publishes nothing.
 Each case installs its environment with the release chart, as `env apply` does.
 It copies the release, its components and the role components by digest into its own registry and stamps a copy of the chart with the same image set.
 

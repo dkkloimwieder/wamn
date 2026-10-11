@@ -116,15 +116,6 @@ impl std::fmt::Debug for LocalApplication {
     }
 }
 
-/// Response and guest-memory observation from one flow-http invocation.
-#[derive(Debug)]
-pub struct LocalInvocation {
-    pub response: Response<Bytes>,
-    pub shell_bytes: u64,
-    pub peak_bytes: u64,
-    pub in_use_before_drop: u64,
-}
-
 impl LocalApplication {
     pub async fn start(config: LocalApplicationConfig<'_>) -> anyhow::Result<Self> {
         let PreparedLocalApplication {
@@ -416,72 +407,4 @@ where
         .await
         .context("flow-http ended before its response head")?;
     Ok(Response::from_parts(parts, FrameBody { frames }))
-}
-
-pub async fn invoke_request<B>(
-    engine: &wash_runtime::engine::Engine,
-    flow_http: &Component,
-    routing: Arc<FlowHttpRouting>,
-    bridge: Arc<RouterDeliveryBridge>,
-    request: Request<B>,
-) -> anyhow::Result<LocalInvocation>
-where
-    B: hyper::body::Body<Data = Bytes> + Send + 'static,
-    B::Error: Into<wasmtime_wasi_http::Error>,
-{
-    let request = with_host_authority(request)?;
-    serve_request_host(&routing, &request);
-    let (mut store, service) = instantiate(engine, flow_http, routing, bridge).await?;
-    let (request, request_io) =
-        wasmtime_wasi_http::p3::Request::from_http(wasmtime_wasi_http::default_hooks(), request);
-    let response = store
-        .run_concurrent(async |accessor| {
-            let handle = async {
-                let response = service
-                    .handle(accessor, request)
-                    .await
-                    .map_err(|error| anyhow::anyhow!("call flow-http: {error}"))?
-                    .map_err(|error| anyhow::anyhow!("flow-http returned {error:?}"))?;
-                let (finish_tx, finish_rx) =
-                    tokio::sync::oneshot::channel::<Result<(), wasmtime_wasi_http::Error>>();
-                let response = accessor
-                    .with(|store| {
-                        response.into_http(store, async move {
-                            finish_rx
-                                .await
-                                .unwrap_or(Err(wasmtime_wasi_http::Error::ConnectionTerminated))
-                        })
-                    })
-                    .map_err(|error| anyhow::anyhow!("convert flow-http response: {error}"))?;
-                let (parts, body) = response.into_parts();
-                let body = body.collect().await;
-                let (body, finish) = match body {
-                    Ok(body) => (Ok(body), Ok(())),
-                    Err(error) => (Err(format!("{error:?}")), Err(error)),
-                };
-                let _ = finish_tx.send(finish);
-                let body =
-                    body.map_err(|error| anyhow::anyhow!("collect flow-http response: {error}"))?;
-                Ok::<_, anyhow::Error>(Response::from_parts(parts, body.to_bytes()))
-            };
-            let io = async {
-                if let Err(error) = request_io.await {
-                    tracing::debug!(?error, "flow-http request body processing ended");
-                }
-                Ok::<_, anyhow::Error>(())
-            };
-            let (response, ()) = tokio::try_join!(handle, io)?;
-            Ok::<_, anyhow::Error>(response)
-        })
-        .await
-        .map_err(|error| anyhow::anyhow!("drive flow-http P3 request: {error}"))??;
-    let shell_bytes = store.data().memory_limiter.charged();
-    let peak_bytes = engine.guest_memory().high_water();
-    let in_use_before_drop = engine.guest_memory().in_use();
-    Ok(LocalInvocation {
-        response,
-        shell_bytes,
-        peak_bytes,
-        in_use_before_drop,
-    })
 }

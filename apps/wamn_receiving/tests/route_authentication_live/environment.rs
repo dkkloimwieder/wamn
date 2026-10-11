@@ -27,9 +27,6 @@ pub(super) fn journey_package_root(
                 .expect("the test package has a directory name"),
         );
     }
-    if let Some(phase) = inputs.and_then(|inputs| inputs.overlay_compatibility.as_ref()) {
-        return overlay_compatibility::source(phase, package);
-    }
     source
 }
 
@@ -51,13 +48,6 @@ pub(super) fn journey_publication_root(
     journey_package_root(package, inputs).join("publication")
 }
 
-/// The reference of a sealed operation id, as an authored copy names it.
-pub(super) fn reference_of(sealed: &str) -> &str {
-    sealed
-        .rsplit_once('@')
-        .map_or(sealed, |(reference, _)| reference)
-}
-
 pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {
     JOURNEY_ATTACHMENTS
         .iter()
@@ -71,11 +61,9 @@ pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {
 /// Apply each released journey package as the artifact
 /// [`push_journey_packages`] pushed, in its order.
 pub(super) async fn install_journey_project(
-    inputs: &JourneyDocument,
     packages: &[wamn_control::apply_package::PackageRoot],
     project: &Client,
     project_url: &str,
-    fresh_only: bool,
 ) -> anyhow::Result<()> {
     install_journey_platform_floor(project, identity().tenant.as_str(), PLATFORM_DOMAIN).await?;
     for (package, root) in released_journey_packages().zip(packages) {
@@ -92,14 +80,6 @@ pub(super) async fn install_journey_project(
                 package.version()
             )
         })?;
-        if fresh_only && package.id == BASE_PACKAGE_ID {
-            wamn_schema_generator::materialize_package_verified(
-                project_url,
-                &journey_package_root(package, Some(inputs)),
-            )
-            .await
-            .context("generate the copied fresh-only base before overlay migrations")?;
-        }
     }
     Ok(())
 }
@@ -601,9 +581,6 @@ pub(super) async fn publish_journey_release(
     .await
     .context("pull the exact released manifest")?;
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
-        candidate.assert_manifest(&manifest)?;
-    }
     wamn_control::environment::stage::write_release(
         project_url,
         identity().tenant.as_str(),
@@ -613,139 +590,6 @@ pub(super) async fn publish_journey_release(
     .await
     .context("install the Receiving release row")?;
     Ok(digest)
-}
-
-pub(super) async fn publish_and_push_journey_release(
-    inputs: &JourneyDocument,
-    target: JourneyReleaseTarget<'_>,
-) -> anyhow::Result<(String, Arc<LoadedRelease>)> {
-    let digest = publish_journey_release(inputs, target).await?;
-    let source = ReleaseManifestSource::new(
-        &inputs.release_artifact_base,
-        true,
-        &inputs.registry_auth_file,
-    )
-    .context("configure the release puller")?;
-    let bytes = source
-        .pull_verified(&digest)
-        .await
-        .context("pull the exact released manifest")?;
-    let origin = format!("{}@{digest}", inputs.release_artifact_base);
-    let release = Arc::new(
-        LoadedRelease::load_canonical_bytes(&bytes, &origin, release_scope())
-            .context("load the pulled Receiving release")?,
-    );
-    Ok((digest, release))
-}
-
-pub(super) fn released_component_digests(
-    release: &LoadedRelease,
-) -> anyhow::Result<HashMap<String, String>> {
-    let expected_packages = JOURNEY_PACKAGES
-        .iter()
-        .map(|package| PackageCoordinate::new(package.id, package.version()))
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    anyhow::ensure!(
-        release.manifest().release.packages == expected_packages,
-        "released manifest carries the wrong exact package membership"
-    );
-    let digests = release
-        .manifest()
-        .components
-        .iter()
-        .map(|component| {
-            (
-                component.package_id.clone(),
-                component.descriptor.component_digest.as_str().to_owned(),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    let expected = JOURNEY_PACKAGES
-        .iter()
-        .map(|package| package.id)
-        .collect::<BTreeSet<_>>();
-    let observed = digests.keys().map(String::as_str).collect::<BTreeSet<_>>();
-    anyhow::ensure!(
-        observed == expected,
-        "released manifest carries the wrong package component closure: {observed:?}"
-    );
-    anyhow::ensure!(
-        release.manifest().components.len() == JOURNEY_PACKAGES.len()
-            && release.manifest().components.iter().all(|component| {
-                JOURNEY_PACKAGES.iter().any(|package| {
-                    component.package_id == package.id
-                        && component.descriptor.component == package.component
-                })
-            }),
-        "released manifest does not carry exactly one component for each package"
-    );
-    let overlay = release
-        .manifest()
-        .components
-        .iter()
-        .find(|component| component.package_id == OVERLAY_PACKAGE_ID)
-        .context("released manifest omitted the overlay component")?;
-    // Publish folds the base operation and its participant into the overlay
-    // entry, so the entry grant carries both.
-    anyhow::ensure!(
-        overlay
-            .operations
-            .get(*OVERLAY_RECORD_RECEIPT)
-            .is_some_and(
-                |operation| operation.permissions.contains(*BASE_RECORD_RECEIPT)
-                    && operation.participant.as_deref() == Some(*OVERLAY_RECEIPT_PARTICIPANT)
-            ),
-        "released overlay record_receipt omitted its folded base grant or participant"
-    );
-    let expected_attachment_ids = JOURNEY_ATTACHMENTS
-        .iter()
-        .map(|attachment| attachment.id)
-        .collect::<BTreeSet<_>>();
-    let observed_attachment_ids = release
-        .manifest()
-        .attachments
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    anyhow::ensure!(
-        observed_attachment_ids == expected_attachment_ids,
-        "released manifest carries missing or extra route attachments: {observed_attachment_ids:?}"
-    );
-    for expected in JOURNEY_ATTACHMENTS {
-        let attachment = &release.manifest().attachments[expected.id];
-        let component = JOURNEY_PACKAGES
-            .iter()
-            .find(|package| package.id == expected.package_id)
-            .context("every journey attachment names a journey package")?
-            .component;
-        anyhow::ensure!(
-            attachment.type_ == AttachmentType::Http
-                && attachment.package_id == expected.package_id
-                && attachment.component == component
-                && attachment.operation == sealed(expected.operation)
-                && attachment.registered_operation == Some(sealed(expected.operation))
-                && attachment.definition["route"]["method"] == expected.method
-                && attachment.definition["route"]["path"] == expected.path
-                && attachment.definition["route"].get("host").is_none()
-                && attachment.auth_policy == serde_json::json!({"modes": ["pat", "session"]}),
-            "released attachment {} does not match its exact authenticated route tuple: {attachment:?}",
-            expected.id
-        );
-    }
-    let registration = release
-        .manifest()
-        .workflow
-        .registrations
-        .get("client_acme_receiving::quality.create_inspection")
-        .context("released manifest omitted the Acme receipt registration")?;
-    anyhow::ensure!(
-        registration.package_id == OVERLAY_PACKAGE_ID
-            && registration.source_package_id == BASE_PACKAGE_ID
-            && registration.entity == "receipt"
-            && registration.ops == BTreeSet::from(["insert".to_owned()]),
-        "released Acme receipt registration has the wrong owner/source/entity/ops: {registration:?}"
-    );
-    Ok(digests)
 }
 
 pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Result<()> {
@@ -787,25 +631,6 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
         )
         .await
         .context("seed only Receiving business rows")
-}
-
-// Distinct route-only approval precondition. This fixture does not claim that
-// CDC or a materializer created the inspection; `.15.25.4` owns that test.
-pub(super) async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow::Result<()> {
-    bind_fixture_principal(project, identity().tenant.as_str()).await?;
-    project
-        .batch_execute(
-            "INSERT INTO receiving.receipt \
-               (id, purchase_order_id, receipt_reference, occurred_at) \
-             VALUES \
-               ('00000000-0000-0000-0000-000000000603', \
-                '00000000-0000-0000-0000-000000000303', 'QUALITY-PREEXISTING', \
-                '2026-08-31T11:30:00.000000Z'); \
-             INSERT INTO receiving.quality_inspection (receipt_id, status, row_version) \
-             VALUES ('00000000-0000-0000-0000-000000000603', 'pending', 1);",
-        )
-        .await
-        .context("seed the distinct pre-existing quality approval fixture")
 }
 
 pub(super) async fn seed_materializer_trigger_rows(project: &Client) -> anyhow::Result<()> {

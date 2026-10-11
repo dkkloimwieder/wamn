@@ -52,17 +52,13 @@ The deployed case retains label delivery and committed results after a label fai
 
 ## Fresh overlay compatibility
 
-The [paired installation test](../../apps/wamn_receiving/tests/route_authentication_live/cluster/postcommit_pair.rs) compares base A plus overlay O with base B plus the same overlay artifacts.
-Each combination is an independent fresh installation.
-The [Acme test owner](../../apps/client_acme_receiving/tests/overlay_compatibility.rs) observes consumed schema requirements and exercises the breaking candidate.
+The [postcommit case](../../apps/wamn_receiving/tests/route_authentication_live/cluster/postcommit_case.rs) installs the candidate release fresh through the package stage.
+The [Acme test owner](../../apps/client_acme_receiving/tests/overlay_compatibility.rs) then observes the schema requirements of the candidate's unchanged overlay package artifact in that installation.
+The evidence names the overlay component by the digest the release manifest carries.
 
-An additive base must satisfy the unchanged overlay's requirements and named operations.
-A breaking combination must refuse for its named schema requirement or ownership conflict.
-An unrelated build failure does not establish compatibility refusal.
-Keep overlay artifact digests unchanged throughout the comparison.
+An additive base and a breaking combination need a second base that no candidate carries, so they are not cluster cases (docs/plan/platform-deploy.md §8.2).
 
 This tests fresh-install compatibility, not an upgrade of an existing database.
-Keep this paired test limited to fresh installations.
 The separate [package upgrade tests](database-tests.md#package-upgrades) exercise migration suffixes on copied predecessor data and accepted production evidence.
 The installed-schema observer does not claim production schema-admission enforcement.
 

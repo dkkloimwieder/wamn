@@ -92,7 +92,10 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
     // The event broker and the database of this application.
     let source = source_stream_config(&triple, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&triple, 1);
-    let consumers = super::declared_consumers()?;
+    let roots = super::super::released_journey_packages()
+        .map(|package| super::super::journey_package_root(package, None))
+        .collect::<Vec<_>>();
+    let consumers = super::declared_consumers(roots.iter().map(PathBuf::as_path))?;
     let broker = event_broker::prepare(
         &work,
         &triple,
@@ -163,7 +166,6 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
         host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: work.join("operator-pat.json"),
         fresh_only_packages: None,
-        overlay_compatibility: None,
         postcommit: None,
         materializer: None,
         runtime: None,

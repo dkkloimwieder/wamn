@@ -85,18 +85,6 @@ impl Candidate {
             .with_context(|| format!("read manifest {}", self.manifest_path.display()))?;
         ServingManifest::from_canonical_bytes(&bytes).context("admit candidate serving manifest")
     }
-
-    /// Require a case that publishes its own release to have published the
-    /// candidate's exact bytes. Only the Receiving cases still publish; the
-    /// WMS cases install the candidate and publish nothing.
-    pub fn assert_manifest(&self, actual: &ServingManifest) -> anyhow::Result<()> {
-        let (expected, _) = self.manifest()?;
-        ensure!(
-            actual.canonical_bytes() == expected.canonical_bytes(),
-            "application fixture produced another release identity or manifest"
-        );
-        Ok(())
-    }
 }
 
 /// The package and component repositories beside the release repository

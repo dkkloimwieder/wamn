@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
 
@@ -40,8 +40,6 @@ pub struct JourneyDocument {
     /// Copied package sources for the dedicated fresh-only test.
     /// The initial phase creates this directory before any package admission.
     pub fresh_only_packages: Option<PathBuf>,
-    /// Fresh-install test with unchanged overlay artifacts.
-    pub overlay_compatibility: Option<CompatibilityPhase>,
     /// Released materializer replay and retry test.
     pub postcommit: Option<PostcommitPhase>,
     /// Known only after the route phase has provisioned the project
@@ -83,21 +81,6 @@ pub struct MaterializerPhase {
     pub project_pg_url: String,
     pub nats_url: String,
     pub receipt_id: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BaseCandidate {
-    Baseline,
-    Additive,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CompatibilityPhase {
-    pub base: BaseCandidate,
-    pub package_directory: PathBuf,
-    pub evidence_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

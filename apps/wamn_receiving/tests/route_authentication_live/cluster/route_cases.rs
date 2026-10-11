@@ -4,11 +4,10 @@ use std::fs;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 
 use super::{
     ReceivingCluster, apply, checked, evidence_directory, kubectl, materializer_case,
-    postcommit_case, publish_and_push, released_http, resources, serve_released_http, start,
+    postcommit_case, provision, released_http, resources, serve_released_http, start,
     write_private,
 };
 
@@ -23,7 +22,7 @@ async fn command_histories() -> anyhow::Result<()> {
 async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
     let mut cluster = start(evidence, true).await?;
     let result = async {
-        let (route, carrier) = publish_and_push(&cluster.inputs, &cluster.artifacts).await?;
+        let (route, carrier) = provision(&cluster).await?;
         let (route, service) = serve_released_http(&cluster, 3, route, carrier).await?;
         let endpoint =
             materializer_case::endpoint(
@@ -34,18 +33,22 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             )
                 .await?;
         postcommit_case::assert_unknown_route(&cluster, &endpoint).await?;
-        let mut digests = serde_json::Map::new();
-        for component in super::super::released_package_roots().into_keys() {
-            let bytes = fs::read(cluster.artifacts.components.join(format!("{component}.wasm")))?;
-            digests.insert(component.into(), json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))));
-        }
+        // The component digests and the package artifacts of the candidate.
+        let (_, manifest) = cluster.candidate()?;
+        let digests = manifest.components.iter()
+            .map(|component| (component.descriptor.component.clone(), json!(component.descriptor.component_digest.as_str())))
+            .collect::<serde_json::Map<_, _>>();
+        let packages = super::super::released_journey_packages()
+            .map(|package| Ok((package.component, cluster.packages.get(package.id)
+                .context("the candidate carries every released journey package")?.root().to_path_buf())))
+            .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()?;
         let path = evidence.join("receiving-correctness.jsonl");
         let inputs = serde_json::from_value(json!({
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
             "tenant":super::super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
             "component_digests":digests,
-            "packages":super::super::released_package_roots(),
+            "packages":packages,
             "seed":7701,"cases":16,"history":null,
         }))?;
         let cancellation = pg_walstream::CancellationToken::new();

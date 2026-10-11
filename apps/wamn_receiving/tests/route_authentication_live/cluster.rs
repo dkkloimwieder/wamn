@@ -10,6 +10,7 @@ mod resources;
 mod route_cases;
 mod session_cluster;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::net::Ipv4Addr;
 use std::os::unix::fs::PermissionsExt as _;
@@ -19,6 +20,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
+use wamn_catalog::ServingManifest;
+use wamn_control::delivery::Candidate;
+use wamn_control::package_artifact::OpenedPackage;
 use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_control::release_chart::{self, ImageSet, ValuesInput};
@@ -32,7 +36,6 @@ use wamn_test_infrastructure::rendering::{
 use wamn_test_infrastructure::secrets::{HostSecret, HostSecretsInput, derive_host_secrets};
 
 use super::{connect, identity, repository_root, routes};
-use build::Artifacts;
 use resources::{Resources, checked, write_private};
 use wamn_control_provision::events::{
     advisory_stream_config, materializer_consumer_config, source_stream_config,
@@ -40,19 +43,47 @@ use wamn_control_provision::events::{
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker::{self, EventBroker};
 
+/// One Receiving cluster case's environment of the candidate release, which
+/// it installs through the package stage and publishes nothing
+/// (docs/plan/platform-deploy.md §8.2).
 struct ReceivingCluster {
     resources: Resources,
     inputs: JourneyDocument,
-    artifacts: Artifacts,
     broker: EventBroker,
     nats_url: String,
     source: async_nats::jetstream::stream::Config,
+    /// The candidate's packages, from their artifacts, by package id.
+    packages: BTreeMap<String, OpenedPackage>,
+    /// The materializer consumers that the candidate's packages declare.
+    consumers: Vec<async_nats::jetstream::consumer::pull::Config>,
+}
+
+impl ReceivingCluster {
+    /// The candidate this case runs.
+    fn candidate(&self) -> anyhow::Result<&(Candidate, ServingManifest)> {
+        self.resources
+            .candidate
+            .as_ref()
+            .context("a Receiving cluster case runs a candidate")
+    }
 }
 
 async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCluster> {
     let repository = repository_root()?;
     let mut cluster = resources::prepare(&repository, evidence, gates_image).await?;
-    let artifacts = build::components_and_tools(&repository, &cluster.evidence).await?;
+    let (candidate, manifest) = cluster
+        .candidate
+        .as_ref()
+        .context("a Receiving cluster case runs a candidate")?;
+    // open_packages opens them in the order of the release's packages.
+    let packages = manifest
+        .release
+        .packages
+        .iter()
+        .map(|package| package.package_id().to_owned())
+        .zip(case_release::open_packages(candidate).await?)
+        .collect::<BTreeMap<_, _>>();
+    let consumers = declared_consumers(packages.values().map(OpenedPackage::root))?;
     let registry_password = resources::prepare_files(&cluster).await?;
     let scope = Triple::new(
         identity().org.as_str(),
@@ -61,7 +92,6 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     );
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
-    let consumers = declared_consumers()?;
     let broker = event_broker::prepare(
         &cluster.work,
         &scope,
@@ -128,7 +158,6 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     result.context("create the owned system database")?;
     let inputs = journey_inputs(
         &cluster,
-        &artifacts,
         &postgres_address.to_string(),
         &authority,
         registry_auth_file,
@@ -136,10 +165,11 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     Ok(ReceivingCluster {
         resources: cluster,
         inputs,
-        artifacts,
         broker,
         nats_url,
         source,
+        packages,
+        consumers,
     })
 }
 
@@ -147,16 +177,16 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
 /// registry authority. A later stage rebuilds the same inputs when it attaches.
 fn journey_inputs(
     cluster: &Resources,
-    artifacts: &Artifacts,
     postgres_address: &str,
     authority: &str,
     registry_auth_file: PathBuf,
 ) -> JourneyDocument {
     JourneyDocument {
         system_pg_url: format!("postgresql://postgres:probe@{postgres_address}:5432/wamn_system"),
-        component_directory: artifacts.components.clone(),
+        // The case reads no built component: the hosts pull the candidate's.
+        component_directory: PathBuf::new(),
         compilation_cache_directory: cluster.work.join("wasmtime-cache"),
-        flow_http_wasm: artifacts.http.clone(),
+        flow_http_wasm: PathBuf::new(),
         component_artifact_base: format!("{authority}/wamn/components"),
         release_artifact_base: format!("{authority}/wamn/releases"),
         route_host: super::identity().route_host.clone(),
@@ -165,14 +195,17 @@ fn journey_inputs(
         host_secret_namespace: cluster.name.clone(),
         operator_secret_output: cluster.work.join("operator-pat.json"),
         fresh_only_packages: None,
-        overlay_compatibility: None,
         postcommit: None,
         materializer: None,
         runtime: None,
     }
 }
 
-fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::pull::Config>> {
+/// The materializer consumer of each registration of the packages at
+/// `roots`, as the operator declares it to provisioning.
+fn declared_consumers<'a>(
+    roots: impl IntoIterator<Item = &'a Path>,
+) -> anyhow::Result<Vec<async_nats::jetstream::consumer::pull::Config>> {
     let mut consumers = Vec::new();
     let sanitize = |value: &str| {
         value
@@ -186,10 +219,8 @@ fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::p
             })
             .collect::<String>()
     };
-    for package in super::released_journey_packages() {
-        let path = wamn_schema_generator::package_manifest_path(&super::journey_package_root(
-            package, None,
-        ));
+    for root in roots {
+        let path = wamn_schema_generator::package_manifest_path(root);
         let manifest = wamn_schema_generator::PackageManifest::from_slice(&fs::read(path)?)?;
         for (name, operation) in &manifest.custom_operations {
             if let Some(registration) = &operation.registration {
@@ -284,21 +315,50 @@ async fn postgres_18(url: &str) -> bool {
     matches!(result, Ok(Ok(row)) if row.get::<_, bool>(0))
 }
 
+/// Copy the candidate's release and its components by digest into the case
+/// registry, which the hosts read, then provision the environment and install
+/// the candidate in it through the package stage. It publishes nothing
+/// (docs/plan/platform-deploy.md §8.2, §10.2).
 async fn provision(
-    inputs: &JourneyDocument,
-    artifacts: &Artifacts,
+    cluster: &ReceivingCluster,
 ) -> anyhow::Result<(ProvisionedRoute, ReleaseCarrier)> {
-    let (route, digest) = routes::receiving_pat_journey(
-        inputs,
-        &artifacts.target.join("debug/wamn-scenario-worker"),
-        inputs.fresh_only_packages.is_some(),
-    )
-    .await?;
-    Ok((route, carrier(inputs, digest)?))
+    let (candidate, _) = cluster.candidate()?;
+    case_release::copy_release(candidate, &case_registry(&cluster.inputs)?).await?;
+    let route = routes::install_candidate_release(&cluster.inputs, candidate).await?;
+    let (_, digest) = candidate.manifest()?;
+    Ok((route, carrier(&cluster.inputs, digest.to_string())?))
 }
 
-/// The carrier of the release `digest` that the journey pushed to its
-/// release repository.
+/// Seed the Receiving business rows and the order of the first materializer
+/// trigger in the project database of `route`.
+async fn seed(route: &ProvisionedRoute) -> anyhow::Result<()> {
+    let (project, task) = connect(&route.database_url).await?;
+    let seeded = async {
+        super::environment::seed_receiving_business_rows(project.as_ref()).await?;
+        super::environment::seed_materializer_trigger_rows(project.as_ref()).await
+    }
+    .await;
+    drop(project);
+    task.abort();
+    seeded
+}
+
+/// The case's own registry, beside its component repository.
+fn case_registry(inputs: &JourneyDocument) -> anyhow::Result<Registry> {
+    Ok(Registry {
+        authority: inputs
+            .component_artifact_base
+            .strip_suffix("/wamn/components")
+            .context("the Receiving component repository has its declared suffix")?
+            .to_owned(),
+        auth_file: Some(inputs.registry_auth_file.clone()),
+        insecure: true,
+        ca_paths: Vec::new(),
+    })
+}
+
+/// The carrier of the release `digest` in the release repository of
+/// `inputs`.
 fn carrier(inputs: &JourneyDocument, digest: String) -> anyhow::Result<ReleaseCarrier> {
     Ok(ReleaseCarrier {
         artifact_base: inputs.release_artifact_base.clone(),
@@ -357,22 +417,9 @@ async fn install_release(
 ) -> anyhow::Result<Deployed> {
     let resources = &cluster.resources;
     let (_, overlay) = prepare_host(resources, &cluster.inputs, carrier, binding).await?;
-    let registry = Registry {
-        authority: cluster
-            .inputs
-            .component_artifact_base
-            .strip_suffix("/wamn/components")
-            .context("the Receiving component repository has its declared suffix")?
-            .to_owned(),
-        auth_file: Some(cluster.inputs.registry_auth_file.clone()),
-        insecure: true,
-        ca_paths: Vec::new(),
-    };
+    let registry = case_registry(&cluster.inputs)?;
     // The manifest is the bytes that `qualify-release` pulled from OCI.
-    let (candidate, manifest) = resources
-        .candidate
-        .as_ref()
-        .context("a Receiving cluster case runs a candidate")?;
+    let (candidate, manifest) = cluster.candidate()?;
     let (http, materializer) = case_release::copy_roles(candidate, &registry).await?;
     let (host_image, runtime_digest) = host_image(resources).await?;
     let (org, project, env) = (
@@ -716,22 +763,9 @@ async fn released_http(
     cluster: &ReceivingCluster,
     replicas: u32,
 ) -> anyhow::Result<(ProvisionedRoute, String)> {
-    let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
+    let (route, carrier) = provision(cluster).await?;
+    seed(&route).await?;
     serve_released_http(cluster, replicas, route, carrier).await
-}
-
-/// Publish the release of the candidate through the publish-only path, which
-/// pushes it as the journey does. The Receiving-only cases start here.
-async fn publish_and_push(
-    inputs: &JourneyDocument,
-    artifacts: &Artifacts,
-) -> anyhow::Result<(ProvisionedRoute, ReleaseCarrier)> {
-    let (route, digest) = routes::publish_receiving_release(
-        inputs,
-        &artifacts.target.join("debug/wamn-scenario-worker"),
-    )
-    .await?;
-    Ok((route, carrier(inputs, digest)?))
 }
 
 /// Install the release through the release chart and check its hosts and its

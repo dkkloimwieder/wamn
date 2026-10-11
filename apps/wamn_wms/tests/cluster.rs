@@ -392,7 +392,6 @@ async fn run_created(
         host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: work.join("operator-pat.json"),
         fresh_only_packages: None,
-        overlay_compatibility: None,
         postcommit: None,
         materializer: None,
         runtime: None,

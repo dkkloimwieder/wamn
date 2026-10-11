@@ -2,26 +2,6 @@
 
 use super::*;
 
-const P3_REQUEST_ID: &str = "p3-protocol";
-/// A write whose revision no row ever reaches, so every run refuses it the
-/// same way and changes nothing. The probe needs a body, and a read has none.
-const P3_PAYLOAD: &[u8] = br#"[{"request_id":"p3-protocol","id":"00000000-0000-0000-0000-000000000301","expected_row_version":2147483647,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#;
-
-fn validate_p3_refusal(response: &hyper::Response<Bytes>) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        response.status() == StatusCode::OK,
-        "P3 protocol request returned {}",
-        response.status()
-    );
-    let body: Value = serde_json::from_slice(response.body())?;
-    anyhow::ensure!(
-        body[0]["request_id"] == P3_REQUEST_ID
-            && body[0]["error"]["code"] == "concurrency_conflict",
-        "P3 protocol request did not reach the stale-revision refusal: {body}"
-    );
-    Ok(())
-}
-
 /// Copy the package at `source` to `destination`, with its build output.
 ///
 /// The build output lies outside the package, in
@@ -107,17 +87,6 @@ pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build the fresh-only copies, the base before the overlay, against the
-/// PostgreSQL server of `server_url`.
-pub(super) async fn build_fresh_only_packages(root: &Path, server_url: &str) -> anyhow::Result<()> {
-    super::package_copies::build(
-        root,
-        &["wamn_receiving", "client_acme_receiving"],
-        server_url,
-    )
-    .await
-}
-
 #[test]
 fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyhow::Result<()> {
     let source_manifest = package_root().join("wamn.k");
@@ -148,57 +117,15 @@ fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyho
     Ok(())
 }
 
-/// The journey, and the route and digest of the release it published.
-pub(super) async fn receiving_pat_journey(
+/// Provision the journey control store, the environment and its route in
+/// the owned PostgreSQL server, and copy the operator Secret to
+/// `inputs.operator_secret_output`.
+async fn provision_environment(
     inputs: &JourneyDocument,
-    scenario_worker: &Path,
-    fresh_only: bool,
-) -> anyhow::Result<(
-    wamn_control::provision_project_env::ProvisionedRoute,
-    String,
-)> {
-    receiving_release_journey(inputs, scenario_worker, fresh_only, false).await
-}
-
-/// The route and digest of the release that the publish-only path published.
-pub(super) async fn publish_receiving_release(
-    inputs: &JourneyDocument,
-    scenario_worker: &Path,
-) -> anyhow::Result<(
-    wamn_control::provision_project_env::ProvisionedRoute,
-    String,
-)> {
-    receiving_release_journey(inputs, scenario_worker, false, true).await
-}
-
-async fn receiving_release_journey(
-    inputs: &JourneyDocument,
-    scenario_worker: &Path,
-    fresh_only: bool,
-    publish_only: bool,
-) -> anyhow::Result<(
-    wamn_control::provision_project_env::ProvisionedRoute,
-    String,
-)> {
-    anyhow::ensure!(
-        inputs.fresh_only_packages.is_some() == fresh_only,
-        "the selected journey must match its fresh-only package fixture"
-    );
-    if let Some(root) = &inputs.fresh_only_packages {
-        prepare_fresh_only_packages(root)?;
-        build_fresh_only_packages(root, &inputs.system_pg_url).await?;
-    }
-    if let Some(phase) = &inputs.overlay_compatibility {
-        anyhow::ensure!(
-            !fresh_only,
-            "overlay compatibility cannot combine with fresh-only"
-        );
-        overlay_compatibility::prepare(phase, &inputs.system_pg_url).await?;
-    }
-    let system_url = inputs.system_pg_url.clone();
-    let scratch = ScratchRoot::create()?;
-    let root = scratch.path();
-    let (admin, admin_task) = connect(&system_url).await?;
+    admin: &Client,
+    root: &Path,
+) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
+    let system_url = &inputs.system_pg_url;
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
         .await
@@ -210,8 +137,7 @@ async fn receiving_release_journey(
         version >= 180_000,
         "journey requires PostgreSQL 18 or newer"
     );
-
-    provision_journey_control(&scope(), &system_url, admin.as_ref()).await?;
+    provision_journey_control(&scope(), system_url, admin).await?;
     admin
         .execute(
             "UPDATE registry.meta SET platform_domain = $1",
@@ -220,24 +146,8 @@ async fn receiving_release_journey(
         .await
         .context("set the disposable journey platform domain")?;
     let management_secret = root.join("management-author-pat.json");
-    let route = provision_route(
-        &scope(),
-        &system_url,
-        admin.as_ref(),
-        root,
-        Some(&management_secret),
-    )
-    .await?;
-    let caller_principal_id = resolve_subject(
-        admin.as_ref(),
-        PrincipalType::Service,
-        &route.principal_subject,
-    )
-    .await
-    .context("resolve the production operator principal")?
-    .context("the production operator principal is absent")?
-    .id()
-    .to_string();
+    let route =
+        provision_route(&scope(), system_url, admin, root, Some(&management_secret)).await?;
     let operator_secret = root.join("operator-pat.json");
     std::fs::copy(&operator_secret, &inputs.operator_secret_output).with_context(|| {
         format!(
@@ -256,19 +166,87 @@ async fn receiving_release_journey(
             inputs.operator_secret_output.display()
         )
     })?;
+    Ok(route)
+}
+
+/// Provision the environment and install the candidate's release in it as
+/// `apply` does: its packages through the package stage from their
+/// artifacts. It publishes nothing (docs/plan/platform-deploy.md §8.2,
+/// §10.2). Returns the route of the environment.
+pub(super) async fn install_candidate_release(
+    inputs: &JourneyDocument,
+    candidate: &Candidate,
+) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
+    let system_url = inputs.system_pg_url.clone();
+    let scratch = ScratchRoot::create()?;
+    let root = scratch.path();
+    let (admin, admin_task) = connect(&system_url).await?;
+    let route = provision_environment(inputs, admin.as_ref(), root).await;
+    admin_task.abort();
+    let route = route?;
+    let (project, project_task) = connect(&route.database_url).await?;
+    let floor = install_journey_platform_floor(
+        project.as_ref(),
+        identity().tenant.as_str(),
+        PLATFORM_DOMAIN,
+    )
+    .await;
+    project_task.abort();
+    floor?;
+    reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
+    prepare_journey_credentials(
+        &scope(),
+        &system_url,
+        &route.database_url,
+        root,
+        &inputs.host_secret_directory,
+        &inputs.host_secret_namespace,
+    )
+    .await?;
+    wamn_gate_harness::case_release::install_candidate(
+        candidate,
+        &system_url,
+        &route.database_url,
+        &wamn_control_registry::Triple::new(
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
+        ),
+    )
+    .await?;
+    wamn_control::dev::environment::grant_operator_admin_role(
+        &route.database_url,
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+        identity().tenant.as_str(),
+        PLATFORM_DOMAIN,
+    )
+    .await?;
+    Ok(route)
+}
+
+/// Publish the release of this checkout through the authoring path, and
+/// return the route and the digest of the release. Only the delivery case,
+/// which mints its own release, publishes.
+pub(super) async fn publish_receiving_release(
+    inputs: &JourneyDocument,
+    scenario_worker: &Path,
+) -> anyhow::Result<(
+    wamn_control::provision_project_env::ProvisionedRoute,
+    String,
+)> {
+    let system_url = inputs.system_pg_url.clone();
+    let scratch = ScratchRoot::create()?;
+    let root = scratch.path();
+    let (admin, admin_task) = connect(&system_url).await?;
+    let route = provision_environment(inputs, admin.as_ref(), root).await?;
     let (project, project_task) = connect(&route.database_url).await?;
     // The gate and authorship read component facts from the verified package
     // artifacts, and apply-package installs them, so the packages are pushed
     // first.
     let packages = super::environment::push_journey_packages(inputs).await?;
-    install_journey_project(
-        inputs,
-        &packages,
-        project.as_ref(),
-        &route.database_url,
-        fresh_only,
-    )
-    .await?;
+    install_journey_project(&packages, project.as_ref(), &route.database_url).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
     wamn_control::dev::environment::grant_operator_admin_role(
@@ -289,22 +267,11 @@ async fn receiving_release_journey(
         &inputs.host_secret_namespace,
     )
     .await?;
-    if let Some(copies) = &inputs.fresh_only_packages {
-        for name in ["control-author", "management-admitter"] {
-            let destination = copies.join(format!("{name}.json"));
-            anyhow::ensure!(
-                !destination.exists(),
-                "fresh-only authority copy must be new"
-            );
-            std::fs::copy(root.join(format!("{name}.json")), &destination)?;
-            std::fs::set_permissions(&destination, Permissions::from_mode(0o600))?;
-        }
-    }
     reconcile_journey_data_access(&packages, &route.database_url).await?;
     let declarations =
         render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
     let admitted_components = admit_journey_components(inputs, &declarations)?;
-    let admitted_component_digests = verify_journey_components_are_effectful(&admitted_components)?;
+    verify_journey_components_are_effectful(&admitted_components)?;
 
     // One gate-launch path for both live gates: the Gate is a spawned
     // `wamn-scenario-worker serve`, never a task in this process
@@ -343,1095 +310,10 @@ async fn receiving_release_journey(
             .as_deref()
             .context("project provisioning emitted no management-author principal")?,
     };
-    if publish_only {
-        let digest = super::environment::publish_journey_release(inputs, target).await?;
-        let stopped = management_server.shutdown().await;
-        project_task.abort();
-        admin_task.abort();
-        stopped?;
-        return Ok((route, digest));
-    }
-    let (digest, release) = publish_and_push_journey_release(inputs, target).await?;
-    let component_digests = released_component_digests(&release)?;
-    anyhow::ensure!(
-        component_digests == admitted_component_digests,
-        "released component digests differ from the two admitted artifacts"
-    );
-    seed_receiving_business_rows(project.as_ref()).await?;
-
-    let traces = TraceHarness::install();
-    let (engine, flow_http, routing, bridge, identity_task) =
-        build_journey_runtime(inputs, &credentials, release, None).await?;
-    let mut expected_direct_traces = Vec::new();
-
-    let (cold_nested_trace, traceparent) = journey_trace(1);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        overlay_route_path("receiving_record_receipt"),
-        Some(&route.token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"acme-record-receipt","value":{"idempotency_key":"receipt-command-2","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-2","occurred_at":"2026-08-31T12:31:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"7.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#,
-        ),
-    )
-    .await?;
-    let value = successful_value(&response, "acme-record-receipt").with_context(|| {
-        let failures: Vec<_> = traces
-            .spans()
-            .into_iter()
-            .flat_map(|span| {
-                span.events
-                    .events
-                    .into_iter()
-                    .flat_map(|event| event.attributes)
-                    .filter(|attribute| attribute.key.as_str() == "error")
-                    .map(|attribute| attribute.value.to_string())
-            })
-            .collect();
-        format!("cold Receiving route trace errors: {failures:?}")
-    })?;
-    let memory = response
-        .extensions()
-        .get::<JourneyGuestMemory>()
-        .context("cold nested Receiving invocation did not report guest memory")?;
-    anyhow::ensure!(
-        memory.shell_bytes > 0 && memory.peak_bytes > memory.shell_bytes,
-        "cold nested Receiving invocation did not share its budget with flow-http: {memory:?}"
-    );
-    anyhow::ensure!(
-        value.as_object().is_some_and(|value| value.len() == 4)
-            && value["receipt_id"].as_str().is_some_and(|id| {
-                id.len() == 36
-                    && id.bytes().all(|byte| {
-                        byte == b'-' || (byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-                    })
-            })
-            && value["purchase_order_id"] == "00000000-0000-0000-0000-000000000302"
-            && value["purchase_order_status"] == "complete"
-            && value["row_version"] == 2
-            && value.get("acme_inspection_required").is_none()
-            && value.get("acme_quality_status").is_none(),
-        "cold Acme receiving.record_receipt did not return the exact base result: {value}"
-    );
-
-    let (_, traceparent) = journey_trace(15);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/location/list",
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "location-list")?;
-    anyhow::ensure!(
-        value["rows"].as_array().is_some_and(|rows| {
-            rows.len() == 1
-                && rows[0]["id"] == "00000000-0000-0000-0000-000000000201"
-                && rows[0]["location_code"] == "DOCK-1"
-        }),
-        "location.list returned the wrong rows: {value}"
-    );
-
-    let (_, traceparent) = journey_trace(16);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/receiving/load_receipt_screen",
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({"purchase_order_id": "00000000-0000-0000-0000-000000000301"}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "load-receipt-screen")?;
-    anyhow::ensure!(
-        value["rows"].as_array().is_some_and(|rows| {
-            rows.len() == 1
-                && rows[0]["purchase_order_id"] == "00000000-0000-0000-0000-000000000301"
-                && rows[0]["line_id"] == "00000000-0000-0000-0000-000000000501"
-                && rows[0]["remaining_quantity"] == "5.0000"
-        }),
-        "receiving.load_receipt_screen returned the wrong rows: {value}"
-    );
-
-    let (trace_id, traceparent) = journey_trace(2);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/purchase_order/get",
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000301"}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "purchase-order-get")?;
-    anyhow::ensure!(
-        value["id"] == "00000000-0000-0000-0000-000000000301" && value["row_version"] == 1,
-        "purchase_order.get returned the wrong row: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("wamn-receiving:purchase-order/get").leak() as &str,
-        BASE_PACKAGE_ID,
-    ));
-
-    let (trace_id, traceparent) = journey_trace(3);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/purchase_order/query",
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({
-            "filter": {
-                "supplier_id": ["00000000-0000-0000-0000-000000000401"],
-                "status": ["open"],
-            },
-            "sort": {"field": "created_at", "direction": "ascending"},
-            "limit": 100,
-        }),
-    )
-    .await?;
-    let value = successful_read_value(&response, "purchase-order-query")?;
-    anyhow::ensure!(
-        value["item"].as_array().is_some_and(|items| {
-            items.len() == 1 && items[0]["id"] == "00000000-0000-0000-0000-000000000301"
-        }),
-        "purchase_order.query returned the wrong page: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("wamn-receiving:purchase-order/query").leak() as &str,
-        BASE_PACKAGE_ID,
-    ));
-
-    let (trace_id, traceparent) = journey_trace(4);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/purchase_order/update",
-        Some(&route.token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"purchase-order-update","id":"00000000-0000-0000-0000-000000000301","expected_row_version":1,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
-        ),
-    )
-    .await?;
-    let value = successful_value(&response, "purchase-order-update")?;
-    anyhow::ensure!(
-        value["supplier_id"] == "00000000-0000-0000-0000-000000000402" && value["row_version"] == 2,
-        "purchase_order.update returned the wrong row: {value}"
-    );
-    // The service principal stamps its own id. The seeded row keeps its creator.
-    anyhow::ensure!(
-        value["updated_by"] == caller_principal_id.as_str()
-            && value["created_by"] == FIXTURE_PRINCIPAL,
-        "purchase_order.update stamped the wrong actors: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("wamn-receiving:purchase-order/update").leak() as &str,
-        BASE_PACKAGE_ID,
-    ));
-    assert_route_update_record_history(
-        &engine,
-        &flow_http,
-        &routing,
-        &bridge,
-        &inputs.route_host,
-        &route.token,
-        &value,
-    )
-    .await?;
-
-    let (trace_id, traceparent) = journey_trace(5);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/receiving/record_receipt",
-        Some(&route.token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"record-receipt","value":{"idempotency_key":"receipt-command-1","purchase_order_id":"00000000-0000-0000-0000-000000000301","receipt_reference":"RECEIPT-1","occurred_at":"2026-08-31T12:30:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000501","quantity":"5.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#,
-        ),
-    )
-    .await?;
-    let value = successful_value(&response, "record-receipt")?;
-    anyhow::ensure!(
-        value["purchase_order_status"] == "complete" && value["row_version"] == 3,
-        "receiving.record_receipt returned the wrong command result: {value}"
-    );
-    let receipt_id = value["receipt_id"]
-        .as_str()
-        .context("record_receipt returned no receipt_id")?
-        .to_owned();
-    // One command transaction stamps the order and its receipt with one instant.
-    let stamps = project
-        .query_one(
-            "SELECT purchase_order.updated_at = receipt.created_at, \
-                    purchase_order.updated_by::text, receipt.created_by::text \
-             FROM receiving.receipt AS receipt \
-             JOIN receiving.purchase_order AS purchase_order \
-               ON purchase_order.id = receipt.purchase_order_id \
-             WHERE receipt.id = $1::text::uuid",
-            &[&receipt_id],
-        )
-        .await
-        .context("read the record_receipt stamps")?;
-    anyhow::ensure!(
-        stamps.get::<_, bool>(0)
-            && stamps.get::<_, String>(1) == caller_principal_id
-            && stamps.get::<_, String>(2) == caller_principal_id,
-        "receiving.record_receipt did not stamp the order and receipt with one instant and actor"
-    );
-    expected_direct_traces.push((trace_id, "", *BASE_RECORD_RECEIPT, BASE_PACKAGE_ID));
-
-    let (trace_id, traceparent) = journey_trace(6);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/receipt/get",
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({"id": receipt_id}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "receipt-get")?;
-    anyhow::ensure!(
-        value["receipt_reference"] == "RECEIPT-1",
-        "receipt.get returned the wrong receipt: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("wamn-receiving:receipt/get").leak() as &str,
-        BASE_PACKAGE_ID,
-    ));
-
-    let (trace_id, traceparent) = journey_trace(7);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/receipt/query",
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({"limit": 100}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "receipt-query")?;
-    anyhow::ensure!(
-        value["item"].as_array().is_some_and(|items| {
-            items.len() == 2
-                && items
-                    .iter()
-                    .any(|item| item["receipt_reference"] == "RECEIPT-1")
-                && items
-                    .iter()
-                    .any(|item| item["receipt_reference"] == "RECEIPT-2")
-        }),
-        "receipt.query returned the wrong page: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("wamn-receiving:receipt/query").leak() as &str,
-        BASE_PACKAGE_ID,
-    ));
-    seed_preexisting_quality_fixture(project.as_ref()).await?;
-
-    let (trace_id, traceparent) = journey_trace(8);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        overlay_route_path("purchase_order_get"),
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000302"}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "acme-purchase-order-get")?;
-    anyhow::ensure!(
-        value["id"] == "00000000-0000-0000-0000-000000000302"
-            && value["row_version"] == 2
-            && value["acme_inspection_required"] == false
-            && value["acme_quality_status"] == "not_required",
-        "the separate Acme purchase_order.get returned the wrong receipt details: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("client-acme-receiving:purchase-order/get").leak() as &str,
-        OVERLAY_PACKAGE_ID,
-    ));
-
-    let (trace_id, traceparent) = journey_trace(9);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        overlay_route_path("purchase_order_update"),
-        Some(&route.token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"acme-purchase-order-update","id":"00000000-0000-0000-0000-000000000302","expected_row_version":2,"change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]"#,
-        ),
-    )
-    .await?;
-    let value = successful_value(&response, "acme-purchase-order-update")?;
-    anyhow::ensure!(
-        value["row_version"] == 3
-            && value["acme_inspection_required"] == true
-            && value["acme_quality_status"] == "pending",
-        "Acme purchase_order.update returned the wrong row: {value}"
-    );
-    // The overlay declares no record history, and its update stamps the base columns.
-    anyhow::ensure!(
-        value["updated_by"] == caller_principal_id.as_str()
-            && value["created_by"] == FIXTURE_PRINCIPAL
-            && value["updated_at"] != value["created_at"],
-        "Acme purchase_order.update did not stamp the base columns: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("client-acme-receiving:purchase-order/update").leak() as &str,
-        OVERLAY_PACKAGE_ID,
-    ));
-    assert_route_history_read(
-        &engine,
-        &flow_http,
-        &routing,
-        &bridge,
-        &inputs.route_host,
-        &route.token,
-        project.as_ref(),
-    )
-    .await?;
-
-    let (trace_id, traceparent) = journey_trace(10);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        overlay_route_path("quality_load_purchase_order_detail"),
-        Some(&route.token),
-        &traceparent,
-        &serde_json::json!({"purchase_order_id": "00000000-0000-0000-0000-000000000302"}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "quality-load-detail")?;
-    anyhow::ensure!(
-        value["id"] == "00000000-0000-0000-0000-000000000302"
-            && value["row_version"] == 3
-            && value["acme_quality_status"] == "pending",
-        "quality.load_purchase_order_detail returned the wrong row: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("client-acme-receiving:quality/load-purchase-order-detail").leak() as &str,
-        OVERLAY_PACKAGE_ID,
-    ));
-
-    let (trace_id, traceparent) = journey_trace(11);
-    let approve = serde_json::to_vec(&serde_json::json!([{
-        "request_id": "quality-approve",
-        "receipt_id": PREEXISTING_QUALITY_RECEIPT_ID,
-        "expected_row_version": 1,
-    }]))?;
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        overlay_route_path("quality_approve_inspection"),
-        Some(&route.token),
-        &traceparent,
-        Bytes::from(approve),
-    )
-    .await?;
-    let value = successful_value(&response, "quality-approve")?;
-    anyhow::ensure!(
-        value["status"] == "approved"
-            && value["row_version"] == 2
-            && value["purchase_order_id"] == "00000000-0000-0000-0000-000000000303"
-            && value["purchase_order_row_version"] == 3,
-        "quality.approve_inspection returned the wrong result: {value}"
-    );
-    expected_direct_traces.push((
-        trace_id,
-        "",
-        sealed("client-acme-receiving:quality/approve-inspection").leak() as &str,
-        OVERLAY_PACKAGE_ID,
-    ));
-
-    // Ruling 71: the operator service holds every other grant, so only the missing
-    // history token refuses, before the component runs. `admin` has no rows to
-    // remove, so the service moves to an authored role that selects every
-    // operation, and the denial arms remove one selection each.
-    narrow_admins_to_authored_role(project.as_ref()).await?;
-    let removed = project
-        .execute(
-            "DELETE FROM app_system.permissions \
-             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[
-                &identity().tenant.as_str(),
-                &AUTHORED_ROLE,
-                &reference_of(&HISTORY_OPERATION),
-            ],
-        )
-        .await
-        .context("remove only the purchase order history permission")?;
-    anyhow::ensure!(
-        removed == 1,
-        "history denial setup removed {removed} permission rows instead of one"
-    );
-    let (denied_history_trace, denied_history_parent) = journey_trace(22);
-    let denied_history = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/receiving/load_purchase_order_history",
-        Some(&route.token),
-        &denied_history_parent,
-        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000302", "limit": 100}),
-    )
-    .await?;
-    super::sessions::assert_operation_refusal(
-        &denied_history,
-        "permission-denied",
-        *HISTORY_OPERATION,
-    )?;
-
-    let removed = project
-        .execute(
-            "DELETE FROM app_system.permissions \
-             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[
-                &identity().tenant.as_str(),
-                &AUTHORED_ROLE,
-                &reference_of(&BASE_RECORD_RECEIPT),
-            ],
-        )
-        .await
-        .context("remove only the pinned-base record_receipt permission")?;
-    anyhow::ensure!(
-        removed == 1,
-        "nested-denial setup removed {removed} permission rows instead of one"
-    );
-    let (denied_nested_trace, denied_nested_parent) = journey_trace(12);
-    let denied_nested = invoke_journey_route(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        overlay_route_path("receiving_record_receipt"),
-        Some(&route.token),
-        &denied_nested_parent,
-        Bytes::from_static(
-            br#"[{"request_id":"nested-permission-denied","value":{"idempotency_key":"receipt-command-denied","purchase_order_id":"00000000-0000-0000-0000-000000000302","receipt_reference":"RECEIPT-DENIED","occurred_at":"2026-08-31T12:32:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000502","quantity":"1.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]"#,
-        ),
-    )
-    .await?;
-    let denied_nested_body: Value = serde_json::from_slice(denied_nested.body())
-        .context("decode the nested permission refusal")?;
-    anyhow::ensure!(
-        denied_nested.status() == StatusCode::FORBIDDEN
-            && denied_nested_body
-                == serde_json::json!({
-                    "error": {
-                        "code": "permission-denied",
-                        "operation": *BASE_RECORD_RECEIPT,
-                    }
-                }),
-        "nested permission refusal was not the exact discoverable 403 contract: status={} body={denied_nested_body}",
-        denied_nested.status()
-    );
-
-    // The probe writes /purchase_order/update, so it runs before the next
-    // step removes that permission.
-    wamn_integration_tests::p3_shell::assert_p3_route(
-        &engine,
-        &flow_http,
-        Arc::clone(&routing),
-        Arc::clone(&bridge),
-        &inputs.route_host,
-        &route.token,
-        &wamn_integration_tests::p3_shell::BodyProbe {
-            path: "/purchase_order/update",
-            payload: P3_PAYLOAD,
-            body_limit: RAW_BODY_LIMIT,
-            validate_response: validate_p3_refusal,
-        },
-    )
-    .await?;
-
-    assert_unauthorized_no_op_refuses(
-        &engine,
-        &flow_http,
-        &routing,
-        &bridge,
-        &inputs.route_host,
-        &route.token,
-        project.as_ref(),
-    )
-    .await?;
-
-    let (unauthorized_trace, unauthorized_parent) = journey_trace(13);
-    let unauthorized = invoke_journey_read(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/purchase_order/get",
-        None,
-        &unauthorized_parent,
-        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000301"}),
-    )
-    .await?;
-    anyhow::ensure!(
-        unauthorized.status() == StatusCode::UNAUTHORIZED,
-        "unauthenticated Receiving route returned {}: {}",
-        unauthorized.status(),
-        String::from_utf8_lossy(unauthorized.body())
-    );
-
-    // A read GET has no body, so the body limit is probed on a write route.
-    let (oversized_trace, oversized_parent) = journey_trace(14);
-    let oversized = invoke_journey_route(
-        &JourneyRuntime {
-            engine: &engine,
-            flow_http: &flow_http,
-            routing: &routing,
-            bridge: &bridge,
-        },
-        &inputs.route_host,
-        "/purchase_order/update",
-        Some(&route.token),
-        &oversized_parent,
-        Bytes::from(vec![b' '; RAW_BODY_LIMIT + 1]),
-    )
-    .await?;
-    anyhow::ensure!(
-        oversized.status() == StatusCode::PAYLOAD_TOO_LARGE
-            && oversized
-                .headers()
-                .get(hyper::header::CONTENT_TYPE)
-                .is_some_and(|value| value == "text/plain; charset=utf-8")
-            && oversized.body().as_ref() == b"request body exceeds 1048576-byte limit\n",
-        "oversized Receiving route returned {}: {}",
-        oversized.status(),
-        String::from_utf8_lossy(oversized.body())
-    );
-
-    let spans = traces.spans();
-    for (trace_id, wiring_id, operation, package_id) in expected_direct_traces {
-        let component_digest = component_digests
-            .get(package_id)
-            .with_context(|| format!("released {package_id} component digest is missing"))?;
-        assert_direct_route_trace(
-            &spans,
-            &trace_id,
-            wiring_id,
-            operation,
-            component_digest,
-            &caller_principal_id,
-        );
-    }
-    let overlay_digest = component_digests
-        .get(OVERLAY_PACKAGE_ID)
-        .context("released overlay component digest is missing")?;
-    let base_digest = component_digests
-        .get(BASE_PACKAGE_ID)
-        .context("released base component digest is missing")?;
-    assert_nested_record_receipt_trace(
-        &spans,
-        &cold_nested_trace,
-        overlay_digest,
-        &caller_principal_id,
-        "pat",
-    );
-    assert_native_nested_acquisition(&spans, &cold_nested_trace, overlay_digest, base_digest);
-    assert_nested_permission_denial_trace(
-        &spans,
-        &denied_nested_trace,
-        overlay_digest,
-        base_digest,
-        &caller_principal_id,
-    );
-    assert_no_component_trace(&spans, &unauthorized_trace);
-    assert_no_component_trace(&spans, &oversized_trace);
-    assert_no_component_trace(&spans, &denied_history_trace);
-
-    // The denial arms removed selections of the authored role deliberately.
-    // Return its holders to `admin` before handing this disposable release to
-    // the operator-managed materializer continuation.
-    restore_admins_from_authored_role(project.as_ref()).await?;
-    reconcile_journey_data_access(&packages, &route.database_url).await?;
-    verify_journey_operation_grants(project.as_ref()).await?;
-    seed_materializer_trigger_rows(project.as_ref()).await?;
-    if let Some(phase) = &inputs.overlay_compatibility {
-        overlay_compatibility::after_install(
-            phase,
-            &route.database_url,
-            &inputs.component_directory,
-        )
-        .await?;
-        if phase.base == BaseCandidate::Baseline {
-            overlay_compatibility::breaking_refusal(
-                phase,
-                &system_url,
-                &inputs.component_directory,
-            )
-            .await?;
-        }
-    }
-
-    let gate_stop = management_server.shutdown().await;
-    identity_task.abort();
+    let digest = super::environment::publish_journey_release(inputs, target).await?;
+    let stopped = management_server.shutdown().await;
     project_task.abort();
     admin_task.abort();
-    gate_stop?;
+    stopped?;
     Ok((route, digest))
-}
-
-/// A true no-op through the generated update keeps the row, its revision, and
-/// its stamps. A stale no-op still refuses with `concurrency_conflict`.
-///
-/// `updated` is the result of the update that set supplier 402 at revision 2.
-async fn assert_route_update_record_history(
-    engine: &wash_runtime::engine::Engine,
-    flow_http: &Component,
-    routing: &Arc<FlowHttpRouting>,
-    bridge: &Arc<RouterDeliveryBridge>,
-    route_host: &str,
-    token: &str,
-    updated: &Value,
-) -> anyhow::Result<()> {
-    let (_, traceparent) = journey_trace(17);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine,
-            flow_http,
-            routing,
-            bridge,
-        },
-        route_host,
-        "/purchase_order/update",
-        Some(token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"purchase-order-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":2,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
-        ),
-    )
-    .await?;
-    let no_op = successful_value(&response, "purchase-order-no-op")?;
-    anyhow::ensure!(
-        no_op == *updated,
-        "a true no-op changed the row, its revision, or its stamps: {no_op}"
-    );
-
-    let (_, traceparent) = journey_trace(18);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine,
-            flow_http,
-            routing,
-            bridge,
-        },
-        route_host,
-        "/purchase_order/update",
-        Some(token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"purchase-order-stale-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":1,"change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
-        ),
-    )
-    .await?;
-    let body: Value =
-        serde_json::from_slice(response.body()).context("decode the stale no-op response")?;
-    anyhow::ensure!(
-        response.status() == StatusCode::OK
-            && body[0]["request_id"] == "purchase-order-stale-no-op"
-            && body[0]["error"]["code"] == "concurrency_conflict"
-            && body[0].get("value").is_none(),
-        "a stale no-op did not refuse with concurrency_conflict: {body}"
-    );
-
-    // A client-supplied stamp fails the closed route schema at its pointer.
-    let (_, traceparent) = journey_trace(19);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine,
-            flow_http,
-            routing,
-            bridge,
-        },
-        route_host,
-        "/purchase_order/update",
-        Some(token),
-        &traceparent,
-        Bytes::from_static(
-            br#"[{"request_id":"purchase-order-supplied-stamp","id":"00000000-0000-0000-0000-000000000301","expected_row_version":2,"change":{"created_by":"00000000-0000-0000-0000-000000000401"}}]"#,
-        ),
-    )
-    .await?;
-    let body: Value =
-        serde_json::from_slice(response.body()).context("decode the supplied-stamp refusal")?;
-    anyhow::ensure!(
-        response.status() == StatusCode::BAD_REQUEST
-            && body
-                == serde_json::json!({
-                    "error": {
-                        "code": "schema-invalid",
-                        "data": {"pointer": "/0/change/created_by"},
-                    }
-                }),
-        "a supplied stamp was not refused at its JSON pointer: status={} body={body}",
-        response.status()
-    );
-    Ok(())
-}
-
-/// The base history read over served bytes (rulings 73 and 74).
-///
-/// The purchase order that the nested receipt and the Acme update changed has
-/// an insert and two update entries. No served image carries an Acme column.
-/// The fold over the served rows reconstructs the base columns that the
-/// database holds, with each timestamp in the platform canonical spelling.
-async fn assert_route_history_read(
-    engine: &wash_runtime::engine::Engine,
-    flow_http: &Component,
-    routing: &Arc<FlowHttpRouting>,
-    bridge: &Arc<RouterDeliveryBridge>,
-    route_host: &str,
-    token: &str,
-    project: &Client,
-) -> anyhow::Result<()> {
-    use wamn_record_history::{HistoryRow, RowState, state_at};
-    use wamn_runtime::plugins::wamn_postgres::canonical_timestamptz;
-
-    const ORDER: &str = "00000000-0000-0000-0000-000000000302";
-    const ACME_COLUMNS: [&str; 2] = ["acme_inspection_required", "acme_quality_status"];
-    let (_, traceparent) = journey_trace(21);
-    let response = invoke_journey_read(
-        &JourneyRuntime {
-            engine,
-            flow_http,
-            routing,
-            bridge,
-        },
-        route_host,
-        "/receiving/load_purchase_order_history",
-        Some(token),
-        &traceparent,
-        &serde_json::json!({"id": "00000000-0000-0000-0000-000000000302", "limit": 100}),
-    )
-    .await?;
-    let value = successful_read_value(&response, "purchase-order-history")?;
-    let served = value["rows"]
-        .as_array()
-        .context("the history read returned no rows")?;
-    let text = |row: &'_ Value, field: &str| -> anyhow::Result<String> {
-        row[field]
-            .as_str()
-            .map(str::to_owned)
-            .with_context(|| format!("the history row carries no text {field}: {row}"))
-    };
-    let mut fields = Vec::with_capacity(served.len());
-    for row in served {
-        for image in ["before", "after", "current"] {
-            let columns: serde_json::Map<String, Value> = serde_json::from_str(&text(row, image)?)?;
-            anyhow::ensure!(
-                ACME_COLUMNS
-                    .iter()
-                    .all(|column| !columns.contains_key(*column)),
-                "the base history read served an Acme column in {image}: {row}"
-            );
-        }
-        // The contract carries no database position, so the entry order is
-        // what the fold reads, and the newest entry is the head.
-        anyhow::ensure!(
-            !text(row, "cursor")?.is_empty(),
-            "the history row carries no cursor: {row}"
-        );
-        fields.push((
-            i64::try_from(fields.len())? + 1,
-            text(row, "type")?,
-            text(row, "before")?,
-            text(row, "current")?,
-        ));
-    }
-    let newest_position = i64::try_from(fields.len())?;
-    let rows = fields
-        .iter()
-        .map(|(position, kind, before, current)| HistoryRow {
-            position: *position,
-            type_: kind,
-            before,
-            current,
-            head_position: newest_position,
-        })
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        rows.iter().map(|row| row.type_).collect::<Vec<_>>() == ["insert", "update", "update"],
-        "the purchase order history has the wrong entries: {value}"
-    );
-    let folded = |position: i64| -> anyhow::Result<serde_json::Map<String, Value>> {
-        let RowState::Present(image) = state_at(&rows, position)? else {
-            anyhow::bail!("the purchase order is not present at position {position}");
-        };
-        image
-            .columns()
-            .map(|(name, value)| Ok((name.to_owned(), serde_json::from_str(value)?)))
-            .collect()
-    };
-    for row in &rows {
-        let state = folded(row.position)?;
-        anyhow::ensure!(
-            ACME_COLUMNS
-                .iter()
-                .all(|column| !state.contains_key(*column)),
-            "the fold showed an Acme column at position {}",
-            row.position
-        );
-    }
-    let held = project
-        .query_one(
-            "SELECT id, purchase_order_number, supplier_id, status, row_version, \
-                    created_at, created_by, updated_at, updated_by \
-               FROM receiving.purchase_order WHERE id = $1::text::uuid",
-            &[&ORDER],
-        )
-        .await
-        .context("read the purchase order that the history folds to")?;
-    let uuid = |index: usize| Value::String(held.get::<_, uuid::Uuid>(index).to_string());
-    let instant = |index: usize| {
-        Value::String(canonical_timestamptz(
-            held.get::<_, chrono::DateTime<chrono::Utc>>(index),
-        ))
-    };
-    let expected = serde_json::json!({
-        "id": uuid(0),
-        "purchase_order_number": held.get::<_, String>(1),
-        "supplier_id": uuid(2),
-        "status": held.get::<_, String>(3),
-        "row_version": held.get::<_, i32>(4),
-        "created_at": instant(5),
-        "created_by": uuid(6),
-        "updated_at": instant(7),
-        "updated_by": uuid(8),
-    });
-    let newest = rows.last().map_or(0, |row| row.position);
-    anyhow::ensure!(
-        Value::Object(folded(newest)?) == expected,
-        "the fold over the served history differs from the held purchase order: {value}"
-    );
-    Ok(())
-}
-
-/// The authored role that the denial arms narrow.
-const AUTHORED_ROLE: &str = "clerk";
-
-/// Give every `admin` holder the authored role [`AUTHORED_ROLE`] instead. The
-/// role selects each operation that `admin` reached through the installed
-/// packages, so the caller keeps its authority until a denial arm removes one
-/// selection.
-async fn narrow_admins_to_authored_role(project: &Client) -> anyhow::Result<()> {
-    let references = BASE_OPERATIONS
-        .iter()
-        .chain(OVERLAY_OPERATIONS.iter())
-        .map(|(_, token)| sealed(token))
-        .filter(|token| *token != sealed("client-acme-receiving:quality/create-inspection"))
-        .chain([(*OVERLAY_RECEIPT_PARTICIPANT).to_owned()])
-        .map(|token| reference_of(&token).to_owned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    project
-        .execute(
-            "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
-            &[&identity().tenant.as_str(), &AUTHORED_ROLE],
-        )
-        .await
-        .context("create the authored denial role")?;
-    project
-        .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             SELECT $1, $2, reference, reference FROM unnest($3::text[]) AS reference",
-            &[&identity().tenant.as_str(), &AUTHORED_ROLE, &references],
-        )
-        .await
-        .context("select every installed operation for the authored role")?;
-    project
-        .batch_execute(&format!(
-            "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-             SELECT tenant_id, user_id, '{AUTHORED_ROLE}' FROM app_system.user_roles \
-              WHERE tenant_id = '{tenant}' AND role_name = '{ADMIN_ROLE}'; \
-             DELETE FROM app_system.user_roles \
-              WHERE tenant_id = '{tenant}' AND role_name = '{ADMIN_ROLE}';",
-            tenant = identity().tenant,
-        ))
-        .await
-        .context("move the admin holders to the authored role")
-}
-
-/// Return every holder of [`AUTHORED_ROLE`] to `admin` and delete the role.
-async fn restore_admins_from_authored_role(project: &Client) -> anyhow::Result<()> {
-    project
-        .batch_execute(&format!(
-            "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-             SELECT tenant_id, user_id, '{ADMIN_ROLE}' FROM app_system.user_roles \
-              WHERE tenant_id = '{tenant}' AND role_name = '{AUTHORED_ROLE}'; \
-             DELETE FROM app_system.roles \
-              WHERE tenant_id = '{tenant}' AND name = '{AUTHORED_ROLE}';",
-            tenant = identity().tenant,
-        ))
-        .await
-        .context("return the authored role holders to admin")
-}
-
-/// An unauthorized true no-op refuses before the operation runs, and the row
-/// keeps its revision and stamps.
-async fn assert_unauthorized_no_op_refuses(
-    engine: &wash_runtime::engine::Engine,
-    flow_http: &Component,
-    routing: &Arc<FlowHttpRouting>,
-    bridge: &Arc<RouterDeliveryBridge>,
-    route_host: &str,
-    token: &str,
-    project: &Client,
-) -> anyhow::Result<()> {
-    async fn row(project: &Client) -> anyhow::Result<Value> {
-        project
-            .query_one(
-                "SELECT to_jsonb(purchase_order) FROM receiving.purchase_order \
-                 WHERE id = '00000000-0000-0000-0000-000000000301'",
-                &[],
-            )
-            .await
-            .map(|row| row.get::<_, Value>(0))
-            .context("read the purchase order around the unauthorized no-op")
-    }
-    let update_operation = sealed("wamn-receiving:purchase-order/update");
-    let before = row(project).await?;
-    let removed = project
-        .execute(
-            "DELETE FROM app_system.permissions \
-             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
-            &[
-                &identity().tenant.as_str(),
-                &AUTHORED_ROLE,
-                &reference_of(&update_operation),
-            ],
-        )
-        .await
-        .context("remove only the purchase_order.update permission")?;
-    anyhow::ensure!(
-        removed == 1,
-        "unauthorized no-op setup removed {removed} permission rows instead of one"
-    );
-    let body = serde_json::to_vec(&serde_json::json!([{
-        "request_id": "purchase-order-unauthorized-no-op",
-        "id": "00000000-0000-0000-0000-000000000301",
-        "expected_row_version": before["row_version"],
-        "change": {"supplier_id": before["supplier_id"]},
-    }]))?;
-    let (_, traceparent) = journey_trace(20);
-    let response = invoke_journey_route(
-        &JourneyRuntime {
-            engine,
-            flow_http,
-            routing,
-            bridge,
-        },
-        route_host,
-        "/purchase_order/update",
-        Some(token),
-        &traceparent,
-        Bytes::from(body),
-    )
-    .await?;
-    super::sessions::assert_operation_refusal(&response, "permission-denied", &update_operation)?;
-    anyhow::ensure!(
-        row(project).await? == before,
-        "an unauthorized no-op changed the purchase order"
-    );
-    Ok(())
 }

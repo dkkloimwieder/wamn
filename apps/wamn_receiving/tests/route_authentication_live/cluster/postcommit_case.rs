@@ -6,12 +6,12 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase, PostcommitPhase};
+use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_test_infrastructure::{event_broker, release_chart, workload};
 
 use super::{
     NAMESPACE, ReceivingCluster, cdc, checked, deployment, install_release, kubectl,
-    materializer_case, provision, resources, start,
+    materializer_case, provision, resources, seed, start,
 };
 
 #[tokio::test]
@@ -23,13 +23,7 @@ async fn baseline_overlay_and_materializer_progress() -> anyhow::Result<()> {
 }
 
 async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
-    let base = BaseCandidate::Baseline;
     let mut cluster = start(evidence, true).await?;
-    cluster.inputs.overlay_compatibility = Some(CompatibilityPhase {
-        base,
-        package_directory: cluster.resources.work.join("compatibility-packages"),
-        evidence_file: evidence.join("overlay-compatibility.json"),
-    });
     let outcome = exercise(&mut cluster).await;
     if outcome.is_err() {
         resources::capture_failure(&cluster.resources).await;
@@ -45,7 +39,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
     fs::write(
         evidence.join("verdict.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema":"wamn-receiving-postcommit/v1", "base":base,
+            "schema":"wamn-receiving-postcommit/v1",
             "verdict":if result.is_ok() { "pass" } else { "fail" },
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
             "passing_arms":if result.is_ok() { vec!["unchanged-overlay-routes", "schema-requirements-observed",
@@ -60,7 +54,29 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
 }
 
 async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
-    let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
+    let (route, carrier) = provision(cluster).await?;
+    seed(&route).await?;
+    // The unchanged overlay of the candidate against the fresh installation
+    // of its base.
+    let (_, manifest) = cluster.candidate()?;
+    let overlay = manifest
+        .components
+        .iter()
+        .find(|component| component.package_id == super::super::OVERLAY_PACKAGE_ID)
+        .context("the candidate carries the overlay component")?;
+    super::super::overlay_compatibility::unchanged_overlay(
+        &cluster
+            .resources
+            .evidence
+            .join("overlay-compatibility.json"),
+        &route.database_url,
+        cluster
+            .packages
+            .get(super::super::OVERLAY_PACKAGE_ID)
+            .context("the candidate carries the overlay package")?,
+        overlay.descriptor.component_digest.as_str(),
+    )
+    .await?;
     let replication_password = uuid::Uuid::new_v4().simple().to_string();
     let reader = cdc::configure(
         &cluster.inputs,
@@ -72,7 +88,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
             nats_username: cluster.broker.publisher.username.clone(),
             nats_password_file: cluster.broker.publisher.password_file.clone(),
             provisioning: &cluster.broker.provisioning,
-            consumers: &super::declared_consumers()?,
+            consumers: &cluster.consumers,
             source: &cluster.source,
         },
     )

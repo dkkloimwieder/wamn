@@ -1,4 +1,5 @@
-//! Builds used by the Receiving cluster tests.
+//! The builds of the Receiving delivery case, which publishes the release of
+//! this checkout. The qualification cases build nothing.
 
 use std::fmt::Write as _;
 
@@ -35,8 +36,6 @@ pub(super) async fn components_and_tools(
                 }
             },
         );
-    // The Receiving cases still publish their own release, so they build
-    // it from this checkout, with or without a candidate.
     {
         // `wamn build` of the packages compiles their components into the
         // target directory, against a PostgreSQL server of its own. The

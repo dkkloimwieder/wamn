@@ -19,7 +19,6 @@ pub mod measure;
 mod measurement_schema;
 pub mod membership_test;
 pub mod operator_recovery;
-pub mod p3_shell;
 pub mod rc;
 pub mod readerbench;
 #[cfg(test)]
