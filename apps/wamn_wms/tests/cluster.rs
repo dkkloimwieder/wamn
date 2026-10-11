@@ -1,4 +1,6 @@
 //! WMS cluster cases call the product libraries and retain their own assertions.
+//!
+//! Each case runs the candidate that `qualify-release` names.
 
 mod application;
 mod bootstrap;
@@ -74,12 +76,7 @@ enum Case {
 }
 
 async fn run_case(case: Case) -> anyhow::Result<()> {
-    let candidate = crate::delivery::candidate()?;
-    ensure!(
-        candidate.is_none()
-            || matches!(case, Case::Routes | Case::PartialCompletion | Case::Startup),
-        "supplied-artifact execution supports released routes, partial completion, and restart cases"
-    );
+    let (candidate, manifest) = crate::delivery::candidate()?;
     let partial_completion = matches!(case, Case::PartialCompletion);
     // A requested hold keeps the released routes case reachable from a browser.
     let browser =
@@ -95,48 +92,19 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         .and_then(Path::parent)
         .context("the WMS app has a repository parent")?
         .canonicalize()?;
-    source_clean(&repository).await?;
     ensure!(
         std::env::consts::ARCH == "x86_64",
-        "the debug host image requires an x86_64 build host"
+        "the amd64 host image requires an x86_64 machine"
     );
-    let head = String::from_utf8(
-        checked(Command::new("git").current_dir(&repository).args([
-            "rev-parse",
-            "--verify",
-            "HEAD",
-        ]))
-        .await?,
-    )?
-    .trim()
-    .to_owned();
     let identifier = uuid::Uuid::new_v4().simple().to_string();
     let cluster = format!("wamn-wms-{identifier}");
-    let tag = format!("wms-{}-{}-debug", &head[..12], &identifier[..12]);
-    let image = candidate
-        .as_ref()
-        .map(|(candidate, _)| crate::delivery::image_reference(&candidate.images.host))
-        .transpose()?
-        .unwrap_or_else(|| format!("wamn-host:{tag}"));
+    let image = crate::delivery::image_reference(&candidate.images.host)?;
     // The published attachments accept sessions, so every case starts the
     // session issuer from this image, as the Receiving cases do.
-    let identity_image = candidate
-        .as_ref()
-        .map(|(candidate, _)| crate::delivery::image_reference(&candidate.qualification.identity))
-        .transpose()?
-        .unwrap_or_else(|| format!("wamn-identity:{cluster}"));
+    let identity_image = crate::delivery::image_reference(&candidate.qualification.identity)?;
     let lifecycle = repository.join("tools/wms-cluster-journey-run");
     deployment::preflight(&lifecycle, &cluster, &image).await?;
-    let target = candidate
-        .as_ref()
-        .map(|(candidate, _)| candidate.target_directory.clone())
-        .or_else(|| std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
-        .unwrap_or_else(|| repository.join("target"));
-    let target = if target.is_absolute() {
-        target
-    } else {
-        repository.join(target)
-    };
+    let target = candidate.target_directory.clone();
     // WAMN_WMS_EVIDENCE_DIR names an existing parent directory. The parent is
     // the system temporary directory when the variable is not set.
     let parent =
@@ -177,32 +145,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 &advisory,
                 &crate::environment::declared_consumers()?,
             )?;
-            if candidate.is_none() {
-                deployment::prepare_image(&target, work.path())?;
-                checked(
-                    Command::new(&lifecycle)
-                        .arg("build-images")
-                        .arg(&cluster)
-                        .arg(work.path())
-                        .arg(&image)
-                        .arg(&head),
-                )
-                .await?;
-            }
-            if candidate.is_none() {
-                checked(
-                    Command::new(&lifecycle)
-                        .arg("build-identity")
-                        .arg(&cluster)
-                        .arg(&repository)
-                        .arg(&head)
-                        .arg(&cluster),
-                )
-                .await?;
-            }
-            if let Some((candidate, _)) = &candidate {
-                crate::delivery::registry_files(candidate, work.path()).await?;
-            }
+            crate::delivery::registry_files(&candidate, work.path()).await?;
             checked(
                 Command::new(&lifecycle)
                     .arg("create")
@@ -213,20 +156,9 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     .arg(&identity_image),
             )
             .await?;
-            let digest = workload::image_ready(
-                &lifecycle,
-                &cluster,
-                work.path(),
-                &image,
-                &head,
-                if candidate.is_some() {
-                    "release"
-                } else {
-                    "debug"
-                },
-                &evidence,
-            )
-            .await?;
+            let digest =
+                workload::image_ready(&lifecycle, &cluster, work.path(), &image, "release", &evidence)
+                    .await?;
             checked(kubectl(&cluster, work.path()).args(["create", "namespace", &cluster])).await?;
             // The operator release, every environment release and its hosts
             // live in the operator namespace (R6).
@@ -242,13 +174,11 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     evidence: &evidence,
                     image: &image,
                     identity_image: &identity_image,
-                    tag: &tag,
-                    source_head: &head,
                     runtime_digest: &digest,
                     files: &files,
                     broker: &broker,
                     source: &source,
-                    candidate: candidate.as_ref().map(|(candidate, _)| candidate),
+                    candidate: &candidate,
                 },
                 &scope,
                 case,
@@ -289,32 +219,10 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         Command::new(&lifecycle)
             .arg("remove")
             .arg(&cluster)
-            .arg(work.path())
-            .args(
-                candidate
-                    .is_none()
-                    .then_some([&image, &identity_image])
-                    .into_iter()
-                    .flatten(),
-            ),
+            .arg(work.path()),
     )
     .await;
     let absent = deployment::preflight(&lifecycle, &cluster, &image).await;
-    let source = async {
-        source_clean(&repository).await?;
-        let current = checked(
-            Command::new("git")
-                .current_dir(&repository)
-                .args(["rev-parse", "HEAD"]),
-        )
-        .await?;
-        ensure!(
-            std::str::from_utf8(&current)?.trim() == head,
-            "the WMS source commit changed during the test"
-        );
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
     let work_path = work.path().to_path_buf();
     drop(work);
     let private_files_removed = !work_path.exists();
@@ -322,19 +230,18 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         &evidence,
         "result.json",
         &json!({
-            "source":head,"cluster":cluster,"completed":matches!(&run, Ok(Ok(()))),
+            "cluster":cluster,"completed":matches!(&run, Ok(Ok(()))),
             "partial_completion":partial_completion,
             "startup":matches!(case, Case::Startup),"demo":browser,
             "failure_capture":failure_capture.as_ref().err().map(|error|format!("{error:#}")),
             "failure":match &run { Ok(Err(error)) => Some(format!("{error:#}")), Err(_) => Some("test panicked".to_owned()), _ => None },
             "resource_cleanup":removed.is_ok() && absent.is_ok(),
-            "private_files_removed":private_files_removed,"source_unchanged":source.is_ok(),
+            "private_files_removed":private_files_removed,
         }),
     )?;
     let cleanup = async {
         removed?;
         absent?;
-        source?;
         ensure!(
             private_files_removed,
             "the owned private WMS directory remains after cleanup"
@@ -345,10 +252,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     match run {
         Ok(result) => match (result, cleanup) {
             (Ok(()), Ok(())) => {
-                if let Some((candidate, manifest)) = &candidate {
-                    wamn_control::delivery::report_candidate_success(candidate, manifest)?;
-                }
-                Ok(())
+                wamn_control::delivery::report_candidate_success(&candidate, &manifest)
             }
             (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
             (Err(error), Err(cleanup)) => {
@@ -375,14 +279,12 @@ struct CaseContext<'a> {
     evidence: &'a Path,
     image: &'a str,
     identity_image: &'a str,
-    tag: &'a str,
-    source_head: &'a str,
     runtime_digest: &'a str,
     files: &'a bootstrap::BootstrapFiles,
     broker: &'a EventBroker,
     source: &'a async_nats::jetstream::stream::Config,
     /// The supplied release, whose images the case deploys.
-    candidate: Option<&'a Candidate>,
+    candidate: &'a Candidate,
 }
 
 /// Start the session issuer that the published WMS attachments need, and
@@ -401,7 +303,6 @@ async fn start_session_issuer(
             evidence: context.evidence,
             repository: context.repository,
             lifecycle: context.lifecycle,
-            source: context.source_head,
             system_database_url: &document.system_pg_url,
             identity_image: Some(context.identity_image),
             org: identity.org.as_str(),
@@ -429,8 +330,6 @@ async fn run_created(
         evidence,
         image,
         identity_image: _,
-        tag,
-        source_head: _,
         runtime_digest,
         files,
         broker,
@@ -619,7 +518,7 @@ async fn run_created(
         let (_, overlay) = application::render_host(
             &document,
             &application::HostBinding {
-                host_tag: tag,
+                host_tag: cluster,
                 nats_url: &nats_url,
                 database_host: &postgres_ip,
                 manifest_digest: release.manifest_digest.as_str(),
@@ -629,18 +528,15 @@ async fn run_created(
             },
             work,
         )?;
-        // The platform image set (R12, R15): the supplied release's role images,
-        // or the release chart's, copied by digest into this registry.
+        // The platform image set (R12, R15): the supplied release's role
+        // images, copied by digest into this registry.
         let registry = Registry {
             authority: registry_authority.clone(),
             auth_file: Some(document.registry_auth_file.clone()),
             insecure: true,
             ca_paths: Vec::new(),
         };
-        let (http, materializer) = match candidate {
-            Some(candidate) => case_release::copy_roles(candidate, &registry).await?,
-            None => case_release::chart_roles(&registry).await?,
-        };
+        let (http, materializer) = case_release::copy_roles(candidate, &registry).await?;
         let host_image = if image.contains('@') {
             image.to_owned()
         } else {
@@ -822,22 +718,4 @@ async fn install_event_secrets(
         }),
     )
     .await
-}
-
-async fn source_clean(repository: &Path) -> anyhow::Result<()> {
-    let status = checked(Command::new("git").current_dir(repository).args([
-        "status",
-        "--porcelain",
-        "--untracked-files=normal",
-        "--",
-        ".",
-        ":(exclude).beads/issues.jsonl",
-        ":(exclude).beads/interactions.jsonl",
-    ]))
-    .await?;
-    ensure!(
-        status.is_empty(),
-        "the WMS cluster case requires a clean source tree"
-    );
-    Ok(())
 }

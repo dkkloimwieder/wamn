@@ -6,7 +6,7 @@ mod cluster;
 mod command_histories;
 mod fresh_only;
 use command_histories::database::{FIXTURE_PRINCIPAL, bind_fixture_principal};
-use wamn_integration_tests::startup_burst;
+
 mod delivery;
 mod dev;
 mod environment;
@@ -85,7 +85,7 @@ use environment::{
     overlay_route_path, package_root, publish_and_push_journey_release,
     reconcile_journey_data_access, reference_of, released_component_digests,
     render_component_declarations, repository_root, required_journey, required_journey_path,
-    seed_materializer_order, seed_materializer_trigger_rows, seed_preexisting_quality_fixture,
+    seed_materializer_trigger_rows, seed_preexisting_quality_fixture,
     seed_receiving_business_rows, verify_journey_components_are_effectful,
     verify_journey_operation_grants, verify_zero_case_gate_reports,
 };

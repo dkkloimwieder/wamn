@@ -10,8 +10,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
 
 pub(super) async fn build(repository: &Path, target: &Path, evidence: &Path) -> anyhow::Result<()> {
-    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
-        candidate.artifact_hashes()?;
+    if wamn_control::delivery::Candidate::from_env()?.is_some() {
         for name in [
             "wamn-ctl",
             "wamn-identity",

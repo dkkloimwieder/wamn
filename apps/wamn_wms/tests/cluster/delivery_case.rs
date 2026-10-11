@@ -55,17 +55,6 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()?;
-    super::source_clean(&repository).await?;
-    let head = String::from_utf8(
-        checked(Command::new("git").current_dir(&repository).args([
-            "rev-parse",
-            "--verify",
-            "HEAD",
-        ]))
-        .await?,
-    )?
-    .trim()
-    .to_owned();
     let target = std::env::var_os("CARGO_TARGET_DIR")
         .map_or_else(|| repository.join("target"), PathBuf::from);
     let target = if target.is_absolute() {
@@ -84,12 +73,12 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
     println!("WMS delivery results: {}", evidence.display());
     let started = Instant::now();
     let kept = delivery::kept_cluster(&repository).await?;
-    let result = Box::pin(run(&repository, &kept, &target, &evidence, &head)).await;
+    let result = Box::pin(run(&repository, &kept, &target, &evidence)).await;
     write_result(
         &evidence,
         "result.json",
         &json!({
-            "source":head,"cluster":kept.name,"seconds":started.elapsed().as_secs(),
+            "cluster":kept.name,"seconds":started.elapsed().as_secs(),
             "result":if result.is_ok() { "pass" } else { "fail" },
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
         }),
@@ -102,7 +91,6 @@ async fn run(
     kept: &KeptCluster,
     target: &Path,
     evidence: &Path,
-    head: &str,
 ) -> anyhow::Result<()> {
     let work = application_directory(kept, "wms")?;
     share_kubeconfig(kept, &work)?;
@@ -257,7 +245,6 @@ async fn run(
         owner: &owner,
         work: &work,
         evidence,
-        source: head,
         target,
         triple: triple.clone(),
         tenant: identity().tenant.as_str(),
@@ -289,7 +276,6 @@ async fn run(
             evidence,
             repository,
             lifecycle: &lifecycle,
-            source: head,
             system_database_url: &document.system_pg_url,
             identity_image: Some(&identity_image),
             org: identity().org.as_str(),
@@ -373,6 +359,5 @@ async fn run(
         "delivered.json",
         &json!({"release_name":delivered.release_name,"host_image":delivered.host_image,
             "plan":delivered.plan,"release":release.manifest_digest.as_str()}),
-    )?;
-    super::source_clean(repository).await
+    )
 }

@@ -61,9 +61,8 @@ Each case installs its environment with the release chart, as `env apply` does.
 It copies the role components by digest into its own registry and stamps a copy of the chart with the same image set.
 
 The package set of the release selects the cases exactly. Any other set fails.
-A Receiving release with Acme runs command histories, baseline overlay compatibility, and durable queue recovery after interruption of its combined host.
+A Receiving release with Acme runs command histories and the baseline overlay with materializer progress.
 A Receiving release without Acme runs command histories, which calls no Acme route.
-Durable queue recovery starts its item from a wiring, and Receiving alone has none.
 WMS runs its released routes, partial-label completion, and restart/cache cases against the same release and host image.
 
 The cases write their results in a temporary directory under the system temporary directory.

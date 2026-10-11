@@ -185,27 +185,6 @@ impl TriggerOrder {
             idempotency_key: "materializer-receipt-command".to_owned(),
         }
     }
-
-    /// Seed a new order, so a stage can trigger again on a kept cluster.
-    pub(super) async fn fresh(database_url: &str) -> anyhow::Result<Self> {
-        let run = uuid::Uuid::new_v4();
-        let order = Self {
-            order_id: run.to_string(),
-            line_id: uuid::Uuid::new_v4().to_string(),
-            idempotency_key: format!("materializer-receipt-command-{}", run.simple()),
-        };
-        let (project, task) = super::super::connect(database_url).await?;
-        let seeded = super::super::seed_materializer_order(
-            project.as_ref(),
-            &order.order_id,
-            &order.line_id,
-            &format!("PO-{}", run.simple()),
-        )
-        .await;
-        task.abort();
-        seeded?;
-        Ok(order)
-    }
 }
 
 pub(super) async fn trigger(

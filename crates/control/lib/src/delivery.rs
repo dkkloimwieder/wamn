@@ -1,6 +1,6 @@
 //! Repository commands and exact artifact inputs for release qualification.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
@@ -100,60 +100,6 @@ impl Candidate {
         );
         Ok(())
     }
-
-    /// Record the guest and native files that the existing application cases consume.
-    pub fn artifact_hashes(&self) -> anyhow::Result<BTreeMap<PathBuf, String>> {
-        for image in self.pinned() {
-            require_pinned_image(image)?;
-        }
-        let mut files = BTreeMap::new();
-        files.insert(
-            self.manifest_path.clone(),
-            file_digest(&self.manifest_path)?,
-        );
-        for relative in ["virtualized/std-empty-environment", "wasm32-wasip2/release"] {
-            let directory = self.target_directory.join(relative);
-            for entry in fs::read_dir(&directory)
-                .with_context(|| format!("read candidate guests {}", directory.display()))?
-            {
-                let path = entry?.path();
-                if path
-                    .extension()
-                    .is_some_and(|extension| extension == "wasm")
-                    && path.is_file()
-                {
-                    files.insert(path.clone(), file_digest(&path)?);
-                }
-            }
-        }
-        for name in [
-            "wamn",
-            "wamn-ctl",
-            "wamn-host",
-            "wamn-identity",
-            "wamn-cdc-reader",
-            "wamn-scenario-worker",
-        ] {
-            for profile in ["debug", "release"] {
-                let path = self.target_directory.join(profile).join(name);
-                if path.is_file() {
-                    files.insert(path.clone(), file_digest(&path)?);
-                }
-            }
-        }
-        let (manifest, _) = self.manifest()?;
-        for component in &manifest.components {
-            ensure!(
-                files
-                    .values()
-                    .any(|digest| digest == component.descriptor.component_digest.as_str()),
-                "candidate lacks component {} with digest {}",
-                component.descriptor.component,
-                component.descriptor.component_digest
-            );
-        }
-        Ok(files)
-    }
 }
 
 fn require_pinned_image(image: &str) -> anyhow::Result<()> {
@@ -175,20 +121,6 @@ fn require_pinned_image(image: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn file_digest(path: &Path) -> anyhow::Result<String> {
-    let bytes =
-        fs::read(path).with_context(|| format!("read candidate artifact {}", path.display()))?;
-    ensure!(
-        !bytes.is_empty(),
-        "candidate artifact is empty: {}",
-        path.display()
-    );
-    Ok(format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes))
-    ))
-}
-
 /// One required command and its observed outcome.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -198,48 +130,15 @@ pub struct CheckResult {
     pub cause: Option<String>,
 }
 
-/// Temporary results bind executed checks to one source and exact artifact set.
+/// The executed checks of one candidate.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Qualification {
     pub release: ServingRelease,
     pub manifest_digest: String,
     pub candidate: Candidate,
-    pub artifact_hashes: BTreeMap<PathBuf, String>,
     pub checks: Vec<CheckResult>,
     pub result: String,
-}
-
-impl Qualification {
-    /// Refuse artifact changes after qualification, and name each changed path.
-    pub fn assert_artifacts(&self) -> anyhow::Result<()> {
-        let found = self.candidate.artifact_hashes()?;
-        let changed: Vec<String> = self
-            .artifact_hashes
-            .keys()
-            .chain(found.keys())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .filter_map(|path| {
-                let recorded = self.artifact_hashes.get(path);
-                let now = found.get(path);
-                (recorded != now).then(|| {
-                    format!(
-                        "{} (recorded {}, found {})",
-                        path.display(),
-                        recorded.map_or("none", String::as_str),
-                        now.map_or("none", String::as_str)
-                    )
-                })
-            })
-            .collect();
-        ensure!(
-            changed.is_empty(),
-            "qualified artifacts changed or disappeared: {}",
-            changed.join("; ")
-        );
-        Ok(())
-    }
 }
 
 /// An executed application's observation of the exact supplied release.

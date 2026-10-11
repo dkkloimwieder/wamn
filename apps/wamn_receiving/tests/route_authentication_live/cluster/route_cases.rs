@@ -7,9 +7,9 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 use super::{
-    ReceivingCluster, apply, assert_source_unchanged, checked, evidence_directory, kubectl,
-    materializer_case, postcommit_case, publish_and_push, released_http, resources,
-    serve_released_http, start, write_private,
+    ReceivingCluster, apply, checked, evidence_directory, kubectl, materializer_case,
+    postcommit_case, publish_and_push, released_http, resources, serve_released_http, start,
+    write_private,
 };
 
 #[tokio::test]
@@ -44,7 +44,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
             "tenant":super::super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
-            "source_commit":cluster.resources.source,"component_digests":digests,
+            "component_digests":digests,
             "packages":super::super::released_package_roots(),
             "seed":7701,"cases":16,"history":null,
         }))?;
@@ -60,7 +60,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             && summaries[0].get("reproduction").is_none_or(|value| value == false),
             "Receiving command history results are absent or incomplete");
         fs::write(evidence.join("receiving-correctness-summary.json"), serde_json::to_vec_pretty(&summaries[0])?)?;
-        assert_source_unchanged(&cluster.resources).await
+        Ok(())
     }.await;
     finish(&mut cluster, result).await
 }
@@ -77,8 +77,7 @@ async fn run_membership(evidence: &std::path::Path) -> anyhow::Result<()> {
     let mut cluster = start(evidence, true).await?;
     let result = async {
         let (route, service) = released_http(&cluster, 1).await?;
-        membership_job(&cluster, &route.database_url, &service).await?;
-        assert_source_unchanged(&cluster.resources).await
+        membership_job(&cluster, &route.database_url, &service).await
     }
     .await;
     finish(&mut cluster, result).await
@@ -268,7 +267,7 @@ pub(super) async fn finish(
     fs::write(
         cluster.resources.evidence.join("result.json"),
         serde_json::to_vec_pretty(&json!({
-            "source":cluster.resources.source,"cluster":cluster.resources.name,"passed":result.is_ok(),
+            "cluster":cluster.resources.name,"passed":result.is_ok(),
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
         }))?,
     )?;

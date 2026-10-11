@@ -258,7 +258,6 @@ pub struct TelemetryInput<'a> {
     pub cluster: &'a str,
     pub work: &'a Path,
     pub namespace: &'a str,
-    pub source: &'a str,
     pub tenant: &'a str,
     pub project: &'a str,
     pub environment: &'a str,
@@ -272,7 +271,6 @@ pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
         cluster,
         work,
         namespace,
-        source,
         tenant,
         project,
         environment,
@@ -282,10 +280,6 @@ pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
     ensure!(
         work.join("kubeconfig").is_file(),
         "telemetry requires the private kubeconfig"
-    );
-    ensure!(
-        hex_identifier(source, 20),
-        "telemetry requires the full source commit"
     );
     ensure!(
         requests[0].0 != requests[1].0 && requests[0].1 != requests[1].1,
@@ -383,7 +377,7 @@ pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
         }
     }
     let passed = completed.len() == paths.len();
-    let result = json!({"verdict":if passed {"pass"} else {"fail"},"source":source,"context":context,"namespace":namespace,"traces":requests.into_iter().collect::<BTreeMap<_,_>>(),"collected":completed,"failure":if passed {None} else {Some(failure.as_str())}});
+    let result = json!({"verdict":if passed {"pass"} else {"fail"},"context":context,"namespace":namespace,"traces":requests.into_iter().collect::<BTreeMap<_,_>>(),"collected":completed,"failure":if passed {None} else {Some(failure.as_str())}});
     std::fs::write(
         evidence.join("result.json"),
         serde_json::to_vec_pretty(&result)?,

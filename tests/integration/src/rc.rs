@@ -195,7 +195,6 @@ async fn execute(
         CLUSTER,
         &resources.work,
         &resources.host_image,
-        &resources.source,
         "debug",
         &resources.evidence,
     )

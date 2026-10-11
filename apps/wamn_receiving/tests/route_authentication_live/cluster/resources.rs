@@ -14,7 +14,7 @@ use tokio::process::Command;
 use wamn_gate_harness::case_release::NAMESPACE;
 use wamn_test_infrastructure::rendering::render_kind_cluster;
 pub(super) use wamn_test_infrastructure::workload::{
-    kind_address, postgres_host_port, record_build,
+    kind_address, postgres_host_port,
 };
 
 const REGISTRY_USERNAME: &str = "wamn-receiving-journey";
@@ -24,7 +24,6 @@ pub(super) struct Resources {
     pub work: PathBuf,
     pub evidence: PathBuf,
     pub name: String,
-    pub source: String,
     pub lifecycle: PathBuf,
     pub host_image: String,
     pub gates_image: Option<String>,
@@ -38,23 +37,23 @@ pub(super) struct Resources {
         tokio::task::JoinHandle<anyhow::Result<()>>,
     )>,
     owned: bool,
-    /// A kept cluster outlives this process: a later stage attaches to it,
-    /// and only the teardown stage removes it.
+    /// A kept cluster outlives this process: the delivery case's.
     kept: bool,
 }
 
 /// Reserve a new name before any lifecycle action can create a resource.
+/// A Receiving cluster case runs the candidate that `qualify-release` names.
 pub(super) async fn prepare(
     repository: &Path,
     evidence: &Path,
     gates_image: bool,
 ) -> anyhow::Result<Resources> {
-    let candidate = super::super::delivery::candidate()?;
+    let (candidate, manifest) = super::super::delivery::candidate()?
+        .context("a Receiving cluster case runs the candidate that qualify-release names")?;
     ensure!(
         std::env::consts::ARCH == "x86_64",
-        "the Receiving images require an x86_64 build host"
+        "the amd64 Receiving images require an x86_64 machine"
     );
-    let source = committed_head(repository).await?;
     let name = format!("wamn-receiving-{}", uuid::Uuid::new_v4().simple());
     let lifecycle = repository.join("tools/receiving-cluster-journey-run");
     for action in ["docker-version", "clusters", "containers", "images"] {
@@ -77,28 +76,15 @@ pub(super) async fn prepare(
         repository: repository.to_owned(),
         work,
         evidence: evidence.to_owned(),
-        host_image: candidate
-            .as_ref()
-            .map(|(candidate, _)| super::super::delivery::image_reference(&candidate.images.host))
-            .transpose()?
-            .unwrap_or_else(|| format!("wamn-host:{name}")),
-        gates_image: if let Some((candidate, _)) = &candidate {
-            gates_image
-                .then(|| super::super::delivery::image_reference(&candidate.qualification.gates))
-                .transpose()?
-        } else {
-            gates_image.then(|| format!("wamn-gates:{name}"))
-        },
-        identity_image: if let Some((candidate, _)) = &candidate {
-            Some(super::super::delivery::image_reference(
-                &candidate.qualification.identity,
-            )?)
-        } else {
-            Some(format!("wamn-identity:{name}"))
-        },
-        candidate,
+        host_image: super::super::delivery::image_reference(&candidate.images.host)?,
+        gates_image: gates_image
+            .then(|| super::super::delivery::image_reference(&candidate.qualification.gates))
+            .transpose()?,
+        identity_image: Some(super::super::delivery::image_reference(
+            &candidate.qualification.identity,
+        )?),
+        candidate: Some((candidate, manifest)),
         name,
-        source,
         lifecycle,
         reader: None,
         owned: false,
@@ -107,97 +93,9 @@ pub(super) async fn prepare(
     write_private(
         &cluster.evidence.join("source.json"),
         &serde_json::to_vec_pretty(&json!({
-            "source_commit":cluster.source,"cluster":cluster.name,
+            "cluster":cluster.name,
             "host_image":cluster.host_image,"gates_image":cluster.gates_image,
             "identity_image":cluster.identity_image,
-        }))?,
-    )?;
-    Ok(cluster)
-}
-
-/// The HEAD commit of a clean tree. A cluster test runs committed source only.
-pub(super) async fn committed_head(repository: &Path) -> anyhow::Result<String> {
-    let status = checked(Command::new("git").current_dir(repository).args([
-        "status",
-        "--porcelain",
-        "--untracked-files=normal",
-        "--",
-        ".",
-        ":(exclude).beads/issues.jsonl",
-        ":(exclude).beads/interactions.jsonl",
-    ]))
-    .await?;
-    ensure!(
-        status.is_empty(),
-        "commit the final source before running the cluster test"
-    );
-    Ok(String::from_utf8(
-        checked(Command::new("git").current_dir(repository).args([
-            "rev-parse",
-            "--verify",
-            "HEAD",
-        ]))
-        .await?,
-    )?
-    .trim()
-    .to_owned())
-}
-
-/// The host image identity of HEAD: the source the host and identity images
-/// are built from, without the test-only files (tools/journey-image-cache).
-pub(super) async fn host_identity(repository: &Path) -> anyhow::Result<String> {
-    let identity = checked(
-        Command::new(repository.join("tools/journey-image-cache"))
-            .arg("identity")
-            .arg(repository)
-            .arg("host"),
-    )
-    .await?;
-    Ok(String::from_utf8(identity)?.trim().to_owned())
-}
-
-/// Attach to a cluster that a setup stage kept. `test_source` names the test
-/// code that runs against it.
-pub(super) async fn attach(
-    repository: &Path,
-    evidence: &Path,
-    kept: &super::stages::Kept,
-    test_source: &str,
-) -> anyhow::Result<Resources> {
-    let lifecycle = repository.join("tools/receiving-cluster-journey-run");
-    let clusters = checked(Command::new(&lifecycle).args(["clusters", &kept.cluster])).await?;
-    ensure!(
-        String::from_utf8_lossy(&clusters)
-            .lines()
-            .any(|line| line == kept.cluster),
-        "the kept Receiving cluster {} does not exist",
-        kept.cluster
-    );
-    ensure!(
-        evidence.is_absolute() && !evidence.exists(),
-        "the evidence directory must be a new absolute path"
-    );
-    DirBuilder::new().mode(0o700).create(evidence)?;
-    let cluster = Resources {
-        repository: repository.to_owned(),
-        work: std::env::temp_dir().join(&kept.cluster),
-        evidence: evidence.to_owned(),
-        name: kept.cluster.clone(),
-        source: kept.source.clone(),
-        lifecycle,
-        host_image: kept.host_image.clone(),
-        gates_image: None,
-        identity_image: kept.identity_image.clone(),
-        candidate: None,
-        reader: None,
-        owned: true,
-        kept: true,
-    };
-    write_private(
-        &cluster.evidence.join("source.json"),
-        &serde_json::to_vec_pretty(&json!({
-            "source_commit":cluster.source,"test_commit":test_source,"cluster":cluster.name,
-            "host_image":cluster.host_image,"identity_image":cluster.identity_image,
         }))?,
     )?;
     Ok(cluster)
@@ -211,14 +109,12 @@ pub(super) fn delivery(
     work: &Path,
     evidence: &Path,
     name: &str,
-    source: &str,
 ) -> Resources {
     Resources {
         repository: repository.to_owned(),
         work: work.to_owned(),
         evidence: evidence.to_owned(),
         name: name.to_owned(),
-        source: source.to_owned(),
         lifecycle: repository.join("tools/receiving-cluster-journey-run"),
         host_image: format!("wamn-host:{name}"),
         gates_image: Some(format!("wamn-gates:{name}")),
@@ -231,16 +127,6 @@ pub(super) fn delivery(
 }
 
 impl Resources {
-    /// Leave the cluster in place when this process ends.
-    pub(super) fn keep(&mut self) {
-        self.kept = true;
-    }
-
-    /// Remove a kept cluster at the end of this process.
-    pub(super) fn release(&mut self) {
-        self.kept = false;
-    }
-
     pub(super) fn kept(&self) -> bool {
         self.kept
     }
@@ -285,45 +171,6 @@ pub(super) async fn prepare_files(cluster: &Resources) -> anyhow::Result<String>
     );
     write_private(&cluster.work.join("registry/htpasswd"), &output.stdout)?;
     Ok(password)
-}
-
-pub(super) async fn build_images(cluster: &mut Resources) -> anyhow::Result<()> {
-    if cluster.candidate.is_some() {
-        return Ok(());
-    }
-    cluster.owned = true;
-    // Every case builds the host image from the repository Dockerfile, and
-    // only a case that uses the gates image builds it (wamn-szr0).
-    record_build(
-        &cluster.evidence,
-        "build-images",
-        Command::new(&cluster.lifecycle)
-            .current_dir(&cluster.repository)
-            .arg("build-images")
-            .arg(&cluster.name)
-            .arg(&cluster.work)
-            .arg(&cluster.repository)
-            .arg(&cluster.source)
-            .arg(&cluster.name)
-            .arg("host")
-            .args(cluster.gates_image.is_some().then_some("gates")),
-    )
-    .await?;
-    if cluster.identity_image.is_some() {
-        record_build(
-            &cluster.evidence,
-            "build-identity",
-            Command::new(&cluster.lifecycle)
-                .current_dir(&cluster.repository)
-                .arg("build-identity")
-                .arg(&cluster.name)
-                .arg(&cluster.repository)
-                .arg(&cluster.source)
-                .arg(&cluster.name),
-        )
-        .await?;
-    }
-    Ok(())
 }
 
 pub(super) async fn create(cluster: &mut Resources) -> anyhow::Result<()> {
@@ -551,20 +398,7 @@ pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
             Command::new(&cluster.lifecycle)
                 .arg("remove")
                 .arg(&cluster.name)
-                .arg(&cluster.work)
-                .args(cluster.candidate.is_none().then_some(&cluster.host_image))
-                .args(
-                    cluster
-                        .gates_image
-                        .iter()
-                        .filter(|_| cluster.candidate.is_none()),
-                )
-                .args(
-                    cluster
-                        .identity_image
-                        .iter()
-                        .filter(|_| cluster.candidate.is_none()),
-                ),
+                .arg(&cluster.work),
         )
         .await?;
         cluster.owned = false;
@@ -597,13 +431,6 @@ impl Drop for Resources {
                 .arg("remove")
                 .arg(&self.name)
                 .arg(&self.work)
-                .args(self.candidate.is_none().then_some(&self.host_image))
-                .args(self.gates_image.iter().filter(|_| self.candidate.is_none()))
-                .args(
-                    self.identity_image
-                        .iter()
-                        .filter(|_| self.candidate.is_none()),
-                )
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();

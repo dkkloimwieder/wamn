@@ -3,11 +3,9 @@
 //!
 //! The qualifying cases deploy the host and the roles the way `env apply`
 //! does: a copy of `deploy/platform/release` stamped with the platform image
-//! set, and the values `release_chart::values` renders. A case that qualifies
-//! a candidate takes the role images from the candidate, copied by digest into
-//! its own registry, so the qualification key names the bytes the case ran. A
-//! run without a candidate copies the role images of the release chart's
-//! defaults there (R15).
+//! set, and the values `release_chart::values` renders. A case runs only with
+//! a candidate and takes the role images from it, copied by digest into its
+//! own registry, so the qualification key names the bytes the case ran (R15).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -304,27 +302,6 @@ pub fn release_chart() -> anyhow::Result<PathBuf> {
     std::env::var_os("WAMN_RELEASE_CHART")
         .map(PathBuf::from)
         .context("WAMN_RELEASE_CHART names the release chart that build-platform stamped")
-}
-
-/// Copy the http and materializer images of the release chart's defaults by
-/// digest into `wamn/http` and `wamn/materializer` of `to`, and return the
-/// copies. This is the role image set of a case without a candidate (R15).
-///
-/// # Errors
-///
-/// When the chart has no stamped set or an image cannot be copied.
-pub async fn chart_roles(to: &Registry) -> anyhow::Result<(String, String)> {
-    let set = release_chart::image_set(&release_chart()?).await?;
-    Ok((
-        copy_image(&set.http, &Registry::of(&set.http)?, "wamn/http", to).await?,
-        copy_image(
-            &set.materializer,
-            &Registry::of(&set.materializer)?,
-            "wamn/materializer",
-            to,
-        )
-        .await?,
-    ))
 }
 
 /// The host group body of the release chart: the one group of a rendered host

@@ -79,7 +79,7 @@ async fn command_histories() -> anyhow::Result<()> {
     })
     .await?;
     let result = async {
-        histories(&application, project.url(), &repository, scratch.path()).await?;
+        histories(&application, project.url(), scratch.path()).await?;
         transactional_participation(&application, project.url()).await
     }
     .await;
@@ -316,23 +316,13 @@ async fn transactional_participation(
 async fn histories(
     application: &LocalApplication,
     database_url: &str,
-    repository: &std::path::Path,
     evidence: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let source = std::process::Command::new("git")
-        .current_dir(repository)
-        .args(["rev-parse", "--verify", "HEAD"])
-        .output()?;
-    ensure!(
-        source.status.success(),
-        "read the Receiving source revision"
-    );
     let path = evidence.join("receiving-correctness.jsonl");
     let inputs = serde_json::from_value(json!({
         "project_pg_url":database_url,"route_endpoint":application.endpoint,
         "route_host":application.route_host,"operator_secret":application.caller_secret_path,
         "tenant":super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
-        "source_commit":std::str::from_utf8(&source.stdout)?.trim(),
         "component_digests":application.component_digests,
         "packages":super::released_package_roots(),
         "seed":7701,"cases":16,"history":null,

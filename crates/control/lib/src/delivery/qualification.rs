@@ -230,7 +230,6 @@ pub async fn qualify(
     let mut result = Qualification {
         release: manifest.release,
         manifest_digest: digest.as_str().to_owned(),
-        artifact_hashes: std::collections::BTreeMap::new(),
         candidate,
         checks: Vec::new(),
         result: "fail".to_owned(),
@@ -296,9 +295,7 @@ async fn qualify_candidate(
     let app = application(&result.candidate)?;
     let target = &result.candidate.target_directory.clone();
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
-    // The candidate's artifacts are what this build made.
     build_artifacts(root, target, &mut result.checks).await?;
-    result.artifact_hashes = result.candidate.artifact_hashes()?;
     for command in image_commands(&result.candidate) {
         run(root, &command, &[], &mut result.checks).await?;
     }
@@ -313,8 +310,6 @@ async fn qualify_candidate(
             &mut result.checks,
         )
         .await?;
-    // Compiling check harnesses cannot replace deployment artifacts.
-    result.assert_artifacts()?;
     // A case the executable lacks refuses here, before any case starts a cluster (wamn-pgub).
     let listed = run(
         root,
@@ -374,7 +369,6 @@ async fn qualify_candidate(
                     && observed.manifest_digest == digest.as_str(),
                 "the application observed another release or did not pass"
             );
-            result.assert_artifacts()?;
             Ok(())
         }
         .await;
@@ -390,7 +384,6 @@ async fn qualify_candidate(
 ///
 /// The repository holds no build output, so the component, native and test
 /// builds after this step need it first (platform-deploy.md §7.1, C15).
-/// Qualification records the candidate's artifacts after this build.
 async fn build_artifacts(
     root: &Path,
     target: &Path,

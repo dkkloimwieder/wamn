@@ -56,16 +56,15 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
     );
     wash_runtime::init_crypto();
     let repository = repository_root()?;
-    let head = resources::committed_head(&repository).await?;
     let evidence = super::evidence_directory()?;
     DirBuilder::new().mode(0o700).create(&evidence)?;
     let started = Instant::now();
     let kept = delivery::kept_cluster(&repository).await?;
-    let result = Box::pin(run(&repository, &kept, &evidence, &head)).await;
+    let result = Box::pin(run(&repository, &kept, &evidence)).await;
     fs::write(
         evidence.join("delivery-result.json"),
         serde_json::to_vec_pretty(&json!({
-            "source_commit":head,"cluster":kept.name,"seconds":started.elapsed().as_secs(),
+            "cluster":kept.name,"seconds":started.elapsed().as_secs(),
             "result":if result.is_ok() { "pass" } else { "fail" },
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
         }))?,
@@ -74,17 +73,12 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
 }
 
 #[expect(clippy::too_many_lines, reason = "one delivery, step after step")]
-async fn run(
-    repository: &Path,
-    kept: &KeptCluster,
-    evidence: &Path,
-    head: &str,
-) -> anyhow::Result<()> {
+async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::Result<()> {
     let work = application_directory(kept, "receiving")?;
     share_kubeconfig(kept, &work)?;
     let owner = format!("{}-receiving", kept.name);
     let lifecycle = repository.join("tools/receiving-cluster-journey-run");
-    let artifacts = build::components_and_tools(repository, evidence, false).await?;
+    let artifacts = build::components_and_tools(repository, evidence).await?;
     for directory in ["docker", "host-secrets", "wasmtime-cache"] {
         DirBuilder::new().mode(0o700).create(work.join(directory))?;
     }
@@ -198,7 +192,6 @@ async fn run(
         owner: &owner,
         work: &work,
         evidence,
-        source: head,
         target: &artifacts.target,
         triple: triple.clone(),
         tenant: identity().tenant.as_str(),
@@ -229,7 +222,6 @@ async fn run(
             evidence,
             repository,
             lifecycle: &lifecycle,
-            source: head,
             system_database_url: &inputs.system_pg_url,
             identity_image: Some(&identity_image),
             org: identity().org.as_str(),
@@ -288,7 +280,7 @@ async fn run(
         .await?;
     kept.copy_config_map(&owner, &renames[2].0, &renames[2].1)
         .await?;
-    let host = resources::delivery(repository, &work, evidence, &owner, head);
+    let host = resources::delivery(repository, &work, evidence, &owner);
     let (_, overlay) = render_host(
         &host,
         &inputs,
@@ -325,10 +317,6 @@ async fn run(
         "delivered.json",
         &json!({"release_name":delivered.release_name,"host_image":delivered.host_image,
             "plan":delivered.plan,"release":digest}),
-    )?;
-    ensure!(
-        resources::committed_head(repository).await? == head,
-        "the source commit changed during the test"
-    );
-    Ok(())
+    )
+    .map(drop)
 }

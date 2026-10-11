@@ -6,10 +6,11 @@ use wamn_control::delivery::Candidate;
 
 pub(crate) use wamn_test_infrastructure::rendering::{host_values, image_reference};
 
-pub(crate) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>> {
-    let Some(candidate) = Candidate::from_env()? else {
-        return Ok(None);
-    };
+/// The candidate that `qualify-release` names. A WMS cluster case runs only
+/// with one.
+pub(crate) fn candidate() -> anyhow::Result<(Candidate, ServingManifest)> {
+    let candidate = Candidate::from_env()?
+        .context("a WMS cluster case runs the candidate that qualify-release names")?;
     let (manifest, _) = candidate.manifest()?;
     // The fixture takes the rest of its identity from the candidate, and it
     // publishes only the WMS package of this checkout.
@@ -25,7 +26,7 @@ pub(crate) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
         result.is_absolute() && !result.exists(),
         "the supplied-artifact result must be a new absolute path"
     );
-    Ok(Some((candidate, manifest)))
+    Ok((candidate, manifest))
 }
 
 /// The files that the cluster's lifecycle tool reads to pull the candidate's

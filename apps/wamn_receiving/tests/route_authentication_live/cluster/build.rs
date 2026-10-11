@@ -23,7 +23,6 @@ pub(super) struct Artifacts {
 pub(super) async fn components_and_tools(
     repository: &Path,
     evidence: &Path,
-    startup_burst: bool,
 ) -> anyhow::Result<Artifacts> {
     let candidate = wamn_control::delivery::Candidate::from_env()?;
     let target = candidate
@@ -78,20 +77,6 @@ pub(super) async fn components_and_tools(
                 &repository.join("apps/Cargo.toml"),
                 package,
                 Some(&target),
-            )
-            .await?;
-        }
-        if startup_burst {
-            // The startup burst runs a host process on this machine, beside the
-            // cluster, so it needs the binary itself and not the image that
-            // carries it. Only that one case builds it (wamn-szr0).
-            let mut host = Command::new("cargo");
-            host.args(["build", "--locked", "--release", "-p", "wamn-host"]);
-            run_build(
-                &mut host,
-                repository,
-                &target,
-                &evidence.join("build-host.log"),
             )
             .await?;
         }

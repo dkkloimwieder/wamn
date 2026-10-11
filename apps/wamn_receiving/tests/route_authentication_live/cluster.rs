@@ -2,21 +2,13 @@
 
 mod build;
 mod cdc;
-mod default_case;
 mod delivery_case;
 mod deployment;
 mod materializer_case;
-mod measurement;
-mod measurement_cases;
-mod operator_recovery;
 mod postcommit_case;
-mod postcommit_pair;
-mod queue_recovery;
 mod resources;
 mod route_cases;
 mod session_cluster;
-mod stages;
-mod startup_case;
 
 use std::fs;
 use std::net::Ipv4Addr;
@@ -60,18 +52,9 @@ struct ReceivingCluster {
 }
 
 async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCluster> {
-    start_with(evidence, gates_image, false).await
-}
-
-async fn start_with(
-    evidence: &Path,
-    gates_image: bool,
-    startup_burst: bool,
-) -> anyhow::Result<ReceivingCluster> {
     let repository = repository_root()?;
     let mut cluster = resources::prepare(&repository, evidence, gates_image).await?;
-    let artifacts =
-        build::components_and_tools(&repository, &cluster.evidence, startup_burst).await?;
+    let artifacts = build::components_and_tools(&repository, &cluster.evidence).await?;
     let registry_password = resources::prepare_files(&cluster).await?;
     let scope = Triple::new(
         identity().org.as_str(),
@@ -89,7 +72,6 @@ async fn start_with(
         &advisory,
         &consumers,
     )?;
-    resources::build_images(&mut cluster).await?;
     resources::create(&mut cluster).await?;
     checked(kubectl(&cluster).args([
         "wait",
@@ -342,18 +324,6 @@ struct Deployed {
 }
 
 impl Deployed {
-    /// The environment release of `carrier` that a kept cluster already has.
-    async fn attached(resources: &Resources, carrier: &ReleaseCarrier) -> anyhow::Result<Self> {
-        let (host_image, runtime_digest) = host_image(resources).await?;
-        Ok(Self {
-            name: release_name()?,
-            label: wamn_engine::release_manifest::release_label(carrier.manifest_digest.as_str())
-                .map_err(|error| anyhow::anyhow!("{error}"))?,
-            host_image,
-            runtime_digest,
-        })
-    }
-
     fn release<'a>(
         &'a self,
         resources: &'a Resources,
@@ -378,9 +348,8 @@ impl Deployed {
 
 /// Install the environment release of `carrier` through the release chart, as
 /// `env apply` does (wamn-ps2tj.1, docs/plan/platform-deploy.md §9.2): the
-/// host group and every role the release implies. A supplied release's role
-/// images, or the release chart's, are copied by digest into the case
-/// registry (R12, R15).
+/// host group and every role the release implies. The candidate's role
+/// images are copied by digest into the case registry (R12, R15).
 async fn install_release(
     cluster: &ReceivingCluster,
     database_url: &str,
@@ -400,10 +369,11 @@ async fn install_release(
         insecure: true,
         ca_paths: Vec::new(),
     };
-    let (http, materializer) = match &resources.candidate {
-        Some((candidate, _)) => case_release::copy_roles(candidate, &registry).await?,
-        None => case_release::chart_roles(&registry).await?,
-    };
+    let (candidate, _) = resources
+        .candidate
+        .as_ref()
+        .context("a Receiving cluster case runs a candidate")?;
+    let (http, materializer) = case_release::copy_roles(candidate, &registry).await?;
     let (host_image, runtime_digest) = host_image(resources).await?;
     let manifest = lookup_release_snapshot(
         database_url,
@@ -467,7 +437,6 @@ async fn host_image(resources: &Resources) -> anyhow::Result<(String, String)> {
         &resources.name,
         &resources.work,
         &resources.host_image,
-        &resources.source,
         "release",
         &resources.evidence,
     )
@@ -751,35 +720,6 @@ async fn cluster_startup_initializes_tls_client_provider() -> anyhow::Result<()>
     .await
 }
 
-async fn assert_source_unchanged(resources: &Resources) -> anyhow::Result<()> {
-    let source = checked(
-        Command::new("git")
-            .current_dir(&resources.repository)
-            .args(["rev-parse", "HEAD"]),
-    )
-    .await?;
-    ensure!(
-        String::from_utf8(source)?.trim() == resources.source,
-        "the source commit changed during the test"
-    );
-    let status = checked(
-        Command::new("git")
-            .current_dir(&resources.repository)
-            .args([
-                "status",
-                "--porcelain",
-                "--untracked-files=normal",
-                "--",
-                ".",
-                ":(exclude).beads/issues.jsonl",
-                ":(exclude).beads/interactions.jsonl",
-            ]),
-    )
-    .await?;
-    ensure!(status.is_empty(), "the source tree changed during the test");
-    Ok(())
-}
-
 async fn released_http(
     cluster: &ReceivingCluster,
     replicas: u32,
@@ -846,7 +786,6 @@ async fn serve_released_http(
                 .gates_image
                 .as_deref()
                 .context("the test built its gates image")?,
-            &resources.source,
             "release",
             &gates_evidence,
         )

@@ -109,7 +109,6 @@ pub struct PostcommitPhase {
     pub context: String,
     pub namespace: String,
     pub materializer_workload: String,
-    pub source_commit: String,
     pub statement_timeout_ms: u64,
 }
 

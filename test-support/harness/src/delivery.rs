@@ -82,8 +82,6 @@ pub struct Application<'a> {
     /// this name.
     pub work: &'a Path,
     pub evidence: &'a Path,
-    /// The clean commit the case runs.
-    pub source: &'a str,
     /// The target directory of the built programs.
     pub target: &'a Path,
     pub triple: Triple,

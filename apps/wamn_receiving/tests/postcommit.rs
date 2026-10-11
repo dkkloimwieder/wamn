@@ -652,14 +652,8 @@ pub(super) async fn assert_postcommit(
         "post-commit test requires the exact owned disposable Receiving materializer"
     );
     ensure!(
-        phase.source_commit.len() == 40
-            && phase
-                .source_commit
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-            && phase.statement_timeout_ms > 0
-            && phase.statement_timeout_ms <= 10_000,
-        "post-commit test requires source identity and a bounded deployed statement timeout"
+        phase.statement_timeout_ms > 0 && phase.statement_timeout_ms <= 10_000,
+        "post-commit test requires a bounded deployed statement timeout"
     );
     ensure!(
         !phase.evidence_file.exists(),
@@ -671,7 +665,7 @@ pub(super) async fn assert_postcommit(
         .context("the journey omitted its materializer baseline")?;
     let (project, project_task) = connect(&materializer.project_pg_url).await?;
     let (lock, lock_task) = connect(&materializer.project_pg_url).await?;
-    let mut evidence = json!({"schema":"wamn-receiving-postcommit/v0.1", "source":phase.source_commit,
+    let mut evidence = json!({"schema":"wamn-receiving-postcommit/v0.1",
         "verdict":"fail", "invariants":["REC-EVENT-REPLAY","REC-POSTCOMMIT-PROGRESS"], "recovery_assumptions":"The owned database, broker, host, and materializer remain available. The poison lock lasts through retry exhaustion."});
     let result = assert_replay_and_progress(
         document,

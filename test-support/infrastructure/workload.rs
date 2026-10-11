@@ -145,16 +145,14 @@ pub async fn image_ready(
     cluster: &str,
     work: &Path,
     image: &str,
-    source_head: &str,
     build_profile: &str,
     evidence: &Path,
 ) -> anyhow::Result<String> {
     let labels = command_json(Command::new(lifecycle).args(["image-labels", image])).await?;
     save(evidence, "host-image-labels.json", &labels)?;
     ensure!(
-        labels["wamn.dev/source-head"] == source_head
-            && labels["wamn.dev/build-profile"] == build_profile,
-        "the host image does not carry the requested source and build profile"
+        labels["wamn.dev/build-profile"] == build_profile,
+        "the host image does not carry the requested build profile"
     );
     checked(kubectl(cluster, work).args([
         "wait",

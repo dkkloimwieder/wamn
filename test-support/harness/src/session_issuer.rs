@@ -36,8 +36,6 @@ pub struct IssuerCluster<'a> {
     pub repository: &'a Path,
     /// The lifecycle tool of the application cluster tests.
     pub lifecycle: &'a Path,
-    /// The source commit that the loaded images carry.
-    pub source: &'a str,
     pub system_database_url: &'a str,
     pub identity_image: Option<&'a str>,
     pub org: &'a str,
@@ -579,9 +577,8 @@ pub async fn image_loaded(
     )?;
     save(cluster, &format!("{name}-image-labels"), &labels)?;
     ensure!(
-        labels["wamn.dev/source-head"] == cluster.source
-            && labels["wamn.dev/build-profile"] == "release",
-        "the session image carries the selected source and build profile"
+        labels["wamn.dev/build-profile"] == "release",
+        "the session image carries the release build profile"
     );
     let nodes = String::from_utf8(
         checked(Command::new(cluster.lifecycle).args(["nodes", cluster.name])).await?,

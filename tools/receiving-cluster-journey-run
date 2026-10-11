@@ -5,77 +5,63 @@ action=${1:?lifecycle action}
 cluster=${2:?cluster or container name}
 case "$cluster" in wamn) printf 'The kind-wamn cluster is frozen.\n' >&2; exit 64 ;; esac
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
-cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
 case "$action" in
   docker-version) docker info --format '{{json .ServerVersion}}' ;;
   clusters) kind get clusters ;;
   containers) docker container ls --all --format '{{json .Names}}' ;;
   images) docker image ls --format '{{json .Repository}} {{json .Tag}}' ;;
   prepare-registry) docker run --rm -i --entrypoint htpasswd httpd:2-alpine -Bni "${3:?username}" ;;
-  build-images)
-    repository=${4:?repository}; source=${5:?source}; tag=${6:?tag}; shift 6
-    # An image of this source is reused when one exists, and relabeled to the
-    # run's own tag. Only the identity image survives the run (wamn-szr0).
-    for target in "$@"; do
-      "$cache" ensure "$repository" "$target" "$target" "$source" "$tag" "$cluster"
-    done
-    ;;
-  build-identity)
-    repository=${3:?repository}; source=${4:?source}; tag=${5:?tag}
-    "$cache" ensure "$repository" identity identity "$source" "$tag" "$cluster"
-    ;;
   create)
+    # The case's images are the candidate's, pinned by digest.
     work=${3:?work directory}; repository=${4:?repository}; shift 4
     kind create cluster --name "$cluster" --config "$work/kind.yaml" --kubeconfig "$work/kubeconfig"
-    if [[ -n ${WAMN_DELIVERY_CANDIDATE:-} ]]; then
-      # The owned delivery registry is plain HTTP with no login, so the nodes
-      # pull from it through the hosts directory. Every other registry is private.
-      insecure=$(jq -r '.native_registry_insecure // false' "$WAMN_DELIVERY_CANDIDATE")
-      if [[ $insecure != true ]]; then
-        # The registry stays private: this machine fetches each pinned image by
-        # digest with its own login, and the nodes import the same bytes.
-        for image in "$@"; do
-          archive="$work/node-image.tar"
-          "$(dirname -- "${BASH_SOURCE[0]}")/registry-image-archive" "$image" "$archive"
-          # kind load image-archive adds an import name with the digest of the
-          # archive index, which CRI reports as a second repository digest.
-          for node in $(kind get nodes --name "$cluster"); do
-            docker exec -i "$node" ctr --namespace k8s.io images import --platform linux/amd64 - < "$archive"
-          done
-          rm -f -- "$archive"
+    # A loopback registry, for which the case wrote native-registry-authority,
+    # is plain HTTP with no login, so the nodes pull from it through the hosts
+    # directory. Every other registry is private.
+    insecure=false
+    [[ ! -f $work/native-registry-authority ]] || insecure=true
+    if [[ $insecure != true ]]; then
+      # The registry stays private: this machine fetches each pinned image by
+      # digest with its own login, and the nodes import the same bytes.
+      for image in "$@"; do
+        archive="$work/node-image.tar"
+        "$(dirname -- "${BASH_SOURCE[0]}")/registry-image-archive" "$image" "$archive"
+        # kind load image-archive adds an import name with the digest of the
+        # archive index, which CRI reports as a second repository digest.
+        for node in $(kind get nodes --name "$cluster"); do
+          docker exec -i "$node" ctr --namespace k8s.io images import --platform linux/amd64 - < "$archive"
         done
+        rm -f -- "$archive"
+      done
+    fi
+    for node in $(kind get nodes --name "$cluster"); do
+      if [[ -f $work/native-registry-authority ]]; then
+        authority=$(cat "$work/native-registry-authority")
+        docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
+        docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
       fi
-      for node in $(kind get nodes --name "$cluster"); do
-        if [[ -f $work/native-registry-authority ]]; then
-          authority=$(cat "$work/native-registry-authority")
-          docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
-          docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
+      for image in "$@"; do
+        if [[ $insecure == true ]]; then
+          # CRI removes a tag when resolving a digest-pinned image.
+          pull_image=${image%@*}
+          if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
+          pull_image="$pull_image@${image##*@}"
+          timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
+            --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image"
         fi
-        for image in "$@"; do
-          if [[ $insecure == true ]]; then
-            # CRI removes a tag when resolving a digest-pinned image.
-            pull_image=${image%@*}
-            if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
-            pull_image="$pull_image@${image##*@}"
-            timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
-              --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image"
+        # CRI records an imported or pulled image from an event, after ctr returns.
+        for wait in 1 2 3 4 5 6 7 8 9 10; do
+          docker exec "$node" crictl inspecti -o json "$image" >/dev/null 2>&1 && break
+          if [[ $wait == 10 ]]; then
+            docker exec "$node" crictl images >&2 || true
+            docker exec "$node" ctr --namespace k8s.io images ls -q >&2 || true
+            docker exec "$node" crictl inspecti -o json "$image" >/dev/null
           fi
-          # CRI records an imported or pulled image from an event, after ctr returns.
-          for wait in 1 2 3 4 5 6 7 8 9 10; do
-            docker exec "$node" crictl inspecti -o json "$image" >/dev/null 2>&1 && break
-            if [[ $wait == 10 ]]; then
-              docker exec "$node" crictl images >&2 || true
-              docker exec "$node" ctr --namespace k8s.io images ls -q >&2 || true
-              docker exec "$node" crictl inspecti -o json "$image" >/dev/null
-            fi
-            printf 'CRI shows no %s on %s after %s s\n' "$image" "$node" "$wait" | tee -a "$work/node-image-waits.log" >&2
-            sleep 1
-          done
+          printf 'CRI shows no %s on %s after %s s\n' "$image" "$node" "$wait" | tee -a "$work/node-image-waits.log" >&2
+          sleep 1
         done
       done
-    else
-      for image in "$@"; do kind load docker-image "$image" --name "$cluster"; done
-    fi
+    done
     docker run --detach --name "$cluster-postgres" --network kind --env POSTGRES_PASSWORD=probe \
       --publish 127.0.0.1::5432 \
       --volume "$repository/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro" \
@@ -124,7 +110,7 @@ case "$action" in
   remove)
     # Without the work directory, as after a killed run, this removes the
     # cluster and its containers, and skips the kubeconfig and the registry.
-    work=${3:-}; shift $(($# < 3 ? $# : 3))
+    work=${3:-}
     status=0
     kubeconfig=()
     [[ -z $work ]] || kubeconfig=(--kubeconfig "$work/kubeconfig")
@@ -133,17 +119,6 @@ case "$action" in
       if docker container inspect "$cluster-$suffix" >/dev/null 2>&1; then
         docker rm --force --volumes "$cluster-$suffix" || status=$?
       fi
-    done
-    for image in "$@"; do
-      if docker image inspect "$image" >/dev/null 2>&1; then
-        docker image rm --force "$image" || status=$?
-      fi
-    done
-    # The run's own tags are gone above. The identity images stay for the next
-    # run of this source, bounded by the retention rule (wamn-szr0).
-    "$cache" release "$cluster" || status=$?
-    for name in host gates identity; do
-      "$cache" retain "$name" || status=$?
     done
     exit "$status"
     ;;

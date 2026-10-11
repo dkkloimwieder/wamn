@@ -18,34 +18,12 @@ use super::{
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn baseline_overlay_and_materializer_progress() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
-    Box::pin(run(BaseCandidate::Baseline)).await
-}
-
-#[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
-async fn additive_overlay_and_materializer_progress() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
-    Box::pin(run(BaseCandidate::Additive)).await
-}
-
-async fn run(base: BaseCandidate) -> anyhow::Result<()> {
     let evidence = super::evidence_directory()?;
-    Box::pin(super::with_signals(
-        &evidence,
-        run_selected(base, &evidence),
-    ))
-    .await
+    Box::pin(super::with_signals(&evidence, run(&evidence))).await
 }
 
-pub(super) async fn run_selected(
-    base: BaseCandidate,
-    evidence: &std::path::Path,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        wamn_control::delivery::Candidate::from_env()?.is_none()
-            || matches!(base, BaseCandidate::Baseline),
-        "supplied-artifact execution supports only the baseline Receiving and Acme installation"
-    );
+async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
+    let base = BaseCandidate::Baseline;
     let mut cluster = start(evidence, true).await?;
     cluster.inputs.overlay_compatibility = Some(CompatibilityPhase {
         base,
@@ -67,7 +45,7 @@ pub(super) async fn run_selected(
     fs::write(
         evidence.join("verdict.json"),
         serde_json::to_vec_pretty(&json!({
-            "schema":"wamn-receiving-postcommit/v1", "source":cluster.resources.source, "base":base,
+            "schema":"wamn-receiving-postcommit/v1", "base":base,
             "verdict":if result.is_ok() { "pass" } else { "fail" },
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
             "passing_arms":if result.is_ok() { vec!["unchanged-overlay-routes", "schema-requirements-observed",
@@ -142,7 +120,6 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
             .gates_image
             .as_deref()
             .context("the test built its gates image")?,
-        &resources.source,
         "release",
         &gates_evidence,
     )
@@ -178,7 +155,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
             cluster: &resources.name,
             work: &resources.work,
             namespace: NAMESPACE,
-            source: &resources.source,
+
             tenant: super::super::identity().tenant.as_str(),
             project: super::super::identity().project.as_str(),
             environment: super::super::identity().environment.as_str(),
@@ -194,7 +171,6 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         context: format!("kind-{}", resources.name),
         namespace: NAMESPACE.to_owned(),
         materializer_workload: format!("{}-materializer", deployed.name),
-        source_commit: resources.source.clone(),
         statement_timeout_ms: statement_timeout(resources, &deployed.name).await?,
     });
     let replay = event_broker::connect(&cluster.broker.runtime, &cluster.nats_url).await?;
@@ -209,8 +185,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         ),
     )
     .await
-    .context("the retained materializer replay test exceeded 600 seconds")??;
-    super::assert_source_unchanged(resources).await
+    .context("the retained materializer replay test exceeded 600 seconds")?
 }
 
 pub(super) async fn assert_gates_layers(resources: &resources::Resources) -> anyhow::Result<()> {

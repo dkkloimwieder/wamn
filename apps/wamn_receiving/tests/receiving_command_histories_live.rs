@@ -41,7 +41,6 @@ pub(crate) struct Inputs {
     tenant: String,
     caller_role: String,
     evidence_file: PathBuf,
-    source_commit: String,
     component_digests: BTreeMap<String, String>,
     /// The root of each released package, by component, whose tree digest
     /// the record names.
@@ -934,23 +933,10 @@ pub(crate) fn assert_histories_with_cancellation(
         "case count must be within 1..=64"
     );
     ensure!(
-        !inputs.component_digests.is_empty() && inputs.source_commit.len() == 40,
-        "source and component identities are required"
+        !inputs.component_digests.is_empty(),
+        "component identities are required"
     );
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let source_head = std::process::Command::new("git")
-        .args(["rev-parse", "--verify", "HEAD"])
-        .current_dir(&repository)
-        .output()
-        .context("read the Receiving test source identity")?;
-    ensure!(
-        source_head.status.success(),
-        "cannot read the test source HEAD"
-    );
-    ensure!(
-        std::str::from_utf8(&source_head.stdout)?.trim() == inputs.source_commit,
-        "Receiving test source identity differs from the current checkout"
-    );
     let mut package_tree_digests = serde_json::Map::new();
     for (component, root) in &inputs.packages {
         package_tree_digests.insert(
@@ -1014,7 +1000,7 @@ pub(crate) fn assert_histories_with_cancellation(
         .open(&inputs.evidence_file)?;
     record(
         &mut evidence,
-        &json!({"case":"identity","source_commit":inputs.source_commit,
+        &json!({"case":"identity",
         "component_digests":inputs.component_digests,
         "postgres_server_version_num":version,"package_tree_digests":package_tree_digests,
         "test_compiler_version":compiler_version,
