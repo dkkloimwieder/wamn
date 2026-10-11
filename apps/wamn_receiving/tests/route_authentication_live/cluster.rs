@@ -337,9 +337,23 @@ struct Deployed {
     label: String,
     /// The host image the release names, pinned by digest.
     host_image: String,
+    /// The digest of the host image the nodes hold.
+    runtime_digest: String,
 }
 
 impl Deployed {
+    /// The environment release of `carrier` that a kept cluster already has.
+    async fn attached(resources: &Resources, carrier: &ReleaseCarrier) -> anyhow::Result<Self> {
+        let (host_image, runtime_digest) = host_image(resources).await?;
+        Ok(Self {
+            name: release_name()?,
+            label: wamn_engine::release_manifest::release_label(carrier.manifest_digest.as_str())
+                .map_err(|error| anyhow::anyhow!("{error}"))?,
+            host_image,
+            runtime_digest,
+        })
+    }
+
     fn release<'a>(
         &'a self,
         resources: &'a Resources,
@@ -399,21 +413,7 @@ async fn install_release(
             .await?
         }
     };
-    let host_image = if resources.host_image.contains('@') {
-        resources.host_image.clone()
-    } else {
-        let digest = wamn_test_infrastructure::workload::image_ready(
-            &resources.lifecycle,
-            &resources.name,
-            &resources.work,
-            &resources.host_image,
-            &resources.source,
-            "release",
-            &resources.evidence,
-        )
-        .await?;
-        format!("{}@{digest}", resources.host_image)
-    };
+    let (host_image, runtime_digest) = host_image(resources).await?;
     let manifest = lookup_release_snapshot(
         database_url,
         identity().tenant.as_str(),
@@ -456,49 +456,47 @@ async fn install_release(
         name,
         label,
         host_image,
+        runtime_digest,
     })
 }
 
-/// What one installed host group binds to: its namespace, how many replicas,
-/// which broker, and the optional session issuer the overlay pins.
+/// The environment release name of the journey coordinate.
+fn release_name() -> anyhow::Result<String> {
+    release_chart::release_name(
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+    )
+}
+
+/// The cluster's host image pinned by the digest its nodes hold, and that digest.
+async fn host_image(resources: &Resources) -> anyhow::Result<(String, String)> {
+    let digest = wamn_test_infrastructure::workload::image_ready(
+        &resources.lifecycle,
+        &resources.name,
+        &resources.work,
+        &resources.host_image,
+        &resources.source,
+        "release",
+        &resources.evidence,
+    )
+    .await?;
+    let pinned = if resources.host_image.contains('@') {
+        resources.host_image.clone()
+    } else {
+        format!("{}@{digest}", resources.host_image)
+    };
+    Ok((pinned, digest))
+}
+
+/// What one installed host group binds to: how many replicas, which broker,
+/// and the optional session issuer the overlay pins.
 struct HostBinding<'a> {
-    /// [`NAMESPACE`] for an environment release; the cluster's own namespace
-    /// for an install-host release.
-    namespace: &'a str,
     replicas: u32,
     nats_url: &'a str,
     native_nats_secrets: &'a [PathBuf],
     source: &'a async_nats::jetstream::stream::Config,
     session: Option<(&'a str, &'a str)>,
-}
-
-async fn install_host(
-    cluster: &Resources,
-    inputs: &JourneyDocument,
-    carrier: &ReleaseCarrier,
-    binding: &HostBinding<'_>,
-) -> anyhow::Result<()> {
-    let (base, overlay) = prepare_host(cluster, inputs, carrier, binding).await?;
-    checked(
-        Command::new(&cluster.lifecycle)
-            .arg("install-host")
-            .arg(&cluster.name)
-            .arg(&cluster.work)
-            .arg(&cluster.name)
-            .arg(&base)
-            .arg(&overlay),
-    )
-    .await?;
-    checked(kubectl(cluster).args([
-        "-n",
-        &cluster.name,
-        "rollout",
-        "status",
-        "deployment/hostgroup-default",
-        "--timeout=240s",
-    ]))
-    .await?;
-    Ok(())
 }
 
 async fn prepare_host(
@@ -523,7 +521,7 @@ async fn prepare_host(
                 WorkloadRoleFamily::Administration,
             ],
             guest_secret_file: PathBuf::from("guest-sql.json"),
-            namespace: binding.namespace.to_owned(),
+            namespace: NAMESPACE.to_owned(),
             database_host,
         },
     )?;
@@ -533,13 +531,13 @@ async fn prepare_host(
     for secret in native_nats_secrets {
         apply(cluster, secret).await?;
     }
-    install_route_credential(cluster, inputs, binding.namespace).await?;
+    install_route_credential(cluster, inputs, NAMESPACE).await?;
     let registry_secret = cluster.work.join("registry-pull.json");
     write_private(
         &registry_secret,
         &serde_json::to_vec(&json!({
             "apiVersion":"v1", "kind":"Secret", "type":"kubernetes.io/dockerconfigjson",
-            "metadata":{"name":"wamn-registry-pull","namespace":binding.namespace},
+            "metadata":{"name":"wamn-registry-pull","namespace":NAMESPACE},
             "stringData":{".dockerconfigjson":fs::read_to_string(&inputs.registry_auth_file)?},
         }))?,
     )?;
@@ -548,7 +546,7 @@ async fn prepare_host(
     fs::write(
         &operator_values,
         serde_json::to_vec(&json!({"operator":{
-            "watchNamespaces":[binding.namespace],"hostNamespaces":[binding.namespace],"allowSharedHosts":false,
+            "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
         }}))?,
     )?;
     wamn_test_infrastructure::platform::install(
@@ -556,7 +554,7 @@ async fn prepare_host(
         &cluster.lifecycle,
         &cluster.name,
         &cluster.work,
-        binding.namespace,
+        NAMESPACE,
         &operator_values,
     )
     .await?;
@@ -612,7 +610,7 @@ fn render_host(
         )?,
         &overlay,
         &HostValuesInput {
-            namespace: binding.namespace.to_owned(),
+            namespace: NAMESPACE.to_owned(),
             host_tag: cluster.name.clone(),
             replicas,
             component_artifact_base: inputs.component_artifact_base.clone(),
@@ -829,7 +827,7 @@ async fn serve_released_http(
     carrier: ReleaseCarrier,
 ) -> anyhow::Result<(ProvisionedRoute, String)> {
     use wamn_test_infrastructure::{release_chart, workload};
-    let secrets = deployment::native_secrets(cluster, NAMESPACE)?;
+    let secrets = deployment::native_secrets(cluster)?;
     let resources = &cluster.resources;
     let (issuer, instance) = session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
@@ -837,23 +835,12 @@ async fn serve_released_http(
         &route.database_url,
         &carrier,
         &HostBinding {
-            namespace: NAMESPACE,
             replicas,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
             source: &cluster.source,
             session: Some((&issuer, &instance)),
         },
-    )
-    .await?;
-    let digest = workload::image_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.host_image,
-        &resources.source,
-        "release",
-        &resources.evidence,
     )
     .await?;
     if resources.gates_image.is_some() {
@@ -875,8 +862,13 @@ async fn serve_released_http(
         .await?;
     }
     let release = deployed.release(resources, &carrier);
-    let hosts =
-        release_chart::hosts_ready(&release, &deployed.host_image, &digest, replicas).await?;
+    let hosts = release_chart::hosts_ready(
+        &release,
+        &deployed.host_image,
+        &deployed.runtime_digest,
+        replicas,
+    )
+    .await?;
     release_chart::role_placed(&release, "http", &hosts).await?;
     Ok((route, deployed.http_service()))
 }

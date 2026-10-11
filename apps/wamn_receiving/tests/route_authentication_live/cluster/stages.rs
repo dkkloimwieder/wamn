@@ -18,13 +18,14 @@ use serde::{Deserialize, Serialize};
 use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_control_provision::events::source_stream_config;
 use wamn_control_registry::Triple;
-use wamn_test_infrastructure::event_broker;
+use wamn_gate_harness::case_release::NAMESPACE;
 use wamn_test_infrastructure::workload::{self, HostObservation};
+use wamn_test_infrastructure::{event_broker, release_chart};
 
 use super::{
-    ReceivingCluster, build, cdc, checked, deployment, identity, install_host, journey_inputs,
-    kubectl, materializer_case, postcommit_case, provision, repository_root, resources,
-    route_cases, startup_case, write_private,
+    Deployed, ReceivingCluster, build, cdc, checked, deployment, identity, install_release,
+    journey_inputs, kubectl, materializer_case, postcommit_case, provision, repository_root,
+    resources, route_cases, startup_case, write_private,
 };
 
 const KEPT: &str = "stage.json";
@@ -57,11 +58,12 @@ pub(super) struct Ready {
     issuer: String,
     instance: String,
     hosts: HostObservation,
+    deployed: Deployed,
 }
 
-/// Provision the release, start the CDC reader, and ready the Hosts,
-/// flow-http, the unknown route, the cross-environment refusal and the
-/// materializer.
+/// Provision the release, start the CDC reader, install the environment
+/// release, and ready the Hosts, the http role, the unknown route, the
+/// cross-environment refusal and the materializer role.
 pub(super) async fn setup(cluster: &mut ReceivingCluster) -> anyhow::Result<Ready> {
     let evidence = cluster.resources.evidence.clone();
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
@@ -83,14 +85,13 @@ pub(super) async fn setup(cluster: &mut ReceivingCluster) -> anyhow::Result<Read
     .await?;
     cluster.resources.reader = Some(cdc::start(reader, &evidence.join("cdc-reader.log"))?);
     reader_ready(cluster).await?;
-    let secrets = deployment::native_secrets(cluster, &cluster.resources.name)?;
+    let secrets = deployment::native_secrets(cluster)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
-    install_host(
-        &cluster.resources,
-        &cluster.inputs,
+    let deployed = install_release(
+        cluster,
+        &route.database_url,
         &carrier,
         &super::HostBinding {
-            namespace: &cluster.resources.name,
             replicas: 3,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
@@ -99,23 +100,15 @@ pub(super) async fn setup(cluster: &mut ReceivingCluster) -> anyhow::Result<Read
         },
     )
     .await?;
-    let hosts = hosts_ready(cluster).await?;
-    let (http, materializer) = deployment::publish_platform_components(cluster).await?;
-    deployment::install_http(cluster, &http).await?;
+    let hosts = hosts_ready(cluster, &deployed, &carrier).await?;
     let resources = &cluster.resources;
-    let http = workload::http_ready(
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &hosts,
-        &evidence,
-    )
-    .await?;
+    let release = deployed.release(resources, &carrier);
+    let http = release_chart::role_placed(&release, "http", &hosts).await?;
     workload::unknown_route(
         &resources.name,
         &resources.work,
-        &resources.name,
-        "flow-http",
+        NAMESPACE,
+        &deployed.http_service(),
         &cluster.inputs.route_host,
         &evidence,
     )
@@ -123,20 +116,19 @@ pub(super) async fn setup(cluster: &mut ReceivingCluster) -> anyhow::Result<Read
     workload::cross_environment_refused(
         &resources.name,
         &resources.work,
-        &resources.name,
+        NAMESPACE,
         &http,
         &evidence,
     )
     .await?;
-    let input = deployment::install_materializer(cluster, &materializer).await?;
-    workload::materializer_ready(&resources.name, &resources.work, &input, &hosts, &evidence)
-        .await?;
+    release_chart::role_placed(&release, "materializer", &hosts).await?;
     Ok(Ready {
         route_database_url: route.database_url,
         carrier,
         issuer,
         instance,
         hosts,
+        deployed,
     })
 }
 
@@ -166,21 +158,20 @@ pub(super) async fn materializer(
     let baseline = super::super::materializer::materializer_baseline(observer.clone()).await?;
     let endpoint = materializer_case::endpoint(
         cluster,
-        &cluster.resources.name,
-        "flow-http",
+        NAMESPACE,
+        &ready.deployed.http_service(),
         "receiving-materializer-nodeport",
     )
     .await?;
     let (phase, update_trace, receipt_trace) =
         materializer_case::trigger(cluster, &ready.route_database_url, &endpoint, order).await?;
     super::super::materializer::assert_materializer_causation(&phase, observer, &baseline).await?;
-    postcommit_case::assert_materializer_logs(cluster, &cluster.resources.name, &ready.hosts.pods)
-        .await?;
+    postcommit_case::assert_materializer_logs(cluster, NAMESPACE, &ready.hosts.pods).await?;
     wamn_test_infrastructure::traces::telemetry::collect(
         &wamn_test_infrastructure::traces::telemetry::TelemetryInput {
             cluster: &resources.name,
             work: &resources.work,
-            namespace: &resources.name,
+            namespace: NAMESPACE,
             source: &resources.source,
             tenant: super::super::identity().tenant.as_str(),
             project: super::super::identity().project.as_str(),
@@ -193,7 +184,7 @@ pub(super) async fn materializer(
     for kind in ["service", "endpointslice"] {
         checked(kubectl(resources).args([
             "-n",
-            &resources.name,
+            NAMESPACE,
             "delete",
             kind,
             "receiving-materializer-nodeport",
@@ -211,8 +202,8 @@ pub(super) async fn startup(cluster: &ReceivingCluster, ready: &Ready) -> anyhow
 
 /// Stop the scheduler, check that a route answers during the outage, restore
 /// it, and check that every Host and release is ready again.
-pub(super) async fn outage(cluster: &ReceivingCluster) -> anyhow::Result<()> {
-    super::operator_recovery::assert_recovery(cluster).await?;
+pub(super) async fn outage(cluster: &ReceivingCluster, ready: &Ready) -> anyhow::Result<()> {
+    super::operator_recovery::assert_recovery(cluster, &ready.deployed).await?;
     fs::copy(
         cluster
             .resources
@@ -238,28 +229,17 @@ async fn reader_ready(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     .await
 }
 
-async fn hosts_ready(cluster: &ReceivingCluster) -> anyhow::Result<HostObservation> {
-    let resources = &cluster.resources;
-    let digest = workload::image_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.host_image,
-        &resources.source,
-        "release",
-        &resources.evidence,
+async fn hosts_ready(
+    cluster: &ReceivingCluster,
+    deployed: &Deployed,
+    carrier: &ReleaseCarrier,
+) -> anyhow::Result<HostObservation> {
+    release_chart::hosts_ready(
+        &deployed.release(&cluster.resources, carrier),
+        &deployed.host_image,
+        &deployed.runtime_digest,
+        3,
     )
-    .await?;
-    workload::hosts_ready(&workload::HostsReadyInput {
-        lifecycle: &resources.lifecycle,
-        cluster: &resources.name,
-        work: &resources.work,
-        namespace: &resources.name,
-        image: &resources.host_image,
-        runtime_digest: &digest,
-        replicas: 3,
-        evidence: &resources.evidence,
-    })
     .await
 }
 
@@ -339,15 +319,13 @@ async fn attach(evidence: &Path, startup_burst: bool) -> anyhow::Result<(Receivi
         source,
     };
     // The readiness checks run again on attach. They also write the host and
-    // flow-http records that the startup stage reads from this stage's results.
-    let hosts = hosts_ready(&cluster).await?;
-    let resources = &cluster.resources;
-    workload::http_ready(
-        &resources.name,
-        &resources.work,
-        &resources.name,
+    // http role records that the startup stage reads from this stage's results.
+    let deployed = Deployed::attached(&cluster.resources, &carrier).await?;
+    let hosts = hosts_ready(&cluster, &deployed, &carrier).await?;
+    release_chart::role_placed(
+        &deployed.release(&cluster.resources, &carrier),
+        "http",
         &hosts,
-        &resources.evidence,
     )
     .await?;
     let ready = Ready {
@@ -356,6 +334,7 @@ async fn attach(evidence: &Path, startup_burst: bool) -> anyhow::Result<(Receivi
         issuer: kept.issuer,
         instance: kept.instance,
         hosts,
+        deployed,
     };
     Ok((cluster, ready))
 }
@@ -409,7 +388,7 @@ async fn startup_stage() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires: WAMN_RECEIVING_CLUSTER from the setup stage"]
 async fn outage_stage() -> anyhow::Result<()> {
-    attached(false, async |cluster, _| outage(cluster).await).await
+    attached(false, async |cluster, ready| outage(cluster, ready).await).await
 }
 
 /// Remove the kept cluster, its containers, its private files and its image

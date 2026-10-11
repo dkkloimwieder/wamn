@@ -115,14 +115,13 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &cluster.resources.evidence,
     )
     .await?;
-    let secrets = deployment::native_secrets(cluster, NAMESPACE)?;
+    let secrets = deployment::native_secrets(cluster)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
         cluster,
         &route.database_url,
         &carrier,
         &super::HostBinding {
-            namespace: NAMESPACE,
             replicas: 3,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
@@ -132,16 +131,6 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     )
     .await?;
     let resources = &cluster.resources;
-    let digest = workload::image_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.host_image,
-        &resources.source,
-        "release",
-        &resources.evidence,
-    )
-    .await?;
     assert_gates_layers(resources).await?;
     let gates_evidence = resources.evidence.join("gates-image");
     fs::create_dir(&gates_evidence)?;
@@ -159,7 +148,9 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     )
     .await?;
     let release = deployed.release(resources, &carrier);
-    let hosts = release_chart::hosts_ready(&release, &deployed.host_image, &digest, 3).await?;
+    let hosts =
+        release_chart::hosts_ready(&release, &deployed.host_image, &deployed.runtime_digest, 3)
+            .await?;
     release_chart::role_placed(&release, "http", &hosts).await?;
     let endpoint = materializer_case::endpoint(
         cluster,

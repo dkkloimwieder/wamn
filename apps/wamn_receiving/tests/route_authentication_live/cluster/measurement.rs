@@ -13,6 +13,8 @@ use tokio::process::Command;
 use wamn_integration_tests::throughput_bench::{self, LayerSpec, StepSpec, ThroughputIndex};
 use wamn_test_infrastructure::traces::{TraceDocument, request_trace_is_complete};
 
+use wamn_gate_harness::case_release::NAMESPACE;
+
 use super::resources::checked;
 use super::{ReceivingCluster, resources};
 
@@ -45,32 +47,29 @@ fn write_result(directory: &Path, name: &str, result: &Value) -> anyhow::Result<
 #[derive(Debug)]
 pub(super) struct ColdHost {
     pod: String,
+    /// The HTTP role Service of the environment release.
+    service: String,
     uid: String,
     startup_ms: u64,
 }
 
-pub(super) async fn cold_host(state: &ReceivingCluster) -> anyhow::Result<ColdHost> {
+/// The one host of the environment release `group`, which the release
+/// installed with one replica and no request has reached.
+pub(super) async fn cold_host(state: &ReceivingCluster, group: &str) -> anyhow::Result<ColdHost> {
     let cluster = state.resources.name.as_str();
     let work = state.resources.work.as_path();
     let evidence = state.resources.evidence.as_path();
+    let host_deployment = format!("hostgroup-{group}");
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
-        "scale",
-        "deployment/hostgroup-default",
-        "--replicas=1",
-    ]))
-    .await?;
-    checked(kubectl(cluster, work).args([
-        "-n",
-        cluster,
+        NAMESPACE,
         "wait",
         "--for=condition=Available",
-        "deployment/hostgroup-default",
+        &format!("deployment/{host_deployment}"),
         "--timeout=120s",
     ]))
     .await?;
-    let deployment = object(cluster, work, "deployment", "hostgroup-default").await?;
+    let deployment = object(cluster, work, "deployment", &host_deployment).await?;
     write_result(evidence, "host-measurement-deployment.json", &deployment)?;
     assert_native_probes(&deployment)?;
     let selector = deployment["spec"]["selector"]["matchLabels"]
@@ -88,10 +87,9 @@ pub(super) async fn cold_host(state: &ReceivingCluster) -> anyhow::Result<ColdHo
         .collect::<anyhow::Result<Vec<_>>>()?
         .join(",");
     let pods: Value = serde_json::from_slice(
-        &checked(
-            kubectl(cluster, work)
-                .args(["-n", cluster, "get", "pods", "-l", &selector, "-o", "json"]),
-        )
+        &checked(kubectl(cluster, work).args([
+            "-n", NAMESPACE, "get", "pods", "-l", &selector, "-o", "json",
+        ]))
         .await?,
     )?;
     write_result(evidence, "host-cold.json", &pods)?;
@@ -112,6 +110,7 @@ pub(super) async fn cold_host(state: &ReceivingCluster) -> anyhow::Result<ColdHo
     let startup_ms = startup_time(cluster, work, &pod, evidence, "host-cold.log").await?;
     Ok(ColdHost {
         pod,
+        service: format!("{group}-http"),
         uid,
         startup_ms,
     })
@@ -153,8 +152,8 @@ async fn requests(
     let caller: Value = serde_json::from_slice(&fs::read(&inputs.operator_secret_output)?)?;
     let endpoint = super::materializer_case::endpoint(
         state,
-        &state.resources.name,
-        "flow-http",
+        NAMESPACE,
+        &cold.service,
         "receiving-measurement-nodeport",
     )
     .await?;
@@ -180,7 +179,7 @@ async fn requests(
     );
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "exec",
         &cold.pod,
         "-c",
@@ -193,7 +192,7 @@ async fn requests(
     .await?;
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "wait",
         "--for=jsonpath={.status.containerStatuses[0].restartCount}=1",
         &format!("pod/{}", cold.pod),
@@ -202,7 +201,7 @@ async fn requests(
     .await?;
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "wait",
         "--for=condition=Ready",
         &format!("pod/{}", cold.pod),
@@ -217,7 +216,7 @@ async fn requests(
         evidence.join("host-cold-previous.log"),
         checked(kubectl(cluster, work).args([
             "-n",
-            cluster,
+            NAMESPACE,
             "logs",
             "--previous",
             "--timestamps",
@@ -227,11 +226,11 @@ async fn requests(
         ]))
         .await?,
     )?;
-    route_after_restart(cluster, work, evidence).await?;
+    route_after_restart(cluster, work, &cold.service, evidence).await?;
     let endpoint = super::materializer_case::endpoint(
         state,
-        &state.resources.name,
-        "flow-http",
+        NAMESPACE,
+        &cold.service,
         "receiving-measurement-nodeport",
     )
     .await?;
@@ -468,9 +467,14 @@ fn assert_response(result: &Value, restarted: bool) -> anyhow::Result<f64> {
     Ok(total * 1000.0)
 }
 
-async fn route_after_restart(cluster: &str, work: &Path, evidence: &Path) -> anyhow::Result<()> {
+async fn route_after_restart(
+    cluster: &str,
+    work: &Path,
+    service: &str,
+    evidence: &Path,
+) -> anyhow::Result<()> {
     let previous: Value =
-        serde_json::from_slice(&fs::read(evidence.join("flow-http-replicaset.json"))?)?;
+        serde_json::from_slice(&fs::read(evidence.join("http-replicaset.json"))?)?;
     let uid = previous["metadata"]["uid"]
         .as_str()
         .context("HTTP ReplicaSet has a UID")?;
@@ -478,7 +482,7 @@ async fn route_after_restart(cluster: &str, work: &Path, evidence: &Path) -> any
         let workloads: Value = serde_json::from_slice(
             &checked(kubectl(cluster, work).args([
                 "-n",
-                cluster,
+                NAMESPACE,
                 "get",
                 "workloads",
                 "-o",
@@ -499,19 +503,19 @@ async fn route_after_restart(cluster: &str, work: &Path, evidence: &Path) -> any
         let slices: Value = serde_json::from_slice(
             &checked(kubectl(cluster, work).args([
                 "-n",
-                cluster,
+                NAMESPACE,
                 "get",
                 "endpointslices",
                 "-l",
-                "kubernetes.io/service-name=flow-http,wasmcloud.dev/route-manager=true",
+                &format!("kubernetes.io/service-name={service},wasmcloud.dev/route-manager=true"),
                 "-o",
                 "json",
             ]))
             .await?,
         )?;
-        write_result(evidence, "flow-http-endpointslices-warm.json", &slices)?;
+        write_result(evidence, "http-endpointslices-warm.json", &slices)?;
         if workloads.len() == 1 {
-            write_result(evidence, "flow-http-workload-warm.json", workloads[0])?;
+            write_result(evidence, "http-workload-warm.json", workloads[0])?;
             let ready = workloads[0]["status"]["conditions"]
                 .as_array()
                 .is_some_and(|conditions| {
@@ -548,7 +552,7 @@ async fn cache_files(
     let mut metadata = String::from_utf8(
         checked(kubectl(cluster, work).args([
             "-n",
-            cluster,
+            NAMESPACE,
             "exec",
             pod,
             "-c",
@@ -572,7 +576,7 @@ async fn cache_files(
     let mut hashes = String::from_utf8(
         checked(kubectl(cluster, work).args([
             "-n",
-            cluster,
+            NAMESPACE,
             "exec",
             pod,
             "-c",
@@ -731,7 +735,7 @@ async fn startup_time(
 ) -> anyhow::Result<u64> {
     let bytes = checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "logs",
         "--timestamps",
         pod,
@@ -753,7 +757,7 @@ async fn startup_time(
 
 async fn object(cluster: &str, work: &Path, kind: &str, name: &str) -> anyhow::Result<Value> {
     Ok(serde_json::from_slice(
-        &checked(kubectl(cluster, work).args(["-n", cluster, "get", kind, name, "-o", "json"]))
+        &checked(kubectl(cluster, work).args(["-n", NAMESPACE, "get", kind, name, "-o", "json"]))
             .await?,
     )?)
 }
@@ -821,7 +825,7 @@ async fn user_runs(
         wamn_integration_tests::membership_test::MembershipTestArgs {
             system_database_url: state.inputs.system_pg_url.clone(),
             project_database_url: project_database_url.to_owned(),
-            endpoint_url: format!("http://flow-http.{}.svc.cluster.local", resources.name),
+            endpoint_url: format!("http://{}.{NAMESPACE}.svc.cluster.local", cold.service),
             host: state.inputs.route_host.clone(),
             org: super::super::identity().org.clone(),
             project: super::super::identity().project.clone(),
@@ -842,14 +846,7 @@ async fn user_runs(
     )?;
     checked(
         super::kubectl(resources)
-            .args([
-                "-n",
-                &resources.name,
-                "create",
-                "secret",
-                "generic",
-                user_secret,
-            ])
+            .args(["-n", NAMESPACE, "create", "secret", "generic", user_secret])
             .arg(format!("--from-file=token={}", user_pat.display())),
     )
     .await?;
@@ -977,8 +974,8 @@ async fn throughput_sweep(
         schema:throughput_bench::INDEX_SCHEMA.to_owned(),source:resources.source.clone(),duration_seconds:10,
         concurrency:vec![1,4,8,16,32,64],
         layers:vec![
-            LayerSpec {layer:"route".to_owned(),driver:"oha".to_owned(),target:format!("GET /purchase_order/get through flow-http, {credential} PAT, repetition {repetition}"),expected_status:Some(200)},
-            LayerSpec {layer:"nodb".to_owned(),driver:"oha".to_owned(),target:"GET /no-such-route through flow-http: routed and answered 404 by the guest, no auth, no database".to_owned(),expected_status:Some(404)},
+            LayerSpec {layer:"route".to_owned(),driver:"oha".to_owned(),target:format!("GET /purchase_order/get through the http role, {credential} PAT, repetition {repetition}"),expected_status:Some(200)},
+            LayerSpec {layer:"nodb".to_owned(),driver:"oha".to_owned(),target:"GET /no-such-route through the http role: routed and answered 404 by the guest, no auth, no database".to_owned(),expected_status:Some(404)},
             LayerSpec {layer:"pg".to_owned(),driver:"pgbench".to_owned(),target:format!("pgbench -M prepared, the generated purchase_order/get read against {database} as postgres"),expected_status:None},
         ],steps:Vec::new(),
     };
@@ -987,11 +984,12 @@ async fn throughput_sweep(
         for concurrency in &index.concurrency {
             let job = format!("bench-{credential}-r{repetition}-{layer}-c{concurrency}");
             let manifest = throughput_job(
-                &state.resources.name,
+                NAMESPACE,
                 &state.inputs.route_host,
                 &job,
                 secret,
                 &ThroughputStep {
+                    service: &cold.service,
                     layer,
                     concurrency: *concurrency,
                     postgres: &postgres_host,
@@ -1013,7 +1011,7 @@ async fn throughput_sweep(
             checked(super::kubectl(resources).args(["apply", "-f"]).arg(&path)).await?;
             let completed = checked(super::kubectl(resources).args([
                 "-n",
-                &resources.name,
+                NAMESPACE,
                 "wait",
                 "--for=condition=Complete",
                 &format!("job/{job}"),
@@ -1021,7 +1019,7 @@ async fn throughput_sweep(
             ]))
             .await;
             let log = super::kubectl(resources)
-                .args(["-n", &resources.name, "logs", &format!("job/{job}")])
+                .args(["-n", NAMESPACE, "logs", &format!("job/{job}")])
                 .kill_on_drop(true)
                 .output()
                 .await?;
@@ -1037,7 +1035,7 @@ async fn throughput_sweep(
                 let pods = super::kubectl(resources)
                     .args([
                         "-n",
-                        &resources.name,
+                        NAMESPACE,
                         "get",
                         "pods",
                         "-l",
@@ -1104,6 +1102,8 @@ async fn throughput_sweep(
 
 /// Which layer one throughput job measures, and at what concurrency.
 struct ThroughputStep<'a> {
+    /// The HTTP role Service the route layers call.
+    service: &'a str,
     layer: &'a str,
     concurrency: u32,
     postgres: &'a str,
@@ -1119,6 +1119,7 @@ fn throughput_job(
     step: &ThroughputStep<'_>,
 ) -> anyhow::Result<Value> {
     let ThroughputStep {
+        service,
         layer,
         concurrency,
         postgres,
@@ -1133,10 +1134,10 @@ fn throughput_job(
     let container = match layer {
         "route" => json!({"name":"oha","image":oha,"imagePullPolicy":"IfNotPresent",
             "env":[{"name":"OPERATOR_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}}],"command":["/bin/oha"],
-            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),"-H","Authorization: Bearer $(OPERATOR_PAT)",format!("http://flow-http.{namespace}.svc.cluster.local{}", purchase_order_get_target())]}),
+            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),"-H","Authorization: Bearer $(OPERATOR_PAT)",format!("http://{service}.{namespace}.svc.cluster.local{}", purchase_order_get_target())]}),
         "nodb" => {
             json!({"name":"oha","image":oha,"imagePullPolicy":"IfNotPresent","command":["/bin/oha"],
-            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),format!("http://flow-http.{namespace}.svc.cluster.local/no-such-route")]})
+            "args":["--no-tui","-z","10s","-c",concurrency.to_string(),"--output-format","json","-m","GET","-H",format!("Host: {host}"),format!("http://{service}.{namespace}.svc.cluster.local/no-such-route")]})
         }
         "pg" => {
             let script = format!(
@@ -1189,7 +1190,7 @@ async fn take_sample(
         evidence.join(format!("cpu-host-{layer}-c{concurrency}-{position}.txt")),
         checked(super::kubectl(resources).args([
             "-n",
-            &resources.name,
+            NAMESPACE,
             "exec",
             &cold.pod,
             "-c",
@@ -1222,7 +1223,7 @@ async fn take_sample(
         evidence.join(format!("memory-host-{layer}-c{concurrency}-{position}.txt")),
         checked(super::kubectl(resources).args([
             "-n",
-            &resources.name,
+            NAMESPACE,
             "exec",
             &cold.pod,
             "-c",
@@ -1247,6 +1248,7 @@ mod tests {
             "selected-job",
             "selected-pat",
             &ThroughputStep {
+                service: "selected-http",
                 layer,
                 concurrency,
                 postgres: "10.89.0.7",
@@ -1294,7 +1296,7 @@ mod tests {
         assert!(!args.contains(&json!("-d")));
         assert_eq!(
             args.last().unwrap(),
-            "http://flow-http.selected-environment.svc.cluster.local/purchase_order/get?id=%2200000000-0000-0000-0000-000000000301%22"
+            "http://selected-http.selected-environment.svc.cluster.local/purchase_order/get?id=%2200000000-0000-0000-0000-000000000301%22"
         );
         assert!(!serde_json::to_string(&route).unwrap().contains("password"));
 
@@ -1320,7 +1322,7 @@ mod tests {
                 "GET",
                 "-H",
                 "Host: selected.example",
-                "http://flow-http.selected-environment.svc.cluster.local/no-such-route"
+                "http://selected-http.selected-environment.svc.cluster.local/no-such-route"
             ])
         );
         assert!(rendered_job("redis", 4).is_err());

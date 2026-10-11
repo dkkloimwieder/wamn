@@ -93,12 +93,6 @@ case "$action" in
       --kube-context "kind-$cluster" --namespace wamn-system wamn "$chart" --version 2.10.3 \
       -f "$work/operator-base.yaml" -f "$values" --wait --timeout 5m
     ;;
-  install-host)
-    work=${3:?work directory}; namespace=${4:?namespace}; base=${5:?base values}; overlay=${6:?overlay values}
-    helm upgrade --install --kubeconfig "$work/kubeconfig" --kube-context "kind-$cluster" \
-      --namespace "$namespace" wamn-host "$chart" --version 2.10.3 \
-      -f "$base" -f "$overlay" --wait --timeout 5m
-    ;;
   helm-releases) helm list --kubeconfig "${3:?work directory}/kubeconfig" --kube-context "kind-$cluster" --all-namespaces -o json ;;
   inspect) docker container inspect --format '{{json .NetworkSettings}}' "$cluster" ;;
   container-logs) docker logs "$cluster" 2>&1 ;;

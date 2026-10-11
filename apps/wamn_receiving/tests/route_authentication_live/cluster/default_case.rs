@@ -23,7 +23,7 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
         )
         .await?;
         stages::startup(&cluster, &ready).await?;
-        stages::outage(&cluster).await?;
+        stages::outage(&cluster, &ready).await?;
         super::assert_source_unchanged(&cluster.resources).await
     }
     .await;

@@ -21,9 +21,10 @@ use wamn_integration_tests::operator_recovery::{
     pod_ids, ready, text, timestamp,
 };
 
-use super::{ReceivingCluster, kubectl, materializer_case};
+use super::{Deployed, ReceivingCluster, kubectl, materializer_case};
 
-const SYSTEM: &str = "wamn-system";
+/// The operator namespace, which also holds the environment release (R6).
+const SYSTEM: &str = wamn_gate_harness::case_release::NAMESPACE;
 /// The request id the retained POST runs sent and got back. A live GET read
 /// carries none.
 const REQUEST_ID: &str = "00000000-0000-4000-8000-000000000929";
@@ -214,6 +215,8 @@ enum Continuity {
 }
 struct Recovery<'a> {
     cluster: &'a ReceivingCluster,
+    /// The environment release, whose host group the outage keeps.
+    deployed: &'a Deployed,
     evidence: PathBuf,
     command_number: usize,
     host_selector: String,
@@ -327,17 +330,17 @@ impl Recovery<'_> {
         )?)
     }
     async fn snapshot(&mut self, label: &str) -> anyhow::Result<Snapshot> {
-        let namespace = self.cluster.resources.name.clone();
+        let namespace = SYSTEM;
         let selector = self.host_selector.clone();
+        let group = format!("hostgroup={}", self.deployed.name);
+        let service = format!(
+            "kubernetes.io/service-name={}",
+            self.deployed.http_service()
+        );
         let value = Snapshot {
             hosts: array(
                 &self
-                    .get(
-                        &format!("{label}-hosts"),
-                        SYSTEM,
-                        "hosts",
-                        &["-l", "hostgroup=default"],
-                    )
+                    .get(&format!("{label}-hosts"), SYSTEM, "hosts", &["-l", &group])
                     .await?,
                 "/items",
             )?
@@ -346,7 +349,7 @@ impl Recovery<'_> {
                 &self
                     .get(
                         &format!("{label}-host-pods"),
-                        &namespace,
+                        namespace,
                         "pods",
                         &["-l", &selector],
                     )
@@ -370,9 +373,9 @@ impl Recovery<'_> {
                 &self
                     .get(
                         &format!("{label}-endpointslices"),
-                        &namespace,
+                        namespace,
                         "endpointslices",
-                        &["-l", "kubernetes.io/service-name=flow-http"],
+                        &["-l", &service],
                     )
                     .await?,
                 "/items",
@@ -380,7 +383,7 @@ impl Recovery<'_> {
             .clone(),
             workloads: array(
                 &self
-                    .get(&format!("{label}-workloads"), &namespace, "workloads", &[])
+                    .get(&format!("{label}-workloads"), namespace, "workloads", &[])
                     .await?,
                 "/items",
             )?
@@ -671,7 +674,10 @@ impl Recovery<'_> {
     }
 }
 
-pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Result<()> {
+pub(super) async fn assert_recovery(
+    cluster: &ReceivingCluster,
+    deployed: &Deployed,
+) -> anyhow::Result<()> {
     use std::os::unix::fs::DirBuilderExt as _;
     let resources = &cluster.resources;
     let evidence = resources.evidence.join("operator-recovery");
@@ -686,6 +692,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
     );
     let mut recovery = Recovery {
         cluster,
+        deployed,
         evidence: evidence.clone(),
         command_number: 0,
         host_selector: String::new(),
@@ -762,8 +769,8 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
     let host = recovery
         .get(
             "host-deployment",
-            &resources.name,
-            "deployment/hostgroup-default",
+            SYSTEM,
+            &format!("deployment/hostgroup-{}", deployed.name),
             &[],
         )
         .await?;
@@ -789,7 +796,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         array(&host, "/spec/template/spec/containers")?
             .iter()
             .any(|container| container["name"] == "host"
-                && container["image"] == resources.host_image),
+                && container["image"] == deployed.host_image),
         "operator recovery must reuse the selected Receiving host image"
     );
     let before = recovery.snapshot("before").await?;
@@ -834,8 +841,8 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
 
     let endpoint = materializer_case::endpoint(
         cluster,
-        &cluster.resources.name,
-        "flow-http",
+        SYSTEM,
+        &deployed.http_service(),
         "receiving-operator-recovery",
     )
     .await?;
@@ -942,7 +949,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
             "delete-request_task-endpoint",
             &[
                 "-n",
-                &resources.name,
+                SYSTEM,
                 "delete",
                 "service/receiving-operator-recovery",
                 "endpointslice/receiving-operator-recovery",

@@ -5,11 +5,12 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_test_infrastructure::workload;
+use wamn_gate_harness::case_release::NAMESPACE;
+use wamn_test_infrastructure::release_chart;
 use wamn_workflow::{PostgresWorkflows, StartRequest, Trigger, Workflows as _};
 
 use super::{
-    ReceivingCluster, checked, deployment, install_host, kubectl, publish_and_push, route_cases,
+    ReceivingCluster, checked, deployment, install_release, kubectl, publish_and_push, route_cases,
     start,
 };
 
@@ -29,14 +30,13 @@ async fn interrupted_durable_queue_item_completes_after_host_restart() -> anyhow
 async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     let (route, carrier) = publish_and_push(&cluster.inputs, &cluster.artifacts).await?;
     seed_queue_rows(&route.database_url).await?;
-    let secrets = deployment::native_secrets(cluster, &cluster.resources.name)?;
+    let secrets = deployment::native_secrets(cluster)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
-    install_host(
-        &cluster.resources,
-        &cluster.inputs,
+    let deployed = install_release(
+        cluster,
+        &route.database_url,
         &carrier,
         &super::HostBinding {
-            namespace: &cluster.resources.name,
             replicas: 1,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
@@ -46,26 +46,12 @@ async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     )
     .await?;
     let resources = &cluster.resources;
-    let digest = workload::image_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.host_image,
-        &resources.source,
-        "release",
-        &resources.evidence,
+    let hosts = release_chart::hosts_ready(
+        &deployed.release(resources, &carrier),
+        &deployed.host_image,
+        &deployed.runtime_digest,
+        1,
     )
-    .await?;
-    let hosts = workload::hosts_ready(&workload::HostsReadyInput {
-        lifecycle: &resources.lifecycle,
-        cluster: &resources.name,
-        work: &resources.work,
-        namespace: &resources.name,
-        image: &resources.host_image,
-        runtime_digest: &digest,
-        replicas: 1,
-        evidence: &resources.evidence,
-    })
     .await?;
     let pod = &hosts.pods["items"][0];
     let name = pod["metadata"]["name"]
@@ -105,16 +91,8 @@ async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     connection.abort();
     result?;
     let warm: Value = serde_json::from_slice(
-        &checked(kubectl(resources).args([
-            "-n",
-            &resources.name,
-            "get",
-            "pod",
-            name,
-            "-o",
-            "json",
-        ]))
-        .await?,
+        &checked(kubectl(resources).args(["-n", NAMESPACE, "get", "pod", name, "-o", "json"]))
+            .await?,
     )?;
     fs::write(
         resources.evidence.join("queue-host-restarted.json"),
@@ -225,7 +203,7 @@ async fn recover(
     let killed = kubectl(&cluster.resources)
         .args([
             "-n",
-            &cluster.resources.name,
+            NAMESPACE,
             "exec",
             pod,
             "-c",

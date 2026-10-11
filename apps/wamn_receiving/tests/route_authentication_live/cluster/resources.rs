@@ -11,6 +11,7 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
+use wamn_gate_harness::case_release::NAMESPACE;
 use wamn_test_infrastructure::rendering::render_kind_cluster;
 pub(super) use wamn_test_infrastructure::workload::{
     kind_address, postgres_host_port, record_build,
@@ -461,7 +462,11 @@ pub(super) async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
 /// The bytes of stderr that a failed command keeps in its error.
 const STDERR_TAIL: usize = 4096;
 
+/// Keep the environment release's objects in the operator namespace.
 pub(super) async fn capture_failure(cluster: &Resources) {
+    let host_deployment = super::release_name()
+        .map(|name| format!("hostgroup-{name}"))
+        .unwrap_or_default();
     for (name, args) in [
         (
             "failure-workloads.json",
@@ -469,7 +474,7 @@ pub(super) async fn capture_failure(cluster: &Resources) {
         ),
         (
             "failure-host-deployment.json",
-            vec!["get", "deployment", "hostgroup-default", "-o", "json"],
+            vec!["get", "deployment", &host_deployment, "-o", "json"],
         ),
         ("failure-pods.json", vec!["get", "pods", "-o", "json"]),
         ("failure-jobs.json", vec!["get", "jobs", "-o", "json"]),
@@ -480,7 +485,7 @@ pub(super) async fn capture_failure(cluster: &Resources) {
     ] {
         let output = super::kubectl(cluster)
             .arg("--request-timeout=10s")
-            .args(["-n", &cluster.name])
+            .args(["-n", NAMESPACE])
             .args(args)
             .kill_on_drop(true)
             .output()
@@ -503,7 +508,7 @@ pub(super) async fn capture_failure(cluster: &Resources) {
                 .arg("--request-timeout=10s")
                 .args([
                     "-n",
-                    &cluster.name,
+                    NAMESPACE,
                     "logs",
                     name,
                     "--all-containers",

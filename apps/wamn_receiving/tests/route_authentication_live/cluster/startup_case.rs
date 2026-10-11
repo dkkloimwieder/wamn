@@ -62,7 +62,7 @@ pub(super) async fn assert_startup(
         for (name,path) in [("Cargo.toml",cluster.resources.repository.join("Cargo.toml")),
             ("Cargo.lock",cluster.resources.repository.join("Cargo.lock")),
             ("host-deployment.json",cluster.resources.evidence.join("host-deployment.json")),
-            ("production-workload.json",cluster.resources.evidence.join("flow-http-workload.json"))] {
+            ("production-workload.json",cluster.resources.evidence.join("http-workload.json"))] {
             final_result["input_sha256"][name] = json!(hex::encode(Sha256::digest(fs::read(path)?)));
         }
         prepare_scheduler_tls(cluster, &private, &evidence).await?;
@@ -71,7 +71,7 @@ pub(super) async fn assert_startup(
         let inputs = super::super::startup_burst::Inputs {
             source:cluster.resources.source.clone(), host_binary:cluster.artifacts.target.join("release/wamn-host"),
             host_secrets:cluster.inputs.host_secret_directory.clone(), registry_auth:cluster.inputs.registry_auth_file.clone(),
-            workload:cluster.resources.evidence.join("flow-http-workload.json"), pat_secret:cluster.inputs.operator_secret_output.clone(),
+            workload:cluster.resources.evidence.join("http-workload.json"), pat_secret:cluster.inputs.operator_secret_output.clone(),
             private_dir:private.clone(), evidence_dir:evidence.clone(), nats_url:cluster.nats_url.clone(),
             scheduler_nats_url:format!("tls://127.0.0.1:{scheduler}"),
             scheduler_nats_tls_ca:private.join("runtime-ca.crt"),
@@ -304,7 +304,7 @@ async fn prepare_scheduler_tls(
     fs::write(evidence.join("scheduler-deployment-ready.json"), deployment)?;
     for (namespace, name, prefix, keys) in [
         (
-            cluster.resources.name.as_str(),
+            "wamn-system",
             "wasmcloud-runtime-tls",
             "runtime",
             &["ca.crt", "tls.crt", "tls.key"][..],

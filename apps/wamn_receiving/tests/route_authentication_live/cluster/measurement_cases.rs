@@ -3,10 +3,11 @@
 use std::path::Path;
 
 use wamn_control::provision_project_env::ProvisionedRoute;
-use wamn_test_infrastructure::workload;
+use wamn_gate_harness::case_release::NAMESPACE;
+use wamn_test_infrastructure::{release_chart, workload};
 
 use super::{
-    ReceivingCluster, deployment, install_host, measurement, provision, route_cases, start,
+    ReceivingCluster, deployment, install_release, measurement, provision, route_cases, start,
 };
 
 #[tokio::test]
@@ -53,17 +54,15 @@ async fn prepare(
 ) -> anyhow::Result<(ReceivingCluster, ProvisionedRoute, measurement::ColdHost)> {
     let cluster = start(evidence, false).await?;
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
-    let secrets = deployment::native_secrets(&cluster, &cluster.resources.name)?;
-    let resources = &cluster.resources;
+    let secrets = deployment::native_secrets(&cluster)?;
     let (issuer, instance) =
         super::session_cluster::prepare_application(&cluster, &carrier).await?;
-    install_host(
-        resources,
-        &cluster.inputs,
+    let deployed = install_release(
+        &cluster,
+        &route.database_url,
         &carrier,
         &super::HostBinding {
-            namespace: &cluster.resources.name,
-            replicas: 0,
+            replicas: 1,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
             source: &cluster.source,
@@ -71,43 +70,18 @@ async fn prepare(
         },
     )
     .await?;
-    let cold = measurement::cold_host(&cluster).await?;
-    let digest = workload::image_ready(
-        &resources.lifecycle,
-        &resources.name,
-        &resources.work,
-        &resources.host_image,
-        &resources.source,
-        "release",
-        evidence,
-    )
-    .await?;
-    let hosts = workload::hosts_ready(&workload::HostsReadyInput {
-        lifecycle: &resources.lifecycle,
-        cluster: &resources.name,
-        work: &resources.work,
-        namespace: &resources.name,
-        image: &resources.host_image,
-        runtime_digest: &digest,
-        replicas: 1,
-        evidence,
-    })
-    .await?;
-    let http = deployment::publish_http(&cluster).await?;
-    deployment::install_http(&cluster, &http).await?;
-    workload::http_ready(
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &hosts,
-        evidence,
-    )
-    .await?;
+    let cold = measurement::cold_host(&cluster, &deployed.name).await?;
+    let resources = &cluster.resources;
+    let release = deployed.release(resources, &carrier);
+    let hosts =
+        release_chart::hosts_ready(&release, &deployed.host_image, &deployed.runtime_digest, 1)
+            .await?;
+    release_chart::role_placed(&release, "http", &hosts).await?;
     workload::unknown_route(
         &resources.name,
         &resources.work,
-        &resources.name,
-        "flow-http",
+        NAMESPACE,
+        &deployed.http_service(),
         &cluster.inputs.route_host,
         evidence,
     )

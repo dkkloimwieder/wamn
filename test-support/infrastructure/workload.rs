@@ -10,8 +10,6 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-use wamn_control_provision::materializer_workload::MaterializerInput;
-
 /// Pinned curl 8.12.1 client used by in-cluster HTTP probes (linux/amd64).
 pub const HTTP_PROBE_IMAGE: &str =
     "curlimages/curl@sha256:88a9abad9d958340e48564f9bdcdaa29916a2984be59314da709f8bbc0eef6f7";
@@ -338,87 +336,6 @@ pub async fn hosts_ready(input: &HostsReadyInput<'_>) -> anyhow::Result<HostObse
     })
 }
 
-/// Check the HTTP workload and its Service-owned endpoint placement.
-pub async fn http_ready(
-    cluster: &str,
-    work: &Path,
-    namespace: &str,
-    hosts: &HostObservation,
-    evidence: &Path,
-) -> anyhow::Result<Value> {
-    let workload = placed_workload(
-        cluster,
-        work,
-        namespace,
-        "flow-http",
-        "flow-http",
-        hosts,
-        evidence,
-    )
-    .await?;
-    let mut slices = Value::Null;
-    for _ in 0..120 {
-        slices = command_json(kubectl(cluster, work).args([
-            "-n",
-            namespace,
-            "get",
-            "endpointslices",
-            "-l",
-            "kubernetes.io/service-name=flow-http,wasmcloud.dev/route-manager=true",
-            "-o",
-            "json",
-        ]))
-        .await?;
-        if slices["items"].as_array().is_some_and(|items| {
-            items.len() == 1
-                && items[0]["endpoints"]
-                    .as_array()
-                    .is_some_and(|endpoints| endpoints.len() == 1)
-        }) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    let service = command_json(kubectl(cluster, work).args([
-        "-n",
-        namespace,
-        "get",
-        "service",
-        "flow-http",
-        "-o",
-        "json",
-    ]))
-    .await?;
-    save(evidence, "flow-http-endpointslices.json", &slices)?;
-    save(evidence, "flow-http-service.json", &service)?;
-    validate_endpoints(&slices, &service, &workload, hosts)?;
-    Ok(workload)
-}
-
-/// Check the accepted materializer declaration and its own native placement.
-pub async fn materializer_ready(
-    cluster: &str,
-    work: &Path,
-    expected: &MaterializerInput,
-    hosts: &HostObservation,
-    evidence: &Path,
-) -> anyhow::Result<Value> {
-    let workload = placed_workload(
-        cluster,
-        work,
-        &expected.namespace,
-        &expected.workload,
-        "materializer",
-        hosts,
-        evidence,
-    )
-    .await?;
-    let deployment: Value =
-        serde_json::from_slice(&fs::read(evidence.join("materializer-deployment.json"))?)?;
-    validate_materializer(&deployment, expected)?;
-    Ok(workload)
-}
-
 /// Check the native refusal and exact Event for a foreign environment.
 pub async fn cross_environment_refused(
     cluster: &str,
@@ -723,84 +640,6 @@ fn validate_unknown_route(response: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn placed_workload(
-    cluster: &str,
-    work: &Path,
-    namespace: &str,
-    name: &str,
-    prefix: &str,
-    hosts: &HostObservation,
-    evidence: &Path,
-) -> anyhow::Result<Value> {
-    checked(kubectl(cluster, work).args([
-        "-n",
-        namespace,
-        "wait",
-        "--for=condition=Ready",
-        &format!("workloaddeployment/{name}"),
-        "--timeout=240s",
-    ]))
-    .await?;
-    let deployment = command_json(kubectl(cluster, work).args([
-        "-n",
-        namespace,
-        "get",
-        "workloaddeployment",
-        name,
-        "-o",
-        "json",
-    ]))
-    .await?;
-    save(evidence, &format!("{prefix}-deployment.json"), &deployment)?;
-    validate_deployment(&deployment)?;
-    let replica_name = text_at(&deployment, "/status/currentReplicaSet/name")?;
-    let replica = command_json(kubectl(cluster, work).args([
-        "-n",
-        namespace,
-        "get",
-        "workloadreplicaset",
-        replica_name,
-        "-o",
-        "json",
-    ]))
-    .await?;
-    save(evidence, &format!("{prefix}-replicaset.json"), &replica)?;
-    let uid = text_at(&replica, "/metadata/uid")?;
-    let mut selected = Vec::new();
-    for _ in 0..120 {
-        let workloads = command_json(kubectl(cluster, work).args([
-            "-n",
-            namespace,
-            "get",
-            "workloads",
-            "-o",
-            "json",
-        ]))
-        .await?;
-        selected = items(&workloads)?
-            .iter()
-            .filter(|workload| {
-                workload["metadata"]["ownerReferences"]
-                    .as_array()
-                    .is_some_and(|owners| owners.iter().any(|owner| owner["uid"] == uid))
-            })
-            .cloned()
-            .collect();
-        if selected.len() == 1 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    ensure!(
-        selected.len() == 1,
-        "the positive workload is missing or ambiguous"
-    );
-    let workload = selected.remove(0);
-    save(evidence, &format!("{prefix}-workload.json"), &workload)?;
-    validate_placement(&workload, namespace, &hosts.hosts)?;
-    Ok(workload)
-}
-
 fn validate_nodes(nodes: &Value) -> anyhow::Result<()> {
     let nodes = items(nodes)?;
     let names = nodes
@@ -935,143 +774,6 @@ fn validate_hosts(hosts: &Value, namespace: &str, replicas: u32) -> anyhow::Resu
         );
     }
     Ok(())
-}
-
-fn validate_deployment(deployment: &Value) -> anyhow::Result<()> {
-    ensure!(
-        deployment["spec"]["replicas"] == 1
-            && deployment["status"]["currentReplicas"] == 1
-            && deployment["status"]["replicas"]["expected"] == 1
-            && deployment["status"]["replicas"]["current"] == 1
-            && deployment["status"]["replicas"]["ready"] == 1
-            && (deployment["status"]["replicas"]["unavailable"].is_null()
-                || deployment["status"]["replicas"]["unavailable"] == false
-                || deployment["status"]["replicas"]["unavailable"] == 0)
-            && !text_at(deployment, "/status/currentReplicaSet/name")?.is_empty()
-            && condition(&deployment["status"], "Ready", "True"),
-        "the workload deployment does not have exactly one ready declared replica"
-    );
-    Ok(())
-}
-
-fn validate_placement(workload: &Value, namespace: &str, hosts: &Value) -> anyhow::Result<()> {
-    let host_id = text_at(workload, "/status/hostId")?;
-    ensure!(
-        workload["status"]["environment"] == namespace
-            && !host_id.is_empty()
-            && items(hosts)?.iter().any(|host| host["hostId"] == host_id)
-            && ["Config", "HostSelection", "Placement", "Sync", "Ready"]
-                .iter()
-                .all(|name| condition(&workload["status"], name, "True")),
-        "the workload is not ready on one of this environment's native Hosts"
-    );
-    Ok(())
-}
-
-fn validate_endpoints(
-    slices: &Value,
-    service: &Value,
-    workload: &Value,
-    hosts: &HostObservation,
-) -> anyhow::Result<()> {
-    let slices = items(slices)?;
-    ensure!(
-        slices.len() == 1,
-        "the HTTP route must have one EndpointSlice"
-    );
-    let slice = &slices[0];
-    let host_id = text_at(workload, "/status/hostId")?;
-    let selected = items(&hosts.hosts)?
-        .iter()
-        .filter(|host| host["hostId"] == host_id)
-        .collect::<Vec<_>>();
-    ensure!(selected.len() == 1, "the route selects one native Host");
-    let endpoints = array_at(slice, "/endpoints")?;
-    let ports = array_at(slice, "/ports")?;
-    ensure!(
-        endpoints.len() == 1 && array_at(&endpoints[0], "/addresses")?.len() == 1,
-        "the HTTP route must have one endpoint address"
-    );
-    let address = text_at(&endpoints[0], "/addresses/0")?;
-    let hostname = text_at(selected[0], "/hostname")?;
-    ensure!(
-        slice["addressType"] == "IPv4"
-            && slice["metadata"]["labels"]["kubernetes.io/service-name"] == "flow-http"
-            && slice["metadata"]["labels"]["wasmcloud.dev/route-manager"] == "true"
-            && array_at(slice, "/metadata/ownerReferences")?
-                .iter()
-                .any(|owner| owner["uid"] == service["metadata"]["uid"]
-                    && owner["kind"] == "Service"
-                    && owner["controller"] == true)
-            && ports.len() == 1
-            && ports[0]["name"] == "http"
-            && ports[0]["protocol"] == "TCP"
-            && ports[0]["port"] == selected[0]["httpPort"]
-            && endpoints[0]["conditions"]["ready"] == true
-            && endpoints[0]["conditions"]["serving"] == true
-            && items(&hosts.pods)?
-                .iter()
-                .any(|pod| pod["status"]["podIP"] == address)
-            && (hostname == address
-                || items(&hosts.pods)?
-                    .iter()
-                    .any(|pod| pod["metadata"]["name"] == hostname
-                        && pod["status"]["podIP"] == address)),
-        "the Service-owned HTTP EndpointSlice differs from its selected native Host and pod"
-    );
-    Ok(())
-}
-
-fn validate_materializer(deployment: &Value, expected: &MaterializerInput) -> anyhow::Result<()> {
-    let spec = &deployment["spec"]["template"]["spec"];
-    ensure!(
-        deployment["metadata"]["name"] == expected.workload
-            && deployment["metadata"]["namespace"] == expected.namespace
-            && deployment["spec"]["replicas"] == 1
-            && spec["environment"] == expected.namespace
-            && spec["hostSelector"] == json!({"hostgroup":"default"})
-            && spec["service"]["image"] == expected.image
-            && spec["service"]["localResources"]["config"]
-                == json!({
-                    "wamn.tenant":expected.tenant,"wamn.project":expected.event.project,
-                    "wamn.environment":expected.event.environment,"wamn.postgres.authority":"event-materializer"
-                }),
-        "the accepted materializer declaration has the wrong identity, image, selector, or authority"
-    );
-    let environment = &spec["service"]["localResources"]["environment"]["config"];
-    for (name, value) in [
-        ("WAMN_MAT_STREAM", expected.event_stream.as_str()),
-        ("WAMN_MAT_ORG", expected.event.org.as_str()),
-        ("WAMN_MAT_PROJECT", expected.event.project.as_str()),
-        ("WAMN_MAT_ENV", expected.event.environment.as_str()),
-        ("WAMN_MAT_TENANT", expected.tenant.as_str()),
-    ] {
-        ensure!(
-            environment[name] == value,
-            "accepted materializer input {name} differs from its declaration"
-        );
-    }
-    let fetch_ms = expected.fetch_ms.to_string();
-    let sweep_ms = expected.sweep_ms.to_string();
-    ensure!(
-        environment["WAMN_MAT_FETCH_MS"] == fetch_ms
-            && environment["WAMN_MAT_SWEEP_MS"] == sweep_ms,
-        "accepted materializer intervals differ from their declaration"
-    );
-    let mut interfaces = array_at(spec, "/hostInterfaces")?.clone();
-    interfaces.sort_by(|left, right| left["package"].as_str().cmp(&right["package"].as_str()));
-    ensure!(
-        json!(interfaces)
-            == json!([
-                {"namespace":"wamn","package":"flow-http-routing","version":"0.1.0","interfaces":["routing"]},
-                {"namespace":"wamn","package":"jetstream","version":"0.1.0","interfaces":["types","registration"]},
-                {"namespace":"wasmcloud","package":"nats","version":"0.1.0","name":"events","interfaces":["types","jetstream"]},
-                {"namespace":"wamn","package":"postgres","version":"0.3.0","interfaces":["types","client"]},
-                {"namespace":"wamn","package":"router-delivery","version":"0.3.0","interfaces":["delivery"]}
-            ]),
-        "accepted materializer interfaces differ from the native declaration"
-    );
-    validate_deployment(deployment)
 }
 
 fn validate_cross_environment(workload: &Value, target: &str) -> anyhow::Result<()> {
@@ -1299,12 +1001,6 @@ mod tests {
     // These are observed native objects from the recorded three-host run.
     const DENIED: &str = include_str!("fixtures/workload/cross-environment-workload.json");
     const EVENT: &str = include_str!("fixtures/workload/cross-environment-event.json");
-    const DEPLOYMENT: &str = include_str!("fixtures/workload/flow-http-deployment.json");
-    const SLICES: &str = include_str!("fixtures/workload/flow-http-endpointslices.json");
-    const SERVICE: &str = include_str!("fixtures/workload/flow-http-service.json");
-    const WORKLOAD: &str = include_str!("fixtures/workload/flow-http-workload.json");
-    const HOSTS: &str = include_str!("fixtures/workload/hosts.json");
-    const PODS: &str = include_str!("fixtures/workload/host-pods.json");
 
     #[test]
     fn recorded_images_require_one_runtime_digest_and_a_config_id() {
@@ -1382,56 +1078,6 @@ mod tests {
                 "{pointer}"
             );
         }
-    }
-
-    #[test]
-    fn endpoint_must_match_the_service_selected_host_and_ready_pod() {
-        let original: Value = serde_json::from_str(SLICES).unwrap();
-        let service = serde_json::from_str(SERVICE).unwrap();
-        let workload = serde_json::from_str(WORKLOAD).unwrap();
-        let hosts = HostObservation {
-            hosts: serde_json::from_str(HOSTS).unwrap(),
-            pods: serde_json::from_str(PODS).unwrap(),
-            runtime_digest: String::new(),
-        };
-        validate_endpoints(&original, &service, &workload, &hosts).unwrap();
-        for (pointer, replacement) in [
-            ("/items/0/ports/0/port", json!(81)),
-            (
-                "/items/0/metadata/ownerReferences/0/uid",
-                json!("foreign-service"),
-            ),
-            ("/items/0/endpoints/0/addresses/0", json!("203.0.113.99")),
-            ("/items/0/endpoints/0/conditions/ready", json!(false)),
-            ("/items/0/endpoints/0/conditions/serving", json!(false)),
-        ] {
-            let mut changed = original.clone();
-            *changed.pointer_mut(pointer).unwrap() = replacement;
-            assert!(
-                validate_endpoints(&changed, &service, &workload, &hosts).is_err(),
-                "{pointer}"
-            );
-        }
-    }
-
-    #[test]
-    fn workload_count_remains_separate_from_stream_settings() {
-        let original: Value = serde_json::from_str(DEPLOYMENT).unwrap();
-        validate_deployment(&original).unwrap();
-        for pointer in [
-            "/spec/replicas",
-            "/status/currentReplicas",
-            "/status/replicas/expected",
-            "/status/replicas/current",
-            "/status/replicas/ready",
-        ] {
-            let mut changed = original.clone();
-            *changed.pointer_mut(pointer).unwrap() = json!(2);
-            assert!(validate_deployment(&changed).is_err(), "{pointer}");
-        }
-        let mut changed = original;
-        changed["status"]["replicas"]["unavailable"] = json!("invalid");
-        assert!(validate_deployment(&changed).is_err());
     }
 
     #[test]

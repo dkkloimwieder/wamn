@@ -296,7 +296,6 @@ async fn run(
         &carrier,
         &secrets,
         &HostBinding {
-            namespace: NAMESPACE,
             replicas: 1,
             nats_url: &nats_url,
             native_nats_secrets: &[],
