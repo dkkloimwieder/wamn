@@ -29,8 +29,9 @@ jobs = 4
 # incremental rebuilds while dependencies still come from the cache.
 
 [env]
-# SQLx query macros compile from each application's committed `tests/.sqlx/`
-# data, so an ordinary build needs no database. The macros ignore an ambient
+# SQLx query macros compile from the `.sqlx/` data in each package's build
+# output, `apps/target/wamn/<package>/.sqlx/`, which the development loop
+# prepares. Git holds none of it, and an ordinary build needs no database. The macros ignore an ambient
 # `DATABASE_URL` while `SQLX_OFFLINE` is true, and they read this value before
 # any `.env` file. `force` stays off on purpose: `cargo sqlx prepare` sets
 # `SQLX_OFFLINE=false` for its own `cargo check`, and that value must win so
