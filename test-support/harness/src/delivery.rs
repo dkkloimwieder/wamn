@@ -261,7 +261,9 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         release_artifact_base: tls_releases,
         registry_auth_file: app.kept.registry_auth.clone(),
         oci_ca_paths: vec![app.kept.ca.clone()],
-        package_artifact_base: None,
+        // The fixture pushed the packages to the HTTP twin, whose storage is
+        // the TLS registry's; the package stage opens them over TLS.
+        package_artifact_base: Some(format!("{}/wamn/packages", app.kept.registry)),
         database_namespace: inputs.database_namespace.to_owned(),
         database_host: Some(inputs.database_host.to_owned()),
         database_port: 5432,
