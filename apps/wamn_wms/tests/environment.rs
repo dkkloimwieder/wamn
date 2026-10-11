@@ -628,29 +628,39 @@ pub async fn publish(
     )
     .await?
     .to_string();
+    let (project, task) = connect(&route.database_url).await?;
+    let snapshot = project.query_one(
+        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
+        &[&identity().tenant.as_str(), &release_digest.as_str()],
+    ).await;
+    drop(project);
+    task.abort();
+    let bytes: Vec<u8> = snapshot
+        .context("read the exact WMS release snapshot")?
+        .get(0);
+    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
-        let (project, task) = connect(&route.database_url).await?;
-        let snapshot = project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
-            &[&identity().tenant.as_str(), &release_digest.as_str()],
-        ).await;
-        drop(project);
-        task.abort();
-        let bytes: Vec<u8> = snapshot
-            .context("read the exact WMS release snapshot")?
-            .get(0);
-        let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
         candidate.assert_manifest(&manifest)?;
     }
+    // The labels store is bound before any `env apply`, which projects the
+    // requirements a binding names, so they are projected here. The instance
+    // and its credential handle are named after the store alias, as `env
+    // apply` names the instances it binds.
+    wamn_control::environment::stage::materialize_requirements(
+        &route.database_url,
+        identity().tenant.as_str(),
+        &manifest,
+    )
+    .await?;
     let definition = json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"});
     bind_connection::bind(&BindConnectionRequest {
         database_url: route.database_url.clone(),
         tenant: identity().tenant.clone(),
         environment: identity().environment.clone(),
-        instance_id: "labels-store".into(),
+        instance_id: store_alias.clone(),
         requirement_type: RequirementType::Blobstore,
         definition,
-        credential_handle: Some("labels-store".into()),
+        credential_handle: Some(store_alias.clone()),
         manifest_digest: release_digest.clone(),
         component_digest: blob_digest,
         store_alias,

@@ -93,7 +93,7 @@ pub async fn stage(
     // 2. The release cache row, once its package versions are installed: the
     // row seals the migrations of every version it names.
     write_release(project_url, &tenant, release).await?;
-    materialize_requirements(project_url, &tenant, release).await?;
+    materialize_requirements(project_url, &tenant, &release.manifest).await?;
 
     // 3. The data access of the packages of the release, when each is the
     // installed version. A release on the tested predecessor keeps the
@@ -180,13 +180,18 @@ pub(super) async fn open(
 /// components in this environment: a runtime projection of the admitted
 /// descriptors the release manifest carries, one row for each connection of
 /// each component's descriptor (contract D, R2 (3)). An existing row with
-/// other bytes refuses.
-async fn materialize_requirements(
+/// other bytes refuses. A binding names a requirement, so a test that binds
+/// a release it deploys without `apply` projects them first.
+///
+/// # Errors
+///
+/// When the project database cannot be written, or a row has other bytes.
+pub async fn materialize_requirements(
     project_url: &str,
     tenant: &str,
-    release: &ReleaseFacts,
+    manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<()> {
-    let requirements = release_requirements(&release.manifest);
+    let requirements = release_requirements(manifest);
     if requirements.is_empty() {
         return Ok(());
     }
