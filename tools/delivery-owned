@@ -109,31 +109,33 @@ case "$action" in
     ;;
   load-native)
     # The kind cluster, when it is not the owned name: the kept delivery cluster.
+    # Only the host image, which the hosts that env apply starts run. The
+    # qualifying cases pull their images on their own clusters, and the session
+    # issuer runs the loaded identity image. A pulled identity or gates image
+    # has the configuration of the loaded one, so CRI would report a second
+    # repository digest for it to the next case on the cluster.
     kind_cluster=${4:-$cluster}
     authority=$(cat "$work/native-registry-authority")
+    image=$(cat "$work/native-host-image")
+    # CRI removes a tag when resolving a digest-pinned image.
+    pull_image=${image%@*}
+    if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
+    pull_image="$pull_image@${image##*@}"
     for node in $(kind get nodes --name "$kind_cluster"); do
       docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
       docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
-      for role in host gates identity; do
-        [[ -f $work/native-$role-image ]] || continue
-        image=$(cat "$work/native-$role-image")
-        # CRI removes a tag when resolving a digest-pinned image.
-        pull_image=${image%@*}
-        if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
-        pull_image="$pull_image@${image##*@}"
-        timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
-          --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image"
-        # CRI records an image that ctr pulled from an event, after ctr returns.
-        for wait in 1 2 3 4 5 6 7 8 9 10; do
-          docker exec "$node" crictl inspecti -o json "$image" >/dev/null 2>&1 && break
-          if [[ $wait == 10 ]]; then
-            docker exec "$node" crictl images >&2 || true
-            docker exec "$node" ctr --namespace k8s.io images ls -q >&2 || true
-            docker exec "$node" crictl inspecti -o json "$image" >/dev/null
-          fi
-          printf 'CRI shows no %s on %s after %s s\n' "$image" "$node" "$wait" | tee -a "$work/node-image-waits.log" >&2
-          sleep 1
-        done
+      timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
+        --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image"
+      # CRI records an image that ctr pulled from an event, after ctr returns.
+      for wait in 1 2 3 4 5 6 7 8 9 10; do
+        docker exec "$node" crictl inspecti -o json "$image" >/dev/null 2>&1 && break
+        if [[ $wait == 10 ]]; then
+          docker exec "$node" crictl images >&2 || true
+          docker exec "$node" ctr --namespace k8s.io images ls -q >&2 || true
+          docker exec "$node" crictl inspecti -o json "$image" >/dev/null
+        fi
+        printf 'CRI shows no %s on %s after %s s\n' "$image" "$node" "$wait" | tee -a "$work/node-image-waits.log" >&2
+        sleep 1
       done
     done
     ;;

@@ -7,7 +7,7 @@
 //!
 //! 1. The host, identity and gates images and the role images go to an owned
 //!    native registry. `prepare-release` writes the candidate, the nodes pull
-//!    the images, and `qualify-release` runs the application's qualifying
+//!    the host image, and `qualify-release` runs the application's qualifying
 //!    cases, which deploy the candidate's images through the release chart.
 //! 2. The role images are copied by digest to the kept registry, and a copy of
 //!    the release chart is stamped with the candidate's image set (R12, R15).
@@ -286,7 +286,7 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
 }
 
 /// The build of qualification, `prepare-release`, the nodes' pull of the
-/// native images, and `qualify-release`. Returns the candidate, its
+/// native host image, and `qualify-release`. Returns the candidate, its
 /// manifest and the qualification result.
 async fn qualify(
     app: &Application<'_>,
