@@ -20,7 +20,8 @@ pub(super) fn journey_package_root(
         overlay_package_root()
     };
     if let Some(root) = inputs.and_then(|inputs| inputs.fresh_only_packages.as_ref()) {
-        return root.join(
+        return super::package_copies::package(
+            root,
             source
                 .file_name()
                 .expect("the test package has a directory name"),

@@ -25,23 +25,26 @@ const CONFLICT_FIELD: &str = "acme_inspection_required";
 
 pub(super) fn source(phase: &CompatibilityPhase, package: JourneyPackage) -> PathBuf {
     if package.id == BASE_PACKAGE_ID {
-        phase.package_directory.join("receiving")
+        super::package_copies::package(&phase.package_directory, "wamn_receiving")
     } else {
         super::overlay_package_root()
     }
 }
 
-pub(super) fn prepare(phase: &CompatibilityPhase) -> anyhow::Result<()> {
+/// Copy the base into a test-owned workspace. The additive candidate edits its
+/// initial migration, so its copy is built again before push-package takes it.
+pub(super) async fn prepare(phase: &CompatibilityPhase, server_url: &str) -> anyhow::Result<()> {
     ensure!(
         phase.package_directory.is_absolute(),
         "compatibility package directory must be absolute"
     );
-    std::fs::create_dir(&phase.package_directory)
+    super::package_copies::create(&phase.package_directory, &[super::package_root()])
         .context("create fresh compatibility package directory")?;
-    let base = phase.package_directory.join("receiving");
-    super::copy_fresh_only_package(&super::package_root(), &base)?;
+    let base = super::package_copies::package(&phase.package_directory, "wamn_receiving");
     if matches!(phase.base, BaseCandidate::Additive) {
         add_initial_field(&base, &format!("{ADDITIVE_FIELD} text"))?;
+        super::package_copies::build(&phase.package_directory, &["wamn_receiving"], server_url)
+            .await?;
     }
     let evidence = json!({
         "case":"unchanged-overlay-compatibility", "invariant":"OVL-SCHEMA", "stage":"prepared", "base":phase.base,

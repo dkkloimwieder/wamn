@@ -72,24 +72,31 @@ fn copy_package_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The authored line of the base's record_receipt command, which the
+/// fresh-only copy follows with `fresh_only = True`.
+const RECORD_RECEIPT_COMMAND: &str =
+    "\"receiving.record_receipt\" = manifest.Command(\"receiving.record_receipt\") {\n";
+
+/// Copy the base and the overlay into a test-owned workspace at `root` and
+/// make the base's record_receipt fresh-only in its wamn.k and its component
+/// declaration. [`build_fresh_only_packages`] builds the copies.
 pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
     anyhow::ensure!(!root.exists(), "fresh-only package directory must be new");
-    std::fs::create_dir(root)?;
-    // Keep the app directory names when copying their generated output.
-    for source in [package_root(), overlay_package_root()] {
-        let directory = source
-            .file_name()
-            .expect("the test package has a directory name");
-        copy_fresh_only_package(&source, &root.join(directory))?;
-    }
-    let base = root.join("wamn_receiving");
-    let manifest_path = wamn_schema_generator::package_manifest_path(&base);
-    let mut manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
-    let operation = manifest["custom_operations"]
-        .get_mut("receiving.record_receipt")
-        .context("the base manifest must declare record_receipt")?;
-    operation["fresh_only"] = Value::Bool(true);
-    std::fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    super::package_copies::create(root, &[package_root(), overlay_package_root()])?;
+    let base = super::package_copies::package(root, "wamn_receiving");
+    let authored_path = base.join("wamn.k");
+    let authored = std::fs::read_to_string(&authored_path)?;
+    anyhow::ensure!(
+        authored.matches(RECORD_RECEIPT_COMMAND).count() == 1,
+        "the base wamn.k must declare record_receipt once"
+    );
+    std::fs::write(
+        &authored_path,
+        authored.replace(
+            RECORD_RECEIPT_COMMAND,
+            &format!("{RECORD_RECEIPT_COMMAND}            fresh_only = True\n"),
+        ),
+    )?;
     let declaration_path = base.join("publication/components/receiving.json.in");
     let mut declaration: Value = serde_json::from_slice(&std::fs::read(&declaration_path)?)?;
     declaration["operations"]
@@ -100,26 +107,34 @@ pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Build the fresh-only copies, the base before the overlay, against the
+/// PostgreSQL server of `server_url`.
+pub(super) async fn build_fresh_only_packages(root: &Path, server_url: &str) -> anyhow::Result<()> {
+    super::package_copies::build(
+        root,
+        &["wamn_receiving", "client_acme_receiving"],
+        server_url,
+    )
+    .await
+}
+
 #[test]
 fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyhow::Result<()> {
-    let source_manifest = wamn_schema_generator::package_manifest_path(&package_root());
+    let source_manifest = package_root().join("wamn.k");
     let source_declaration = package_root().join("publication/components/receiving.json.in");
     let manifest_before = std::fs::read(&source_manifest)?;
     let declaration_before = std::fs::read(&source_declaration)?;
     let scratch = ScratchRoot::create()?;
     let copies = scratch.path().join("packages");
     prepare_fresh_only_packages(&copies)?;
-    let base = copies.join("wamn_receiving");
-    let manifest: Value = serde_json::from_slice(&std::fs::read(
-        wamn_schema_generator::package_manifest_path(&base),
-    )?)?;
+    let base = super::package_copies::package(&copies, "wamn_receiving");
+    let manifest = std::fs::read_to_string(base.join("wamn.k"))?;
     let declaration: Value = serde_json::from_slice(&std::fs::read(
         base.join("publication/components/receiving.json.in"),
     )?)?;
-    assert_eq!(
-        manifest["custom_operations"]["receiving.record_receipt"]["fresh_only"],
-        true
-    );
+    assert!(manifest.contains(&format!(
+        "{RECORD_RECEIPT_COMMAND}            fresh_only = True\n"
+    )));
     assert_eq!(
         declaration["operations"][BASE_RECORD_RECEIPT_REFERENCE]["fresh-only"],
         true
@@ -160,13 +175,14 @@ async fn receiving_release_journey(
     );
     if let Some(root) = &inputs.fresh_only_packages {
         prepare_fresh_only_packages(root)?;
+        build_fresh_only_packages(root, &inputs.system_pg_url).await?;
     }
     if let Some(phase) = &inputs.overlay_compatibility {
         anyhow::ensure!(
             !fresh_only,
             "overlay compatibility cannot combine with fresh-only"
         );
-        overlay_compatibility::prepare(phase)?;
+        overlay_compatibility::prepare(phase, &inputs.system_pg_url).await?;
     }
     let system_url = inputs.system_pg_url.clone();
     let scratch = ScratchRoot::create()?;
