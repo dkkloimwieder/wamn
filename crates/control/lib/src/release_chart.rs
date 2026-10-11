@@ -201,8 +201,9 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
 /// which every environment shares (R6), and a second entry of one name is
 /// refused by server-side apply. The release passes `--environment` again in
 /// `extraArgs`, after the chart's, and the host keeps the last value as its
-/// release scope; its heartbeat names the chart's namespace, where the
-/// operator places the release's workloads.
+/// release scope. The host reads `WASMCLOUD_HOST_ENVIRONMENT` once, as its
+/// host namespace, which its heartbeat names and where the operator places
+/// the release's workloads; it is never the environment.
 /// `WAMN_DRAIN_BOUND_SECONDS` is the policy's drain bound, the one budget of
 /// the host's shutdown sequence, from the same value as the pods'
 /// `terminationGracePeriodSeconds` (R20).

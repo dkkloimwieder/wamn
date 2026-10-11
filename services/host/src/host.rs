@@ -137,15 +137,11 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_QUEUE_LEASE_TTL_MS", default_value_t = DEFAULT_QUEUE_LEASE_TTL_MS)]
     pub queue_lease_ttl_ms: u64,
 
-    /// The environment of this host's release scope. The operator chart passes
-    /// the pod namespace first; a release passes the environment name again in
-    /// its `extraArgs`, and the last value wins (R1, R6). Heartbeats advertise
-    /// the chart's `WASMCLOUD_HOST_ENVIRONMENT` instead, when it is set.
-    #[arg(
-        long = "environment",
-        env = "WASMCLOUD_HOST_ENVIRONMENT",
-        overrides_with = "environment"
-    )]
+    /// The environment of this host's release scope, and nothing else. The
+    /// operator chart passes the pod namespace first; a release passes the
+    /// environment name again in its `extraArgs`, and the last value wins
+    /// (R1, R6).
+    #[arg(long = "environment", overrides_with = "environment")]
     pub environment: Option<String>,
 
     /// Address for the workload HTTP server
@@ -556,7 +552,7 @@ fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
         .as_deref()
         .filter(|environment| !environment.is_empty())
         .context(
-            "a host that serves a release requires --environment/WASMCLOUD_HOST_ENVIRONMENT",
+            "a host that serves a release requires --environment",
         )?;
     Ok(ReleaseScope::new(
         project_env_tenant(org, &args.project, environment),
@@ -1431,11 +1427,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(host_name) = &args.host_name {
         builder = builder.with_host_name(host_name);
     }
-    if let Some(environment) = heartbeat_environment(
-        std::env::var("WASMCLOUD_HOST_ENVIRONMENT").ok(),
-        args.environment.as_ref(),
-    ) {
-        builder = builder.with_environment(&environment);
+    if let Some(namespace) = host_namespace(std::env::var("WASMCLOUD_HOST_ENVIRONMENT").ok()) {
+        builder = builder.with_environment(&namespace);
     }
 
     if let Some(starts) = args.max_concurrent_starts {
@@ -1853,15 +1846,13 @@ async fn load_local_materializer(
 /// the identity connection and the probe tasks, one second each.
 const EXIT_RESERVE: Duration = Duration::from_secs(2);
 
-/// The environment the heartbeat names: the pod namespace the operator chart
-/// sets in `WASMCLOUD_HOST_ENVIRONMENT`, because the operator's
+/// The host namespace the heartbeat names: the pod namespace the operator
+/// chart sets in `WASMCLOUD_HOST_ENVIRONMENT`, because the operator's
 /// `allowSharedHosts: false` lock places a WorkloadDeployment only on hosts
-/// whose environment is its namespace, which every environment's release
-/// shares (R6). The release's last `--environment` names the scope only.
-fn heartbeat_environment(chart: Option<String>, argument: Option<&String>) -> Option<String> {
-    chart
-        .filter(|namespace| !namespace.is_empty())
-        .or_else(|| argument.cloned())
+/// of its namespace, which every environment's release shares (R6). It is
+/// never the environment: `--environment` names the release scope only.
+fn host_namespace(chart: Option<String>) -> Option<String> {
+    chart.filter(|namespace| !namespace.is_empty())
 }
 
 /// The one budget of the shutdown sequence (R20): the drain bound, less the
@@ -2033,7 +2024,7 @@ mod tests {
     }
 
     #[test]
-    fn the_heartbeat_names_the_chart_environment_not_the_last_argument() {
+    fn the_host_namespace_is_the_chart_variable_and_never_the_environment() {
         let args = parse([
             "host",
             "--environment",
@@ -2045,18 +2036,11 @@ mod tests {
         .args;
         assert_eq!(args.environment.as_deref(), Some("staging"));
         assert_eq!(
-            heartbeat_environment(Some("wamn-system".to_owned()), args.environment.as_ref())
-                .as_deref(),
+            host_namespace(Some("wamn-system".to_owned())).as_deref(),
             Some("wamn-system")
         );
-        assert_eq!(
-            heartbeat_environment(Some(String::new()), args.environment.as_ref()).as_deref(),
-            Some("staging")
-        );
-        assert_eq!(
-            heartbeat_environment(None, args.environment.as_ref()).as_deref(),
-            Some("staging")
-        );
+        assert_eq!(host_namespace(Some(String::new())), None);
+        assert_eq!(host_namespace(None), None);
     }
 
     #[derive(Debug, clap::Parser)]
