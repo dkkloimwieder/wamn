@@ -23,6 +23,10 @@ enum Command {
     Dev(Box<DevArgs>),
     /// Build a web client and write it to a bucket.
     Web(wamn_ctl::web::WebArgs),
+    /// Print layer 0, the canonical wamn.json, of a pushed package artifact.
+    Inspect(wamn_ctl::artifact_verbs::InspectArgs),
+    /// Print where layer 0 of two pushed package artifacts differs.
+    Diff(wamn_ctl::artifact_verbs::DiffArgs),
 }
 
 /// `wamn dev` either runs the loop from its own flags or takes `up` and stands
@@ -76,6 +80,8 @@ async fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Build(args) => wamn_ctl::build_verbs::run(args).await,
         Command::Web(args) => wamn_ctl::web::run(args).await,
+        Command::Inspect(args) => wamn_ctl::artifact_verbs::inspect(args).await,
+        Command::Diff(args) => wamn_ctl::artifact_verbs::diff(args).await,
         Command::Dev(dev) => match dev.environment {
             Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(*args).await,
             Some(DevEnvironmentCommand::Down(args)) => wamn_ctl::dev::up::down(args).await,

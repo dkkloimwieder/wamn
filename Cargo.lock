@@ -5954,6 +5954,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-execution-contract",
  "wamn-fixture-package",
+ "wamn-package-artifact",
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-project-state",
