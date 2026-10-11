@@ -51,7 +51,7 @@ mod tests {
     /// environment is fixed configuration rather than a per-request choice.
     /// wamn-0h0g.8.5.3 adds the second, separate project-database admission
     /// input alongside it.
-    const SERVE: [&str; 16] = [
+    const SERVE: [&str; 20] = [
         "wamn-scenario-worker",
         "serve",
         "--system-url",
@@ -68,6 +68,10 @@ mod tests {
         "dev",
         "--tenant",
         "tenant-a",
+        "--package-artifact-base",
+        "registry.invalid/wamn/packages",
+        "--registry-auth-file",
+        "config.json",
     ];
 
     #[test]
