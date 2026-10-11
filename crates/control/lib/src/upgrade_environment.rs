@@ -2126,21 +2126,19 @@ impl GateService {
 }
 
 /// The one release that the active connection bindings of the environment
-/// name, other than `except`. None when no such binding is active. Refused
-/// when they name more than one release (docs/plan/platform-deploy.md §13, R22).
+/// name. None when no binding is active. Refused when they name more than one
+/// release (docs/plan/platform-deploy.md §13, R22).
 async fn bound_release(
     client: &tokio_postgres::Client,
     tenant: &str,
     environment: &str,
-    except: Option<&str>,
 ) -> anyhow::Result<Option<String>> {
     let digests = client
         .query(
             "SELECT DISTINCT manifest_digest FROM catalog.connection_bindings
               WHERE tenant_id = $1 AND environment = $2 AND binding_status = 'active'
-                AND manifest_digest IS DISTINCT FROM $3
               ORDER BY manifest_digest",
-            &[&tenant, &environment, &except],
+            &[&tenant, &environment],
         )
         .await
         .context("read the releases of the active connection bindings")?
@@ -2160,8 +2158,10 @@ async fn bound_release(
 /// Copies each active binding of the current release of the environment to
 /// the new release, with the digest that the verified package artifacts
 /// carry for the same component (owner ruling of 2026-10-02 on `wamn-m511.5`).
-/// The current release is the one the active bindings name, other than the
-/// new release. Its manifest names the component of each bound digest.
+/// The current release is the one release the active bindings name; bindings
+/// that name two releases refuse. Its manifest names the component of each
+/// bound digest. When the bindings already name the new release, there is
+/// nothing to copy.
 async fn copy_bindings(
     run: &Run,
     databases: &Databases,
@@ -2170,16 +2170,14 @@ async fn copy_bindings(
 ) -> anyhow::Result<Vec<(String, String)>> {
     let mut client = databases.project().await?;
     // An environment with no active binding binds nothing yet.
-    let Some(current) = bound_release(
-        &client,
-        &databases.tenant,
-        &run.arguments.environment,
-        Some(release),
-    )
-    .await?
+    let Some(current) =
+        bound_release(&client, &databases.tenant, &run.arguments.environment).await?
     else {
         return Ok(Vec::new());
     };
+    if current == release {
+        return Ok(Vec::new());
+    }
     let transaction = client.transaction().await?;
     let bytes = crate::publish_release::read_release(&transaction, &databases.tenant, &current)
         .await?
