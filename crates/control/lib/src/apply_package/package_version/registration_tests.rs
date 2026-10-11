@@ -45,8 +45,8 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
     let _lock = wamn_test_postgres::lock();
     let hash = format!("sha256:{}", "a".repeat(64));
     let other_hash = format!("sha256:{}", "b".repeat(64));
-    // The system copy of catalog.packages has no writer and waits for Epic 9,
-    // so registration runs against the project copy only.
+    // Registration runs against catalog.packages in the project database, the
+    // only copy.
     {
         let database = wamn_catalog::test_database::tenant();
         let url = database.url();

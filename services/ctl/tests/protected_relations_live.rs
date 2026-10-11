@@ -219,20 +219,13 @@ async fn install_project_database(client: &Client, url: &str) {
         .expect("install canonical management-admission authority");
 }
 
-/// Portable relations the control store installs that the project plane also
-/// installs, so both copies must carry an identical column and constraint shape.
-// catalog.packages is left out: the project copy records artifact_digest
-// (project migration 0018, wamn-vavs4.4), and the system copy keeps
-// manifest_sha256 until Epic 9, which owns the system copy and removes it.
-const SHARED_PORTABLE_RELATIONS: [&str; 1] = ["catalog.package_migrations"];
-
 /// Portable relations both planes install whose shapes DELIBERATELY diverge by
 /// one column, ruled 2026-09-09 on wamn-10yt.52. The component library left
 /// both planes in wamn-vavs4.7.
 ///
 /// # What the retired arm asserted
 ///
-/// These used to sit in [`SHARED_PORTABLE_RELATIONS`], where
+/// These used to sit in a list of relations shared by both planes, where
 /// `assert_eq!(control_shared_fingerprints, project_shared_fingerprints,
 /// "control copies drifted from the still-authoritative project column/constraint
 /// shapes")` required their control and project copies to be IDENTICAL in every column
@@ -259,13 +252,12 @@ const DIVERGENCE_COLUMN: &str = "environment_instance";
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 7] = [
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 6] = [
     "catalog.authoring_command_audit",
     // The project plane keeps a release as its manifest bytes in
     // `catalog.releases` (platform-deploy.md R1); these release identity rows
     // are control-plane shapes.
     "catalog.effective_releases",
-    "catalog.effective_release_packages",
     "catalog.deployment_attestations",
     // The projected environment identity is a CONTROL fact: the project plane
     // has no `registry.project_envs` to project from, and its own catalog is
@@ -504,8 +496,6 @@ async fn protected_relations_match_reconciled_postgres() {
     );
     prepare_scratch_database(&client).await;
     install_control_database(&client).await;
-    let control_shared_fingerprints =
-        portable_fingerprints(&client, &SHARED_PORTABLE_RELATIONS).await;
     let control_diverged_fingerprints =
         portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await;
     let control_only_fingerprints =
@@ -518,14 +508,7 @@ async fn protected_relations_match_reconciled_postgres() {
     );
     assert_author_sql_boundaries(&client, true).await;
     install_project_database(&client, &url).await;
-    let project_shared_fingerprints =
-        portable_fingerprints(&client, &SHARED_PORTABLE_RELATIONS).await;
-    assert_eq!(
-        control_shared_fingerprints, project_shared_fingerprints,
-        "control copies drifted from the still-authoritative project column/constraint shapes"
-    );
-    // The two relations this equality no longer covers, and the narrower rule
-    // that replaced it for them (wamn-10yt.52).
+    // The relation that diverges by one column (wamn-10yt.52).
     assert_diverges_by_environment_instance(
         &control_diverged_fingerprints,
         &portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await,

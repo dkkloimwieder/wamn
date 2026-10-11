@@ -172,7 +172,7 @@ fn control_portable_store_enforces_the_current_record_on_postgres() {
 
     psql_ok(
         &url,
-        "check the installed package/release record",
+        "check the installed release record",
         r"
 SET ROLE wamn_system;
 SET app.tenant = 'tenant-a';
@@ -187,9 +187,8 @@ BEGIN
     FROM pg_tables WHERE schemaname = 'catalog';
   ASSERT catalog_tables = ARRAY[
     'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
-    'effective_release_packages',
-    'effective_releases', 'package_artifacts', 'package_migrations',
-    'packages', 'qualifications', 'tenant_environments'
+    'effective_releases', 'package_artifacts', 'qualifications',
+    'tenant_environments'
   ]::text[], format('catalog table list drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
@@ -216,29 +215,16 @@ BEGIN
 END
 $shape$;
 
-INSERT INTO catalog.packages
-  (tenant_id, package_id, package_version, manifest_sha256, predecessor_version)
-VALUES ('tenant-a', 'widgets', '1.0.0', 'sha256:' || repeat('a', 64), NULL);
-
-INSERT INTO catalog.package_migrations
-  (tenant_id, package_id, package_version, ordinal, relative_path, sha256)
-VALUES
-  ('tenant-a', 'widgets', '1.0.0', 1, 'migrations/0001_initial.sql',
-   'sha256:' || repeat('c', 64));
+INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
+INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
 DO $immutable$ BEGIN
   BEGIN
-    UPDATE catalog.package_migrations SET sha256 = 'sha256:' || repeat('d', 64);
-    ASSERT false, 'the exact-byte record mutated';
+    UPDATE catalog.effective_releases SET environment = 'prod';
+    ASSERT false, 'the effective release mutated';
   EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
   END;
 END
 $immutable$;
-
-INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
-INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
-INSERT INTO catalog.effective_release_packages
-  (tenant_id, manifest_digest, package_id, package_version)
-VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'widgets', '1.0.0');
 
 
 
@@ -380,21 +366,15 @@ INSERT INTO wamn_authority.author_login_tenants
   (login_identity, tenant_id, org_id, project_id, environment)
 VALUES ('{author_a}', 'tenant-a', 'acme', 'widgets', 'dev'),
        ('{author_b}', 'tenant-b', 'acme', 'shipping', 'dev');
-DO $seed$ DECLARE tenant text; package text; release text; BEGIN
-  FOR tenant, package, release IN
+DO $seed$ DECLARE tenant text; release text; BEGIN
+  FOR tenant, release IN
     SELECT * FROM (VALUES
-      ('tenant-a', 'widgets', 'sha256:' || repeat('1', 64)),
-      ('tenant-b', 'shipping', 'sha256:' || repeat('2', 64))
-    ) AS seed(tenant, package, release)
+      ('tenant-a', 'sha256:' || repeat('1', 64)),
+      ('tenant-b', 'sha256:' || repeat('2', 64))
+    ) AS seed(tenant, release)
   LOOP
     PERFORM set_config('app.tenant', tenant, false);
-    INSERT INTO catalog.packages
-      (tenant_id, package_id, package_version, manifest_sha256, predecessor_version)
-    VALUES (tenant, package, '1.0.0', 'sha256:' || repeat('a', 64), NULL);
     INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES (tenant, release, 'dev');
-    INSERT INTO catalog.effective_release_packages
-      (tenant_id, manifest_digest, package_id, package_version)
-    VALUES (tenant, release, package, '1.0.0');
     INSERT INTO catalog.connection_requirements
       (tenant_id, environment_instance, component_digest, store_alias,
        requirement_json, requirement_hash)
@@ -461,9 +441,6 @@ $narrowed$;
 
 SET app.tenant = 'tenant-a';
 DO $denied$ BEGIN
-  BEGIN PERFORM 1 FROM catalog.packages;
-    ASSERT false, 'the author read package custody facts';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM 1 FROM catalog.deployment_attestations;
     ASSERT false, 'the author read deployment attestations';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;

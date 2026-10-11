@@ -216,6 +216,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0026_package_artifact_verified_at.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0027_remove_package_copies.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0027_remove_package_copies.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

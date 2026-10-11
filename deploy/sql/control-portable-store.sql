@@ -1,52 +1,3 @@
-CREATE TABLE catalog.packages (
-    tenant_id          text        NOT NULL CHECK (tenant_id <> ''),
-    package_id         text        NOT NULL,
-    package_version    text        NOT NULL,
-    predecessor_version text,
-    manifest_sha256    text        NOT NULL,
-    registered_at      timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT packages_pkey PRIMARY KEY (tenant_id, package_id, package_version),
-    CONSTRAINT packages_package_id_check
-        CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
-    CONSTRAINT packages_package_version_check CHECK (
-        package_version <> ''
-        AND package_version = btrim(package_version)
-        AND strpos(package_version, '@') = 0
-        AND strpos(package_version, '::') = 0
-    ),
-    CONSTRAINT packages_predecessor_version_check CHECK (
-        predecessor_version IS NULL OR (
-            predecessor_version <> ''
-            AND predecessor_version = btrim(predecessor_version)
-            AND strpos(predecessor_version, '@') = 0
-            AND strpos(predecessor_version, '::') = 0
-        )
-    ),
-    CONSTRAINT packages_manifest_sha256_check
-        CHECK (manifest_sha256 ~ '^sha256:[0-9a-f]{64}$')
-);
-
-CREATE UNIQUE INDEX packages_one_successor_per_version
-    ON catalog.packages (tenant_id, package_id, predecessor_version)
-    WHERE predecessor_version IS NOT NULL;
-
-CREATE TABLE catalog.package_migrations (
-    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
-    package_id      text        NOT NULL CHECK (package_id <> ''),
-    package_version text        NOT NULL CHECK (package_version <> ''),
-    ordinal         int         NOT NULL CHECK (ordinal > 0),
-    relative_path   text        NOT NULL CHECK (relative_path ~ '^migrations/[0-9]{4}_[a-z0-9_]+\.sql$'),
-    sha256          text        NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
-    applied_at      timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT package_migrations_pkey
-        PRIMARY KEY (tenant_id, package_id, package_version, ordinal),
-    CONSTRAINT package_migrations_path_key
-        UNIQUE (tenant_id, package_id, package_version, relative_path),
-    CONSTRAINT package_migrations_package_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version)
-);
-
 -- A release is named by its manifest digest (docs/plan/platform-deploy.md R1).
 CREATE TABLE catalog.effective_releases (
     tenant_id                    text        NOT NULL CHECK (tenant_id <> ''),
@@ -62,86 +13,6 @@ CREATE TABLE catalog.effective_releases (
     CONSTRAINT effective_releases_environment_key
         UNIQUE (tenant_id, manifest_digest, environment)
 );
-
-CREATE TABLE catalog.effective_release_packages (
-    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
-    manifest_digest      text NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    package_id           text NOT NULL CHECK (package_id <> ''),
-    package_version      text NOT NULL CHECK (package_version <> ''),
-    CONSTRAINT effective_release_packages_pkey
-        PRIMARY KEY (tenant_id, manifest_digest, package_id),
-    CONSTRAINT effective_release_packages_exact_pair_key
-        UNIQUE (tenant_id, manifest_digest, package_id, package_version),
-    CONSTRAINT effective_release_packages_release_fkey
-        FOREIGN KEY (tenant_id, manifest_digest)
-        REFERENCES catalog.effective_releases (tenant_id, manifest_digest),
-    CONSTRAINT effective_release_packages_package_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version)
-);
-
--- Immutable release membership is the sole package-coordinate seal. Both the
--- publisher and migration table serialize on the package row, so whichever
--- commits first determines whether one last migration precedes the seal or is
--- refused after it. There is no second seal flag or snapshot of release records.
-CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    PERFORM 1
-      FROM catalog.packages
-     WHERE tenant_id = NEW.tenant_id
-       AND package_id = NEW.package_id
-       AND package_version = NEW.package_version
-     FOR UPDATE;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION catalog.lock_package_coordinate_for_release_membership() FROM PUBLIC;
-
-CREATE TRIGGER effective_release_packages_seal_coordinate
-    BEFORE INSERT ON catalog.effective_release_packages
-    FOR EACH ROW
-    EXECUTE FUNCTION catalog.lock_package_coordinate_for_release_membership();
-
-CREATE FUNCTION catalog.reject_package_migration_after_release_membership()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    PERFORM 1
-      FROM catalog.packages
-     WHERE tenant_id = NEW.tenant_id
-       AND package_id = NEW.package_id
-       AND package_version = NEW.package_version
-     FOR UPDATE;
-
-    IF EXISTS (
-        SELECT 1
-          FROM catalog.effective_release_packages
-         WHERE tenant_id = NEW.tenant_id
-           AND package_id = NEW.package_id
-           AND package_version = NEW.package_version
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'package-version-sealed',
-            DETAIL = format(
-                'coordinate=%s@%s belongs to an effective release',
-                NEW.package_id, NEW.package_version
-            ),
-            HINT = 'create and apply a new package version for additional migrations';
-    END IF;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION catalog.reject_package_migration_after_release_membership() FROM PUBLIC;
-
-CREATE TRIGGER package_migrations_release_seal
-    BEFORE INSERT ON catalog.package_migrations
-    FOR EACH ROW
-    EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
 -- `environment_instance` names WHICH CREATION of the project database this fact
 -- belongs to (wamn-10yt.52). The development loop drops and clones the project
@@ -331,9 +202,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.packages', 'catalog.package_migrations',
-        'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.connection_requirements',
+        'catalog.effective_releases', 'catalog.connection_requirements',
         'catalog.authoring_command_audit', 'catalog.deployment_attestations',
         'catalog.tenant_environments',
         'wamn_run.gate_reports'
@@ -360,9 +229,7 @@ BEGIN
     -- rather than editing the one whose database is gone, so there is nothing
     -- left for a conditional freeze to permit.
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.packages', 'catalog.package_migrations',
-        'catalog.effective_releases', 'catalog.effective_release_packages',
-        'catalog.authoring_command_audit', 'catalog.connection_requirements',
+        'catalog.effective_releases', 'catalog.authoring_command_audit', 'catalog.connection_requirements',
         'catalog.deployment_attestations', 'catalog.package_artifacts',
         'catalog.qualifications',
         'wamn_run.gate_reports'
@@ -460,9 +327,8 @@ BEGIN
       FROM pg_tables WHERE schemaname = 'catalog';
     IF catalog_tables IS DISTINCT FROM ARRAY[
         'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
-        'effective_release_packages',
-        'effective_releases', 'package_artifacts', 'package_migrations',
-        'packages', 'qualifications', 'tenant_environments'
+        'effective_releases', 'package_artifacts', 'qualifications',
+        'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';

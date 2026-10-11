@@ -44,7 +44,7 @@ const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
 /// The control tables that key rows by `tenant_id`, leaves first, each with
 /// its immutability trigger. The foreign keys have no `ON DELETE` clause, so
 /// this order is the one that deletes.
-pub const CONTROL_TABLES: [(&str, Option<&str>); 8] = [
+pub const CONTROL_TABLES: [(&str, Option<&str>); 5] = [
     (
         "catalog.deployment_attestations",
         Some("deployment_attestations_immutable"),
@@ -54,18 +54,9 @@ pub const CONTROL_TABLES: [(&str, Option<&str>); 8] = [
         Some("connection_requirements_immutable"),
     ),
     (
-        "catalog.effective_release_packages",
-        Some("effective_release_packages_immutable"),
-    ),
-    (
         "catalog.effective_releases",
         Some("effective_releases_immutable"),
     ),
-    (
-        "catalog.package_migrations",
-        Some("package_migrations_immutable"),
-    ),
-    ("catalog.packages", Some("packages_immutable")),
     (
         "catalog.authoring_command_audit",
         Some("authoring_command_audit_immutable"),
@@ -537,20 +528,23 @@ mod tests {
         let position = |table: &str| order.iter().position(|t| *t == table).unwrap();
         // Each child table before the table its foreign key names.
         assert!(
-            position("catalog.effective_release_packages") < position("catalog.effective_releases")
+            position("catalog.deployment_attestations") < position("catalog.effective_releases")
         );
-        assert!(position("catalog.package_migrations") < position("catalog.packages"));
         assert_eq!(
-            delete_control_rows_sql("catalog.packages", Some("packages_immutable"), "dev"),
+            delete_control_rows_sql(
+                "catalog.effective_releases",
+                Some("effective_releases_immutable"),
+                "dev"
+            ),
             [
-                "ALTER TABLE catalog.packages DISABLE TRIGGER \"packages_immutable\"",
-                "DELETE FROM catalog.packages WHERE tenant_id = 'dev'",
-                "ALTER TABLE catalog.packages ENABLE TRIGGER \"packages_immutable\"",
+                "ALTER TABLE catalog.effective_releases DISABLE TRIGGER \"effective_releases_immutable\"",
+                "DELETE FROM catalog.effective_releases WHERE tenant_id = 'dev'",
+                "ALTER TABLE catalog.effective_releases ENABLE TRIGGER \"effective_releases_immutable\"",
             ]
         );
         assert_eq!(
-            delete_control_rows_sql("catalog.packages", None, "dev"),
-            ["DELETE FROM catalog.packages WHERE tenant_id = 'dev'"]
+            delete_control_rows_sql("catalog.effective_releases", None, "dev"),
+            ["DELETE FROM catalog.effective_releases WHERE tenant_id = 'dev'"]
         );
     }
 }

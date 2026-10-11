@@ -21,17 +21,6 @@ INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
 SELECT $1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2::bytea";
 const PROJECT_MANIFEST: &[u8] =
     br#"{"release":{"packages":[{"package-id":"inventory","package-version":"1.0.0"}]}}"#;
-/// The control database keeps the membership rows of a release digest.
-const INSERT_CONTROL_MEMBERSHIP_SQL: &str = "\
-INSERT INTO catalog.effective_release_packages (\
-       tenant_id, manifest_digest, package_id, package_version\
-     ) VALUES ($1, 'sha256:' || repeat('1', 64), $2, $3)";
-
-#[derive(Clone, Copy)]
-enum Store {
-    Project,
-    Control,
-}
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -43,21 +32,12 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-async fn seed_package_and_release(client: &Client, store: Store) {
+async fn seed_package(client: &Client) {
     client
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
         .expect("claim the test tenant");
-    // The project store records the package artifact digest. The control
-    // store still records the wamn.json hash.
-    let insert_package = match store {
-        Store::Project => {
-            "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)"
-        }
-        Store::Control => {
-            "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256, predecessor_version) VALUES ($1, $2, $3, $4, $5)"
-        }
-    };
+    let insert_package = "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)";
     for (package_id, package_version, predecessor_version) in [
         ("inventory", "1.0.0", None),
         ("inventory", "2.0.0", Some("1.0.0")),
@@ -90,21 +70,9 @@ async fn seed_package_and_release(client: &Client, store: Store) {
         )
         .await
         .expect("record the migration that precedes release membership");
-    if matches!(store, Store::Control) {
-        client
-            .execute(
-                "INSERT INTO catalog.effective_releases (\
-                       tenant_id, manifest_digest, environment, \
-                       verified_publisher_principal\
-                     ) VALUES ($1, 'sha256:' || repeat('1', 64), 'dev', 'publisher')",
-                &[&TENANT],
-            )
-            .await
-            .expect("register release identities");
-    }
 }
 
-async fn assert_immutable_rows(client: &Client, store: Store) {
+async fn assert_immutable_rows(client: &Client) {
     let row = client
         .query_one(
             "SELECT pg_get_userbyid(proowner)::text, current_user::text, \
@@ -116,11 +84,7 @@ async fn assert_immutable_rows(client: &Client, store: Store) {
         )
         .await
         .expect("read the installed integrity function owner and privileges");
-    let expected_owner = match store {
-        Store::Project => row.get::<_, String>(1),
-        Store::Control => "wamn_system".to_owned(),
-    };
-    assert_eq!(row.get::<_, String>(0), expected_owner);
+    assert_eq!(row.get::<_, String>(0), row.get::<_, String>(1));
     assert!(
         row.get::<_, bool>(2),
         "PUBLIC cannot execute the integrity function"
@@ -145,10 +109,10 @@ async fn assert_immutable_rows(client: &Client, store: Store) {
     }
 }
 
-async fn assert_package_seal(url: &str, store: Store) {
+async fn assert_package_seal(url: &str) {
     let installer = connect(url).await;
-    seed_package_and_release(&installer, store).await;
-    assert_immutable_rows(&installer, store).await;
+    seed_package(&installer).await;
+    assert_immutable_rows(&installer).await;
 
     let mut publisher = connect(url).await;
     let migrator = connect(url).await;
@@ -164,17 +128,10 @@ async fn assert_package_seal(url: &str, store: Store) {
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
         .await
         .expect("claim the publication tenant");
-    match store {
-        Store::Project => {
-            publication.execute(INSERT_PROJECT_MEMBERSHIP_SQL, &[&TENANT, &PROJECT_MANIFEST])
-        }
-        Store::Control => publication.execute(
-            INSERT_CONTROL_MEMBERSHIP_SQL,
-            &[&TENANT, &"inventory", &"1.0.0"],
-        ),
-    }
-    .await
-    .expect("insert the first membership while holding the package row");
+    publication
+        .execute(INSERT_PROJECT_MEMBERSHIP_SQL, &[&TENANT, &PROJECT_MANIFEST])
+        .await
+        .expect("insert the first membership while holding the package row");
 
     let late_hash = format!("sha256:{}", "c".repeat(64));
     let late_ordinal = 2_i32;
@@ -245,8 +202,22 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
     let control = wamn_control_provision::test_database::system();
     let url = control.url();
 
-    assert_package_seal(&project, Store::Project).await;
-    assert_package_seal(url, Store::Control).await;
+    assert_package_seal(&project).await;
+    let control_client = connect(url).await;
+    control_client
+        .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .await
+        .expect("claim the test tenant");
+    control_client
+        .execute(
+            "INSERT INTO catalog.effective_releases (\
+                   tenant_id, manifest_digest, environment, \
+                   verified_publisher_principal\
+                 ) VALUES ($1, 'sha256:' || repeat('1', 64), 'dev', 'publisher')",
+            &[&TENANT],
+        )
+        .await
+        .expect("register the release identity");
 
     let scope = wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev");
     let coordinate = DeploymentCoordinate::new("demo", "inventory", &scope, &digest('1'));
