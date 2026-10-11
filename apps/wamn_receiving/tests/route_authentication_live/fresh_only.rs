@@ -232,6 +232,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
             registry: registry.clone(),
             component_artifact_base: test.inputs.component_artifact_base.clone(),
             source_commit: None,
+            build_database_url: None,
         },
     )
     .await
