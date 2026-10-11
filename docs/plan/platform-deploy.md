@@ -517,6 +517,7 @@ One word per thing; the third column is retired (R14).
 | release | a manifest naming packages and components by digest; identified by its sha256 | effective release, release id |
 | application | a release deployed in an environment | — |
 | environment | `(org, project, env)`: one Helm release, a `Database` CR, a project database, an environment row | project env |
+| host namespace | the Kubernetes namespace of the release, which the host advertises in its heartbeat; owned by the `release` chart through `WASMCLOUD_HOST_ENVIRONMENT`, named `host_namespace` in wamn code; never called environment. `environment` is only the coordinate's env, owned by the document, and the host's `--environment` is the release scope only | heartbeat environment |
 | publish | `publish-release`: make a release exist in OCI | push-release-manifest, prepare-release, publication (the verb) |
 | `publication/` | the authored attachments directory | — |
 | attachment | an authored entry binding a route or wiring to an operation | — |
