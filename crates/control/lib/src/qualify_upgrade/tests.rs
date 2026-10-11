@@ -552,3 +552,27 @@ fn the_predecessor_release_must_name_the_installed_versions() {
         "predecessor release sha256:a names other@1.0.0, which is not installed"
     );
 }
+
+/// `--predecessor-release` names a row of `catalog.releases`. A digest that
+/// no row holds refuses before qualification writes evidence or changes the
+/// source (docs/plan/platform-deploy.md §13).
+#[tokio::test]
+async fn a_predecessor_release_outside_catalog_releases_refuses() {
+    let mut fixture = fixture("unknown-predecessor", false).await;
+    let original = state(&mut fixture.source).await;
+    let unknown = format!("sha256:{}", "f".repeat(64));
+    let mut qualification = request(&fixture, "unknown-predecessor.json");
+    qualification.predecessor_release.clone_from(&unknown);
+    let error = qualify_upgrade_with_observer(
+        qualification,
+        WorkloadObserver::Captured(fixture.serving.clone()),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains(&format!("catalog.releases holds no release {unknown}")),
+        "{error:#}"
+    );
+    assert!(!fixture.root.join("unknown-predecessor.json").exists());
+    assert_eq!(state(&mut fixture.source).await, original);
+}

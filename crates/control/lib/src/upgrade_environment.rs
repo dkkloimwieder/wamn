@@ -3185,6 +3185,36 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// `--predecessor-release` is an input of the package stage, which
+    /// passes it to qualify-upgrade, and of no other stage.
+    #[test]
+    fn the_predecessor_release_is_an_input_of_the_package_stage_only() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let run = Run {
+            repository: PathBuf::from("/repository"),
+            work: PathBuf::from("/work"),
+            checkout: PathBuf::from("/work/checkout"),
+            arguments: RunArguments::new("dkk", "receiving", "dev", &"0".repeat(40)).unwrap(),
+            predecessor_release: Some(digest.clone()),
+        };
+        assert_eq!(
+            run.inputs(Stage::Packages).get("predecessor_release"),
+            Some(&digest)
+        );
+        for stage in [Stage::Source, Stage::Schema, Stage::Publish] {
+            assert!(!run.inputs(stage).contains_key("predecessor_release"));
+        }
+        let without = Run {
+            predecessor_release: None,
+            ..run
+        };
+        assert!(
+            !without
+                .inputs(Stage::Packages)
+                .contains_key("predecessor_release")
+        );
+    }
+
     #[test]
     fn quantities_read_in_millicores_and_bytes() {
         assert_eq!(cpu("500m").unwrap(), 500);

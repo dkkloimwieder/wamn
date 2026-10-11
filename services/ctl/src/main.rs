@@ -219,6 +219,87 @@ mod tests {
         }
     }
 
+    const PREDECESSOR: &str =
+        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+    /// `qualify-upgrade` needs `--predecessor-release` and passes it on.
+    #[test]
+    fn qualify_upgrade_requires_the_predecessor_release() {
+        let mut values = vec![
+            "wamn-ctl",
+            "qualify-upgrade",
+            "--package",
+            "orders-2.0.0",
+            "--presented-package",
+            "orders-2.0.0",
+            "--artifact-base",
+            "registry.example/wamn/packages",
+            "--registry-auth-file",
+            "/run/registry/config.json",
+            "--control-database-url",
+            "postgres://control.invalid/wamn_system",
+            "--database-url",
+            "postgres://project.invalid/project",
+            "--tenant",
+            "acme--plant--dev",
+            "--environment",
+            "dev",
+            "--result",
+            "/tmp/qualification.json",
+            "--kubeconfig",
+            "/run/kubeconfig",
+            "--context",
+            "dev",
+            "--namespace",
+            "hosts",
+            "--host-deployment",
+            "host",
+        ];
+        let Err(missing) = Cli::try_parse_from(values.clone()) else {
+            panic!("qualify-upgrade without a predecessor release refuses");
+        };
+        assert_eq!(
+            missing.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(missing.to_string().contains("--predecessor-release"));
+        values.extend(["--predecessor-release", PREDECESSOR]);
+        let Command::QualifyUpgrade(args) = Cli::try_parse_from(values).unwrap().command else {
+            panic!("expected qualify-upgrade");
+        };
+        assert_eq!(args.predecessor_release, PREDECESSOR);
+    }
+
+    /// `upgrade-environment` takes `--predecessor-release` as an optional
+    /// digest; the package stage refuses an installed upgrade without it.
+    #[test]
+    fn upgrade_environment_takes_an_optional_predecessor_release() {
+        let commit = "a".repeat(40);
+        let values = [
+            "wamn-ctl",
+            "upgrade-environment",
+            "--org",
+            "acme",
+            "--project",
+            "plant",
+            "--env",
+            "dev",
+            "--commit",
+            commit.as_str(),
+        ];
+        let Command::UpgradeEnvironment(args) = Cli::try_parse_from(values).unwrap().command else {
+            panic!("expected upgrade-environment");
+        };
+        assert_eq!(args.predecessor_release, None);
+        let with = values
+            .into_iter()
+            .chain(["--predecessor-release", PREDECESSOR]);
+        let Command::UpgradeEnvironment(args) = Cli::try_parse_from(with).unwrap().command else {
+            panic!("expected upgrade-environment");
+        };
+        assert_eq!(args.predecessor_release.as_deref(), Some(PREDECESSOR));
+    }
+
     #[test]
     fn workflow_verbs_parse_their_scope_after_the_verb() {
         let cli = Cli::try_parse_from([
