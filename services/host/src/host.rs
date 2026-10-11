@@ -137,9 +137,10 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_QUEUE_LEASE_TTL_MS", default_value_t = DEFAULT_QUEUE_LEASE_TTL_MS)]
     pub queue_lease_ttl_ms: u64,
 
-    /// Environment advertised in heartbeats. The operator chart passes the pod
-    /// namespace first; a release passes the environment name again in its
-    /// `extraArgs`, and the last value wins (R1, R6).
+    /// The environment of this host's release scope. The operator chart passes
+    /// the pod namespace first; a release passes the environment name again in
+    /// its `extraArgs`, and the last value wins (R1, R6). Heartbeats advertise
+    /// the chart's `WASMCLOUD_HOST_ENVIRONMENT` instead, when it is set.
     #[arg(
         long = "environment",
         env = "WASMCLOUD_HOST_ENVIRONMENT",
@@ -1430,8 +1431,17 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(host_name) = &args.host_name {
         builder = builder.with_host_name(host_name);
     }
-    if let Some(environment) = &args.environment {
-        builder = builder.with_environment(environment);
+    // The heartbeat names the pod namespace the operator chart sets, because
+    // the operator's `allowSharedHosts: false` lock places a WorkloadDeployment
+    // only on hosts whose environment is its namespace, which every
+    // environment's release shares (R6). The release's last `--environment`
+    // names the scope only.
+    if let Some(environment) = std::env::var("WASMCLOUD_HOST_ENVIRONMENT")
+        .ok()
+        .filter(|namespace| !namespace.is_empty())
+        .or_else(|| args.environment.clone())
+    {
+        builder = builder.with_environment(&environment);
     }
 
     if let Some(starts) = args.max_concurrent_starts {

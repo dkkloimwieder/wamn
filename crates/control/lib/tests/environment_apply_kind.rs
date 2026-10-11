@@ -62,7 +62,13 @@
 //! `wamn build apps/edge_device` of this checkout. Releases A and B name fake
 //! component digests, which no host pulls: they have no route. Release H names
 //! the admitted `device` descriptor, whose bytes `push-package` pushed, because
-//! its hosts pull and compile the component of its route.
+//! its hosts pull and compile the component of its route, and carries its
+//! operation as publish projects it, because a host refuses to preload an
+//! operation that does not carry the admitted one.
+//!
+//! A run with a failed check keeps a `diagnostics` row in `report.json`: the
+//! events, the descriptions, the container logs and, for a failed rollout,
+//! the same taken before Helm's rollback removed its pods.
 //!
 //! Run (epic closeout only), after `wamn build apps/edge_device`:
 //! `WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
@@ -108,11 +114,14 @@ const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"compon
 const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":7,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"edge_device","wiring-id":"orders","wiring-version":1}]}}"#;
 /// The third fixture release, H: the same package with one http attachment,
 /// served with no authentication, so its environments render the http role.
-/// Its one component is the admitted `device` component, whose descriptor
-/// replaces `null`; `@OPERATION@` is that descriptor's one operation.
-const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"modes":["none"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"@OPERATION@","package-id":"edge_device","type":"http"}},"components":[{"descriptor":null,"operations":{"@OPERATION@":{}},"package-id":"edge_device"}],"format-version":7,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[{"component":"device","operation":"@OPERATION@","package-id":"edge_device","type":"get"}],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"edge_device","wiring-id":"orders","wiring-version":1}]}}"#;
+/// Its one component, `null` here, is the admitted `device` component as
+/// publish projects it; `@OPERATION@` is that component's one operation.
+const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"modes":["none"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"@OPERATION@","package-id":"edge_device","type":"http"}},"components":[null],"format-version":7,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[{"component":"device","operation":"@OPERATION@","package-id":"edge_device","type":"get"}],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"edge_device","wiring-id":"orders","wiring-version":1}]}}"#;
 /// The route guest's refusal of a path the release does not serve.
 const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
+/// When a rollout's diagnostics are taken: a minute before the `dev` policy's
+/// 600 s readiness budget, which is Helm's `--timeout`, ends.
+const ROLLOUT_SNAPSHOT: Duration = Duration::from_secs(540);
 /// A role image no WorkloadDeployment pulls: no fixture release has a
 /// registration, so no materializer renders.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
@@ -316,6 +325,23 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
     let result = Box::pin(scenario(&mut run, &repository, &host_image)).await;
     let elapsed = started.elapsed().as_secs();
     run.record("duration", "", json!({"seconds": elapsed}), "info");
+    if result.is_err() || run.report.iter().any(|row| row["result"] == "fail") {
+        let mut observed = diagnostics(&run.work.join("kubeconfig")).await;
+        observed["error"] = json!(result.as_ref().err().map(|error| format!("{error:#}")));
+        for entry in std::fs::read_dir(&run.work)?.flatten() {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            if file.starts_with("rollout-") {
+                observed["rollouts"][file] =
+                    serde_json::from_slice(&std::fs::read(entry.path())?).unwrap_or(Value::Null);
+            }
+        }
+        run.record(
+            "diagnostics",
+            "kubectl get events -A; kubectl -n wamn-system describe deployments,workloaddeployments,workloads,pods; kubectl logs --tail=80 (and --previous) of every container",
+            observed,
+            "info",
+        );
+    }
     std::fs::write(
         run.work.join("report.json"),
         serde_json::to_vec_pretty(&run.report)?,
@@ -701,7 +727,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
             .context("the fixture package admits its device component")?;
     let manifest_a = release(MANIFEST, &version, None)?;
     let manifest_b = release(MANIFEST_B, &version, None)?;
-    let manifest_h = release(MANIFEST_H, &version, Some(&serde_json::to_value(&device)?))?;
+    let manifest_h = release(MANIFEST_H, &version, Some(&device))?;
 
     // The http role image: the route guest, built as the Dockerfile builds it
     // and pushed to the registry as a wasm component.
@@ -816,11 +842,14 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     }
     system_task.abort();
 
-    // The platform part of the host group: the registry mount.
+    // The platform part of the host group: the registry mount, and the http
+    // listener that the http role's Service reaches, as every platform host
+    // group has (deploy/platform/values-host-default.yaml).
     std::fs::write(
         work.join("host-group.yaml"),
         serde_yaml::to_string(&json!({
             "replicas": 1,
+            "http": {"enabled": true, "port": 80},
             "env": [
                 {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
                 {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
@@ -860,12 +889,36 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         connections: std::collections::BTreeMap::new(),
         floors: std::collections::BTreeMap::new(),
     };
+    // A failed rollout is uninstalled by `--rollback-on-failure`, its pods
+    // with it, so its diagnostics are taken before the readiness budget ends
+    // and kept for the report when the apply fails.
     let apply = async |document: &EnvironmentDocument, name: &str| -> anyhow::Result<()> {
         let file = work.join(format!("{name}.k"));
         std::fs::write(&file, document.to_kcl())?;
-        let plan = environment::apply(&platform, &file).await?;
-        println!("{name}: {:?}", plan.plan);
-        Ok(())
+        let mut applying = Box::pin(environment::apply(&platform, &file));
+        let mut snapshot = None;
+        let applied = tokio::select! {
+            applied = &mut applying => applied,
+            () = tokio::time::sleep(ROLLOUT_SNAPSHOT) => {
+                snapshot = Some(diagnostics(&work.join("kubeconfig")).await);
+                applying.await
+            }
+        };
+        match applied {
+            Ok(plan) => {
+                println!("{name}: {:?}", plan.plan);
+                Ok(())
+            }
+            Err(error) => {
+                if let Some(snapshot) = snapshot {
+                    std::fs::write(
+                        work.join(format!("rollout-{name}.json")),
+                        serde_json::to_vec_pretty(&snapshot)?,
+                    )?;
+                }
+                Err(error)
+            }
+        }
     };
     let name = release_name(ORG, PROJECT, "dev")?;
 
@@ -1586,25 +1639,100 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     Ok(())
 }
 
+/// What a failed run keeps before its cluster goes: every event, a
+/// description of the Deployments, WorkloadDeployments, Workloads and pods of
+/// the operator namespace, and the last 80 lines of every container's log
+/// outside `kube-system`, with its previous run's when it restarted.
+async fn diagnostics(kubeconfig: &Path) -> Value {
+    let kubectl = async |args: &[&str]| -> String {
+        match Command::new("kubectl")
+            .args(args)
+            .env("KUBECONFIG", kubeconfig)
+            .kill_on_drop(true)
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).into_owned()
+            }
+            Ok(output) => String::from_utf8_lossy(&output.stderr).into_owned(),
+            Err(error) => format!("start kubectl: {error}"),
+        }
+    };
+    let lines = |text: String| -> Vec<String> { text.lines().map(str::to_owned).collect() };
+    let events = kubectl(&["get", "events", "-A", "--sort-by=.lastTimestamp"]).await;
+    let described = kubectl(&[
+        "-n",
+        NAMESPACE,
+        "describe",
+        "deployments,workloaddeployments,workloads,pods",
+    ])
+    .await;
+    let pods: Value = serde_json::from_str(&kubectl(&["get", "pods", "-A", "-o", "json"]).await)
+        .unwrap_or(Value::Null);
+    let mut logs = serde_json::Map::new();
+    for pod in pods["items"].as_array().into_iter().flatten() {
+        let namespace = pod["metadata"]["namespace"].as_str().unwrap_or_default();
+        let name = pod["metadata"]["name"].as_str().unwrap_or_default();
+        if namespace == "kube-system" {
+            continue;
+        }
+        for status in pod["status"]["containerStatuses"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let container = status["name"].as_str().unwrap_or_default();
+            let tail = ["-n", namespace, "logs", name, "-c", container, "--tail=80"];
+            let mut entry = json!({"log": lines(kubectl(&tail).await)});
+            if status["restartCount"].as_u64().unwrap_or(0) > 0 {
+                let previous = [&tail[..], &["--previous"]].concat();
+                entry["previous"] = json!(lines(kubectl(&previous).await));
+            }
+            logs.insert(format!("{namespace}/{name}/{container}"), entry);
+        }
+    }
+    json!({"events": lines(events), "describe": lines(described), "logs": logs})
+}
+
 /// The canonical bytes of a fixture release: `template` with the package
-/// version, and with `device` as its one component's descriptor and that
-/// descriptor's one operation as the operation of its route.
-fn release(template: &str, version: &str, device: Option<&Value>) -> anyhow::Result<Vec<u8>> {
+/// version, and with `device` as its one component, projected as publish
+/// projects it, and that component's one operation as the operation of its
+/// route. The host serves a route only from an operation that carries the
+/// admitted operation's facts (`validate_component_in_release`).
+fn release(
+    template: &str,
+    version: &str,
+    device: Option<&wamn_catalog::ComponentDescriptor>,
+) -> anyhow::Result<Vec<u8>> {
     let mut text = template.replace("@VERSION@", version);
     if let Some(device) = device {
-        let operations = device["operations"]
-            .as_object()
-            .context("the device descriptor has operations")?;
         ensure!(
-            operations.len() == 1,
+            device.operations.len() == 1,
             "the device descriptor has one operation"
         );
-        let operation = operations.keys().next().context("the device operation")?;
+        let operation = device
+            .operations
+            .keys()
+            .next()
+            .context("the device operation")?;
         text = text.replace("@OPERATION@", operation);
     }
     let mut value: Value = serde_json::from_str(&text)?;
     if let Some(device) = device {
-        value["components"][0]["descriptor"] = device.clone();
+        let fact = device
+            .clone()
+            .into_admitted(wamn_catalog::ComponentPackageScope {
+                tenant_id: String::new(),
+                package_id: PACKAGE.to_owned(),
+                package_version: version.to_owned(),
+            })
+            .component;
+        value["components"][0] = serde_json::to_value(wamn_catalog::ServingComponent::project(
+            &fact,
+            Vec::new(),
+            &|_| None,
+        )?)?;
     }
     let bytes = wamn_execution_contract::canonical_json_bytes(&value);
     wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
@@ -1625,8 +1753,22 @@ fn the_fixture_releases_are_canonical_manifests() {
         serde_json::to_value(&fixture.components.first().expect("a component").descriptor)
             .expect("a descriptor");
     device["component"] = json!("device");
-    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"input-ports": [], "output-ports": [], "parameters": []}});
-    release(MANIFEST_H, "2.1.0", Some(&device)).expect("release H");
+    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"registered-operation": wamn_catalog::operation_token("edge_device", "2.1.0", "sample", "read"),"input-ports": [], "output-ports": [], "parameters": []}});
+    let device: wamn_catalog::ComponentDescriptor =
+        serde_json::from_value(device).expect("a device descriptor");
+    let (h, _) = wamn_catalog::ServingManifest::from_canonical_bytes(
+        &release(MANIFEST_H, "2.1.0", Some(&device)).expect("release H"),
+    )
+    .expect("release H");
+    let served = &h
+        .components
+        .first()
+        .expect("the device component")
+        .operations["edge-device:sample/read@2.1.0"];
+    assert!(
+        served.carries(&device.operations["edge-device:sample/read@2.1.0"]),
+        "release H carries the admitted device operation"
+    );
 }
 
 /// GET `url` from a pod in the namespace with `Host: route_host`, and return
