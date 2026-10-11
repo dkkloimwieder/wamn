@@ -558,9 +558,9 @@ async fn compose(
         .join(format!("{component}.json.in"));
     let document: Value = read_json(&declaration)?;
     let dependencies = document["operations"]
-        .as_array()
+        .as_object()
         .into_iter()
-        .flatten()
+        .flat_map(serde_json::Map::values)
         .any(|operation| {
             operation["dependencies"]
                 .as_array()
