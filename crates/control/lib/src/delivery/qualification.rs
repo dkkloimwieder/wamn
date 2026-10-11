@@ -9,6 +9,9 @@ use anyhow::{Context as _, ensure};
 use serde::Serialize;
 use tokio::process::Command;
 
+use super::qualification_artifact::{
+    self, CaseResult, QualificationPayload, QualificationPushDisposition, Runner,
+};
 use super::{ApplicationResult, Candidate, CheckResult, Qualification};
 use crate::git_source::{GitSourceState, discover_repository_root, read_status};
 use crate::package_artifact::PackageRegistry;
@@ -46,8 +49,9 @@ const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
 const TEST_WORKSPACES: &[&str] = &["", "apps"];
 
-/// Exact inputs for qualifying one published release, by its digest, through
-/// the existing application cases (docs/plan/platform-deploy.md §8.2).
+/// Exact inputs for qualifying one published release, by its digest, on the
+/// platform image set of a release chart through the existing application
+/// cases (docs/plan/platform-deploy.md §8.2).
 #[derive(Clone, Debug)]
 pub struct QualifyReleaseRequest {
     pub repository: PathBuf,
@@ -55,8 +59,12 @@ pub struct QualifyReleaseRequest {
     pub revision: String,
     /// The release, `sha256:<hex>`.
     pub release_digest: String,
-    /// The release repository `publish-release` pushed the manifest to.
+    /// The release repository: `publish-release` pushed the manifest there,
+    /// and the qualification goes beside it.
     pub releases: PackageRegistry,
+    /// The release chart whose default values name the platform image set
+    /// the cases run on (R15).
+    pub release_chart: PathBuf,
     /// The org, project, environment, tenant and route host the cases
     /// provision and publish under. The manifest names none of them (R1).
     pub org: String,
@@ -65,18 +73,11 @@ pub struct QualifyReleaseRequest {
     pub tenant: String,
     pub route_host: String,
     pub target_directory: PathBuf,
-    pub host_image: String,
-    /// The http role component, `<repository>@sha256:<hex>` (R12).
-    pub http_image: String,
-    /// The materializer role component, `<repository>@sha256:<hex>` (R12).
-    pub materializer_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
     pub native_registry_endpoint: Option<String>,
     pub native_registry_insecure: bool,
     pub deployment_files: Vec<PathBuf>,
-    /// Fresh temporary result file outside tracked source.
-    pub result: PathBuf,
 }
 
 /// Exact selected existing behavior checks to run before integration.
@@ -225,16 +226,16 @@ fn require_built_packages(checks: &[CheckResult], packages: &[String]) -> anyhow
     Ok(())
 }
 
-/// Execute fresh required checks and write one machine result, including failures.
-pub async fn qualify(request: QualifyReleaseRequest) -> anyhow::Result<()> {
-    let output_file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&request.result)
-        .context("create a fresh qualification result file")?;
+/// Execute fresh required checks and, after every case passed, push the
+/// qualification beside the release (§8.2). Returns the qualification's
+/// manifest digest. A failed qualification pushes nothing.
+pub async fn qualify(
+    request: QualifyReleaseRequest,
+) -> anyhow::Result<(String, QualificationPushDisposition)> {
     let temporary = TemporaryResults::create()?;
     let candidate_path = temporary.path.join("candidate.json");
-    let candidate = write_candidate(&request, &temporary.path, &candidate_path).await?;
+    let (candidate, release_size) =
+        write_candidate(&request, &temporary.path, &candidate_path).await?;
     let repository_root = discover_repository_root(&request.repository).await?;
     let snapshot = read_status(&repository_root).await?;
     let (manifest, digest) = candidate.manifest()?;
@@ -247,35 +248,47 @@ pub async fn qualify(request: QualifyReleaseRequest) -> anyhow::Result<()> {
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    let run = qualify_candidate(
+    qualify_candidate(
         &request,
         &repository_root,
         &candidate_path,
         temporary,
         &mut result,
     )
-    .await;
-    if run.is_ok() {
-        "pass".clone_into(&mut result.result);
-    }
-    if let Err(error) = &run {
-        result.checks.push(CheckResult {
-            command: vec!["qualify-release".to_owned()],
-            result: "fail".to_owned(),
-            cause: Some(format!("{error:#}")),
-        });
-    }
-    serde_json::to_writer_pretty(output_file, &result).context("write the qualification result")?;
-    run
+    .await?;
+    let image_set = crate::release_chart::image_set(&request.release_chart).await?;
+    let runner = std::env::current_exe().context("find the running program")?;
+    let payload = QualificationPayload {
+        format: 1,
+        release_digest: result.manifest_digest.clone(),
+        image_set: qualification_artifact::image_set_digests(&image_set)?,
+        chart_version: crate::release_chart::chart_version(&request.release_chart).await?,
+        cases: application(&result.candidate)?
+            .cases
+            .iter()
+            .map(|case| CaseResult {
+                name: (*case).to_owned(),
+                result: "pass".to_owned(),
+            })
+            .collect(),
+        runner: Runner {
+            source_commit: result.source_commit.clone(),
+            image_digest: wamn_package_artifact::sha256_digest(
+                &fs::read(&runner).with_context(|| format!("read {}", runner.display()))?,
+            ),
+        },
+    };
+    qualification_artifact::push(&request.releases, &payload, release_size).await
 }
 
 /// Pull the release by its digest into `directory` and write the candidate
-/// the cases read: the release and the request's other inputs.
+/// the cases read: the release, the chart's platform image set and the
+/// request's other inputs. Returns it with the length of the release bytes.
 async fn write_candidate(
     request: &QualifyReleaseRequest,
     directory: &Path,
     candidate_path: &Path,
-) -> anyhow::Result<Candidate> {
+) -> anyhow::Result<(Candidate, usize)> {
     let releases = &request.releases;
     let bytes = wamn_runtime::release_manifest_source::ReleaseManifestSource::new(
         &releases.artifact_base,
@@ -290,6 +303,7 @@ async fn write_candidate(
     .with_context(|| format!("pull release {}", request.release_digest))?;
     let manifest_path = directory.join("manifest.json");
     fs::write(&manifest_path, &bytes)?;
+    let image_set = crate::release_chart::image_set(&request.release_chart).await?;
     let candidate = Candidate {
         org: request.org.clone(),
         project: request.project.clone(),
@@ -298,9 +312,9 @@ async fn write_candidate(
         route_host: request.route_host.clone(),
         manifest_path,
         target_directory: fs::canonicalize(&request.target_directory)?,
-        host_image: request.host_image.clone(),
-        http_image: request.http_image.clone(),
-        materializer_image: request.materializer_image.clone(),
+        host_image: image_set.host,
+        http_image: image_set.http,
+        materializer_image: image_set.materializer,
         gates_image: request.gates_image.clone(),
         identity_image: request.identity_image.clone(),
         deployment_files: request.deployment_files.clone(),
@@ -312,7 +326,7 @@ async fn write_candidate(
         .write(true)
         .open(candidate_path)?;
     serde_json::to_writer_pretty(output, &candidate).context("write the candidate")?;
-    Candidate::read(candidate_path)
+    Ok((Candidate::read(candidate_path)?, bytes.len()))
 }
 
 async fn qualify_candidate(

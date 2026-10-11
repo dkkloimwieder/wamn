@@ -10,8 +10,8 @@ use wamn_catalog::{ManifestDigest, PackageCoordinate, ServingManifest, ServingRe
 
 pub mod environment;
 pub mod qualification;
+pub mod qualification_artifact;
 pub mod run_record;
-pub mod selection;
 pub mod sqlx;
 
 /// The release inputs that a qualification fixture provisions and publishes.

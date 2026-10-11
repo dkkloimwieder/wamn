@@ -583,7 +583,7 @@ impl Run {
         })
     }
 
-    /// The credentials of the gate, kept until stage 11 retires the old
+    /// The credentials of the gate, kept until stage 10 retires the old
     /// generation, then deleted.
     fn secrets(&self) -> PathBuf {
         self.work.join("secrets").join(format!(
@@ -1009,19 +1009,15 @@ impl Run {
     }
 
     /// Stage 8: `qualify-release` of the published release at the commit,
-    /// on the stage 2 target. A failed qualification stops the run.
+    /// on the stage 2 target and the release chart's image set. It pushes
+    /// the qualification beside the release. A failed qualification stops
+    /// the run.
     async fn qualify(&self, record: &RunRecord) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         self.broker(&kubectl).await?;
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
         let manifest_digest = Self::release_digest(record)?;
-        let files = self.release_files();
-        private_directory(&files)?;
-        let qualification = files.join("qualification.json");
-        if qualification.exists() {
-            fs::remove_file(&qualification)?;
-        }
         // The kind cases fetch the pinned images with the login of this
         // machine (tools/registry-image-archive), so the qualification runs
         // as its own process with the private Docker configuration.
@@ -1040,6 +1036,8 @@ impl Run {
             ])
             .arg("--registry-auth-file")
             .arg(registry.auth_file())
+            .arg("--release-chart")
+            .arg(platform(&environment)?.chart)
             .args(["--org", &self.arguments.org])
             .args(["--project", &self.arguments.project])
             .args(["--environment", &self.arguments.environment])
@@ -1047,27 +1045,20 @@ impl Run {
             .args(["--route-host", &environment.route_host])
             .arg("--target-directory")
             .arg(self.delivery())
-            .args(["--host-image", record.output(Stage::Images, "host")?])
-            .args(["--http-image", record.output(Stage::Guests, "flow-http")?])
-            .args([
-                "--materializer-image",
-                record.output(Stage::Guests, "materializer")?,
-            ])
             .args(["--gates-image", record.output(Stage::Images, "gates")?])
-            .args(["--identity-image", record.output(Stage::Images, "identity")?])
-            .arg("--result")
-            .arg(&qualification);
-        self.command(&format!("qualify-{}", self.arguments.project), &mut qualify)
+            .args([
+                "--identity-image",
+                record.output(Stage::Images, "identity")?,
+            ]);
+        let printed = self
+            .command(&format!("qualify-{}", self.arguments.project), &mut qualify)
             .await
             .context(StopRun("the qualification failed"))?;
-        let outputs = BTreeMap::from([(
-            "qualification".to_owned(),
-            qualification.display().to_string(),
-        )]);
+        let outputs = BTreeMap::from([("qualification".to_owned(), printed.trim().to_owned())]);
         Ok((StepResult::Done, outputs))
     }
 
-    /// The broker check of stage 5, which runs again before stages 8 and 10
+    /// The broker check of stage 5, which runs again before stages 8 and 9
     /// (§4.3): the broker is Ready, and the tap Job runs when `WAMN_TAP` is
     /// missing.
     async fn broker(&self, kubectl: &Kubectl) -> anyhow::Result<&'static str> {
@@ -1117,7 +1108,7 @@ impl Run {
         self.release_files().join("rendered")
     }
 
-    /// Stage 10: `env apply` of the environment's document with the published
+    /// Stage 9: `env apply` of the environment's document with the published
     /// release (docs/plan/platform-deploy.md §15.2), then the web client, the
     /// edge and the URL map.
     async fn deploy(&self, record: &RunRecord) -> Outcome {
@@ -1254,7 +1245,7 @@ impl Run {
         Ok((StepResult::Done, outputs))
     }
 
-    /// Stage 11: the serve check, then the retirement of the old gate
+    /// Stage 10: the serve check, then the retirement of the old gate
     /// generation and the revocation of every older management-author PAT of
     /// the environment.
     async fn check_and_retire(&self, record: &RunRecord) -> Outcome {
@@ -1402,7 +1393,7 @@ impl Run {
         }
 
         // Only the management-author PATs of the environment, which upgrades
-        // issue (owner ruling of 2026-10-02 on stage 11).
+        // issue (owner ruling of 2026-10-02 on this stage, then numbered 11).
         let pat = record
             .output(Stage::Packages, "management-author PAT prefix")?
             .to_owned();
@@ -1438,7 +1429,7 @@ impl Run {
         Ok((StepResult::Done, outputs))
     }
 
-    /// Stage 12: the run record is complete. It names its own file and the
+    /// Stage 11: the run record is complete. It names its own file and the
     /// start of its first step.
     #[expect(
         clippy::unnecessary_wraps,

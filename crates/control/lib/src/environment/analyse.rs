@@ -18,7 +18,7 @@ use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 use super::Platform;
 use super::document::{DeclaredRelease, EnvironmentDocument};
-use crate::delivery::selection::{image_set_digests, package_set};
+use crate::delivery::qualification_artifact;
 use crate::release_chart;
 
 /// The policy facts `apply` uses.
@@ -482,28 +482,19 @@ async fn read_release(
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
         .await
         .context("claim the release's tenant")?;
-    // R12: the key is the package set and every digest of the chart's
-    // platform image set, the host and each role component.
-    let qualification: Option<String> = system
-        .query_opt(
-            "SELECT qualification_sha256 FROM catalog.qualifications \
-              WHERE package_set = $1::text::jsonb AND image_digests @> $2::text::jsonb \
-              ORDER BY recorded_at DESC LIMIT 1",
-            &[
-                &serde_json::to_string(&package_set(&manifest)?)?,
-                &serde_json::to_string(&image_set_digests(&image_set)?)?,
-            ],
-        )
+    // R12: the key is the release digest and every digest of the chart's
+    // platform image set, the host and each role component. It is read from
+    // the registry (§8.2), never from Postgres.
+    let releases = wamn_package_artifact::PackageRegistry {
+        artifact_base: platform.release_artifact_base.clone(),
+        registry_auth_file: platform.registry_auth_file.clone(),
+        insecure_registry: false,
+        oci_ca_paths: platform.oci_ca_paths.clone(),
+        control_database_url: String::new(),
+    };
+    let qualification = qualification_artifact::find(&releases, digest, &image_set)
         .await
-        .context("look up the release's qualification")?
-        .map(|row| row.get(0));
-    let qualification = qualification.with_context(|| {
-        format!(
-            "refused: release {digest} has no qualification on the chart's image set: \
-             host {}, http {}, materializer {}",
-            image_set.host, image_set.http, image_set.materializer
-        )
-    })?;
+        .context("refused")?;
     let components: Vec<String> = manifest
         .components
         .iter()

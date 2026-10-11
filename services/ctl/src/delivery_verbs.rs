@@ -44,8 +44,9 @@ pub struct PrintReleaseEnvArgs {
     pub artifact_base: String,
 }
 
-/// Qualify one published release, by its digest, through the existing
-/// application cases (docs/plan/platform-deploy.md §8.2).
+/// Qualify one published release, by its digest, on the release chart's
+/// platform image set through the existing application cases, and push the
+/// qualification beside the release (docs/plan/platform-deploy.md §8.2).
 #[derive(Debug, Args)]
 pub struct QualifyReleaseArgs {
     #[arg(long, default_value = ".")]
@@ -57,7 +58,7 @@ pub struct QualifyReleaseArgs {
     #[arg(long)]
     pub release_digest: String,
     /// The `<registry>/<repository>` that `publish-release` pushed the
-    /// manifest to.
+    /// manifest to. The qualification is pushed beside it.
     #[arg(long)]
     pub artifact_base: String,
     /// `.dockerconfigjson` file carrying the registry credential.
@@ -70,6 +71,10 @@ pub struct QualifyReleaseArgs {
     /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
     #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
     pub oci_ca_paths: Vec<PathBuf>,
+    /// The stamped release chart whose default values name the platform
+    /// image set the cases run on (R12, R15).
+    #[arg(long, env = "WAMN_RELEASE_CHART")]
+    pub release_chart: PathBuf,
     /// Org the cases provision and publish under.
     #[arg(long)]
     pub org: String,
@@ -88,15 +93,6 @@ pub struct QualifyReleaseArgs {
     #[arg(long)]
     pub target_directory: PathBuf,
     #[arg(long)]
-    pub host_image: String,
-    /// The http role component the cases deploy through the release chart,
-    /// `<repository>@sha256:<hex>`.
-    #[arg(long)]
-    pub http_image: String,
-    /// The materializer role component, `<repository>@sha256:<hex>`.
-    #[arg(long)]
-    pub materializer_image: String,
-    #[arg(long)]
     pub gates_image: Option<String>,
     #[arg(long)]
     pub identity_image: Option<String>,
@@ -106,9 +102,6 @@ pub struct QualifyReleaseArgs {
     pub native_registry_insecure: bool,
     #[arg(long = "deployment-file")]
     pub deployment_files: Vec<PathBuf>,
-    /// Fresh temporary result file outside tracked source.
-    #[arg(long)]
-    pub result: PathBuf,
 }
 
 /// Run explicitly selected existing behavior checks before integration.
@@ -156,9 +149,10 @@ fn release_lines(carrier: &ReleaseCarrier) -> String {
     )
 }
 
-/// Qualify one published release by its digest.
+/// Qualify one published release by its digest, and print the
+/// qualification's digest and whether this run pushed it.
 pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
-    qualification::qualify(qualification::QualifyReleaseRequest {
+    let (digest, disposition) = qualification::qualify(qualification::QualifyReleaseRequest {
         repository: args.repository,
         revision: args.revision,
         release_digest: args.release_digest,
@@ -174,18 +168,17 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
         environment: args.environment,
         tenant: args.tenant,
         route_host: args.route_host,
+        release_chart: args.release_chart,
         target_directory: args.target_directory,
-        host_image: args.host_image,
-        http_image: args.http_image,
-        materializer_image: args.materializer_image,
         gates_image: args.gates_image,
         identity_image: args.identity_image,
         native_registry_endpoint: args.native_registry_endpoint,
         native_registry_insecure: args.native_registry_insecure,
         deployment_files: args.deployment_files,
-        result: args.result,
     })
-    .await
+    .await?;
+    println!("{digest} {disposition:?}");
+    Ok(())
 }
 
 /// Take one installed environment to the bytes of one commit

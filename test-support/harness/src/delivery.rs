@@ -6,12 +6,14 @@
 //! delivery is the same for every application:
 //!
 //! 1. The host, identity and gates images and the role images go to an owned
-//!    native registry. The nodes pull the host image, and `qualify-release`
-//!    of the release digest, which the fixture's `publish-release` pushed,
-//!    runs the application's qualifying cases, which deploy those images
-//!    through the release chart (§8).
+//!    native registry, and a copy of the release chart is stamped with that
+//!    image set. The nodes pull the host image, and `qualify-release` of the
+//!    release digest, which the fixture's `publish-release` pushed, runs the
+//!    application's qualifying cases, which deploy the chart's images, and
+//!    pushes the qualification beside the release manifest (§8).
 //! 2. The role images are copied by digest to the kept registry, and a copy of
-//!    the release chart is stamped with the qualified image set (R12, R15).
+//!    the release chart is stamped with the same digests from there, the set
+//!    `env apply` finds the qualification by (R12, R15).
 //! 3. The host group's platform part is the fixture's overlay group less what
 //!    `apply` derives. The document is `env show` of the environment with the
 //!    release digest and the route host, and `wamn-ctl env apply` runs on it.
@@ -28,7 +30,6 @@ use serde_json::{Value, json};
 use serde_yaml::Value as Yaml;
 use tokio::process::Command;
 use wamn_catalog::ServingManifest;
-use wamn_control::delivery::Qualification;
 use wamn_control::environment::document::DeclaredRelease;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::release_chart::{ImageSet, Target, release_name, roles, stamp};
@@ -38,7 +39,7 @@ use wamn_test_infrastructure::release_chart::{
     self as checks, Environment, Release, a1_probe, hosts_ready, role_placed,
 };
 
-use crate::case_release::{Registry, copy_roles};
+use crate::case_release::{Registry, copy_image};
 
 /// One run of an owned delivery command may take this long; `qualify-release`
 /// runs the application's cluster cases.
@@ -188,17 +189,24 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     let host_image = app.native("host")?;
     let (http, materializer) = push_roles(app).await?;
     let tls_releases = format!("{}/wamn/releases", app.kept.registry);
-    let qualification = qualify(app, &tls_releases, &host_image, &http, &materializer).await?;
+    qualify(app, &tls_releases, &host_image, &http, &materializer).await?;
 
     // The platform image set is the qualified one: the role images copied by
     // digest to the kept registry, which the hosts pull from.
+    let native = Registry {
+        authority: native_authority(app)?,
+        auth_file: None,
+        insecure: true,
+        ca_paths: Vec::new(),
+    };
     let kept = Registry {
         authority: app.kept.registry.clone(),
         auth_file: Some(app.kept.registry_auth.clone()),
         insecure: false,
         ca_paths: vec![app.kept.ca.clone()],
     };
-    let (http, materializer) = copy_roles(&qualification.candidate, &kept).await?;
+    let http = copy_image(&http, &native, "wamn/flow-http", &kept).await?;
+    let materializer = copy_image(&materializer, &native, "wamn/materializer", &kept).await?;
     let chart = stamp(
         &app.repository.join("deploy/platform/release"),
         &ImageSet {
@@ -251,16 +259,26 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     })
 }
 
-/// The nodes' pull of the native host image and `qualify-release` of the
-/// release digest, which `publish-release` pushed to `releases`. Returns the
-/// qualification result.
+/// The release chart stamped with the native image set, the nodes' pull of
+/// the native host image, and `qualify-release` of the release digest, which
+/// `publish-release` pushed to `releases` and beside which the qualification
+/// goes.
 async fn qualify(
     app: &Application<'_>,
     releases: &str,
     host_image: &str,
     http_image: &str,
     materializer_image: &str,
-) -> anyhow::Result<Qualification> {
+) -> anyhow::Result<()> {
+    let chart = stamp(
+        &app.repository.join("deploy/platform/release"),
+        &ImageSet {
+            host: host_image.to_owned(),
+            http: http_image.to_owned(),
+            materializer: materializer_image.to_owned(),
+        },
+        &app.work.join("qualification-chart"),
+    )?;
     let endpoint = format!("{}-native-registry:5000", app.owner);
     native_registry_files(&endpoint, host_image, app.work)?;
     step(
@@ -273,7 +291,6 @@ async fn qualify(
             .arg(&app.kept.name),
     )
     .await?;
-    let result = app.evidence.join("qualification.json");
     let ca = app.kept.ca.to_string_lossy().into_owned();
     let mut qualify = Command::new(app.ctl());
     qualify
@@ -285,6 +302,8 @@ async fn qualify(
         .args(["--artifact-base", releases, "--oci-ca-path", &ca])
         .arg("--registry-auth-file")
         .arg(&app.kept.registry_auth)
+        .arg("--release-chart")
+        .arg(&chart)
         .args([
             "--org",
             &app.triple.org,
@@ -299,32 +318,17 @@ async fn qualify(
         ])
         .arg("--target-directory")
         .arg(app.target)
-        .args(["--host-image", host_image])
-        .args(["--http-image", http_image])
-        .args(["--materializer-image", materializer_image])
         .args(["--identity-image", &app.native("identity")?])
         .args([
             "--native-registry-endpoint",
             &endpoint,
             "--native-registry-insecure",
-        ])
-        .arg("--result")
-        .arg(&result);
+        ]);
     if app.gates() {
         qualify.args(["--gates-image", &app.native("gates")?]);
     }
     step(app, "qualify-release", &mut qualify).await?;
-    let qualification: Qualification = serde_json::from_slice(
-        &fs::read(&result).context("read the qualification result")?,
-    )
-    .context("decode the qualification result")?;
-    ensure!(
-        qualification.manifest_digest == app.release_digest,
-        "the qualification names release {}, not {}",
-        qualification.manifest_digest,
-        app.release_digest
-    );
-    Ok(qualification)
+    Ok(())
 }
 
 /// The nodes' hosts file for the native registry at `endpoint`, as the

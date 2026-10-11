@@ -34,7 +34,8 @@ struct Cli {
 enum Command {
     /// Execute selected existing tests before integration.
     CheckChanges(delivery_verbs::CheckChangesArgs),
-    /// Qualify one published release, by its digest, from a clean selected revision.
+    /// Qualify one published release, by its digest, on the release chart's
+    /// platform image set, and push the qualification beside the release.
     QualifyRelease(delivery_verbs::QualifyReleaseArgs),
     /// Take one installed environment to the bytes of one commit.
     UpgradeEnvironment(delivery_verbs::UpgradeEnvironmentArgs),

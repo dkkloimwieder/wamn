@@ -79,7 +79,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
-use wamn_control::delivery::selection::{image_set_digests, package_set};
+use wamn_control::delivery::qualification_artifact::{
+    self, QualificationPayload, Runner, image_set_digests,
+};
 use wamn_control::dev::environment::{connect, reset_control_store};
 use wamn_control::environment::document::{
     ConnectionDefinition, DeclaredRelease, EnvironmentDocument,
@@ -835,20 +837,34 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     run.run("helm", &["dependency", "build", &chart.to_string_lossy()])
         .await?;
 
-    // The qualification of each fixture release on the chart's image set (R12).
-    for (fill, bytes) in [("9", &manifest_a), ("8", &manifest_b), ("7", &manifest_h)] {
-        let (release, _) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
-        system
-            .execute(
-                "INSERT INTO catalog.qualifications (qualification_sha256, package_set, image_digests) \
-                 VALUES ($1, $2::text::jsonb, $3::text::jsonb)",
-                &[
-                    &format!("sha256:{}", fill.repeat(64)),
-                    &serde_json::to_string(&package_set(&release)?)?,
-                    &serde_json::to_string(&image_set_digests(&set)?)?,
-                ],
-            )
-            .await?;
+    // The qualification of each fixture release on the chart's image set
+    // (R12), beside the release manifests.
+    let releases = PackageRegistry {
+        artifact_base: format!("{local}/wamn/releases"),
+        registry_auth_file: work.join("auth.json"),
+        insecure_registry: false,
+        oci_ca_paths: ca.clone(),
+        control_database_url: String::new(),
+    };
+    for bytes in [&manifest_a, &manifest_b, &manifest_h] {
+        let (_, release) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
+        qualification_artifact::push(
+            &releases,
+            &QualificationPayload {
+                format: 1,
+                release_digest: release.as_str().to_owned(),
+                image_set: image_set_digests(&set)?,
+                chart_version: wamn_control::release_chart::CHART_VERSION.to_owned(),
+                cases: Vec::new(),
+                runner: Runner {
+                    source_commit: "environment_apply_kind".to_owned(),
+                    image_digest: format!("sha256:{}", "0".repeat(64)),
+                },
+            },
+            bytes.len(),
+        )
+        .await
+        .context("push a fixture qualification")?;
     }
     system_task.abort();
 
