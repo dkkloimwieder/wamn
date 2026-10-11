@@ -6,6 +6,10 @@
 #   docker build --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 #   docker build --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
+#   docker build --target roles --output type=local,dest=DIR .  # http and materializer role components
+#   docker build --target runner -t wamn-runner:dev .  # qualification runner: FROM ctl + the case binaries
+# `wamn-ctl build-platform` builds host, runner, gates, identity and roles, and
+# stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches and one
 # locked target cache per build stage, so the stages no longer wait on each
 # other. Each retained native image builds only its top-level package. The
@@ -222,6 +226,18 @@ COPY --from=component-builder /component-output/http_route.wasm /bench/http-rout
 COPY --from=component-builder /component-output/materializer.wasm /bench/materializer.wasm
 COPY --from=component-builder /component-output/connection_http_standard.wasm /bench/connection-http-standard.wasm
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
+
+# ---- role components: the http and materializer guests alone -------------
+# `wamn-ctl build-platform` exports them with --output and pushes each as a
+# role component of the platform image set (R15).
+FROM scratch AS roles
+COPY --from=component-builder /component-output/http_route.wasm /http_route.wasm
+COPY --from=component-builder /component-output/materializer.wasm /materializer.wasm
+
+# ---- runner image: the qualification runner FROM ctl -----------------------
+# ctl is unchanged; the runner adds what `qualify-release` runs the cases with
+# (docs/plan/platform-deploy.md §8.2, R15).
+FROM ctl AS runner
 
 # ---- edge box artifact: the stripped aarch64 binary alone ------------------
 # The box runs no container; export the file with --output (header above).

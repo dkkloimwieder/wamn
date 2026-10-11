@@ -70,8 +70,13 @@
 //! events, the descriptions, the container logs and, for a failed rollout,
 //! the same taken before Helm's rollback removed its pods.
 //!
+//! The host and http role images are the ones of the release chart that
+//! `WAMN_RELEASE_CHART` names, which `wamn-ctl build-platform` stamped
+//! (§9.3, R15): the host is loaded onto the node and the http role is copied
+//! into the suite's registry, and a copy of that chart is stamped with them.
+//!
 //! Run (epic closeout only), after `wamn build apps/edge_device`:
-//! `WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
+//! `WAMN_RELEASE_CHART=<chart> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -91,7 +96,7 @@ use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_p
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
 use wamn_control::publish_release::push_manifest_bytes;
-use wamn_control::release_chart::{ImageSet, Target, release_name, stamp};
+use wamn_control::release_chart::{ImageSet, Target, image_set, release_name, stamp};
 use wamn_control_registry::{Template, Triple};
 use wamn_engine::release_manifest::release_label;
 
@@ -307,10 +312,11 @@ impl Run {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, WAMN_SMOKE_HOST_IMAGE; epic closeout only"]
+#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, WAMN_RELEASE_CHART; epic closeout only"]
 async fn environment_apply_kind() -> anyhow::Result<()> {
-    let host_image = std::env::var("WAMN_SMOKE_HOST_IMAGE")
-        .context("WAMN_SMOKE_HOST_IMAGE names a local host image, <repository>:<tag>")?;
+    let chart = std::env::var_os("WAMN_RELEASE_CHART")
+        .map(PathBuf::from)
+        .context("WAMN_RELEASE_CHART names the release chart that build-platform stamped")?;
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let pid = std::process::id();
     let work = std::env::temp_dir().join(format!("wamn-apply-{pid}"));
@@ -324,7 +330,7 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
     };
     let started = Instant::now();
     run.remove().await;
-    let result = Box::pin(scenario(&mut run, &repository, &host_image)).await;
+    let result = Box::pin(scenario(&mut run, &repository, &chart)).await;
     let elapsed = started.elapsed().as_secs();
     run.record("duration", "", json!({"seconds": elapsed}), "info");
     if result.is_err() || run.report.iter().any(|row| row["result"] == "fail") {
@@ -370,7 +376,8 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
 }
 
 #[allow(clippy::too_many_lines)]
-async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow::Result<()> {
+async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Result<()> {
+    let platform = image_set(source).await?;
     let work = run.work.clone();
     let path = |name: &str| work.join(name).to_string_lossy().into_owned();
     let cluster = run.cluster.clone();
@@ -738,25 +745,22 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     let manifest_b = release(MANIFEST_B, &version, None)?;
     let manifest_h = release(MANIFEST_H, &version, Some(&device))?;
 
-    // The http role image: the route guest, built as the Dockerfile builds it
-    // and pushed to the registry as a wasm component.
-    let flags = run
-        .run(
-            &repository.join("tools/guest-rustflags").to_string_lossy(),
-            &[],
-        )
-        .await?;
-    let built = Command::new(env!("CARGO"))
-        .current_dir(repository.join("apps"))
-        .env("RUSTFLAGS", flags.trim())
-        .args(["build", "--locked", "--offline", "--release"])
-        .args(["--target", "wasm32-wasip2", "-p", "http-route"])
-        .status()
-        .await
-        .context("start the route guest build")?;
-    ensure!(built.success(), "the route guest build exited {built}");
-    let guest = std::fs::read(repository.join("apps/target/wasm32-wasip2/release/http_route.wasm"))
-        .context("read the route guest")?;
+    // The http role image: the chart's route guest, copied into the registry.
+    let loopback = matches!(
+        platform.http.split([':', '/']).next(),
+        Some("localhost" | "127.0.0.1")
+    );
+    let (guest, _) = wash_runtime::oci::pull_component(
+        &platform.http,
+        wash_runtime::oci::OciConfig {
+            insecure: loopback,
+            cache_dir: Some(work.join("oci-cache")),
+            ..wash_runtime::oci::OciConfig::default()
+        },
+        wash_runtime::oci::OciPullPolicy::Always,
+    )
+    .await
+    .context("pull the chart's http role image")?;
     wash_runtime::oci::set_extra_ca_certificates(&[work.join("ca.crt")])?;
     let http_digest = wash_runtime::oci::push_component(
         &format!("{local}/wamn/flow-http:apply"),
@@ -783,7 +787,12 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     .as_str()
     .to_owned();
 
-    // The host image, pinned by the digest the node reports, as the smoke.
+    // The chart's host image, pinned by the digest the node reports, as the smoke.
+    let host_image = platform
+        .host
+        .split_once('@')
+        .map_or(platform.host.as_str(), |(tagged, _)| tagged);
+    run.run("docker", &["pull", "--quiet", &platform.host]).await?;
     run.run(
         "kind",
         &["load", "docker-image", host_image, "--name", &cluster],
@@ -816,21 +825,17 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
             "k8s.io",
             "images",
             "tag",
-            &format!("docker.io/library/{host_image}"),
-            &format!("docker.io/library/{repository_name}@{node_digest}"),
+            &containerd_name(host_image),
+            &containerd_name(&format!("{repository_name}@{node_digest}")),
         ],
     )
     .await?;
     let set = ImageSet {
         host: format!("{host_image}@{node_digest}"),
         http: format!("{local}/wamn/flow-http@{http_digest}"),
-        materializer: UNPULLED.to_owned(),
+        materializer: platform.materializer.clone(),
     };
-    let chart = stamp(
-        &repository.join("deploy/platform/release"),
-        &set,
-        &work.join("chart"),
-    )?;
+    let chart = stamp(source, &set, None, &work.join("chart"))?;
     run.run("helm", &["dependency", "build", &chart.to_string_lossy()])
         .await?;
 
@@ -1660,6 +1665,17 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
 /// description of the Deployments, WorkloadDeployments, Workloads and pods of
 /// the operator namespace, and the last 80 lines of every container's log
 /// outside `kube-system`, with its previous run's when it restarted.
+/// The name containerd gives a Docker image name: unqualified names live
+/// under `docker.io/library`.
+fn containerd_name(name: &str) -> String {
+    let first = name.split('/').next().unwrap_or_default();
+    if name.contains('/') && (first.contains(['.', ':']) || first == "localhost") {
+        name.to_owned()
+    } else {
+        format!("docker.io/library/{name}")
+    }
+}
+
 async fn diagnostics(kubeconfig: &Path) -> Value {
     let kubectl = async |args: &[&str]| -> String {
         match Command::new("kubectl")

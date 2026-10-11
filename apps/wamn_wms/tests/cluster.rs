@@ -636,8 +636,8 @@ async fn run_created(
             },
             work,
         )?;
-        // The platform image set (R12, R15): the supplied release's role images
-        // copied by digest into this registry, or this checkout's, pushed.
+        // The platform image set (R12, R15): the supplied release's role images,
+        // or the release chart's, copied by digest into this registry.
         let registry = Registry {
             authority: registry_authority.clone(),
             auth_file: Some(document.registry_auth_file.clone()),
@@ -646,7 +646,7 @@ async fn run_created(
         };
         let (http, materializer) = match candidate {
             Some(candidate) => case_release::copy_roles(candidate, &registry).await?,
-            None => case_release::push_roles(repository, target, &registry, tag, evidence).await?,
+            None => case_release::chart_roles(&registry).await?,
         };
         let host_image = if image.contains('@') {
             image.to_owned()

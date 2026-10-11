@@ -277,7 +277,7 @@ async fn run(
     // The session issuer, which the published attachments need, in the
     // application's own namespace: the kept cluster serves one issuer per
     // application.
-    delivery::build_images(&app).await?;
+    delivery::load_images(&app).await?;
     kept.apply(&json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":owner}}))
         .await?;
     let identity_image = format!("wamn-identity:{owner}");
@@ -374,13 +374,5 @@ async fn run(
         &json!({"release_name":delivered.release_name,"host_image":delivered.host_image,
             "plan":delivered.plan,"release":release.manifest_digest.as_str()}),
     )?;
-    // The nodes hold the native images; the owned registry goes.
-    checked(
-        Command::new(repository.join("tools/delivery-owned"))
-            .arg("remove-native")
-            .arg(&owner)
-            .arg(&work),
-    )
-    .await?;
     super::source_clean(repository).await
 }

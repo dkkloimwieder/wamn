@@ -32,6 +32,9 @@ struct Cli {
 /// instead.
 #[derive(Subcommand)]
 enum Command {
+    /// Build and push the platform images and stamp them into the release
+    /// chart's defaults.
+    BuildPlatform(delivery_verbs::BuildPlatformArgs),
     /// Execute selected existing tests before integration.
     CheckChanges(delivery_verbs::CheckChangesArgs),
     /// Qualify one published release, by its digest, on the release chart's
@@ -126,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
+        Command::BuildPlatform(args) => delivery_verbs::build_platform(args).await,
         Command::CheckChanges(args) => delivery_verbs::check_changes(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
         Command::UpgradeEnvironment(args) => delivery_verbs::upgrade_environment(args).await,

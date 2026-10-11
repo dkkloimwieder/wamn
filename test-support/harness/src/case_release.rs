@@ -6,7 +6,8 @@
 //! set, and the values `release_chart::values` renders. A case that qualifies
 //! a candidate takes the role images from the candidate, copied by digest into
 //! its own registry, so the qualification key names the bytes the case ran. A
-//! run without a candidate pushes this checkout's role components there.
+//! run without a candidate copies the role images of the release chart's
+//! defaults there (R15).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -58,6 +59,137 @@ impl Registry {
             credentials.password().to_owned(),
         ))
     }
+}
+
+impl Registry {
+    /// The registry that holds `image`, `<authority>/...`, as this machine
+    /// reaches it: plain HTTP for a loopback authority, and this machine's
+    /// Docker login otherwise.
+    ///
+    /// # Errors
+    ///
+    /// When the image names no registry authority.
+    pub fn of(image: &str) -> anyhow::Result<Self> {
+        let (authority, _) = image
+            .split_once('/')
+            .with_context(|| format!("the image {image} names no registry"))?;
+        let loopback = is_loopback(authority);
+        let docker = std::env::var_os("DOCKER_CONFIG")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".docker")))
+            .map(|directory| directory.join("config.json"));
+        Ok(Self {
+            authority: authority.to_owned(),
+            auth_file: docker.filter(|file| !loopback && file.is_file()),
+            insecure: loopback,
+            ca_paths: Vec::new(),
+        })
+    }
+}
+
+fn is_loopback(authority: &str) -> bool {
+    matches!(
+        authority.split(':').next(),
+        Some("localhost" | "127.0.0.1")
+    )
+}
+
+/// The `<container>:<port>` at which kind nodes reach a loopback registry
+/// `authority`, `localhost:<port>`: the container that publishes the port,
+/// on the kind network. `None` for any other authority, which the nodes reach
+/// as it is.
+///
+/// # Errors
+///
+/// When no container publishes the port, or it is not on the kind network.
+pub async fn registry_endpoint(authority: &str) -> anyhow::Result<Option<String>> {
+    if !is_loopback(authority) {
+        return Ok(None);
+    }
+    let port = authority
+        .rsplit_once(':')
+        .map(|(_, port)| port)
+        .with_context(|| format!("the loopback registry {authority} names no port"))?;
+    let names = docker(&[
+        "container",
+        "ls",
+        "--filter",
+        &format!("publish={port}"),
+        "--format",
+        "{{.Names}}",
+    ])
+    .await?;
+    let name = names
+        .lines()
+        .next()
+        .with_context(|| format!("no container publishes the registry port {port}"))?;
+    let settings: serde_json::Value = serde_json::from_str(
+        &docker(&[
+            "container",
+            "inspect",
+            "--format",
+            "{{json .NetworkSettings}}",
+            name,
+        ])
+        .await?,
+    )?;
+    ensure!(
+        settings["Networks"].get("kind").is_some(),
+        "the registry container {name} is not on the kind network"
+    );
+    let inner = settings["Ports"]
+        .as_object()
+        .and_then(|ports| {
+            ports.iter().find_map(|(inner, bindings)| {
+                bindings
+                    .as_array()?
+                    .iter()
+                    .any(|binding| binding["HostPort"] == port)
+                    .then(|| inner.trim_end_matches("/tcp").to_owned())
+            })
+        })
+        .with_context(|| format!("the container {name} publishes no port {port}"))?;
+    Ok(Some(format!("{name}:{inner}")))
+}
+
+/// The files that a cluster's lifecycle tool reads to pull `host_image` onto
+/// its nodes from the loopback registry that kind reaches at `endpoint`:
+/// `native-registry-authority`, `native-registry-hosts.toml` and
+/// `native-host-image`, in `work`.
+///
+/// # Errors
+///
+/// When the image names no registry or a file cannot be written.
+pub fn registry_files(endpoint: &str, host_image: &str, work: &Path) -> anyhow::Result<()> {
+    let (authority, _) = host_image
+        .split_once('/')
+        .context("the host image has a registry authority")?;
+    let endpoint = serde_json::to_string(&format!("http://{endpoint}"))?;
+    fs::write(work.join("native-registry-authority"), authority)?;
+    fs::write(
+        work.join("native-registry-hosts.toml"),
+        format!(
+            "server = {endpoint}\n[host.{endpoint}]\n  capabilities = [\"pull\", \"resolve\"]\n"
+        ),
+    )?;
+    fs::write(work.join("native-host-image"), host_image)?;
+    Ok(())
+}
+
+async fn docker(arguments: &[&str]) -> anyhow::Result<String> {
+    let output = tokio::process::Command::new("docker")
+        .args(arguments)
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("run docker")?;
+    ensure!(
+        output.status.success(),
+        "docker {} failed: {}",
+        arguments.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?)
 }
 
 /// Copy the image `source` (`<authority>/<repository>@sha256:<hex>`) from
@@ -182,80 +314,37 @@ pub async fn copy_roles(candidate: &Candidate, to: &Registry) -> anyhow::Result<
     ))
 }
 
-/// Push this checkout's http and materializer role components, built in
-/// `target`, to `wamn/http` and `wamn/materializer` of `to` under `tag`, and
-/// return each as `<authority>/<repository>@sha256:<hex>`. This is the role
-/// build of a run that has no candidate; each push result is written to
-/// `evidence` as `<role>-push.json`.
+/// The release chart that `WAMN_RELEASE_CHART` names, stamped by
+/// `wamn-ctl build-platform` (docs/plan/platform-deploy.md §9.3).
 ///
 /// # Errors
 ///
-/// When wash cannot be installed, or a push fails or returns no digest.
-pub async fn push_roles(
-    repository: &Path,
-    target: &Path,
-    to: &Registry,
-    tag: &str,
-    evidence: &Path,
-) -> anyhow::Result<(String, String)> {
-    let installed = tokio::process::Command::new(repository.join("tools/install-wash"))
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("run install-wash")?;
-    ensure!(installed.status.success(), "install-wash failed");
-    let wash = String::from_utf8(installed.stdout)?.trim().to_owned();
-    ensure!(!wash.is_empty(), "install-wash returned no executable path");
-    let mut pushed = Vec::new();
-    for (file, role) in [
-        ("http_route.wasm", "http"),
-        ("materializer.wasm", "materializer"),
-    ] {
-        let reference = format!("{}/wamn/{role}:{tag}", to.authority);
-        let mut push = tokio::process::Command::new(&wash);
-        push.args(["-o", "json", "oci", "push"])
-            .args(to.insecure.then_some("--insecure"))
-            .arg(&reference)
-            .arg(target.join("wasm32-wasip2/release").join(file))
-            .kill_on_drop(true);
-        if let Some(file) = &to.auth_file {
-            push.env(
-                "DOCKER_CONFIG",
-                file.parent()
-                    .context("the registry credential has a directory")?,
-            );
-        }
-        let output = push.output().await.context("run wash oci push")?;
-        ensure!(
-            output.status.success(),
-            "the {role} role push failed with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let body: serde_json::Value =
-            serde_json::from_slice(&output.stdout).context("read the role push result")?;
-        let digest = body["data"]["digest"]
-            .as_str()
-            .filter(|digest| {
-                body["success"] == true
-                    && body["data"]["success"] == true
-                    && digest.strip_prefix("sha256:").is_some_and(|hex| {
-                        hex.len() == 64
-                            && hex
-                                .bytes()
-                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                    })
-            })
-            .with_context(|| format!("the {role} role push returned no canonical digest"))?;
-        fs::write(
-            evidence.join(format!("{role}-push.json")),
-            serde_json::to_vec_pretty(&body)?,
-        )?;
-        pushed.push(format!("{}/wamn/{role}@{digest}", to.authority));
-    }
-    let materializer = pushed.pop().context("the materializer image")?;
-    let http = pushed.pop().context("the http image")?;
-    Ok((http, materializer))
+/// When the variable is not set.
+pub fn release_chart() -> anyhow::Result<PathBuf> {
+    std::env::var_os("WAMN_RELEASE_CHART")
+        .map(PathBuf::from)
+        .context("WAMN_RELEASE_CHART names the release chart that build-platform stamped")
+}
+
+/// Copy the http and materializer images of the release chart's defaults by
+/// digest into `wamn/http` and `wamn/materializer` of `to`, and return the
+/// copies. This is the role image set of a case without a candidate (R15).
+///
+/// # Errors
+///
+/// When the chart has no stamped set or an image cannot be copied.
+pub async fn chart_roles(to: &Registry) -> anyhow::Result<(String, String)> {
+    let set = release_chart::image_set(&release_chart()?).await?;
+    Ok((
+        copy_image(&set.http, &Registry::of(&set.http)?, "wamn/http", to).await?,
+        copy_image(
+            &set.materializer,
+            &Registry::of(&set.materializer)?,
+            "wamn/materializer",
+            to,
+        )
+        .await?,
+    ))
 }
 
 /// The host group body of the release chart: the one group of a rendered host
@@ -316,6 +405,7 @@ pub async fn install(
     let chart = release_chart::stamp(
         &at.repository.join("deploy/platform/release"),
         images,
+        None,
         &at.work.join("release-chart"),
     )?;
     let name = release_chart::release_name(&input.org, &input.project, &input.env)?;

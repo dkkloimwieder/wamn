@@ -82,6 +82,22 @@ pub struct QualifyReleaseArgs {
     pub native_registry_insecure: bool,
 }
 
+/// Build and push the platform images and stamp their digests into a copy
+/// of the release chart's defaults (docs/plan/platform-deploy.md §9.3, R15).
+#[derive(Debug, Args)]
+pub struct BuildPlatformArgs {
+    /// The `<host>[:<port>]` of the registry the images are pushed to. A
+    /// loopback registry is reached over plain HTTP.
+    #[arg(long)]
+    pub registry: String,
+    /// The directory the stamped release chart is written to. It must not exist.
+    #[arg(long)]
+    pub out: PathBuf,
+    /// The checkout whose `Dockerfile` and release chart are built.
+    #[arg(long, default_value = ".")]
+    pub repository: PathBuf,
+}
+
 /// Run explicitly selected existing behavior checks before integration.
 #[derive(Debug, Args)]
 pub struct CheckChangesArgs {
@@ -147,6 +163,20 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
     })
     .await?;
     println!("{digest} {disposition:?}");
+    Ok(())
+}
+
+/// Build the platform and print the stamped chart's directory.
+pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
+    use wamn_control::platform_build::{BuildPlatformRequest, build_platform};
+    let chart = build_platform(&BuildPlatformRequest {
+        repository: std::fs::canonicalize(&args.repository)
+            .with_context(|| format!("find {}", args.repository.display()))?,
+        registry: args.registry,
+        out: args.out,
+    })
+    .await?;
+    println!("{}", chart.display());
     Ok(())
 }
 

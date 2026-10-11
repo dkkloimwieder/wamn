@@ -379,8 +379,8 @@ impl Deployed {
 /// Install the environment release of `carrier` through the release chart, as
 /// `env apply` does (wamn-ps2tj.1, docs/plan/platform-deploy.md §9.2): the
 /// host group and every role the release implies. A supplied release's role
-/// images are copied by digest into the case registry; otherwise this
-/// checkout's are pushed (R12).
+/// images, or the release chart's, are copied by digest into the case
+/// registry (R12, R15).
 async fn install_release(
     cluster: &ReceivingCluster,
     database_url: &str,
@@ -402,16 +402,7 @@ async fn install_release(
     };
     let (http, materializer) = match &resources.candidate {
         Some((candidate, _)) => case_release::copy_roles(candidate, &registry).await?,
-        None => {
-            case_release::push_roles(
-                &resources.repository,
-                &cluster.artifacts.target,
-                &registry,
-                &resources.name,
-                &resources.evidence,
-            )
-            .await?
-        }
+        None => case_release::chart_roles(&registry).await?,
     };
     let (host_image, runtime_digest) = host_image(resources).await?;
     let manifest = lookup_release_snapshot(

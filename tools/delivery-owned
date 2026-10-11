@@ -2,7 +2,7 @@
 # Existing app fixtures own the stores, release publish, assertions, and cleanup.
 set -euo pipefail
 umask 077
-action=${1:?build-native, receiving, wms, build-images, native-registry, load-native, remove-native, remove-kept, or render-host}
+action=${1:?build-native, receiving, wms, load-native, remove-kept, or render-host}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ $action == build-native ]]; then
   target=${2:?absolute native target directory}
@@ -52,17 +52,10 @@ if [[ $action == remove-kept ]]; then
   if docker volume inspect "$kept-registry-data" >/dev/null 2>&1; then
     docker volume rm "$kept-registry-data" || status=$?
   fi
-  # Each application's own image tags; the cached images stay (wamn-szr0).
+  # Each application's own tags of the release chart's identity and gates images.
   for image in $(docker image ls --format '{{.Repository}}:{{.Tag}}'); do
     [[ ${image##*:} == "$kept"-receiving || ${image##*:} == "$kept"-wms ]] || continue
     docker image rm "$image" || status=$?
-  done
-  cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
-  for owner in "$kept-receiving" "$kept-wms"; do
-    "$cache" release "$owner" || status=$?
-  done
-  for name in host identity gates; do
-    "$cache" retain "$name" || status=$?
   done
   rm -rf -- "${TMPDIR:-/tmp}/$kept" || status=$?
   exit "$status"
@@ -72,42 +65,10 @@ cluster=${2:?owned cluster name}
 [[ $cluster =~ ^wamn-(receiving|wms)-[a-f0-9]{32}$ || $cluster =~ ^wamn-delivery-[a-z0-9]{1,24}-(receiving|wms)$ ]] || {
   printf 'An exact owned application cluster name is required.\n' >&2; exit 64; }
 work=${3:?owned private work directory}
-cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
-# The application's images: the host and identity, and the gates for Receiving.
-roles=(host identity)
-if [[ $cluster == *receiving* ]]; then
-  roles+=(gates)
-fi
 case "$action" in
-  build-images)
-    source=${4:?source commit}
-    for role in "${roles[@]}"; do
-      "$cache" ensure "$repository" "$role" "$role" "$source" "$cluster" "$cluster"
-    done
-    ;;
-  native-registry)
-    source=${4:?source commit}
-    if docker container inspect "$cluster-native-registry" >/dev/null 2>&1; then
-      printf 'The owned native registry name already exists.\n' >&2
-      exit 64
-    fi
-    : > "$work/native-registry-owned"
-    docker run --detach --name "$cluster-native-registry" --network kind \
-      --publish 127.0.0.1::5000 registry:2
-    port=$(docker inspect --format '{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}' "$cluster-native-registry")
-    printf '%s' "$port" > "$work/native-registry-port"
-    curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-connrefused --max-time 2 "http://127.0.0.1:$port/v2/"
-    for role in "${roles[@]}"; do
-      tag="localhost:$port/wamn-$role:$cluster"
-      docker tag "wamn-$role:$cluster" "$tag"
-      timeout 180 docker push "$tag"
-      digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$tag" | \
-        awk -v prefix="localhost:$port/wamn-$role@" 'index($0,prefix)==1 {sub(/^.*@/, ""); print}')
-      [[ $digest =~ ^sha256:[a-f0-9]{64}$ ]] || { printf 'The owned native upload has no unique digest.\n' >&2; exit 1; }
-      printf '%s@%s' "$tag" "$digest" > "$work/native-$role-image"
-    done
-    ;;
   load-native)
+    # The release chart's host image, from the registry that build-platform
+    # pushed it to, which the nodes reach as native-registry-hosts.toml says.
     # The kind cluster, when it is not the owned name: the kept delivery cluster.
     # Only the host image, which the hosts that env apply starts run. The
     # qualifying cases pull their images on their own clusters, and the session
@@ -138,21 +99,6 @@ case "$action" in
         sleep 1
       done
     done
-    ;;
-  remove-native)
-    status=0
-    if docker container inspect "$cluster-native-registry" >/dev/null 2>&1; then
-      docker rm --force --volumes "$cluster-native-registry" || status=$?
-    fi
-    if [[ -f $work/native-registry-port ]]; then
-      port=$(cat "$work/native-registry-port")
-      [[ $port =~ ^[0-9]+$ ]] || exit 64
-      for role in host gates identity; do
-        tag="localhost:$port/wamn-$role:$cluster"
-        if docker image inspect "$tag" >/dev/null 2>&1; then docker image rm "$tag" || status=$?; fi
-      done
-    fi
-    exit "$status"
     ;;
   render-host)
     # Helm can print OCI pull status on stdout; only rendered documents belong there.

@@ -3,8 +3,8 @@
 //! An environment is one Helm release of `deploy/platform/release`: the pinned
 //! runtime-operator subchart, host-only, plus one WorkloadDeployment per role.
 //! This module derives the release name, renders the install values, stamps the
-//! platform image set into the chart's defaults, reads the set back, and runs
-//! the Helm install and uninstall.
+//! platform image set and the qualification images into the chart's defaults,
+//! reads them back, and runs the Helm install and uninstall.
 //!
 //! The platform image set lives only in the chart's default values (R15). The
 //! install values carry no image digest and no integer release id: the release
@@ -47,7 +47,9 @@ pub fn release_name(org: &str, project: &str, env: &str) -> anyhow::Result<Strin
 }
 
 /// The platform image set: the host image and the role component images.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// It is the qualification key (R12).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImageSet {
     /// `<repository>:<tag>@sha256:<hex>`.
     pub host: String,
@@ -57,16 +59,43 @@ pub struct ImageSet {
     pub materializer: String,
 }
 
-/// Copy `chart` to `out` with the image set written into its default values.
+/// The images the chart's defaults pin outside the key: the qualification
+/// runner, gates and identity (R12, R15). Each is `<repository>[:<tag>]@sha256:<hex>`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QualificationImages {
+    pub runner: String,
+    pub gates: String,
+    pub identity: String,
+}
+
+/// Copy `chart` to `out` with the image set, and the qualification images
+/// when given, written into its default values.
 ///
-/// This is the platform build step: the stamped chart's defaults are the one
-/// source of the image set. `chart` must hold its built subchart archive.
-pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf> {
+/// The platform build step stamps both; its chart's defaults are the one
+/// source of them. A case that copies the roles by digest into its own
+/// registry stamps a copy of that chart with the copied set and `None`, so
+/// the copy keeps the source's qualification images. `chart` must hold its
+/// built subchart archive.
+pub fn stamp(
+    chart: &Path,
+    set: &ImageSet,
+    qualification: Option<&QualificationImages>,
+    out: &Path,
+) -> anyhow::Result<PathBuf> {
     let (repository, tag) = split_host_image(&set.host)?;
-    for (role, image) in [("http", &set.http), ("materializer", &set.materializer)] {
+    let mut pinned = vec![("http", &set.http), ("materializer", &set.materializer)];
+    if let Some(images) = qualification {
+        pinned.extend([
+            ("runner", &images.runner),
+            ("gates", &images.gates),
+            ("identity", &images.identity),
+        ]);
+    }
+    for (name, image) in pinned {
         ensure!(
             image.contains("@sha256:"),
-            "the {role} image {image} is not pinned by digest"
+            "the {name} image {image} is not pinned by digest"
         );
     }
     copy_dir(chart, out)?;
@@ -79,41 +108,63 @@ pub fn stamp(chart: &Path, set: &ImageSet, out: &Path) -> anyhow::Result<PathBuf
     image["registry"] = "".into();
     image["repository"] = repository.into();
     image["tag"] = tag.into();
-    values["platform"]["roles"]["http"]["image"] = set.http.clone().into();
-    values["platform"]["roles"]["materializer"]["image"] = set.materializer.clone().into();
+    let platform = &mut values["platform"];
+    platform["roles"]["http"]["image"] = set.http.clone().into();
+    platform["roles"]["materializer"]["image"] = set.materializer.clone().into();
+    if let Some(images) = qualification {
+        platform["runner"]["image"] = images.runner.clone().into();
+        platform["gates"]["image"] = images.gates.clone().into();
+        platform["identity"]["image"] = images.identity.clone().into();
+    }
     std::fs::write(&path, serde_yaml::to_string(&values)?)
         .with_context(|| format!("write {}", path.display()))?;
     Ok(out.to_owned())
 }
 
-/// Read the image set from the default values of `chart`, with `helm show values`.
-pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
+/// The default values of `chart`, with `helm show values`.
+async fn default_values(chart: &Path) -> anyhow::Result<Value> {
     let shown = helm(&["show".as_ref(), "values".as_ref(), chart.as_os_str()]).await?;
-    let values: Value = serde_yaml::from_str(&shown).context("parse the chart's values")?;
-    let text = |value: &Value, name: &str| -> anyhow::Result<String> {
-        let text = value.as_str().unwrap_or_default();
-        ensure!(
-            !text.is_empty(),
-            "the chart's default {name} is not stamped"
-        );
-        Ok(text.to_owned())
-    };
+    serde_yaml::from_str(&shown).context("parse the chart's values")
+}
+
+/// A stamped default of the chart, which must not be empty.
+fn stamped(value: &Value, name: &str) -> anyhow::Result<String> {
+    let text = value.as_str().unwrap_or_default();
+    ensure!(
+        !text.is_empty(),
+        "the chart's default {name} is not stamped"
+    );
+    Ok(text.to_owned())
+}
+
+/// Read the image set from the default values of `chart`.
+pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
+    let values = default_values(chart).await?;
     let image = &values["runtime-operator"]["runtime"]["image"];
     let registry = image["registry"].as_str().unwrap_or_default();
-    let repository = text(&image["repository"], "host repository")?;
-    let tag = text(&image["tag"], "host tag")?;
+    let repository = stamped(&image["repository"], "host repository")?;
+    let tag = stamped(&image["tag"], "host tag")?;
     let host = if registry.is_empty() {
         format!("{repository}:{tag}")
     } else {
         format!("{registry}/{repository}:{tag}")
     };
+    let roles = &values["platform"]["roles"];
     Ok(ImageSet {
         host,
-        http: text(&values["platform"]["roles"]["http"]["image"], "http image")?,
-        materializer: text(
-            &values["platform"]["roles"]["materializer"]["image"],
-            "materializer image",
-        )?,
+        http: stamped(&roles["http"]["image"], "http image")?,
+        materializer: stamped(&roles["materializer"]["image"], "materializer image")?,
+    })
+}
+
+/// Read the qualification images from the default values of `chart`.
+pub async fn qualification_images(chart: &Path) -> anyhow::Result<QualificationImages> {
+    let values = default_values(chart).await?;
+    let platform = &values["platform"];
+    Ok(QualificationImages {
+        runner: stamped(&platform["runner"]["image"], "runner image")?,
+        gates: stamped(&platform["gates"]["image"], "gates image")?,
+        identity: stamped(&platform["identity"]["image"], "identity image")?,
     })
 }
 

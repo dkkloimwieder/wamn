@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use tokio::process::Command;
 use wamn_control::delivery::Candidate;
 use wamn_control::environment::EventBroker;
 use wamn_control::print_release_env::lookup_release_carrier;
@@ -218,7 +217,7 @@ async fn run(
     // The session issuer, which the published attachments need, in the
     // application's own namespace: the kept cluster serves one issuer per
     // application.
-    delivery::build_images(&app).await?;
+    delivery::load_images(&app).await?;
     kept.apply(&json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":owner}}))
         .await?;
     let identity_image = format!("wamn-identity:{owner}");
@@ -327,14 +326,6 @@ async fn run(
         &json!({"release_name":delivered.release_name,"host_image":delivered.host_image,
             "plan":delivered.plan,"release":digest}),
     )?;
-    // The nodes hold the native images; the owned registry goes.
-    resources::checked(
-        Command::new(repository.join("tools/delivery-owned"))
-            .arg("remove-native")
-            .arg(&owner)
-            .arg(&work),
-    )
-    .await?;
     ensure!(
         resources::committed_head(repository).await? == head,
         "the source commit changed during the test"

@@ -133,10 +133,12 @@ It runs once, from scratch, as part of the cutover acceptance (wamn-k8127), afte
 It creates its own kind cluster `wamn-apply-<pid>` with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password.
 It runs `env apply`, rollback, release none and delete on two environments, and it checks the host heartbeat labels, placement by `hostSelector`, route host isolation and the operator release.
 It removes the cluster and the registry at the end.
-Run it with a local host image:
+It takes the host and http role images from the release chart that `WAMN_RELEASE_CHART` names.
+Build that chart first with the platform build step, against a registry at a loopback port that a container on the `kind` network publishes:
 
 ```bash
-WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> \
+target/debug/wamn-ctl build-platform --registry localhost:<port> --out "$WAMN_RESULTS/release-chart"
+WAMN_RELEASE_CHART="$WAMN_RESULTS/release-chart" \
   cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture
 ```
 
@@ -148,13 +150,16 @@ The Receiving and WMS delivery cases deliver each application's release with `wa
 Both run on one kept kind cluster that `WAMN_DELIVERY_CLUSTER` names, `wamn-delivery-<suffix>`.
 The first case creates the cluster with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password. The second case attaches to it.
 Each case publishes its release with its fixture, and `publish-release` pushes the release manifest.
-The case then runs `qualify-release` on the release digest, which pushes the qualification beside the release when all of its qualifying cases pass.
-Then the case pushes the role images, writes `environment.k` and runs `env apply`, which reads that qualification from the registry.
+The images come from the release chart that `WAMN_RELEASE_CHART` names, which `wamn-ctl build-platform` stamped; no case builds an image.
+The case then runs `qualify-release` on the release digest and that chart, which pushes the qualification beside the release when all of its qualifying cases pass.
+Then the case copies the role images by digest to the kept registry, writes `environment.k` and runs `env apply`, which reads that qualification from the registry.
 It then checks the hosts, the role placement and the A1 probe. The second case also checks A12 with the two applications in `wamn-system`.
 Run Receiving first, then WMS, then remove the cluster:
 
 ```bash
 export WAMN_DELIVERY_CLUSTER=wamn-delivery-<suffix>
+export WAMN_RELEASE_CHART="$WAMN_RESULTS/release-chart"
+target/debug/wamn-ctl build-platform --registry localhost:<port> --out "$WAMN_RELEASE_CHART"
 tools/delivery-owned receiving "$WAMN_RESULTS"
 tools/delivery-owned wms "$WAMN_RESULTS"
 tools/delivery-owned remove-kept "$WAMN_DELIVERY_CLUSTER"

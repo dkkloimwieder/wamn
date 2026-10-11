@@ -5,14 +5,15 @@
 //! database, starts its session issuer and renders its host overlay. Then the
 //! delivery is the same for every application:
 //!
-//! 1. The host, identity and gates images and the role images go to an owned
-//!    native registry, and a copy of the release chart is stamped with that
-//!    image set. The nodes pull the host image, and `qualify-release` of the
-//!    release digest, which the fixture's `publish-release` pushed, runs the
-//!    application's qualifying cases, which deploy the chart's images, and
-//!    pushes the qualification beside the release manifest (§8).
+//! 1. The release chart is the one that `wamn-ctl build-platform` stamped,
+//!    which `WAMN_RELEASE_CHART` names; its defaults are the one source of the
+//!    image set and of the qualification images (§9.3, R15). The nodes pull
+//!    its host image, and `qualify-release` of the release digest, which the
+//!    fixture's `publish-release` pushed, runs the application's qualifying
+//!    cases on that chart and pushes the qualification beside the release
+//!    manifest (§8).
 //! 2. The role images are copied by digest to the kept registry, and a copy of
-//!    the release chart is stamped with the same digests from there, the set
+//!    the release chart is stamped with the copies, the same digests, which
 //!    `env apply` finds the qualification by (R12, R15).
 //! 3. The host group's platform part is the fixture's overlay group less what
 //!    `apply` derives. The document is `env show` of the environment with the
@@ -32,14 +33,19 @@ use tokio::process::Command;
 use wamn_catalog::ServingManifest;
 use wamn_control::environment::document::DeclaredRelease;
 use wamn_control::environment::{EventBroker, Platform};
-use wamn_control::release_chart::{ImageSet, Target, release_name, roles, stamp};
+use wamn_control::release_chart::{
+    ImageSet, QualificationImages, Target, image_set, qualification_images, release_name, roles,
+    stamp,
+};
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::delivery_cluster::{self, KeptCluster, NAMESPACE, REGISTRY_SECRET};
 use wamn_test_infrastructure::release_chart::{
     self as checks, Environment, Release, a1_probe, hosts_ready, role_placed,
 };
 
-use crate::case_release::{Registry, copy_image, push_roles};
+use crate::case_release::{
+    Registry, copy_image, registry_endpoint, registry_files, release_chart,
+};
 
 /// One run of an owned delivery command may take this long; `qualify-release`
 /// runs the application's cluster cases.
@@ -75,12 +81,13 @@ pub struct Application<'a> {
     /// registry and service containers.
     pub owner: &'a str,
     /// The application's private directory, which holds a copy of the kept
-    /// `kubeconfig`.
+    /// `kubeconfig`. The images it loads onto the kept nodes are tagged with
+    /// this name.
     pub work: &'a Path,
     pub evidence: &'a Path,
     /// The clean commit the case runs.
     pub source: &'a str,
-    /// The target directory of the built programs and guests.
+    /// The target directory of the built programs.
     pub target: &'a Path,
     pub triple: Triple,
     pub tenant: &'a str,
@@ -137,66 +144,46 @@ impl Application<'_> {
         self.repository.join("tools/delivery-owned")
     }
 
-    /// Receiving carries a gates image, as `tools/delivery-owned` builds it.
+    /// Receiving carries a gates image.
     fn gates(&self) -> bool {
         self.owner.ends_with("-receiving")
     }
-
-    fn native(&self, role: &str) -> anyhow::Result<String> {
-        Ok(
-            fs::read_to_string(self.work.join(format!("native-{role}-image")))
-                .with_context(|| format!("read the native {role} image"))?
-                .trim()
-                .to_owned(),
-        )
-    }
 }
 
-/// Build the application's host, identity and gates images as
-/// `wamn-<role>:<owner>`, and load the identity and gates images into the
-/// kept cluster for the session issuer, which runs them with `pullPolicy: Never`.
-pub async fn build_images(app: &Application<'_>) -> anyhow::Result<()> {
-    step(
-        app,
-        "build-images",
-        Command::new(app.adapter())
-            .arg("build-images")
-            .arg(app.owner)
-            .arg(app.work)
-            .arg(app.source),
-    )
-    .await?;
-    for role in std::iter::once("identity").chain(app.gates().then_some("gates")) {
-        app.kept
-            .load_image(&format!("wamn-{role}:{}", app.owner))
+/// Load the release chart's identity image, and its gates image for
+/// Receiving, into the kept cluster as `wamn-<role>:<owner>`, for the session
+/// issuer, which runs them with `pullPolicy: Never`.
+///
+/// # Errors
+///
+/// When the chart has no qualification images or an image cannot be loaded.
+pub async fn load_images(app: &Application<'_>) -> anyhow::Result<()> {
+    let images = qualification_images(&release_chart()?).await?;
+    for (role, image) in std::iter::once(("identity", &images.identity))
+        .chain(app.gates().then_some(("gates", &images.gates)))
+    {
+        let local = format!("wamn-{role}:{}", app.owner);
+        for arguments in [vec!["pull", "--quiet", image], vec!["tag", image, &local]] {
+            step(
+                app,
+                &format!("{role}-{}", arguments[0]),
+                Command::new("docker").args(&arguments),
+            )
             .await?;
+        }
+        app.kept.load_image(&local).await?;
     }
     Ok(())
 }
 
 /// Qualify and apply the application's release, then check it.
 pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Result<Delivered> {
-    step(
-        app,
-        "native-registry",
-        Command::new(app.adapter())
-            .arg("native-registry")
-            .arg(app.owner)
-            .arg(app.work)
-            .arg(app.source),
-    )
-    .await?;
-    let host_image = app.native("host")?;
-    let native = Registry {
-        authority: native_authority(app)?,
-        auth_file: None,
-        insecure: true,
-        ca_paths: Vec::new(),
-    };
-    let (http, materializer) =
-        push_roles(app.repository, app.target, &native, app.owner, app.evidence).await?;
+    let chart = release_chart()?;
+    let set = image_set(&chart).await?;
+    let qualification = qualification_images(&chart).await?;
+    let host_image = set.host.clone();
     let tls_releases = format!("{}/wamn/releases", app.kept.registry);
-    qualify(app, &tls_releases, &host_image, &http, &materializer).await?;
+    qualify(app, &chart, &tls_releases, &host_image, &qualification).await?;
 
     // The platform image set is the qualified one: the role images copied by
     // digest to the kept registry, which the hosts pull from.
@@ -206,15 +193,22 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         insecure: false,
         ca_paths: vec![app.kept.ca.clone()],
     };
-    let http = copy_image(&http, &native, "wamn/http", &kept).await?;
-    let materializer = copy_image(&materializer, &native, "wamn/materializer", &kept).await?;
+    let http = copy_image(&set.http, &Registry::of(&set.http)?, "wamn/http", &kept).await?;
+    let materializer = copy_image(
+        &set.materializer,
+        &Registry::of(&set.materializer)?,
+        "wamn/materializer",
+        &kept,
+    )
+    .await?;
     let chart = stamp(
-        &app.repository.join("deploy/platform/release"),
+        &chart,
         &ImageSet {
             host: host_image.clone(),
             http,
             materializer,
         },
+        None,
         &app.work.join("release-chart"),
     )?;
     let platform = Platform {
@@ -260,28 +254,23 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     })
 }
 
-/// The release chart stamped with the native image set, the nodes' pull of
-/// the native host image, and `qualify-release` of the release digest, which
-/// `publish-release` pushed to `releases` and beside which the qualification
-/// goes.
+/// The nodes' pull of the chart's host image, and `qualify-release` of the
+/// release digest on the chart, which `publish-release` pushed to `releases`
+/// and beside which the qualification goes.
 async fn qualify(
     app: &Application<'_>,
+    chart: &Path,
     releases: &str,
     host_image: &str,
-    http_image: &str,
-    materializer_image: &str,
+    images: &QualificationImages,
 ) -> anyhow::Result<()> {
-    let chart = stamp(
-        &app.repository.join("deploy/platform/release"),
-        &ImageSet {
-            host: host_image.to_owned(),
-            http: http_image.to_owned(),
-            materializer: materializer_image.to_owned(),
-        },
-        &app.work.join("qualification-chart"),
-    )?;
-    let endpoint = format!("{}-native-registry:5000", app.owner);
-    native_registry_files(&endpoint, host_image, app.work)?;
+    let (authority, _) = host_image
+        .split_once('/')
+        .context("the host image has a registry authority")?;
+    let endpoint = registry_endpoint(authority)
+        .await?
+        .with_context(|| format!("the kind nodes reach no loopback registry at {authority}"))?;
+    registry_files(&endpoint, host_image, app.work)?;
     step(
         app,
         "load-native",
@@ -301,45 +290,20 @@ async fn qualify(
         .arg("--registry-auth-file")
         .arg(&app.kept.registry_auth)
         .arg("--release-chart")
-        .arg(&chart)
+        .arg(chart)
         .arg("--target-directory")
         .arg(app.target)
-        .args(["--identity-image", &app.native("identity")?])
+        .args(["--identity-image", &images.identity])
         .args([
             "--native-registry-endpoint",
             &endpoint,
             "--native-registry-insecure",
         ]);
     if app.gates() {
-        qualify.args(["--gates-image", &app.native("gates")?]);
+        qualify.args(["--gates-image", &images.gates]);
     }
     step(app, "qualify-release", &mut qualify).await?;
     Ok(())
-}
-
-/// The nodes' hosts file for the native registry at `endpoint`, as the
-/// application fixtures' `delivery::registry_files` writes it.
-fn native_registry_files(endpoint: &str, host_image: &str, work: &Path) -> anyhow::Result<()> {
-    let (authority, _) = host_image
-        .split_once('/')
-        .context("the native host image has a registry authority")?;
-    let endpoint = serde_json::to_string(&format!("http://{endpoint}"))?;
-    fs::write(work.join("native-registry-authority"), authority)?;
-    fs::write(
-        work.join("native-registry-hosts.toml"),
-        format!(
-            "server = {endpoint}\n[host.{endpoint}]\n  capabilities = [\"pull\", \"resolve\"]\n"
-        ),
-    )?;
-    Ok(())
-}
-
-/// The owned native registry's authority as this process reaches it: the
-/// loopback port `tools/delivery-owned native-registry` published.
-fn native_authority(app: &Application<'_>) -> anyhow::Result<String> {
-    let port = fs::read_to_string(app.work.join("native-registry-port"))
-        .context("read the native registry port")?;
-    Ok(format!("localhost:{}", port.trim()))
 }
 
 /// The platform part of the host group (`WAMN_RELEASE_HOST_GROUP`): the

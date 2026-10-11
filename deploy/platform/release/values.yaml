@@ -1,10 +1,11 @@
 # Defaults of the `release` chart (docs/plan/platform-deploy.md §9.2).
 #
-# The platform part is here: the host-only subchart settings and the platform
-# image set. The image set has one source, these defaults (R15). The committed
-# values are empty, so the chart does not render until the platform build stamps
-# them (`wamn_control::release_chart::stamp`). No values file passed at install
-# time carries an image digest.
+# The platform part is here: the host-only subchart settings, the platform
+# image set and the qualification images. Each has one source, these defaults
+# (R15). The committed values are empty, so the chart does not render until the
+# platform build stamps them (`wamn-ctl build-platform`, through
+# `wamn_control::release_chart::stamp`). No values file passed at install time
+# carries an image digest.
 
 global:
   certificates:
@@ -53,6 +54,15 @@ platform:
       image: ""
     materializer:
       image: ""
+  # Outside the image set and the qualification key (R12): the images
+  # `qualify-release` reads. The runner is a stage FROM `wamn-ctl` that carries
+  # the case binaries. `<repository>[:<tag>]@sha256:<hex>`.
+  runner:
+    image: ""
+  gates:
+    image: ""
+  identity:
+    image: ""
 
 # Install values. `wamn_control::release_chart::values` writes them.
 release:

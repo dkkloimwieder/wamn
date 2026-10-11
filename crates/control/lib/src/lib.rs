@@ -29,6 +29,7 @@ pub mod identity_issuer;
 pub mod invite;
 pub mod owned_command;
 pub mod package_artifact;
+pub mod platform_build;
 mod package_upgrade;
 pub use wamn_identity_client as pat_client;
 pub mod print_release_env;

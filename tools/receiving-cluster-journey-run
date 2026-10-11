@@ -134,9 +134,6 @@ case "$action" in
         docker rm --force --volumes "$cluster-$suffix" || status=$?
       fi
     done
-    if [[ -n $work && -f $work/native-registry-owned ]]; then
-      "$(dirname -- "${BASH_SOURCE[0]}")/delivery-owned" remove-native "$cluster" "$work" || status=$?
-    fi
     for image in "$@"; do
       if docker image inspect "$image" >/dev/null 2>&1; then
         docker image rm --force "$image" || status=$?
