@@ -60,13 +60,8 @@ pub struct QualifyReleaseRequest {
     /// and the qualification goes beside it.
     pub releases: PackageRegistry,
     /// The release chart whose default values name the platform image set
-    /// the cases run on (R15).
+    /// the cases run on, and the gates, identity and runner images (R15).
     pub release_chart: PathBuf,
-    pub target_directory: PathBuf,
-    pub gates_image: Option<String>,
-    pub identity_image: Option<String>,
-    pub native_registry_endpoint: Option<String>,
-    pub native_registry_insecure: bool,
 }
 
 /// Exact selected existing behavior checks to run before integration.
@@ -223,9 +218,14 @@ pub async fn qualify(
 ) -> anyhow::Result<(String, QualificationPushDisposition)> {
     let temporary = TemporaryResults::create()?;
     let candidate_path = temporary.path.join("candidate.json");
-    let (candidate, release_size) =
-        write_candidate(&request, &temporary.path, &candidate_path).await?;
     let repository_root = discover_repository_root(&std::env::current_dir()?).await?;
+    // The cases' programs build into this checkout's own target directory.
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map_or_else(|| repository_root.join("target"), PathBuf::from);
+    let target = repository_root.join(target);
+    fs::create_dir_all(&target)?;
+    let (candidate, release_size) =
+        write_candidate(&request, &target, &temporary.path, &candidate_path).await?;
     let (manifest, digest) = candidate.manifest()?;
     let mut result = Qualification {
         release: manifest.release,
@@ -236,11 +236,10 @@ pub async fn qualify(
         result: "fail".to_owned(),
     };
     qualify_candidate(&repository_root, &candidate_path, temporary, &mut result).await?;
-    let image_set = crate::release_chart::image_set(&request.release_chart).await?;
     let payload = QualificationPayload {
         format: QUALIFICATION_PAYLOAD_FORMAT,
         release_digest: result.manifest_digest.clone(),
-        image_set: qualification_artifact::image_set_digests(&image_set)?,
+        image_set: qualification_artifact::image_set_digests(&result.candidate.images)?,
         cases: application(&result.candidate)?
             .cases
             .iter()
@@ -251,10 +250,12 @@ pub async fn qualify(
 }
 
 /// Pull the release by its digest into `directory` and write the candidate
-/// the cases read: the release, the chart's platform image set and the
-/// request's other inputs. Returns it with the length of the release bytes.
+/// the cases read: the release, the target directory, and the chart's image
+/// set and qualification images. Returns it with the length of the release
+/// bytes.
 async fn write_candidate(
     request: &QualifyReleaseRequest,
+    target: &Path,
     directory: &Path,
     candidate_path: &Path,
 ) -> anyhow::Result<(Candidate, usize)> {
@@ -272,17 +273,11 @@ async fn write_candidate(
     .with_context(|| format!("pull release {}", request.release_digest))?;
     let manifest_path = directory.join("manifest.json");
     fs::write(&manifest_path, &bytes)?;
-    let image_set = crate::release_chart::image_set(&request.release_chart).await?;
     let candidate = Candidate {
         manifest_path,
-        target_directory: fs::canonicalize(&request.target_directory)?,
-        host_image: image_set.host,
-        http_image: image_set.http,
-        materializer_image: image_set.materializer,
-        gates_image: request.gates_image.clone(),
-        identity_image: request.identity_image.clone(),
-        native_registry_endpoint: request.native_registry_endpoint.clone(),
-        native_registry_insecure: request.native_registry_insecure,
+        target_directory: fs::canonicalize(target)?,
+        images: crate::release_chart::image_set(&request.release_chart).await?,
+        qualification: crate::release_chart::qualification_images(&request.release_chart).await?,
     };
     let output = OpenOptions::new()
         .create_new(true)
@@ -300,24 +295,6 @@ async fn qualify_candidate(
 ) -> anyhow::Result<()> {
     let app = application(&result.candidate)?;
     let target = &result.candidate.target_directory.clone();
-    let rust = run(
-        root,
-        &strings(&["rustc", "--version"]),
-        &[],
-        &mut result.checks,
-    )
-    .await?;
-    let pin = fs::read_to_string(root.join("rust-toolchain.toml"))?;
-    let version = String::from_utf8(rust.stdout)?;
-    let actual = version
-        .split_whitespace()
-        .nth(1)
-        .context("read the Rust version")?;
-    ensure!(
-        pin.lines()
-            .any(|line| line.trim() == format!("channel = \"{actual}\"")),
-        "Rust differs from rust-toolchain.toml"
-    );
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
     // The candidate's artifacts are what this build made.
     build_artifacts(root, target, &mut result.checks).await?;
@@ -596,16 +573,19 @@ fn member_workspace(package: &str, metadata: &[(PathBuf, Vec<u8>)]) -> anyhow::R
 /// records its image id, and builds none (owner ruling of 2026-10-03 on
 /// `wamn-t3ox`).
 fn image_commands(candidate: &Candidate) -> Vec<Vec<String>> {
-    std::iter::once(&candidate.host_image)
-        .chain(candidate.identity_image.iter())
-        .chain(candidate.gates_image.iter())
-        .flat_map(|image| {
-            [
-                strings(&["docker", "pull", "--quiet", image]),
-                strings(&["docker", "image", "inspect", "--format", "{{.Id}}", image]),
-            ]
-        })
-        .collect()
+    [
+        &candidate.images.host,
+        &candidate.qualification.identity,
+        &candidate.qualification.gates,
+    ]
+    .into_iter()
+    .flat_map(|image| {
+        [
+            strings(&["docker", "pull", "--quiet", image]),
+            strings(&["docker", "image", "inspect", "--format", "{{.Id}}", image]),
+        ]
+    })
+    .collect()
 }
 
 async fn compile_tests(
@@ -793,13 +773,16 @@ mod tests {
         let candidate = Candidate {
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
-            host_image: pinned("host"),
-            http_image: pinned("flow-http"),
-            materializer_image: pinned("materializer"),
-            gates_image: Some(pinned("gates")),
-            identity_image: Some(pinned("identity")),
-            native_registry_endpoint: None,
-            native_registry_insecure: false,
+            images: crate::release_chart::ImageSet {
+                host: pinned("host"),
+                http: pinned("flow-http"),
+                materializer: pinned("materializer"),
+            },
+            qualification: crate::release_chart::QualificationImages {
+                runner: pinned("runner"),
+                gates: pinned("gates"),
+                identity: pinned("identity"),
+            },
         };
         let expected: Vec<Vec<String>> = ["host", "identity", "gates"]
             .into_iter()

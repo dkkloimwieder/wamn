@@ -50,16 +50,6 @@ pub(super) async fn prepare(
     gates_image: bool,
 ) -> anyhow::Result<Resources> {
     let candidate = super::super::delivery::candidate()?;
-    if let Some((candidate, _)) = &candidate {
-        ensure!(
-            !gates_image || candidate.gates_image.is_some(),
-            "this Receiving case requires a supplied gates image"
-        );
-        ensure!(
-            candidate.identity_image.is_some(),
-            "this Receiving case requires a supplied identity image"
-        );
-    }
     ensure!(
         std::env::consts::ARCH == "x86_64",
         "the Receiving images require an x86_64 build host"
@@ -89,24 +79,20 @@ pub(super) async fn prepare(
         evidence: evidence.to_owned(),
         host_image: candidate
             .as_ref()
-            .map(|(candidate, _)| super::super::delivery::image_reference(&candidate.host_image))
+            .map(|(candidate, _)| super::super::delivery::image_reference(&candidate.images.host))
             .transpose()?
             .unwrap_or_else(|| format!("wamn-host:{name}")),
         gates_image: if let Some((candidate, _)) = &candidate {
-            candidate
-                .gates_image
-                .as_deref()
-                .map(super::super::delivery::image_reference)
+            gates_image
+                .then(|| super::super::delivery::image_reference(&candidate.qualification.gates))
                 .transpose()?
         } else {
             gates_image.then(|| format!("wamn-gates:{name}"))
         },
         identity_image: if let Some((candidate, _)) = &candidate {
-            candidate
-                .identity_image
-                .as_deref()
-                .map(super::super::delivery::image_reference)
-                .transpose()?
+            Some(super::super::delivery::image_reference(
+                &candidate.qualification.identity,
+            )?)
         } else {
             Some(format!("wamn-identity:{name}"))
         },
@@ -342,7 +328,7 @@ pub(super) async fn build_images(cluster: &mut Resources) -> anyhow::Result<()> 
 
 pub(super) async fn create(cluster: &mut Resources) -> anyhow::Result<()> {
     if let Some((candidate, _)) = &cluster.candidate {
-        super::super::delivery::registry_files(candidate, &cluster.work)?;
+        super::super::delivery::registry_files(candidate, &cluster.work).await?;
     }
     cluster.owned = true;
     checked(

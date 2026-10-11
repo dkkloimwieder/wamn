@@ -34,8 +34,7 @@ use wamn_catalog::ServingManifest;
 use wamn_control::environment::document::DeclaredRelease;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::release_chart::{
-    ImageSet, QualificationImages, Target, image_set, qualification_images, release_name, roles,
-    stamp,
+    ImageSet, Target, image_set, qualification_images, release_name, roles, stamp,
 };
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::delivery_cluster::{self, KeptCluster, NAMESPACE, REGISTRY_SECRET};
@@ -43,9 +42,7 @@ use wamn_test_infrastructure::release_chart::{
     self as checks, Environment, Release, a1_probe, hosts_ready, role_placed,
 };
 
-use crate::case_release::{
-    Registry, copy_image, registry_endpoint, registry_files, release_chart,
-};
+use crate::case_release::{Registry, copy_image, registry_endpoint, registry_files, release_chart};
 
 /// One run of an owned delivery command may take this long; `qualify-release`
 /// runs the application's cluster cases.
@@ -180,10 +177,9 @@ pub async fn load_images(app: &Application<'_>) -> anyhow::Result<()> {
 pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Result<Delivered> {
     let chart = release_chart()?;
     let set = image_set(&chart).await?;
-    let qualification = qualification_images(&chart).await?;
     let host_image = set.host.clone();
     let tls_releases = format!("{}/wamn/releases", app.kept.registry);
-    qualify(app, &chart, &tls_releases, &host_image, &qualification).await?;
+    qualify(app, &chart, &tls_releases, &host_image).await?;
 
     // The platform image set is the qualified one: the role images copied by
     // digest to the kept registry, which the hosts pull from.
@@ -262,7 +258,6 @@ async fn qualify(
     chart: &Path,
     releases: &str,
     host_image: &str,
-    images: &QualificationImages,
 ) -> anyhow::Result<()> {
     let (authority, _) = host_image
         .split_once('/')
@@ -291,17 +286,7 @@ async fn qualify(
         .arg(&app.kept.registry_auth)
         .arg("--release-chart")
         .arg(chart)
-        .arg("--target-directory")
-        .arg(app.target)
-        .args(["--identity-image", &images.identity])
-        .args([
-            "--native-registry-endpoint",
-            &endpoint,
-            "--native-registry-insecure",
-        ]);
-    if app.gates() {
-        qualify.args(["--gates-image", &images.gates]);
-    }
+        .env("CARGO_TARGET_DIR", app.target);
     step(app, "qualify-release", &mut qualify).await?;
     Ok(())
 }

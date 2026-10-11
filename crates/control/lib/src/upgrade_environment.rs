@@ -949,13 +949,7 @@ impl Run {
             .arg(registry.auth_file())
             .arg("--release-chart")
             .arg(platform(&environment)?.chart)
-            .arg("--target-directory")
-            .arg(self.delivery())
-            .args(["--gates-image", record.output(Stage::Images, "gates")?])
-            .args([
-                "--identity-image",
-                record.output(Stage::Images, "identity")?,
-            ]);
+            .env("CARGO_TARGET_DIR", self.delivery());
         let printed = self
             .command(&format!("qualify-{}", self.arguments.project), &mut qualify)
             .await

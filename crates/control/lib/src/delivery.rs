@@ -8,6 +8,8 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use wamn_catalog::{ManifestDigest, PackageCoordinate, ServingManifest, ServingRelease};
 
+use crate::release_chart::{ImageSet, QualificationImages};
+
 pub mod environment;
 pub mod qualification;
 pub mod qualification_artifact;
@@ -31,18 +33,12 @@ pub struct ReleaseIdentity {
 pub struct Candidate {
     pub manifest_path: PathBuf,
     pub target_directory: PathBuf,
-    pub host_image: String,
-    /// The http role component the qualification deploys through the release
-    /// chart, `<repository>@sha256:<hex>`. Its digest is in the key (R12).
-    pub http_image: String,
-    /// The materializer role component, as [`Self::http_image`].
-    pub materializer_image: String,
-    pub gates_image: Option<String>,
-    pub identity_image: Option<String>,
-    #[serde(default)]
-    pub native_registry_endpoint: Option<String>,
-    #[serde(default)]
-    pub native_registry_insecure: bool,
+    /// The platform image set the cases deploy, from the release chart's
+    /// defaults. Its digests are the key (R12).
+    pub images: ImageSet,
+    /// The gates and identity images the cases start and the runner, from
+    /// the same defaults, outside the key (R12, R15).
+    pub qualification: QualificationImages,
 }
 
 impl Candidate {
@@ -60,54 +56,25 @@ impl Candidate {
             candidate.target_directory.is_absolute() && candidate.target_directory.is_dir(),
             "candidate target directory must name an existing absolute directory"
         );
-        candidate.validate_registry()?;
         candidate.manifest()?;
-        for image in candidate.images() {
+        for image in candidate.pinned() {
             require_pinned_image(image)?;
         }
         Ok(candidate)
     }
 
-    /// Every image the candidate names: the host, the two role components, and
-    /// the gates and identity images it has.
-    fn images(&self) -> impl Iterator<Item = &String> {
-        [&self.host_image, &self.http_image, &self.materializer_image]
-            .into_iter()
-            .chain(self.gates_image.iter())
-            .chain(self.identity_image.iter())
-    }
-
-    fn validate_registry(&self) -> anyhow::Result<()> {
-        ensure!(
-            !self.native_registry_insecure || self.native_registry_endpoint.is_some(),
-            "an insecure native registry requires an explicit endpoint"
-        );
-        if let Some(endpoint) = &self.native_registry_endpoint {
-            let parsed = url::Url::parse(&format!("http://{endpoint}"))?;
-            ensure!(
-                parsed.host_str().is_some()
-                    && parsed.port().is_some()
-                    && parsed.username().is_empty()
-                    && parsed.password().is_none()
-                    && parsed.path() == "/"
-                    && parsed.query().is_none()
-                    && parsed.fragment().is_none(),
-                "the native registry endpoint must be an explicit host and port"
-            );
-            let host = self.host_image.parse::<oci_client::Reference>()?;
-            ensure!(
-                self.host_image.split('/').next() == Some(host.registry()),
-                "an explicit native registry endpoint requires an explicit image registry authority"
-            );
-            for image in self.images().skip(1) {
-                ensure!(
-                    image.parse::<oci_client::Reference>()?.registry() == host.registry()
-                        && image.split('/').next() == Some(host.registry()),
-                    "an explicit native registry endpoint requires one image registry authority"
-                );
-            }
-        }
-        Ok(())
+    /// Every image the candidate names: the host, the two role components,
+    /// the gates, identity and runner images.
+    fn pinned(&self) -> impl Iterator<Item = &String> {
+        [
+            &self.images.host,
+            &self.images.http,
+            &self.images.materializer,
+            &self.qualification.gates,
+            &self.qualification.identity,
+            &self.qualification.runner,
+        ]
+        .into_iter()
     }
 
     /// Read the explicit supplied-artifact mode for an existing application case.
@@ -136,8 +103,7 @@ impl Candidate {
 
     /// Record the guest and native files that the existing application cases consume.
     pub fn artifact_hashes(&self) -> anyhow::Result<BTreeMap<PathBuf, String>> {
-        self.validate_registry()?;
-        for image in self.images() {
+        for image in self.pinned() {
             require_pinned_image(image)?;
         }
         let mut files = BTreeMap::new();
@@ -314,52 +280,6 @@ pub fn report_candidate_success(
 #[cfg(test)]
 mod tests {
     use super::require_pinned_image;
-
-    #[test]
-    fn registry_mapping_refuses_implicit_insecure_and_credential_endpoints() {
-        let mut candidate = super::Candidate {
-            manifest_path: "unused".into(),
-            target_directory: "unused".into(),
-            host_image: format!("localhost:5000/host@sha256:{}", "a".repeat(64)),
-            http_image: format!("localhost:5000/wamn/flow-http@sha256:{}", "b".repeat(64)),
-            materializer_image: format!(
-                "localhost:5000/wamn/materializer@sha256:{}",
-                "c".repeat(64)
-            ),
-            gates_image: None,
-            identity_image: None,
-            native_registry_endpoint: None,
-            native_registry_insecure: true,
-        };
-        assert!(candidate.validate_registry().is_err());
-        for endpoint in [
-            "user:password@owned-registry:5000",
-            "owned-registry:5000/path",
-            "owned-registry:5000?query=1",
-        ] {
-            candidate.native_registry_endpoint = Some(endpoint.to_owned());
-            assert!(candidate.validate_registry().is_err());
-        }
-        candidate.native_registry_endpoint = Some("owned-registry:5000".to_owned());
-        assert!(candidate.validate_registry().is_ok());
-        candidate.identity_image = Some(format!("another.test/identity@sha256:{}", "a".repeat(64)));
-        assert!(candidate.validate_registry().is_err());
-        candidate.identity_image = None;
-        candidate.http_image = format!("another.test/flow-http@sha256:{}", "b".repeat(64));
-        assert!(
-            candidate.validate_registry().is_err(),
-            "a role image has another authority"
-        );
-        candidate.host_image = format!("acme/host@sha256:{}", "a".repeat(64));
-        assert!(candidate.validate_registry().is_err());
-        candidate.host_image = format!("docker.io/acme/host@sha256:{}", "a".repeat(64));
-        candidate.http_image = format!("docker.io/acme/flow-http@sha256:{}", "b".repeat(64));
-        candidate.materializer_image =
-            format!("docker.io/acme/materializer@sha256:{}", "c".repeat(64));
-        assert!(candidate.validate_registry().is_ok());
-        candidate.identity_image = Some(format!("acme/identity@sha256:{}", "a".repeat(64)));
-        assert!(candidate.validate_registry().is_err());
-    }
 
     #[test]
     fn deployment_images_require_immutable_named_references() {

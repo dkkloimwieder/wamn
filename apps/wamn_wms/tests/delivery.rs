@@ -28,26 +28,20 @@ pub(crate) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
     Ok(Some((candidate, manifest)))
 }
 
-pub(crate) fn registry_files(candidate: &Candidate, work: &std::path::Path) -> anyhow::Result<()> {
-    let Some(endpoint) = &candidate.native_registry_endpoint else {
-        return Ok(());
-    };
+/// The files that the cluster's lifecycle tool reads to pull the candidate's
+/// images onto its nodes from a loopback registry, through the container that
+/// publishes its port on the kind network. Another registry needs none.
+pub(crate) async fn registry_files(
+    candidate: &Candidate,
+    work: &std::path::Path,
+) -> anyhow::Result<()> {
     let (authority, _) = candidate
-        .host_image
+        .images
+        .host
         .split_once('/')
-        .context("the mapped native image has a registry authority")?;
-    let scheme = if candidate.native_registry_insecure {
-        "http"
-    } else {
-        "https"
-    };
-    let endpoint = serde_json::to_string(&format!("{scheme}://{endpoint}"))?;
-    std::fs::write(work.join("native-registry-authority"), authority)?;
-    std::fs::write(
-        work.join("native-registry-hosts.toml"),
-        format!(
-            "server = {endpoint}\n[host.{endpoint}]\n  capabilities = [\"pull\", \"resolve\"]\n"
-        ),
-    )?;
+        .context("the candidate's host image has a registry authority")?;
+    if let Some(endpoint) = wamn_gate_harness::case_release::registry_endpoint(authority).await? {
+        wamn_gate_harness::case_release::registry_files(&endpoint, &candidate.images.host, work)?;
+    }
     Ok(())
 }

@@ -88,10 +88,7 @@ impl Registry {
 }
 
 fn is_loopback(authority: &str) -> bool {
-    matches!(
-        authority.split(':').next(),
-        Some("localhost" | "127.0.0.1")
-    )
+    matches!(authority.split(':').next(), Some("localhost" | "127.0.0.1"))
 }
 
 /// The `<container>:<port>` at which kind nodes reach a loopback registry
@@ -280,33 +277,16 @@ pub async fn copy_image(
 /// Copy the candidate's http and materializer images by digest into
 /// `wamn/http` and `wamn/materializer` of `to`, and return the copies.
 ///
-/// The candidate's registry is its owned native registry over plain HTTP, or
-/// a registry this machine's Docker login reads.
-///
 /// # Errors
 ///
 /// When an image cannot be copied.
 pub async fn copy_roles(candidate: &Candidate, to: &Registry) -> anyhow::Result<(String, String)> {
-    let (authority, _) = candidate
-        .http_image
-        .split_once('/')
-        .context("the candidate's http image names its registry")?;
-    let docker = std::env::var_os("DOCKER_CONFIG")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".docker")))
-        .map(|directory| directory.join("config.json"));
-    let from = Registry {
-        authority: authority.to_owned(),
-        auth_file: docker
-            .filter(|file| candidate.native_registry_endpoint.is_none() && file.is_file()),
-        insecure: candidate.native_registry_insecure,
-        ca_paths: Vec::new(),
-    };
+    let images = &candidate.images;
     Ok((
-        copy_image(&candidate.http_image, &from, "wamn/http", to).await?,
+        copy_image(&images.http, &Registry::of(&images.http)?, "wamn/http", to).await?,
         copy_image(
-            &candidate.materializer_image,
-            &from,
+            &images.materializer,
+            &Registry::of(&images.materializer)?,
             "wamn/materializer",
             to,
         )

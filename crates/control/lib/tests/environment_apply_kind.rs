@@ -792,7 +792,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .host
         .split_once('@')
         .map_or(platform.host.as_str(), |(tagged, _)| tagged);
-    run.run("docker", &["pull", "--quiet", &platform.host]).await?;
+    run.run("docker", &["pull", "--quiet", &platform.host])
+        .await?;
     run.run(
         "kind",
         &["load", "docker-image", host_image, "--name", &cluster],

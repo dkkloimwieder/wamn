@@ -67,19 +67,10 @@ pub struct QualifyReleaseArgs {
     #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
     pub oci_ca_paths: Vec<PathBuf>,
     /// The stamped release chart whose default values name the platform
-    /// image set the cases run on (R12, R15).
+    /// image set the cases run on, and the gates, identity and runner images
+    /// (R12, R15).
     #[arg(long, env = "WAMN_RELEASE_CHART")]
     pub release_chart: PathBuf,
-    #[arg(long)]
-    pub target_directory: PathBuf,
-    #[arg(long)]
-    pub gates_image: Option<String>,
-    #[arg(long)]
-    pub identity_image: Option<String>,
-    #[arg(long)]
-    pub native_registry_endpoint: Option<String>,
-    #[arg(long, requires = "native_registry_endpoint")]
-    pub native_registry_insecure: bool,
 }
 
 /// Build and push the platform images and stamp their digests into a copy
@@ -155,11 +146,6 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
             oci_ca_paths: args.oci_ca_paths,
         },
         release_chart: args.release_chart,
-        target_directory: args.target_directory,
-        gates_image: args.gates_image,
-        identity_image: args.identity_image,
-        native_registry_endpoint: args.native_registry_endpoint,
-        native_registry_insecure: args.native_registry_insecure,
     })
     .await?;
     println!("{digest} {disposition:?}");

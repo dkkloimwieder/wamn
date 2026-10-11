@@ -33,14 +33,13 @@ Then qualify that release from a checkout of the repository:
 wamn-ctl qualify-release \
   --release-digest "$RELEASE_DIGEST" --release-chart "$WAMN_RELEASE_CHART" \
   --artifact-base "$WAMN_RELEASE_ARTIFACT_BASE" \
-  --registry-auth-file "$REGISTRY_AUTH_FILE" \
-  --target-directory "$DELIVERY_TARGET" \
-  --gates-image "$GATES_IMAGE" --identity-image "$IDENTITY_IMAGE"
+  --registry-auth-file "$REGISTRY_AUTH_FILE"
 ```
 
 `--release-digest` is the digest that `publish-release` printed.
-`--release-chart` is the stamped release chart.
+`--release-chart` is the release chart that `wamn-ctl build-platform` stamped.
 Its default values name the platform image set: the host image and the `http-route` and `materializer` role components, each by its `@sha256` digest.
+They also name the runner, gates and identity images, outside the qualification key.
 The command line does not repeat these digests.
 `--artifact-base` is the release repository, the same repository that `WAMN_RELEASE_ARTIFACT_BASE` names.
 
@@ -50,14 +49,10 @@ A missing entry still refuses with `registry-credentials-not-found`.
 If the registry certificate chains to a private CA, add `--oci-ca-path` with that CA, or set `WASH_OCI_CA_PATHS`.
 If the registry uses HTTP, add `--insecure-registry` for that registry.
 
-The other inputs belong to the cluster cases:
+Receiving and WMS start the chart's identity image, because their published application routes accept sessions, and give issuer trust to their application hosts.
+When the chart's images are in a registry at a loopback port, the kind nodes reach it through the container that publishes that port on the `kind` network.
 
-- `--target-directory` is the Cargo target directory of the cases.
-- `--gates-image` and `--identity-image` name the gates and identity images, each as `repository@sha256:digest`. Receiving and WMS need the identity image, because their published application routes accept sessions. The cases start that image and give issuer trust to their application hosts.
-- For an owned registry that kind reaches through another address, add `--native-registry-endpoint HOST:PORT`. If that endpoint uses HTTP, also add `--native-registry-insecure`. The mapping applies only inside the new kind nodes.
-
-The command runs in the repository of the current directory.
-The Rust version must be the one that `rust-toolchain.toml` names.
+The command runs in the repository of the current directory, and builds into `CARGO_TARGET_DIR` or `target`.
 The command pulls the release by its digest.
 It runs `wamn build` of every package and builds the workload guests and the native programs into the target directory.
 It pulls the host, gates and identity images by digest and builds no image.

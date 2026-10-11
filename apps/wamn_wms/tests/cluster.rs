@@ -115,21 +115,14 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     let tag = format!("wms-{}-{}-debug", &head[..12], &identifier[..12]);
     let image = candidate
         .as_ref()
-        .map(|(candidate, _)| crate::delivery::image_reference(&candidate.host_image))
+        .map(|(candidate, _)| crate::delivery::image_reference(&candidate.images.host))
         .transpose()?
         .unwrap_or_else(|| format!("wamn-host:{tag}"));
     // The published attachments accept sessions, so every case starts the
     // session issuer from this image, as the Receiving cases do.
     let identity_image = candidate
         .as_ref()
-        .map(|(candidate, _)| {
-            crate::delivery::image_reference(
-                candidate
-                    .identity_image
-                    .as_deref()
-                    .context("this WMS case requires a supplied identity image")?,
-            )
-        })
+        .map(|(candidate, _)| crate::delivery::image_reference(&candidate.qualification.identity))
         .transpose()?
         .unwrap_or_else(|| format!("wamn-identity:{cluster}"));
     let lifecycle = repository.join("tools/wms-cluster-journey-run");
@@ -208,7 +201,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 .await?;
             }
             if let Some((candidate, _)) = &candidate {
-                crate::delivery::registry_files(candidate, work.path())?;
+                crate::delivery::registry_files(candidate, work.path()).await?;
             }
             checked(
                 Command::new(&lifecycle)

@@ -33,11 +33,11 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         "the chart output {} exists",
         request.out.display()
     );
-    let head = output(
-        Command::new("git")
-            .current_dir(&request.repository)
-            .args(["rev-parse", "--verify", "HEAD"]),
-    )
+    let head = output(Command::new("git").current_dir(&request.repository).args([
+        "rev-parse",
+        "--verify",
+        "HEAD",
+    ]))
     .await?;
     let mut pushed = Vec::new();
     for target in ["host", "runner", "gates", "identity"] {
@@ -154,7 +154,11 @@ async fn push_roles(registry: &str, directory: &Path) -> anyhow::Result<(String,
 
 /// Run `command` and return its standard output; a failure names its error output.
 async fn output(command: &mut Command) -> anyhow::Result<String> {
-    let program = command.as_std().get_program().to_string_lossy().into_owned();
+    let program = command
+        .as_std()
+        .get_program()
+        .to_string_lossy()
+        .into_owned();
     let output = command
         .kill_on_drop(true)
         .output()

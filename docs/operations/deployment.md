@@ -155,8 +155,7 @@ WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
 
 wamn-ctl qualify-release \
   --release-digest "$RELEASE_DIGEST" --release-chart "$WAMN_RELEASE_CHART" \
-  --artifact-base "$RELEASE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG" \
-  --target-directory "$DELIVERY_TARGET" --identity-image "$IDENTITY_IMAGE"
+  --artifact-base "$RELEASE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
 
 wamn-ctl print-release-env \
   --database-url "$OWNER_URL" --tenant "$TENANT" \

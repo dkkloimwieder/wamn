@@ -1466,8 +1466,7 @@ target/debug/wamn-ctl bind-connection --database-url "$T" --tenant wms --environ
   --requirement-type blobstore --definition $P/labels-store.definition.json --release-digest <release digest> \
   --component-digest <blob-put digest> --store-alias labels
 target/debug/wamn-ctl qualify-release --release-digest <release digest> --release-chart "$WAMN_RELEASE_CHART" \
-  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --registry-auth-file $A/config.json \
-  --target-directory <target directory> --gates-image <gates image> --identity-image <identity image>
+  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --registry-auth-file $A/config.json
 ```
 
 Receiving runs the same `publish-release` and `qualify-release` commands with `--tenant dev` and no `--wiring`.

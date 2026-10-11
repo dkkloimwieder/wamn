@@ -202,7 +202,7 @@ pub(super) fn render_host(
     if let Some(candidate) = candidate {
         rendered.base = crate::delivery::host_values(
             &rendered.base,
-            &crate::delivery::image_reference(&candidate.host_image)?,
+            &crate::delivery::image_reference(&candidate.images.host)?,
         )?;
     }
     assert_rendered_identity(
