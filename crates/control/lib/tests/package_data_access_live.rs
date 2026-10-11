@@ -49,9 +49,12 @@ fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAcce
     ReconcilePackageDataAccessRequest {
         packages: packages
             .into_iter()
-            .map(|package| {
-                wamn_control::package_artifact::fixture_package_root(&package)
-                    .expect("read the fixture package root")
+            .map(|package| wamn_control::apply_package::PackageRoot {
+                path: package.clone(),
+                artifact_digest: Some(
+                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
+                        .expect("read the fixture package root"),
+                ),
             })
             .collect(),
         database_url: url.to_owned(),
@@ -208,16 +211,30 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .await
         .expect("install application authorization floor");
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(&fixture_package_root())
-            .expect("read the fixture package root"),
+        package: wamn_control::apply_package::PackageRoot {
+            path: fixture_package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
+                    &fixture_package_root(),
+                )
+                .expect("read the fixture package root"),
+            ),
+        },
         database_url: url.to_string(),
         tenant: TENANT.to_owned(),
     })
     .await
     .expect("apply the fixture package before policy");
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(&overlay_package_root())
-            .expect("read the fixture package root"),
+        package: wamn_control::apply_package::PackageRoot {
+            path: overlay_package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
+                    &overlay_package_root(),
+                )
+                .expect("read the fixture package root"),
+            ),
+        },
         database_url: url.to_string(),
         tenant: TENANT.to_owned(),
     })
@@ -535,8 +552,13 @@ async fn install_lineage_fixture(url: &str) -> Client {
 
 async fn apply(url: &str, package: PathBuf) {
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(&package)
-            .expect("read the fixture package root"),
+        package: wamn_control::apply_package::PackageRoot {
+            path: package.clone(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
+                    .expect("read the fixture package root"),
+            ),
+        },
         database_url: url.to_owned(),
         tenant: TENANT.to_owned(),
     })
@@ -983,10 +1005,8 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
 
     // An operations-only wamn.json edit at an applied coordinate reconciles
     // with no Migrate, and the comment follows the presented manifest.
-    let installed = wamn_control::package_artifact::fixture_package_root(&fixture)
-        .expect("read the fixture package root")
-        .artifact_digest
-        .expect("a fixture package root has a stand-in digest");
+    let installed = wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&fixture)
+        .expect("read the fixture package root");
     let second = change_manifest_bytes(&fixture);
     assert_ne!(second, first, "the manifest bytes did not move");
     reconcile(true)

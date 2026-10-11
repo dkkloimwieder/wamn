@@ -196,10 +196,15 @@ async fn install_project_database(client: &Client, url: &str) {
     );
 
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(
-            &wamn_fixture_package::package_root(),
-        )
-        .expect("read the fixture package root"),
+        package: wamn_control::apply_package::PackageRoot {
+            path: wamn_fixture_package::package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
+                    &wamn_fixture_package::package_root(),
+                )
+                .expect("read the fixture package root"),
+            ),
+        },
         database_url: url.to_string(),
         tenant: "protected-relation-audit".to_string(),
     })

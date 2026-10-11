@@ -183,7 +183,12 @@ fn upgrade_retention(root: &Path, table: &str, retention: &str) {
 /// stands in for one under a digest of its own bytes.
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(package)?,
+        package: wamn_control::apply_package::PackageRoot {
+            path: package.to_path_buf(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
+            ),
+        },
         database_url: url.to_owned(),
         tenant: TENANT.to_owned(),
     })

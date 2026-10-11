@@ -204,7 +204,14 @@ pub(super) async fn assemble(
     let mut roots = BTreeMap::new();
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
-            package: wamn_control::package_artifact::fixture_package_root(package.root)?,
+            package: wamn_control::apply_package::PackageRoot {
+                path: package.root.to_path_buf(),
+                artifact_digest: Some(
+                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
+                        package.root,
+                    )?,
+                ),
+            },
             database_url: input.database_url.to_owned(),
             tenant: input.tenant.to_owned(),
         })
@@ -251,7 +258,16 @@ pub(super) async fn assemble(
             packages: input
                 .packages
                 .iter()
-                .map(|package| wamn_control::package_artifact::fixture_package_root(package.root))
+                .map(|package| {
+                    Ok(wamn_control::apply_package::PackageRoot {
+                        path: package.root.to_path_buf(),
+                        artifact_digest: Some(
+                            wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
+                                package.root,
+                            )?,
+                        ),
+                    })
+                })
                 .collect::<anyhow::Result<_>>()?,
             database_url: input.database_url.to_owned(),
             tenant: input.tenant.to_owned(),

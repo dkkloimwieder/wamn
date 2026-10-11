@@ -197,8 +197,13 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("seed the authored role's references")?;
 
     let args = || ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(&package_root())
-            .expect("read the fixture package root"),
+        package: wamn_control::apply_package::PackageRoot {
+            path: package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package_root())
+                    .expect("read the fixture package root"),
+            ),
+        },
         database_url: project_url.to_owned(),
         tenant: TENANT.to_owned(),
     };

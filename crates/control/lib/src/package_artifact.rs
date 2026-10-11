@@ -216,32 +216,18 @@ fn descriptor_files(root: &Path) -> anyhow::Result<Vec<(ComponentDescriptor, Vec
     Ok(descriptors)
 }
 
-/// The package root of a fixture tree that a test applies as a release, with
-/// a stand-in artifact digest.
-///
-/// No registry records it. It is the SHA-256 of the length-framed `wamn.json`
-/// and migration bytes, so a test that changes those bytes under one
-/// coordinate presents another digest, as a second push would. It is not the
-/// package artifact digest of the tree ([`package_artifact_digest`]).
-///
-/// # Errors
-///
-/// When the tree cannot be read.
-pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::apply_package::PackageRoot> {
-    let directory = crate::apply_package::read_package_directory(root)?;
-    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
-    let mut frame = |bytes: &[u8]| {
-        context.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
-        context.update(bytes);
-    };
-    frame(&directory.manifest_bytes);
-    for migration in &directory.migrations {
-        frame(migration.relative_path.as_bytes());
-        frame(&migration.bytes);
-    }
+/// The package root of a fixture tree that a unit test applies as a release,
+/// with the stand-in artifact digest of
+/// [`wamn_test_infrastructure::fixture_digest::fixture_artifact_digest`].
+#[cfg(test)]
+pub(crate) fn fixture_package_root(
+    root: &Path,
+) -> anyhow::Result<crate::apply_package::PackageRoot> {
     Ok(crate::apply_package::PackageRoot {
         path: root.to_owned(),
-        artifact_digest: Some(format!("sha256:{}", hex::encode(context.finish()))),
+        artifact_digest: Some(
+            wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(root)?,
+        ),
     })
 }
 

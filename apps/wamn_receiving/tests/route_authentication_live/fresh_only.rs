@@ -109,7 +109,12 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
          tenant_id text NOT NULL, count bigint NOT NULL);\n",
     )?;
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(&package)?,
+        package: wamn_control::apply_package::PackageRoot {
+            path: package.clone(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)?,
+            ),
+        },
         database_url: test.project_url.to_owned(),
         tenant: identity().tenant.clone(),
     })

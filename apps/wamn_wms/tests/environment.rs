@@ -293,7 +293,12 @@ pub async fn prepare_project(
         private_file(&path)?;
     }
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(&package_root())?,
+        package: wamn_control::apply_package::PackageRoot {
+            path: package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package_root())?,
+            ),
+        },
         database_url: route.database_url.clone(),
         tenant: identity().tenant.clone(),
     })
@@ -308,9 +313,12 @@ pub async fn prepare_project(
     )
     .await?;
     shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
-        packages: vec![wamn_control::package_artifact::fixture_package_root(
-            &package_root(),
-        )?],
+        packages: vec![wamn_control::apply_package::PackageRoot {
+            path: package_root(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package_root())?,
+            ),
+        }],
         database_url: route.database_url.clone(),
         tenant: identity().tenant.clone(),
     })

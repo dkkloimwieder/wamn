@@ -392,7 +392,11 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
         project.batch_execute("SET statement_timeout = '20s'; SET lock_timeout = '10s'").await?;
         super::install_journey_platform_floor(project.as_ref(), identity().tenant.as_str(), super::PLATFORM_DOMAIN).await?;
         let apply = |package: PathBuf| {
-            let root = wamn_control::package_artifact::fixture_package_root(&package);
+            let root = wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
+                .map(|digest| wamn_control::apply_package::PackageRoot {
+                    path: package.clone(),
+                    artifact_digest: Some(digest),
+                });
             async move {
                 apply_package::apply_package(ApplyPackageRequest {
                     package: root?,database_url:database_url.to_owned(),tenant:identity().tenant.clone(),
@@ -584,7 +588,7 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     .await?;
     for package in [super::package_root(), super::overlay_package_root()] {
         apply_package::apply_package(ApplyPackageRequest {
-            package: wamn_control::package_artifact::fixture_package_root(&package)?,
+            package: wamn_control::apply_package::PackageRoot { path: package.clone(), artifact_digest: Some(wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)?) },
             database_url: url.clone(),
             tenant: identity().tenant.clone(),
         })
@@ -593,10 +597,8 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     wamn_control::reconcile_package_data_access::reconcile_package_data_access(
         wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
             packages: vec![
-                wamn_control::package_artifact::fixture_package_root(&super::package_root())?,
-                wamn_control::package_artifact::fixture_package_root(
-                    &super::overlay_package_root(),
-                )?,
+                wamn_control::apply_package::PackageRoot { path: super::package_root(), artifact_digest: Some(wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&super::package_root())?) },
+                wamn_control::apply_package::PackageRoot { path: super::overlay_package_root(), artifact_digest: Some(wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&super::overlay_package_root())?) },
             ],
             database_url: url.clone(),
             tenant: identity().tenant.clone(),

@@ -196,8 +196,13 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         .expect("ensure the CallableHttp class ACL role the pool probes for");
     let package = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection");
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::package_artifact::fixture_package_root(&package)
-            .expect("read the fixture package root"),
+        package: wamn_control::apply_package::PackageRoot {
+            path: package.clone(),
+            artifact_digest: Some(
+                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)
+                    .expect("read the fixture package root"),
+            ),
+        },
         database_url: project_url.to_string(),
         tenant: TENANT.to_string(),
     })
