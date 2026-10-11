@@ -395,6 +395,7 @@ async fn start_session_issuer(
     wamn_gate_harness::session_issuer::prepare_application(
         &wamn_gate_harness::session_issuer::IssuerCluster {
             name: context.cluster,
+            namespace: context.cluster,
             work: context.work,
             evidence: context.evidence,
             repository: context.repository,

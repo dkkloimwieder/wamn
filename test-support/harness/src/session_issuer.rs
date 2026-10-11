@@ -24,8 +24,11 @@ const IDENTITY: &str = "host-session-identity";
 /// One disposable kind cluster and the environment whose hosts trust the issuer.
 #[derive(Debug)]
 pub struct IssuerCluster<'a> {
-    /// The kind cluster name, which is also the namespace.
+    /// The kind cluster name.
     pub name: &'a str,
+    /// The namespace of the issuer. One per issuer, so the kept delivery
+    /// cluster can serve the issuer of each application.
+    pub namespace: &'a str,
     /// The private work directory that holds `kubeconfig`.
     pub work: &'a Path,
     /// The result directory of the run.
@@ -101,7 +104,7 @@ pub async fn prepare(
         fixture["manifest_digest"] == manifest_digest,
         "the session fixture differs from the deployed release"
     );
-    let issuer = format!("https://{IDENTITY}.{}.svc.cluster.local", cluster.name);
+    let issuer = format!("https://{IDENTITY}.{}.svc.cluster.local", cluster.namespace);
     let identity_image = cluster
         .identity_image
         .context("the session identity image is built")?;
@@ -122,7 +125,7 @@ pub async fn prepare(
         db_port: url::Url::parse(cluster.system_database_url)?
             .port_or_known_default()
             .unwrap_or(5432),
-        namespace: cluster.name.to_owned(),
+        namespace: cluster.namespace.to_owned(),
         secret_name: "host-session-identity-db".to_owned(),
     })
     .await?;
@@ -151,7 +154,7 @@ pub async fn prepare(
         cluster: None,
         db_host: target_url.host_str().map(str::to_owned),
         db_port: target_url.port_or_known_default().unwrap_or(5432),
-        namespace: cluster.name.to_owned(),
+        namespace: cluster.namespace.to_owned(),
         action: WorkloadGenerationAction {
             family: WorkloadRoleFamily::SessionRoleReader,
             verb: WorkloadActionVerb::Prepare,
@@ -170,7 +173,7 @@ pub async fn prepare(
         ensure!(
             document["kind"] == "Secret"
                 && document["metadata"]["name"] == name
-                && document["metadata"]["namespace"] == cluster.name,
+                && document["metadata"]["namespace"] == cluster.namespace,
             "the session Secret has the declared name and namespace"
         );
         let data = document["stringData"]
@@ -199,7 +202,7 @@ pub async fn prepare(
         kubectl(cluster)
             .args([
                 "-n",
-                cluster.name,
+                cluster.namespace,
                 "create",
                 "secret",
                 "tls",
@@ -219,7 +222,7 @@ pub async fn prepare(
         kubectl(cluster)
             .args([
                 "-n",
-                cluster.name,
+                cluster.namespace,
                 "create",
                 "configmap",
                 "host-session-public-ca",
@@ -248,7 +251,7 @@ pub async fn prepare(
         kubectl(cluster)
             .args([
                 "-n",
-                cluster.name,
+                cluster.namespace,
                 "create",
                 "secret",
                 "generic",
@@ -290,7 +293,7 @@ pub async fn prepare(
             .arg(cluster.work.join("kubeconfig"))
             .arg("--kube-context")
             .arg(format!("kind-{}", cluster.name))
-            .args(["--namespace", cluster.name]);
+            .args(["--namespace", cluster.namespace]);
         for value in &args {
             command.arg("--set-string").arg(value);
         }
@@ -310,7 +313,7 @@ pub async fn prepare(
     let deployment = read_object(
         cluster,
         "session-identity-deployment",
-        &["-n", cluster.name, "get", "deployment", IDENTITY],
+        &["-n", cluster.namespace, "get", "deployment", IDENTITY],
     )
     .await?;
     ensure!(
@@ -327,7 +330,7 @@ pub async fn prepare(
         "session-identity-pods",
         &[
             "-n",
-            cluster.name,
+            cluster.namespace,
             "get",
             "pods",
             "-l",
@@ -342,7 +345,7 @@ pub async fn prepare(
 }
 
 async fn create_tls(cluster: &IssuerCluster<'_>) -> anyhow::Result<()> {
-    let hostname = format!("{IDENTITY}.{}.svc.cluster.local", cluster.name);
+    let hostname = format!("{IDENTITY}.{}.svc.cluster.local", cluster.namespace);
     let requests: Vec<(&str, Vec<String>)> = vec![
         (
             "ca",

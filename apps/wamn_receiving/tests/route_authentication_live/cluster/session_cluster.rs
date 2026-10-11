@@ -11,6 +11,7 @@ fn issuer_cluster(cluster: &ReceivingCluster) -> IssuerCluster<'_> {
     let resources = &cluster.resources;
     IssuerCluster {
         name: &resources.name,
+        namespace: &resources.name,
         work: &resources.work,
         evidence: &resources.evidence,
         repository: &resources.repository,

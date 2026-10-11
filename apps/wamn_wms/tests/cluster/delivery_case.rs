@@ -255,14 +255,16 @@ async fn run(
     };
 
     // The session issuer, which the published attachments need, in the
-    // namespace named after the kept cluster.
+    // application's own namespace: the kept cluster serves one issuer per
+    // application.
     delivery::build_images(&app).await?;
-    kept.apply(&json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":kept.name}}))
+    kept.apply(&json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":owner}}))
         .await?;
     let identity_image = format!("wamn-identity:{owner}");
     let (issuer, instance) = prepare_application(
         &IssuerCluster {
             name: &kept.name,
+            namespace: &owner,
             work: &work,
             evidence,
             repository,
@@ -313,7 +315,7 @@ async fn run(
             "stringData":{"binding.json":fs::read_to_string(&broker.binding)?}}),
     )
     .await?;
-    kept.copy_config_map(&kept.name, &renames[2].0, &renames[2].1)
+    kept.copy_config_map(&owner, &renames[2].0, &renames[2].1)
         .await?;
     let (_, overlay) = application::render_host(
         &document,
