@@ -18,18 +18,24 @@ use anyhow::{Context as _, ensure};
 use futures_util::FutureExt as _;
 use serde_json::json;
 use tokio::process::Command;
+use wamn_control::delivery::Candidate;
+use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
-use wamn_control_provision::materializer_workload::{
-    EventIdentity, MaterializerInput, render_materializer,
-};
 use wamn_control_registry::Triple;
+use wamn_gate_harness::case_release::{self, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::event_broker::EventBroker;
+use wamn_test_infrastructure::release_chart::{Release, hosts_ready, role_placed};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 use wamn_test_infrastructure::{event_broker, platform, workload};
 
 use crate::wms_runtime_live::write_result;
 use deployment::{checked, kubectl};
+
+/// The drain bound of the case environment: the host pods' grace period and
+/// `WAMN_DRAIN_BOUND_SECONDS`, as `deploy/platform/values-host-default.yaml`
+/// sets them (R20).
+const DRAIN_BOUND_SECONDS: u32 = 70;
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
@@ -237,6 +243,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     files: &files,
                     broker: &broker,
                     source: &source,
+                    candidate: candidate.as_ref().map(|(candidate, _)| candidate),
                 },
                 &scope,
                 case,
@@ -263,7 +270,15 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     let failure_capture = if matches!(&run, Ok(Ok(()))) {
         Ok(())
     } else {
-        deployment::capture_failure(&cluster, work.path(), &evidence).await
+        let identity = crate::environment::identity();
+        match release_chart::release_name(
+            identity.org.as_str(),
+            identity.project.as_str(),
+            identity.environment.as_str(),
+        ) {
+            Ok(name) => deployment::capture_failure(&cluster, work.path(), &name, &evidence).await,
+            Err(error) => Err(error),
+        }
     };
     let removed = checked(
         Command::new(&lifecycle)
@@ -361,6 +376,8 @@ struct CaseContext<'a> {
     files: &'a bootstrap::BootstrapFiles,
     broker: &'a EventBroker,
     source: &'a async_nats::jetstream::stream::Config,
+    /// The supplied release, whose images the case deploys.
+    candidate: Option<&'a Candidate>,
 }
 
 /// Start the session issuer that the published WMS attachments need, and
@@ -412,6 +429,7 @@ async fn run_created(
         files,
         broker,
         source,
+        candidate,
     } = *case_context;
     let partial_completion = matches!(case, Case::PartialCompletion);
     let measure_startup = matches!(case, Case::Startup);
@@ -564,7 +582,8 @@ async fn run_created(
         .await?;
         let (issuer, instance) =
             start_session_issuer(case_context, &document, release.manifest_digest.as_str()).await?;
-        let (base, overlay) = application::render_host(
+        let replicas = if measure_startup { 1 } else { 3 };
+        let (_, overlay) = application::render_host(
             &document,
             &application::HostBinding {
                 host_tag: tag,
@@ -572,63 +591,129 @@ async fn run_created(
                 database_host: &postgres_ip,
                 manifest_digest: release.manifest_digest.as_str(),
                 source,
-                replicas: if measure_startup { 0 } else { 3 },
+                replicas,
                 session: (&issuer, &instance),
             },
             work,
         )?;
-        checked(
-            Command::new(lifecycle)
-                .arg("install-host")
-                .arg(cluster)
-                .arg(work)
-                .arg(cluster)
-                .arg(&base)
-                .arg(&overlay),
+        // The platform image set (R12, R15): the supplied release's role images
+        // copied by digest into this registry, or this checkout's, pushed.
+        let (flow_http, materializer) = if let Some(candidate) = candidate {
+            case_release::copy_roles(
+                candidate,
+                &Registry {
+                    authority: registry_authority.clone(),
+                    auth_file: Some(document.registry_auth_file.clone()),
+                    insecure: true,
+                    ca_paths: Vec::new(),
+                },
+            )
+            .await?
+        } else {
+            (
+                deployment::publish_runtime(
+                    repository,
+                    work,
+                    &document.flow_http_wasm,
+                    &format!("{registry_authority}/wamn/flow-http:{tag}"),
+                    &evidence.join("flow-http-push.json"),
+                )
+                .await?,
+                deployment::publish_runtime(
+                    repository,
+                    work,
+                    &target.join("wasm32-wasip2/release/materializer.wasm"),
+                    &format!("{registry_authority}/wamn/materializer:{tag}"),
+                    &evidence.join("materializer-push.json"),
+                )
+                .await?,
+            )
+        };
+        let host_image = if image.contains('@') {
+            image.to_owned()
+        } else {
+            format!("{image}@{runtime_digest}")
+        };
+        let identity = crate::environment::identity();
+        let (org, project_name, env) = (
+            identity.org.as_str(),
+            identity.project.as_str(),
+            identity.environment.as_str(),
+        );
+        let manifest = wamn_control::print_release_env::lookup_release_snapshot(
+            &route.database_url,
+            identity.tenant.as_str(),
+            release.manifest_digest.as_str(),
+            &release.artifact_base,
+        )
+        .await?
+        .manifest;
+        // The environment release installs the host group and the roles the
+        // release implies, as `env apply` does (§9.2).
+        let (name, label) = case_release::install(
+            &case_release::Install {
+                repository,
+                cluster,
+                work,
+                namespace: cluster,
+            },
+            &ImageSet {
+                host: host_image.clone(),
+                http: flow_http,
+                materializer,
+            },
+            &ValuesInput {
+                org: org.to_owned(),
+                project: project_name.to_owned(),
+                env: env.to_owned(),
+                manifest_digest: release.manifest_digest.to_string(),
+                artifact_base: release.artifact_base.clone(),
+                route_host: document.route_host.clone(),
+                roles: release_chart::roles(&manifest, org, project_name, env),
+                drain_bound_seconds: DRAIN_BOUND_SECONDS,
+                actor: "wms cluster case".to_owned(),
+                host_group: case_release::host_group(&fs::read_to_string(&overlay)?)?,
+            },
         )
         .await?;
-        let cold = if measure_startup {
-            Some(startup::cold_host(cluster, work, evidence).await?)
-        } else {
-            None
-        };
-        let hosts = workload::hosts_ready(&workload::HostsReadyInput {
-            lifecycle,
+        let environment = Release {
             cluster,
             work,
             namespace: cluster,
-            image,
-            runtime_digest,
-            replicas: if measure_startup { 1 } else { 3 },
+            name: &name,
+            label: &label,
+            digest: release.manifest_digest.as_str(),
             evidence,
-        })
-        .await?;
-        let flow_http = deployment::publish_runtime(
-            repository,
-            work,
-            &document.flow_http_wasm,
-            &format!("{registry_authority}/wamn/flow-http:{tag}"),
-            &evidence.join("flow-http-push.json"),
-        )
-        .await?;
-        let materializer = deployment::publish_runtime(
-            repository,
-            work,
-            &target.join("wasm32-wasip2/release/materializer.wasm"),
-            &format!("{registry_authority}/wamn/materializer:{tag}"),
-            &evidence.join("materializer-push.json"),
-        )
-        .await?;
-        let http_path = application::render_workload(&document, &flow_http, work)?;
-        checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&http_path)).await?;
-        let http = workload::http_ready(cluster, work, cluster, &hosts, evidence).await?;
+        };
+        let service = format!("{name}-http");
+        let cold = if measure_startup {
+            Some(startup::cold_host(cluster, work, &name, evidence).await?)
+        } else {
+            None
+        };
+        let hosts = hosts_ready(&environment, &host_image, runtime_digest, replicas).await?;
+        let http = role_placed(&environment, "http", &hosts).await?;
         if let Some(cold) = &cold {
             return startup::requests(cluster, work, &document, cold, evidence).await;
         }
-        workload::unknown_route(cluster, work, cluster, &document.route_host, evidence).await?;
-        let endpoint =
-            deployment::expose_route(cluster, work, cluster, lifecycle, &document.route_host)
-                .await?;
+        workload::unknown_route(
+            cluster,
+            work,
+            cluster,
+            &service,
+            &document.route_host,
+            evidence,
+        )
+        .await?;
+        let endpoint = deployment::expose_route(
+            cluster,
+            work,
+            cluster,
+            &service,
+            lifecycle,
+            &document.route_host,
+        )
+        .await?;
         if browser {
             demo::start(
                 lifecycle,
@@ -645,38 +730,7 @@ async fn run_created(
 
         // The movement_label workflow runs on the materializer's delivery of
         // the move's row event, so the materializer serves before any move.
-        let materializer_input = MaterializerInput {
-            workload: format!(
-                "{}-materializer",
-                crate::environment::identity().project.as_str()
-            ),
-            namespace: cluster.to_owned(),
-            image: materializer,
-            tenant: crate::environment::identity().tenant.clone(),
-            event: EventIdentity {
-                org: scope.org.clone(),
-                project: scope.project.clone(),
-                environment: scope.env.as_str().to_owned(),
-            },
-            event_stream: source.name.clone(),
-            fetch_ms: 500,
-            sweep_ms: 500,
-        };
-        let materializer_path = work.join("materializer.yaml");
-        fs::write(
-            &materializer_path,
-            render_materializer(
-                &fs::read_to_string(repository.join("deploy/platform/materializer.example.yaml"))?,
-                &materializer_input,
-            )?,
-        )?;
-        checked(
-            kubectl(cluster, work)
-                .args(["apply", "-f"])
-                .arg(&materializer_path),
-        )
-        .await?;
-        workload::materializer_ready(cluster, work, &materializer_input, &hosts, evidence).await?;
+        role_placed(&environment, "materializer", &hosts).await?;
         application::released_routes(&document, &store, evidence).await?;
         if partial_completion {
             checked(

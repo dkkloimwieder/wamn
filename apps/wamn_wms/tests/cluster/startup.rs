@@ -14,33 +14,31 @@ use crate::wms_runtime_live::write_result;
 #[derive(Debug)]
 pub(super) struct ColdHost {
     pod: String,
+    /// The HTTP role Service of the environment release.
+    service: String,
     uid: String,
     startup_ms: u64,
 }
 
+/// The one host of the environment release `group`, which the release
+/// installed with one replica and no request has reached.
 pub(super) async fn cold_host(
     cluster: &str,
     work: &Path,
+    group: &str,
     evidence: &Path,
 ) -> anyhow::Result<ColdHost> {
-    checked(kubectl(cluster, work).args([
-        "-n",
-        cluster,
-        "scale",
-        "deployment/hostgroup-default",
-        "--replicas=1",
-    ]))
-    .await?;
+    let host_deployment = format!("hostgroup-{group}");
     checked(kubectl(cluster, work).args([
         "-n",
         cluster,
         "wait",
         "--for=condition=Available",
-        "deployment/hostgroup-default",
+        &format!("deployment/{host_deployment}"),
         "--timeout=120s",
     ]))
     .await?;
-    let deployment = object(cluster, work, "deployment", "hostgroup-default").await?;
+    let deployment = object(cluster, work, "deployment", &host_deployment).await?;
     write_result(evidence, "host-measurement-deployment.json", &deployment)?;
     assert_native_probes(&deployment)?;
     let selector = deployment["spec"]["selector"]["matchLabels"]
@@ -82,6 +80,7 @@ pub(super) async fn cold_host(
     let startup_ms = startup_time(cluster, work, &pod, evidence, "host-cold.log").await?;
     Ok(ColdHost {
         pod,
+        service: format!("{group}-http"),
         uid,
         startup_ms,
     })
@@ -97,6 +96,7 @@ pub(super) async fn requests(
     request(
         cluster,
         work,
+        &cold.service,
         inputs,
         &RequestTrace {
             name: "cold",
@@ -160,10 +160,11 @@ pub(super) async fn requests(
         ]))
         .await?,
     )?;
-    route_after_restart(cluster, work, evidence).await?;
+    route_after_restart(cluster, work, &cold.service, evidence).await?;
     let restart = request(
         cluster,
         work,
+        &cold.service,
         inputs,
         &RequestTrace {
             name: "restart-first",
@@ -176,6 +177,7 @@ pub(super) async fn requests(
     let steady = request(
         cluster,
         work,
+        &cold.service,
         inputs,
         &RequestTrace {
             name: "steady",
@@ -225,6 +227,7 @@ struct RequestTrace<'a> {
 async fn request(
     cluster: &str,
     work: &Path,
+    service: &str,
     inputs: &JourneyDocument,
     trace: &RequestTrace<'_>,
     evidence: &Path,
@@ -248,6 +251,7 @@ async fn request(
     let job = format!("startup-request-{name}");
     let manifest = request_job(
         cluster,
+        service,
         &inputs.route_host,
         secret,
         &job,
@@ -327,6 +331,7 @@ async fn request(
 
 fn request_job(
     cluster: &str,
+    service: &str,
     route_host: &str,
     secret: &str,
     job: &str,
@@ -358,7 +363,7 @@ test "$1" = 200
     json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":HTTP_PROBE_IMAGE,"imagePullPolicy":"IfNotPresent","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
         {"name":"OPERATOR_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
         {"name":"ROUTE_HOST","value":route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
-        {"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/packaging/get?{query}")}
+        {"name":"ROUTE_URL","value":format!("http://{service}.{cluster}.svc.cluster.local/packaging/get?{query}")}
     ]}]}}}})
 }
 
@@ -412,9 +417,14 @@ fn assert_response(result: &Value, restarted: bool) -> anyhow::Result<f64> {
     Ok(total * 1000.0)
 }
 
-async fn route_after_restart(cluster: &str, work: &Path, evidence: &Path) -> anyhow::Result<()> {
+async fn route_after_restart(
+    cluster: &str,
+    work: &Path,
+    service: &str,
+    evidence: &Path,
+) -> anyhow::Result<()> {
     let previous: Value =
-        serde_json::from_slice(&fs::read(evidence.join("flow-http-replicaset.json"))?)?;
+        serde_json::from_slice(&fs::read(evidence.join("http-replicaset.json"))?)?;
     let uid = previous["metadata"]["uid"]
         .as_str()
         .context("HTTP ReplicaSet has a UID")?;
@@ -447,7 +457,7 @@ async fn route_after_restart(cluster: &str, work: &Path, evidence: &Path) -> any
                 "get",
                 "endpointslices",
                 "-l",
-                "kubernetes.io/service-name=flow-http,wasmcloud.dev/route-manager=true",
+                &format!("kubernetes.io/service-name={service},wasmcloud.dev/route-manager=true"),
                 "-o",
                 "json",
             ]))
@@ -786,6 +796,7 @@ mod tests {
         let query = "id=%22selected-packaging%22&note=%22it%27s%20quoted%22";
         let job = request_job(
             "selected-environment",
+            "selected-http",
             "selected.example",
             "selected-pat",
             "selected-job",
@@ -822,7 +833,7 @@ mod tests {
         );
         assert_eq!(
             env[3],
-            json!({"name":"ROUTE_URL","value":format!("http://flow-http.selected-environment.svc.cluster.local/packaging/get?{query}")})
+            json!({"name":"ROUTE_URL","value":format!("http://selected-http.selected-environment.svc.cluster.local/packaging/get?{query}")})
         );
         assert_eq!(env.len(), 4);
         let script = container["args"][0].as_str().unwrap();

@@ -24,8 +24,10 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
     let mut cluster = start(evidence, true).await?;
     let result = async {
         let (route, carrier) = publish_and_push(&cluster.inputs, &cluster.artifacts).await?;
-        let (route, _, _, _) = serve_released_http(&cluster, 3, route, carrier).await?;
-        let endpoint = materializer_case::endpoint(&cluster, "receiving-correctness-nodeport").await?;
+        let (route, service) = serve_released_http(&cluster, 3, route, carrier).await?;
+        let endpoint =
+            materializer_case::endpoint(&cluster, &service, "receiving-correctness-nodeport")
+                .await?;
         postcommit_case::assert_unknown_route(&cluster, &endpoint).await?;
         let mut digests = serde_json::Map::new();
         for component in super::super::released_package_roots().into_keys() {
@@ -69,15 +71,19 @@ async fn user_membership_and_permission_revocation() -> anyhow::Result<()> {
 async fn run_membership(evidence: &std::path::Path) -> anyhow::Result<()> {
     let mut cluster = start(evidence, true).await?;
     let result = async {
-        let (route, _, _, _) = released_http(&cluster, 1).await?;
-        membership_job(&cluster, &route.database_url).await?;
+        let (route, service) = released_http(&cluster, 1).await?;
+        membership_job(&cluster, &route.database_url, &service).await?;
         assert_source_unchanged(&cluster.resources).await
     }
     .await;
     finish(&mut cluster, result).await
 }
 
-async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow::Result<()> {
+async fn membership_job(
+    cluster: &ReceivingCluster,
+    project_url: &str,
+    service: &str,
+) -> anyhow::Result<()> {
     let resources = &cluster.resources;
     let secret = resources.work.join("membership-secret.json");
     write_private(
@@ -99,7 +105,7 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
         "restartPolicy":"Never","automountServiceAccountToken":false,"containers":[{
             "name":"membership-test","image":image,"imagePullPolicy":"Never",
             "command":["/usr/local/bin/wamn-gates","membership-test"],
-            "args":["--endpoint-url",format!("http://flow-http.{}.svc.cluster.local",resources.name),
+            "args":["--endpoint-url",format!("http://{service}.{}.svc.cluster.local",resources.name),
                 "--host",cluster.inputs.route_host,"--org",super::super::identity().org.as_str(),
                 "--project",super::super::identity().project.as_str(),"--env",super::super::identity().environment.as_str(),"--tenant",super::super::identity().tenant.as_str()],
             "env":[{"name":"WAMN_SYSTEM_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"system-url"}}},

@@ -3,12 +3,14 @@
 //!
 //! A qualification proves bytes, not names. Its key is the package set, the
 //! exact `(package_id, version, component_digest)` triples of the release, and
-//! the platform image set of the release chart: the `@sha256` digests of the
-//! host image and of each role component (R12, R15), with the registry names
-//! ignored. The gates and identity digests the qualification ran with are
-//! recorded beside them and are not part of the key. `publish-qualified-release`
-//! records a passing file in `catalog.qualifications`, and `env apply` reads it
-//! by the package set and every digest of the release chart's image set.
+//! the platform image set the qualification deployed through the release
+//! chart: the `@sha256` digests of the candidate's host image and of each of
+//! its role components (R12, R15), with the registry names ignored. The gates
+//! and identity digests the qualification ran with are recorded beside them and
+//! are not part of the key. `publish-qualified-release` records a passing file
+//! in `catalog.qualifications` when the release chart names the same set, and
+//! `env apply` reads it by the package set and every digest of the release
+//! chart's image set.
 
 use std::collections::BTreeMap;
 
@@ -17,7 +19,7 @@ use serde::Serialize;
 use tokio_postgres::Transaction;
 use wamn_catalog::ServingManifest;
 
-use super::Qualification;
+use super::{Candidate, Qualification};
 use crate::release_chart::ImageSet;
 
 /// One `(package_id, version, component_digest)` triple of a release.
@@ -39,22 +41,31 @@ pub struct QualificationKey {
 }
 
 impl QualificationKey {
-    fn new(
-        manifest: &ServingManifest,
-        image_set: &ImageSet,
-        gates: Option<&str>,
-        identity: Option<&str>,
-    ) -> anyhow::Result<Self> {
-        let mut image_digests = image_set_digests(image_set)?;
-        for (name, image) in [("gates", gates), ("identity", identity)] {
+    /// The key of what `candidate` ran: its release and its images.
+    fn new(candidate: &Candidate) -> anyhow::Result<Self> {
+        let (manifest, _) = candidate.manifest()?;
+        let mut image_digests = image_set_digests(&candidate_image_set(candidate))?;
+        for (name, image) in [
+            ("gates", candidate.gates_image.as_deref()),
+            ("identity", candidate.identity_image.as_deref()),
+        ] {
             if let Some(image) = image {
                 image_digests.insert(name, image_digest(image)?);
             }
         }
         Ok(Self {
-            package_set: package_set(manifest)?,
+            package_set: package_set(&manifest)?,
             image_digests,
         })
+    }
+}
+
+/// The platform image set the candidate's cases deployed through the release chart.
+fn candidate_image_set(candidate: &Candidate) -> ImageSet {
+    ImageSet {
+        host: candidate.host_image.clone(),
+        http: candidate.http_image.clone(),
+        materializer: candidate.materializer_image.clone(),
     }
 }
 
@@ -120,8 +131,9 @@ pub fn image_digest(reference: &str) -> anyhow::Result<String> {
 /// Record a passing qualification in `catalog.qualifications` on the
 /// control transaction, and return its SHA-256. A recorded file is kept.
 ///
-/// `image_set` is the release chart's image set. Its host image must be the
-/// one the qualification ran on.
+/// The key's image digests are the candidate's. `image_set` is the release
+/// chart's image set, which `env apply` reads; each of its digests must be the
+/// one the qualification ran on, or the record would name bytes no case ran.
 pub(super) async fn record(
     control: &Transaction<'_>,
     qualification: &Qualification,
@@ -129,20 +141,9 @@ pub(super) async fn record(
     image_set: &ImageSet,
 ) -> anyhow::Result<String> {
     qualification.require_pass()?;
-    let (qualified, _) = qualification.candidate.manifest()?;
     let candidate = &qualification.candidate;
-    ensure!(
-        image_digest(&candidate.host_image)? == image_digest(&image_set.host)?,
-        "the qualification ran on host image {}, and the release chart names {}",
-        candidate.host_image,
-        image_set.host
-    );
-    let key = QualificationKey::new(
-        &qualified,
-        image_set,
-        candidate.gates_image.as_deref(),
-        candidate.identity_image.as_deref(),
-    )?;
+    require_same_set(&candidate_image_set(candidate), image_set)?;
+    let key = QualificationKey::new(candidate)?;
     let sha256 = format!(
         "sha256:{}",
         hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes))
@@ -161,6 +162,24 @@ pub(super) async fn record(
         .await
         .context("record the qualification")?;
     Ok(sha256)
+}
+
+/// Refuse a release chart whose image set differs by any digest from the set
+/// the qualification ran on, naming each image that differs.
+fn require_same_set(qualified: &ImageSet, chart: &ImageSet) -> anyhow::Result<()> {
+    let ran = image_set_digests(qualified)?;
+    let named = image_set_digests(chart)?;
+    let differing = ran
+        .iter()
+        .filter(|(image, digest)| named.get(*image) != Some(*digest))
+        .map(|(image, digest)| format!("{image} ran {digest}, the chart names {}", named[image]))
+        .collect::<Vec<_>>();
+    ensure!(
+        differing.is_empty(),
+        "the release chart's image set is not the one the qualification ran on: {}",
+        differing.join("; ")
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -191,24 +210,62 @@ mod tests {
     }
 
     #[test]
-    fn the_key_ignores_names_and_registries() {
-        let (manifest, manifest_digest) =
+    fn the_key_is_the_candidates_and_ignores_names_and_registries() {
+        let (_, manifest_digest) =
             ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES).unwrap();
         assert_eq!(manifest_digest.as_str(), vector::DIGEST);
-        let digest = "b".repeat(64);
-        let set = |registry: &str| ImageSet {
-            host: format!("{registry}/host:1@sha256:{digest}"),
-            http: format!("{registry}/http@sha256:{}", "c".repeat(64)),
-            materializer: format!("{registry}/materializer@sha256:{}", "d".repeat(64)),
+        let directory =
+            std::env::temp_dir().join(format!("wamn-selection-key-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let manifest = directory.join("manifest.json");
+        std::fs::write(&manifest, vector::CANONICAL_BYTES).unwrap();
+        let candidate = |registry: &str| Candidate {
+            org: "acme".into(),
+            project: "wms".into(),
+            environment: "dev".into(),
+            tenant: "tenant".into(),
+            route_host: "wms.example".into(),
+            manifest_path: manifest.clone(),
+            target_directory: directory.clone(),
+            host_image: format!("{registry}/host:1@sha256:{}", "b".repeat(64)),
+            http_image: format!("{registry}/http@sha256:{}", "c".repeat(64)),
+            materializer_image: format!("{registry}/materializer@sha256:{}", "d".repeat(64)),
+            gates_image: None,
+            identity_image: None,
+            deployment_files: Vec::new(),
+            native_registry_endpoint: None,
+            native_registry_insecure: false,
         };
-        let key = QualificationKey::new(&manifest, &set("one.example"), None, None).unwrap();
-        let other =
-            QualificationKey::new(&manifest, &set("two.example/other"), None, None).unwrap();
+        let key = QualificationKey::new(&candidate("one.example")).unwrap();
+        let other = QualificationKey::new(&candidate("two.example/other")).unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
         assert_eq!(key, other);
         assert!(!key.package_set.is_empty());
         assert_eq!(
-            key.image_digests.keys().copied().collect::<Vec<_>>(),
-            ["host", "http", "materializer"]
+            key.image_digests,
+            BTreeMap::from([
+                ("host", format!("sha256:{}", "b".repeat(64))),
+                ("http", format!("sha256:{}", "c".repeat(64))),
+                ("materializer", format!("sha256:{}", "d".repeat(64))),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_chart_that_names_another_role_digest_is_refused() {
+        let set = |http: char| ImageSet {
+            host: format!("one.example/host:1@sha256:{}", "b".repeat(64)),
+            http: format!("one.example/http@sha256:{}", http.to_string().repeat(64)),
+            materializer: format!("one.example/materializer@sha256:{}", "d".repeat(64)),
+        };
+        require_same_set(&set('c'), &set('c')).unwrap();
+        let refused = require_same_set(&set('c'), &set('e'))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains(&format!("http ran sha256:{}", "c".repeat(64)))
+                && !refused.contains("host ran"),
+            "{refused}"
         );
     }
 }

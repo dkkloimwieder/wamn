@@ -1039,6 +1039,8 @@ impl Run {
             manifest_output: manifest.clone(),
             candidate_output: candidate.clone(),
             host_image: record.output(Stage::Images, "host")?.to_owned(),
+            http_image: record.output(Stage::Guests, "flow-http")?.to_owned(),
+            materializer_image: record.output(Stage::Guests, "materializer")?.to_owned(),
             gates_image: Some(record.output(Stage::Images, "gates")?.to_owned()),
             identity_image: Some(record.output(Stage::Images, "identity")?.to_owned()),
             native_registry_endpoint: None,

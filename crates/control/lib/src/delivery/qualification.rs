@@ -770,6 +770,8 @@ mod tests {
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: pinned("host"),
+            http_image: pinned("flow-http"),
+            materializer_image: pinned("materializer"),
             gates_image: Some(pinned("gates")),
             identity_image: Some(pinned("identity")),
             deployment_files: Vec::new(),

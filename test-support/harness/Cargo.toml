@@ -26,6 +26,10 @@ wamn-catalog = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
+# The cluster cases' environment on the release chart (case_release.rs): the
+# role images copied by digest.
+oci-client = { workspace = true }
+wamn-package-artifact = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true, features = ["jetstream"] }

@@ -10,7 +10,13 @@ use wamn_gate_harness::journey::MaterializerPhase;
 
 use super::{ReceivingCluster, apply, checked, kubectl, resources};
 
-pub(super) async fn endpoint(cluster: &ReceivingCluster, name: &str) -> anyhow::Result<String> {
+/// Mirror the HTTP Service `service` to a NodePort Service `name`, and return
+/// its endpoint.
+pub(super) async fn endpoint(
+    cluster: &ReceivingCluster,
+    service: &str,
+    name: &str,
+) -> anyhow::Result<String> {
     let slices: Value = serde_json::from_slice(
         &checked(kubectl(&cluster.resources).args([
             "-n",
@@ -18,7 +24,7 @@ pub(super) async fn endpoint(cluster: &ReceivingCluster, name: &str) -> anyhow::
             "get",
             "endpointslices",
             "-l",
-            "kubernetes.io/service-name=flow-http",
+            &format!("kubernetes.io/service-name={service}"),
             "-o",
             "json",
         ]))
@@ -30,7 +36,7 @@ pub(super) async fn endpoint(cluster: &ReceivingCluster, name: &str) -> anyhow::
             &cluster.resources.name,
             "get",
             "service",
-            "flow-http",
+            service,
             "-o",
             "json",
         ]))

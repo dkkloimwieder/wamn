@@ -45,11 +45,14 @@ wamn-ctl prepare-release \
   --release-digest "$DELIVERY_RELEASE_DIGEST" --artifact-base "$DELIVERY_ARTIFACT_BASE" \
   --target-directory "$DELIVERY_TARGET" \
   --host-image "$DELIVERY_HOST_IMAGE" \
+  --http-image "$DELIVERY_HTTP_IMAGE" --materializer-image "$DELIVERY_MATERIALIZER_IMAGE" \
   --manifest-output "$DELIVERY_MANIFEST" --candidate-output "$DELIVERY_CANDIDATE"
 ```
 
 Use unused absolute paths for both output files.
 The candidate records the org, the project, the environment, the tenant and the route host, because the manifest does not name them.
+It also records the platform image set the cases deploy: the host image and the `http-route` and `materializer` role components, each as `repository@sha256:digest`.
+The qualification key names these digests, and publication refuses a release chart whose image set differs from them.
 The qualification fixtures take the org, the project, the tenant, the environment, the route host and the packages from the candidate.
 Add each deployment document, application request, and expected response with `--deployment-file` before qualification.
 For an owned registry reached through another address inside kind, add `--native-registry-endpoint HOST:PORT`.
@@ -74,6 +77,8 @@ The result must record a `wamn build` of each package of the candidate.
 It rebuilds through Cargo, then refuses artifacts that differ from the candidate.
 It pulls each image by the digest that the candidate names and records its image ID. It builds no image.
 The application cases consume the supplied artifacts without replacement builds.
+Each case installs its environment with the release chart, as `env apply` does.
+It copies the candidate's role components by digest into its own registry and stamps a copy of the chart with the candidate's image set.
 
 The package set of the candidate selects the cases exactly. Any other set fails.
 A Receiving release with Acme runs command histories, baseline overlay compatibility, and durable queue recovery after interruption of its combined host.

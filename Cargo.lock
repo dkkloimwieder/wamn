@@ -6131,6 +6131,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "oci-client",
  "schemars",
  "serde",
  "serde_json",
@@ -6144,6 +6145,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-engine",
  "wamn-event-wire",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-schema-control",
  "wamn-test-infrastructure",

@@ -7,10 +7,10 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase, PostcommitPhase};
-use wamn_test_infrastructure::{event_broker, workload};
+use wamn_test_infrastructure::{event_broker, release_chart, workload};
 
 use super::{
-    ReceivingCluster, cdc, checked, deployment, install_host, kubectl, materializer_case,
+    ReceivingCluster, cdc, checked, deployment, install_release, kubectl, materializer_case,
     provision, resources, start,
 };
 
@@ -117,9 +117,9 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     .await?;
     let secrets = deployment::native_secrets(cluster)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
-    install_host(
-        &cluster.resources,
-        &cluster.inputs,
+    let deployed = install_release(
+        cluster,
+        &route.database_url,
         &carrier,
         &super::HostBinding {
             replicas: 3,
@@ -157,38 +157,17 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &gates_evidence,
     )
     .await?;
-    let hosts = workload::hosts_ready(&workload::HostsReadyInput {
-        lifecycle: &resources.lifecycle,
-        cluster: &resources.name,
-        work: &resources.work,
-        namespace: &resources.name,
-        image: &resources.host_image,
-        runtime_digest: &digest,
-        replicas: 3,
-        evidence: &resources.evidence,
-    })
-    .await?;
-    let (http_image, materializer_image) = deployment::publish_platform_components(cluster).await?;
-    deployment::install_http(cluster, &http_image).await?;
-    workload::http_ready(
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &hosts,
-        &resources.evidence,
+    let release = deployed.release(resources, &carrier);
+    let hosts = release_chart::hosts_ready(&release, &deployed.host_image, &digest, 3).await?;
+    release_chart::role_placed(&release, "http", &hosts).await?;
+    let endpoint = materializer_case::endpoint(
+        cluster,
+        &deployed.http_service(),
+        "receiving-postcommit-nodeport",
     )
     .await?;
-    let endpoint = materializer_case::endpoint(cluster, "receiving-postcommit-nodeport").await?;
     assert_unknown_route(cluster, &endpoint).await?;
-    let materializer = deployment::install_materializer(cluster, &materializer_image).await?;
-    workload::materializer_ready(
-        &resources.name,
-        &resources.work,
-        &materializer,
-        &hosts,
-        &resources.evidence,
-    )
-    .await?;
+    release_chart::role_placed(&release, "materializer", &hosts).await?;
     let baseline = super::super::materializer::materializer_baseline(observer.clone()).await?;
     let (phase, update_trace, receipt_trace) = materializer_case::trigger(
         cluster,
@@ -221,9 +200,9 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         kubeconfig: resources.work.join("kubeconfig"),
         context: format!("kind-{}", resources.name),
         namespace: resources.name.clone(),
-        materializer_workload: "receiving-materializer".to_owned(),
+        materializer_workload: format!("{}-materializer", deployed.name),
         source_commit: resources.source.clone(),
-        statement_timeout_ms: statement_timeout(resources).await?,
+        statement_timeout_ms: statement_timeout(resources, &deployed.name).await?,
     });
     let replay = event_broker::connect(&cluster.broker.runtime, &cluster.nats_url).await?;
     tokio::time::timeout(
@@ -363,13 +342,13 @@ pub(super) async fn assert_materializer_logs(
     Ok(())
 }
 
-async fn statement_timeout(resources: &resources::Resources) -> anyhow::Result<u64> {
+async fn statement_timeout(resources: &resources::Resources, group: &str) -> anyhow::Result<u64> {
     let bytes = checked(kubectl(resources).args([
         "-n",
         &resources.name,
         "get",
         "deployment",
-        "hostgroup-default",
+        &format!("hostgroup-{group}"),
         "-o",
         "json",
     ]))

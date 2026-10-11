@@ -28,9 +28,13 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
+use wamn_control::print_release_env::{
+    ReleaseCarrier, lookup_release_carrier, lookup_release_snapshot,
+};
 use wamn_control::provision_project_env::ProvisionedRoute;
+use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
+use wamn_gate_harness::case_release::{self, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
@@ -316,6 +320,137 @@ async fn provision(
     )
     .await?;
     Ok((route, carrier))
+}
+
+/// The drain bound of a case environment release: the host pods' grace period
+/// and `WAMN_DRAIN_BOUND_SECONDS`, as `deploy/platform/values-host-default.yaml`
+/// sets them (R20).
+const DRAIN_BOUND_SECONDS: u32 = 70;
+
+/// One environment release a case installed through the release chart.
+struct Deployed {
+    /// The Helm release name, which is the host group.
+    name: String,
+    /// The `wamn.release` label of the manifest digest.
+    label: String,
+    /// The host image the release names, pinned by digest.
+    host_image: String,
+}
+
+impl Deployed {
+    fn release<'a>(
+        &'a self,
+        resources: &'a Resources,
+        carrier: &'a ReleaseCarrier,
+    ) -> wamn_test_infrastructure::release_chart::Release<'a> {
+        wamn_test_infrastructure::release_chart::Release {
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+            name: &self.name,
+            label: &self.label,
+            digest: carrier.manifest_digest.as_str(),
+            evidence: &resources.evidence,
+        }
+    }
+
+    /// The HTTP role Service.
+    fn http_service(&self) -> String {
+        format!("{}-http", self.name)
+    }
+}
+
+/// Install the environment release of `carrier` through the release chart, as
+/// `env apply` does (wamn-ps2tj.1, docs/plan/platform-deploy.md §9.2): the
+/// host group and every role the release implies. A supplied release's role
+/// images are copied by digest into the case registry; otherwise this
+/// checkout's are pushed (R12).
+async fn install_release(
+    cluster: &ReceivingCluster,
+    database_url: &str,
+    carrier: &ReleaseCarrier,
+    binding: &HostBinding<'_>,
+) -> anyhow::Result<Deployed> {
+    let resources = &cluster.resources;
+    let (_, overlay) = prepare_host(resources, &cluster.inputs, carrier, binding).await?;
+    let (http, materializer) = if let Some((candidate, _)) = &resources.candidate {
+        let authority = cluster
+            .inputs
+            .component_artifact_base
+            .strip_suffix("/wamn/components")
+            .context("the Receiving component repository has its declared suffix")?;
+        case_release::copy_roles(
+            candidate,
+            &Registry {
+                authority: authority.to_owned(),
+                auth_file: Some(cluster.inputs.registry_auth_file.clone()),
+                insecure: true,
+                ca_paths: Vec::new(),
+            },
+        )
+        .await?
+    } else {
+        deployment::publish_platform_components(cluster).await?
+    };
+    let host_image = if resources.host_image.contains('@') {
+        resources.host_image.clone()
+    } else {
+        let digest = wamn_test_infrastructure::workload::image_ready(
+            &resources.lifecycle,
+            &resources.name,
+            &resources.work,
+            &resources.host_image,
+            &resources.source,
+            "release",
+            &resources.evidence,
+        )
+        .await?;
+        format!("{}@{digest}", resources.host_image)
+    };
+    let manifest = lookup_release_snapshot(
+        database_url,
+        identity().tenant.as_str(),
+        carrier.manifest_digest.as_str(),
+        &carrier.artifact_base,
+    )
+    .await?
+    .manifest;
+    let (org, project, env) = (
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+    );
+    let (name, label) = case_release::install(
+        &case_release::Install {
+            repository: &resources.repository,
+            cluster: &resources.name,
+            work: &resources.work,
+            namespace: &resources.name,
+        },
+        &ImageSet {
+            host: host_image.clone(),
+            http,
+            materializer,
+        },
+        &ValuesInput {
+            org: org.to_owned(),
+            project: project.to_owned(),
+            env: env.to_owned(),
+            manifest_digest: carrier.manifest_digest.to_string(),
+            artifact_base: carrier.artifact_base.clone(),
+            route_host: cluster.inputs.route_host.clone(),
+            roles: release_chart::roles(&manifest, org, project, env),
+            drain_bound_seconds: DRAIN_BOUND_SECONDS,
+            actor: "receiving cluster case".to_owned(),
+            host_group: case_release::host_group(&fs::read_to_string(&overlay)?)?,
+        },
+    )
+    .await?;
+    Ok(Deployed {
+        name,
+        label,
+        host_image,
+    })
 }
 
 /// What one installed host group binds to: how many replicas, which broker,
@@ -649,12 +784,7 @@ async fn assert_source_unchanged(resources: &Resources) -> anyhow::Result<()> {
 async fn released_http(
     cluster: &ReceivingCluster,
     replicas: u32,
-) -> anyhow::Result<(
-    ProvisionedRoute,
-    ReleaseCarrier,
-    wamn_test_infrastructure::workload::HostObservation,
-    Value,
-)> {
+) -> anyhow::Result<(ProvisionedRoute, String)> {
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
     serve_released_http(cluster, replicas, route, carrier).await
 }
@@ -698,24 +828,21 @@ async fn publish_and_push(
     Ok((route, carrier))
 }
 
+/// Install the release through the release chart and check its hosts and its
+/// HTTP role. Returns the route and the HTTP role Service.
 async fn serve_released_http(
     cluster: &ReceivingCluster,
     replicas: u32,
     route: ProvisionedRoute,
     carrier: ReleaseCarrier,
-) -> anyhow::Result<(
-    ProvisionedRoute,
-    ReleaseCarrier,
-    wamn_test_infrastructure::workload::HostObservation,
-    Value,
-)> {
-    use wamn_test_infrastructure::workload;
+) -> anyhow::Result<(ProvisionedRoute, String)> {
+    use wamn_test_infrastructure::{release_chart, workload};
     let secrets = deployment::native_secrets(cluster)?;
     let resources = &cluster.resources;
     let (issuer, instance) = session_cluster::prepare_application(cluster, &carrier).await?;
-    install_host(
-        resources,
-        &cluster.inputs,
+    let deployed = install_release(
+        cluster,
+        &route.database_url,
         &carrier,
         &HostBinding {
             replicas,
@@ -754,26 +881,9 @@ async fn serve_released_http(
         )
         .await?;
     }
-    let hosts = workload::hosts_ready(&workload::HostsReadyInput {
-        lifecycle: &resources.lifecycle,
-        cluster: &resources.name,
-        work: &resources.work,
-        namespace: &resources.name,
-        image: &resources.host_image,
-        runtime_digest: &digest,
-        replicas,
-        evidence: &resources.evidence,
-    })
-    .await?;
-    let image = deployment::publish_http(cluster).await?;
-    deployment::install_http(cluster, &image).await?;
-    let observed = workload::http_ready(
-        &resources.name,
-        &resources.work,
-        &resources.name,
-        &hosts,
-        &resources.evidence,
-    )
-    .await?;
-    Ok((route, carrier, hosts, observed))
+    let release = deployed.release(resources, &carrier);
+    let hosts =
+        release_chart::hosts_ready(&release, &deployed.host_image, &digest, replicas).await?;
+    release_chart::role_placed(&release, "http", &hosts).await?;
+    Ok((route, deployed.http_service()))
 }

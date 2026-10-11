@@ -146,6 +146,13 @@ pub struct PrepareReleaseArgs {
     pub candidate_output: PathBuf,
     #[arg(long)]
     pub host_image: String,
+    /// The http role component the cases deploy through the release chart,
+    /// `<repository>@sha256:<hex>`.
+    #[arg(long)]
+    pub http_image: String,
+    /// The materializer role component, `<repository>@sha256:<hex>`.
+    #[arg(long)]
+    pub materializer_image: String,
     #[arg(long)]
     pub gates_image: Option<String>,
     #[arg(long)]
@@ -246,6 +253,8 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
         manifest_output: args.manifest_output,
         candidate_output: args.candidate_output,
         host_image: args.host_image,
+        http_image: args.http_image,
+        materializer_image: args.materializer_image,
         gates_image: args.gates_image,
         identity_image: args.identity_image,
         native_registry_endpoint: args.native_registry_endpoint,

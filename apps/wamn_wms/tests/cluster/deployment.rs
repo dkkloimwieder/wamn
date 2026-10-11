@@ -275,6 +275,7 @@ pub(super) async fn expose_route(
     cluster: &str,
     work: &Path,
     namespace: &str,
+    service: &str,
     lifecycle: &Path,
     route_host: &str,
 ) -> anyhow::Result<String> {
@@ -284,7 +285,7 @@ pub(super) async fn expose_route(
         "get",
         "endpointslices",
         "-l",
-        "kubernetes.io/service-name=flow-http",
+        &format!("kubernetes.io/service-name={service}"),
         "-o",
         "json",
     ]))
@@ -304,7 +305,7 @@ pub(super) async fn expose_route(
     }
     ensure!(
         !endpoints.is_empty(),
-        "flow-http has no placed endpoint to mirror"
+        "{service} has no placed endpoint to mirror"
     );
     let body = json!({"apiVersion":"v1","kind":"List","items":[
         {"apiVersion":"v1","kind":"Service","metadata":{"name":"flow-http-nodeport","namespace":namespace},
@@ -380,10 +381,12 @@ pub(super) async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Retain the old failure diagnostics before deleting the owned namespace.
+/// Retain the failure diagnostics of the environment release `group` before
+/// deleting the owned namespace.
 pub(super) async fn capture_failure(
     cluster: &str,
     work: &Path,
+    group: &str,
     evidence: &Path,
 ) -> anyhow::Result<()> {
     async fn capture(
@@ -399,27 +402,23 @@ pub(super) async fn capture_failure(
     if !work.join("kubeconfig").is_file() {
         return Ok(());
     }
+    let host_deployment = format!("hostgroup-{group}");
+    let service = format!("{group}-http");
+    let service_slices = format!("kubernetes.io/service-name={service}");
     let mut failures = Vec::new();
     for (name, arguments) in [
         (
             "failure-host-deployment.json",
-            vec!["get", "deployment", "hostgroup-default", "-o", "json"],
+            vec!["get", "deployment", &host_deployment, "-o", "json"],
         ),
         ("failure-pods.json", vec!["get", "pods", "-o", "json"]),
         (
             "failure-flow-http-service.json",
-            vec!["get", "service", "flow-http", "-o", "json"],
+            vec!["get", "service", &service, "-o", "json"],
         ),
         (
             "failure-flow-http-endpointslices.json",
-            vec![
-                "get",
-                "endpointslices",
-                "-l",
-                "kubernetes.io/service-name=flow-http",
-                "-o",
-                "json",
-            ],
+            vec!["get", "endpointslices", "-l", &service_slices, "-o", "json"],
         ),
         (
             "failure-nodeport.json",

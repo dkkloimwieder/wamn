@@ -597,6 +597,7 @@ pub async fn unknown_route(
     cluster: &str,
     work: &Path,
     namespace: &str,
+    service: &str,
     route_host: &str,
     evidence: &Path,
 ) -> anyhow::Result<()> {
@@ -606,7 +607,7 @@ pub async fn unknown_route(
         .expect("pinned probe digest");
     let config_digest = "sha256:5dce198cca467ce79994ed65e01d03882238f9efdd16a8c6f4bc55151c8a4a54";
     let image = HTTP_PROBE_IMAGE;
-    let script = r#"transport=$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body --write-out '{"status":%{http_code},"content_type":"%{content_type}"}' --header "Host: $ROUTE_HOST" "http://flow-http.$NAMESPACE.svc.cluster.local/no-such-route")
+    let script = r#"transport=$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body --write-out '{"status":%{http_code},"content_type":"%{content_type}"}' --header "Host: $ROUTE_HOST" "http://$SERVICE.$NAMESPACE.svc.cluster.local/no-such-route")
 body_hex=$(od -An -v -tx1 /tmp/body | tr -d ' \n')
 printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termination-log
 "#;
@@ -614,7 +615,7 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
     "metadata":{"name":"flow-http-reachability","namespace":namespace},
     "spec":{"activeDeadlineSeconds":60,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{
         "name":"probe","image":image,"imagePullPolicy":"IfNotPresent","command":["/bin/sh","-ec"],"args":[script],
-        "env":[{"name":"ROUTE_HOST","value":route_host},{"name":"NAMESPACE","value":namespace}]
+        "env":[{"name":"ROUTE_HOST","value":route_host},{"name":"NAMESPACE","value":namespace},{"name":"SERVICE","value":service}]
     }]}}}});
     let path = work.join("flow-http-reachability.json");
     fs::write(&path, serde_json::to_vec_pretty(&job)?)?;

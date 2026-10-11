@@ -5,11 +5,12 @@
 //! database, starts its session issuer and renders its host overlay. Then the
 //! delivery is the same for every application:
 //!
-//! 1. The host, identity and gates images go to an owned native registry.
-//!    `prepare-release` writes the candidate, the nodes pull the images, and
-//!    `qualify-release` runs the application's qualifying cases.
-//! 2. The role images are pushed, and a copy of the release chart is stamped
-//!    with the host image and the role images (R15).
+//! 1. The host, identity and gates images and the role images go to an owned
+//!    native registry. `prepare-release` writes the candidate, the nodes pull
+//!    the images, and `qualify-release` runs the application's qualifying
+//!    cases, which deploy the candidate's images through the release chart.
+//! 2. The role images are copied by digest to the kept registry, and a copy of
+//!    the release chart is stamped with the candidate's image set (R12, R15).
 //! 3. `publish-qualified-release` pushes the manifest to the TLS registry and
 //!    records the qualification on the chart's image set, which `env apply`
 //!    reads (R12).
@@ -38,6 +39,8 @@ use wamn_test_infrastructure::delivery_cluster::{self, KeptCluster, NAMESPACE, R
 use wamn_test_infrastructure::release_chart::{
     self as checks, Environment, Release, a1_probe, hosts_ready, role_placed,
 };
+
+use crate::case_release::{Registry, copy_roles};
 
 /// One run of an owned delivery command may take this long; `qualify-release`
 /// runs the application's cluster cases.
@@ -187,10 +190,19 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     )
     .await?;
     let host_image = app.native("host")?;
-    let (candidate, manifest, qualification) = qualify(app, &host_image).await?;
-
-    // The platform image set: the qualified host image and the role images.
     let (http, materializer) = push_roles(app).await?;
+    let (candidate, manifest, qualification) =
+        qualify(app, &host_image, &http, &materializer).await?;
+
+    // The platform image set is the candidate's: the role images copied by
+    // digest to the kept registry, which the hosts pull from.
+    let kept = Registry {
+        authority: app.kept.registry.clone(),
+        auth_file: Some(app.kept.registry_auth.clone()),
+        insecure: false,
+        ca_paths: vec![app.kept.ca.clone()],
+    };
+    let (http, materializer) = copy_roles(&candidate, &kept).await?;
     let chart = stamp(
         &app.repository.join("deploy/platform/release"),
         &ImageSet {
@@ -277,6 +289,8 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
 async fn qualify(
     app: &Application<'_>,
     host_image: &str,
+    http_image: &str,
+    materializer_image: &str,
 ) -> anyhow::Result<(Candidate, ServingManifest, PathBuf)> {
     let manifest = app.evidence.join("manifest.json");
     let candidate_path = app.evidence.join("candidate.json");
@@ -309,6 +323,8 @@ async fn qualify(
         .arg("--candidate-output")
         .arg(&candidate_path)
         .args(["--host-image", host_image])
+        .args(["--http-image", http_image])
+        .args(["--materializer-image", materializer_image])
         .args(["--identity-image", &app.native("identity")?])
         .args([
             "--native-registry-endpoint",
@@ -377,8 +393,9 @@ fn native_registry_files(candidate: &Candidate, work: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// Push the http and materializer role components over HTTP, and return
-/// each as the TLS registry's `<repository>@sha256:<hex>`: one storage.
+/// Push the http and materializer role components to the owned native
+/// registry, and return each as `localhost:<port>/wamn/<repository>@sha256:<hex>`,
+/// the authority of the native host image.
 async fn push_roles(app: &Application<'_>) -> anyhow::Result<(String, String)> {
     let wash = String::from_utf8(
         checked(&mut Command::new(app.repository.join("tools/install-wash"))).await?,
@@ -386,18 +403,15 @@ async fn push_roles(app: &Application<'_>) -> anyhow::Result<(String, String)> {
     .trim()
     .to_owned();
     ensure!(!wash.is_empty(), "install-wash returned no executable path");
-    let docker = app.work.join("role-docker");
-    fs::create_dir_all(&docker)?;
-    fs::copy(&app.kept.registry_auth, docker.join("config.json"))?;
+    let native = native_authority(app)?;
     let mut pushed = Vec::new();
     for (file, repository) in [
         ("http_route.wasm", "flow-http"),
         ("materializer.wasm", "materializer"),
     ] {
-        let reference = format!("{}/wamn/{repository}:{}", app.kept.http_registry, app.owner);
+        let reference = format!("{native}/wamn/{repository}:{}", app.owner);
         let output = checked(
             Command::new(&wash)
-                .env("DOCKER_CONFIG", &docker)
                 .args(["-o", "json", "oci", "push", "--insecure", &reference])
                 .arg(app.target.join("wasm32-wasip2/release").join(file)),
         )
@@ -409,11 +423,19 @@ async fn push_roles(app: &Application<'_>) -> anyhow::Result<(String, String)> {
             .filter(|digest| digest.starts_with("sha256:"))
             .context("the role publication returned no digest")?;
         write_evidence(app.evidence, &format!("{repository}-push.json"), &body)?;
-        pushed.push(format!("{}/wamn/{repository}@{digest}", app.kept.registry));
+        pushed.push(format!("{native}/wamn/{repository}@{digest}"));
     }
     let materializer = pushed.pop().context("the materializer image")?;
     let http = pushed.pop().context("the http image")?;
     Ok((http, materializer))
+}
+
+/// The owned native registry's authority as this process reaches it: the
+/// loopback port `tools/delivery-owned native-registry` published.
+fn native_authority(app: &Application<'_>) -> anyhow::Result<String> {
+    let port = fs::read_to_string(app.work.join("native-registry-port"))
+        .context("read the native registry port")?;
+    Ok(format!("localhost:{}", port.trim()))
 }
 
 /// The platform part of the host group (`WAMN_RELEASE_HOST_GROUP`): the

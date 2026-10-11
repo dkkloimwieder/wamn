@@ -8,6 +8,7 @@
 //! test inputs and environment calls. Application assertions stay with the app;
 //! provisioning uses the existing control library functions.
 
+pub mod case_release;
 pub mod ceiling;
 pub mod delivery;
 pub mod environment;

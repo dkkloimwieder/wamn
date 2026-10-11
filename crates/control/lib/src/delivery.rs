@@ -38,6 +38,10 @@ pub struct PrepareReleaseRequest {
     pub manifest_output: PathBuf,
     pub candidate_output: PathBuf,
     pub host_image: String,
+    /// The http role component, `<repository>@sha256:<hex>` (R12).
+    pub http_image: String,
+    /// The materializer role component, `<repository>@sha256:<hex>` (R12).
+    pub materializer_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
     pub native_registry_endpoint: Option<String>,
@@ -71,6 +75,8 @@ pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
         manifest_path: request.manifest_output,
         target_directory: fs::canonicalize(request.target_directory)?,
         host_image: request.host_image,
+        http_image: request.http_image,
+        materializer_image: request.materializer_image,
         gates_image: request.gates_image,
         identity_image: request.identity_image,
         deployment_files: request.deployment_files,
@@ -119,6 +125,11 @@ pub struct Candidate {
     pub manifest_path: PathBuf,
     pub target_directory: PathBuf,
     pub host_image: String,
+    /// The http role component the qualification deploys through the release
+    /// chart, `<repository>@sha256:<hex>`. Its digest is in the key (R12).
+    pub http_image: String,
+    /// The materializer role component, as [`Self::http_image`].
+    pub materializer_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
     #[serde(default)]
@@ -146,13 +157,19 @@ impl Candidate {
         );
         candidate.validate_registry()?;
         candidate.manifest()?;
-        for image in std::iter::once(&candidate.host_image)
-            .chain(candidate.gates_image.iter())
-            .chain(candidate.identity_image.iter())
-        {
+        for image in candidate.images() {
             require_pinned_image(image)?;
         }
         Ok(candidate)
+    }
+
+    /// Every image the candidate names: the host, the two role components, and
+    /// the gates and identity images it has.
+    fn images(&self) -> impl Iterator<Item = &String> {
+        [&self.host_image, &self.http_image, &self.materializer_image]
+            .into_iter()
+            .chain(self.gates_image.iter())
+            .chain(self.identity_image.iter())
     }
 
     fn validate_registry(&self) -> anyhow::Result<()> {
@@ -177,7 +194,7 @@ impl Candidate {
                 self.host_image.split('/').next() == Some(host.registry()),
                 "an explicit native registry endpoint requires an explicit image registry authority"
             );
-            for image in self.gates_image.iter().chain(self.identity_image.iter()) {
+            for image in self.images().skip(1) {
                 ensure!(
                     image.parse::<oci_client::Reference>()?.registry() == host.registry()
                         && image.split('/').next() == Some(host.registry()),
@@ -230,10 +247,7 @@ impl Candidate {
     /// Record the guest and native files that the existing application cases consume.
     pub fn artifact_hashes(&self) -> anyhow::Result<BTreeMap<PathBuf, String>> {
         self.validate_registry()?;
-        for image in std::iter::once(&self.host_image)
-            .chain(self.gates_image.iter())
-            .chain(self.identity_image.iter())
-        {
+        for image in self.images() {
             require_pinned_image(image)?;
         }
         let mut files = BTreeMap::new();
@@ -446,6 +460,11 @@ mod tests {
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: format!("localhost:5000/host@sha256:{}", "a".repeat(64)),
+            http_image: format!("localhost:5000/wamn/flow-http@sha256:{}", "b".repeat(64)),
+            materializer_image: format!(
+                "localhost:5000/wamn/materializer@sha256:{}",
+                "c".repeat(64)
+            ),
             gates_image: None,
             identity_image: None,
             deployment_files: Vec::new(),
@@ -466,9 +485,17 @@ mod tests {
         candidate.identity_image = Some(format!("another.test/identity@sha256:{}", "a".repeat(64)));
         assert!(candidate.validate_registry().is_err());
         candidate.identity_image = None;
+        candidate.http_image = format!("another.test/flow-http@sha256:{}", "b".repeat(64));
+        assert!(
+            candidate.validate_registry().is_err(),
+            "a role image has another authority"
+        );
         candidate.host_image = format!("acme/host@sha256:{}", "a".repeat(64));
         assert!(candidate.validate_registry().is_err());
         candidate.host_image = format!("docker.io/acme/host@sha256:{}", "a".repeat(64));
+        candidate.http_image = format!("docker.io/acme/flow-http@sha256:{}", "b".repeat(64));
+        candidate.materializer_image =
+            format!("docker.io/acme/materializer@sha256:{}", "c".repeat(64));
         assert!(candidate.validate_registry().is_ok());
         candidate.identity_image = Some(format!("acme/identity@sha256:{}", "a".repeat(64)));
         assert!(candidate.validate_registry().is_err());

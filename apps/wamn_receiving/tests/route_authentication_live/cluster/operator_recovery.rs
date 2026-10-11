@@ -832,7 +832,8 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
         "a release is ready before the scheduler fault"
     );
 
-    let endpoint = materializer_case::endpoint(cluster, "receiving-operator-recovery").await?;
+    let endpoint =
+        materializer_case::endpoint(cluster, "flow-http", "receiving-operator-recovery").await?;
     recovery.write("request-origin",&json!({"kind":"owned-nodeport","endpoint":endpoint,"cluster":resources.name,
         "route_host":cluster.inputs.route_host,"route":"/purchase_order/get","connect_timeout_seconds":2,"read_timeout_seconds":5,"total_timeout_seconds":5}))?;
     let token = secret_value(&cluster.inputs.operator_secret_output, "token")?;

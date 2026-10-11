@@ -114,6 +114,7 @@ pub(super) async fn setup(cluster: &mut ReceivingCluster) -> anyhow::Result<Read
         &resources.name,
         &resources.work,
         &resources.name,
+        "flow-http",
         &cluster.inputs.route_host,
         &evidence,
     )
@@ -162,7 +163,9 @@ pub(super) async fn materializer(
     let resources = &cluster.resources;
     let observer = event_broker::connect(&cluster.broker.observer, &cluster.nats_url).await?;
     let baseline = super::super::materializer::materializer_baseline(observer.clone()).await?;
-    let endpoint = materializer_case::endpoint(cluster, "receiving-materializer-nodeport").await?;
+    let endpoint =
+        materializer_case::endpoint(cluster, "flow-http", "receiving-materializer-nodeport")
+            .await?;
     let (phase, update_trace, receipt_trace) =
         materializer_case::trigger(cluster, &ready.route_database_url, &endpoint, order).await?;
     super::super::materializer::assert_materializer_causation(&phase, observer, &baseline).await?;

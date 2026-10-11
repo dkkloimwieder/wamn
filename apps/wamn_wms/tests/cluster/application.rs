@@ -223,37 +223,6 @@ pub(super) fn render_host(
     Ok((base, overlay))
 }
 
-pub(super) fn render_workload(
-    inputs: &JourneyDocument,
-    image: &str,
-    work: &Path,
-) -> anyhow::Result<std::path::PathBuf> {
-    use wamn_test_infrastructure::rendering::{
-        HttpClaims, HttpWorkloadInput, render_http_workload,
-    };
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let output = render_http_workload(
-        &std::fs::read_to_string(
-            repository.join("deploy/platform/http-route-workload.example.yaml"),
-        )?,
-        &HttpWorkloadInput {
-            namespace: inputs.host_secret_namespace.clone(),
-            image: image.to_owned(),
-            route_host: inputs.route_host.clone(),
-            claims: HttpClaims {
-                tenant: crate::environment::identity().tenant.clone(),
-                catalog: "default".to_owned(),
-                environment: crate::environment::identity().environment.clone(),
-                project: crate::environment::identity().project.clone(),
-                schema: crate::environment::SCHEMA.to_owned(),
-            },
-        },
-    )?;
-    let path = work.join("flow-http.yaml");
-    std::fs::write(&path, output)?;
-    Ok(path)
-}
-
 pub(super) async fn released_routes(
     document: &JourneyDocument,
     store: &AmazonS3,
