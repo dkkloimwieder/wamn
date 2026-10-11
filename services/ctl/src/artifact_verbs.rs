@@ -2,9 +2,10 @@
 //! (docs/plan/platform-deploy.md §7.2).
 //!
 //! Layer 0 of a package artifact is the canonical `wamn.json` of the package.
-//! Both verbs read the verified artifact that `catalog.package_artifacts`
-//! records, through `wamn-package-artifact`, so each layer is checked against
-//! its digest.
+//! Both verbs take a package artifact digest or a unique prefix of one and
+//! read the verified artifact that `catalog.package_artifacts` records with
+//! that digest, through `wamn-package-artifact`, so each layer is checked
+//! against its digest.
 
 use std::fmt::Write as _;
 
@@ -12,15 +13,16 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::Value;
 use wamn_control::package_artifact::PACKAGE_MANIFEST_MEDIA_TYPE;
-use wamn_package_artifact::{PackageRegistry, Repository, verified_digest};
+use wamn_package_artifact::{PackageRegistry, Repository, resolve_digest};
 
 use crate::package_verbs::RegistryArgs;
 
 /// Arguments of `wamn inspect`.
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// Package artifact `<package_id>-<version>` that `push-package` pushed.
-    pub package: String,
+    /// Digest, or unique digest prefix, of a package artifact that
+    /// `push-package` pushed.
+    pub digest: String,
     /// The registry flags of `push-package`.
     #[command(flatten)]
     pub registry: RegistryArgs,
@@ -29,9 +31,9 @@ pub struct InspectArgs {
 /// Arguments of `wamn diff`.
 #[derive(Debug, Args)]
 pub struct DiffArgs {
-    /// The first package artifact `<package_id>-<version>`.
+    /// Digest, or unique digest prefix, of the first package artifact.
     pub from: String,
-    /// The second package artifact `<package_id>-<version>`.
+    /// Digest, or unique digest prefix, of the second package artifact.
     pub to: String,
     /// The registry flags of `push-package`.
     #[command(flatten)]
@@ -44,7 +46,7 @@ pub struct DiffArgs {
 ///
 /// When the artifact is not verified or cannot be pulled.
 pub async fn inspect(args: InspectArgs) -> anyhow::Result<()> {
-    let manifest = layer_zero(&args.registry.registry(), &args.package).await?;
+    let manifest = layer_zero(&args.registry.registry(), &args.digest).await?;
     println!(
         "{}",
         String::from_utf8(manifest).context("layer 0 is not UTF-8")?
@@ -72,13 +74,13 @@ pub async fn diff(args: DiffArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Layer 0 of the verified artifact `package` (`<package_id>-<version>`).
-async fn layer_zero(registry: &PackageRegistry, package: &str) -> anyhow::Result<Vec<u8>> {
-    let (package_id, version) = package
-        .split_once('-')
-        .with_context(|| format!("{package} is not <package_id>-<version>"))?;
-    let digest = verified_digest(registry, package_id, version).await?;
-    let layers = Repository::open(registry, package)?.pull(&digest).await?;
+/// Layer 0 of the verified artifact whose digest is or starts with `digest`.
+async fn layer_zero(registry: &PackageRegistry, digest: &str) -> anyhow::Result<Vec<u8>> {
+    let artifact = resolve_digest(registry, digest).await?;
+    let package = &artifact.digest;
+    let layers = Repository::open(registry, &artifact.tag())?
+        .pull(package)
+        .await?;
     let first = layers
         .into_iter()
         .next()
@@ -146,7 +148,8 @@ mod tests {
 
     #[test]
     fn the_diff_names_each_changed_pointer() {
-        let from = json!({"package": {"id": "a", "version": "1.0.0"}, "tables": ["x", "y"], "a/b": 1});
+        let from =
+            json!({"package": {"id": "a", "version": "1.0.0"}, "tables": ["x", "y"], "a/b": 1});
         let to = json!({"package": {"id": "a", "version": "1.1.0"}, "tables": ["x"], "c": true, "a/b": 1});
         assert_eq!(
             diff_documents(&from, &to),

@@ -396,6 +396,99 @@ pub async fn verified_digest(
     }
 }
 
+/// One verified package artifact that `catalog.package_artifacts` records.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedArtifact {
+    pub package_id: String,
+    pub version: String,
+    /// `sha256:<hex>` of the package artifact manifest.
+    pub digest: String,
+}
+
+impl VerifiedArtifact {
+    /// The tag `push-package` pushed the artifact under.
+    pub fn tag(&self) -> String {
+        format!("{}-{}", self.package_id, self.version)
+    }
+}
+
+/// The verified artifact whose digest is `prefix` or starts with it. The
+/// prefix is lowercase hex, with or without `sha256:`.
+///
+/// # Errors
+///
+/// When the prefix is not hex, no verified artifact or more than one has a
+/// digest that starts with it, or the control database cannot be read.
+pub async fn resolve_digest(
+    registry: &PackageRegistry,
+    prefix: &str,
+) -> anyhow::Result<VerifiedArtifact> {
+    let prefix = digest_prefix(prefix)?;
+    let (control, connection) = tokio_postgres::connect(&registry.control_database_url, NoTls)
+        .await
+        .context("connect to the control database")?;
+    let connection_task = tokio::spawn(connection);
+    let rows = control
+        .query(
+            "SELECT package_id, version, digest FROM catalog.package_artifacts \
+              WHERE verified_at IS NOT NULL AND starts_with(digest, $1) \
+              ORDER BY digest",
+            &[&prefix],
+        )
+        .await
+        .context("read catalog.package_artifacts");
+    drop(control);
+    connection_task.abort();
+    let artifacts = rows?
+        .into_iter()
+        .map(|row| VerifiedArtifact {
+            package_id: row.get(0),
+            version: row.get(1),
+            digest: row.get(2),
+        })
+        .collect();
+    one_artifact(&prefix, artifacts)
+}
+
+/// `sha256:<hex>` of a digest or digest prefix given with or without
+/// `sha256:`.
+fn digest_prefix(prefix: &str) -> anyhow::Result<String> {
+    let hex = prefix.strip_prefix("sha256:").unwrap_or(prefix);
+    ensure!(
+        !hex.is_empty()
+            && hex.len() <= 64
+            && hex
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+        "{prefix:?} is not a package artifact digest or a prefix of one in lowercase hex"
+    );
+    Ok(format!("sha256:{hex}"))
+}
+
+/// The one artifact of `artifacts`, all of whose digests start with `prefix`.
+fn one_artifact(
+    prefix: &str,
+    mut artifacts: Vec<VerifiedArtifact>,
+) -> anyhow::Result<VerifiedArtifact> {
+    match artifacts.len() {
+        0 => anyhow::bail!(
+            "no verified package artifact in catalog.package_artifacts has a digest that starts with {prefix}"
+        ),
+        1 => Ok(artifacts.remove(0)),
+        _ => anyhow::bail!(
+            "digest prefix {prefix} is ambiguous; it starts {}; give more digits",
+            artifacts
+                .iter()
+                .map(|artifact| format!(
+                    "{} ({}@{})",
+                    artifact.digest, artifact.package_id, artifact.version
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
 /// Parse one descriptor layer. Its bytes must be the canonical JSON of the
 /// descriptor it holds.
 ///
@@ -476,6 +569,46 @@ pub async fn load_component_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_digest_prefix_is_lowercase_hex_with_or_without_its_algorithm() {
+        assert_eq!(digest_prefix("ab12").unwrap(), "sha256:ab12");
+        assert_eq!(digest_prefix("sha256:ab12").unwrap(), "sha256:ab12");
+        for refused in [
+            "",
+            "sha256:",
+            "AB12",
+            "ab%",
+            "wamn_wms-2.1.0",
+            &"a".repeat(65),
+        ] {
+            assert!(digest_prefix(refused).is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn a_digest_prefix_names_exactly_one_artifact() {
+        let artifact = |package_id: &str, digest: &str| VerifiedArtifact {
+            package_id: package_id.to_owned(),
+            version: "1.0.0".to_owned(),
+            digest: digest.to_owned(),
+        };
+        let one = artifact("a", "sha256:ab01");
+        assert_eq!(one_artifact("sha256:ab", vec![one.clone()]).unwrap(), one);
+        let unknown = one_artifact("sha256:ff", Vec::new())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            unknown.contains("no verified package artifact"),
+            "{unknown}"
+        );
+        let ambiguous = one_artifact("sha256:ab", vec![one, artifact("b", "sha256:ab02")])
+            .unwrap_err()
+            .to_string();
+        assert!(ambiguous.contains("ambiguous"), "{ambiguous}");
+        assert!(ambiguous.contains("sha256:ab01 (a@1.0.0)"), "{ambiguous}");
+        assert!(ambiguous.contains("sha256:ab02 (b@1.0.0)"), "{ambiguous}");
+    }
 
     #[test]
     fn a_tag_follows_the_oci_grammar() {

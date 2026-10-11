@@ -148,15 +148,17 @@ The refusal tells you to run `wamn build`.
 ## Reading a pushed package
 
 Layer 0 of a package artifact is the canonical `wamn.json` of the package.
-`wamn inspect <package_id>-<version>` prints layer 0 of the pushed artifact, byte for byte.
-`wamn diff <package_id>-<version> <package_id>-<version>` prints each JSON pointer where layer 0 of the two artifacts differs.
+`wamn inspect <digest>` prints layer 0 of the pushed artifact, byte for byte.
+`wamn diff <digest> <digest>` prints each JSON pointer where layer 0 of the two artifacts differs.
+A digest is the package artifact digest that `push-package` prints, with or without `sha256:`, or a prefix of it that names one artifact.
+A prefix that names no verified artifact, or more than one, is refused.
 A line that starts with `-` shows the value in the first artifact, and a line that starts with `+` shows the value in the second.
 Identical documents print nothing.
 Both commands read only an artifact that `catalog.package_artifacts` records as verified, and they check each layer against its digest.
 They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry`, `--oci-ca-path` and `--control-database-url`.
 
 ```bash
-"$CARGO_TARGET_DIR/debug/wamn" inspect wamn_receiving-2.1.0 \
+"$CARGO_TARGET_DIR/debug/wamn" inspect <digest> \
   --artifact-base <registry>/wamn/packages \
   --registry-auth-file <auth file> \
   --control-database-url <control database URL>
