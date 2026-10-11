@@ -400,11 +400,32 @@ impl Qualification {
         self.assert_artifacts()
     }
 
-    /// Refuse artifact changes after qualification.
+    /// Refuse artifact changes after qualification, and name each changed path.
     pub fn assert_artifacts(&self) -> anyhow::Result<()> {
+        let found = self.candidate.artifact_hashes()?;
+        let changed: Vec<String> = self
+            .artifact_hashes
+            .keys()
+            .chain(found.keys())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|path| {
+                let recorded = self.artifact_hashes.get(path);
+                let now = found.get(path);
+                (recorded != now).then(|| {
+                    format!(
+                        "{} (recorded {}, found {})",
+                        path.display(),
+                        recorded.map_or("none", String::as_str),
+                        now.map_or("none", String::as_str)
+                    )
+                })
+            })
+            .collect();
         ensure!(
-            self.candidate.artifact_hashes()? == self.artifact_hashes,
-            "qualified artifacts changed or disappeared"
+            changed.is_empty(),
+            "qualified artifacts changed or disappeared: {}",
+            changed.join("; ")
         );
         Ok(())
     }
