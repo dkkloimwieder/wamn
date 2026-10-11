@@ -14,7 +14,6 @@ mod postcommit_pair;
 mod queue_recovery;
 mod resources;
 mod route_cases;
-mod session_cases;
 mod session_cluster;
 mod stages;
 mod startup_case;

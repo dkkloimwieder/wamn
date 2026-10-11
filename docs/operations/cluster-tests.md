@@ -93,7 +93,7 @@ tools/test-changes --cluster --name \
 
 This case compares unchanged overlay files and guest bytes across both installations.
 It retains duplicate-delivery, blocked-handler, broker-advisory, and later-valid-event assertions.
-The adjacent `route_cases`, `session_cases`, and `measurement_cases` modules own the other named Receiving cases.
+The adjacent `route_cases` and `measurement_cases` modules own the other named Receiving cases.
 Pass their full test names to `--name`.
 
 ### `[WMS-CLUSTER-JOURNEY]` WMS application tests

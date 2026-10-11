@@ -174,7 +174,6 @@ WAMN_PRIOR_COMMIT_COMPONENT="$PWD/target/virtualized/std-empty-environment/prior
 ```
 
 The fixture uses generated typed Receiving bindings and the current asynchronous PostgreSQL interface.
-The existing deployed prior-commit case retains its real commit and refusal assertions.
 
 Run the local SQLx transaction case with its component:
 

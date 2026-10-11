@@ -44,17 +44,6 @@ pub(super) fn required_journey_path(key: &str) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(required_journey(key)?))
 }
 
-/// Resolve the scenario-worker binary the live gates spawn, refusing by name.
-pub(super) fn journey_scenario_worker_binary() -> anyhow::Result<PathBuf> {
-    let binary = required_journey_path(SCENARIO_WORKER_BIN_ENV)?;
-    anyhow::ensure!(
-        binary.is_file(),
-        "{SCENARIO_WORKER_BIN_ENV} does not name a built wamn-scenario-worker binary: {}",
-        binary.display()
-    );
-    Ok(binary)
-}
-
 pub(super) fn journey_publication_root(
     package: JourneyPackage,
     inputs: Option<&JourneyDocument>,
@@ -62,42 +51,11 @@ pub(super) fn journey_publication_root(
     journey_package_root(package, inputs).join("publication")
 }
 
-/// Add the generated route entries beside an authored attachment document to
-/// a copy of it, which a publish then reads away from its package.
-pub(super) fn with_generated_attachments(
-    source: &Path,
-    document: &mut serde_json::Value,
-) -> anyhow::Result<()> {
-    use wamn_schema_generator::route_schema;
-    let generated = route_schema::read_generated_publication(
-        route_schema::package_root_of(source),
-        route_schema::GENERATED_ATTACHMENTS,
-    )?;
-    if let Some(serde_json::Value::Object(mut generated)) = generated {
-        generated.values_mut().for_each(as_authored_entry);
-        document
-            .as_object_mut()
-            .context("an attachment document is an object")?
-            .extend(generated);
-    }
-    Ok(())
-}
-
 /// The reference of a sealed operation id, as an authored copy names it.
 pub(super) fn reference_of(sealed: &str) -> &str {
     sealed
         .rsplit_once('@')
         .map_or(sealed, |(reference, _)| reference)
-}
-
-/// Write a generated route entry as an authored one, which names its
-/// operation by reference: a publish reads the copy as an authored document.
-fn as_authored_entry(entry: &mut serde_json::Value) {
-    for member in ["operation", "registered-operation"] {
-        if let Some(sealed) = entry.get(member).and_then(serde_json::Value::as_str) {
-            entry[member] = serde_json::Value::String(reference_of(sealed).to_owned());
-        }
-    }
 }
 
 pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {

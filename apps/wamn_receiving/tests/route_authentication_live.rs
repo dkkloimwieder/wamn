@@ -19,13 +19,11 @@ mod package_copies;
 mod postcommit;
 mod routes;
 mod runtime;
-mod session_client;
 mod sessions;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::Permissions;
-use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -50,7 +48,6 @@ use wamn_control::author_wiring;
 use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::dev::watch::GitSource;
 use wamn_control::git_source::GitSourceState;
-use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
@@ -61,9 +58,7 @@ use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{OperationHost, OperationScope, RouterDeliveryBridge};
 use wamn_gate_harness::journey::{BaseCandidate, JourneyDocument, MaterializerPhase};
-use wamn_platform_identity::{
-    PrincipalType, create_user, issue_pat, operator_subject, resolve_subject,
-};
+use wamn_platform_identity::{PrincipalType, operator_subject, resolve_subject};
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -78,7 +73,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
-use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
+use wamn_runtime::session_keys::IssuerKeys;
 use wamn_session::verifier::SessionVerifier;
 use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -87,26 +82,22 @@ use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
 use environment::{
     JourneyReleaseTarget, admit_journey_components, author_journey_wirings, gate_journey_wirings,
-    install_journey_project, journey_package_root, journey_publication_root,
-    journey_scenario_worker_binary, overlay_package_root, overlay_route_path, package_root,
-    publish_and_push_journey_release, reconcile_journey_data_access, reference_of,
-    released_component_digests, render_component_declarations, repository_root, required_journey,
-    required_journey_path, seed_materializer_order, seed_materializer_trigger_rows,
-    seed_preexisting_quality_fixture, seed_receiving_business_rows,
-    verify_journey_components_are_effectful, verify_journey_operation_grants,
-    verify_zero_case_gate_reports, with_generated_attachments,
+    install_journey_project, journey_package_root, journey_publication_root, overlay_package_root,
+    overlay_route_path, package_root, publish_and_push_journey_release,
+    reconcile_journey_data_access, reference_of, released_component_digests,
+    render_component_declarations, repository_root, required_journey, required_journey_path,
+    seed_materializer_order, seed_materializer_trigger_rows, seed_preexisting_quality_fixture,
+    seed_receiving_business_rows, verify_journey_components_are_effectful,
+    verify_journey_operation_grants, verify_zero_case_gate_reports,
 };
 use routes::copy_fresh_only_package;
 use runtime::{
     JourneyGuestMemory, JourneyRuntime, TraceHarness, assert_direct_route_trace,
-    assert_invocation_identity, assert_native_nested_acquisition,
-    assert_nested_permission_denial_trace, assert_nested_record_receipt_trace,
-    assert_no_component_trace, assert_postgres_descendants, build_journey_runtime,
-    invoke_journey_method, invoke_journey_read, invoke_journey_route, journey_trace,
-    span_attribute, span_descends_from, successful_read_value, successful_value,
-    trace_component_invocations,
+    assert_native_nested_acquisition, assert_nested_permission_denial_trace,
+    assert_nested_record_receipt_trace, assert_no_component_trace, build_journey_runtime,
+    invoke_journey_read, invoke_journey_route, journey_trace, successful_read_value,
+    successful_value,
 };
-use sessions::{assert_operation_refusal, nested_receipt_state};
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, JourneyScope, ORG, PROJECT, TENANT,
@@ -124,10 +115,6 @@ const BASE_PACKAGE_ID: &str = "wamn_receiving";
 static BASE_PACKAGE_VERSION: LazyLock<&'static str> =
     LazyLock::new(|| package_version(BASE_PACKAGE_ID).leak());
 const BASE_COMPONENT: &str = "receiving";
-// Each operation is named by reference, as the authored files name it, and
-// `sealed` reads its version from the package wamn.json.
-static OPERATION: LazyLock<&'static str> =
-    LazyLock::new(|| sealed("wamn-receiving:purchase-order/get").leak());
 const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
 /// The version of the overlay package, from its wamn.json.
 static OVERLAY_PACKAGE_VERSION: LazyLock<&'static str> =
@@ -463,13 +450,6 @@ const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
 /// The one process setting the cluster journey hands this crate: the path to
 /// its input document. Everything else crosses as fields of that document.
 const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
-
-/// The built `wamn-scenario-worker` the route journey spawns as its Gate.
-///
-/// It rides as an environment variable rather than a journey-document field
-/// because it is a process setting, not journey data: it names a binary this
-/// machine's recipe just built, exactly like `WAMN_RECEIVING_DEV_HOST_BIN`.
-const SCENARIO_WORKER_BIN_ENV: &str = "WAMN_JOURNEY_SCENARIO_WORKER_BIN";
 
 /// Fixed nameable port for `[RECEIVING-ROUTE-JOURNEY]`'s spawned Gate.
 const ROUTE_JOURNEY_GATE_BIND: &str = "127.0.0.1:18089";
