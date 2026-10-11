@@ -500,15 +500,13 @@ pub async fn ensure_database(
         host: container_address(proxy).await?,
         password,
     };
-    let init = fs::read_to_string(repository.join("deploy/sql/postgres-init.sql"))?;
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         match tokio_postgres::connect(&database.url("postgres"), tokio_postgres::NoTls).await {
-            Ok((client, connection)) => {
-                let task = tokio::spawn(connection);
-                let result = client.batch_execute(&init).await;
-                task.abort();
-                result.context("run postgres-init.sql on the application database")?;
+            Ok(_) => {
+                apply_postgres_init(repository, &database.url("postgres"))
+                    .await
+                    .context("run postgres-init.sql on the application database")?;
                 return Ok(database);
             }
             Err(error) if Instant::now() >= deadline => {
@@ -520,6 +518,25 @@ pub async fn ensure_database(
             Err(_) => tokio::time::sleep(Duration::from_secs(2)).await,
         }
     }
+}
+
+/// Apply `deploy/sql/postgres-init.sql` to the server of the superuser `url`
+/// with psql, as the PostgreSQL image's initdb step applies it: the file holds
+/// `CREATE DATABASE` and the psql meta-command `\connect`.
+pub async fn apply_postgres_init(repository: &Path, url: &str) -> anyhow::Result<()> {
+    let output = Command::new("/usr/lib/postgresql/18/bin/psql")
+        .env_clear()
+        .args(["-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", url, "-f"])
+        .arg(repository.join("deploy/sql/postgres-init.sql"))
+        .output()
+        .await
+        .context("run psql")?;
+    ensure!(
+        output.status.success(),
+        "psql failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
 }
 
 /// Start `name` on the kind network with `arguments` after `docker run
@@ -602,4 +619,30 @@ async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(output.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    /// The init step accepts the real file, `\connect` included.
+    #[tokio::test]
+    async fn the_init_step_applies_the_real_postgres_init() -> anyhow::Result<()> {
+        let postgres = wamn_test_postgres::start(&[])?;
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        super::apply_postgres_init(&repository, postgres.database("postgres")?.url()).await?;
+        let (client, connection) =
+            tokio_postgres::connect(postgres.database("wamn")?.url(), tokio_postgres::NoTls)
+                .await?;
+        let task = tokio::spawn(connection);
+        let created = client
+            .query_one("SELECT to_regnamespace('s2') IS NOT NULL", &[])
+            .await?;
+        task.abort();
+        assert!(
+            created.get::<_, bool>(0),
+            "postgres-init.sql creates s2 in wamn"
+        );
+        Ok(())
+    }
 }
