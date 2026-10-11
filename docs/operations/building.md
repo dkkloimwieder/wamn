@@ -72,7 +72,7 @@ The composer does not compare the base bytes with the digest pin in `wamn.json`.
 Last, the build copies each component that the package owns, each palette component that its wirings name, and each no-op participant to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
 `wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component.
 `push-package` refuses a component without an entry, and a file whose digest differs from its entry.
-For `push-package` and its build, see [Pushing a package](#pushing-a-package).
+For the `build.json` that `push-package` needs, see [Pushing a package](#pushing-a-package).
 The dev loop watches the package roots, `apps/platform`, and the shared platform WIT sources, so an edit of any of them rebuilds the components.
 
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
@@ -140,13 +140,10 @@ The build compiles the package's components as [above](#native-programs-and-app-
 
 `wamn-ctl push-package --package <package root>` pushes one package artifact ([platform-deploy.md §7.2](../plan/platform-deploy.md)).
 First it compares the `inputs.digest` of the package's `build.json` with the digest of the package tree.
-If they are equal, it pushes the build output as it is, and it does not build.
-If they differ, or the package has no `build.json`, it builds the package with the `wamn build` library, and then it pushes.
-It never compares file times.
-A build needs a PostgreSQL server, as for `wamn build`.
-Give a superuser URL in `DATABASE_URL` or `--database-url`.
-If the package needs a build and no URL is given, `push-package` refuses and pushes nothing.
-An overlay reads the `build.json` of each base package, so build or push the base first.
+If they are equal, it pushes the build output as it is.
+If they differ, or the package has no `build.json`, `push-package` refuses and pushes nothing.
+The refusal tells you to run `wamn build`.
+`push-package` never builds, and it never compares file times.
 
 ## Reading a pushed package
 

@@ -594,7 +594,6 @@ pub(super) async fn push_journey_packages(
                 registry: registry.clone(),
                 component_artifact_base: inputs.component_artifact_base.clone(),
                 source_commit: None,
-                build_database_url: None,
             },
         )
         .await

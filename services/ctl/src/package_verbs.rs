@@ -229,9 +229,8 @@ fn roots(opened: &[OpenedPackage]) -> Vec<PackageRoot> {
 #[derive(Debug, Args)]
 pub struct PushPackageArgs {
     /// Root of the authored package (it holds `wamn.k`). Its built components
-    /// are read through `outputs.components` of its `build.json`. When the
-    /// package has no `build.json`, or its inputs differ from the tree,
-    /// push-package builds the package first.
+    /// are read through `outputs.components` of its `build.json`, which must
+    /// be current for the tree.
     #[arg(long)]
     pub package: PathBuf,
 
@@ -265,11 +264,6 @@ pub struct PushPackageArgs {
     /// Source commit recorded with the artifact.
     #[arg(long)]
     pub source_commit: Option<String>,
-
-    /// A superuser URL of a PostgreSQL server, as `wamn build` takes it. It is
-    /// read only when the package must be built.
-    #[arg(long, env = "DATABASE_URL", hide_env_values = true)]
-    pub database_url: Option<String>,
 }
 
 /// Push one package and print its tag and digest.
@@ -285,7 +279,6 @@ pub async fn push(args: PushPackageArgs) -> anyhow::Result<()> {
         },
         component_artifact_base: args.component_artifact_base,
         source_commit: args.source_commit,
-        build_database_url: args.database_url,
     })
     .await?;
     match pushed.disposition {

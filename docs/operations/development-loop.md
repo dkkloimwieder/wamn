@@ -205,8 +205,8 @@ Restart the loop with the same configuration after reset.
 ## Pushing from a working tree
 
 The loop does not push packages.
-To push a package that you changed, run `wamn-ctl push-package` with the same `DATABASE_URL` that `wamn build` uses.
-If the tree changed after the last build, `push-package` builds the package first, and then it pushes ([building](building.md#pushing-a-package)).
+To push a package that you changed, run `wamn build` for the package first, and then run `wamn-ctl push-package`.
+If the tree changed after the last build, `push-package` refuses and tells you to run `wamn build` ([building](building.md#pushing-a-package)).
 If the tree did not change, it pushes the existing build output.
 To see what a pushed package holds, run `wamn inspect`.
 To compare two pushed versions, run `wamn diff` ([building](building.md#reading-a-pushed-package)).
