@@ -172,7 +172,6 @@ pub(crate) async fn apply_coordinated(
                     roots,
                     &ordered,
                     &manifest,
-                    &evidence.serving_workloads,
                 )
                 .await?;
                 require_reconciled_privileges(&tx, evidence).await?;

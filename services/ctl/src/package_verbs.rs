@@ -9,7 +9,7 @@ use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest, Packa
 use wamn_control::package_artifact::{
     self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };
-use wamn_control::qualify_upgrade::{self, QualifyUpgradeRequest, workload::WorkloadTarget};
+use wamn_control::qualify_upgrade::{self, QualifyUpgradeRequest};
 use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_control::reconcile_replica_identity::{
     ReconcileReplicaIdentityRequest, reconcile_package_replica_identity,
@@ -91,42 +91,10 @@ pub struct QualifyUpgradeArgs {
     /// New file for canonical qualification evidence.
     #[arg(long)]
     pub result: PathBuf,
-    /// Kubernetes configuration for the serving environment.
-    #[arg(long)]
-    pub kubeconfig: PathBuf,
-    /// Explicit Kubernetes context.
-    #[arg(long)]
-    pub context: String,
-    /// Namespace that contains the serving host and application workloads.
-    #[arg(long)]
-    pub namespace: String,
-    /// Host Deployment that serves the selected release.
-    #[arg(long)]
-    pub host_deployment: String,
-    /// SQL-bearing package and its serving WorkloadDeployment, PACKAGE=NAME.
-    #[arg(long = "package-workload", value_parser = parse_package_workload)]
-    pub package_workloads: Vec<(String, String)>,
-}
-
-fn parse_package_workload(value: &str) -> Result<(String, String), String> {
-    let (package, workload) = value
-        .split_once('=')
-        .ok_or_else(|| "use PACKAGE=WORKLOAD_DEPLOYMENT".to_owned())?;
-    if package.is_empty() || workload.is_empty() || workload.contains('=') {
-        return Err("use a nonempty PACKAGE=WORKLOAD_DEPLOYMENT".to_owned());
-    }
-    Ok((package.to_owned(), workload.to_owned()))
 }
 
 /// Qualify the database transition and print its immutable result identity.
 pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
-    let mut package_workloads = std::collections::BTreeMap::new();
-    for (package, workload) in args.package_workloads {
-        anyhow::ensure!(
-            package_workloads.insert(package, workload).is_none(),
-            "a package has more than one workload selector"
-        );
-    }
     let registry = args.registry.registry();
     let package = open(&registry, args.package).await?;
     let presented = open_all(&registry, args.presented_packages).await?;
@@ -141,13 +109,6 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
         predecessor_packages: roots(&predecessors),
         base_component: args.base_component,
         result: args.result,
-        workload: WorkloadTarget {
-            kubeconfig: args.kubeconfig,
-            context: args.context,
-            namespace: args.namespace,
-            host_deployment: args.host_deployment,
-            package_workloads,
-        },
     })
     .await?;
     println!(

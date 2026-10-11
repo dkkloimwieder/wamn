@@ -507,73 +507,6 @@ impl Run {
         ))
     }
 
-    async fn package_workload_target(
-        &self,
-        environment: &EnvironmentFile,
-    ) -> anyhow::Result<crate::qualify_upgrade::workload::WorkloadTarget> {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-
-        let output = Kubectl(environment.context.clone())
-            .command(&["config", "view", "--minify", "--flatten", "--raw"])
-            .stderr(Stdio::null())
-            .output()
-            .await
-            .context("capture the Kubernetes configuration for package qualification")?;
-        ensure!(
-            output.status.success(),
-            "capture the Kubernetes configuration for package qualification exited {}",
-            output.status
-        );
-        ensure!(
-            !output.stdout.is_empty(),
-            "the Kubernetes configuration for package qualification is empty"
-        );
-        private_directory(&self.release_files())?;
-        let kubeconfig = self.release_files().join("package-workload.kubeconfig");
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&kubeconfig)
-        {
-            Ok(mut file) => {
-                file.write_all(&output.stdout).context(
-                    "write the private Kubernetes configuration for package qualification",
-                )?;
-                file.sync_all().context(
-                    "save the private Kubernetes configuration for package qualification",
-                )?;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let metadata = fs::symlink_metadata(&kubeconfig)
-                    .context("read the private Kubernetes configuration metadata")?;
-                ensure!(
-                    metadata.file_type().is_file()
-                        && metadata.permissions().mode() & 0o777 == 0o600,
-                    "the retained Kubernetes configuration must be a private regular file"
-                );
-                ensure!(
-                    fs::read(&kubeconfig).context("read the retained Kubernetes configuration")?
-                        == output.stdout,
-                    "the Kubernetes context differs from the retained package qualification configuration"
-                );
-            }
-            Err(error) => {
-                return Err(error).context(
-                    "create the private Kubernetes configuration for package qualification",
-                );
-            }
-        }
-        Ok(crate::qualify_upgrade::workload::WorkloadTarget {
-            kubeconfig,
-            context: environment.context.clone(),
-            namespace: platform(environment)?.target.namespace,
-            host_deployment: format!("hostgroup-{}", self.release_name()?),
-            package_workloads: environment.package_workloads.clone(),
-        })
-    }
-
     /// The credentials of the gate, kept until stage 10 retires the old
     /// generation, then deleted.
     fn secrets(&self) -> PathBuf {
@@ -780,7 +713,6 @@ impl Run {
                                 .any(|pin| pin.package == candidate.manifest.package.id)
                         })
                         .then(|| artifact.path.clone()),
-                    workload: self.package_workload_target(environment).await?,
                     result: evidence_path.clone(),
                 },
             )
@@ -1398,10 +1330,6 @@ impl Run {
         outputs.insert("current PAT".to_owned(), pat);
         if secrets.exists() {
             fs::remove_dir_all(&secrets)?;
-        }
-        let kubeconfig = self.release_files().join("package-workload.kubeconfig");
-        if kubeconfig.exists() {
-            fs::remove_file(kubeconfig)?;
         }
         Ok((StepResult::Done, outputs))
     }

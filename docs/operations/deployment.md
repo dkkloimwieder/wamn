@@ -451,18 +451,14 @@ An upgrade result cannot replace release qualification.
 
 ### Upgrade prerequisites
 
-Use one deployment writer for the environment. Resolve any mismatch between the selected release and serving workloads before qualification.
+Use one deployment writer for the environment.
 `--predecessor-release` names the manifest digest of the release the environment serves.
 The command refuses it when `catalog.releases` has no row for it, or when it names a package version that is not installed.
-The observer compares that digest with the one on fully rolled-out, ready host pods.
-It follows each selected `WorkloadDeployment` through its current replica set to the ready, correctly placed `Workload` objects.
-The Kubernetes arguments select those resources. They do not assert application schemas.
+Qualification reads no Kubernetes resource.
 
-Each SQL-bearing package must have one actual serving `wamn.schema`, with the expected tenant and environment.
-The successor keeps that schema. Predecessor and candidate SQL use the same exact `search_path`.
-Absent or ambiguous workloads, multiple schema surfaces, conflicting replica schemas, and schema changes refuse qualification.
-There are no predecessor-schema or candidate-schema flags.
-Packages with no SQL need no application schema or `--package-workload` selector. Host convergence still applies.
+Each SQL-bearing package must declare one application schema. Predecessor SQL plans with that schema as its exact `search_path`.
+A schema change makes predecessor SQL fail to plan and refuses qualification.
+Packages with no SQL need no application schema.
 Schema relocation or multiple-schema support requires a future persisted deployment fact outside the additive upgrade path.
 
 Apply pending [platform schema migrations](#platform-schema-upgrades) before application upgrade, including the `catalog.package_upgrade_qualifications` carrier.
@@ -493,19 +489,16 @@ Keep database credentials outside committed files. Retain the qualification resu
 ### Upgrade order
 
 Set the paths and scope below for the chosen environment. `UPGRADE_RESULT` must name a new file.
-Push the candidate with `push-package` first. For WMS, `CANDIDATE_PACKAGE` is the artifact `wamn_wms-2.1.0` and `WORKLOAD_DEPLOYMENT` identifies its serving HTTP workload.
+Push the candidate with `push-package` first. For WMS, `CANDIDATE_PACKAGE` is the artifact `wamn_wms-2.1.0`.
 `CANDIDATE_ROOT` is its package root, which `reconcile-replica-identity` reads.
 `REGISTRY_FLAGS` holds the registry flags of `push-package`: `--artifact-base` and `--registry-auth-file`.
-Repeat `--presented-package` for every installed lineage and `--package-workload PACKAGE=NAME` for each SQL-bearing package in the proof.
+Repeat `--presented-package` for every installed lineage.
 
 ```bash
 wamn-ctl qualify-upgrade \
   --database-url "$OWNER_URL" --tenant "$TENANT" --environment "$ENVIRONMENT" \
   --predecessor-release "$PREDECESSOR_RELEASE" $REGISTRY_FLAGS \
   --package "$CANDIDATE_PACKAGE" --presented-package "$CANDIDATE_PACKAGE" \
-  --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
-  --host-deployment "$HOST_DEPLOYMENT" \
-  --package-workload "$PACKAGE_ID=$WORKLOAD_DEPLOYMENT" \
   --result "$UPGRADE_RESULT"
 
 wamn-ctl apply-package \
@@ -569,15 +562,14 @@ The application transaction applies the base first, then affected overlay succes
 It commits all registrations, migrations, and accepted evidence together, or rolls them all back.
 SQL that cannot run inside a transaction is refused as `NontransactionalOperation`, with `nontransactional SQL is forbidden`.
 This includes `CREATE INDEX CONCURRENTLY`. There is no separate application step for that SQL.
-The same actual serving schema rule applies to the base and overlays.
+The same application schema rule applies to the base and overlays.
 
 Set `BASE_PREDECESSOR` and `OVERLAY_PREDECESSOR` to the installed package roots.
 Set `BASE_SUCCESSOR` and `OVERLAY_SUCCESSOR` to their prepared direct successor roots.
 Set `BASE_COMPONENT` to the exact built successor base artifact named by each overlay pin.
-Use the owner connection and Kubernetes scope from [upgrade prerequisites](#upgrade-prerequisites).
+Use the owner connection from [upgrade prerequisites](#upgrade-prerequisites).
 Repeat `--predecessor-package` for the complete original root set, including unchanged packages.
 Repeat `--presented-package` for the complete successor root set in both commands.
-Repeat `--package-workload PACKAGE=NAME` for every SQL-bearing package in the proof.
 
 ```bash
 wamn-ctl qualify-upgrade \
@@ -586,10 +578,6 @@ wamn-ctl qualify-upgrade \
   --package "$BASE_SUCCESSOR" --base-component "$BASE_COMPONENT" \
   --predecessor-package "$BASE_PREDECESSOR" --predecessor-package "$OVERLAY_PREDECESSOR" \
   --presented-package "$BASE_SUCCESSOR" --presented-package "$OVERLAY_SUCCESSOR" \
-  --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" --namespace "$NAMESPACE" \
-  --host-deployment "$HOST_DEPLOYMENT" \
-  --package-workload "$BASE_PACKAGE_ID=$BASE_WORKLOAD_DEPLOYMENT" \
-  --package-workload "$OVERLAY_PACKAGE_ID=$OVERLAY_WORKLOAD_DEPLOYMENT" \
   --result "$UPGRADE_RESULT"
 
 wamn-ctl apply-package \

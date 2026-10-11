@@ -5,7 +5,6 @@ mod scratch;
 pub(crate) mod stage;
 #[cfg(test)]
 mod tests;
-pub mod workload;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
@@ -30,7 +29,7 @@ use crate::reconcile_package_data_access::upgrade::{
     UpgradePrivileges, read_upgrade_privileges, reconcile_for_upgrade, restore_upgrade_privileges,
 };
 
-/// Source project, complete candidate roots, and explicit serving workload selectors.
+/// Source project and complete candidate roots.
 #[derive(Debug)]
 pub struct QualifyUpgradeRequest {
     pub database_url: String,
@@ -46,7 +45,6 @@ pub struct QualifyUpgradeRequest {
     pub predecessor_packages: Vec<PackageRoot>,
     /// Exact successor base artifact to which affected overlays re-pin.
     pub base_component: Option<PathBuf>,
-    pub workload: workload::WorkloadTarget,
     pub result: PathBuf,
 }
 
@@ -63,12 +61,13 @@ pub struct UpgradeQualificationOutcome {
 /// `wamn.json` hash and the digest of the generated package metadata in place
 /// of the package artifact digest (wamn-vavs4.4). Versions 4 to 6 carried
 /// the presented roots with a statement corpus digest and a data access
-/// digest beside the artifact digest. Neither decodes.
-pub(crate) const PLAIN_FORMAT: u32 = 7;
+/// digest beside the artifact digest. Versions 7 to 9 carried the serving
+/// workload selectors and the observed workload schemas. None decodes.
+pub(crate) const PLAIN_FORMAT: u32 = 10;
 /// The evidence format of an upgrade with an overlay.
-pub(crate) const OVERLAY_FORMAT: u32 = 8;
+pub(crate) const OVERLAY_FORMAT: u32 = 11;
 /// The evidence format of an upgrade with an online stage.
-pub(crate) const STAGE_FORMAT: u32 = 9;
+pub(crate) const STAGE_FORMAT: u32 = 12;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -103,8 +102,6 @@ pub(crate) struct UpgradeQualification {
     pub(crate) schemas: Vec<String>,
     pub(crate) predecessor_privileges: UpgradePrivileges,
     pub(crate) post_privileges: UpgradePrivileges,
-    pub(crate) workload_target: workload::WorkloadTarget,
-    pub(crate) serving_workloads: workload::ServingWorkloads,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) overlay: Option<overlay::OverlayEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,27 +115,18 @@ struct PresentedPackage {
     identity: PackageIdentity,
 }
 
-enum WorkloadObserver {
-    Live,
-    #[cfg(test)]
-    Captured(workload::ServingWorkloads),
-    #[cfg(test)]
-    CapturedWithChange {
-        serving: workload::ServingWorkloads,
-        before_publication: Box<dyn FnOnce() + Send + Sync>,
-    },
-}
-
 /// Qualify a direct successor without writing to the source project database.
 pub async fn qualify_upgrade(
     request: QualifyUpgradeRequest,
 ) -> anyhow::Result<UpgradeQualificationOutcome> {
-    qualify_upgrade_with_observer(request, WorkloadObserver::Live).await
+    qualify_upgrade_before_publication(request, || {}).await
 }
 
-async fn qualify_upgrade_with_observer(
+/// Qualify, running `before_publication` after the proof and before the
+/// inputs are rechecked and the evidence is written.
+async fn qualify_upgrade_before_publication(
     request: QualifyUpgradeRequest,
-    observer: WorkloadObserver,
+    before_publication: impl FnOnce() + Send,
 ) -> anyhow::Result<UpgradeQualificationOutcome> {
     ensure!(
         !request.tenant.is_empty(),
@@ -171,21 +159,6 @@ async fn qualify_upgrade_with_observer(
         stage::require_executor(&package.manifest, &package.directory)?;
     }
     let schemas = package_schemas(&packages)?;
-    let sql_packages = packages
-        .iter()
-        .filter(|package| !package.manifest.declares_no_sql())
-        .map(|package| package.identity.package_id.clone())
-        .collect::<BTreeSet<_>>();
-    ensure!(
-        request
-            .workload
-            .package_workloads
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-            == sql_packages,
-        "workload selectors must name exactly the SQL-bearing presented packages"
-    );
 
     let (mut source, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
@@ -198,7 +171,6 @@ async fn qualify_upgrade_with_observer(
         &predecessors,
         candidate,
         &schemas,
-        &observer,
     )
     .await;
     drop(source);
@@ -228,13 +200,7 @@ async fn qualify_upgrade_with_observer(
         });
     }
     proof?;
-    #[cfg(test)]
-    if let WorkloadObserver::CapturedWithChange {
-        before_publication, ..
-    } = observer
-    {
-        before_publication();
-    }
+    before_publication();
     // Both callers and the scratch executors consume paths. Recheck their exact
     // migration/manifest inputs before publishing an identity for those bytes.
     for package in packages.iter().chain(&predecessors) {
@@ -285,7 +251,6 @@ async fn copy_predecessor(
     predecessors: &[PresentedPackage],
     candidate: &PresentedPackage,
     schemas: &[String],
-    observer: &WorkloadObserver,
 ) -> anyhow::Result<(
     scratch::ScratchDatabase,
     UpgradeQualification,
@@ -503,25 +468,7 @@ async fn copy_predecessor(
                 && package.package_version() == predecessor.package_version),
         "selected release does not contain the installed predecessor coordinate"
     );
-    let serving_workloads = match observer {
-        WorkloadObserver::Live => {
-            workload::observe(
-                &request.workload,
-                &request.tenant,
-                &request.environment,
-                &manifest_digest,
-            )
-            .await?
-        }
-        #[cfg(test)]
-        WorkloadObserver::Captured(serving)
-        | WorkloadObserver::CapturedWithChange { serving, .. } => serving.clone(),
-    };
-    ensure!(
-        serving_workloads.manifest_digest == manifest_digest,
-        "observed workload is not serving the selected predecessor manifest"
-    );
-    require_runtime_schemas(packages, &manifest, &serving_workloads)?;
+    require_runtime_schemas(packages, &manifest)?;
     let predecessor_privileges = read_upgrade_privileges(&tx, schemas).await?;
     let snapshot: String = tx
         .query_one("SELECT pg_export_snapshot()", &[])
@@ -561,8 +508,6 @@ async fn copy_predecessor(
         schemas: schemas.to_vec(),
         predecessor_privileges,
         post_privileges: UpgradePrivileges::default(),
-        workload_target: request.workload.clone(),
-        serving_workloads,
     };
     tx.rollback()
         .await
@@ -612,6 +557,7 @@ async fn prove_connected_copy(
     manifest: &ServingManifest,
     evidence: &mut UpgradeQualification,
 ) -> anyhow::Result<()> {
+    let runtime = &runtime_schemas(packages.iter().map(|package| &package.directory))?;
     let candidate = packages
         .iter()
         .find(|package| package.identity == evidence.candidate_package)
@@ -661,7 +607,6 @@ async fn prove_connected_copy(
             &roots,
             &complete_roots,
             manifest,
-            &evidence.serving_workloads,
         )
         .await
         .context("apply base and overlay successors atomically on the owned predecessor copy")?;
@@ -674,7 +619,7 @@ async fn prove_connected_copy(
         .await
         .context("apply candidate suffix on the owned predecessor copy")?;
     }
-    plan_predecessor(client, manifest, &evidence.serving_workloads)
+    plan_predecessor(client, manifest, runtime)
         .await
         .context("predecessor statements fail before candidate grant reconciliation")?;
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
@@ -690,7 +635,7 @@ async fn prove_connected_copy(
     let tx = client.transaction().await?;
     evidence.post_privileges = read_upgrade_privileges(&tx, &evidence.schemas).await?;
     tx.rollback().await?;
-    plan_predecessor(client, manifest, &evidence.serving_workloads)
+    plan_predecessor(client, manifest, runtime)
         .await
         .context("predecessor statements fail under candidate grants")?;
     let tx = client.transaction().await?;
@@ -779,10 +724,10 @@ fn require_predecessor_statement_facts(
 async fn plan_predecessor(
     client: &mut Client,
     manifest: &ServingManifest,
-    serving: &workload::ServingWorkloads,
+    runtime: &BTreeMap<String, String>,
 ) -> anyhow::Result<()> {
     let mut transaction = client.transaction().await?;
-    let result = plan_predecessor_in_transaction(&mut transaction, manifest, serving).await;
+    let result = plan_predecessor_in_transaction(&mut transaction, manifest, runtime).await;
     transaction.rollback().await?;
     result
 }
@@ -790,7 +735,7 @@ async fn plan_predecessor(
 pub(crate) async fn plan_predecessor_in_transaction(
     transaction: &mut Transaction<'_>,
     manifest: &ServingManifest,
-    serving: &workload::ServingWorkloads,
+    runtime: &BTreeMap<String, String>,
 ) -> anyhow::Result<()> {
     for component in &manifest.components {
         let mut corpus = BTreeMap::new();
@@ -808,11 +753,9 @@ pub(crate) async fn plan_predecessor_in_transaction(
         if corpus.is_empty() {
             continue;
         }
-        let schema = &serving
-            .packages
+        let schema = runtime
             .get(&component.package_id)
-            .context("predecessor statements have no observed runtime schema")?
-            .schema;
+            .context("predecessor statements have no runtime schema")?;
         wamn_schema_generator::classify_statements_with_existing_grants_in_transaction(
             transaction,
             &corpus,
@@ -823,14 +766,34 @@ pub(crate) async fn plan_predecessor_in_transaction(
     Ok(())
 }
 
+/// The single application schema of each SQL-bearing package, by package id.
+pub(crate) fn runtime_schemas<'a>(
+    directories: impl IntoIterator<Item = &'a PackageDirectory>,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut runtime = BTreeMap::new();
+    for directory in directories {
+        let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
+        if manifest.declares_no_sql() {
+            continue;
+        }
+        let schemas = wamn_schema_generator::data_access_schemas(&directory.manifest_bytes)?;
+        let [schema] = schemas.as_slice() else {
+            anyhow::bail!(
+                "Epic 1 requires one runtime schema for package {}",
+                manifest.package.id
+            );
+        };
+        runtime.insert(manifest.package.id, schema.clone());
+    }
+    Ok(runtime)
+}
+
 fn require_runtime_schemas(
     packages: &[PresentedPackage],
     manifest: &ServingManifest,
-    serving: &workload::ServingWorkloads,
 ) -> anyhow::Result<()> {
+    runtime_schemas(packages.iter().map(|package| &package.directory))?;
     for package in packages {
-        let schemas =
-            wamn_schema_generator::data_access_schemas(&package.directory.manifest_bytes)?;
         if package.manifest.declares_no_sql() {
             ensure!(
                 !manifest
@@ -843,17 +806,7 @@ fn require_runtime_schemas(
                         .any(|operation| !operation.statements.is_empty())),
                 "a SQL-bearing predecessor cannot transition to a schema-free candidate in Epic 1"
             );
-            continue;
         }
-        let runtime = serving
-            .packages
-            .get(&package.identity.package_id)
-            .context("SQL-bearing package has no observed runtime workload")?;
-        ensure!(
-            schemas.as_slice() == [runtime.schema.as_str()],
-            "Epic 1 requires one unchanged runtime schema for package {}",
-            package.identity.package_id
-        );
     }
     Ok(())
 }

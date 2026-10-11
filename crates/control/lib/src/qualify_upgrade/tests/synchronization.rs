@@ -47,12 +47,9 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
         .unwrap();
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:seed-mirror',true); INSERT INTO inventory.widget_tag(label) VALUES ('second tag'); COMMIT").await.unwrap();
     let original = state(&mut fixture.source).await;
-    let qualified = qualify_upgrade_with_observer(
-        request(&fixture, "synchronization.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let qualified = qualify_upgrade(request(&fixture, "synchronization.json"))
+        .await
+        .unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:fail-mirror-postcondition',true); UPDATE inventory.widget_tag SET label='missing second' WHERE label='second tag'; COMMIT").await.unwrap();
     let failed = crate::apply_package::apply_qualified_package(

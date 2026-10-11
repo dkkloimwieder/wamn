@@ -162,11 +162,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
         "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT, &digest, &bytes],
     ).await.unwrap();
-    base.serving.manifest_digest = digest;
-    base.serving.packages.insert(
-        OVERLAY.to_owned(),
-        base.serving.packages["platform_fixture"].clone(),
-    );
+    base.predecessor_release = digest;
 
     let component = base.root.join("candidate-base.wasm");
     fs::write(&component, b"qualified fixture successor component").unwrap();
@@ -220,10 +216,6 @@ fn overlay_request(fixture: &OverlayFixture, result: &str) -> QualifyUpgradeRequ
         .push(fixture_root(&fixture.candidate));
     request.base_component = Some(fixture.component.clone());
     request
-        .workload
-        .package_workloads
-        .insert(OVERLAY.to_owned(), "http".to_owned());
-    request
 }
 
 async fn apply_set(
@@ -272,12 +264,7 @@ async fn nontransactional_candidate_statements_are_named_before_mutation() {
         .unwrap();
         let qualification = overlay_request(&fixture, "nontransactional.json");
         let result = qualification.result.clone();
-        let refused = qualify_upgrade_with_observer(
-            qualification,
-            WorkloadObserver::Captured(fixture.base.serving.clone()),
-        )
-        .await
-        .unwrap_err();
+        let refused = qualify_upgrade(qualification).await.unwrap_err();
         let unapplied = crate::apply_package::apply_package(apply_request(
             fixture.base.source_database.url(),
             &fixture.base.root.join("candidate"),
@@ -332,15 +319,7 @@ async fn qualification_refuses_input_changes_before_publication() {
     let original = state(&mut fixture.base.source).await;
     let mut accepted = overlay_request(&fixture, "unchanged.json");
     accepted.predecessor_packages[0] = fixture_root(&predecessor);
-    qualify_upgrade_with_observer(
-        accepted,
-        WorkloadObserver::CapturedWithChange {
-            serving: fixture.base.serving.clone(),
-            before_publication: Box::new(|| {}),
-        },
-    )
-    .await
-    .unwrap();
+    qualify_upgrade(accepted).await.unwrap();
     assert_eq!(state(&mut fixture.base.source).await, original);
     let append = |path: PathBuf| {
         let mut bytes = fs::read(&path).unwrap();
@@ -400,17 +379,11 @@ async fn qualification_refuses_input_changes_before_publication() {
         let mut qualification = overlay_request(&fixture, &format!("changed-{name}.json"));
         qualification.predecessor_packages[0] = fixture_root(&predecessor);
         let result = qualification.result.clone();
-        let error = qualify_upgrade_with_observer(
-            qualification,
-            WorkloadObserver::CapturedWithChange {
-                serving: fixture.base.serving.clone(),
-                before_publication: Box::new(move || {
-                    for (path, bytes) in changes {
-                        fs::write(path, bytes).unwrap();
-                    }
-                }),
-            },
-        )
+        let error = qualify_upgrade_before_publication(qualification, move || {
+            for (path, bytes) in changes {
+                fs::write(path, bytes).unwrap();
+            }
+        })
         .await
         .unwrap_err();
         assert!(format!("{error:#}").contains(expected), "{name}: {error:#}");
@@ -433,12 +406,7 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     frozen_predecessor(&fixture.predecessor, &overlay_predecessor);
     let mut qualification = overlay_request(&fixture, "accepted.json");
     qualification.predecessor_packages = fixture_roots(&[base_predecessor, overlay_predecessor]);
-    let result = qualify_upgrade_with_observer(
-        qualification,
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let result = qualify_upgrade(qualification).await.unwrap();
     assert_eq!(state(&mut fixture.base.source).await, original);
     let applied = apply_set(&fixture, &result.result).await.unwrap();
     assert_eq!(applied.len(), 2);
@@ -579,12 +547,7 @@ async fn single_package_accepts_frozen_predecessor_artifacts() {
     let original = state(&mut fixture.source).await;
     let mut qualification = request(&fixture, "accepted.json");
     qualification.predecessor_packages = vec![fixture_root(&predecessor)];
-    qualify_upgrade_with_observer(
-        qualification,
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    qualify_upgrade(qualification).await.unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
 }
 
@@ -597,12 +560,9 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut changed: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
     changed["package"]["predecessor_version"] = serde_json::json!("0.9.0");
     fs::write(&manifest_path, serde_json::to_vec(&changed).unwrap()).unwrap();
-    let error = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "original-manifest-mismatch.json"),
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(overlay_request(&fixture, "original-manifest-mismatch.json"))
+        .await
+        .unwrap_err();
     assert!(
         format!("{error:#}").contains("predecessor artifact digest mismatch")
             && format!("{error:#}").contains(OVERLAY),
@@ -619,10 +579,10 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut changed = migration_bytes.clone();
     changed.extend_from_slice(b"\n");
     fs::write(&migration, changed).unwrap();
-    let error = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "original-migration-mismatch.json"),
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
+    let error = qualify_upgrade(overlay_request(
+        &fixture,
+        "original-migration-mismatch.json",
+    ))
     .await
     .unwrap_err();
     // Changed migration bytes are another artifact, so the digest refuses first.
@@ -665,10 +625,10 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     .unwrap();
     crate::component_admission::load_package_statement_facts(&fixture.predecessor, &manifest)
         .unwrap();
-    let error = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "original-serving-sql-mismatch.json"),
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
+    let error = qualify_upgrade(overlay_request(
+        &fixture,
+        "original-serving-sql-mismatch.json",
+    ))
     .await
     .unwrap_err();
     assert!(
@@ -690,16 +650,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     base_only
         .presented_packages
         .push(fixture_root(&fixture.predecessor));
-    base_only
-        .workload
-        .package_workloads
-        .insert(OVERLAY.to_owned(), "http".to_owned());
-    let error = qualify_upgrade_with_observer(
-        base_only,
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(base_only).await.unwrap_err();
     assert!(
         format!("{error:#}").contains("base-only") && format!("{error:#}").contains(OVERLAY),
         "{error:#}"
@@ -707,24 +658,15 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     assert_eq!(state(&mut fixture.base.source).await, original);
     let mut omitted = overlay_request(&fixture, "omitted.json");
     omitted.presented_packages.pop();
-    omitted.workload.package_workloads.remove(OVERLAY);
-    let error = qualify_upgrade_with_observer(
-        omitted,
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(omitted).await.unwrap_err();
     assert!(format!("{error:#}").contains(OVERLAY), "{error:#}");
     assert!(!fixture.base.root.join("omitted.json").exists());
     assert_eq!(state(&mut fixture.base.source).await, original);
     let component = fs::read(&fixture.component).unwrap();
     fs::write(&fixture.component, b"different base component").unwrap();
-    let error = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "wrong-pin.json"),
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(overlay_request(&fixture, "wrong-pin.json"))
+        .await
+        .unwrap_err();
     assert!(format!("{error:#}").contains("digest"), "{error:#}");
     fs::write(&fixture.component, component).unwrap();
     assert!(!fixture.base.root.join("wrong-pin.json").exists());
@@ -736,12 +678,9 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut changed: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     changed["properties"]["id"]["type"] = serde_json::json!("integer");
     fs::write(&contract, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
-    let error = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "changed-contract.json"),
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(overlay_request(&fixture, "changed-contract.json"))
+        .await
+        .unwrap_err();
     assert!(
         format!("{error:#}").contains("widget.archive")
             && format!("{error:#}").contains("contract"),
@@ -756,12 +695,9 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
         "CREATE INDEX CONCURRENTLY upgrade_widget_code ON inventory.widget(code);\n",
     )
     .unwrap();
-    let error = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "nontransactional.json"),
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(overlay_request(&fixture, "nontransactional.json"))
+        .await
+        .unwrap_err();
     assert!(error.chain().any(|source| source.downcast_ref::<wamn_schema_introspection::migration_policy::MigrationPolicyError>()
         .is_some_and(|error| error.error_type() == wamn_schema_introspection::migration_policy::MigrationPolicyErrorType::NontransactionalOperation)), "{error:#}");
     assert!(format!("{error:#}").contains("CONCURRENTLY"), "{error:#}");
@@ -773,12 +709,9 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
 #[tokio::test]
 async fn second_package_failure_rolls_back_base_and_evidence() {
     let mut fixture = overlay_fixture("overlay-atomic-failure").await;
-    let result = qualify_upgrade_with_observer(
-        overlay_request(&fixture, "accepted.json"),
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let result = qualify_upgrade(overlay_request(&fixture, "accepted.json"))
+        .await
+        .unwrap();
     fixture.base.source.batch_execute(
         "CREATE FUNCTION catalog.refuse_overlay_successor() RETURNS trigger LANGUAGE plpgsql AS $body$ \
          BEGIN IF NEW.package_id = 'platform_fixture_overlay' AND NEW.package_version = '2.2.0' \
@@ -945,11 +878,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
         &[&TENANT, &digest, &bytes],
     ).await.unwrap();
-    fixture.base.serving.manifest_digest = digest;
-    fixture.base.serving.packages.insert(
-        SECOND.to_owned(),
-        fixture.base.serving.packages[OVERLAY].clone(),
-    );
+    fixture.base.predecessor_release = digest;
     let generation = fixture
         .base
         .server
@@ -999,20 +928,11 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     let mut request = overlay_request(&fixture, "two-accepted.json");
     request.predecessor_packages = original_package_roots;
     request.presented_packages = successor_package_roots.clone();
-    request
-        .workload
-        .package_workloads
-        .insert(SECOND.to_owned(), "http".to_owned());
     let original = state(&mut fixture.base.source).await;
     let rows = retained_rows(&fixture.base.source).await;
     let mut omitted = overlay_request(&fixture, "second-omitted.json");
     omitted.predecessor_packages = request.predecessor_packages.clone();
-    let error = qualify_upgrade_with_observer(
-        omitted,
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(omitted).await.unwrap_err();
     assert!(
         format!("{error:#}").contains(&format!(
             "successor roots omit affected installed overlay {SECOND}"
@@ -1021,12 +941,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     );
     assert!(!fixture.base.root.join("second-omitted.json").exists());
     assert_eq!(state(&mut fixture.base.source).await, original);
-    let result = qualify_upgrade_with_observer(
-        request,
-        WorkloadObserver::Captured(fixture.base.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let result = qualify_upgrade(request).await.unwrap();
     assert_eq!(state(&mut fixture.base.source).await, original);
     let applied = crate::apply_package::apply_qualified_package_set(
         apply_request(

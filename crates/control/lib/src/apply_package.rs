@@ -178,7 +178,6 @@ pub(crate) async fn apply_qualification_packages(
     roots: &[PackageRoot],
     complete_roots: &[PackageRoot],
     manifest: &wamn_catalog::ServingManifest,
-    serving: &crate::qualify_upgrade::workload::ServingWorkloads,
 ) -> anyhow::Result<Vec<ApplyOutcome>> {
     ensure!(!tenant.is_empty(), "tenant must not be empty");
     ensure!(
@@ -228,15 +227,7 @@ pub(crate) async fn apply_qualification_packages(
         if packages.iter().any(|package| {
             crate::qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())
         }) {
-            finish_whole_row_stage(
-                &mut tx,
-                tenant,
-                complete_roots,
-                &packages,
-                manifest,
-                serving,
-            )
-            .await?;
+            finish_whole_row_stage(&mut tx, tenant, complete_roots, &packages, manifest).await?;
         }
         tx.commit()
             .await
@@ -357,8 +348,13 @@ pub(crate) async fn finish_whole_row_stage(
     roots: &[PackageRoot],
     packages: &[PreparedPackage],
     manifest: &wamn_catalog::ServingManifest,
-    serving: &crate::qualify_upgrade::workload::ServingWorkloads,
 ) -> anyhow::Result<()> {
+    let runtime = crate::qualify_upgrade::runtime_schemas(
+        &roots
+            .iter()
+            .map(read_package_root)
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    )?;
     crate::reconcile_package_data_access::upgrade::reconcile_upgrade_in_transaction(
         tx, tenant, roots,
     )
@@ -368,11 +364,9 @@ pub(crate) async fn finish_whole_row_stage(
         {
             continue;
         }
-        let schema = &serving
-            .packages
+        let schema = runtime
             .get(&package.manifest.package.id)
-            .context("whole_row_grants requires an observed runtime schema")?
-            .schema;
+            .context("whole_row_grants requires a runtime schema")?;
         stage::conditions(
             tx,
             tenant,
@@ -388,7 +382,7 @@ pub(crate) async fn finish_whole_row_stage(
         )
         .await?;
     }
-    crate::qualify_upgrade::plan_predecessor_in_transaction(tx, manifest, serving)
+    crate::qualify_upgrade::plan_predecessor_in_transaction(tx, manifest, &runtime)
         .await
         .context("serving statements fail after atomic stage grant reconciliation")
 }

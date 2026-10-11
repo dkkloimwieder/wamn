@@ -23,7 +23,7 @@ struct Fixture {
     root: PathBuf,
     suffix: PathBuf,
     manifest: ServingManifest,
-    serving: workload::ServingWorkloads,
+    predecessor_release: String,
     server: OwnedPostgres,
 }
 
@@ -134,7 +134,7 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
         root,
         suffix,
         manifest,
-        serving: serving(digest.as_str()),
+        predecessor_release: digest.as_str().to_owned(),
         server,
     }
 }
@@ -186,16 +186,8 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
     .unwrap()
 }
 
-fn serving(digest: &str) -> workload::ServingWorkloads {
-    workload::ServingWorkloads {
-        manifest_digest: digest.to_owned(),
-        packages: BTreeMap::from([(
-            "platform_fixture".to_owned(),
-            workload::PackageWorkload {
-                schema: "inventory".to_owned(),
-            },
-        )]),
-    }
+fn runtime() -> BTreeMap<String, String> {
+    BTreeMap::from([("platform_fixture".to_owned(), "inventory".to_owned())])
 }
 
 fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
@@ -204,19 +196,12 @@ fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
         database_url: fixture.source_database.url().to_owned(),
         tenant: TENANT.to_owned(),
         environment: ENVIRONMENT.to_owned(),
-        predecessor_release: fixture.serving.manifest_digest.clone(),
+        predecessor_release: fixture.predecessor_release.clone(),
         package: package.clone(),
         presented_packages: vec![package],
         predecessor_packages: Vec::new(),
         base_component: None,
         result: fixture.root.join(result),
-        workload: workload::WorkloadTarget {
-            kubeconfig: fixture.root.join("unused-test-kubeconfig"),
-            context: "captured-test".to_owned(),
-            namespace: "hosts".to_owned(),
-            host_deployment: "host".to_owned(),
-            package_workloads: BTreeMap::from([("platform_fixture".to_owned(), "http".to_owned())]),
-        },
     }
 }
 
@@ -300,12 +285,9 @@ async fn retained_rows(client: &Client) -> Vec<String> {
 async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() {
     let mut fixture = fixture("proof", false).await;
     let original = state(&mut fixture.source).await;
-    let result = qualify_upgrade_with_observer(
-        request(&fixture, "accepted.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let result = qualify_upgrade(request(&fixture, "accepted.json"))
+        .await
+        .unwrap();
     let (evidence, canonical, digest) = read_qualification(&result.result).unwrap();
     assert_eq!(result.sha256, digest);
     assert_eq!(
@@ -331,34 +313,13 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
     let mut edited = original_prefix.clone();
     edited.push(b'\n');
     fs::write(&prefix, edited).unwrap();
-    let error = qualify_upgrade_with_observer(
-        request(&fixture, "prefix.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(request(&fixture, "prefix.json"))
+        .await
+        .unwrap_err();
     assert!(format!("{error:#}").contains("prefix"), "{error:#}");
     fs::write(&prefix, original_prefix).unwrap();
 
-    let mut wrong_schema = fixture.serving.clone();
-    wrong_schema
-        .packages
-        .get_mut("platform_fixture")
-        .unwrap()
-        .schema = "wrong_schema".to_owned();
-    let error = qualify_upgrade_with_observer(
-        request(&fixture, "schema.json"),
-        WorkloadObserver::Captured(wrong_schema),
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("unchanged runtime schema"),
-        "{error:#}"
-    );
-    for refused in ["prefix.json", "schema.json"] {
-        assert!(!fixture.root.join(refused).exists());
-    }
+    assert!(!fixture.root.join("prefix.json").exists());
     assert_eq!(state(&mut fixture.source).await, original);
 
     let candidate = fixture.root.join("candidate");
@@ -479,12 +440,9 @@ async fn copied_suffix_retains_rows_and_rolls_back_failed_execution() {
 async fn whole_row_failure_is_refused_before_grants_that_would_fix_it() {
     let mut fixture = fixture("whole-row", true).await;
     let original = state(&mut fixture.source).await;
-    let error = qualify_upgrade_with_observer(
-        request(&fixture, "refused.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(request(&fixture, "refused.json"))
+        .await
+        .unwrap_err();
     let diagnostic = format!("{error:#}");
     assert!(
         diagnostic.contains("before candidate grant reconciliation"),
@@ -504,7 +462,7 @@ async fn whole_row_failure_is_refused_before_grants_that_would_fix_it() {
         .await
         .unwrap();
     let mut copy = connect(scratch.url()).await;
-    plan_predecessor(&mut copy, &fixture.manifest, &fixture.serving)
+    plan_predecessor(&mut copy, &fixture.manifest, &runtime())
         .await
         .unwrap_err();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
@@ -514,7 +472,7 @@ async fn whole_row_failure_is_refused_before_grants_that_would_fix_it() {
     })
     .await
     .unwrap();
-    plan_predecessor(&mut copy, &fixture.manifest, &fixture.serving)
+    plan_predecessor(&mut copy, &fixture.manifest, &runtime())
         .await
         .unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
@@ -563,12 +521,7 @@ async fn a_predecessor_release_outside_catalog_releases_refuses() {
     let unknown = format!("sha256:{}", "f".repeat(64));
     let mut qualification = request(&fixture, "unknown-predecessor.json");
     qualification.predecessor_release.clone_from(&unknown);
-    let error = qualify_upgrade_with_observer(
-        qualification,
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let error = qualify_upgrade(qualification).await.unwrap_err();
     assert!(
         format!("{error:#}").contains(&format!("catalog.releases holds no release {unknown}")),
         "{error:#}"

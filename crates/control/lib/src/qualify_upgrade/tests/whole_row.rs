@@ -64,12 +64,9 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
         "{missing_evidence:#}"
     );
     assert_eq!(state(&mut fixture.source).await, original);
-    let qualified = qualify_upgrade_with_observer(
-        request(&fixture, "whole-row.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let qualified = qualify_upgrade(request(&fixture, "whole-row.json"))
+        .await
+        .unwrap();
     let (evidence, canonical, digest) = read_qualification(&qualified.result).unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
     assert_eq!(evidence.format_version, STAGE_FORMAT);
@@ -204,7 +201,7 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     assert_eq!(persisted.get::<_, Vec<u8>>(0), canonical);
     assert_eq!(persisted.get::<_, String>(1), qualified.sha256);
 
-    plan_predecessor(&mut fixture.source, &fixture.manifest, &fixture.serving)
+    plan_predecessor(&mut fixture.source, &fixture.manifest, &runtime())
         .await
         .unwrap();
     let transaction = fixture.source.transaction().await.unwrap();
@@ -244,12 +241,9 @@ async fn whole_row_postcondition_failure_rolls_back_schema_grants_and_evidence()
     fs::write(&fixture.suffix,
         "ALTER TABLE inventory.widget ADD COLUMN upgrade_note text NOT NULL DEFAULT 'not_required';\n",
     ).unwrap();
-    let refused = qualify_upgrade_with_observer(
-        request(&fixture, "whole-row-default-refused.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap_err();
+    let refused = qualify_upgrade(request(&fixture, "whole-row-default-refused.json"))
+        .await
+        .unwrap_err();
     assert!(
         format!("{refused:#}")
             .contains("widget.upgrade_note must be a nullable column without a default"),
@@ -258,12 +252,9 @@ async fn whole_row_postcondition_failure_rolls_back_schema_grants_and_evidence()
     assert!(!fixture.root.join("whole-row-default-refused.json").exists());
     assert_eq!(state(&mut fixture.source).await, original);
     fs::write(&fixture.suffix, suffix).unwrap();
-    let qualified = qualify_upgrade_with_observer(
-        request(&fixture, "whole-row-rollback.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let qualified = qualify_upgrade(request(&fixture, "whole-row-rollback.json"))
+        .await
+        .unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
     fixture.source.batch_execute(
         "BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:fail-whole-row-postcondition',true); UPDATE inventory.widget SET note='changed after qualification' WHERE code='priority'; COMMIT",
@@ -289,7 +280,7 @@ async fn whole_row_postcondition_failure_rolls_back_schema_grants_and_evidence()
         &[&TENANT, &CANDIDATE_VERSION],
     ).await.unwrap();
     assert!(absent.get::<_, bool>(0) && absent.get::<_, bool>(1) && absent.get::<_, bool>(2));
-    plan_predecessor(&mut fixture.source, &fixture.manifest, &fixture.serving)
+    plan_predecessor(&mut fixture.source, &fixture.manifest, &runtime())
         .await
         .unwrap();
     fixture.server.stop().unwrap();

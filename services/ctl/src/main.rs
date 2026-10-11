@@ -237,14 +237,6 @@ mod tests {
             "dev",
             "--result",
             "/tmp/qualification.json",
-            "--kubeconfig",
-            "/run/kubeconfig",
-            "--context",
-            "dev",
-            "--namespace",
-            "hosts",
-            "--host-deployment",
-            "host",
         ];
         let Err(missing) = Cli::try_parse_from(values.clone()) else {
             panic!("qualify-upgrade without a predecessor release refuses");

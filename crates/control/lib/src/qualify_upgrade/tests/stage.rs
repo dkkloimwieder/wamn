@@ -37,12 +37,9 @@ async fn backfill_commits_batches_resumes_after_failed_postcondition_and_install
         .await
         .unwrap();
     let original = state(&mut fixture.source).await;
-    let result = qualify_upgrade_with_observer(
-        request(&fixture, "backfill.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let result = qualify_upgrade(request(&fixture, "backfill.json"))
+        .await
+        .unwrap();
     assert_eq!(state(&mut fixture.source).await, original);
     let (evidence, _, _) = read_qualification(&result.result).unwrap();
     assert!(evidence.candidate_suffix.is_empty());
@@ -188,12 +185,9 @@ async fn expand_conditions_preserve_rows_stop_on_lock_and_commit_with_evidence()
         manifest["upgrade_stage"]["preconditions"]["retained"] = json!(precondition);
         manifest["upgrade_stage"]["postconditions"]["expanded"] = json!(postcondition);
         fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-        let error = qualify_upgrade_with_observer(
-            request(&fixture, &format!("{name}.json")),
-            WorkloadObserver::Captured(fixture.serving.clone()),
-        )
-        .await
-        .unwrap_err();
+        let error = qualify_upgrade(request(&fixture, &format!("{name}.json")))
+            .await
+            .unwrap_err();
         assert!(format!("{error:#}").contains(expected), "{error:#}");
         assert_eq!(state(&mut fixture.source).await, original);
     }
@@ -224,12 +218,9 @@ async fn expand_conditions_preserve_rows_stop_on_lock_and_commit_with_evidence()
     wamn_schema_generator::materialize_package_verified(generation.url(), &candidate)
         .await
         .unwrap();
-    let result = qualify_upgrade_with_observer(
-        request(&fixture, "expand.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let result = qualify_upgrade(request(&fixture, "expand.json"))
+        .await
+        .unwrap();
     let (evidence, _, _) = read_qualification(&result.result).unwrap();
     assert_eq!(evidence.format_version, STAGE_FORMAT);
     assert!(evidence.upgrade_stage.is_some());
@@ -272,12 +263,9 @@ async fn expand_conditions_preserve_rows_stop_on_lock_and_commit_with_evidence()
 async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
     let mut fixture = fixture("stage-format", false).await;
     let original = state(&mut fixture.source).await;
-    let result = qualify_upgrade_with_observer(
-        request(&fixture, "additive.json"),
-        WorkloadObserver::Captured(fixture.serving.clone()),
-    )
-    .await
-    .unwrap();
+    let result = qualify_upgrade(request(&fixture, "additive.json"))
+        .await
+        .unwrap();
     let (mut evidence, additive_bytes, _) = read_qualification(&result.result).unwrap();
     assert_eq!(evidence.format_version, PLAIN_FORMAT);
     assert!(evidence.upgrade_stage.is_none());
@@ -341,10 +329,7 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
 
     let refused = request(&fixture, "stage.json");
     let output = refused.result.clone();
-    let error =
-        qualify_upgrade_with_observer(refused, WorkloadObserver::Captured(fixture.serving.clone()))
-            .await
-            .unwrap_err();
+    let error = qualify_upgrade(refused).await.unwrap_err();
     assert!(
         format!("{error:#}").contains("backfill stage cannot carry a DDL suffix"),
         "{error:#}"
@@ -392,10 +377,7 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
         fs::write(&manifest_path, serde_json::to_vec(&changed).unwrap()).unwrap();
         let refused = request(&fixture, &format!("dynamic-{index}.json"));
         let output = refused.result.clone();
-        let error = qualify_upgrade_with_observer(
-            refused,
-            WorkloadObserver::Captured(fixture.serving.clone()),
-        )
+        let error = qualify_upgrade(refused)
         .await
         .unwrap_err();
         assert!(format!("{error:#}").contains(operation), "{error:#}");

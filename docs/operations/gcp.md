@@ -2084,8 +2084,7 @@ Read-only live `qualify-upgrade` ran on 2026-10-02 at 18:28:21 UTC and refused a
 
 ## 10. Upgrade an environment
 
-The environment file uses `package_workloads` to map package IDs to their serving WorkloadDeployment names.
-This map contains no schema. Qualification reads the schema from the live workload.
+Package qualification reads no Kubernetes resource. It reads each package's application schema from the package manifest.
 
 `wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
 

@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ComponentSqlStatement, PackageCoordinate, ServingManifest};
@@ -7,7 +6,6 @@ use wamn_catalog::{ComponentSqlStatement, PackageCoordinate, ServingManifest};
 use super::{
     AcceptedUpgrade, matching_reconciliation_evidence, persist, read_accepted, require_prefix,
 };
-use crate::qualify_upgrade::workload::{PackageWorkload, ServingWorkloads, WorkloadTarget};
 use crate::qualify_upgrade::{PackageIdentity, UpgradeQualification, read_current_packages};
 use crate::reconcile_package_data_access::upgrade::read_upgrade_privileges;
 
@@ -141,22 +139,6 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
         schemas,
         predecessor_privileges: privileges.clone(),
         post_privileges: privileges,
-        workload_target: WorkloadTarget {
-            kubeconfig: PathBuf::from("unused"),
-            context: "test".to_owned(),
-            namespace: "test".to_owned(),
-            host_deployment: "host".to_owned(),
-            package_workloads: BTreeMap::new(),
-        },
-        serving_workloads: ServingWorkloads {
-            manifest_digest: manifest.digest().as_str().to_owned(),
-            packages: BTreeMap::from([(
-                "platform_fixture".to_owned(),
-                PackageWorkload {
-                    schema: "inventory".to_owned(),
-                },
-            )]),
-        },
     };
     let value = serde_json::to_value(&evidence).unwrap();
     AcceptedUpgrade {

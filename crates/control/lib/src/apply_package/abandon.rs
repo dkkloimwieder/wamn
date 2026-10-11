@@ -152,13 +152,11 @@ async fn abandon_existing(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use serde_json::json;
 
     use super::*;
-    use crate::qualify_upgrade::workload::{ServingWorkloads, WorkloadTarget};
     use crate::reconcile_package_data_access::upgrade::UpgradePrivileges;
 
     struct Files(PathBuf);
@@ -223,17 +221,6 @@ mod tests {
             schemas: vec!["inventory".into()],
             predecessor_privileges: UpgradePrivileges::default(),
             post_privileges: UpgradePrivileges::default(),
-            workload_target: WorkloadTarget {
-                kubeconfig: PathBuf::from("must-not-read"),
-                context: "unused".into(),
-                namespace: "unused".into(),
-                host_deployment: "unused".into(),
-                package_workloads: BTreeMap::new(),
-            },
-            serving_workloads: ServingWorkloads {
-                manifest_digest: format!("sha256:{}", "a".repeat(64)),
-                packages: BTreeMap::new(),
-            },
             overlay: None,
             upgrade_stage: prepared.manifest.upgrade_stage.clone(),
         };
