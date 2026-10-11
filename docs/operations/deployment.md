@@ -233,7 +233,7 @@ Each object carries its Cache-Control: `assets/` is `public, max-age=31536000, i
 The command writes `index.html` last. The command refuses a built file that has no declared cache rule or content type.
 The command writes each object create-only and never replaces one. A package whose `index.html` is already there is reported as present and not written again.
 The bucket must allow reads without credentials.
-The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, the route ingress `api` of its host group, and its upload path `bucketPath`. The edge passes the headers of each object on.
+The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, its environment coordinate `environment` (`org/project/env`), and its upload path `bucketPath`. The edge sends `/api/` to the `http` Service of that environment's release in `wamn-system`. The edge passes the headers of each object on.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
 ## Google Cloud edge

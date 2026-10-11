@@ -9,13 +9,13 @@ image:
 
 # The applications the edge serves, one server each. host is the public host,
 # the config.host of the environment's http workload, so the edge passes the
-# Host header to the router unchanged. api is the route
-# ingress of its host group, plain HTTP; the edge removes /api before it
-# forwards. bucketPath is the path that `wamn web upload` wrote, readable
+# Host header to the router unchanged. environment is the coordinate
+# org/project/env; the edge sends /api to the http Service of that
+# environment's release and removes /api before it forwards. bucketPath is the path that `wamn web upload` wrote, readable
 # without credentials: <bucket>/<prefix>/<package>/<release digest hex>.
 applications: []
 #  - host: receiving.example.com
-#    api: http://flow-http.hosts.svc.cluster.local
+#    environment: acme/receiving/prod
 #    bucketPath: web/clients/wamn_receiving/<release digest hex>
 
 # The serving certificate. With issuer set, the chart requests it from that

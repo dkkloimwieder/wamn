@@ -501,6 +501,11 @@ mod tests {
             release_name("acme", "wms", "prod").expect("valid coordinate")
         );
         assert!(name.starts_with("r-prod-") && name.len() == "r-prod-".len() + HASH_LEN);
+        // The edge chart derives the same name (deployment_declarations.rs).
+        assert_eq!(
+            release_name("acme", "wms", "dev").expect("valid coordinate"),
+            "r-dev-2d9920a989cb26764e77"
+        );
         // A valid env is bounded by the database name it provisions, so a short
         // org and project leave room for an env longer than the slug.
         let long = "a".repeat(30);
