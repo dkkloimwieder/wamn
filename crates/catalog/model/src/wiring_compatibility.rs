@@ -7,7 +7,7 @@ use boon::{Compiler, Draft, Schemas};
 
 use crate::{
     AdmittedComponent, AdmittedComponentOperation, AdmittedComponentPort, ComponentPackageScope,
-    ComponentSchema, WiringDocument, WiringNode, schema_digests_match,
+    ComponentSchema, WiringDocument, WiringNode,
 };
 
 const PARAMETER_SCHEMA_URI: &str = "mem://wamn-wiring-parameter.json";
@@ -27,7 +27,7 @@ pub enum WiringCompatibilityErrorType {
     UnknownInputPort,
     MissingInputPort,
     AmbiguousInputPort,
-    SchemaDigestMismatch,
+    SchemaMismatch,
 }
 
 /// Contextual refusal from the gate-time wiring compatibility boundary.
@@ -63,7 +63,7 @@ impl std::error::Error for WiringCompatibilityError {}
 ///
 /// This is a publish/gate function, not a delivery-time fallback. Every normal
 /// edge resolves the exact authored source and target ports and requires equal
-/// canonical JSON-Schema digests. Parameters are both declared and validated
+/// JSON Schemas. Parameters are both declared and validated
 /// against their admitted schemas. No structural subtyping, coercion, default,
 /// or cross-version lookup exists.
 pub fn validate_wiring_compatibility(
@@ -226,17 +226,17 @@ fn validate_resolved_edges(
                 ),
             ));
         };
-        if !schema_digests_match(&source_port.schema, &target_port.schema) {
+        if source_port.schema != target_port.schema {
             return Err(WiringCompatibilityError::new(
-                WiringCompatibilityErrorType::SchemaDigestMismatch,
+                WiringCompatibilityErrorType::SchemaMismatch,
                 format!(
-                    "wiring edge {:?}.{:?} -> {:?}.{:?} has schema digests {:?} and {:?}",
+                    "wiring edge {:?}.{:?} -> {:?}.{:?} has schemas {} and {}",
                     edge.from,
                     edge.from_port,
                     edge.to,
                     target_port.name,
-                    source_port.schema.schema_digest,
-                    target_port.schema.schema_digest,
+                    source_port.schema.schema,
+                    target_port.schema.schema,
                 ),
             ));
         }
@@ -360,8 +360,8 @@ fn validate_parameter_value(
         WiringCompatibilityError::new(
             WiringCompatibilityErrorType::InvalidParameter,
             format!(
-                "wiring node {node_id:?} parameter {parameter:?} does not match schema digest {:?}: {error}",
-                schema.schema_digest
+                "wiring node {node_id:?} parameter {parameter:?} does not match schema {}: {error}",
+                schema.schema
             ),
         )
     })
@@ -410,10 +410,7 @@ mod tests {
     use crate::{AdmittedComponentParameter, WiringEdge, WiringTerminal};
 
     fn schema(value: serde_json::Value) -> ComponentSchema {
-        ComponentSchema {
-            schema_digest: wamn_execution_contract::canonical_json_sha256(&value),
-            schema: value,
-        }
+        ComponentSchema { schema: value }
     }
 
     fn component(
@@ -597,7 +594,7 @@ mod tests {
             validate_wiring_compatibility(&wiring(), &scope(), &source_digest)
                 .unwrap_err()
                 .error_type(),
-            WiringCompatibilityErrorType::SchemaDigestMismatch
+            WiringCompatibilityErrorType::SchemaMismatch
         );
 
         let mut target_digest = components();
@@ -607,7 +604,7 @@ mod tests {
             validate_wiring_compatibility(&wiring(), &scope(), &target_digest)
                 .unwrap_err()
                 .error_type(),
-            WiringCompatibilityErrorType::SchemaDigestMismatch
+            WiringCompatibilityErrorType::SchemaMismatch
         );
 
         let mut wrong_port = wiring();
@@ -663,7 +660,7 @@ mod tests {
             validate_wiring_compatibility(&wiring(), &scope(), &structurally_wider)
                 .unwrap_err()
                 .error_type(),
-            WiringCompatibilityErrorType::SchemaDigestMismatch
+            WiringCompatibilityErrorType::SchemaMismatch
         );
     }
 

@@ -38,8 +38,8 @@ pub use component_facts::{
     ComponentFactError, ComponentFactErrorType, ComponentOperationDeclaration,
     ComponentOperationDependency, ComponentPackageScope, ComponentParameterDeclaration,
     ComponentPortDeclaration, ComponentSchema, ComponentSqlField, ComponentSqlStatement,
-    ComponentSqlValueType, bind_component_statement_facts, component_sql_digest,
-    normalize_component_fact, schema_digests_match, verify_stored_effect_projection,
+    ComponentSqlValueType, bind_component_statement_facts, normalize_component_fact,
+    verify_stored_effect_projection,
 };
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,

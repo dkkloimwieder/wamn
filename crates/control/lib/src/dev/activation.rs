@@ -72,8 +72,6 @@ pub struct DevActivationRequest<'a> {
     pub identity: &'a DevActivationIdentity,
     pub host_binary: &'a Path,
     pub wasmtime_cache_dir: &'a Path,
-    /// Integrity of exact admitted bytes, held by the coordinator until cutover.
-    pub local_admission_digest: Option<&'a str>,
 }
 
 impl fmt::Debug for DevActivationRequest<'_> {
@@ -499,21 +497,6 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
     std::fs::create_dir_all(&local.directory).map_err(stage_error)?;
     std::fs::set_permissions(&local.directory, std::fs::Permissions::from_mode(0o700))
         .map_err(stage_error)?;
-    let admission = std::fs::read(
-        local
-            .directory
-            .join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
-    )
-    .map_err(stage_error)?;
-    if Some(wamn_engine::component_admission::component_digest(&admission).as_str())
-        != request.local_admission_digest
-    {
-        return Err(DevActivationError::new(
-            DevActivationErrorType::InvalidInput,
-            "local-admission",
-            "local admission bytes changed after validation",
-        ));
-    }
     let component_bytes = std::fs::read(&local.flow_http_component).map_err(stage_error)?;
     let checked = (|| -> anyhow::Result<()> {
         let engine = wamn_engine::engine::build_engine(&[])?;
@@ -572,7 +555,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
 }
 
 /// Stage the platform materializer beside the release. It enters neither the
-/// local admission digest nor the release manifest.
+/// local admission facts nor the release manifest.
 fn stage_materializer(config: &DevConfig) -> Result<(), DevActivationError> {
     let staged = (|| -> anyhow::Result<()> {
         let local = config.local_artifacts();
@@ -840,11 +823,6 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         local.directory.display().to_string(),
         "--local-application-digest".to_owned(),
         request.release.manifest_digest.to_string(),
-        "--local-admission-digest".to_owned(),
-        request
-            .local_admission_digest
-            .unwrap_or_default()
-            .to_owned(),
         "--wasmtime-cache-dir".to_owned(),
         request.wasmtime_cache_dir.display().to_string(),
         "--materializer-nats-binding-file".to_owned(),
@@ -1877,7 +1855,6 @@ mod tests {
             identity: &identity,
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
-            local_admission_digest: None,
         };
         let spec = host_process_spec(&request);
         for (name, value) in [
@@ -1909,7 +1886,6 @@ mod tests {
             identity: &identity,
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
-            local_admission_digest: None,
         };
         let spec = host_process_spec(&request);
         assert!(
@@ -1973,7 +1949,6 @@ mod tests {
         std::fs::write(&materializer, materializer_bytes).unwrap();
         std::fs::create_dir(&directory).unwrap();
         let admission = b"local-admission-fixture";
-        let admission_digest = wamn_engine::component_admission::component_digest(admission);
         std::fs::write(
             directory.join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
             admission,
@@ -1990,7 +1965,6 @@ mod tests {
             identity: &identity,
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
-            local_admission_digest: Some(&admission_digest),
         };
         prepare_local(&request).expect("Release stages validated workload bytes");
         let staged_workload = std::fs::read(directory.join("flow-http.json")).unwrap();
@@ -2103,7 +2077,6 @@ mod tests {
             identity: &identity,
             host_binary: Path::new("/opt/wamn/bin/wamn-host"),
             wasmtime_cache_dir: Path::new("/tmp/wamn-dev-cache"),
-            local_admission_digest: None,
         };
         let shared = Arc::new(Shared::default());
         let backend = FakeBackend::new(
@@ -2184,8 +2157,6 @@ mod tests {
             "/tmp/wamn-local-candidate",
             "--local-application-digest",
             expected_digest.as_str(),
-            "--local-admission-digest",
-            "",
             "--wasmtime-cache-dir",
             "/tmp/wamn-dev-cache",
             "--materializer-nats-binding-file",
@@ -2392,7 +2363,6 @@ mod tests {
             identity: &identity,
             host_binary: Path::new("/opt/wamn/bin/wamn-host"),
             wasmtime_cache_dir: Path::new("/tmp/wamn-dev-cache"),
-            local_admission_digest: None,
         };
         let shared = Arc::new(Shared::default());
         let backend = FakeBackend::new(Arc::clone(&shared), [], [], []);

@@ -3,8 +3,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use sha2::{Digest as _, Sha256};
-
 use super::{
     ContractMismatch, ContractPart, RowSet, SqlValue, StatementError, ValueShape, WamnPostgres,
 };
@@ -67,12 +65,12 @@ pub type VerifiedStatementSet = BTreeMap<String, VerifiedStatement>;
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct BoundStatementSet(BTreeMap<String, Arc<VerifiedStatement>>);
 
-/// One operation's statement set, verified against its digests and sealed --
-/// the per-DIGEST half of the statement bind.
+/// One operation's statement set, keyed by each statement's package-relative
+/// path and sealed -- the per-component half of the statement bind.
 ///
 /// Nothing in here is per request: the admitted facts it was lowered from name
 /// the component digest, so one of these serves every scope that binds the
-/// operation. Opaque, so a set that skipped verification cannot be bound.
+/// operation. Opaque, so a set can be bound only as it was prepared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedStatementSet(Arc<BoundStatementSet>);
 
@@ -83,36 +81,16 @@ pub(super) struct StatementScopes {
 }
 
 impl WamnPostgres {
-    /// Bind one admitted operation's immutable statement set to a component.
-    ///
-    /// Binding verifies every map key against the exact SQL bytes. Rebinding the
-    /// same facts is a no-op; changing facts under a live component/operation
-    /// identity is refused.
-    /// Verify every statement's digest and seal the set. Once per digest.
-    ///
-    /// The digest-mismatch refusal lives here, so a set whose SQL does not
-    /// hash to its digest is refused before it can be bound under any scope --
-    /// under the router driver that is at preparation, once, for every request
-    /// that would have followed.
-    pub fn prepare_statement_set(
-        statements: VerifiedStatementSet,
-    ) -> anyhow::Result<PreparedStatementSet> {
-        tracing::info_span!("wamn.scope.verify").in_scope(|| {
-            for (digest, statement) in &statements {
-                let observed = statement_digest(&statement.exact_sql);
-                anyhow::ensure!(
-                    digest == &observed,
-                    "statement-digest-mismatch: expected {digest}, observed {observed}"
-                );
-            }
-            Ok::<(), anyhow::Error>(())
-        })?;
-        Ok(PreparedStatementSet(Arc::new(BoundStatementSet(
+    /// Seal one admitted operation's immutable statement set, once per
+    /// component, so a scope can bind it.
+    #[must_use]
+    pub fn prepare_statement_set(statements: VerifiedStatementSet) -> PreparedStatementSet {
+        PreparedStatementSet(Arc::new(BoundStatementSet(
             statements
                 .into_iter()
-                .map(|(digest, statement)| (digest, Arc::new(statement)))
+                .map(|(path, statement)| (path, Arc::new(statement)))
                 .collect(),
-        ))))
+        )))
     }
 
     /// Bind a prepared set under a scope. Once per request.
@@ -150,7 +128,7 @@ impl WamnPostgres {
         operation: &str,
         statements: VerifiedStatementSet,
     ) -> anyhow::Result<()> {
-        let prepared = Self::prepare_statement_set(statements)?;
+        let prepared = Self::prepare_statement_set(statements);
         self.bind_prepared_statement_operation(component_id, operation, &prepared)
     }
 
@@ -228,16 +206,16 @@ impl WamnPostgres {
 
 pub(super) fn resolve_statement(
     statements: Option<&BoundStatementSet>,
-    digest: &str,
+    statement_path: &str,
     binds: &[SqlValue],
 ) -> Result<Arc<VerifiedStatement>, StatementError> {
     let statement = statements
-        .and_then(|statements| statements.0.get(digest))
+        .and_then(|statements| statements.0.get(statement_path))
         .cloned()
-        .ok_or_else(|| StatementError::UnknownStatement(digest.to_owned()))?;
+        .ok_or_else(|| StatementError::UnknownStatement(statement_path.to_owned()))?;
     if !binds_match(&statement.binds, binds) {
         return Err(contract_mismatch(
-            digest,
+            statement_path,
             ContractPart::Binds,
             expected_shape(&statement.binds),
             observed_bind_shape(&statement.binds, binds),
@@ -247,7 +225,7 @@ pub(super) fn resolve_statement(
 }
 
 pub(super) fn validate_statement_result(
-    digest: &str,
+    statement_path: &str,
     statement: &VerifiedStatement,
     result: RowSet,
 ) -> Result<RowSet, StatementError> {
@@ -291,7 +269,7 @@ pub(super) fn validate_statement_result(
         }
     }
     Err(contract_mismatch(
-        digest,
+        statement_path,
         ContractPart::Columns,
         expected_shape(&statement.columns),
         ValueShape {
@@ -302,7 +280,7 @@ pub(super) fn validate_statement_result(
 }
 
 pub(super) fn validate_prepared_statement(
-    digest: &str,
+    statement_path: &str,
     statement: &VerifiedStatement,
     prepared: &tokio_postgres::Statement,
 ) -> Result<(), StatementError> {
@@ -319,7 +297,7 @@ pub(super) fn validate_prepared_statement(
             .map(tokio_postgres::types::Type::name),
     ) {
         return Err(contract_mismatch(
-            digest,
+            statement_path,
             ContractPart::Binds,
             expected_shape(&statement.binds),
             ValueShape {
@@ -342,7 +320,7 @@ pub(super) fn validate_prepared_statement(
             .map(|column| column.type_().name()),
     ) {
         return Err(contract_mismatch(
-            digest,
+            statement_path,
             ContractPart::Columns,
             expected_shape(&statement.columns),
             ValueShape {
@@ -352,10 +330,6 @@ pub(super) fn validate_prepared_statement(
         ));
     }
     Ok(())
-}
-
-fn statement_digest(sql: &str) -> String {
-    format!("sha256:{}", hex::encode(Sha256::digest(sql.as_bytes())))
 }
 
 fn binds_match(expected: &[StatementField], observed: &[SqlValue]) -> bool {
@@ -459,13 +433,13 @@ fn bounded_count(count: usize) -> u32 {
 }
 
 fn contract_mismatch(
-    digest: &str,
+    statement_path: &str,
     part: ContractPart,
     expected: ValueShape,
     observed: ValueShape,
 ) -> StatementError {
     StatementError::StatementContractMismatch(ContractMismatch {
-        statement_digest: digest.to_owned(),
+        statement: statement_path.to_owned(),
         part,
         expected,
         observed,
@@ -503,21 +477,21 @@ mod tests {
     fn activation_exposes_only_the_selected_operation_and_revoke_closes_it() {
         let plugin = plugin();
         let first = verified("SELECT $1::uuid, 'first'::text");
-        let first_digest = statement_digest(&first.exact_sql);
+        let first_path = "sql/first.sql".to_owned();
         let second = verified("SELECT $1::uuid, 'second'::text");
-        let second_digest = statement_digest(&second.exact_sql);
+        let second_path = "sql/second.sql".to_owned();
         plugin
             .bind_statement_operation(
                 "component",
                 "first/get",
-                BTreeMap::from([(first_digest.clone(), first)]),
+                BTreeMap::from([(first_path.clone(), first)]),
             )
             .expect("bind first operation");
         plugin
             .bind_statement_operation(
                 "component",
                 "second/get",
-                BTreeMap::from([(second_digest.clone(), second)]),
+                BTreeMap::from([(second_path.clone(), second)]),
             )
             .expect("bind second operation");
 
@@ -528,11 +502,11 @@ mod tests {
             .active_statement_set("component")
             .expect("first operation is active");
         assert!(
-            resolve_statement(Some(&active), &first_digest, &[SqlValue::Uuid("id".into())]).is_ok()
+            resolve_statement(Some(&active), &first_path, &[SqlValue::Uuid("id".into())]).is_ok()
         );
         assert!(matches!(
-            resolve_statement(Some(&active), &second_digest, &[SqlValue::Uuid("id".into())]),
-            Err(StatementError::UnknownStatement(digest)) if digest == second_digest
+            resolve_statement(Some(&active), &second_path, &[SqlValue::Uuid("id".into())]),
+            Err(StatementError::UnknownStatement(path)) if path == second_path
         ));
 
         plugin
@@ -542,16 +516,11 @@ mod tests {
             .active_statement_set("component")
             .expect("second operation is active");
         assert!(matches!(
-            resolve_statement(Some(&active), &first_digest, &[SqlValue::Uuid("id".into())]),
-            Err(StatementError::UnknownStatement(digest)) if digest == first_digest
+            resolve_statement(Some(&active), &first_path, &[SqlValue::Uuid("id".into())]),
+            Err(StatementError::UnknownStatement(path)) if path == first_path
         ));
         assert!(
-            resolve_statement(
-                Some(&active),
-                &second_digest,
-                &[SqlValue::Uuid("id".into())]
-            )
-            .is_ok()
+            resolve_statement(Some(&active), &second_path, &[SqlValue::Uuid("id".into())]).is_ok()
         );
 
         plugin.revoke_statement_operation("component");
@@ -562,21 +531,21 @@ mod tests {
     fn exact_scope_cleanup_preserves_a_scope_with_the_same_prefix() {
         let plugin = plugin();
         let first = verified("SELECT $1::uuid, 'first'::text");
-        let first_digest = statement_digest(&first.exact_sql);
+        let first_path = "sql/first.sql".to_owned();
         let second = verified("SELECT $1::uuid, 'second'::text");
-        let second_digest = statement_digest(&second.exact_sql);
+        let second_path = "sql/second.sql".to_owned();
         plugin
             .bind_statement_operation(
                 "workload",
                 "orders/get",
-                BTreeMap::from([(first_digest, first)]),
+                BTreeMap::from([(first_path, first)]),
             )
             .expect("bind exact scope");
         plugin
             .bind_statement_operation(
                 "workload-child",
                 "orders/get",
-                BTreeMap::from([(second_digest.clone(), second)]),
+                BTreeMap::from([(second_path.clone(), second)]),
             )
             .expect("bind prefix-sharing scope");
         plugin
@@ -599,38 +568,21 @@ mod tests {
             .active_statement_set("workload-child")
             .expect("prefix-sharing scope remains active");
         assert!(
-            resolve_statement(
-                Some(&active),
-                &second_digest,
-                &[SqlValue::Uuid("id".into())]
-            )
-            .is_ok()
+            resolve_statement(Some(&active), &second_path, &[SqlValue::Uuid("id".into())]).is_ok()
         );
-    }
-
-    #[test]
-    fn binding_refuses_a_digest_that_does_not_name_the_exact_sql_bytes() {
-        let error = plugin()
-            .bind_statement_operation(
-                "component",
-                "orders/get",
-                BTreeMap::from([("sha256:wrong".to_owned(), verified("SELECT $1::uuid"))]),
-            )
-            .expect_err("digest drift must fail closed");
-        assert!(error.to_string().starts_with("statement-digest-mismatch:"));
     }
 
     #[test]
     fn bind_mismatch_reports_expected_and_observed_shapes() {
         let statement = verified("SELECT $1::uuid");
-        let digest = statement_digest(&statement.exact_sql);
-        let set = BoundStatementSet(BTreeMap::from([(digest.clone(), Arc::new(statement))]));
-        let error = resolve_statement(Some(&set), &digest, &[SqlValue::Text("id".into())])
+        let path = "sql/statement.sql".to_owned();
+        let set = BoundStatementSet(BTreeMap::from([(path.clone(), Arc::new(statement))]));
+        let error = resolve_statement(Some(&set), &path, &[SqlValue::Text("id".into())])
             .expect_err("wrong carrier type must fail closed");
         let StatementError::StatementContractMismatch(mismatch) = error else {
             panic!("expected statement-contract-mismatch");
         };
-        assert_eq!(mismatch.statement_digest, digest);
+        assert_eq!(mismatch.statement, path);
         assert_eq!(mismatch.part, ContractPart::Binds);
         assert_eq!(mismatch.expected.types, vec!["uuid".to_owned()]);
         assert_eq!(mismatch.observed.types, vec!["text".to_owned()]);
@@ -639,7 +591,7 @@ mod tests {
     #[test]
     fn result_mismatch_reports_the_column_contract() {
         let statement = verified("SELECT $1::uuid");
-        let digest = statement_digest(&statement.exact_sql);
+        let path = "sql/statement.sql".to_owned();
         let result = RowSet {
             columns: vec![super::super::Column {
                 name: "value".into(),
@@ -647,7 +599,7 @@ mod tests {
             }],
             rows: vec![vec![SqlValue::Int64(1)]],
         };
-        let error = validate_statement_result(&digest, &statement, result)
+        let error = validate_statement_result(&path, &statement, result)
             .expect_err("wrong result type must fail closed");
         let StatementError::StatementContractMismatch(mismatch) = error else {
             panic!("expected statement-contract-mismatch");

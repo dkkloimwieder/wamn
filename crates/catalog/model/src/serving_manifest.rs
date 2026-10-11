@@ -174,8 +174,8 @@ pub struct ServingComponentOperation {
 
 impl ServingComponentOperation {
     /// Resolve one release-pinned statement inside this operation's authority.
-    pub fn statement(&self, digest: &str) -> Option<&ComponentSqlStatement> {
-        self.statements.get(digest)
+    pub fn statement(&self, path: &str) -> Option<&ComponentSqlStatement> {
+        self.statements.get(path)
     }
 
     /// Whether this folded operation carries the admitted operation's own facts.
@@ -200,7 +200,7 @@ impl ServingComponentOperation {
             && admitted
                 .statements
                 .iter()
-                .all(|(digest, statement)| self.statements.get(digest) == Some(statement))
+                .all(|(path, statement)| self.statements.get(path) == Some(statement))
     }
 }
 
@@ -325,12 +325,12 @@ fn fold_call_graph<'a>(
         .permissions
         .extend(operation.registered_operation.iter().cloned());
     folded.fresh_only |= operation.fresh_only;
-    for (digest, statement) in &operation.statements {
-        if let Some(previous) = folded.statements.insert(digest.clone(), statement.clone())
+    for (path, statement) in &operation.statements {
+        if let Some(previous) = folded.statements.insert(path.clone(), statement.clone())
             && &previous != statement
         {
             return invalid(format!(
-                "statement {digest:?} has two different facts in the call graph of one export"
+                "statement {path:?} has two different facts in the call graph of one export"
             ));
         }
     }
@@ -2112,10 +2112,10 @@ mod tests {
     }
 
     #[test]
-    fn statement_lookup_is_operation_scoped_and_revalidates_exact_bytes() {
+    fn statement_lookup_is_operation_scoped_and_revalidates_its_key() {
         let operation = "base:widget/get@1.0.0";
         let sql = "SELECT row_version FROM widget WHERE id = $1";
-        let digest = crate::digest(sql.as_bytes());
+        let path = "generated/sql/widget/get.sql".to_owned();
         let mut components = components();
         let mut base = components
             .iter()
@@ -2128,10 +2128,10 @@ mod tests {
             .expect("fixture has the base operation")
             .statements
             .insert(
-                digest.clone(),
+                path.clone(),
                 ComponentSqlStatement {
                     name: "get".into(),
-                    path: "generated/sql/widget/get.sql".into(),
+                    path: path.clone(),
                     sql: sql.into(),
                     // A SELECT fixture: PostgreSQL classifies it as needing no
                     // transaction.
@@ -2157,7 +2157,7 @@ mod tests {
             .find(|component| component.package_id == "base")
             .expect("base component remains present")
             .operations[operation]
-            .statement(&digest);
+            .statement(&path);
         assert!(admitted.is_some());
         assert!(
             manifest
@@ -2166,7 +2166,7 @@ mod tests {
                 .find(|component| component.package_id == "overlay")
                 .expect("overlay component remains present")
                 .operations["overlay:transform/map@3.0.0"]
-                .statement(&digest)
+                .statement(&path)
                 .is_none()
         );
 
@@ -2181,10 +2181,10 @@ mod tests {
             .get_mut(operation)
             .expect("fixture has the base operation")
             .statements
-            .get_mut(&digest)
+            .get_mut(&path)
             .expect("fixture has a statement")
-            .sql
-            .push(' ');
+            .path
+            .push_str(".moved");
         broken.insert(base);
         let error = ServingManifest::new(
             release(),
@@ -2194,7 +2194,7 @@ mod tests {
             BTreeMap::from([("orders".to_string(), attachment())]),
             BTreeMap::from([("overlay::orders-changed".to_string(), registration())]),
         )
-        .expect_err("statement bytes may not drift from their digest");
+        .expect_err("a statement may not move off its key");
         assert!(error.to_string().contains("invalid statement facts"));
     }
 

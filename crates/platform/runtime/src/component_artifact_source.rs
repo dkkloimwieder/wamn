@@ -25,7 +25,6 @@ use wamn_catalog::{
 use wamn_engine::artifact_source::{
     ArtifactSource, ComponentArtifactFetchError, verify_component_body, verify_config_body,
 };
-use wamn_engine::component_admission::component_digest;
 use wamn_engine::component_artifact::{component_artifact_config_bytes, component_artifact_layout};
 use wamn_package_artifact::registry_credentials::{
     RegistryCredentialSource, RegistryCredentials, RegistryCredentialsError,
@@ -227,7 +226,6 @@ impl ArtifactSource for ComponentArtifactSource {
         );
         let named = artifact.to_string();
         let expected_config = component_artifact_config_bytes(component);
-        let expected_config_digest = component_digest(&expected_config);
 
         let auth = match &self.config.credentials {
             None => RegistryAuth::Anonymous,
@@ -261,7 +259,6 @@ impl ArtifactSource for ComponentArtifactSource {
         let descriptors = verify_manifest(
             &manifest,
             &component.component_digest,
-            &expected_config_digest,
             expected_config.len(),
             &named,
         )?;
@@ -300,7 +297,6 @@ impl ArtifactSource for ComponentArtifactSource {
         verify_config_body(
             &config_bytes,
             descriptors.config.size,
-            &expected_config_digest,
             &expected_config,
             &named,
         )?;
@@ -328,7 +324,6 @@ struct VerifiedManifest<'a> {
 fn verify_manifest<'a>(
     manifest: &'a OciImageManifest,
     expected_component_digest: &str,
-    expected_config_digest: &str,
     expected_config_size: usize,
     reference: &str,
 ) -> Result<VerifiedManifest<'a>, ComponentArtifactFetchError> {
@@ -355,9 +350,6 @@ fn verify_manifest<'a>(
     if config.media_type != expected_layout.config_media_type() {
         return Err(refuse("component-artifact-config-media-type-mismatch"));
     }
-    if config.digest != expected_config_digest {
-        return Err(refuse("component-artifact-config-digest-mismatch"));
-    }
     if config.size != i64::try_from(expected_config_size).unwrap_or(i64::MAX) {
         return Err(refuse("component-artifact-config-size-mismatch"));
     }
@@ -367,6 +359,8 @@ fn verify_manifest<'a>(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    use wamn_engine::component_admission::component_digest;
 
     use oci_client::errors::DigestError;
     use serde_json::json;
@@ -494,18 +488,16 @@ mod tests {
     fn manifest_must_match_both_descriptors_and_exactly_one_layer() {
         let component = admitted(b"component-bytes");
         let config = component_artifact_config_bytes(&component);
-        let config_digest = component_digest(&config);
         let exact = manifest(&component, 15);
         verify_manifest(
             &exact,
             &component.component_digest,
-            &config_digest,
             config.len(),
             "registry.example/wamn/components:tag",
         )
         .expect("exact manifest verifies");
 
-        let cases: [(&str, OciImageManifest); 7] = [
+        let cases: [(&str, OciImageManifest); 6] = [
             ("schema", {
                 let mut value = exact.clone();
                 value.schema_version = 1;
@@ -531,11 +523,6 @@ mod tests {
                 value.config.media_type = "application/json".to_owned();
                 value
             }),
-            ("config-digest", {
-                let mut value = exact.clone();
-                value.config.digest = component_digest(b"other");
-                value
-            }),
             ("config-size", {
                 let mut value = exact.clone();
                 value.config.size += 1;
@@ -546,7 +533,6 @@ mod tests {
             let error = verify_manifest(
                 &value,
                 &component.component_digest,
-                &config_digest,
                 config.len(),
                 "registry.example/wamn/components:tag",
             )

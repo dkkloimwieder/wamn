@@ -695,7 +695,7 @@ enum ProjectionContents<'a> {
 
 #[derive(Debug, Serialize)]
 struct WamnApi {
-    statement_digest_visibility: RustVisibility,
+    statement_visibility: RustVisibility,
     mutation_constraints: Vec<MutationConstraintNames>,
     operation_rows: Vec<RustRow>,
     accessors: Vec<WamnAccessor>,
@@ -751,7 +751,7 @@ struct WamnAccessor {
     name: String,
     visibility: RustVisibility,
     operation: CrudAction,
-    statement_digest_constant: String,
+    statement_constant: String,
     #[serde(skip)]
     sql_path: String,
     row: String,
@@ -762,7 +762,7 @@ struct WamnAccessor {
 #[derive(Debug, Serialize)]
 struct StaticSqlAccessor {
     name: String,
-    statement_digest_constant: String,
+    statement_constant: String,
     row: String,
     fetch: StaticSqlFetch,
     binds: Vec<AccessorBind>,
@@ -784,7 +784,6 @@ struct NativeBindFixture {
 struct StatementContract {
     name: String,
     path: String,
-    digest: String,
     binds: Vec<StatementValueContract>,
     columns: Vec<StatementValueContract>,
     /// PostgreSQL's own verdict, from the statement's generic plan against the

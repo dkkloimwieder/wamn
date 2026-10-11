@@ -317,7 +317,7 @@ impl WamnPostgres {
         &self,
         scope: &str,
         resource: &PgTransactionView,
-        digest: &str,
+        statement_path: &str,
         binds: &[SqlValue],
     ) -> Result<RowSet, StatementError> {
         let identity = self.view_identity(scope)?;
@@ -352,7 +352,8 @@ impl WamnPostgres {
             ViewUse(Arc::clone(&view))
         };
         let active = self.active_statement_set(scope);
-        let statement = admit_transaction_statement(self, scope, active.as_deref(), digest, binds)?;
+        let statement =
+            admit_transaction_statement(self, scope, active.as_deref(), statement_path, binds)?;
         let connection = StatementConnectionGuard::new(
             take_conn(&state).map_err(StatementError::Postgres)?,
             Arc::clone(&view.destroyed),
@@ -367,7 +368,7 @@ impl WamnPostgres {
                 connection.connection().query_one(
                     "SELECT set_config('app.operation', $1, true)", &[&view.operation],
                 ).await.map_err(|error| StatementError::Postgres(super::types::map_pg_error(&error)))?;
-                let rows = run_verified_query(connection.connection(), digest, &statement, binds, view.row_limit).await?;
+                let rows = run_verified_query(connection.connection(), statement_path, &statement, binds, view.row_limit).await?;
                 connection.connection().query_one(
                     "SELECT set_config('app.operation', $1, true)", &[&view.identity.operation],
                 ).await.map_err(|error| StatementError::Postgres(super::types::map_pg_error(&error)))?;
@@ -455,7 +456,7 @@ pub(super) fn acquire<T: 'static>(
 pub(super) async fn run<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
     resource: Resource<PgTransactionView>,
-    digest: String,
+    statement_path: String,
     binds: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
     let (plugin, scope, trace, view) = accessor.with(|mut access| {
@@ -473,7 +474,7 @@ pub(super) async fn run<T: 'static>(
             let span = db_span_for_project(&plugin, &scope, &project, "statement.view.run");
             let started = std::time::Instant::now();
             let result = plugin
-                .run_transaction_view(&scope, &view, &digest, &binds)
+                .run_transaction_view(&scope, &view, &statement_path, &binds)
                 .instrument(span)
                 .await;
             record_query_ms("statement.view.run", &project, started.elapsed());

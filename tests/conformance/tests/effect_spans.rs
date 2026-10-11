@@ -179,7 +179,7 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         "bindings::named_imports::wamn::postgres::client::HostCursorWithStore",
         &[("fetch", Surface::Effect)],
     ),
-    // The SQL-by-reference world. A guest names a statement digest instead of
+    // The SQL-by-reference world. A guest names a statement path instead of
     // sending text, but what crosses the host boundary is the same database
     // round trip, so the classification is the same as `client::*` above.
     (POSTGRES, "statement_wit::Host", &[]),

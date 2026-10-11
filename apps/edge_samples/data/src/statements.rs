@@ -1,7 +1,7 @@
 //! The statement accessor of the `sample.record` command, materialized in the
 //! package. The generated operation includes its own, in [`crate::generated`].
 
-/// Runtime projections carrying only admitted statement digests.
+/// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {
     /// Generated `sample.record` accessor.
     pub(crate) mod sample_record {

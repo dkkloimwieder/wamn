@@ -7,7 +7,6 @@ use std::path::{Component as PathComponent, Path};
 use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
 
 use crate::package::validate_canonical_operation_for_package;
 use crate::{CatalogIdentityError, PackageCoordinate, validate_text};
@@ -169,12 +168,11 @@ pub struct ComponentDeclaration {
     pub connections: Vec<ComponentConnection>,
 }
 
-/// Canonical JSON Schema document and its exact RFC 8785 digest.
+/// A compiled-valid JSON Schema document.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentSchema {
     pub schema: Value,
-    pub schema_digest: String,
 }
 
 /// One normalized admitted input or output port.
@@ -257,7 +255,7 @@ pub struct ComponentSqlField {
     pub nullable: bool,
 }
 
-/// Exact SQL bytes and typed shape admitted under their SHA-256 map key.
+/// Exact SQL bytes and typed shape admitted under their path, the map key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentSqlStatement {
@@ -299,15 +297,16 @@ pub struct AdmittedComponentOperation {
     pub input_ports: Vec<AdmittedComponentPort>,
     pub output_ports: Vec<AdmittedComponentPort>,
     pub parameters: Vec<AdmittedComponentParameter>,
-    /// Exact SQL available while this export is active, keyed by raw-byte digest.
+    /// Exact SQL available while this export is active, keyed by its
+    /// package-relative path.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub statements: BTreeMap<String, ComponentSqlStatement>,
 }
 
 impl AdmittedComponentOperation {
     /// Resolve one statement only inside this operation's admitted authority.
-    pub fn statement(&self, digest: &str) -> Option<&ComponentSqlStatement> {
-        self.statements.get(digest)
+    pub fn statement(&self, path: &str) -> Option<&ComponentSqlStatement> {
+        self.statements.get(path)
     }
 }
 
@@ -590,15 +589,6 @@ pub fn normalize_component_fact(
     })
 }
 
-/// MVP wiring compatibility: exact canonical schema-digest equality only.
-///
-/// This intentionally makes no structural-subtyping promise. Relaxing exact
-/// equality later is compatible; callers cannot depend on an unshipped
-/// widening today.
-pub fn schema_digests_match(left: &ComponentSchema, right: &ComponentSchema) -> bool {
-    left.schema_digest == right.schema_digest
-}
-
 /// Refuse a stored component fact whose effects its own imports do not derive.
 ///
 /// `effects` is a total function of the audited imports, and `imports` is the
@@ -721,12 +711,12 @@ pub(crate) fn validate_operation_statement_facts(
 ) -> Result<(), ComponentFactError> {
     let mut names = BTreeSet::new();
     let mut paths = BTreeSet::new();
-    for (digest, statement) in statements {
-        if !valid_digest(digest) || component_sql_digest(statement.sql.as_bytes()) != *digest {
+    for (path, statement) in statements {
+        if *path != statement.path {
             return Err(ComponentFactError::new(
                 ComponentFactErrorType::InvalidStatementFact,
                 format!(
-                    "operation {export:?} statement {:?} digest disagrees with its SQL bytes",
+                    "operation {export:?} statement {:?} is keyed by {path:?}, not by its path",
                     statement.name
                 ),
             ));
@@ -794,18 +784,6 @@ fn is_safe_statement_path(path: &str) -> bool {
             .collect::<Vec<_>>()
             .join("/")
             == path
-}
-
-/// SHA-256 identity of exact SQL source bytes.
-pub fn component_sql_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity("sha256:".len() + 64);
-    output.push_str("sha256:");
-    for byte in digest {
-        use fmt::Write as _;
-        write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
-    }
-    output
 }
 
 fn validate_registered_operation_scope(
@@ -1202,13 +1180,7 @@ pub(crate) fn validate_committed_result_schema(
             "only a registered operation can declare a committed result",
         ));
     }
-    let normalized = normalize_schema(schema.schema.clone(), "committed-result")?;
-    if normalized != *schema {
-        return Err(ComponentFactError::new(
-            ComponentFactErrorType::InvalidSchema,
-            "committed-result schema digest differs from its schema",
-        ));
-    }
+    normalize_schema(schema.schema.clone(), "committed-result")?;
     Ok(())
 }
 
@@ -1251,11 +1223,7 @@ pub(crate) fn normalize_schema(
             )
         })?;
 
-    let schema_digest = wamn_execution_contract::canonical_json_sha256(&schema);
-    Ok(ComponentSchema {
-        schema,
-        schema_digest,
-    })
+    Ok(ComponentSchema { schema })
 }
 
 fn has_remote_ref(value: &Value) -> bool {
@@ -1607,27 +1575,8 @@ mod tests {
             .as_ref()
             .unwrap();
         assert_eq!(schema.schema, success);
-        assert_eq!(
-            schema.schema_digest,
-            wamn_execution_contract::canonical_json_sha256(&success)
-        );
         verify_stored_effect_projection(&facts.component)
             .expect("stored committed facts remain valid");
-        let mut corrupted = facts.component;
-        corrupted
-            .operations
-            .get_mut(registered)
-            .unwrap()
-            .committed_result_schema
-            .as_mut()
-            .unwrap()
-            .schema_digest = format!("sha256:{}", "b".repeat(64));
-        assert_eq!(
-            verify_stored_effect_projection(&corrupted)
-                .unwrap_err()
-                .error_type(),
-            ComponentFactErrorType::InvalidSchema
-        );
 
         for (schema, kind) in [
             (
@@ -2073,7 +2022,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_identity_is_rfc_8785_and_compatibility_is_exact() {
+    fn schema_compatibility_is_exact_value_equality() {
         let mut left = declaration();
         let mut right = declaration();
         operation_mut(&mut left).input_ports[0].schema =
@@ -2097,16 +2046,13 @@ mod tests {
         )
         .unwrap()
         .component;
-        assert!(schema_digests_match(
-            &left.operations["map"].input_ports[0].schema,
-            &right.operations["map"].input_ports[0].schema
-        ));
+        assert_eq!(
+            left.operations["map"].input_ports[0].schema,
+            right.operations["map"].input_ports[0].schema
+        );
 
         let different = normalize_schema(json!({"type": "string"}), "input-port").unwrap();
-        assert!(!schema_digests_match(
-            &left.operations["map"].input_ports[0].schema,
-            &different
-        ));
+        assert_ne!(left.operations["map"].input_ports[0].schema, different);
     }
 
     #[test]
@@ -2160,7 +2106,7 @@ mod tests {
 
     fn sql_statement(sql: &str) -> (String, ComponentSqlStatement) {
         (
-            component_sql_digest(sql.as_bytes()),
+            "generated/sql/widget/get.sql".to_owned(),
             ComponentSqlStatement {
                 name: "select_order".to_owned(),
                 path: "generated/sql/widget/get.sql".to_owned(),
@@ -2231,7 +2177,7 @@ mod tests {
     }
 
     #[test]
-    fn statement_authority_refuses_wrong_operation_digest_and_shape() {
+    fn statement_authority_refuses_wrong_operation_path_and_shape() {
         let mut component = migration_defaulted_fact(&[]);
         let statement = sql_statement("SELECT row_version FROM widget WHERE id = $1");
         assert_eq!(
@@ -2247,7 +2193,7 @@ mod tests {
         let operation = component.operations.get_mut("map").expect("map operation");
         operation.registered_operation = Some("orders:widget/get@1.2.0".to_owned());
         operation.statements =
-            BTreeMap::from([(format!("sha256:{}", "f".repeat(64)), statement.1.clone())]);
+            BTreeMap::from([("generated/sql/other.sql".to_owned(), statement.1.clone())]);
         assert_eq!(
             verify_stored_effect_projection(&component)
                 .unwrap_err()
@@ -2270,9 +2216,9 @@ mod tests {
             .operations
             .get_mut("orders:widget/get@1.2.0")
             .expect("registered operation");
-        let (digest, mut malformed) = statement;
+        let (path, mut malformed) = statement;
         malformed.binds.push(malformed.binds[0].clone());
-        operation.statements = BTreeMap::from([(digest, malformed)]);
+        operation.statements = BTreeMap::from([(path, malformed)]);
         assert_eq!(
             verify_stored_effect_projection(&component)
                 .unwrap_err()

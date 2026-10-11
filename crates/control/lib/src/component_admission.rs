@@ -21,7 +21,6 @@ use wamn_catalog::ConnectionTypeDescriptor;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentDescriptor, ComponentSqlField, ComponentSqlStatement, bind_component_statement_facts,
-    component_sql_digest,
 };
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_engine::component_admission::validate_component_admission;
@@ -48,7 +47,6 @@ pub enum ComponentProjectionErrorType {
     StatementOperationMismatch,
     StatementComponentMismatch,
     StatementPathInvalid,
-    StatementDigestMismatch,
     StatementCorpusMismatch,
 }
 
@@ -60,7 +58,6 @@ impl ComponentProjectionErrorType {
             Self::StatementOperationMismatch => "statement-operation-mismatch",
             Self::StatementComponentMismatch => "statement-component-mismatch",
             Self::StatementPathInvalid => "statement-path-invalid",
-            Self::StatementDigestMismatch => "statement-digest-mismatch",
             Self::StatementCorpusMismatch => "statement-corpus-mismatch",
         }
     }
@@ -139,7 +136,6 @@ where
 struct GeneratedStatementContract {
     name: String,
     path: String,
-    digest: String,
     binds: Vec<ComponentSqlField>,
     columns: Vec<ComponentSqlField>,
     /// PostgreSQL's own verdict from the generic plan at generation time.
@@ -668,16 +664,6 @@ fn load_operation_statements(
             &statement.path,
             "sql",
         )?;
-        let observed_digest = component_sql_digest(&bytes);
-        if statement.digest != observed_digest {
-            return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorType::StatementDigestMismatch,
-                format!(
-                    "operation {operation:?} statement {:?} records {}, exact bytes are {observed_digest}",
-                    statement.name, statement.digest
-                ),
-            ));
-        }
         let sql = std::str::from_utf8(&bytes)
             .map(str::to_owned)
             .map_err(|error| {
@@ -697,15 +683,7 @@ fn load_operation_statements(
             columns: statement.columns,
             transactional: statement.transactional,
         };
-        if admitted.insert(statement.digest.clone(), fact).is_some() {
-            return Err(ComponentProjectionError::new(
-                ComponentProjectionErrorType::StatementContractInvalid,
-                format!(
-                    "operation {operation:?} repeats statement digest {:?}",
-                    statement.digest
-                ),
-            ));
-        }
+        admitted.insert(statement.path.clone(), fact);
         if let Some(existing) = corpus.get(&statement.path) {
             if existing != &bytes {
                 return Err(ComponentProjectionError::new(
@@ -1038,14 +1016,9 @@ mod tests {
                         AdmittedComponentOperation {
                             pre_commit: operation.pre_commit,
                             pre_commit_required: false,
-                            committed_result_schema: operation.committed_result_schema.map(
-                                |schema| wamn_catalog::ComponentSchema {
-                                    schema_digest: wamn_execution_contract::canonical_json_sha256(
-                                        &schema,
-                                    ),
-                                    schema,
-                                },
-                            ),
+                            committed_result_schema: operation
+                                .committed_result_schema
+                                .map(|schema| wamn_catalog::ComponentSchema { schema }),
                             registered_operation: operation.registered_operation,
                             fresh_only: operation.fresh_only,
                             dependencies: operation.dependencies,
@@ -1111,8 +1084,7 @@ mod tests {
         assert_eq!(statement.name, "get");
         assert_eq!(statement.path, "generated/sql/item/get.sql");
         assert_eq!(
-            component.operations[operation]
-                .statement(&component_sql_digest(statement.sql.as_bytes())),
+            component.operations[operation].statement(&statement.path),
             Some(statement)
         );
     }
@@ -1181,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn unsafe_paths_and_digest_drift_are_typed_statement_refusals() {
+    fn unsafe_paths_are_typed_statement_refusals() {
         let package_root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
         let canonical_root = package_root.canonicalize().expect("package root resolves");
@@ -1196,27 +1168,6 @@ mod tests {
         assert_eq!(
             path_error.error_type(),
             ComponentProjectionErrorType::StatementPathInvalid
-        );
-
-        let mut corpus = BTreeMap::new();
-        let digest_error = load_operation_statements(
-            &package_root,
-            &canonical_root,
-            "source-fixture:item/get@1.0.0",
-            vec![GeneratedStatementContract {
-                name: "get".to_owned(),
-                path: "generated/sql/item/get.sql".to_owned(),
-                digest: format!("sha256:{}", "f".repeat(64)),
-                binds: Vec::new(),
-                columns: Vec::new(),
-                transactional: false,
-            }],
-            &mut corpus,
-        )
-        .expect_err("statement digest drift was admitted");
-        assert_eq!(
-            digest_error.error_type(),
-            ComponentProjectionErrorType::StatementDigestMismatch
         );
     }
 

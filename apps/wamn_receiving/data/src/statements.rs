@@ -2,7 +2,7 @@
 //! the package. The generated operations include their own, in
 //! [`crate::generated`].
 
-/// Runtime projections carrying only admitted statement digests.
+/// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {
     /// Generated `location.list` projection.
     pub(crate) mod location_list {

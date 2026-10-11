@@ -40,7 +40,7 @@ const STREAM_CURSOR: &str = "wamn_stream";
 /// and a future that resolves after the last row.
 pub(super) async fn run_stream<T: 'static + Send>(
     accessor: &Accessor<T, SharedCtx>,
-    statement_digest: String,
+    statement_path: String,
     binds: Vec<SqlValue>,
 ) -> WasmResult<
     Result<
@@ -68,7 +68,7 @@ pub(super) async fn run_stream<T: 'static + Send>(
                 &plugin,
                 &component_id,
                 active.as_deref(),
-                &statement_digest,
+                &statement_path,
                 &binds,
             )?;
             let span = db_span_for_project(&plugin, &component_id, &project, "statement.stream");
@@ -77,19 +77,18 @@ pub(super) async fn run_stream<T: 'static + Send>(
                 &plugin,
                 &component_id,
                 &project,
-                &statement_digest,
+                &statement_path,
                 &statement,
                 &binds,
             )
             .instrument(span.clone())
             .await;
             record_query_ms("statement.stream", &project, started.elapsed());
-            opened.map(|(columns, connection)| {
-                (columns, connection, statement_digest, statement, span)
-            })
+            opened
+                .map(|(columns, connection)| (columns, connection, statement_path, statement, span))
         })
         .await;
-    let (columns, connection, statement_digest, statement, span) = match opened {
+    let (columns, connection, statement_path, statement, span) = match opened {
         Ok(opened) => opened,
         Err(error) => return Ok(Err(error)),
     };
@@ -100,7 +99,7 @@ pub(super) async fn run_stream<T: 'static + Send>(
         async move {
             let pumped = pump(
                 &connection,
-                &statement_digest,
+                &statement_path,
                 &statement,
                 stream_columns,
                 rows,
@@ -150,7 +149,7 @@ async fn open_stream(
     plugin: &WamnPostgres,
     component_id: &str,
     project: &str,
-    statement_digest: &str,
+    statement_path: &str,
     statement: &VerifiedStatement,
     binds: &[SqlValue],
 ) -> Result<(Vec<Column>, StatementConnectionGuard), StatementError> {
@@ -166,7 +165,7 @@ async fn open_stream(
         .prepare_cached(&statement.exact_sql)
         .await
         .map_err(postgres)?;
-    validate_prepared_statement(statement_digest, statement, &prepared)?;
+    validate_prepared_statement(statement_path, statement, &prepared)?;
     let columns = columns_of(&prepared);
     let declare = format!(
         "DECLARE {STREAM_CURSOR} NO SCROLL CURSOR FOR {}",
@@ -201,7 +200,7 @@ fn owned_connection(transaction: &PgTransaction) -> Result<StatementConnectionGu
 /// Fetch batches from the cursor and hand each one to the reader.
 async fn pump(
     connection: &StatementConnectionGuard,
-    statement_digest: &str,
+    statement_path: &str,
     statement: &VerifiedStatement,
     columns: Vec<Column>,
     rows: mpsc::Sender<Vec<Vec<SqlValue>>>,
@@ -232,7 +231,7 @@ async fn pump(
             .collect::<Result<Vec<_>, _>>()
             .map_err(StatementError::Postgres)?;
         let batch = validate_statement_result(
-            statement_digest,
+            statement_path,
             statement,
             RowSet {
                 columns: columns.clone(),

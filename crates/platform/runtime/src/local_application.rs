@@ -62,10 +62,9 @@ pub async fn load_local_application(
     manifest: &ServingManifest,
     scope: ReleaseScope,
     database_url: &str,
-    admission_digest: &str,
 ) -> anyhow::Result<LocalApplication> {
     let instance = read_local_target(database_url, &scope.tenant_id, &scope.environment).await?;
-    let facts = load_local_facts(directory, manifest, &scope.tenant_id, admission_digest)?;
+    let facts = load_local_facts(directory, manifest, &scope.tenant_id)?;
     Ok(LocalApplication {
         manifest: manifest.clone(),
         scope,
@@ -332,14 +331,9 @@ pub fn load_local_facts(
     directory: &Path,
     manifest: &ServingManifest,
     tenant_id: &str,
-    admission_digest: &str,
 ) -> anyhow::Result<LocalApplicationFacts> {
     let bytes =
         std::fs::read(directory.join(LOCAL_FACTS_FILE)).context("read local admission facts")?;
-    anyhow::ensure!(
-        wamn_engine::component_admission::component_digest(&bytes) == admission_digest,
-        "local admission bytes changed after validation"
-    );
     let facts: LocalApplicationFacts =
         serde_json::from_slice(&bytes).context("parse local admission facts")?;
     validate_local_facts(&facts, manifest, tenant_id)?;
@@ -787,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_or_missing_local_admission_bytes_refuse_before_loading() {
+    fn missing_local_admission_facts_refuse_before_loading() {
         let (mut facts, manifest) = fixture();
         let requirement = wamn_catalog::ComponentConnectionRequirement::new(
             &facts.components[0].component_digest,
@@ -815,23 +809,10 @@ mod tests {
             std::env::temp_dir().join(format!("wamn-local-integrity-{}", std::process::id()));
         std::fs::create_dir(&directory).unwrap();
         let path = directory.join(super::LOCAL_FACTS_FILE);
-        let bytes = serde_json::to_vec(&facts).unwrap();
-        let digest = wamn_engine::component_admission::component_digest(&bytes);
-        std::fs::write(&path, &bytes).unwrap();
-        super::load_local_facts(&directory, &manifest, "tenant-a", &digest).unwrap();
-        let mut changed = serde_json::to_value(&facts).unwrap();
-        changed["bindings"] = serde_json::json!([]);
-        changed["requirements"] = serde_json::json!([]);
-        // Even a semantically valid rewrite must match the coordinator's exact bytes.
-        std::fs::write(&path, serde_json::to_vec_pretty(&changed).unwrap()).unwrap();
-        assert!(
-            super::load_local_facts(&directory, &manifest, "tenant-a", &digest)
-                .unwrap_err()
-                .to_string()
-                .contains("bytes changed")
-        );
+        std::fs::write(&path, serde_json::to_vec(&facts).unwrap()).unwrap();
+        super::load_local_facts(&directory, &manifest, "tenant-a").unwrap();
         std::fs::remove_file(path).unwrap();
-        assert!(super::load_local_facts(&directory, &manifest, "tenant-a", &digest).is_err());
+        assert!(super::load_local_facts(&directory, &manifest, "tenant-a").is_err());
         std::fs::remove_dir(directory).unwrap();
     }
 

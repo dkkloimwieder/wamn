@@ -3278,7 +3278,7 @@ mod tests {
     fn release_projection_preserves_operation_scoped_statement_facts() {
         let operation = "base:widget/get@1.0.0";
         let sql = "SELECT row_version FROM widget WHERE id = $1";
-        let digest = sha256(sql.as_bytes());
+        let path = "generated/sql/widget/get.sql".to_owned();
         let mut admitted = closure_component("base-component", Some(operation));
         admitted
             .operations
@@ -3286,7 +3286,7 @@ mod tests {
             .expect("fixture has the registered operation")
             .statements
             .insert(
-                digest.clone(),
+                path.clone(),
                 wamn_catalog::ComponentSqlStatement {
                     name: "get".to_owned(),
                     path: "generated/sql/widget/get.sql".to_owned(),
@@ -3306,8 +3306,8 @@ mod tests {
         .expect("an admitted component projects to serving facts");
 
         assert_eq!(
-            serving.operations[operation].statement(&digest),
-            admitted.operations[operation].statement(&digest)
+            serving.operations[operation].statement(&path),
+            admitted.operations[operation].statement(&path)
         );
     }
 
@@ -3432,7 +3432,7 @@ mod tests {
                 .expect("fixture has the run operation")
                 .statements
                 .insert(
-                    sha256(sql.as_bytes()),
+                    "sql/note.sql".to_owned(),
                     wamn_catalog::ComponentSqlStatement {
                         name: "note".to_owned(),
                         path: "sql/note.sql".to_owned(),

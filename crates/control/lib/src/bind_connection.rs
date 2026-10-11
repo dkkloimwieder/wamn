@@ -148,14 +148,8 @@ pub async fn ensure_instance(instance: &ConnectionInstance) -> anyhow::Result<(O
             .execute(CLAIM_TENANT_SQL, &[&instance.tenant])
             .await
             .context("claim the tenant for the connection instance transaction")?;
-        let generations = bind_generation(
-            &transaction,
-            instance,
-            &descriptor,
-            &instance.definition,
-            &definition_hash(&instance.definition),
-        )
-        .await?;
+        let generations =
+            bind_generation(&transaction, instance, &descriptor, &instance.definition).await?;
         transaction
             .commit()
             .await
@@ -283,11 +277,10 @@ async fn bind_in(
         args.requirement_type
     );
 
-    let definition_digest = definition_hash(definition);
     let validation_digest = definition_hash(&validation_subject(
         descriptor,
         &requirement_hash,
-        &definition_digest,
+        &definition_hash(definition),
     ));
     let existing_binding = transaction
         .query_opt(
@@ -316,7 +309,6 @@ async fn bind_in(
         &ConnectionInstance::from(args),
         descriptor,
         definition,
-        &definition_digest,
     )
     .await?;
     if existing_binding.is_none() {
@@ -347,7 +339,7 @@ async fn bind_in(
         instance_id: args.instance_id.clone(),
         previous_generation,
         generation,
-        definition_hash: definition_digest,
+        definition_hash: definition_hash(definition),
         validation_hash: validation_digest,
     })
 }
@@ -358,7 +350,6 @@ async fn bind_generation(
     args: &ConnectionInstance,
     descriptor: &ConnectionTypeDescriptor,
     definition: &Value,
-    definition_digest: &str,
 ) -> anyhow::Result<(Option<i64>, i64)> {
     let coordinate: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
         [&args.tenant, &args.environment, &args.instance_id];
@@ -416,7 +407,6 @@ async fn bind_generation(
     let existing: Option<Value> = existing.as_deref().map(serde_json::from_str).transpose()?;
     if let Some(active) = previous
         && existing.as_ref() == Some(definition)
-        && current.get::<_, Option<String>>(6).as_deref() == Some(definition_digest)
         && current.get::<_, Option<String>>(7) == args.credential_handle
     {
         ensure!(
@@ -471,7 +461,7 @@ async fn bind_generation(
                 &args.instance_id,
                 &generation,
                 &definition_text,
-                &definition_digest,
+                &definition_hash(definition),
                 &args.credential_handle.as_deref(),
             ],
         )
@@ -663,7 +653,6 @@ async fn insert_instance_generation(
     definition: &Value,
     credential_handle: Option<&str>,
 ) -> anyhow::Result<()> {
-    let definition_digest = definition_hash(definition);
     let definition_text =
         serde_json::to_string(definition).context("serialize the generation definition")?;
     client
@@ -688,7 +677,7 @@ async fn insert_instance_generation(
                 &instance_id,
                 &FIRST_GENERATION,
                 &definition_text,
-                &definition_digest,
+                &definition_hash(definition),
                 &credential_handle,
             ],
         )

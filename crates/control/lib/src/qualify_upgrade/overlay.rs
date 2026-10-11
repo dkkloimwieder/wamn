@@ -382,9 +382,8 @@ fn normalize_operation_contract(
             let statement = statement
                 .as_object_mut()
                 .context("statement contract must be an object")?;
-            // SQL bytes and their storage paths are implementation identities.
-            // Bind/result shapes, statement names and transaction facts remain.
-            statement.remove("digest");
+            // Storage paths are implementation identities. Bind/result shapes,
+            // statement names and transaction facts remain.
             statement.remove("path");
         }
     }
@@ -404,7 +403,7 @@ mod tests {
     }
 
     fn contract(version: &str) -> Value {
-        json!({"operation": format!("wamn-receiving:receiving/record-receipt@{version}"), "grant": format!("wamn-receiving:receiving/record-receipt@{version}"), "pre_commit": format!("wamn-receiving:receiving/record-receipt-pre-commit@{version}"), "idempotency": {"log": {"operation": "wamn-receiving:receiving/record-receipt"}}, "statements": [{"name":"write", "path":"old.sql", "digest":"old", "binds":[{"type":"uuid"}], "columns":[], "transactional":true}]})
+        json!({"operation": format!("wamn-receiving:receiving/record-receipt@{version}"), "grant": format!("wamn-receiving:receiving/record-receipt@{version}"), "pre_commit": format!("wamn-receiving:receiving/record-receipt-pre-commit@{version}"), "idempotency": {"log": {"operation": "wamn-receiving:receiving/record-receipt"}}, "statements": [{"name":"write", "path":"old.sql", "binds":[{"type":"uuid"}], "columns":[], "transactional":true}]})
     }
 
     fn identity(id: &str, version: &str, predecessor: Option<&str>) -> PackageIdentity {
@@ -477,7 +476,6 @@ mod tests {
     fn coordinate_and_sql_implementation_changes_preserve_consumed_contract() {
         let mut old = contract("2.1.0");
         let mut new = contract("2.2.0");
-        new["statements"][0]["digest"] = json!("new");
         new["statements"][0]["path"] = json!("new.sql");
         normalize_operation_contract(&mut old, &package("2.1.0"), "receiving.record_receipt")
             .unwrap();

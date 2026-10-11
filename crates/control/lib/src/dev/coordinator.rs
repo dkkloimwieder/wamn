@@ -45,7 +45,7 @@ use super::read::{
     dev_read_channel,
 };
 use super::target_database;
-use super::watch::{GitSource, git_ignored};
+use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
 use crate::print_release_env::ReleaseCarrier;
 
@@ -196,7 +196,7 @@ fn project_catalog_for_package(
 struct PreparedLocalGrants {
     target: target_database::PreparedConfiguration,
     data_access: reconcile_package_data_access::PreparedLocalDataAccess,
-    input_digest: String,
+    inputs: Vec<String>,
 }
 
 /// Concrete runner carrying production-owner outputs through all ten stages.
@@ -217,19 +217,19 @@ pub struct ProductionDevStageRunner {
     local_bindings: Vec<wamn_runtime::local_application::LocalBindingFacts>,
     local_binding_inputs: Vec<PreparedLocalBinding>,
     local_grants: Option<PreparedLocalGrants>,
-    local_admission_digest: Option<String>,
     activation: Option<DevActivation>,
     cdc_reader: Option<super::cdc_reader::CdcReaderProcess>,
-    generate_input_digest: Option<String>,
-    generate_input_candidate: Option<String>,
-    generated_output_digest: Option<String>,
-    schema_input_digest: Option<String>,
-    schema_input_candidate: Option<String>,
-    /// Structure of the packages that the current target instance took.
-    target_structure_digest: Option<String>,
+    /// The build.json inputs digest of each package that this run reads,
+    /// bases first.
+    build_inputs: Option<Vec<String>>,
+    /// The build inputs that Migrate last applied to the target.
+    migrated_inputs: Option<Vec<String>>,
+    /// The build inputs that Generate last built.
+    generated_inputs: Option<Vec<String>>,
     /// Inputs of each verifier's last successful SQLx preparation; `None` while unknown.
     sqlx_metadata_inputs: BTreeMap<String, Option<SqlxMetadataInputs>>,
-    acl_input_digest: Option<String>,
+    /// The build inputs whose grants Activate last applied.
+    acl_inputs: Option<Vec<String>>,
     read_publisher: DevReadPublisher,
     read_handle: DevReadHandle,
     observation_readers: Option<DevObservationReaders>,
@@ -290,17 +290,13 @@ impl ProductionDevStageRunner {
             local_bindings: Vec::new(),
             local_binding_inputs: Vec::new(),
             local_grants: None,
-            local_admission_digest: None,
             activation: None,
             cdc_reader: None,
-            generate_input_digest: None,
-            generate_input_candidate: None,
-            generated_output_digest: None,
-            schema_input_digest: None,
-            schema_input_candidate: None,
-            target_structure_digest: None,
+            build_inputs: None,
+            migrated_inputs: None,
+            generated_inputs: None,
             sqlx_metadata_inputs: BTreeMap::new(),
-            acl_input_digest: None,
+            acl_inputs: None,
             read_publisher,
             read_handle,
             observation_readers: None,
@@ -419,8 +415,7 @@ impl ProductionDevStageRunner {
             tracing::info!(package = %outcome.package_id, version = %outcome.package_version, migrations = outcome.migrations_applied, changed = outcome.changed, "applied development package");
         }
         self.grant_operator_admin_role().await?;
-        self.schema_input_digest
-            .clone_from(&self.schema_input_candidate);
+        self.migrated_inputs.clone_from(&self.build_inputs);
         Ok(())
     }
 
@@ -463,12 +458,9 @@ impl ProductionDevStageRunner {
             self.target_instance
                 .as_deref()
                 .expect("prepare_run claimed the target instance"),
-            self.schema_input_digest
+            self.migrated_inputs
                 .as_deref()
-                .expect("Migrate recorded the schema inputs"),
-            self.target_structure_digest
-                .as_deref()
-                .expect("prepare_run recorded the target structure"),
+                .expect("Migrate recorded the build inputs"),
             &self.catalogs,
         )
         .map_err(|source| ProductionDevStageError::owner("record the target schema", source))?;
@@ -531,14 +523,6 @@ impl ProductionDevStageRunner {
                     .insert(package_id.clone(), Some(current));
             }
         }
-        let outputs = generated_outputs_digest(&self.package_inputs()?)?;
-        if outputs == "missing" {
-            return Err(ProductionDevStageError::invalid(
-                "verify generated outputs",
-                "generation or SQLx preparation left required outputs missing",
-            ));
-        }
-        self.generated_output_digest = Some(outputs);
         Ok(())
     }
 
@@ -755,7 +739,7 @@ impl ProductionDevStageRunner {
             .into_iter()
             .map(|package| package.root)
             .collect::<Vec<_>>();
-        let input_digest = self.generate_inputs_digest().await?;
+        let inputs = build_inputs(&self.package_inputs()?)?;
         let prepared = PreparedLocalGrants {
             target: target_database::prepare_configuration(&self.config).map_err(|source| {
                 ProductionDevStageError::owner("prepare local target privileges", source)
@@ -765,10 +749,10 @@ impl ProductionDevStageRunner {
                     ProductionDevStageError::owner("prepare generated package data access", source)
                 },
             )?,
-            input_digest,
+            inputs,
         };
         self.reconcile_local_grants(&prepared, false).await?;
-        if prepared.input_digest != self.generate_inputs_digest().await? {
+        if prepared.inputs != build_inputs(&self.package_inputs()?)? {
             return Err(ProductionDevStageError::invalid(
                 "validate local grant inputs",
                 "source inputs changed during grant validation; retry the candidate",
@@ -943,7 +927,6 @@ impl ProductionDevStageRunner {
         let admission_bytes = serde_json::to_vec(&local_facts).map_err(|source| {
             ProductionDevStageError::owner("encode local admissions", source.into())
         })?;
-        let admission_digest = wamn_engine::component_admission::component_digest(&admission_bytes);
         fs::write(
             local
                 .directory
@@ -963,7 +946,6 @@ impl ProductionDevStageRunner {
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
             wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
-            local_admission_digest: Some(&admission_digest),
         })
         .map_err(|source| {
             ProductionDevStageError::owner(
@@ -976,7 +958,6 @@ impl ProductionDevStageRunner {
         self.release = Some(carrier);
         self.local_bindings = local_facts.bindings;
         self.local_binding_inputs = binding_inputs;
-        self.local_admission_digest = Some(admission_digest);
         Ok(())
     }
 
@@ -1000,7 +981,7 @@ impl ProductionDevStageRunner {
             )
         })?;
         self.reconcile_local_grants(grants, true).await?;
-        self.acl_input_digest = Some(grants.input_digest.clone());
+        self.acl_inputs = Some(grants.inputs.clone());
         self.clear_after(DevStage::Activate);
         let release = self.release.as_ref().ok_or_else(|| {
             ProductionDevStageError::invalid(
@@ -1020,7 +1001,6 @@ impl ProductionDevStageRunner {
             identity: self.config.activation_identity(),
             host_binary: self.config.host_binary(),
             wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
-            local_admission_digest: self.local_admission_digest.as_deref(),
         })
         .await
         .map_err(|source| {
@@ -1055,88 +1035,6 @@ impl ProductionDevStageRunner {
         }
         self.read_publisher.set_runtime_endpoint(endpoint);
         Ok(())
-    }
-
-    /// Digest every authored byte Generate reads.
-    ///
-    /// Includes package contracts, SQL, grants, verifier sources and active
-    /// checkers. Component Rust edits leave these generation inputs unchanged.
-    async fn generate_inputs_digest(&self) -> Result<String, ProductionDevStageError> {
-        let mut inputs: Vec<(String, String)> = Vec::new();
-        for package in self.package_inputs()? {
-            let package_inputs =
-                collect_package_bytes(self.git.repository_root(), &package.root).await?;
-            inputs.extend(
-                package_inputs
-                    .into_iter()
-                    .filter(|(path, _)| {
-                        std::path::Path::new(path)
-                            .extension()
-                            .is_none_or(|extension| extension != "rs")
-                            || path.starts_with("tests/")
-                    })
-                    .map(|(path, bytes)| {
-                        (format!("{}:{path}", package.manifest.package.id), bytes)
-                    }),
-            );
-        }
-        for relative in [
-            "Cargo.lock",
-            "Cargo.toml",
-            "rust-toolchain.toml",
-            ".cargo/config.toml",
-            ".cargo/config",
-        ] {
-            let path = self.git.repository_root().join(relative);
-            if path.exists() {
-                inputs.push((relative.to_owned(), file_digest(&path)?));
-            }
-        }
-        for path in [
-            self.config.target_privileges_file(),
-            self.config.target_database_acl_file(),
-        ] {
-            inputs.push((path.display().to_string(), file_digest(path)?));
-        }
-        if self
-            .package_inputs()?
-            .iter()
-            .any(|package| crate::delivery::sqlx::requires_verifier(&package.manifest))
-        {
-            let path = std::env::var_os("PATH")
-                .and_then(|path| {
-                    std::env::split_paths(&path)
-                        .map(|directory| directory.join("cargo-sqlx"))
-                        .find(|path| path.is_file())
-                })
-                .ok_or_else(|| {
-                    ProductionDevStageError::invalid(
-                        "locate SQLx checker",
-                        "SQLx CLI 0.9.0 is required on PATH",
-                    )
-                })?;
-            inputs.push(("sqlx-checker".to_owned(), file_digest(&path)?));
-        }
-        let checker = std::env::current_exe().map_err(|source| {
-            ProductionDevStageError::owner("locate active checker", source.into())
-        })?;
-        let metadata = fs::metadata(&checker).map_err(|source| {
-            ProductionDevStageError::owner("inspect active checker", source.into())
-        })?;
-        inputs.push((
-            "active-checker".to_owned(),
-            format!(
-                "{}:{}:{:?}",
-                checker.display(),
-                metadata.len(),
-                metadata.modified()
-            ),
-        ));
-        inputs.sort();
-        let inputs = serde_json::to_value(&inputs).map_err(|source| {
-            ProductionDevStageError::owner("serialize the authored input digest", source.into())
-        })?;
-        Ok(wamn_execution_contract::canonical_json_sha256(&inputs))
     }
 
     fn package_inputs(&self) -> Result<Vec<PackageInput>, ProductionDevStageError> {
@@ -1253,149 +1151,26 @@ impl ProductionDevStageRunner {
     }
 }
 
-fn file_digest(path: &Path) -> Result<String, ProductionDevStageError> {
-    let bytes = fs::read(path).map_err(|source| {
-        ProductionDevStageError::owner("read development input", source.into())
-    })?;
-    Ok(wamn_engine::component_admission::component_digest(&bytes))
-}
-
-fn schema_inputs_digest(
-    packages: &[PackageInput],
-    config: &DevConfig,
-) -> Result<String, ProductionDevStageError> {
-    let mut inputs = Vec::new();
-    for package in packages {
-        let directory = apply_package::read_package_directory(&package.root)
-            .map_err(|source| ProductionDevStageError::owner("read schema input", source))?;
-        wamn_schema_control::plan_package_migrations(&directory, None).map_err(|source| {
-            ProductionDevStageError::owner("validate schema inputs", source.into())
-        })?;
-        inputs.push(package_schema_inputs(&package.manifest, &directory));
-    }
-    inputs.push(serde_json::json!({"template": config.target_template_database()}));
-    Ok(wamn_execution_contract::canonical_json_sha256(
-        &serde_json::json!(inputs),
-    ))
-}
-
-fn package_schema_inputs(
-    manifest: &PackageManifest,
-    directory: &wamn_schema_control::PackageDirectory,
-) -> Value {
-    let mut models = serde_json::to_value(&manifest.models).expect("models serialize");
-    for model in models
-        .as_object_mut()
-        .expect("models are a map")
-        .values_mut()
-    {
-        model
-            .as_object_mut()
-            .expect("model is an object")
-            .remove("operations");
-    }
-    let migrations = directory
-        .migrations
+/// The build.json inputs digest of each package, in order: the one owner of
+/// the build input identity (docs/plan/platform-deploy.md §7.2).
+fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevStageError> {
+    packages
         .iter()
-        .map(|migration| {
-            (
-                &migration.relative_path,
-                wamn_engine::component_admission::component_digest(&migration.bytes),
-            )
+        .map(|package| {
+            wamn_schema_generator::receipt::input_digest(&package.root)
+                .map_err(|source| ProductionDevStageError::owner("read the build inputs", source))
         })
-        .collect::<Vec<_>>();
-    serde_json::json!({"package": manifest.package, "models": models, "internal-relations": manifest.internal_relations, "migrations": migrations})
+        .collect()
 }
 
-/// Digest of the package inputs whose change needs a new target.
-fn target_structure_digest(packages: &[PackageInput], config: &DevConfig) -> String {
-    let mut inputs = packages
-        .iter()
-        .map(|package| package_structure_inputs(&package.manifest))
-        .collect::<Vec<_>>();
-    inputs.push(serde_json::json!({"template": config.target_template_database()}));
-    wamn_execution_contract::canonical_json_sha256(&serde_json::json!(inputs))
-}
-
-/// The package identity, the models with their definition owners, and the internal relations.
-///
-/// A kept target takes appended migrations, enum_fields, min_lengths,
-/// server_owned_fields, audit_log, and field_text in place, so they are not
-/// structure. Authored
-/// text changes a screen and never a table or a grant. delete_mode IS
-/// structure: a tombstone needs two columns the target may not carry, and the
-/// mode decides both the emitted statement and the table grant.
-fn package_structure_inputs(manifest: &PackageManifest) -> Value {
-    let models = manifest
-        .models
-        .iter()
-        .map(|(model_id, model)| {
-            let wamn_schema_generator::ModelDeclaration {
-                schema,
-                table,
-                owner,
-                client_field_extensible,
-                field_owners,
-                constraint_owners,
-                server_owned_fields: _,
-                enum_fields: _,
-                min_lengths: _,
-                field_text: _,
-                audit_log: _,
-                delete_mode,
-                operations: _,
-            } = model;
-            (
-                model_id,
-                serde_json::json!({
-                    "schema": schema,
-                    "table": table,
-                    "owner": owner,
-                    "client_field_extensible": client_field_extensible,
-                    "field_owners": field_owners,
-                    "constraint_owners": constraint_owners,
-                    "delete_mode": delete_mode,
-                }),
-            )
+/// Whether the build output of every package is current for `inputs`: its
+/// `build.json` reads and records those inputs.
+fn builds_are_current(packages: &[PackageInput], inputs: &[String]) -> bool {
+    packages.len() == inputs.len()
+        && packages.iter().zip(inputs).all(|(package, inputs)| {
+            wamn_schema_generator::receipt::read(&wamn_schema_generator::output_root(&package.root))
+                .is_ok_and(|receipt| receipt.inputs.digest == *inputs)
         })
-        .collect::<BTreeMap<_, _>>();
-    serde_json::json!({"package": manifest.package, "models": models, "internal-relations": manifest.internal_relations})
-}
-
-fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, ProductionDevStageError> {
-    let mut files = Vec::new();
-    for package in packages {
-        let mut roots = vec![(
-            "generated",
-            wamn_schema_generator::output_root(&package.root),
-        )];
-        if crate::delivery::sqlx::requires_verifier(&package.manifest) {
-            roots.push((
-                "sqlx",
-                wamn_schema_generator::output_root(&package.root).join(".sqlx"),
-            ));
-        }
-        for (kind, root) in roots {
-            if !root.is_dir() {
-                return Ok("missing".to_owned());
-            }
-            let mut contents = Vec::new();
-            collect_authored_bytes(&root, &root, &mut contents)?;
-            if contents.is_empty() {
-                return Ok("missing".to_owned());
-            }
-            files.extend(contents.into_iter().map(|(path, bytes)| {
-                (
-                    format!("{}:{kind}:{path}", package.manifest.package.id),
-                    bytes,
-                )
-            }));
-        }
-    }
-    files.sort();
-    Ok(wamn_execution_contract::canonical_json_sha256(
-        &serde_json::json!(files),
-    ))
 }
 
 /// What a verifier's SQLx metadata was prepared from: the input digest of the
@@ -1431,112 +1206,6 @@ fn sqlx_metadata_is_current(
     prepared.is_some_and(|prepared| prepared.as_ref() == Some(current))
 }
 
-/// Read every authored file of the package at `root`.
-///
-/// The walk skips the generated subtree, `node_modules`, and each directory
-/// that the ignore rules of `repository` cover. Those hold
-/// installed packages and build output, not package source, and a package
-/// manager can fill them with links to directories (wamn-qjuy). The watcher
-/// bounds itself by the same ignore rules.
-async fn collect_package_bytes(
-    repository: &Path,
-    root: &Path,
-) -> Result<Vec<(String, String)>, ProductionDevStageError> {
-    let mut inputs = Vec::new();
-    let mut pending = vec![root.to_owned()];
-    while let Some(directory) = pending.pop() {
-        let entries = std::fs::read_dir(&directory).map_err(|source| {
-            ProductionDevStageError::owner("read the package tree", source.into())
-        })?;
-        let mut directories = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|source| {
-                ProductionDevStageError::owner("read the package tree", source.into())
-            })?;
-            let path = entry.path();
-            if path.file_name().is_some_and(|name| {
-                name == "generated" || name == "target" || name == ".sqlx" || name == "node_modules"
-            }) {
-                continue;
-            }
-            let kind = entry.file_type().map_err(|source| {
-                ProductionDevStageError::owner("read the package tree", source.into())
-            })?;
-            if kind.is_dir() {
-                directories.push(path);
-                continue;
-            }
-            inputs.push(authored_file(root, &path)?);
-        }
-        let ignored = git_ignored(repository, &directories)
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner(
-                    "read the ignore rules of the package tree",
-                    source.into(),
-                )
-            })?;
-        pending.extend(
-            directories
-                .into_iter()
-                .filter(|directory| !ignored.contains(directory)),
-        );
-    }
-    Ok(inputs)
-}
-
-/// Read every authored file under `directory`, skipping the generated subtree.
-///
-/// A read failure is a refusal rather than an omission: a file the walk cannot
-/// read is a file whose change would go unnoticed.
-fn collect_authored_bytes(
-    root: &Path,
-    directory: &Path,
-    inputs: &mut Vec<(String, String)>,
-) -> Result<(), ProductionDevStageError> {
-    let entries = std::fs::read_dir(directory)
-        .map_err(|source| ProductionDevStageError::owner("read the package tree", source.into()))?;
-    for entry in entries {
-        let entry = entry.map_err(|source| {
-            ProductionDevStageError::owner("read the package tree", source.into())
-        })?;
-        let path = entry.path();
-        if path
-            .file_name()
-            .is_some_and(|name| name == "generated" || name == "target" || name == ".sqlx")
-        {
-            continue;
-        }
-        let kind = entry.file_type().map_err(|source| {
-            ProductionDevStageError::owner("read the package tree", source.into())
-        })?;
-        if kind.is_dir() {
-            collect_authored_bytes(root, &path, inputs)?;
-            continue;
-        }
-        inputs.push(authored_file(root, &path)?);
-    }
-    Ok(())
-}
-
-/// One authored file, as its path relative to `root` and its bytes in hex.
-fn authored_file(root: &Path, path: &Path) -> Result<(String, String), ProductionDevStageError> {
-    let bytes = std::fs::read(path).map_err(|source| {
-        ProductionDevStageError::owner("read an authored package file", source.into())
-    })?;
-    let relative = path.strip_prefix(root).unwrap_or(path);
-    Ok((
-        relative.to_string_lossy().into_owned(),
-        // Authored inputs are text. Encoding the bytes rather than the text
-        // keeps a non-UTF-8 file from hashing to the same value as another.
-        bytes.iter().fold(String::new(), |mut hex, byte| {
-            use std::fmt::Write as _;
-            write!(hex, "{byte:02x}").expect("writing to a string is infallible");
-            hex
-        }),
-    ))
-}
-
 impl DevStageRunner for ProductionDevStageRunner {
     type Error = ProductionDevStageError;
 
@@ -1552,7 +1221,7 @@ impl DevStageRunner for ProductionDevStageRunner {
         // The digest is promoted only after the stage it describes succeeded.
         // Recording it earlier would let a failed Generate be skipped next run.
         if stage == DevStage::Generate {
-            self.generate_input_digest = self.generate_input_candidate.take();
+            self.generated_inputs.clone_from(&self.build_inputs);
         }
         self.read_publisher.stage_completed(stage);
     }
@@ -1561,34 +1230,32 @@ impl DevStageRunner for ProductionDevStageRunner {
         self.read_publisher.stage_skipped(stage);
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the `DevStageRunner` seam declares `async fn`; this stage check \
+                  reads build.json synchronously"
+    )]
     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
         match stage {
             DevStage::Migrate => {
-                return Ok(self.schema_input_digest.is_some()
-                    && self.schema_input_digest == self.schema_input_candidate);
+                return Ok(
+                    self.migrated_inputs.is_some() && self.migrated_inputs == self.build_inputs
+                );
             }
             DevStage::Introspect => {
                 return Ok(self.catalogs.len() == self.package_inputs()?.len());
             }
             DevStage::Acl => {
-                return Ok(self.acl_input_digest.as_deref()
-                    == Some(self.generate_inputs_digest().await?.as_str()));
+                return Ok(self.acl_inputs.is_some() && self.acl_inputs == self.build_inputs);
             }
             _ => {}
         }
         if stage != DevStage::Generate {
             return Ok(false);
         }
-        let digest = self.generate_inputs_digest().await?;
-        let outputs = generated_outputs_digest(&self.package_inputs()?)?;
-        if outputs != "missing"
-            && self.generate_input_digest.as_deref() == Some(digest.as_str())
-            && self.generated_output_digest.as_deref() == Some(outputs.as_str())
-        {
-            return Ok(true);
-        }
-        self.generate_input_candidate = Some(digest);
-        Ok(false)
+        let inputs = self.build_inputs.as_deref().unwrap_or_default();
+        Ok(self.generated_inputs.as_deref() == Some(inputs)
+            && builds_are_current(&self.package_inputs()?, inputs))
     }
 
     fn stage_failed(&mut self, stage: DevStage, failure: DevStageFailure) {
@@ -1622,7 +1289,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             )?,
         );
         let packages = self.package_inputs()?;
-        let digest = schema_inputs_digest(&packages, &self.config)?;
+        let inputs = build_inputs(&packages)?;
         if self.target_lease.is_none() {
             self.target_lease = Some(target_database::acquire(&self.config).await.map_err(
                 |source| {
@@ -1638,24 +1305,22 @@ impl DevStageRunner for ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("check local session lease", source.into())
             })?;
-        if self.schema_input_digest.as_deref() != Some(digest.as_str()) {
-            let structure = target_structure_digest(&packages, &self.config);
-            // A target keeps its data while its structure is unchanged. The first
-            // run of a session reads the structure that a previous session
-            // recorded, and it also keeps the catalogs of an unchanged schema.
+        if self.migrated_inputs.as_ref() != Some(&inputs) {
+            // A target keeps its data unless the kept-target check below
+            // refuses it. The first run of a session takes the target that a
+            // previous session recorded, and it also keeps the catalogs of
+            // unchanged build inputs.
             let kept = match &self.target_instance {
                 None => self
                     .target_lease
                     .as_ref()
                     .expect("lease acquired")
-                    .retained_target(&self.config, &structure)
+                    .retained_target(&self.config)
                     .await
                     .map(|(instance, recorded, catalogs)| {
-                        (instance, (recorded == digest).then_some(catalogs))
+                        (instance, (recorded == inputs).then_some(catalogs))
                     }),
-                Some(instance) => (self.target_structure_digest.as_deref()
-                    == Some(structure.as_str()))
-                .then(|| (instance.clone(), None)),
+                Some(instance) => Some((instance.clone(), None)),
             };
             let kept = match kept {
                 Some(kept) => {
@@ -1680,15 +1345,15 @@ impl DevStageRunner for ProductionDevStageRunner {
                 None => None,
             };
             self.shutdown().await?;
-            self.schema_input_digest = None;
-            self.generate_input_digest = None;
-            self.acl_input_digest = None;
+            self.migrated_inputs = None;
+            self.generated_inputs = None;
+            self.acl_inputs = None;
             self.local_grants = None;
             self.catalogs.clear();
             let lease = self.target_lease.as_ref().expect("lease acquired");
             let instance = match kept {
                 Some((instance, Some(catalogs))) => {
-                    self.schema_input_digest = Some(digest.clone());
+                    self.migrated_inputs = Some(inputs.clone());
                     self.catalogs = catalogs;
                     instance
                 }
@@ -1704,9 +1369,8 @@ impl DevStageRunner for ProductionDevStageRunner {
             )
             .await?;
             self.target_instance = Some(instance);
-            self.target_structure_digest = Some(structure);
         }
-        self.schema_input_candidate = Some(digest);
+        self.build_inputs = Some(inputs);
         Ok(())
     }
 
@@ -2282,43 +1946,16 @@ mod tests {
         );
     }
 
+    /// Owner ruling 5 of wamn-ri4b: an appended migration keeps the target,
+    /// and a changed applied migration recreates it.
     #[test]
-    fn local_schema_inputs_separate_contract_and_sql_changes_from_migrations() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/dev_package");
-        let directory = apply_package::read_package_directory(&root).unwrap();
-        let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
-        let original = package_schema_inputs(&manifest, &directory);
-        manifest
-            .models
-            .get_mut("record")
-            .unwrap()
-            .operations
-            .get_mut(&wamn_schema_generator::CrudAction::Get)
-            .unwrap()
-            .permission = "record.changed".to_owned();
-        manifest.custom_operations.clear();
-        assert_eq!(package_schema_inputs(&manifest, &directory), original);
-        let mut changed = directory.clone();
-        changed.migrations[0]
-            .bytes
-            .extend_from_slice(b"\n-- schema changed\n");
-        assert_ne!(package_schema_inputs(&manifest, &changed), original);
-        manifest.models.get_mut("record").unwrap().table = "replacement".to_owned();
-        assert_ne!(package_schema_inputs(&manifest, &directory), original);
-    }
-
-    /// Owner rulings 3 and 5 of wamn-ri4b: the changes a column edit makes keep
-    /// the target, and a structure change or a changed applied migration
-    /// recreates it.
-    #[test]
-    fn a_column_edit_keeps_the_target_and_a_structure_change_recreates_it() {
+    fn an_appended_migration_keeps_the_target_and_an_edited_one_recreates_it() {
         use wamn_schema_control::{
             AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration,
         };
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/dev_package");
         let directory = apply_package::read_package_directory(&root).unwrap();
-        let manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
         let plan = wamn_schema_control::plan_package_migrations(&directory, None).unwrap();
         let applied = AppliedPackage {
             coordinate: plan.coordinate,
@@ -2335,21 +1972,10 @@ mod tests {
                 .collect(),
         };
         // The decision of prepare_run for a target that applied the shipped package.
-        let keeps = |changed: &PackageManifest, migrations: &PackageDirectory| {
-            let presented = PackageDirectory {
-                manifest_bytes: serde_json::to_vec(changed).unwrap(),
-                migrations: migrations.migrations.clone(),
-                artifact_digest: migrations.artifact_digest.clone(),
-            };
-            package_structure_inputs(changed) == package_structure_inputs(&manifest)
-                && apply_package::applied_migration_drift(&presented, &applied)
-                    .unwrap()
-                    .is_none()
-        };
-        let edit = |change: fn(&mut PackageManifest)| {
-            let mut changed = manifest.clone();
-            change(&mut changed);
-            changed
+        let keeps = |migrations: &PackageDirectory| {
+            apply_package::applied_migration_drift(migrations, &applied)
+                .unwrap()
+                .is_none()
         };
 
         let mut appended = directory.clone();
@@ -2357,209 +1983,12 @@ mod tests {
             relative_path: "migrations/0002_location_description.sql".to_owned(),
             bytes: b"ALTER TABLE platform_fixture.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';".to_vec(),
         });
-        assert!(keeps(&manifest, &appended), "an appended migration keeps");
-        assert_ne!(
-            package_schema_inputs(&manifest, &appended),
-            package_schema_inputs(&manifest, &directory),
-            "an appended migration runs Migrate on the kept target"
-        );
+        assert!(keeps(&appended), "an appended migration keeps");
         let mut edited = directory.clone();
         edited.migrations[0]
             .bytes
             .extend_from_slice(b"\n-- schema changed\n");
-        assert!(!keeps(&manifest, &edited), "an edited migration recreates");
-        for (kept, change) in [
-            (
-                "enum_fields",
-                edit(|manifest| {
-                    manifest
-                        .models
-                        .get_mut("record")
-                        .unwrap()
-                        .enum_fields
-                        .insert(
-                            "state".to_owned(),
-                            vec!["open".to_owned(), "held".to_owned()],
-                        );
-                }),
-            ),
-            (
-                "server_owned_fields",
-                edit(|manifest| {
-                    manifest
-                        .models
-                        .get_mut("record")
-                        .unwrap()
-                        .server_owned_fields
-                        .pop();
-                }),
-            ),
-            (
-                "audit_log",
-                edit(|manifest| {
-                    manifest
-                        .models
-                        .get_mut("location")
-                        .unwrap()
-                        .audit_log
-                        .as_mut()
-                        .unwrap()
-                        .retention = "unlimited".to_owned();
-                }),
-            ),
-        ] {
-            assert!(keeps(&change, &directory), "{kept} keeps");
-        }
-        for (recreated, change) in [
-            (
-                "field_owners",
-                edit(|manifest| {
-                    manifest
-                        .models
-                        .get_mut("record")
-                        .unwrap()
-                        .field_owners
-                        .insert("state".to_owned(), "platform_records".to_owned());
-                }),
-            ),
-            (
-                "constraint_owners",
-                edit(|manifest| {
-                    manifest
-                        .models
-                        .get_mut("record")
-                        .unwrap()
-                        .constraint_owners
-                        .insert(
-                            "record_state_check".to_owned(),
-                            "platform_records".to_owned(),
-                        );
-                }),
-            ),
-            (
-                "client_field_extensible",
-                edit(|manifest| {
-                    manifest
-                        .models
-                        .get_mut("record")
-                        .unwrap()
-                        .client_field_extensible = false;
-                }),
-            ),
-            (
-                "a package version bump",
-                edit(|manifest| {
-                    manifest.package.version = "1.0.1".to_owned();
-                }),
-            ),
-            (
-                "a predecessor_version change",
-                edit(|manifest| {
-                    manifest.package.predecessor_version = Some("0.9.0".to_owned());
-                }),
-            ),
-            (
-                "a new model",
-                edit(|manifest| {
-                    let model = manifest.models["location"].clone();
-                    manifest.models.insert("location_copy".to_owned(), model);
-                }),
-            ),
-            (
-                "a removed internal relation",
-                edit(|manifest| {
-                    manifest.internal_relations.clear();
-                }),
-            ),
-        ] {
-            assert!(!keeps(&change, &directory), "{recreated} recreates");
-        }
-    }
-
-    #[test]
-    fn generated_output_reuse_detects_deleted_corrupt_and_extra_files() {
-        let root = std::env::temp_dir().join(format!(
-            "wamn-output-reuse-{}-{}",
-            std::process::id(),
-            TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let package_root = root.join("demo");
-        let output = wamn_schema_generator::output_root(&package_root);
-        fs::create_dir_all(&package_root).unwrap();
-        fs::create_dir_all(output.join("contracts")).unwrap();
-        fs::create_dir_all(output.join(".sqlx")).unwrap();
-        fs::write(output.join(".sqlx/query.json"), b"metadata").unwrap();
-        let path = output.join("contracts/operation.json");
-        fs::write(&path, b"original").unwrap();
-        let package = PackageInput {
-            root: package_root,
-            manifest: PackageManifest::from_slice(include_bytes!(
-                "../../tests/support/dev_package/wamn.json"
-            ))
-            .unwrap(),
-        };
-        let original = generated_outputs_digest(std::slice::from_ref(&package)).unwrap();
-        fs::write(&path, b"corrupt").unwrap();
-        assert_ne!(
-            generated_outputs_digest(std::slice::from_ref(&package)).unwrap(),
-            original
-        );
-        fs::write(&path, b"original").unwrap();
-        fs::write(output.join("contracts/extra.json"), b"extra").unwrap();
-        assert_ne!(
-            generated_outputs_digest(std::slice::from_ref(&package)).unwrap(),
-            original
-        );
-        fs::remove_dir_all(output.join("contracts")).unwrap();
-        assert_ne!(generated_outputs_digest(&[package]).unwrap(), original);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[tokio::test]
-    async fn package_inputs_skip_installed_packages_and_ignored_output() {
-        let root = std::env::temp_dir().join(format!(
-            "wamn-package-inputs-{}-{}",
-            std::process::id(),
-            TEMPORARY_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let package = root.join("apps/demo");
-        for (path, bytes) in [
-            (root.join(".gitignore"), &b"dist/\n"[..]),
-            (package.join("wamn.json"), b"{}"),
-            (package.join("web/src/main.tsx"), b"export {};"),
-            (package.join("web/dist/index.js"), b"built"),
-            (
-                package.join("web/node_modules/.pnpm/vite/index.js"),
-                b"installed",
-            ),
-        ] {
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, bytes).unwrap();
-        }
-        // pnpm links each package to a directory. Reading the link as a file
-        // refused the whole Generate stage.
-        std::os::unix::fs::symlink(
-            package.join("web/node_modules/.pnpm/vite"),
-            package.join("web/node_modules/vite"),
-        )
-        .unwrap();
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(["init", "--quiet"])
-            .status()
-            .unwrap();
-        assert!(status.success());
-
-        let mut paths = collect_package_bytes(&root, &package)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|(path, _)| path)
-            .collect::<Vec<_>>();
-        paths.sort();
-        assert_eq!(paths, ["wamn.json", "web/src/main.tsx"]);
-        fs::remove_dir_all(root).unwrap();
+        assert!(!keeps(&edited), "an edited migration recreates");
     }
 
     #[test]

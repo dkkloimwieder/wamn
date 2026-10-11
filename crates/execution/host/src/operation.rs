@@ -656,17 +656,18 @@ fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
     }
 }
 
-/// Lower and verify every operation's statement set out of the admitted facts.
+/// Lower and seal every operation's statement set out of the admitted facts.
 /// The complete admitted fact owns these immutable statements.
 fn prepare_statement_sets(
     operations: &BTreeMap<String, ServingComponentOperation>,
-) -> anyhow::Result<BTreeMap<String, PreparedStatementSet>> {
+) -> BTreeMap<String, PreparedStatementSet> {
     operations
         .iter()
         .map(|(operation, fact)| {
-            WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements))
-                .with_context(|| format!("prepare verified statements for operation {operation:?}"))
-                .map(|prepared| (operation.clone(), prepared))
+            (
+                operation.clone(),
+                WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements)),
+            )
         })
         .collect()
 }
@@ -676,9 +677,9 @@ fn lower_statement_set(
 ) -> VerifiedStatementSet {
     statements
         .iter()
-        .map(|(digest, statement)| {
+        .map(|(path, statement)| {
             (
-                digest.clone(),
+                path.clone(),
                 VerifiedStatement {
                     exact_sql: statement.sql.clone().into_boxed_str(),
                     binds: statement.binds.iter().map(lower_statement_field).collect(),

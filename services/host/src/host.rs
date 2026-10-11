@@ -285,7 +285,7 @@ pub struct HostArgs {
     pub release_manifest_digest: Option<String>,
 
     /// Explicit unpublished application directory for an owned local session.
-    #[arg(long, requires_all = ["local_application_digest", "local_admission_digest"], conflicts_with_all = [
+    #[arg(long, requires = "local_application_digest", conflicts_with_all = [
         "release_artifact_base", "release_manifest_digest", "component_artifact_base", "registry_auth_file",
         "registry_token_metadata"
     ])]
@@ -294,10 +294,6 @@ pub struct HostArgs {
     /// Exact canonical manifest digest selected for the local application.
     #[arg(long, requires = "local_application")]
     pub local_application_digest: Option<String>,
-
-    /// Exact digest of the coordinator's validated local admission bytes.
-    #[arg(long, requires = "local_application")]
-    pub local_admission_digest: Option<String>,
 
     /// Maximum resolved wirings retained by the one production router driver.
     #[arg(
@@ -924,9 +920,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             directory,
             loaded.manifest(),
             &loaded.scope().tenant_id,
-            args.local_admission_digest
-                .as_deref()
-                .context("local admission digest is required")?,
         )?;
         let target_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
             .context("local application requires WAMN_EXECUTOR_PLATFORM_PG_URL")?;
@@ -1133,9 +1126,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             release.manifest(),
             release.scope().clone(),
             &database_url,
-            args.local_admission_digest
-                .as_deref()
-                .context("local admission digest is required")?,
         )
         .await?;
         postgres = postgres.with_local_application(local);
@@ -2708,8 +2698,6 @@ mod tests {
             "--local-application",
             "/tmp/wamn-local-candidate",
             "--local-application-digest",
-            digest.as_str(),
-            "--local-admission-digest",
             digest.as_str(),
         ];
         let cli = parse(local).unwrap();

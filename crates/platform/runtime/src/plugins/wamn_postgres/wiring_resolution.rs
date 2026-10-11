@@ -1054,10 +1054,7 @@ mod tests {
             .operations
             .get_mut(registered)
             .unwrap()
-            .committed_result_schema = Some(wamn_catalog::ComponentSchema {
-            schema_digest: wamn_execution_contract::canonical_json_sha256(&schema),
-            schema,
-        });
+            .committed_result_schema = Some(wamn_catalog::ComponentSchema { schema });
         let resolved = resolve(admitted.clone()).expect("admitted committed result resolves");
         assert_eq!(resolved.document.response, document.response);
         assert_eq!(resolved.components.as_ref(), &[admitted]);

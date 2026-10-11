@@ -183,7 +183,6 @@ pub fn verify_component_body(
 pub fn verify_config_body(
     bytes: &[u8],
     descriptor_size: i64,
-    expected_digest: &str,
     expected_bytes: &[u8],
     reference: &str,
 ) -> Result<(), ComponentArtifactFetchError> {
@@ -193,7 +192,7 @@ pub fn verify_config_body(
             "component-artifact-config-body-size-mismatch",
         ));
     }
-    if component_digest(bytes) != expected_digest || bytes != expected_bytes {
+    if bytes != expected_bytes {
         return Err(ComponentArtifactFetchError::mismatched(
             reference,
             "component-artifact-config-body-mismatch",
@@ -339,14 +338,12 @@ mod tests {
         verify_config_body(
             &config,
             i64::try_from(config.len()).unwrap(),
-            &component_digest(&config),
             &config,
             "reference",
         )
         .expect("exact config verifies");
-        let wrong_config =
-            verify_config_body(b"{}", 2, &component_digest(b"{}"), &config, "reference")
-                .expect_err("different config facts refuse");
+        let wrong_config = verify_config_body(b"{}", 2, &config, "reference")
+            .expect_err("different config facts refuse");
         assert_eq!(
             wrong_config.refusal(),
             "component-artifact-config-body-mismatch"

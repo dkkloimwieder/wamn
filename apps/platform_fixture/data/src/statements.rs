@@ -3,7 +3,7 @@
 //! The generated operations include their own accessors, in
 //! [`crate::generated`].
 
-/// Runtime projections carrying only admitted statement digests.
+/// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {
     /// Generated `widget.archive` accessor.
     pub(crate) mod widget_archive {

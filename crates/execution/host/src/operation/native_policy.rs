@@ -128,7 +128,7 @@ pub(super) fn new_native_policy(
         let policy = ComponentPolicy {
             fact: fact.clone(),
             operations: served.operations.clone(),
-            statements: prepare_statement_sets(&served.operations)?,
+            statements: prepare_statement_sets(&served.operations),
         };
         facts.insert(name, Arc::new(policy));
     }

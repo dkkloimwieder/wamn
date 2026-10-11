@@ -59,7 +59,7 @@ The loop runs the platform materializer as a second workload beside the release,
 At each activation, the loop renders `deploy/platform/materializer.example.yaml` with `render_materializer`, the renderer of the cluster files.
 The rendering uses the deployed fetch and sweep intervals of `wamn-control-provision`.
 The loop writes the result with the local component bytes to `materializer.json` in the local output directory.
-The materializer does not enter the local admission digest, the release manifest, or the preload.
+The materializer does not enter the local admission facts, the release manifest, or the preload.
 The host starts it after the flow-http workload runs, and the loop waits until it runs.
 The materializer restarts with the host on each loop change. Its JetStream consumers are durable, so a restart resumes them.
 
@@ -108,43 +108,32 @@ After changing generator code, rebuild `wamn` and restart the developer process.
 The running loop holds a lease, an exclusive claim on its application database.
 A second loop or reset command cannot take that target while the lease remains active.
 The first run creates the target from the environment template.
-After each successful introspection, the loop records the schema inputs and the introspected catalogs beside its local artifacts.
-A restarted developer process keeps the target when that record names the same package structure.
-It also reuses the catalogs when the record matches the current schema inputs.
-Otherwise the first run of the new process recreates the target.
+After each successful introspection, the loop records the build inputs and the introspected catalogs beside its local artifacts.
+The build inputs are the `inputs.digest` of each package's `build.json` ([building](building.md#wamn-build)).
+A restarted developer process keeps the target, unless a change below recreates it.
+It also reuses the catalogs when the record matches the current build inputs.
 
-Rust code saves reuse the schema, database rows, and unchanged generated files.
+A change to the build inputs of a package runs Migrate, Introspect and Generate again on the kept target.
 Cargo controls which selected components need compilation.
-Named SQL and operation contract changes run the Generate stage again.
 Generate runs [`wamn build`](building.md#wamn-build) for each package, the base packages first, without the component build.
 Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
 The Build stage then runs the component build of `wamn build` for each package, and the Virtualize stage selects the components that each `build.json` records.
 SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
-Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
-The generator inputs are the files of the package, without `node_modules` and without any directory that the Git ignore rules cover.
-The watcher uses the same ignore rules.
+The build inputs are the files of the package without `target`, `node_modules`, `generated` and `web/dist`, the lock file of the apps workspace, and the generator identity.
+The watcher skips each directory that the Git ignore rules cover.
 The watcher watches the package directories, `apps/platform`, the shared platform WIT sources, and the local configuration files of `dev.json`.
 Nothing in the loop builds natively, so the root Cargo files and `crates/client` are not inputs.
 In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `wamn.json` in the build output, `apps/target/wamn/<package>`, as generated output.
-Missing or changed generated files prevent reuse.
+A missing `build.json`, or one that records other inputs, prevents reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
-Schema inputs include migrations, package identity, model structure, and internal relations.
-When these inputs change, the loop stops the host before it applies them.
+When the build inputs change, the loop stops the host before it applies them.
 
-These changes keep the target database and the rows it holds:
-
-- a migration file appended after the last applied migration
-- a changed `wamn.json` or `wamn.k` at the same package coordinate
-- a change to `enum_fields`, `server_owned_fields`, or `audit_log`
-
-The loop applies them to the kept target and reads its catalogs again.
+Every change keeps the target database and the rows it holds, except the changes below.
+The loop applies a kept change, for example a migration file appended after the last applied migration, to the kept target and reads its catalogs again.
 
 These changes recreate the target database:
 
-- a new model or a new internal relation
-- a change to `field_owners`, `constraint_owners`, or `client_field_extensible`
-- a package version bump or a changed `predecessor_version`
 - an applied migration that the directory edits, removes, or reorders
 - a retention change that removes a history table that holds rows
 

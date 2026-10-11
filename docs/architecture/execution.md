@@ -346,7 +346,7 @@ A wiring edge carries the declared route envelope.
 Items contain either `value` or `error`.
 A write item retains its `request_id`. A read item carries none, and its outcomes match its items by position.
 Each node consumes that envelope and emits its declared output port.
-Connected ports require identical canonical schema digests.
+Connected ports require identical JSON Schemas.
 A target with multiple input ports requires an explicit `to_port`.
 A hop limit bounds graph traversal.
 The router does not invent item fan-out or split one emission into independent branches.

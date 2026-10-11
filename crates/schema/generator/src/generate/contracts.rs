@@ -16,8 +16,7 @@ use super::{
     canonical_operation_identity, column, constraint_error, constraint_error_code,
     constraint_field, custom_artifact_stem, custom_operation_constraint_origin, insert_bytes,
     insert_json, insert_json_line, json, operation_constraints, operation_exclusions,
-    query_variants, relation, rust_type_identifier, server_owned_fields, sha256, sql,
-    writable_path,
+    query_variants, relation, rust_type_identifier, server_owned_fields, sql, writable_path,
 };
 use crate::manifest::{FieldReference, OperationErrorDetailKey, authored_name};
 use wamn_record_history::HISTORY_COLUMNS;
@@ -77,7 +76,6 @@ pub(super) fn emit_model(
     let native_bind_fixtures = native_bind_fixtures(&wamn_api);
     emit_projection(
         files,
-        sql_corpus,
         model_name,
         table,
         &operation_sql,
@@ -88,7 +86,6 @@ pub(super) fn emit_model(
     )?;
     emit_projection(
         files,
-        sql_corpus,
         model_name,
         table,
         &operation_sql,
@@ -139,7 +136,6 @@ pub(super) fn emit_custom_operation(
 
     emit_static_sql_projection(
         files,
-        sql_corpus,
         &module_name,
         operation,
         &native_rows,
@@ -148,7 +144,6 @@ pub(super) fn emit_custom_operation(
     )?;
     emit_static_sql_projection(
         files,
-        sql_corpus,
         &module_name,
         operation,
         &wamn_rows,
@@ -393,7 +388,6 @@ fn statement_contract(
     Ok(StatementContract {
         name: name.to_owned(),
         path: path.to_owned(),
-        digest: sha256(bytes),
         binds,
         columns: columns.into_iter().collect(),
         transactional: transactional.needs_transaction(path),

@@ -670,12 +670,7 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
     assert_eq!(contract_statement["path"], statement["path"]);
     assert_eq!(contract_statement["binds"], statement["parameters"]);
     assert_eq!(contract_statement["columns"], statement["row"]);
-    assert!(
-        contract_statement["digest"]
-            .as_str()
-            .unwrap()
-            .starts_with("sha256:")
-    );
+    assert!(contract_statement.get("digest").is_none());
     for declared in statement["parameters"].as_array().unwrap() {
         let name = declared["name"].as_str().unwrap();
         let emitted = accessor["binds"]

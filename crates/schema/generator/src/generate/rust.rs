@@ -10,7 +10,7 @@ use super::{
     ModelDeclaration, MutationConstraintNames, NativeBindFixture, OperationDeclaration, Projection,
     ProjectionContents, RustMember, RustRow, RustVisibility, StaticSqlAccessor, StaticSqlFetch,
     Table, WamnAccessor, WamnApi, column, insert_bytes, operation_constraints,
-    operation_exclusions, query_variants, rust_identifier, rust_type_identifier, sha256, sql,
+    operation_exclusions, query_variants, rust_identifier, rust_type_identifier, sql,
 };
 
 /// Clippy's default `too-many-arguments-threshold`. The repository declares no
@@ -59,7 +59,7 @@ pub(super) fn static_sql_accessors(
         .iter()
         .map(|(name, statement)| StaticSqlAccessor {
             name: name.clone(),
-            statement_digest_constant: format!("{}_DIGEST", name.to_ascii_uppercase()),
+            statement_constant: format!("{}_STATEMENT", name.to_ascii_uppercase()),
             row: format!("{}Row", rust_type_identifier(name)),
             fetch: statement.fetch,
             binds: statement
@@ -95,7 +95,6 @@ pub(super) fn static_sql_native_bind_fixtures(
 
 pub(super) fn emit_static_sql_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
-    sql_corpus: &BTreeMap<String, Vec<u8>>,
     module_name: &str,
     operation: &CustomOperationDeclaration,
     rows: &[RustRow],
@@ -127,15 +126,11 @@ pub(super) fn emit_static_sql_projection(
                 .expect("writing to a String cannot fail");
             }
             Projection::Wamn => {
-                let digest = sha256(
-                    sql_corpus
-                        .get(&statement.path)
-                        .expect("validated statement is present in the SQL corpus"),
-                );
                 writeln!(
                     &mut source,
-                    "pub(crate) const {}_DIGEST: &str = {digest:?};",
+                    "pub(crate) const {}_STATEMENT: &str = {:?};",
                     name.to_ascii_uppercase(),
+                    statement.path,
                 )
                 .expect("writing to a String cannot fail");
             }
@@ -206,7 +201,7 @@ fn emit_static_sql_wamn_accessor(
     writeln!(
         source,
         "    let rows = transaction.run({}, vec![",
-        accessor.statement_digest_constant,
+        accessor.statement_constant,
     )
     .expect("writing to a String cannot fail");
     for bind in &accessor.binds {
@@ -224,12 +219,7 @@ fn emit_static_sql_wamn_accessor(
         StaticSqlFetch::BoundedList => "decode_all",
         StaticSqlFetch::One => "decode_one",
     };
-    emit_decode_result(
-        source,
-        row,
-        decode_function,
-        &accessor.statement_digest_constant,
-    );
+    emit_decode_result(source, row, decode_function, &accessor.statement_constant);
 }
 
 fn static_sql_accessor_result_type(accessor: &StaticSqlAccessor) -> String {
@@ -269,11 +259,7 @@ pub(super) fn wamn_api(
                 name: "get".to_owned(),
                 visibility: RustVisibility::Crate,
                 operation: *action,
-                statement_digest_constant: statement_digest_constant_name(
-                    action.as_str(),
-                    0,
-                    paths.len(),
-                ),
+                statement_constant: statement_constant_name(action.as_str(), 0, paths.len()),
                 sql_path: paths[0].clone(),
                 row: model_row.clone(),
                 fetch: AccessorFetch::Optional,
@@ -309,7 +295,7 @@ pub(super) fn wamn_api(
                         name: format!("query_{field}_{}", sql::direction_name(direction)),
                         visibility: RustVisibility::Crate,
                         operation: *action,
-                        statement_digest_constant: statement_digest_constant_name(
+                        statement_constant: statement_constant_name(
                             action.as_str(),
                             index,
                             paths.len(),
@@ -325,11 +311,7 @@ pub(super) fn wamn_api(
                 name: CREATE_STATEMENT.to_owned(),
                 visibility: RustVisibility::Crate,
                 operation: *action,
-                statement_digest_constant: statement_digest_constant_name(
-                    action.as_str(),
-                    0,
-                    paths.len(),
-                ),
+                statement_constant: statement_constant_name(action.as_str(), 0, paths.len()),
                 sql_path: paths[0].clone(),
                 row: model_row.clone(),
                 fetch: AccessorFetch::One,
@@ -378,11 +360,7 @@ pub(super) fn wamn_api(
                     name: "update".to_owned(),
                     visibility: RustVisibility::Crate,
                     operation: *action,
-                    statement_digest_constant: statement_digest_constant_name(
-                        action.as_str(),
-                        0,
-                        paths.len(),
-                    ),
+                    statement_constant: statement_constant_name(action.as_str(), 0, paths.len()),
                     sql_path: paths[0].clone(),
                     row: result_row.name.clone(),
                     fetch: AccessorFetch::One,
@@ -401,11 +379,7 @@ pub(super) fn wamn_api(
                     name: "delete".to_owned(),
                     visibility: RustVisibility::Crate,
                     operation: *action,
-                    statement_digest_constant: statement_digest_constant_name(
-                        action.as_str(),
-                        0,
-                        paths.len(),
-                    ),
+                    statement_constant: statement_constant_name(action.as_str(), 0, paths.len()),
                     sql_path: paths[0].clone(),
                     row: result_row.name.clone(),
                     fetch: AccessorFetch::One,
@@ -420,7 +394,7 @@ pub(super) fn wamn_api(
     }
 
     WamnApi {
-        statement_digest_visibility: RustVisibility::Crate,
+        statement_visibility: RustVisibility::Crate,
         mutation_constraints,
         operation_rows,
         accessors,
@@ -620,7 +594,6 @@ fn accessor_bind(parameter: &str, ty: ColumnType, nullable: bool) -> AccessorBin
 
 pub(super) fn emit_projection(
     files: &mut BTreeMap<String, Vec<u8>>,
-    sql_corpus: &BTreeMap<String, Vec<u8>>,
     model_name: &str,
     table: &Table,
     operation_sql: &BTreeMap<String, Vec<String>>,
@@ -687,19 +660,14 @@ pub(super) fn emit_projection(
                     .expect("writing to a String cannot fail");
                 }
                 Projection::Wamn => {
-                    let digest = sha256(
-                        sql_corpus
-                            .get(path)
-                            .expect("generated statement is present in the SQL corpus"),
-                    );
                     writeln!(
                         &mut source,
-                        "{} const {}: &str = {digest:?};",
+                        "{} const {}: &str = {path:?};",
                         wamn_api
                             .expect("Wamn projection carries its accessor API")
-                            .statement_digest_visibility
+                            .statement_visibility
                             .source(),
-                        statement_digest_constant_name(action, index, paths.len()),
+                        statement_constant_name(action, index, paths.len()),
                     )
                     .expect("writing to a String cannot fail");
                 }
@@ -854,7 +822,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
         } else {
             "connection"
         },
-        accessor.statement_digest_constant
+        accessor.statement_constant
     )
     .expect("writing to a String cannot fail");
     for bind in &accessor.binds {
@@ -871,12 +839,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
         AccessorFetch::One => "decode_one",
         AccessorFetch::Stream => unreachable!("a stream accessor returned above"),
     };
-    emit_decode_result(
-        source,
-        row,
-        decode_function,
-        &accessor.statement_digest_constant,
-    );
+    emit_decode_result(source, row, decode_function, &accessor.statement_constant);
 }
 
 fn accessor_result_type(accessor: &WamnAccessor) -> String {
@@ -892,7 +855,7 @@ fn emit_stream_accessor_body(source: &mut String, accessor: &WamnAccessor, row: 
     writeln!(
         source,
         "    connection.run_stream({}, vec![",
-        accessor.statement_digest_constant
+        accessor.statement_constant
     )
     .expect("writing to a String cannot fail");
     for bind in &accessor.binds {
@@ -921,12 +884,12 @@ fn emit_decode_result(
     source: &mut String,
     row: &RustRow,
     decode_function: &str,
-    statement_digest_constant: &str,
+    statement_constant: &str,
 ) {
     source.push_str("    ");
     writeln!(
         source,
-        "wamn_postgres_statements::{decode_function}({statement_digest_constant}, rows, |row| {{"
+        "wamn_postgres_statements::{decode_function}({statement_constant}, rows, |row| {{"
     )
     .expect("writing to a String cannot fail");
     writeln!(source, "        Ok({} {{", row.name).expect("writing to a String cannot fail");
@@ -951,13 +914,13 @@ fn sql_constant_name(action: &str, index: usize, path_count: usize) -> String {
     format!("{}{}_SQL", action.to_ascii_uppercase(), suffix)
 }
 
-fn statement_digest_constant_name(action: &str, index: usize, path_count: usize) -> String {
+fn statement_constant_name(action: &str, index: usize, path_count: usize) -> String {
     let suffix = if path_count == 1 {
         String::new()
     } else {
         format!("_{index}")
     };
-    format!("{}{}_DIGEST", action.to_ascii_uppercase(), suffix)
+    format!("{}{}_STATEMENT", action.to_ascii_uppercase(), suffix)
 }
 
 fn rust_type(column: &Column, projection: Projection) -> String {

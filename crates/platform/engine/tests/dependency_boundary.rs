@@ -68,7 +68,7 @@ const ACCEPTED: &[(&str, &str)] = &[
     ("opentelemetry", "the route limiter's gauges"),
     ("serde", "wire and manifest types"),
     ("serde_json", "wire and manifest types"),
-    ("sha2", "component and schema digests"),
+    ("sha2", "component digests"),
     ("tokio", "timers, files and channels"),
     ("tracing", "spans and events"),
     (

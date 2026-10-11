@@ -76,7 +76,7 @@ pub struct ValueShape {
 /// Structured host report for a statement-contract mismatch.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractMismatch {
-    pub statement_digest: Box<str>,
+    pub statement: Box<str>,
     pub part: ContractPart,
     pub expected: ValueShape,
     pub observed: ValueShape,
@@ -86,7 +86,7 @@ pub struct ContractMismatch {
 #[derive(Debug)]
 pub struct StatementError {
     type_: StatementErrorType,
-    statement_digest: Option<Box<str>>,
+    statement: Option<Box<str>>,
     constraint: Option<Box<str>>,
     // Boxed to keep `StatementError` small enough for a by-value `Result`.
     contract_mismatch: Option<Box<ContractMismatch>>,
@@ -100,8 +100,8 @@ impl StatementError {
     }
 
     /// Statement identity supplied by the host or local decoder, when available.
-    pub fn statement_digest(&self) -> Option<&str> {
-        self.statement_digest.as_deref()
+    pub fn statement(&self) -> Option<&str> {
+        self.statement.as_deref()
     }
 
     /// Named PostgreSQL constraint for typed violation cases.
@@ -114,10 +114,10 @@ impl StatementError {
         self.contract_mismatch.as_deref()
     }
 
-    fn invalid_result(statement_digest: &str, context: impl Into<Box<str>>) -> Self {
+    fn invalid_result(statement: &str, context: impl Into<Box<str>>) -> Self {
         Self {
             type_: StatementErrorType::InvalidResult,
-            statement_digest: Some(statement_digest.into()),
+            statement: Some(statement.into()),
             constraint: None,
             contract_mismatch: None,
             context: context.into(),
@@ -126,16 +126,16 @@ impl StatementError {
 
     fn from_wire(source: host::StatementError) -> Self {
         match source {
-            host::StatementError::UnknownStatement(statement_digest) => Self {
+            host::StatementError::UnknownStatement(statement) => Self {
                 type_: StatementErrorType::UnknownStatement,
-                statement_digest: Some(statement_digest.into()),
+                statement: Some(statement.into()),
                 constraint: None,
                 contract_mismatch: None,
-                context: "host does not admit the statement digest".into(),
+                context: "host does not admit the statement".into(),
             },
             host::StatementError::StatementContractMismatch(mismatch) => {
                 let mismatch = ContractMismatch {
-                    statement_digest: mismatch.statement_digest.into(),
+                    statement: mismatch.statement.into(),
                     part: match mismatch.part {
                         host::ContractPart::Binds => ContractPart::Binds,
                         host::ContractPart::Columns => ContractPart::Columns,
@@ -151,7 +151,7 @@ impl StatementError {
                 };
                 Self {
                     type_: StatementErrorType::StatementContractMismatch,
-                    statement_digest: Some(mismatch.statement_digest.clone()),
+                    statement: Some(mismatch.statement.clone()),
                     constraint: None,
                     contract_mismatch: Some(Box::new(mismatch)),
                     context: "statement values do not match the admitted contract".into(),
@@ -216,7 +216,7 @@ impl StatementError {
         };
         Self {
             type_: kind,
-            statement_digest: None,
+            statement: None,
             constraint,
             contract_mismatch: None,
             context: context.into(),
@@ -245,10 +245,10 @@ impl Connection {
     /// Run one admitted statement in an implicit transaction.
     pub async fn run(
         &mut self,
-        statement_digest: &str,
+        statement: &str,
         params: Vec<SqlValue>,
     ) -> Result<RowSet, StatementError> {
-        host::run(statement_digest.to_string(), params)
+        host::run(statement.to_string(), params)
             .await
             .map_err(StatementError::from_wire)
     }
@@ -260,15 +260,15 @@ impl Connection {
     /// Dropping the returned stream before its end ends the query.
     pub async fn run_stream<T>(
         &mut self,
-        statement_digest: &str,
+        statement: &str,
         params: Vec<SqlValue>,
         decode: fn(&mut RowDecoder<'_>) -> Result<T, StatementError>,
     ) -> Result<RowStream<T>, StatementError> {
-        let (columns, rows, end) = host::run_stream(statement_digest.to_string(), params)
+        let (columns, rows, end) = host::run_stream(statement.to_string(), params)
             .await
             .map_err(StatementError::from_wire)?;
         Ok(RowStream {
-            statement_digest: statement_digest.into(),
+            statement: statement.into(),
             columns,
             rows,
             end: Some(end),
@@ -289,7 +289,7 @@ impl Connection {
 
 /// Rows the host reads, which the caller decodes one at a time.
 pub struct RowStream<T> {
-    statement_digest: Box<str>,
+    statement: Box<str>,
     columns: Vec<wire::Column>,
     rows: StreamReader<Vec<SqlValue>>,
     end: Option<FutureReader<Result<(), host::StatementError>>>,
@@ -301,7 +301,7 @@ impl<T> fmt::Debug for RowStream<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RowStream")
-            .field("statement_digest", &self.statement_digest)
+            .field("statement", &self.statement)
             .finish_non_exhaustive()
     }
 }
@@ -315,8 +315,7 @@ impl<T> RowStream<T> {
     pub async fn next(&mut self) -> Result<Option<T>, StatementError> {
         loop {
             if let Some(values) = self.batch.next() {
-                return decode_row(&self.statement_digest, &self.columns, values, self.decode)
-                    .map(Some);
+                return decode_row(&self.statement, &self.columns, values, self.decode).map(Some);
             }
             let Some(end) = self.end.take() else {
                 return Ok(None);
@@ -363,11 +362,11 @@ impl Transaction {
     /// Run one admitted statement in this transaction.
     pub async fn run(
         &mut self,
-        statement_digest: &str,
+        statement: &str,
         params: Vec<SqlValue>,
     ) -> Result<RowSet, StatementError> {
         self.inner
-            .run(statement_digest.to_string(), params)
+            .run(statement.to_string(), params)
             .await
             .map_err(StatementError::from_wire)
     }
@@ -435,11 +434,11 @@ impl TransactionView {
     /// Run one admitted statement through this transaction view.
     pub async fn run(
         &mut self,
-        statement_digest: &str,
+        statement: &str,
         params: Vec<SqlValue>,
     ) -> Result<RowSet, StatementError> {
         self.inner
-            .run(statement_digest.to_string(), params)
+            .run(statement.to_string(), params)
             .await
             .map_err(StatementError::from_wire)
     }
@@ -545,7 +544,7 @@ where
 
 /// Positional decoder that verifies generated column names and value types.
 pub struct RowDecoder<'a> {
-    statement_digest: &'a str,
+    statement: &'a str,
     columns: std::slice::Iter<'a, wire::Column>,
     values: std::vec::IntoIter<wire::SqlValue>,
 }
@@ -554,7 +553,7 @@ impl fmt::Debug for RowDecoder<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RowDecoder")
-            .field("statement_digest", &self.statement_digest)
+            .field("statement", &self.statement)
             .field("remaining_columns", &self.columns.len())
             .field("remaining_values", &self.values.len())
             .finish()
@@ -562,13 +561,9 @@ impl fmt::Debug for RowDecoder<'_> {
 }
 
 impl<'a> RowDecoder<'a> {
-    fn new(
-        statement_digest: &'a str,
-        columns: &'a [wire::Column],
-        values: Vec<wire::SqlValue>,
-    ) -> Self {
+    fn new(statement: &'a str, columns: &'a [wire::Column], values: Vec<wire::SqlValue>) -> Self {
         Self {
-            statement_digest,
+            statement,
             columns: columns.iter(),
             values: values.into_iter(),
         }
@@ -581,13 +576,13 @@ impl<'a> RowDecoder<'a> {
     {
         let column = self.columns.next().ok_or_else(|| {
             StatementError::invalid_result(
-                self.statement_digest,
+                self.statement,
                 format!("result omitted column `{expected_name}`"),
             )
         })?;
         if column.name != expected_name {
             return Err(StatementError::invalid_result(
-                self.statement_digest,
+                self.statement,
                 format!(
                     "result column `{}` does not match expected `{expected_name}`",
                     column.name
@@ -596,13 +591,13 @@ impl<'a> RowDecoder<'a> {
         }
         let value = self.values.next().ok_or_else(|| {
             StatementError::invalid_result(
-                self.statement_digest,
+                self.statement,
                 format!("result omitted value for `{expected_name}`"),
             )
         })?;
         T::from_sql_value(value).ok_or_else(|| {
             StatementError::invalid_result(
-                self.statement_digest,
+                self.statement,
                 format!("result value for `{expected_name}` has the wrong type"),
             )
         })
@@ -613,7 +608,7 @@ impl<'a> RowDecoder<'a> {
             Ok(())
         } else {
             Err(StatementError::invalid_result(
-                self.statement_digest,
+                self.statement,
                 "result contains undeclared columns or values",
             ))
         }
@@ -622,7 +617,7 @@ impl<'a> RowDecoder<'a> {
 
 /// Decode exactly one returned row.
 pub fn decode_one<T>(
-    statement_digest: &str,
+    statement: &str,
     rows: RowSet,
     decode: impl FnOnce(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<T, StatementError> {
@@ -630,16 +625,16 @@ pub fn decode_one<T>(
         <Vec<Vec<wire::SqlValue>> as TryInto<[Vec<wire::SqlValue>; 1]>>::try_into(rows.rows)
             .map_err(|rows| {
                 StatementError::invalid_result(
-                    statement_digest,
+                    statement,
                     format!("expected one row, received {}", rows.len()),
                 )
             })?;
-    decode_row(statement_digest, &rows.columns, values, decode)
+    decode_row(statement, &rows.columns, values, decode)
 }
 
 /// Decode zero or one returned row.
 pub fn decode_optional<T>(
-    statement_digest: &str,
+    statement: &str,
     rows: RowSet,
     decode: impl FnOnce(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<Option<T>, StatementError> {
@@ -649,32 +644,32 @@ pub fn decode_optional<T>(
     };
     if values.next().is_some() {
         return Err(StatementError::invalid_result(
-            statement_digest,
+            statement,
             "expected at most one row",
         ));
     }
-    decode_row(statement_digest, &rows.columns, row, decode).map(Some)
+    decode_row(statement, &rows.columns, row, decode).map(Some)
 }
 
 /// Decode every returned row in order.
 pub fn decode_all<T>(
-    statement_digest: &str,
+    statement: &str,
     rows: RowSet,
     mut decode: impl FnMut(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<Vec<T>, StatementError> {
     rows.rows
         .into_iter()
-        .map(|values| decode_row(statement_digest, &rows.columns, values, &mut decode))
+        .map(|values| decode_row(statement, &rows.columns, values, &mut decode))
         .collect()
 }
 
 fn decode_row<T>(
-    statement_digest: &str,
+    statement: &str,
     columns: &[wire::Column],
     values: Vec<wire::SqlValue>,
     decode: impl FnOnce(&mut RowDecoder<'_>) -> Result<T, StatementError>,
 ) -> Result<T, StatementError> {
-    let mut row = RowDecoder::new(statement_digest, columns, values);
+    let mut row = RowDecoder::new(statement, columns, values);
     let decoded = decode(&mut row)?;
     row.finish()?;
     Ok(decoded)

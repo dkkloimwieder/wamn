@@ -382,7 +382,7 @@ async fn qualification_refuses_input_changes_before_publication() {
             vec![append(
                 wamn_schema_generator::output_root(&fixture.predecessor).join("sql/widget/get.sql"),
             )],
-            "statement-digest-mismatch",
+            "presented generated or SQL bytes changed during qualification",
         ),
         (
             "contract",
@@ -662,16 +662,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let contract = fs::read(&contract_path).unwrap();
     let mut changed_sql = sql.clone();
     changed_sql.extend_from_slice(b"\n-- different carried predecessor statement\n");
-    let mut changed_contract: serde_json::Value = serde_json::from_slice(&contract).unwrap();
-    changed_contract["statements"][0]["digest"] = serde_json::json!(
-        wamn_engine::component_admission::component_digest(&changed_sql)
-    );
     fs::write(&sql_path, changed_sql).unwrap();
-    fs::write(
-        &contract_path,
-        serde_json::to_vec(&changed_contract).unwrap(),
-    )
-    .unwrap();
     let manifest = PackageManifest::from_slice(
         &fs::read(wamn_schema_generator::package_manifest_path(
             &fixture.predecessor,

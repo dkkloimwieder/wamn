@@ -13,7 +13,7 @@
 //! read is a fact about this crate, and the generator sees only the catalog,
 //! the manifest, and the authored SQL.
 
-/// Runtime projections carrying only admitted statement digests.
+/// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {
     /// Generated `inventory.adjust` transaction accessors.
     #[expect(

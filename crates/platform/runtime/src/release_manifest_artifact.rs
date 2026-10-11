@@ -101,8 +101,7 @@ pub fn verify_release_manifest_artifact_layout<'a>(
     expected_digest: &str,
     expected_size: Option<usize>,
 ) -> Result<ReleaseManifestArtifactBlobs<'a>, ReleaseManifestLayoutRefusal> {
-    let (_, expected_config, expected_manifest) = release_manifest_artifact_layout(&[]);
-    let expected_config_digest = expected_config.sha256_digest();
+    let (_, _, expected_manifest) = release_manifest_artifact_layout(&[]);
     if manifest.schema_version != 2
         || manifest.media_type.as_deref() != Some(OCI_IMAGE_MEDIA_TYPE)
         || manifest.artifact_type.as_deref() != Some(RELEASE_MANIFEST_ARTIFACT_MEDIA_TYPE)
@@ -135,7 +134,7 @@ pub fn verify_release_manifest_artifact_layout<'a>(
     }
     let config = &manifest.config;
     if config.media_type != RELEASE_MANIFEST_CONFIG_MEDIA_TYPE
-        || config.digest != expected_config_digest
+        || config.digest != expected_manifest.config.digest
         || config.size != expected_manifest.config.size
         || config.urls.is_some()
         || config.annotations.is_some()

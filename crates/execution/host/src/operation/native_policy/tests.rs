@@ -210,7 +210,7 @@ const POSTGRES_TYPES: &str = r#"
         (export "contract-part" (type $contract-part (eq $contract-part')))
         (type $value-shape' (record (field "count" u32) (field "types" (list string))))
         (export "value-shape" (type $value-shape (eq $value-shape')))
-        (type $contract-mismatch' (record (field "statement-digest" string) (field "part" $contract-part)
+        (type $contract-mismatch' (record (field "statement" string) (field "part" $contract-part)
           (field "expected" $value-shape) (field "observed" $value-shape)))
         (export "contract-mismatch" (type $contract-mismatch (eq $contract-mismatch')))
         (type $statement-error' (variant (case "unknown-statement" string)
@@ -227,7 +227,7 @@ const POSTGRES_TYPES: &str = r#"
         (export "participant-view" (func async
           (result (result (own $transaction-view) (error $statement-error)))))
         (export "[method]transaction-view.run" (func async (param "self" (borrow $transaction-view))
-          (param "statement-digest" string) (param "binds" (list $sql-value))
+          (param "statement" string) (param "binds" (list $sql-value))
           (result (result $row-set (error $statement-error)))))))
 "#;
 
@@ -236,7 +236,7 @@ fn transaction_participant_component(operation: &str) -> Vec<u8> {
       {NODE_TYPES}{POSTGRES_TYPES}
       (core module $memory
         (memory (export "memory") 16)
-        (data (i32.const 16) "{digest}")
+        (data (i32.const 16) "{statement}")
         (data (i32.const 320) "[]")
         (data (i32.const 400) "viewrun")
         (global $next (mut i32) (i32.const 1024))
@@ -263,7 +263,7 @@ fn transaction_participant_component(operation: &str) -> Vec<u8> {
           i32.const 64 i32.load8_u if
             i32.const 0 i32.const 400 i32.const 4 i32.const 0 i32.const 0 i32.const 0
             i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
-          i32.const 72 i32.load i32.const 16 i32.const {digest_len} i32.const 0 i32.const 0 i32.const 128 call $run-view
+          i32.const 72 i32.load i32.const 16 i32.const {statement_len} i32.const 0 i32.const 0 i32.const 128 call $run-view
           i32.const 128 i32.load8_u if
             i32.const 0 i32.const 404 i32.const 3 i32.const 0 i32.const 0 i32.const 0
             i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
@@ -280,8 +280,8 @@ fn transaction_participant_component(operation: &str) -> Vec<u8> {
         (export "node-error" (type $error)) (export "emission" (type $emission))
         (export "run" (func $run)))
       (export "{operation}" (instance $handler)))"#,
-      digest = TRANSACTION_SQL_DIGEST,
-      digest_len = TRANSACTION_SQL_DIGEST.len(),
+      statement = TRANSACTION_SQL_PATH,
+      statement_len = TRANSACTION_SQL_PATH.len(),
     )).expect("encode transaction participant")
 }
 
@@ -294,7 +294,7 @@ fn transaction_owner_component(operation: &str) -> Vec<u8> {
       (core module $memory
         (memory (export "memory") 16) (data (i32.const 16) "{PARTICIPANT}")
         (data (i32.const 320) "[]")
-        (data (i32.const 480) "{digest}")
+        (data (i32.const 480) "{statement}")
         (data (i32.const 600) "viewrun")
         (global $next (mut i32) (i32.const 1024))
         (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
@@ -326,7 +326,7 @@ fn transaction_owner_component(operation: &str) -> Vec<u8> {
           i32.const 128 i32.load8_u if
             i32.const 0 i32.const 600 i32.const 4 i32.const 0 i32.const 0 i32.const 0
             i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
-          i32.const 136 i32.load i32.const 480 i32.const {digest_len} i32.const 0 i32.const 0 i32.const 160 call $run-view
+          i32.const 136 i32.load i32.const 480 i32.const {statement_len} i32.const 0 i32.const 0 i32.const 160 call $run-view
           i32.const 160 i32.load8_u if
             i32.const 0 i32.const 604 i32.const 3 i32.const 0 i32.const 0 i32.const 0
             i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
@@ -344,14 +344,13 @@ fn transaction_owner_component(operation: &str) -> Vec<u8> {
       (export "{operation}" (instance $handler))
       (export "{PARTICIPANT}" (instance $handler)))"#,
       participant_len = PARTICIPANT.len(),
-      digest = TRANSACTION_SQL_DIGEST,
-      digest_len = TRANSACTION_SQL_DIGEST.len(),
+      statement = TRANSACTION_SQL_PATH,
+      statement_len = TRANSACTION_SQL_PATH.len(),
     )).expect("encode composed transaction owner")
 }
 
 const TRANSACTION_SQL: &str = "UPDATE native_policy_participant SET value = 2 RETURNING value";
-const TRANSACTION_SQL_DIGEST: &str =
-    "sha256:1404226aba656e74db5db97045be6526e3451412526dc1ae2f99302f9b0d7bd3";
+const TRANSACTION_SQL_PATH: &str = "sql/update-participant.sql";
 
 #[derive(Debug, Clone)]
 struct Observation {
@@ -573,10 +572,10 @@ impl Fixture {
         };
         let mut root = fact(ROOT, &root_bytes, registered_root, dependencies);
         let transaction_statements = BTreeMap::from([(
-            TRANSACTION_SQL_DIGEST.into(),
+            TRANSACTION_SQL_PATH.into(),
             ComponentSqlStatement {
                 name: "update-participant".into(),
-                path: "sql/update-participant.sql".into(),
+                path: TRANSACTION_SQL_PATH.into(),
                 sql: TRANSACTION_SQL.into(),
                 binds: Vec::new(),
                 columns: vec![ComponentSqlField {

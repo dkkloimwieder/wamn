@@ -1,5 +1,4 @@
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use wamn_schema_generator::{
     AuthoredSql, GeneratedPackage, GenerationInput, PackageManifest, StatementTransactionality,
     generate,
@@ -263,10 +262,6 @@ pub(super) fn run(
 
 pub(super) fn artifact_json(package: &GeneratedPackage, path: &str) -> Value {
     serde_json::from_slice(package.file(path).unwrap().bytes()).unwrap()
-}
-
-pub(super) fn statement_digest(bytes: &[u8]) -> String {
-    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 pub(super) fn accessor_bind(

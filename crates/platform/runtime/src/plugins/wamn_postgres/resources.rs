@@ -308,7 +308,7 @@ pub(super) async fn run_execute(
 
 pub(super) async fn run_verified_query(
     conn: &Object,
-    digest: &str,
+    statement_path: &str,
     statement: &VerifiedStatement,
     binds: &[SqlValue],
     row_limit: u64,
@@ -319,7 +319,7 @@ pub(super) async fn run_verified_query(
             .prepare_cached(&statement.exact_sql)
             .await
             .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
-        validate_prepared_statement(digest, statement, &prepared)?;
+        validate_prepared_statement(statement_path, statement, &prepared)?;
         let columns = columns_of(&prepared);
         let wrapped: Vec<PgParam> = binds.iter().map(|value| PgParam(value.clone())).collect();
         let stream = conn
@@ -347,13 +347,13 @@ pub(super) async fn run_verified_query(
         }
         .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
         .await?;
-        validate_statement_result(digest, statement, RowSet { columns, rows })
+        validate_statement_result(statement_path, statement, RowSet { columns, rows })
     }
     .instrument(tracing::info_span!(
         "wamn.postgres.statement",
         db.system = "postgresql",
         db.operation = "verified-query",
-        statement.digest = digest,
+        statement.path = statement_path,
     ))
     .await
 }
@@ -1237,7 +1237,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
 
     async fn run(
         accessor: &Accessor<T, Self>,
-        statement_digest: String,
+        statement_path: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
         let (plugin, component_id, trace) = accessor.with(|mut access| {
@@ -1251,16 +1251,16 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         trace
             .run(async move {
                 let active = plugin.active_statement_set(&component_id);
-                let statement =
-                    match resolve_statement(active.as_deref(), &statement_digest, &binds) {
-                        Ok(statement) => statement,
-                        Err(error) => return Ok(Err(error)),
-                    };
+                let statement = match resolve_statement(active.as_deref(), &statement_path, &binds)
+                {
+                    Ok(statement) => statement,
+                    Err(error) => return Ok(Err(error)),
+                };
                 let project = plugin.project_for(&component_id);
                 let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
                 let started = std::time::Instant::now();
                 let result = plugin
-                    .one_shot_statement(&component_id, &statement_digest, &statement, &binds)
+                    .one_shot_statement(&component_id, &statement_path, &statement, &binds)
                     .instrument(span)
                     .await;
                 record_query_ms("statement.run", &project, started.elapsed());
@@ -1320,7 +1320,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
 
     async fn run_stream(
         accessor: &Accessor<T, Self>,
-        statement_digest: String,
+        statement_path: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<
         Result<
@@ -1332,7 +1332,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
             StatementError,
         >,
     > {
-        super::run_stream::run_stream(accessor, statement_digest, binds).await
+        super::run_stream::run_stream(accessor, statement_path, binds).await
     }
 
     #[expect(
@@ -1379,7 +1379,7 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
     async fn run(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
-        statement_digest: String,
+        statement_path: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
         let (plugin, component_id, trace, state, destroyed, row_limit, statements) = accessor
@@ -1407,7 +1407,7 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
                     &plugin,
                     &component_id,
                     statements.as_deref(),
-                    &statement_digest,
+                    &statement_path,
                     &binds,
                 ) {
                     Ok(statement) => statement,
@@ -1424,7 +1424,7 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
                 let started = std::time::Instant::now();
                 let result = run_verified_query(
                     connection.connection(),
-                    &statement_digest,
+                    &statement_path,
                     &statement,
                     &binds,
                     row_limit,
@@ -1484,10 +1484,10 @@ pub(super) fn admit_transaction_statement(
     plugin: &WamnPostgres,
     component_id: &str,
     statements: Option<&BoundStatementSet>,
-    statement_digest: &str,
+    statement_path: &str,
     binds: &[SqlValue],
 ) -> Result<Arc<VerifiedStatement>, StatementError> {
-    let statement = resolve_statement(statements, statement_digest, binds)?;
+    let statement = resolve_statement(statements, statement_path, binds)?;
     refuse_unattributed_statement(&statement, plugin.user_id_for(component_id).as_deref())
         .map_err(StatementError::Postgres)?;
     Ok(statement)
@@ -1612,10 +1612,10 @@ impl<T: 'static + Send> statement_wit::HostTransactionViewWithStore<T> for Share
     async fn run(
         accessor: &Accessor<T, Self>,
         rep: Resource<super::PgTransactionView>,
-        statement_digest: String,
+        statement_path: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        super::transaction_views::run(accessor, rep, statement_digest, binds).await
+        super::transaction_views::run(accessor, rep, statement_path, binds).await
     }
 }
 
@@ -1865,7 +1865,7 @@ mod tests {
 
     fn mismatch() -> StatementError {
         StatementError::StatementContractMismatch(ContractMismatch {
-            statement_digest: "sha256:digest".into(),
+            statement: "sql/statement.sql".into(),
             part: ContractPart::Columns,
             expected: ValueShape {
                 count: 1,

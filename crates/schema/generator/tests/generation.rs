@@ -17,7 +17,7 @@ mod support;
 use support::{
     QUERY_SOURCES, accessor_bind, artifact_json, assert_native_fixtures_match_wamn_api, catalog,
     manifest, object_named, parsed_manifest, projection_operation, rebuilt_table, replacing_table,
-    run, statement_digest, table,
+    run, table,
 };
 
 fn wamn_accessor<'a>(source_map: &'a Value, name: &str) -> &'a Value {
@@ -609,10 +609,8 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
     let get_statement = &get_contract["statements"][0];
     assert_eq!(get_statement["name"], "get");
     let get_path = get_statement["path"].as_str().unwrap();
-    assert_eq!(
-        get_statement["digest"],
-        statement_digest(package.file(get_path).unwrap().bytes())
-    );
+    assert!(package.file(get_path).is_some());
+    assert!(get_statement.get("digest").is_none());
     assert_eq!(
         get_statement["binds"],
         json!([{"name": "id", "type": "uuid", "nullable": false}])
@@ -630,7 +628,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
     );
     let source_map = artifact_json(&package, "generated/source-map/gadget.json");
     let api = &source_map["wamn_api"];
-    assert_eq!(api["statement_digest_visibility"], "crate");
+    assert_eq!(api["statement_visibility"], "crate");
     assert_eq!(
         api["mutation_constraints"],
         json!([{
@@ -664,7 +662,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "name": "get",
             "visibility": "crate",
             "operation": "get",
-            "statement_digest_constant": "GET_DIGEST",
+            "statement_constant": "GET_STATEMENT",
             "row": "GadgetRow",
             "fetch": "optional",
             "binds": [
@@ -679,45 +677,45 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
         })
     );
 
-    for (name, digest_constant, cursor_postgres, native_cursor, wamn_cursor) in [
+    for (name, statement_constant, cursor_postgres, native_cursor, wamn_cursor) in [
         (
             "query_part_code_ascending",
-            "QUERY_0_DIGEST",
+            "QUERY_0_STATEMENT",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_part_code_descending",
-            "QUERY_1_DIGEST",
+            "QUERY_1_STATEMENT",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_status_ascending",
-            "QUERY_2_DIGEST",
+            "QUERY_2_STATEMENT",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_status_descending",
-            "QUERY_3_DIGEST",
+            "QUERY_3_STATEMENT",
             "text",
             "Option<String>",
             "Option<String>",
         ),
         (
             "query_created_at_ascending",
-            "QUERY_4_DIGEST",
+            "QUERY_4_STATEMENT",
             "timestamptz",
             "Option<chrono::DateTime<chrono::Utc>>",
             "Option<wamn_postgres_statements::TimestampTz>",
         ),
         (
             "query_created_at_descending",
-            "QUERY_5_DIGEST",
+            "QUERY_5_STATEMENT",
             "timestamptz",
             "Option<chrono::DateTime<chrono::Utc>>",
             "Option<wamn_postgres_statements::TimestampTz>",
@@ -729,7 +727,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
                 "name": name,
                 "visibility": "crate",
                 "operation": "query",
-                "statement_digest_constant": digest_constant,
+                "statement_constant": statement_constant,
                 "row": "GadgetRow",
                 "fetch": "stream",
                 "binds": [
@@ -767,7 +765,7 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
             "name": "update",
             "visibility": "crate",
             "operation": "update",
-            "statement_digest_constant": "UPDATE_DIGEST",
+            "statement_constant": "UPDATE_STATEMENT",
             "row": "GadgetUpdateRow",
             "fetch": "one",
             "binds": [
