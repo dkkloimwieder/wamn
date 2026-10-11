@@ -342,7 +342,7 @@ impl Deployed {
 
     /// The HTTP role Service.
     fn http_service(&self) -> String {
-        format!("{}-http", self.name)
+        release_chart::workload_name(&self.name, release_chart::RoleName::Http)
     }
 }
 

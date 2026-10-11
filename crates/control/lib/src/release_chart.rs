@@ -195,6 +195,13 @@ impl RoleName {
     }
 }
 
+/// The name the release chart gives the WorkloadDeployment of `role` in
+/// release `release_name`: `<release>-<role>`. The http role's Service has
+/// the same name.
+pub fn workload_name(release_name: &str, role: RoleName) -> String {
+    format!("{release_name}-{}", role.as_str())
+}
+
 /// The roles a release implies (R4, epic decision D6): http iff the manifest
 /// has an http attachment, materializer iff it has an event registration.
 /// Each role's configuration derives from the coordinate.

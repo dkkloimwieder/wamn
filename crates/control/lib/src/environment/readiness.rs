@@ -24,7 +24,7 @@ use super::write::Written;
 /// `rollback` or a fix.
 pub async fn wait(platform: &Platform, written: &Written) -> anyhow::Result<()> {
     for role in &written.roles {
-        let name = format!("{}-{}", written.release_name, role.as_str());
+        let name = crate::release_chart::workload_name(&written.release_name, *role);
         let remaining = written.deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             bail!("the readiness budget is spent before WorkloadDeployment {name} is Ready");

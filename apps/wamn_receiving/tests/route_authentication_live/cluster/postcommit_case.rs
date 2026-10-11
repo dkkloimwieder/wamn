@@ -169,7 +169,10 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         kubeconfig: resources.work.join("kubeconfig"),
         context: format!("kind-{}", resources.name),
         namespace: NAMESPACE.to_owned(),
-        materializer_workload: format!("{}-materializer", deployed.name),
+        materializer_workload: wamn_control::release_chart::workload_name(
+            &deployed.name,
+            wamn_control::release_chart::RoleName::Materializer,
+        ),
         statement_timeout_ms: statement_timeout(resources, &deployed.name).await?,
     });
     let replay = event_broker::connect(&cluster.broker.runtime, &cluster.nats_url).await?;

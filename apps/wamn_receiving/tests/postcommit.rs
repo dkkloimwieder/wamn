@@ -9,6 +9,7 @@ use futures_util::StreamExt as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
+use wamn_control::release_chart;
 use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryType, Envelope, Op};
 use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_runtime::plugins::wamn_jetstream::{
@@ -644,10 +645,18 @@ pub(super) async fn assert_postcommit(
         .postcommit
         .as_ref()
         .context("the journey omitted the armed postcommit phase")?;
+    let materializer_workload = release_chart::workload_name(
+        &release_chart::release_name(
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
+        )?,
+        release_chart::RoleName::Materializer,
+    );
     ensure!(
         phase.context == owned_context
             && phase.namespace == owned_namespace
-            && phase.materializer_workload == "receiving-materializer"
+            && phase.materializer_workload == materializer_workload
             && phase.kubeconfig.is_file(),
         "post-commit test requires the exact owned disposable Receiving materializer"
     );
