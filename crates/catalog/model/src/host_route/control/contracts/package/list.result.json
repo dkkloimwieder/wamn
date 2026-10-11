@@ -14,7 +14,7 @@
       "values": []
     },
     {
-      "path": "packages[].attested_at",
+      "path": "packages[].verified_at",
       "type": "timestamptz",
       "nullable": false,
       "values": []

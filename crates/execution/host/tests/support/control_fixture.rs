@@ -50,7 +50,7 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
             "CREATE SCHEMA catalog; \
              CREATE TABLE catalog.package_artifacts ( \
                package_id text NOT NULL, version text NOT NULL, digest text NOT NULL, \
-               source_commit text, attested_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+               source_commit text, verified_at timestamptz, \
                PRIMARY KEY (package_id, version));",
         )
         .await?;
