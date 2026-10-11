@@ -32,9 +32,7 @@ data:
       error_log /dev/stderr;
 {{- range $applications }}
 {{- $host := required "Set host of each application to its public host name." .host }}
-{{- $environment := required "Set environment of each application to its coordinate org/project/env." .environment }}
-{{- /* The http Service of the environment's release: release_chart::release_name in the release namespace wamn-system (R6). */}}
-{{- $release := printf "r-%s-%s" (splitList "/" $environment | last | trunc 24) (sha256sum $environment | trunc 20) }}
+{{- $api := required "Set api of each application to the URL of the http Service of its release." .api }}
 {{- $bucket := required "Set bucketPath of each application to the path that wamn web upload wrote." .bucketPath | trimAll "/" }}
       server {
         listen 8443 ssl;
@@ -45,7 +43,7 @@ data:
         # The router reads the release from the Host header, so it passes
         # unchanged. The trailing slash removes /api.
         location /api/ {
-          proxy_pass http://{{ $release }}-http.wamn-system.svc.cluster.local/;
+          proxy_pass {{ trimSuffix "/" $api }}/;
           proxy_http_version 1.1;
           proxy_set_header Host $host;
         }

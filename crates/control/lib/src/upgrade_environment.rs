@@ -1226,7 +1226,12 @@ impl Run {
             )
             .await?;
             let mut values: Value = serde_json::from_str(&live)?;
-            if set_bucket_path(&mut values, &environment.route_host, &bucket_path)? {
+            let api = format!(
+                "http://{}-http.{}.svc.cluster.local",
+                self.release_name()?,
+                platform.target.namespace
+            );
+            if set_edge_application(&mut values, &environment.route_host, &api, &bucket_path)? {
                 let file = rendered.join("values-edge.yaml");
                 fs::write(&file, serde_yaml::to_string(&values)?)?;
                 let chart = self.checkout.join("deploy/platform/edge");
@@ -2324,18 +2329,24 @@ fn gcp_project(registry: &str) -> anyhow::Result<String> {
         .with_context(|| format!("the registry {registry} names no project"))
 }
 
-/// Sets the bucket path of the edge application of `host`. It reports
-/// whether the values changed.
-fn set_bucket_path(values: &mut Value, host: &str, bucket_path: &str) -> anyhow::Result<bool> {
+/// Sets the api URL and the bucket path of the edge application of `host`.
+/// It reports whether the values changed.
+fn set_edge_application(
+    values: &mut Value,
+    host: &str,
+    api: &str,
+    bucket_path: &str,
+) -> anyhow::Result<bool> {
     let application = values["applications"]
         .as_array_mut()
         .context("the edge values have no applications")?
         .iter_mut()
         .find(|application| application["host"] == host)
         .with_context(|| format!("the edge serves no host {host}"))?;
-    if application["bucketPath"] == bucket_path {
+    if application["api"] == api && application["bucketPath"] == bucket_path {
         return Ok(false);
     }
+    application["api"] = Value::from(api);
     application["bucketPath"] = Value::from(bucket_path);
     Ok(true)
 }
@@ -3516,11 +3527,13 @@ mod tests {
         let mut edge: Value = serde_json::to_value(edge).unwrap();
         let before = edge.clone();
         let path = format!("wamn-dev-web/clients/wamn_wms/{}", "c".repeat(64));
-        assert!(set_bucket_path(&mut edge, "wms.wamn.dev", &path).unwrap());
-        assert!(!set_bucket_path(&mut edge, "wms.wamn.dev", &path).unwrap());
+        let api = "http://r-dev-2d9920a989cb26764e77-http.wamn-system.svc.cluster.local";
+        assert!(set_edge_application(&mut edge, "wms.wamn.dev", api, &path).unwrap());
+        assert!(!set_edge_application(&mut edge, "wms.wamn.dev", api, &path).unwrap());
         assert_eq!(edge["applications"][0], before["applications"][0]);
+        assert_eq!(edge["applications"][1]["api"], api);
         assert_eq!(edge["applications"][1]["bucketPath"], path.as_str());
-        assert!(set_bucket_path(&mut edge, "absent.wamn.dev", &path).is_err());
+        assert!(set_edge_application(&mut edge, "absent.wamn.dev", api, &path).is_err());
 
         let mut map: serde_yaml::Value = serde_yaml::from_str(
             &fs::read_to_string(repository().join("deploy/gcp/url-map.yaml")).unwrap(),

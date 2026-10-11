@@ -385,7 +385,7 @@ fn render_edge(root: &Path) -> Output {
         "applications[0].host=wamn.example.invalid".to_owned(),
         format!("tlsSecret={EDGE_TLS_SECRET}"),
         "issuer=wasmcloud-ca".to_owned(),
-        "applications[0].environment=acme/wms/dev".to_owned(),
+        "applications[0].api=http://flow-http.wamn-system.svc.cluster.local".to_owned(),
         format!("identity={IDENTITY_ISSUER}"),
         format!("identityCaConfigMap={EDGE_IDENTITY_CA}"),
         "bucket.endpoint=http://object-store.invalid:9000".to_owned(),
@@ -427,19 +427,6 @@ fn render_identity(
     command
         .output()
         .expect("run Helm to render the identity chart")
-}
-
-/// The edge derives the release's http Service from the coordinate as
-/// `release_chart::release_name` does; its test pins the same name.
-#[test]
-fn the_edge_sends_api_to_the_http_service_of_the_coordinates_release() {
-    let edge = read(&repository_root(), "edge");
-    assert!(
-        edge.contains(
-            "proxy_pass http://r-dev-2d9920a989cb26764e77-http.wamn-system.svc.cluster.local/;"
-        ),
-        "{edge}"
-    );
 }
 
 #[test]
