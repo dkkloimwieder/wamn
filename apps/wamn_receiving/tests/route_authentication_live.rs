@@ -49,7 +49,6 @@ use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::dev::watch::GitSource;
 use wamn_control::git_source::GitSourceState;
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache, default_host_memory_budgets,

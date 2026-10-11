@@ -207,7 +207,6 @@ async fn run(
         project_database_url: &route.database_url,
         system_database_url: &inputs.system_pg_url,
         release_digest: &digest,
-        release_artifact_base: &carrier.artifact_base,
         secrets: vec![
             route.database_url.clone(),
             inputs.system_pg_url.clone(),

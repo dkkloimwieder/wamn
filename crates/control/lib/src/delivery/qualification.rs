@@ -11,6 +11,7 @@ use tokio::process::Command;
 
 use super::{ApplicationResult, Candidate, CheckResult, Qualification};
 use crate::git_source::{GitSourceState, discover_repository_root, read_status};
+use crate::package_artifact::PackageRegistry;
 
 const RECEIVING_CASES: &[&str] = &[
     "route_authentication_live::cluster::route_cases::command_histories",
@@ -45,14 +46,35 @@ const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
 const TEST_WORKSPACES: &[&str] = &["", "apps"];
 
-/// Exact inputs for qualifying a clean selected revision through the existing
-/// application cases.
+/// Exact inputs for qualifying one published release, by its digest, through
+/// the existing application cases (docs/plan/platform-deploy.md §8.2).
 #[derive(Clone, Debug)]
 pub struct QualifyReleaseRequest {
     pub repository: PathBuf,
     /// Integrated main, a release tag, or an explicitly selected revision.
     pub revision: String,
-    pub candidate: PathBuf,
+    /// The release, `sha256:<hex>`.
+    pub release_digest: String,
+    /// The release repository `publish-release` pushed the manifest to.
+    pub releases: PackageRegistry,
+    /// The org, project, environment, tenant and route host the cases
+    /// provision and publish under. The manifest names none of them (R1).
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+    pub tenant: String,
+    pub route_host: String,
+    pub target_directory: PathBuf,
+    pub host_image: String,
+    /// The http role component, `<repository>@sha256:<hex>` (R12).
+    pub http_image: String,
+    /// The materializer role component, `<repository>@sha256:<hex>` (R12).
+    pub materializer_image: String,
+    pub gates_image: Option<String>,
+    pub identity_image: Option<String>,
+    pub native_registry_endpoint: Option<String>,
+    pub native_registry_insecure: bool,
+    pub deployment_files: Vec<PathBuf>,
     /// Fresh temporary result file outside tracked source.
     pub result: PathBuf,
 }
@@ -210,7 +232,9 @@ pub async fn qualify(request: QualifyReleaseRequest) -> anyhow::Result<()> {
         .write(true)
         .open(&request.result)
         .context("create a fresh qualification result file")?;
-    let candidate = Candidate::read(&fs::canonicalize(&request.candidate)?)?;
+    let temporary = TemporaryResults::create()?;
+    let candidate_path = temporary.path.join("candidate.json");
+    let candidate = write_candidate(&request, &temporary.path, &candidate_path).await?;
     let repository_root = discover_repository_root(&request.repository).await?;
     let snapshot = read_status(&repository_root).await?;
     let (manifest, digest) = candidate.manifest()?;
@@ -218,12 +242,19 @@ pub async fn qualify(request: QualifyReleaseRequest) -> anyhow::Result<()> {
         source_commit: snapshot.source_commit().to_owned(),
         release: manifest.release,
         manifest_digest: digest.as_str().to_owned(),
-        artifact_hashes: candidate.artifact_hashes()?,
+        artifact_hashes: std::collections::BTreeMap::new(),
         candidate,
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    let run = qualify_candidate(&request, &repository_root, &mut result).await;
+    let run = qualify_candidate(
+        &request,
+        &repository_root,
+        &candidate_path,
+        temporary,
+        &mut result,
+    )
+    .await;
     if run.is_ok() {
         "pass".clone_into(&mut result.result);
     }
@@ -238,9 +269,57 @@ pub async fn qualify(request: QualifyReleaseRequest) -> anyhow::Result<()> {
     run
 }
 
+/// Pull the release by its digest into `directory` and write the candidate
+/// the cases read: the release and the request's other inputs.
+async fn write_candidate(
+    request: &QualifyReleaseRequest,
+    directory: &Path,
+    candidate_path: &Path,
+) -> anyhow::Result<Candidate> {
+    let releases = &request.releases;
+    let bytes = wamn_runtime::release_manifest_source::ReleaseManifestSource::new(
+        &releases.artifact_base,
+        releases.insecure_registry,
+        &releases.registry_auth_file,
+    )
+    .context("open the release manifest source")?
+    .with_ca_paths(&releases.oci_ca_paths)
+    .context("read the registry CA")?
+    .pull_verified(&request.release_digest)
+    .await
+    .with_context(|| format!("pull release {}", request.release_digest))?;
+    let manifest_path = directory.join("manifest.json");
+    fs::write(&manifest_path, &bytes)?;
+    let candidate = Candidate {
+        org: request.org.clone(),
+        project: request.project.clone(),
+        environment: request.environment.clone(),
+        tenant: request.tenant.clone(),
+        route_host: request.route_host.clone(),
+        manifest_path,
+        target_directory: fs::canonicalize(&request.target_directory)?,
+        host_image: request.host_image.clone(),
+        http_image: request.http_image.clone(),
+        materializer_image: request.materializer_image.clone(),
+        gates_image: request.gates_image.clone(),
+        identity_image: request.identity_image.clone(),
+        deployment_files: request.deployment_files.clone(),
+        native_registry_endpoint: request.native_registry_endpoint.clone(),
+        native_registry_insecure: request.native_registry_insecure,
+    };
+    let output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(candidate_path)?;
+    serde_json::to_writer_pretty(output, &candidate).context("write the candidate")?;
+    Candidate::read(candidate_path)
+}
+
 async fn qualify_candidate(
     request: &QualifyReleaseRequest,
     repository_root: &Path,
+    candidate_path: &Path,
+    temporary: TemporaryResults,
     result: &mut Qualification,
 ) -> anyhow::Result<()> {
     let snapshot = read_status(repository_root).await?;
@@ -284,8 +363,9 @@ async fn qualify_candidate(
         "Rust differs from rust-toolchain.toml"
     );
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
+    // The candidate's artifacts are what this build made.
     build_artifacts(root, target, &mut result.checks).await?;
-    result.assert_artifacts()?;
+    result.artifact_hashes = result.candidate.artifact_hashes()?;
     for command in image_commands(&result.candidate) {
         run(root, &command, &[], &mut result.checks).await?;
     }
@@ -316,11 +396,10 @@ async fn qualify_candidate(
     )
     .await?;
     require_listed_cases(&String::from_utf8_lossy(&listed.stdout), app.cases)?;
-    let temporary = TemporaryResults::create()?;
     for (index, case) in app.cases.iter().enumerate() {
         let checked: anyhow::Result<()> = async {
             ensure!(
-                Candidate::read(&request.candidate)? == result.candidate,
+                Candidate::read(candidate_path)? == result.candidate,
                 "candidate inputs changed during qualification"
             );
             let case_result = temporary.path.join(format!("case-{index}.json"));
@@ -328,7 +407,7 @@ async fn qualify_candidate(
             env.extend([
                 (
                     "WAMN_DELIVERY_CANDIDATE".to_owned(),
-                    fs::canonicalize(&request.candidate)?.display().to_string(),
+                    candidate_path.display().to_string(),
                 ),
                 (
                     "WAMN_DELIVERY_RESULT".to_owned(),
@@ -384,10 +463,8 @@ async fn qualify_candidate(
 ///
 /// The repository holds no build output, so the component, native and test
 /// builds after this step need it first (platform-deploy.md §7.1, C15).
-/// Qualification rebuilds the candidate's target directory with this, so a
-/// candidate is prepared after it: the rebuild then adds no guest and
-/// changes no file.
-pub async fn build_artifacts(
+/// Qualification records the candidate's artifacts after this build.
+async fn build_artifacts(
     root: &Path,
     target: &Path,
     checks: &mut Vec<CheckResult>,

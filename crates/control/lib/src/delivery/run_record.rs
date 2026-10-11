@@ -26,14 +26,13 @@ pub enum Stage {
     Schema,
     Packages,
     Qualify,
-    Publish,
     Deploy,
     CheckAndRetire,
     Record,
 }
 
 impl Stage {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 11] = [
         Self::Source,
         Self::Build,
         Self::Images,
@@ -42,7 +41,6 @@ impl Stage {
         Self::Schema,
         Self::Packages,
         Self::Qualify,
-        Self::Publish,
         Self::Deploy,
         Self::CheckAndRetire,
         Self::Record,

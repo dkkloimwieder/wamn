@@ -9,10 +9,10 @@
 //! refused (`wamn-duyl`) because it would roll a release without a rollout.
 
 use anyhow::Context as _;
-use tokio_postgres::NoTls;
+use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest};
 
-use crate::push_release_manifest::select_snapshot;
+use crate::publish_release::read_release;
 
 /// Exact release identity carried into one workload deployment.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,4 +84,25 @@ pub async fn lookup_release_snapshot(
             manifest_digest,
         },
     })
+}
+
+/// Read one published release's exact canonical bytes in its own transaction.
+async fn select_snapshot(
+    client: &mut Client,
+    tenant: &str,
+    manifest_digest: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin the release snapshot read")?;
+    let snapshot = read_release(&transaction, tenant, manifest_digest)
+        .await
+        .context("read the published release")?;
+    transaction
+        .commit()
+        .await
+        .context("close the release snapshot read")?;
+    snapshot
+        .with_context(|| format!("tenant {tenant:?} has no published release {manifest_digest}"))
 }

@@ -387,15 +387,26 @@ impl PublishReleaseRequest {
 }
 
 /// Publish one effective release from the verified package artifacts in
-/// `registry`, project its identity, and return its manifest digest.
+/// `registry`, project its identity, push its manifest to
+/// `release_artifact_base` with the credential and trust roots of `registry`
+/// (§8.1), and return its manifest digest.
 pub async fn publish_release(
     request: PublishReleaseRequest,
     registry: &PackageRegistry,
+    release_artifact_base: &str,
 ) -> anyhow::Result<ManifestDigest> {
     let published = publish_candidate(&request, registry, false).await?;
     let coordinate = request.deployment_coordinate(&published.digest);
     report_deployment_coordinate(&coordinate);
     project_release_identity(&request.control_database_url, &coordinate).await?;
+    crate::push_release_manifest::push_manifest_bytes(
+        &published.canonical_bytes,
+        release_artifact_base,
+        registry.insecure_registry,
+        &registry.oci_ca_paths,
+        &registry.registry_auth_file,
+    )
+    .await?;
     Ok(published.digest)
 }
 
@@ -2605,6 +2616,7 @@ mod tests {
                 wirings: Vec::new(),
             },
             &registry,
+            "127.0.0.1:9/wamn/releases",
         )
         .await
         .unwrap_err();

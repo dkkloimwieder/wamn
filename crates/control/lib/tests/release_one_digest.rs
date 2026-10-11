@@ -193,6 +193,10 @@ async fn publish_through_publish_release(
             wirings: Vec::new(),
         },
         registry,
+        &format!(
+            "{}/releases",
+            registry.artifact_base.trim_end_matches("/packages")
+        ),
     )
     .await
     .expect("publish the release")

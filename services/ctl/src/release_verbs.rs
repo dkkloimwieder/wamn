@@ -98,10 +98,12 @@ pub struct PublishReleaseArgs {
     /// Explicit `<registry>/<repository>` base for package artifacts.
     #[arg(long)]
     pub artifact_base: String,
-    /// `.dockerconfigjson` file carrying the registry pull credential.
+    /// `.dockerconfigjson` file carrying the credential of both registries:
+    /// a pull for the packages, a push for the release.
     #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
     pub registry_auth_file: PathBuf,
-    /// Use plain HTTP for exactly the registry in `--artifact-base`.
+    /// Use plain HTTP for exactly the registries of the package base and of
+    /// `WAMN_RELEASE_ARTIFACT_BASE`.
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
     /// PEM CA bundle trusted for the registry, on top of the compiled-in
@@ -206,6 +208,10 @@ pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
 
 /// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
+    // The release repository is the one `env apply` pulls from, named once
+    // for the platform (`environment::Platform::from_env`).
+    let release_artifact_base = std::env::var("WAMN_RELEASE_ARTIFACT_BASE")
+        .map_err(|_| anyhow::anyhow!("set WAMN_RELEASE_ARTIFACT_BASE to the release repository"))?;
     let registry = PackageRegistry {
         artifact_base: args.artifact_base,
         registry_auth_file: args.registry_auth_file,
@@ -227,6 +233,7 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
             wirings: args.wirings,
         },
         &registry,
+        &release_artifact_base,
     )
     .await?;
     println!("{digest}");

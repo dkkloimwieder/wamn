@@ -794,8 +794,8 @@ async fn released_http(
     serve_released_http(cluster, replicas, route, carrier).await
 }
 
-/// Publish the release of the candidate through the publish-only path, and
-/// push it as the journey does. The Receiving-only cases start here.
+/// Publish the release of the candidate through the publish-only path, which
+/// pushes it as the journey does. The Receiving-only cases start here.
 async fn publish_and_push(
     inputs: &JourneyDocument,
     artifacts: &Artifacts,
@@ -805,24 +805,6 @@ async fn publish_and_push(
         &artifacts.target.join("debug/wamn-scenario-worker"),
     )
     .await?;
-    wamn_control::push_release_manifest::push_release_manifest(
-        &wamn_control::push_release_manifest::PushReleaseManifestRequest {
-            database_url: route.database_url.clone(),
-            org: identity().org.clone(),
-            project: identity().project.clone(),
-            environment: identity().environment.clone(),
-            tenant: identity().tenant.clone(),
-            manifest_digest: release_digest_at(&route.database_url, FIRST_RELEASE).await?,
-            artifact_base: inputs.release_artifact_base.clone(),
-            registry_auth_file: inputs.registry_auth_file.clone(),
-            insecure_registry: true,
-            oci_ca_paths: Vec::new(),
-            control_database_url: inputs.system_pg_url.clone(),
-        },
-        None,
-    )
-    .await
-    .context("push and attest the published Receiving release")?;
     let carrier = lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),

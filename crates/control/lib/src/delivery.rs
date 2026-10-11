@@ -9,92 +9,10 @@ use serde::{Deserialize, Serialize};
 use wamn_catalog::{ManifestDigest, PackageCoordinate, ServingManifest, ServingRelease};
 
 pub mod environment;
-pub mod publication;
 pub mod qualification;
 pub mod run_record;
 pub mod selection;
 pub mod sqlx;
-
-/// Exact published release and explicit artifact locations captured for qualification.
-#[derive(Clone, Debug)]
-pub struct PrepareReleaseRequest {
-    /// URL to the database holding the published release snapshot.
-    pub database_url: String,
-    /// Org of the published release, which its manifest does not name.
-    pub org: String,
-    /// Project of the published release, which its manifest does not name.
-    pub project: String,
-    /// Environment of the published release, which its manifest does not name.
-    pub environment: String,
-    /// Tenant that holds the published release, which its manifest does not name.
-    pub tenant: String,
-    /// Route host of the environment, which the manifest does not name (R1).
-    pub route_host: String,
-    /// The published release, as its manifest digest.
-    pub manifest_digest: String,
-    /// The `<registry>/<repository>` the release manifest was pushed to.
-    pub artifact_base: String,
-    pub target_directory: PathBuf,
-    pub manifest_output: PathBuf,
-    pub candidate_output: PathBuf,
-    pub host_image: String,
-    /// The http role component, `<repository>@sha256:<hex>` (R12).
-    pub http_image: String,
-    /// The materializer role component, `<repository>@sha256:<hex>` (R12).
-    pub materializer_image: String,
-    pub gates_image: Option<String>,
-    pub identity_image: Option<String>,
-    pub native_registry_endpoint: Option<String>,
-    pub native_registry_insecure: bool,
-    pub deployment_files: Vec<PathBuf>,
-}
-
-/// Write machine inputs from an immutable snapshot without qualifying or publishing it.
-pub async fn prepare(request: PrepareReleaseRequest) -> anyhow::Result<()> {
-    ensure!(
-        request.manifest_output.is_absolute() && request.candidate_output.is_absolute(),
-        "candidate output paths must be absolute"
-    );
-    ensure!(
-        !request.manifest_output.exists() && !request.candidate_output.exists(),
-        "candidate output paths must be unused"
-    );
-    let snapshot = crate::print_release_env::lookup_release_snapshot(
-        &request.database_url,
-        &request.tenant,
-        &request.manifest_digest,
-        &request.artifact_base,
-    )
-    .await?;
-    let candidate = Candidate {
-        org: request.org,
-        project: request.project,
-        environment: request.environment,
-        tenant: request.tenant,
-        route_host: request.route_host,
-        manifest_path: request.manifest_output,
-        target_directory: fs::canonicalize(request.target_directory)?,
-        host_image: request.host_image,
-        http_image: request.http_image,
-        materializer_image: request.materializer_image,
-        gates_image: request.gates_image,
-        identity_image: request.identity_image,
-        deployment_files: request.deployment_files,
-        native_registry_endpoint: request.native_registry_endpoint,
-        native_registry_insecure: request.native_registry_insecure,
-    };
-    let mut manifest = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&candidate.manifest_path)?;
-    std::io::Write::write_all(&mut manifest, &snapshot.manifest.canonical_bytes())?;
-    candidate.artifact_hashes()?;
-    let output = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(request.candidate_output)?;
-    serde_json::to_writer_pretty(output, &candidate).context("write the candidate artifact inputs")
-}
 
 /// The release inputs that a qualification fixture provisions and publishes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -363,43 +281,6 @@ pub struct Qualification {
 }
 
 impl Qualification {
-    /// Read a result without granting it publication or deployment authority.
-    pub fn read(path: &Path) -> anyhow::Result<Self> {
-        serde_json::from_slice(&fs::read(path).context("read the qualification result")?)
-            .context("decode the qualification result")
-    }
-
-    /// Refuse failures, missing required commands, and incomplete results.
-    pub fn require_pass(&self) -> anyhow::Result<()> {
-        ensure!(
-            self.result == "pass",
-            "the release did not pass qualification"
-        );
-        ensure!(
-            self.source_commit.len() == 40
-                && self
-                    .source_commit
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit()),
-            "qualification requires the exact source commit"
-        );
-        ensure!(
-            !self.checks.is_empty()
-                && self
-                    .checks
-                    .iter()
-                    .all(|check| check.result == "pass" && check.cause.is_none()),
-            "every required qualification command must execute and pass"
-        );
-        let (manifest, digest) = self.candidate.manifest()?;
-        ensure!(
-            self.release == manifest.release && self.manifest_digest == digest.as_str(),
-            "qualification names another release or manifest digest"
-        );
-        qualification::require_complete_checks(self)?;
-        self.assert_artifacts()
-    }
-
     /// Refuse artifact changes after qualification, and name each changed path.
     pub fn assert_artifacts(&self) -> anyhow::Result<()> {
         let found = self.candidate.artifact_hashes()?;

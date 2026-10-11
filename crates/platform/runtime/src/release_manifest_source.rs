@@ -1,6 +1,6 @@
 //! Digest-verified OCI supply of one release's canonical serving-manifest bytes.
 //!
-//! This is the read side of the artifact `wamn-ctl push-release-manifest`
+//! This is the read side of the artifact `wamn-ctl publish-release`
 //! writes, and it is what makes that artifact the release's desired-state
 //! source rather than a write-only copy: a serving process is told its release
 //! by an explicit `<registry>/<repository>` base plus the manifest digest its

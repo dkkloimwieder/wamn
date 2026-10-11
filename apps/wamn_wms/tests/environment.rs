@@ -29,7 +29,6 @@ use wamn_control::provision_project_env::{
     secret_value,
 };
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_release_manifest::{self, PushReleaseManifestRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
@@ -495,13 +494,12 @@ fn label_store_alias(root: &Path) -> anyhow::Result<String> {
         .with_context(|| format!("{} names no store alias on its store node", path.display()))
 }
 
-/// Publish WMS and its label components, author its wirings, then bind and attest.
+/// Publish WMS and its label components, author its wirings, then bind.
 /// The artifacts and endpoint one release publication is published from.
 pub struct PublicationArtifacts<'a> {
     pub scenario_worker: &'a Path,
     pub label_render_wasm: &'a Path,
     pub minio_endpoint: &'a str,
-    pub publish_only: bool,
 }
 
 pub async fn publish(
@@ -515,7 +513,6 @@ pub async fn publish(
         scenario_worker,
         label_render_wasm,
         minio_endpoint,
-        publish_only,
     } = *artifacts;
     let package = package_coordinate()?;
     let root = package_root();
@@ -625,6 +622,7 @@ pub async fn publish(
             wirings: targets,
         },
         &registry,
+        &inputs.release_artifact_base,
     )
     .await?
     .to_string();
@@ -666,25 +664,6 @@ pub async fn publish(
         store_alias,
     })
     .await?;
-    if !publish_only {
-        push_release_manifest::push_release_manifest(
-            &PushReleaseManifestRequest {
-                database_url: route.database_url.clone(),
-                control_database_url: inputs.system_pg_url.clone(),
-                org: identity().org.clone(),
-                project: identity().project.clone(),
-                environment: identity().environment.clone(),
-                tenant: identity().tenant.clone(),
-                manifest_digest: release_digest.clone(),
-                artifact_base: inputs.release_artifact_base.clone(),
-                registry_auth_file: inputs.registry_auth_file.clone(),
-                insecure_registry: true,
-                oci_ca_paths: Vec::new(),
-            },
-            None,
-        )
-        .await?;
-    }
     print_release_env::lookup_release_carrier(
         &route.database_url,
         identity().tenant.as_str(),

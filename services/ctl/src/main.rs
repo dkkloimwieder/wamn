@@ -32,15 +32,9 @@ struct Cli {
 /// instead.
 #[derive(Subcommand)]
 enum Command {
-    /// Publish only the release that passed required qualification.
-    PublishQualifiedRelease(delivery_verbs::PublishArgs),
-    /// Push one published release manifest with no qualification commit and attest it.
-    PushReleaseManifest(delivery_verbs::PushReleaseManifestArgs),
-    /// Capture a published release and exact artifact locations for qualification.
-    PrepareRelease(delivery_verbs::PrepareReleaseArgs),
     /// Execute selected existing tests before integration.
     CheckChanges(delivery_verbs::CheckChangesArgs),
-    /// Qualify the exact release artifacts from a clean selected revision.
+    /// Qualify one published release, by its digest, from a clean selected revision.
     QualifyRelease(delivery_verbs::QualifyReleaseArgs),
     /// Take one installed environment to the bytes of one commit.
     UpgradeEnvironment(delivery_verbs::UpgradeEnvironmentArgs),
@@ -91,7 +85,8 @@ enum Command {
     /// Bind one admitted component's declared connection alias to an
     /// environment-owned instance carrying a host-held credential handle.
     BindConnection(component_verbs::BindConnectionArgs),
-    /// Publish one immutable format-1 effective release from exact package-owned facts.
+    /// Publish one immutable release from exact package-owned facts and push
+    /// its manifest to the release repository.
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(release_verbs::PublishReleaseArgs),
@@ -130,9 +125,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
-        Command::PublishQualifiedRelease(args) => delivery_verbs::publish(args).await,
-        Command::PushReleaseManifest(args) => delivery_verbs::push_release_manifest(args).await,
-        Command::PrepareRelease(args) => delivery_verbs::prepare(args).await,
         Command::CheckChanges(args) => delivery_verbs::check_changes(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
         Command::UpgradeEnvironment(args) => delivery_verbs::upgrade_environment(args).await,

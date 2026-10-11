@@ -6,18 +6,16 @@
 //! delivery is the same for every application:
 //!
 //! 1. The host, identity and gates images and the role images go to an owned
-//!    native registry. `prepare-release` writes the candidate, the nodes pull
-//!    the host image, and `qualify-release` runs the application's qualifying
-//!    cases, which deploy the candidate's images through the release chart.
+//!    native registry. The nodes pull the host image, and `qualify-release`
+//!    of the release digest, which the fixture's `publish-release` pushed,
+//!    runs the application's qualifying cases, which deploy those images
+//!    through the release chart (§8).
 //! 2. The role images are copied by digest to the kept registry, and a copy of
-//!    the release chart is stamped with the candidate's image set (R12, R15).
-//! 3. `publish-qualified-release` pushes the manifest to the TLS registry and
-//!    records the qualification on the chart's image set, which `env apply`
-//!    reads (R12).
-//! 4. The host group's platform part is the fixture's overlay group less what
+//!    the release chart is stamped with the qualified image set (R12, R15).
+//! 3. The host group's platform part is the fixture's overlay group less what
 //!    `apply` derives. The document is `env show` of the environment with the
 //!    release digest and the route host, and `wamn-ctl env apply` runs on it.
-//! 5. The checks: the hosts, each role's placement, the A1 probe, and A12 when
+//! 4. The checks: the hosts, each role's placement, the A1 probe, and A12 when
 //!    another environment is in the namespace.
 
 use std::ffi::OsString;
@@ -30,7 +28,7 @@ use serde_json::{Value, json};
 use serde_yaml::Value as Yaml;
 use tokio::process::Command;
 use wamn_catalog::ServingManifest;
-use wamn_control::delivery::{Candidate, qualification};
+use wamn_control::delivery::Qualification;
 use wamn_control::environment::document::DeclaredRelease;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::release_chart::{ImageSet, Target, release_name, roles, stamp};
@@ -91,8 +89,6 @@ pub struct Application<'a> {
     pub system_database_url: &'a str,
     /// The release the fixture published, `sha256:<hex>`.
     pub release_digest: &'a str,
-    /// Where the fixture pushed the release manifest: the plain HTTP registry.
-    pub release_artifact_base: &'a str,
     /// Values every command result redacts.
     pub secrets: Vec<String>,
 }
@@ -177,7 +173,7 @@ pub async fn build_images(app: &Application<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Qualify, publish and apply the application's release, then check it.
+/// Qualify and apply the application's release, then check it.
 pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Result<Delivered> {
     step(
         app,
@@ -191,10 +187,10 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     .await?;
     let host_image = app.native("host")?;
     let (http, materializer) = push_roles(app).await?;
-    let (candidate, manifest, qualification) =
-        qualify(app, &host_image, &http, &materializer).await?;
+    let tls_releases = format!("{}/wamn/releases", app.kept.registry);
+    let qualification = qualify(app, &tls_releases, &host_image, &http, &materializer).await?;
 
-    // The platform image set is the candidate's: the role images copied by
+    // The platform image set is the qualified one: the role images copied by
     // digest to the kept registry, which the hosts pull from.
     let kept = Registry {
         authority: app.kept.registry.clone(),
@@ -202,7 +198,7 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         insecure: false,
         ca_paths: vec![app.kept.ca.clone()],
     };
-    let (http, materializer) = copy_roles(&candidate, &kept).await?;
+    let (http, materializer) = copy_roles(&qualification.candidate, &kept).await?;
     let chart = stamp(
         &app.repository.join("deploy/platform/release"),
         &ImageSet {
@@ -212,44 +208,6 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         },
         &app.work.join("release-chart"),
     )?;
-
-    // The manifest goes to the TLS registry, and the qualification is recorded
-    // on the chart's image set (R12).
-    let tls_releases = format!("{}/wamn/releases", app.kept.registry);
-    let ca = app.kept.ca.to_string_lossy().into_owned();
-    step(
-        app,
-        "publish-qualified-release",
-        Command::new(app.ctl())
-            .arg("publish-qualified-release")
-            .arg("--qualification")
-            .arg(&qualification)
-            .args([
-                "--database-url",
-                app.project_database_url,
-                "--control-database-url",
-                app.system_database_url,
-                "--org",
-                &app.triple.org,
-                "--project",
-                &app.triple.project,
-                "--environment",
-                app.triple.env.as_str(),
-                "--tenant",
-                app.tenant,
-                "--release-digest",
-                app.release_digest,
-                "--artifact-base",
-                &tls_releases,
-                "--oci-ca-path",
-                &ca,
-            ])
-            .arg("--registry-auth-file")
-            .arg(&app.kept.registry_auth)
-            .arg("--release-chart")
-            .arg(&chart),
-    )
-    .await?;
     let platform = Platform {
         system_database_url: app.system_database_url.to_owned(),
         target: Target {
@@ -258,7 +216,7 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
             namespace: NAMESPACE.to_owned(),
         },
         chart,
-        release_artifact_base: tls_releases,
+        release_artifact_base: tls_releases.clone(),
         registry_auth_file: app.kept.registry_auth.clone(),
         oci_ca_paths: vec![app.kept.ca.clone()],
         // The fixture pushed the packages to the HTTP twin, whose storage is
@@ -277,7 +235,15 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         &app.triple.project,
         app.triple.env.as_str(),
     )?;
-    check(app, &name, &host_image, &candidate, &manifest).await?;
+    let manifest = wamn_control::print_release_env::lookup_release_snapshot(
+        app.project_database_url,
+        app.tenant,
+        app.release_digest,
+        &tls_releases,
+    )
+    .await?
+    .manifest;
+    check(app, &name, &host_image, &manifest).await?;
     Ok(Delivered {
         release_name: name,
         host_image,
@@ -285,67 +251,18 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     })
 }
 
-/// The build of qualification, `prepare-release`, the nodes' pull of the
-/// native host image, and `qualify-release`. Returns the candidate, its
-/// manifest and the qualification result.
+/// The nodes' pull of the native host image and `qualify-release` of the
+/// release digest, which `publish-release` pushed to `releases`. Returns the
+/// qualification result.
 async fn qualify(
     app: &Application<'_>,
+    releases: &str,
     host_image: &str,
     http_image: &str,
     materializer_image: &str,
-) -> anyhow::Result<(Candidate, ServingManifest, PathBuf)> {
-    // The application built only its own packages. Qualification builds every
-    // package into the same target directory, and refuses a guest that its
-    // build adds to the candidate.
-    let mut builds = Vec::new();
-    let built = qualification::build_artifacts(app.repository, app.target, &mut builds).await;
-    write_evidence(app.evidence, "candidate-build.json", &json!(builds))?;
-    built?;
-    let manifest = app.evidence.join("manifest.json");
-    let candidate_path = app.evidence.join("candidate.json");
-    let qualification = app.evidence.join("qualification.json");
-    let mut prepare = Command::new(app.ctl());
-    prepare
-        .arg("prepare-release")
-        .args([
-            "--route-host",
-            app.route_host,
-            "--database-url",
-            app.project_database_url,
-            "--org",
-            &app.triple.org,
-            "--project",
-            &app.triple.project,
-            "--environment",
-            app.triple.env.as_str(),
-            "--tenant",
-            app.tenant,
-            "--release-digest",
-            app.release_digest,
-            "--artifact-base",
-            app.release_artifact_base,
-        ])
-        .arg("--target-directory")
-        .arg(app.target)
-        .arg("--manifest-output")
-        .arg(&manifest)
-        .arg("--candidate-output")
-        .arg(&candidate_path)
-        .args(["--host-image", host_image])
-        .args(["--http-image", http_image])
-        .args(["--materializer-image", materializer_image])
-        .args(["--identity-image", &app.native("identity")?])
-        .args([
-            "--native-registry-endpoint",
-            &format!("{}-native-registry:5000", app.owner),
-            "--native-registry-insecure",
-        ]);
-    if app.gates() {
-        prepare.args(["--gates-image", &app.native("gates")?]);
-    }
-    step(app, "prepare-release", &mut prepare).await?;
-    let candidate = Candidate::read(&candidate_path)?;
-    native_registry_files(&candidate, app.work)?;
+) -> anyhow::Result<Qualification> {
+    let endpoint = format!("{}-native-registry:5000", app.owner);
+    native_registry_files(&endpoint, host_image, app.work)?;
     step(
         app,
         "load-native",
@@ -356,39 +273,64 @@ async fn qualify(
             .arg(&app.kept.name),
     )
     .await?;
-    step(
-        app,
-        "qualify-release",
-        Command::new(app.ctl())
-            .arg("qualify-release")
-            .arg("--repository")
-            .arg(app.repository)
-            .arg("--revision")
-            .arg(app.source)
-            .arg("--candidate")
-            .arg(&candidate_path)
-            .arg("--result")
-            .arg(&qualification),
+    let result = app.evidence.join("qualification.json");
+    let ca = app.kept.ca.to_string_lossy().into_owned();
+    let mut qualify = Command::new(app.ctl());
+    qualify
+        .arg("qualify-release")
+        .arg("--repository")
+        .arg(app.repository)
+        .args(["--revision", app.source])
+        .args(["--release-digest", app.release_digest])
+        .args(["--artifact-base", releases, "--oci-ca-path", &ca])
+        .arg("--registry-auth-file")
+        .arg(&app.kept.registry_auth)
+        .args([
+            "--org",
+            &app.triple.org,
+            "--project",
+            &app.triple.project,
+            "--environment",
+            app.triple.env.as_str(),
+            "--tenant",
+            app.tenant,
+            "--route-host",
+            app.route_host,
+        ])
+        .arg("--target-directory")
+        .arg(app.target)
+        .args(["--host-image", host_image])
+        .args(["--http-image", http_image])
+        .args(["--materializer-image", materializer_image])
+        .args(["--identity-image", &app.native("identity")?])
+        .args([
+            "--native-registry-endpoint",
+            &endpoint,
+            "--native-registry-insecure",
+        ])
+        .arg("--result")
+        .arg(&result);
+    if app.gates() {
+        qualify.args(["--gates-image", &app.native("gates")?]);
+    }
+    step(app, "qualify-release", &mut qualify).await?;
+    let qualification: Qualification = serde_json::from_slice(
+        &fs::read(&result).context("read the qualification result")?,
     )
-    .await?;
-    let (manifest, digest) = candidate.manifest()?;
+    .context("decode the qualification result")?;
     ensure!(
-        digest.as_str() == app.release_digest,
-        "the candidate names release {digest}, not {}",
+        qualification.manifest_digest == app.release_digest,
+        "the qualification names release {}, not {}",
+        qualification.manifest_digest,
         app.release_digest
     );
-    Ok((candidate, manifest, qualification))
+    Ok(qualification)
 }
 
-/// The nodes' hosts file for the native registry, as the application
-/// fixtures' `delivery::registry_files` writes it.
-fn native_registry_files(candidate: &Candidate, work: &Path) -> anyhow::Result<()> {
-    let endpoint = candidate
-        .native_registry_endpoint
-        .as_deref()
-        .context("the candidate names its native registry")?;
-    let (authority, _) = candidate
-        .host_image
+/// The nodes' hosts file for the native registry at `endpoint`, as the
+/// application fixtures' `delivery::registry_files` writes it.
+fn native_registry_files(endpoint: &str, host_image: &str, work: &Path) -> anyhow::Result<()> {
+    let (authority, _) = host_image
         .split_once('/')
         .context("the native host image has a registry authority")?;
     let endpoint = serde_json::to_string(&format!("http://{endpoint}"))?;
@@ -650,7 +592,6 @@ async fn check(
     app: &Application<'_>,
     name: &str,
     host_image: &str,
-    candidate: &Candidate,
     manifest: &ServingManifest,
 ) -> anyhow::Result<()> {
     let label = wamn_engine::release_manifest::release_label(app.release_digest)
@@ -664,10 +605,9 @@ async fn check(
         digest: app.release_digest,
         evidence: app.evidence,
     };
-    let (_, runtime_digest) = candidate
-        .host_image
+    let (_, runtime_digest) = host_image
         .rsplit_once('@')
-        .context("the candidate host image is pinned by digest")?;
+        .context("the host image is pinned by digest")?;
     let hosts = hosts_ready(&release, host_image, runtime_digest, REPLICAS).await?;
     let mut results = vec![json!({"check":"hosts ready","result":"pass","release":name})];
     let implied = roles(

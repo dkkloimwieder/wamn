@@ -1,5 +1,4 @@
-//! Arguments and output of the release-manifest, release-environment, and
-//! delivery verbs.
+//! Arguments and output of the release-environment and delivery verbs.
 //!
 //! # The host carrier uses explicit flags
 //!
@@ -12,9 +11,9 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::Args;
-use wamn_control::delivery::{PrepareReleaseRequest, publication, qualification};
+use wamn_control::delivery::qualification;
+use wamn_control::package_artifact::PackageRegistry;
 use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
-use wamn_control::push_release_manifest::PushReleaseManifestRequest;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// The host's carrier: per host group `extraArgs`, flags rather than env. The
@@ -24,82 +23,6 @@ const HOST_CARRIER: &str = "hostGroups[].extraArgs of the selected host overlay"
 
 const ARTIFACT_BASE_FLAG: &str = "--release-artifact-base";
 const MANIFEST_DIGEST_FLAG: &str = "--release-manifest-digest";
-
-/// Arguments for the release-manifest distribution copy.
-#[derive(Debug, Args)]
-pub struct PushReleaseManifestArgs {
-    /// Owner URL to the database holding the published release snapshot.
-    #[arg(long)]
-    pub database_url: String,
-
-    /// Registry organization the release is deployed into. Required in both
-    /// byte sources: the manifest fixes the rest of the attestation key, but
-    /// never its control-plane placement.
-    #[arg(long)]
-    pub org: String,
-
-    /// Registry project the release is deployed into.
-    #[arg(long)]
-    pub project: String,
-
-    /// Environment the release is deployed into. The manifest names none.
-    #[arg(long)]
-    pub environment: String,
-
-    /// Tenant claim carried by the published release snapshot.
-    #[arg(long)]
-    pub tenant: String,
-
-    /// The published release, as its manifest digest.
-    #[arg(long)]
-    pub release_digest: String,
-
-    /// Explicit `<registry>/<repository>` base for release manifests.
-    #[arg(long)]
-    pub artifact_base: String,
-
-    /// Projected `.dockerconfigjson` file carrying the push credential.
-    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
-    pub registry_auth_file: PathBuf,
-
-    /// Use plain HTTP for exactly the registry in `--artifact-base`.
-    #[arg(long, default_value_t = false)]
-    pub insecure_registry: bool,
-
-    /// PEM CA bundle trusted for the registry, on top of the compiled-in
-    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
-    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
-    pub oci_ca_paths: Vec<PathBuf>,
-
-    /// Owner URL to the CONTROL database this deployment is attested in
-    /// (wamn-0h0g.8.27).
-    ///
-    /// REQUIRED in both byte sources. The attestation is what makes a digest
-    /// RELEASED rather than a candidate (`wamn-0h0g.13.54`), so a push that
-    /// could not reach the control plane must refuse rather than leave bytes in
-    /// a registry that no fact says were deployed.
-    #[arg(long)]
-    pub control_database_url: String,
-}
-
-impl PushReleaseManifestArgs {
-    /// Carry exactly what the operator typed into the library request.
-    pub fn into_request(self) -> PushReleaseManifestRequest {
-        PushReleaseManifestRequest {
-            database_url: self.database_url,
-            org: self.org,
-            project: self.project,
-            environment: self.environment,
-            tenant: self.tenant,
-            manifest_digest: self.release_digest,
-            artifact_base: self.artifact_base,
-            registry_auth_file: self.registry_auth_file,
-            insecure_registry: self.insecure_registry,
-            oci_ca_paths: self.oci_ca_paths,
-            control_database_url: self.control_database_url,
-        }
-    }
-}
 
 /// Arguments naming the published release whose lines are printed.
 #[derive(Debug, Args)]
@@ -121,29 +44,49 @@ pub struct PrintReleaseEnvArgs {
     pub artifact_base: String,
 }
 
-/// Capture the existing published release and explicit artifact locations for qualification.
+/// Qualify one published release, by its digest, through the existing
+/// application cases (docs/plan/platform-deploy.md §8.2).
 #[derive(Debug, Args)]
-pub struct PrepareReleaseArgs {
-    #[command(flatten)]
-    pub release: PrintReleaseEnvArgs,
-    /// Org of the published release, written into the candidate.
+pub struct QualifyReleaseArgs {
+    #[arg(long, default_value = ".")]
+    pub repository: PathBuf,
+    /// Integrated main, a release tag, or an explicitly selected revision.
+    #[arg(long, default_value = "main")]
+    pub revision: String,
+    /// The published release, as its manifest digest.
+    #[arg(long)]
+    pub release_digest: String,
+    /// The `<registry>/<repository>` that `publish-release` pushed the
+    /// manifest to.
+    #[arg(long)]
+    pub artifact_base: String,
+    /// `.dockerconfigjson` file carrying the registry credential.
+    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    pub registry_auth_file: PathBuf,
+    /// Use plain HTTP for exactly the registry in `--artifact-base`.
+    #[arg(long, default_value_t = false)]
+    pub insecure_registry: bool,
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in
+    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
+    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
+    /// Org the cases provision and publish under.
     #[arg(long)]
     pub org: String,
-    /// Project of the published release, written into the candidate.
+    /// Project the cases provision and publish under.
     #[arg(long)]
     pub project: String,
-    /// Environment of the published release, written into the candidate.
+    /// Environment the cases provision and publish under.
     #[arg(long)]
     pub environment: String,
-    /// Route host of the environment, written into the candidate.
+    /// Tenant the cases provision and publish under.
+    #[arg(long)]
+    pub tenant: String,
+    /// Route host the cases serve under.
     #[arg(long)]
     pub route_host: String,
     #[arg(long)]
     pub target_directory: PathBuf,
-    #[arg(long)]
-    pub manifest_output: PathBuf,
-    #[arg(long)]
-    pub candidate_output: PathBuf,
     #[arg(long)]
     pub host_image: String,
     /// The http role component the cases deploy through the release chart,
@@ -163,31 +106,6 @@ pub struct PrepareReleaseArgs {
     pub native_registry_insecure: bool,
     #[arg(long = "deployment-file")]
     pub deployment_files: Vec<PathBuf>,
-}
-
-/// Publish an already qualified candidate through the existing OCI publisher.
-#[derive(Debug, Args)]
-pub struct PublishArgs {
-    #[arg(long)]
-    pub qualification: PathBuf,
-    /// The stamped release chart whose default values name the platform image
-    /// set the release was qualified on (R12, R15).
-    #[arg(long, env = "WAMN_RELEASE_CHART")]
-    pub release_chart: PathBuf,
-    #[command(flatten)]
-    pub publication: PushReleaseManifestArgs,
-}
-
-/// Qualify a clean selected revision through the existing application cases.
-#[derive(Debug, Args)]
-pub struct QualifyReleaseArgs {
-    #[arg(long, default_value = ".")]
-    pub repository: PathBuf,
-    /// Integrated main, a release tag, or an explicitly selected revision.
-    #[arg(long, default_value = "main")]
-    pub revision: String,
-    #[arg(long)]
-    pub candidate: PathBuf,
     /// Fresh temporary result file outside tracked source.
     #[arg(long)]
     pub result: PathBuf,
@@ -238,20 +156,25 @@ fn release_lines(carrier: &ReleaseCarrier) -> String {
     )
 }
 
-/// Write machine inputs from an immutable snapshot without qualifying or publishing it.
-pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
-    wamn_control::delivery::prepare(PrepareReleaseRequest {
-        database_url: args.release.database_url,
+/// Qualify one published release by its digest.
+pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
+    qualification::qualify(qualification::QualifyReleaseRequest {
+        repository: args.repository,
+        revision: args.revision,
+        release_digest: args.release_digest,
+        releases: PackageRegistry {
+            artifact_base: args.artifact_base,
+            registry_auth_file: args.registry_auth_file,
+            insecure_registry: args.insecure_registry,
+            oci_ca_paths: args.oci_ca_paths,
+            control_database_url: String::new(),
+        },
         org: args.org,
         project: args.project,
         environment: args.environment,
-        tenant: args.release.tenant,
+        tenant: args.tenant,
         route_host: args.route_host,
-        manifest_digest: args.release.release_digest,
-        artifact_base: args.release.artifact_base,
         target_directory: args.target_directory,
-        manifest_output: args.manifest_output,
-        candidate_output: args.candidate_output,
         host_image: args.host_image,
         http_image: args.http_image,
         materializer_image: args.materializer_image,
@@ -260,39 +183,6 @@ pub async fn prepare(args: PrepareReleaseArgs) -> anyhow::Result<()> {
         native_registry_endpoint: args.native_registry_endpoint,
         native_registry_insecure: args.native_registry_insecure,
         deployment_files: args.deployment_files,
-    })
-    .await
-}
-
-/// Push one published release manifest with no qualification commit, attest it in
-/// the control database, and print its digest. A deployment that is not a
-/// qualification, such as the first Google Cloud deployment, uses this verb.
-pub async fn push_release_manifest(args: PushReleaseManifestArgs) -> anyhow::Result<()> {
-    let published =
-        wamn_control::push_release_manifest::push_release_manifest(&args.into_request(), None)
-            .await?;
-    println!("{}", published.digest);
-    Ok(())
-}
-
-/// Publish only the release that passed required qualification.
-pub async fn publish(args: PublishArgs) -> anyhow::Result<()> {
-    let published = publication::publish(
-        &args.qualification,
-        &args.publication.into_request(),
-        &args.release_chart,
-    )
-    .await?;
-    println!("{}", published.digest);
-    Ok(())
-}
-
-/// Qualify the exact release artifacts from a clean selected revision.
-pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
-    qualification::qualify(qualification::QualifyReleaseRequest {
-        repository: args.repository,
-        revision: args.revision,
-        candidate: args.candidate,
         result: args.result,
     })
     .await
@@ -367,16 +257,9 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use clap::Parser as _;
-    use wamn_catalog::{ManifestDigest, ServingManifest};
+    use wamn_catalog::ManifestDigest;
 
     use super::*;
-
-    /// Host command for the flattened argument surface under test.
-    #[derive(Debug, clap::Parser)]
-    struct PushProbe {
-        #[command(flatten)]
-        args: PushReleaseManifestArgs,
-    }
 
     /// Host command for the flattened argument surface under test.
     #[derive(Debug, clap::Parser)]
@@ -385,28 +268,8 @@ mod tests {
         args: PrintReleaseEnvArgs,
     }
 
-    const DESTINATION: [&str; 6] = [
-        "--artifact-base",
-        "registry.example/wamn/releases",
-        "--registry-auth-file",
-        "auth.json",
-        // wamn-0h0g.8.27: the control database the push attests into. A
-        // separate URL on purpose — the two planes are two databases.
-        "--control-database-url",
-        "postgres://control.invalid/store",
-    ];
-
     /// The published release the fixture coordinates name.
     const RELEASE: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
-
-    const PLACEMENT: [&str; 6] = [
-        "--org",
-        "fixture",
-        "--project",
-        "billing",
-        "--environment",
-        "prod",
-    ];
 
     const COORDINATE: [&str; 8] = [
         "--database-url",
@@ -419,128 +282,9 @@ mod tests {
         "registry.example/wamn/releases",
     ];
 
-    const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":7,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
-
-    fn parse(source: &[&str]) -> Result<PushReleaseManifestArgs, clap::Error> {
-        let mut argv = vec!["push-release-manifest"];
-        argv.extend_from_slice(source);
-        argv.extend_from_slice(&DESTINATION);
-        argv.extend_from_slice(&PLACEMENT);
-        PushProbe::try_parse_from(argv).map(|probe| probe.args)
-    }
-
     fn digest() -> ManifestDigest {
         ManifestDigest::parse(format!("sha256:{}", "7".repeat(64)))
             .expect("the fixture digest is canonical")
-    }
-
-    #[test]
-    fn published_snapshot_is_not_pushed_without_its_control_plane_placement() {
-        let source = [
-            "--database-url",
-            "postgres://release.invalid/env",
-            "--tenant",
-            "tenant-a",
-            "--release-digest",
-            RELEASE,
-        ];
-        for placement in [
-            vec!["--org", "fixture"],
-            vec!["--project", "billing"],
-            vec![],
-        ] {
-            let mut argv = vec!["push-release-manifest"];
-            argv.extend_from_slice(&source);
-            argv.extend_from_slice(&DESTINATION);
-            argv.extend_from_slice(&placement);
-            assert!(
-                PushProbe::try_parse_from(argv).is_err(),
-                "pushed with placement {placement:?}"
-            );
-        }
-
-        let mut argv = vec!["push-release-manifest"];
-        argv.extend_from_slice(&source);
-        argv.extend_from_slice(&[
-            "--artifact-base",
-            "registry.example/wamn/releases",
-            "--registry-auth-file",
-            "auth.json",
-        ]);
-        argv.extend_from_slice(&PLACEMENT);
-        assert!(
-            PushProbe::try_parse_from(argv).is_err(),
-            "pushed with no control database to attest into"
-        );
-
-        let placed = parse(&source).expect("a placed published snapshot parses");
-        assert_eq!(placed.org, "fixture");
-        assert_eq!(placed.project, "billing");
-        assert_eq!(
-            placed.control_database_url,
-            "postgres://control.invalid/store"
-        );
-    }
-
-    #[test]
-    fn the_parsed_placement_reaches_the_attestation_key() {
-        // The link the surface exists for: what the operator typed on the
-        // command line, not some other string in scope, is what keys the write.
-        let args = parse(&[
-            "--database-url",
-            "postgres://release.invalid/env",
-            "--tenant",
-            "tenant-a",
-            "--release-digest",
-            RELEASE,
-        ])
-        .expect("the published snapshot source parses");
-        let (_, manifest_digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-7 bytes");
-        let coordinate = args.into_request().deployment_coordinate(&manifest_digest);
-
-        assert_eq!(coordinate.triple.org, "fixture");
-        assert_eq!(coordinate.triple.project, "billing");
-        assert_eq!(coordinate.triple.env.as_str(), "prod");
-        assert_eq!(coordinate.tenant_id, "tenant-a");
-    }
-
-    #[test]
-    fn a_release_is_pushed_only_from_its_published_snapshot() {
-        let snapshot = parse(&[
-            "--database-url",
-            "postgres://release.invalid/env",
-            "--tenant",
-            "tenant-a",
-            "--release-digest",
-            RELEASE,
-        ])
-        .expect("the published-snapshot source parses");
-        assert_eq!(snapshot.database_url, "postgres://release.invalid/env");
-        assert_eq!(snapshot.tenant, "tenant-a");
-        assert_eq!(snapshot.release_digest, RELEASE);
-
-        assert!(
-            parse(&["--manifest", "manifest.json"]).is_err(),
-            "caller-supplied bytes must not mint deployment evidence"
-        );
-    }
-
-    #[test]
-    fn a_complete_published_snapshot_coordinate_is_required() {
-        let refusals: [Vec<&str>; 3] = [
-            vec![],
-            vec![
-                "--database-url",
-                "postgres://release.invalid/env",
-                "--tenant",
-                "tenant-a",
-            ],
-            vec!["--tenant", "tenant-a", "--release-digest", RELEASE],
-        ];
-        for refused in refusals {
-            assert!(parse(&refused).is_err(), "accepted {refused:?}");
-        }
     }
 
     #[test]

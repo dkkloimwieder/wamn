@@ -206,7 +206,6 @@ async fn run(
             scenario_worker: &target.join("debug/wamn-scenario-worker"),
             label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
             minio_endpoint: &minio_endpoint,
-            publish_only: true,
         },
         evidence,
     )
@@ -244,7 +243,6 @@ async fn run(
         project_database_url: &route.database_url,
         system_database_url: &document.system_pg_url,
         release_digest: release.manifest_digest.as_str(),
-        release_artifact_base: &release.artifact_base,
         secrets: vec![
             route.database_url.clone(),
             document.system_pg_url.clone(),

@@ -4,23 +4,18 @@
 //! exact retry pulls and verifies the existing artifact and performs no push.
 //! A tag holding any other layout or bytes refuses instead of being replaced.
 //!
-//! The bytes come only from the `catalog.releases` row the publish recorded
-//! under their digest. The push therefore cannot attest caller-supplied bytes
-//! that were never verified against the release identity.
+//! `publish-release` pushes the bytes it composed and recorded
+//! (docs/plan/platform-deploy.md §8.1).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::publish_release::{DeploymentCoordinate, read_release, report_deployment_coordinate};
-use anyhow::Context as _;
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
-use wamn_engine::release_manifest::ReleaseScope;
 use wamn_package_artifact::read_ca_bundles;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 pub(crate) use wamn_package_artifact::{artifact_is_absent, registry_auth};
@@ -139,180 +134,6 @@ pub struct PushedReleaseManifest {
     pub disposition: ReleaseManifestPushDisposition,
     /// Effective-release coordinate carried by the pushed bytes.
     pub release: ServingRelease,
-}
-
-/// Exact inputs of one release-manifest distribution copy.
-#[derive(Clone, Debug)]
-pub struct PushReleaseManifestRequest {
-    /// Owner URL to the database holding the published release.
-    pub database_url: String,
-
-    /// Registry organization the release is deployed into. Required in both
-    /// byte sources: the manifest fixes the rest of the attestation key, but
-    /// never its control-plane placement.
-    pub org: String,
-
-    /// Registry project the release is deployed into.
-    pub project: String,
-
-    /// Environment the release is deployed into. The manifest names none (R1).
-    pub environment: String,
-
-    /// Tenant that holds the published release.
-    pub tenant: String,
-
-    /// The published release, as its manifest digest.
-    pub manifest_digest: String,
-
-    /// Explicit `<registry>/<repository>` base for release manifests.
-    pub artifact_base: String,
-
-    /// Projected `.dockerconfigjson` file carrying the push credential.
-    pub registry_auth_file: PathBuf,
-
-    /// Use plain HTTP for exactly the registry in `artifact_base`.
-    pub insecure_registry: bool,
-
-    /// PEM CA bundle trusted for the registry, on top of the compiled-in roots.
-    pub oci_ca_paths: Vec<PathBuf>,
-
-    /// Owner URL to the CONTROL database this deployment is attested in
-    /// (wamn-0h0g.8.27).
-    ///
-    /// REQUIRED in both byte sources. The attestation is what makes a digest
-    /// RELEASED rather than a candidate (`wamn-0h0g.13.54`), so a push that
-    /// could not reach the control plane must refuse rather than leave bytes in
-    /// a registry that no fact says were deployed.
-    pub control_database_url: String,
-}
-
-impl PushReleaseManifestRequest {
-    /// Key the pushed bytes for attestation under this invocation's placement.
-    pub fn deployment_coordinate(&self, manifest_digest: &ManifestDigest) -> DeploymentCoordinate {
-        DeploymentCoordinate::new(
-            &self.org,
-            &self.project,
-            &ReleaseScope::new(self.tenant.as_str(), self.environment.as_str()),
-            manifest_digest,
-        )
-    }
-}
-
-/// Push one canonical release manifest, optionally attributed to one clean
-/// source commit, and return its verified identity.
-///
-/// Bytes never sit in the registry without their attestation. The verb opens
-/// the control database first and reads the release it will attest, pushes,
-/// and writes the attestation on that open connection. An unreachable control
-/// database therefore refuses before any push.
-pub async fn push_release_manifest(
-    request: &PushReleaseManifestRequest,
-    source_commit: Option<&str>,
-) -> anyhow::Result<PushedReleaseManifest> {
-    if let Some(source_commit) = source_commit {
-        anyhow::ensure!(
-            !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
-            "source commit must be one nonempty value"
-        );
-    }
-    crate::publish_release::on_control_plane(&request.control_database_url, async |control| {
-        let canonical_bytes = canonical_release_bytes(request).await?;
-        push_and_attest(control, request, &canonical_bytes, source_commit).await
-    })
-    .await
-}
-
-/// Read the control release that `canonical_bytes` names, push the bytes, and
-/// attest the push on `control`. A refused read pushes nothing, and a refused
-/// push writes no attestation.
-pub async fn push_and_attest(
-    control: &mut PgClient,
-    request: &PushReleaseManifestRequest,
-    canonical_bytes: &[u8],
-    source_commit: Option<&str>,
-) -> anyhow::Result<PushedReleaseManifest> {
-    let (_, digest) = ServingManifest::from_canonical_bytes(canonical_bytes)
-        .context("read the release that the published bytes name")?;
-    let coordinate = request.deployment_coordinate(&digest);
-    let known = control
-        .query_opt(
-            "SELECT 1 FROM catalog.effective_releases \
-              WHERE tenant_id = $1 AND manifest_digest = $2 AND environment = $3",
-            &[
-                &coordinate.tenant_id,
-                &coordinate.manifest_digest.as_str(),
-                &coordinate.triple.env.as_str(),
-            ],
-        )
-        .await
-        .context("read the control release before the push")?;
-    anyhow::ensure!(
-        known.is_some(),
-        "the control database has no release {} of tenant {:?} in environment {}; nothing was pushed",
-        coordinate.manifest_digest,
-        coordinate.tenant_id,
-        coordinate.triple.env.as_str()
-    );
-    let pushed = push_manifest_bytes(
-        canonical_bytes,
-        &request.artifact_base,
-        request.insecure_registry,
-        &request.oci_ca_paths,
-        &request.registry_auth_file,
-    )
-    .await?;
-    report_deployment_coordinate(&coordinate);
-    // wamn-0h0g.8.27: the OCI push IS the deployment event this attestation
-    // records, so the write lands here and on no other verb.
-    crate::publish_release::attest_deployment_on(control, &coordinate, source_commit).await?;
-    Ok(pushed)
-}
-
-/// Read the bytes to push from the release that published them.
-async fn canonical_release_bytes(request: &PushReleaseManifestRequest) -> anyhow::Result<Vec<u8>> {
-    let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
-        .await
-        .context("connect to the release snapshot database")?;
-    let connection_task = tokio::spawn(connection);
-    let read = select_snapshot(&mut client, &request.tenant, &request.manifest_digest).await;
-    match read {
-        Ok(canonical_bytes) => {
-            drop(client);
-            connection_task
-                .await
-                .context("join the release snapshot connection")?
-                .context("drive the release snapshot connection")?;
-            Ok(canonical_bytes)
-        }
-        Err(error) => {
-            connection_task.abort();
-            Err(error)
-        }
-    }
-}
-
-/// Read one published release's exact canonical bytes in its own transaction.
-///
-/// Shared with `print-release-env` (wamn-duyl) so the two readers of a frozen
-/// snapshot cannot drift apart on locking or on the absent-release refusal.
-pub(crate) async fn select_snapshot(
-    client: &mut PgClient,
-    tenant: &str,
-    manifest_digest: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin the release snapshot read")?;
-    let snapshot = read_release(&transaction, tenant, manifest_digest)
-        .await
-        .context("read the published release")?;
-    transaction
-        .commit()
-        .await
-        .context("close the release snapshot read")?;
-    snapshot
-        .with_context(|| format!("tenant {tenant:?} has no published release {manifest_digest}"))
 }
 
 /// Push canonical format-1 bytes or check that their exact artifact already exists.
@@ -557,26 +378,6 @@ mod tests {
             "wamn/releases".to_owned(),
             "a".repeat(64),
         )
-    }
-
-    #[test]
-    fn pushed_bytes_carry_their_own_half_of_the_attestation_key() {
-        let (_, digest) = ServingManifest::from_canonical_bytes(CANONICAL_MANIFEST)
-            .expect("the fixture is canonical format-7 bytes");
-        let coordinate = DeploymentCoordinate::new(
-            "acme",
-            "billing",
-            &ReleaseScope::new("tenant-a", "prod"),
-            &digest,
-        );
-
-        // The bytes name no scope (R1): the environment and tenant are the
-        // request's, and the digest is the bytes'.
-        assert_eq!(coordinate.triple.env.as_str(), "prod");
-        assert_eq!(coordinate.tenant_id, "tenant-a");
-        assert_eq!(coordinate.manifest_digest, digest);
-        assert_eq!(coordinate.triple.org, "acme");
-        assert_eq!(coordinate.triple.project, "billing");
     }
 
     #[test]

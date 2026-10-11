@@ -593,6 +593,7 @@ pub(super) async fn publish_journey_release(
             wirings,
         },
         &registry,
+        &inputs.release_artifact_base,
     )
     .await
     .context("publish the production Receiving release")?
@@ -631,48 +632,7 @@ pub(super) async fn publish_and_push_journey_release(
     inputs: &JourneyDocument,
     target: JourneyReleaseTarget<'_>,
 ) -> anyhow::Result<(String, Arc<LoadedRelease>)> {
-    let project_url = target.project_url;
-    let system_url = target.system_url;
-    let control = target.control;
     let digest = publish_journey_release(inputs, target).await?;
-    push_release_manifest::push_release_manifest(
-        &PushReleaseManifestRequest {
-            database_url: project_url.to_owned(),
-            org: identity().org.clone(),
-            project: identity().project.clone(),
-            environment: identity().environment.clone(),
-            tenant: identity().tenant.clone(),
-            manifest_digest: digest.clone(),
-            artifact_base: inputs.release_artifact_base.clone(),
-            registry_auth_file: inputs.registry_auth_file.clone(),
-            insecure_registry: true,
-            oci_ca_paths: Vec::new(),
-            control_database_url: system_url.to_owned(),
-        },
-        None,
-    )
-    .await
-    .context("push and attest the production Receiving release")?;
-    let serving: String = control
-        .query_one(
-            "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
-             WHERE tenant_id = $1 AND manifest_digest = $2 \
-               AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[
-                &identity().tenant.as_str(),
-                &digest.as_str(),
-                &identity().org.as_str(),
-                &identity().project.as_str(),
-                &identity().environment.as_str(),
-            ],
-        )
-        .await
-        .context("verify the deployed Receiving release is serving")?
-        .get(0);
-    anyhow::ensure!(
-        serving == digest,
-        "serving attestation {serving} differs from published release {digest}"
-    );
     let source = ReleaseManifestSource::new(
         &inputs.release_artifact_base,
         true,

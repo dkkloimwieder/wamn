@@ -1,6 +1,6 @@
 //! Shared wire contract for digest-addressed release-manifest artifacts.
 //!
-//! One layout is written by `wamn-ctl push-release-manifest` and read back by
+//! One layout is written by `wamn-ctl publish-release` and read back by
 //! [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource),
 //! so both the build and the verification of that layout live here. A second
 //! copy on either side could drift, and drift in this envelope is exactly what

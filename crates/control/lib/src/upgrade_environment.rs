@@ -115,7 +115,6 @@ impl Run {
             Stage::Schema => self.schema().await,
             Stage::Packages => self.packages(record).await,
             Stage::Qualify => self.qualify(record).await,
-            Stage::Publish => self.publish(record).await,
             Stage::Deploy => Box::pin(self.deploy(record)).await,
             Stage::CheckAndRetire => self.check_and_retire(record).await,
             Stage::Record => self.finish_record(record),
@@ -998,6 +997,7 @@ impl Run {
                 wirings: targets,
             },
             &package_registry,
+            &format!("{}/releases", environment.registry),
         )
         .await?;
         outputs.insert("release digest".to_owned(), digest.to_string());
@@ -1008,8 +1008,8 @@ impl Run {
         Ok((StepResult::Done, outputs))
     }
 
-    /// Stage 8: the candidate from the stage 2 target and `qualify-release`
-    /// at the commit. A failed qualification stops the run.
+    /// Stage 8: `qualify-release` of the published release at the commit,
+    /// on the stage 2 target. A failed qualification stops the run.
     async fn qualify(&self, record: &RunRecord) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
@@ -1018,36 +1018,10 @@ impl Run {
         let manifest_digest = Self::release_digest(record)?;
         let files = self.release_files();
         private_directory(&files)?;
-        let manifest = files.join("manifest.json");
-        let candidate = files.join("candidate.json");
         let qualification = files.join("qualification.json");
-        for path in [&manifest, &candidate, &qualification] {
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
+        if qualification.exists() {
+            fs::remove_file(&qualification)?;
         }
-        crate::delivery::prepare(crate::delivery::PrepareReleaseRequest {
-            database_url: databases.project_url(),
-            org: self.arguments.org.clone(),
-            project: self.arguments.project.clone(),
-            environment: self.arguments.environment.clone(),
-            tenant: databases.tenant.clone(),
-            route_host: environment.route_host.clone(),
-            manifest_digest,
-            artifact_base: format!("{}/releases", environment.registry),
-            target_directory: self.delivery(),
-            manifest_output: manifest.clone(),
-            candidate_output: candidate.clone(),
-            host_image: record.output(Stage::Images, "host")?.to_owned(),
-            http_image: record.output(Stage::Guests, "flow-http")?.to_owned(),
-            materializer_image: record.output(Stage::Guests, "materializer")?.to_owned(),
-            gates_image: Some(record.output(Stage::Images, "gates")?.to_owned()),
-            identity_image: Some(record.output(Stage::Images, "identity")?.to_owned()),
-            native_registry_endpoint: None,
-            native_registry_insecure: false,
-            deployment_files: Vec::new(),
-        })
-        .await?;
         // The kind cases fetch the pinned images with the login of this
         // machine (tools/registry-image-archive), so the qualification runs
         // as its own process with the private Docker configuration.
@@ -1059,52 +1033,37 @@ impl Run {
             .arg("--repository")
             .arg(&self.checkout)
             .args(["--revision", &self.arguments.commit])
-            .arg("--candidate")
-            .arg(&candidate)
+            .args(["--release-digest", &manifest_digest])
+            .args([
+                "--artifact-base",
+                &format!("{}/releases", environment.registry),
+            ])
+            .arg("--registry-auth-file")
+            .arg(registry.auth_file())
+            .args(["--org", &self.arguments.org])
+            .args(["--project", &self.arguments.project])
+            .args(["--environment", &self.arguments.environment])
+            .args(["--tenant", &databases.tenant])
+            .args(["--route-host", &environment.route_host])
+            .arg("--target-directory")
+            .arg(self.delivery())
+            .args(["--host-image", record.output(Stage::Images, "host")?])
+            .args(["--http-image", record.output(Stage::Guests, "flow-http")?])
+            .args([
+                "--materializer-image",
+                record.output(Stage::Guests, "materializer")?,
+            ])
+            .args(["--gates-image", record.output(Stage::Images, "gates")?])
+            .args(["--identity-image", record.output(Stage::Images, "identity")?])
             .arg("--result")
             .arg(&qualification);
         self.command(&format!("qualify-{}", self.arguments.project), &mut qualify)
             .await
             .context(StopRun("the qualification failed"))?;
-        let outputs = BTreeMap::from([
-            ("candidate".to_owned(), candidate.display().to_string()),
-            (
-                "qualification".to_owned(),
-                qualification.display().to_string(),
-            ),
-        ]);
-        Ok((StepResult::Done, outputs))
-    }
-
-    /// Stage 9: the qualified publication, which records its qualification
-    /// for `env apply`.
-    async fn publish(&self, record: &RunRecord) -> Outcome {
-        let environment = self.environment()?;
-        let kubectl = Kubectl(environment.context.clone());
-        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        let qualification = PathBuf::from(record.output(Stage::Qualify, "qualification")?);
-        let registry = Registry::login(&environment.registry, &self.work).await?;
-        let request = crate::push_release_manifest::PushReleaseManifestRequest {
-            database_url: databases.project_url(),
-            org: self.arguments.org.clone(),
-            project: self.arguments.project.clone(),
-            environment: self.arguments.environment.clone(),
-            tenant: databases.tenant.clone(),
-            manifest_digest: Self::release_digest(record)?,
-            artifact_base: format!("{}/releases", environment.registry),
-            registry_auth_file: registry.auth_file(),
-            insecure_registry: false,
-            oci_ca_paths: Vec::new(),
-            control_database_url: databases.system_url(),
-        };
-        let chart = platform(&environment)?.chart;
-        let pushed = crate::delivery::publication::publish(&qualification, &request, &chart)
-            .await
-            .context(StopRun("the qualified publication refused the bytes"))?;
-        let outputs = BTreeMap::from([
-            ("published".to_owned(), format!("{pushed:?}")),
-            ("manifest digest".to_owned(), pushed.digest.to_string()),
-        ]);
+        let outputs = BTreeMap::from([(
+            "qualification".to_owned(),
+            qualification.display().to_string(),
+        )]);
         Ok((StepResult::Done, outputs))
     }
 
@@ -1165,7 +1124,7 @@ impl Run {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         self.broker(&kubectl).await?;
-        let digest = record.output(Stage::Publish, "manifest digest")?.to_owned();
+        let digest = Self::release_digest(record)?;
         let hex = digest
             .strip_prefix("sha256:")
             .context("the published manifest digest has no sha256 prefix")?
@@ -3289,7 +3248,7 @@ mod tests {
             run.inputs(Stage::Packages).get("predecessor_release"),
             Some(&digest)
         );
-        for stage in [Stage::Source, Stage::Schema, Stage::Publish] {
+        for stage in [Stage::Source, Stage::Schema, Stage::Qualify] {
             assert!(!run.inputs(stage).contains_key("predecessor_release"));
         }
         let without = Run {
