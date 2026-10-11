@@ -1431,16 +1431,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     if let Some(host_name) = &args.host_name {
         builder = builder.with_host_name(host_name);
     }
-    // The heartbeat names the pod namespace the operator chart sets, because
-    // the operator's `allowSharedHosts: false` lock places a WorkloadDeployment
-    // only on hosts whose environment is its namespace, which every
-    // environment's release shares (R6). The release's last `--environment`
-    // names the scope only.
-    if let Some(environment) = std::env::var("WASMCLOUD_HOST_ENVIRONMENT")
-        .ok()
-        .filter(|namespace| !namespace.is_empty())
-        .or_else(|| args.environment.clone())
-    {
+    if let Some(environment) = heartbeat_environment(
+        std::env::var("WASMCLOUD_HOST_ENVIRONMENT").ok(),
+        args.environment.as_ref(),
+    ) {
         builder = builder.with_environment(&environment);
     }
 
@@ -1859,6 +1853,17 @@ async fn load_local_materializer(
 /// the identity connection and the probe tasks, one second each.
 const EXIT_RESERVE: Duration = Duration::from_secs(2);
 
+/// The environment the heartbeat names: the pod namespace the operator chart
+/// sets in `WASMCLOUD_HOST_ENVIRONMENT`, because the operator's
+/// `allowSharedHosts: false` lock places a WorkloadDeployment only on hosts
+/// whose environment is its namespace, which every environment's release
+/// shares (R6). The release's last `--environment` names the scope only.
+fn heartbeat_environment(chart: Option<String>, argument: Option<&String>) -> Option<String> {
+    chart
+        .filter(|namespace| !namespace.is_empty())
+        .or_else(|| argument.cloned())
+}
+
 /// The one budget of the shutdown sequence (R20): the drain bound, less the
 /// auxiliary teardown that follows it, so the process exits before the pod's
 /// `terminationGracePeriodSeconds`, which the release chart renders from the
@@ -2025,6 +2030,33 @@ mod tests {
         assert!(require_queue_admission(true, Some("guest"), Some("platform")).is_ok());
         assert!(require_queue_admission(true, Some("guest"), None).is_err());
         assert!(require_queue_admission(true, None, Some("platform")).is_err());
+    }
+
+    #[test]
+    fn the_heartbeat_names_the_chart_environment_not_the_last_argument() {
+        let args = parse([
+            "host",
+            "--environment",
+            "wamn-system",
+            "--environment",
+            "staging",
+        ])
+        .unwrap()
+        .args;
+        assert_eq!(args.environment.as_deref(), Some("staging"));
+        assert_eq!(
+            heartbeat_environment(Some("wamn-system".to_owned()), args.environment.as_ref())
+                .as_deref(),
+            Some("wamn-system")
+        );
+        assert_eq!(
+            heartbeat_environment(Some(String::new()), args.environment.as_ref()).as_deref(),
+            Some("staging")
+        );
+        assert_eq!(
+            heartbeat_environment(None, args.environment.as_ref()).as_deref(),
+            Some("staging")
+        );
     }
 
     #[derive(Debug, clap::Parser)]
