@@ -48,13 +48,23 @@ async fn seed_package_and_release(client: &Client, store: Store) {
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
         .expect("claim the test tenant");
+    // The project store records the package artifact digest. The control
+    // store still records the wamn.json hash.
+    let insert_package = match store {
+        Store::Project => {
+            "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)"
+        }
+        Store::Control => {
+            "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256, predecessor_version) VALUES ($1, $2, $3, $4, $5)"
+        }
+    };
     for (package_id, package_version, predecessor_version) in [
         ("inventory", "1.0.0", None),
         ("inventory", "2.0.0", Some("1.0.0")),
     ] {
         client
             .execute(
-                "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)",
+                insert_package,
                 &[
                     &TENANT,
                     &package_id,
