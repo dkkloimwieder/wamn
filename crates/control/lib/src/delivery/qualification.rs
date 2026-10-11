@@ -31,19 +31,6 @@ const WMS_CASES: &[&str] = &[
     "cluster::released_wms_routes_retain_committed_work_after_label_failure",
     "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
 ];
-/// Every package that `wamn build` builds, each base before its overlays.
-/// Qualification builds them all, not only the packages of the candidate.
-const BUILD_PACKAGES: &[&str] = &[
-    "platform_fixture",
-    "platform_fixture_overlay",
-    "wamn_receiving",
-    "client_acme_receiving",
-    "wamn_wms",
-    "edge_samples",
-    "edge_device",
-];
-/// The guests of the platform workloads that the cluster cases deploy.
-const WORKLOAD_GUESTS: [&str; 2] = ["http-route", "materializer"];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 /// Workspace directories, from the repository root, whose members change checks can select.
@@ -189,24 +176,6 @@ pub(super) fn require_complete_checks(result: &Qualification) -> anyhow::Result<
             "qualification lacks required case {case}"
         );
     }
-    require_built_packages(&result.checks, &candidate_packages(&result.candidate)?)
-}
-
-/// Refuse a result without a `wamn build` of each candidate package.
-fn require_built_packages(checks: &[CheckResult], packages: &[String]) -> anyhow::Result<()> {
-    for package in packages {
-        ensure!(
-            checks.iter().any(|check| check
-                .command
-                .windows(2)
-                .any(|pair| pair[0].ends_with("/wamn") && pair[1] == "build")
-                && check
-                    .command
-                    .iter()
-                    .any(|arg| arg.ends_with(&format!("/apps/{package}")))),
-            "qualification lacks a wamn build of {package}"
-        );
-    }
     Ok(())
 }
 
@@ -225,7 +194,7 @@ pub async fn qualify(
     let target = repository_root.join(target);
     fs::create_dir_all(&target)?;
     let (candidate, release_size) =
-        write_candidate(&request, &target, &temporary.path, &candidate_path).await?;
+        write_candidate(&request, &temporary.path, &candidate_path).await?;
     let (manifest, digest) = candidate.manifest()?;
     let mut result = Qualification {
         release: manifest.release,
@@ -234,7 +203,14 @@ pub async fn qualify(
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    qualify_candidate(&repository_root, &candidate_path, temporary, &mut result).await?;
+    qualify_candidate(
+        &repository_root,
+        &target,
+        &candidate_path,
+        temporary,
+        &mut result,
+    )
+    .await?;
     let payload = QualificationPayload {
         format: QUALIFICATION_PAYLOAD_FORMAT,
         release_digest: result.manifest_digest.clone(),
@@ -249,12 +225,10 @@ pub async fn qualify(
 }
 
 /// Pull the release by its digest into `directory` and write the candidate
-/// the cases read: the release, the target directory, and the chart's image
-/// set and qualification images. Returns it with the length of the release
-/// bytes.
+/// the cases read: the release, its registry, and the chart's image set and
+/// qualification images. Returns it with the length of the release bytes.
 async fn write_candidate(
     request: &QualifyReleaseRequest,
-    target: &Path,
     directory: &Path,
     candidate_path: &Path,
 ) -> anyhow::Result<(Candidate, usize)> {
@@ -274,7 +248,7 @@ async fn write_candidate(
     fs::write(&manifest_path, &bytes)?;
     let candidate = Candidate {
         manifest_path,
-        target_directory: fs::canonicalize(target)?,
+        releases: request.releases.clone(),
         images: crate::release_chart::image_set(&request.release_chart).await?,
         qualification: crate::release_chart::qualification_images(&request.release_chart).await?,
     };
@@ -288,14 +262,13 @@ async fn write_candidate(
 
 async fn qualify_candidate(
     root: &Path,
+    target: &Path,
     candidate_path: &Path,
     temporary: TemporaryResults,
     result: &mut Qualification,
 ) -> anyhow::Result<()> {
     let app = application(&result.candidate)?;
-    let target = &result.candidate.target_directory.clone();
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
-    build_artifacts(root, target, &mut result.checks).await?;
     for command in image_commands(&result.candidate) {
         run(root, &command, &[], &mut result.checks).await?;
     }
@@ -377,85 +350,6 @@ async fn qualify_candidate(
         }
     }
     require_complete_checks(result)
-}
-
-/// Build every package with `wamn build` against a fresh PostgreSQL server,
-/// then the workload guests, which are no package's, and the native programs.
-///
-/// The repository holds no build output, so the component, native and test
-/// builds after this step need it first (platform-deploy.md §7.1, C15).
-async fn build_artifacts(
-    root: &Path,
-    target: &Path,
-    checks: &mut Vec<CheckResult>,
-) -> anyhow::Result<()> {
-    let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
-    for (package, binary) in [
-        ("wamn-test-infrastructure", "wamn-test-postgres"),
-        ("wamn-ctl", "wamn"),
-    ] {
-        run(
-            root,
-            &strings(&[
-                "cargo",
-                "build",
-                "--locked",
-                "--offline",
-                "-p",
-                package,
-                "--bin",
-                binary,
-            ]),
-            &target_env,
-            checks,
-        )
-        .await?;
-    }
-    run(root, &build_command(root, target), &target_env, checks).await?;
-    for package in WORKLOAD_GUESTS {
-        wamn_schema_generator::build::build_guest(
-            root,
-            &root.join("apps/Cargo.toml"),
-            package,
-            Some(target),
-        )
-        .await?;
-    }
-    run(
-        root,
-        &[
-            "bash".to_owned(),
-            "tools/delivery-owned".to_owned(),
-            "build-native".to_owned(),
-            target.display().to_string(),
-        ],
-        &target_env,
-        checks,
-    )
-    .await?;
-    Ok(())
-}
-
-/// The `wamn build` of every package under the PostgreSQL runner, which sets
-/// `DATABASE_URL` to a superuser URL of its own server.
-fn build_command(root: &Path, target: &Path) -> Vec<String> {
-    let debug = target.join("debug");
-    let mut command = vec![
-        debug.join("wamn-test-postgres").display().to_string(),
-        "--database".to_owned(),
-        "delivery_build".to_owned(),
-        "--url-env".to_owned(),
-        "DATABASE_URL".to_owned(),
-        "--".to_owned(),
-        debug.join("wamn").display().to_string(),
-        "build".to_owned(),
-    ];
-    command.extend(
-        BUILD_PACKAGES
-            .iter()
-            .map(|package| root.join("apps").join(package).display().to_string()),
-    );
-    command
 }
 
 /// Execute exact selected tests and distinguish executed success from a skip.
@@ -765,7 +659,12 @@ mod tests {
         let pinned = |name: &str| format!("registry.example/{name}@sha256:{}", "a".repeat(64));
         let candidate = Candidate {
             manifest_path: "unused".into(),
-            target_directory: "unused".into(),
+            releases: PackageRegistry {
+                artifact_base: "registry.example/wamn/releases".to_owned(),
+                registry_auth_file: "unused".into(),
+                insecure_registry: false,
+                oci_ca_paths: Vec::new(),
+            },
             images: crate::release_chart::ImageSet {
                 host: pinned("host"),
                 http: pinned("flow-http"),
@@ -859,45 +758,6 @@ mod tests {
         );
         assert!(member_workspace("wamn-absent-data-access", &split).is_err());
         assert!(member_workspace("same", &workspaces("same", "same")).is_err());
-    }
-
-    #[test]
-    fn qualification_builds_every_package_and_requires_each_candidate_package() {
-        let root = wamn_fixture_package::repository_root();
-        let mut authored: Vec<String> = fs::read_dir(root.join("apps"))
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.join("wamn.k").is_file())
-            .map(|path| path.file_name().unwrap().to_str().unwrap().to_owned())
-            .collect();
-        authored.sort_unstable();
-        let mut built = BUILD_PACKAGES.to_vec();
-        built.sort_unstable();
-        assert_eq!(
-            built, authored,
-            "qualification builds every authored package"
-        );
-
-        let command = build_command(&root, Path::new("/t"));
-        assert_eq!(command[0], "/t/debug/wamn-test-postgres");
-        let checks = vec![CheckResult {
-            command,
-            result: "pass".to_owned(),
-            cause: None,
-        }];
-        let packages = |ids: &[&str]| ids.iter().map(|&id| id.to_owned()).collect::<Vec<_>>();
-        require_built_packages(
-            &checks,
-            &packages(&["client_acme_receiving", "wamn_receiving"]),
-        )
-        .unwrap();
-        assert_eq!(
-            require_built_packages(&checks, &packages(&["wamn_absent"]))
-                .unwrap_err()
-                .to_string(),
-            "qualification lacks a wamn build of wamn_absent"
-        );
-        assert!(require_built_packages(&[], &packages(&["wamn_wms"])).is_err());
     }
 
     #[test]

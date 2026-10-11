@@ -1,7 +1,7 @@
-//! Retained self-contained builds for the WMS cluster cases.
+//! The builds of the WMS delivery case, which publishes the release of this
+//! checkout.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
@@ -10,43 +10,6 @@ use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
 
 pub(super) async fn build(repository: &Path, target: &Path, evidence: &Path) -> anyhow::Result<()> {
-    if wamn_control::delivery::Candidate::from_env()?.is_some() {
-        for name in [
-            "wamn-ctl",
-            "wamn-identity",
-            "wamn-cdc-reader",
-            "wamn-scenario-worker",
-        ] {
-            let path = target.join("debug").join(name);
-            let metadata = fs::metadata(&path)
-                .with_context(|| format!("read supplied helper {}", path.display()))?;
-            ensure!(
-                metadata.is_file()
-                    && metadata.len() > 0
-                    && metadata.permissions().mode() & 0o111 != 0,
-                "the supplied helper is not an executable file: {}",
-                path.display()
-            );
-        }
-        for relative in [
-            "virtualized/std-empty-environment/wms.wasm",
-            "virtualized/std-empty-environment/blob_put.wasm",
-            "virtualized/std-empty-environment/jsonata_expression.wasm",
-            "wasm32-wasip2/release/label_render.wasm",
-            "wasm32-wasip2/release/http_route.wasm",
-            "wasm32-wasip2/release/materializer.wasm",
-        ] {
-            let path = target.join(relative);
-            ensure!(
-                !fs::read(&path)
-                    .with_context(|| format!("read supplied component {}", path.display()))?
-                    .is_empty(),
-                "the supplied component is empty: {}",
-                path.display()
-            );
-        }
-        return Ok(());
-    }
     // `wamn build` of the package compiles its components into the target
     // directory, against a PostgreSQL server of its own. The workload guests
     // are no package's.

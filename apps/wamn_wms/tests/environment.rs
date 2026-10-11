@@ -189,7 +189,7 @@ pub async fn provision_project(
     shared::provision_project(args, admin_url).await
 }
 
-/// Apply the emitted WMS database setup, package, and workload credentials.
+/// Apply the emitted WMS database setup and workload credentials.
 /// Call this only after the provisioning PAT service has stopped and revoked its role.
 pub async fn prepare_project(
     inputs: &JourneyDocument,
@@ -314,25 +314,14 @@ pub async fn prepare_project(
     ] {
         private_file(&path)?;
     }
-    // The package is applied as the artifact it is pushed as, so publish
-    // reads one digest for it (docs/plan/platform-deploy.md R3).
-    let pushed = push_package(&PushPackageRequest {
-        package: package_root(),
-        registry: package_registry(inputs)?,
-        component_artifact_base: inputs.component_artifact_base.clone(),
-    })
-    .await
-    .context("push the WMS package artifact")?;
-    let package = wamn_control::apply_package::PackageRoot {
-        path: package_root(),
-        artifact_digest: Some(pushed.digest),
-    };
-    apply_package::apply_package(ApplyPackageRequest {
-        package: package.clone(),
-        database_url: route.database_url.clone(),
-        tenant: identity().tenant.clone(),
-    })
-    .await?;
+    Ok(credentials)
+}
+
+/// The operator's admin role and the replica identity of the package at
+/// `package`, after its installation. The label workflow's condition reads
+/// the old packaging row, so the operator's replica identity verb runs the
+/// table with REPLICA IDENTITY FULL.
+async fn after_install(route: &ProvisionedRoute, package: PathBuf) -> anyhow::Result<()> {
     wamn_control::dev::environment::grant_operator_admin_role(
         &route.database_url,
         identity().org.as_str(),
@@ -342,23 +331,68 @@ pub async fn prepare_project(
         PLATFORM_DOMAIN,
     )
     .await?;
-    shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
-        packages: vec![package],
-        database_url: route.database_url.clone(),
-        tenant: identity().tenant.clone(),
-    })
-    .await?;
-    // The label workflow's condition reads the old packaging row, so the
-    // operator's replica identity verb runs the table with REPLICA IDENTITY FULL.
     wamn_control::reconcile_replica_identity::reconcile_package_replica_identity(
         wamn_control::reconcile_replica_identity::ReconcileReplicaIdentityRequest {
             admin_database_url: route.database_url.clone(),
-            package: package_root(),
+            package,
             dry_run: false,
         },
     )
+    .await
+    .map(drop)
+}
+
+/// Install the candidate's release in the provisioned environment as `apply`
+/// does, and publish nothing (docs/plan/platform-deploy.md §8.2, §10.2): its
+/// packages through the package stage from their artifacts, the operator's
+/// admin role and the replica identity of the WMS package, and a binding of
+/// each connection the release requires to the labels store at
+/// `minio_endpoint`, named after its store alias.
+pub async fn install(
+    candidate: &Candidate,
+    inputs: &JourneyDocument,
+    route: &ProvisionedRoute,
+    packages: &[wamn_control::package_artifact::OpenedPackage],
+    minio_endpoint: &str,
+) -> anyhow::Result<()> {
+    wamn_gate_harness::case_release::install_candidate(
+        candidate,
+        &inputs.system_pg_url,
+        &route.database_url,
+        &wamn_control_registry::Triple::new(
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
+        ),
+    )
     .await?;
-    Ok(credentials)
+    for package in packages {
+        after_install(route, package.root().to_path_buf()).await?;
+    }
+    let (manifest, digest) = candidate.manifest()?;
+    for component in &manifest.components {
+        for connection in &component.descriptor.connections {
+            ensure!(
+                connection.requirement_type == wamn_catalog::ComponentConnectionType::Blobstore,
+                "the WMS case binds only the labels store, not {}",
+                connection.store_alias
+            );
+            bind_connection::bind(&BindConnectionRequest {
+                database_url: route.database_url.clone(),
+                tenant: identity().tenant.clone(),
+                environment: identity().environment.clone(),
+                instance_id: connection.store_alias.clone(),
+                requirement_type: RequirementType::Blobstore,
+                definition: json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"}),
+                credential_handle: Some(connection.store_alias.clone()),
+                manifest_digest: digest.as_str().to_owned(),
+                component_digest: component.descriptor.component_digest.as_str().to_owned(),
+                store_alias: connection.store_alias.clone(),
+            })
+            .await?;
+        }
+    }
+    Ok(())
 }
 
 fn generation_args(
@@ -523,6 +557,32 @@ pub async fn publish(
         label_render_wasm,
         minio_endpoint,
     } = *artifacts;
+    // The package is applied as the artifact it is pushed as, so publish
+    // reads one digest for it (docs/plan/platform-deploy.md R3).
+    let pushed = push_package(&PushPackageRequest {
+        package: package_root(),
+        registry: package_registry(inputs)?,
+        component_artifact_base: inputs.component_artifact_base.clone(),
+    })
+    .await
+    .context("push the WMS package artifact")?;
+    let installed = wamn_control::apply_package::PackageRoot {
+        path: package_root(),
+        artifact_digest: Some(pushed.digest),
+    };
+    apply_package::apply_package(ApplyPackageRequest {
+        package: installed.clone(),
+        database_url: route.database_url.clone(),
+        tenant: identity().tenant.clone(),
+    })
+    .await?;
+    shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
+        packages: vec![installed],
+        database_url: route.database_url.clone(),
+        tenant: identity().tenant.clone(),
+    })
+    .await?;
+    after_install(route, package_root()).await?;
     let package = package_coordinate()?;
     let root = package_root();
     let repository = repository_root();
@@ -645,12 +705,9 @@ pub async fn publish(
     .await
     .context("pull the exact WMS release")?;
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
-        candidate.assert_manifest(&manifest)?;
-    }
     // A binding names the connection requirements that the package stage
-    // projects, so the release's stage runs first, on the package that
-    // `prepare_project` installed (docs/plan/platform-deploy.md §10.2). The
+    // projects, so the release's stage runs first, on the package installed
+    // above (docs/plan/platform-deploy.md §10.2). The
     // instance and its credential handle are named after the store alias, as
     // `env apply` names the instances it binds.
     let version = package.package_version().to_owned();
@@ -820,17 +877,30 @@ async fn author_wirings(
     result
 }
 
-/// Enable the same CDC and registry-reader credentials as the WMS script.
-/// The materializer consumer of each WMS registration, as the operator
-/// declares it to provisioning: the workflow `movement_label` today.
+/// The manifest of the WMS package of this checkout.
+pub fn package_manifest() -> anyhow::Result<wamn_schema_generator::PackageManifest> {
+    package_manifest_at(&package_root())
+}
+
+/// The manifest of the package at `root`.
+pub fn package_manifest_at(root: &Path) -> anyhow::Result<wamn_schema_generator::PackageManifest> {
+    let path = wamn_schema_generator::package_manifest_path(root);
+    wamn_schema_generator::PackageManifest::from_slice(
+        &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .with_context(|| format!("parse {}", path.display()))
+}
+
+/// The materializer consumer of each registration of the WMS package
+/// `manifest`, as the operator declares it to provisioning: the workflow
+/// `movement_label` today.
 ///
 /// The durable name is the one the materializer attaches to
 /// (`mat_<tenant>_<package>_<registration>`), and the filter is the
 /// registration entity's subjects in this environment.
-pub fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consumer::pull::Config>> {
-    let manifest = wamn_schema_generator::PackageManifest::from_slice(&fs::read(
-        wamn_schema_generator::package_manifest_path(&package_root()),
-    )?)?;
+pub fn declared_consumers(
+    manifest: &wamn_schema_generator::PackageManifest,
+) -> Vec<async_nats::jetstream::consumer::pull::Config> {
     let sanitize = |value: &str| {
         value
             .chars()
@@ -851,7 +921,7 @@ pub fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consume
         .workflows
         .iter()
         .map(|(name, workflow)| (name, &workflow.registration));
-    Ok(handlers
+    handlers
         .chain(workflows)
         .map(|(name, registration)| {
             wamn_control_provision::events::materializer_consumer_config(
@@ -872,9 +942,12 @@ pub fn declared_consumers() -> anyhow::Result<Vec<async_nats::jetstream::consume
                 5,
             )
         })
-        .collect())
+        .collect()
 }
 
+/// Enable the same CDC and registry-reader credentials as the WMS script,
+/// with the materializer `consumers` of the installed package.
+#[expect(clippy::too_many_arguments)]
 pub async fn configure_cdc(
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
@@ -883,6 +956,7 @@ pub async fn configure_cdc(
     nats_url: &str,
     provisioning: &wamn_test_infrastructure::event_broker::Credentials,
     source: &async_nats::jetstream::stream::Config,
+    consumers: &[async_nats::jetstream::consumer::pull::Config],
 ) -> anyhow::Result<()> {
     let database_config: tokio_postgres::Config = route.database_url.parse()?;
     let host = match database_config.get_hosts() {
@@ -912,7 +986,7 @@ pub async fn configure_cdc(
         nats_password_file: provisioning.password_file.clone(),
         stream_replicas: source.num_replicas,
         dup_window_secs: source.duplicate_window.as_secs(),
-        consumer_config: declared_consumers()?
+        consumer_config: consumers
             .iter()
             .map(serde_json::to_string)
             .collect::<Result<_, _>>()?,

@@ -105,16 +105,15 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .with_context(|| format!("write private file {}", path.display()))
 }
 
-/// Write OCI credentials once the owned registry's authorities are known:
-/// its plain HTTP one and its TLS twin's.
+/// Write the OCI credential of the owned registry once its authority is known.
 pub(super) fn write_registry_auth(
     files: &BootstrapFiles,
     work: &Path,
-    authorities: [&str; 2],
+    authority: &str,
 ) -> anyhow::Result<PathBuf> {
     let path = work.join("docker/config.json");
     let credentials = json!({"username":REGISTRY_USERNAME,"password":files.registry_password});
-    let value = json!({"auths":{authorities[0]:credentials,authorities[1]:credentials}});
+    let value = json!({"auths":{authority:credentials}});
     write_private(&path, &serde_json::to_vec(&value)?)?;
     Ok(path)
 }

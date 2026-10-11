@@ -1,11 +1,14 @@
-//! One cluster case's environment on the release chart (wamn-ps2tj.1,
-//! docs/plan/platform-deploy.md §9.2, R12, R15).
+//! One cluster case's environment of the candidate release (wamn-ps2tj.1,
+//! wamn-ps2tj.4, docs/plan/platform-deploy.md §8.2, §9.2, §10.2, R12, R15).
 //!
-//! The qualifying cases deploy the host and the roles the way `env apply`
-//! does: a copy of `deploy/platform/release` stamped with the platform image
-//! set, and the values `release_chart::values` renders. A case runs only with
-//! a candidate and takes the role images from it, copied by digest into its
-//! own registry, so the qualification key names the bytes the case ran (R15).
+//! A case installs the candidate's packages through the package stage of
+//! `apply`, from the package repository beside the release repository, and
+//! publishes nothing. It copies the release manifest, its components and the
+//! candidate's role images by digest into its own registry, which its hosts
+//! read, so the qualification key names the bytes the case ran. It deploys
+//! the host and the roles the way `env apply` does: a copy of the release
+//! chart stamped with the image set, and the values `release_chart::values`
+//! renders.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,8 +20,13 @@ use oci_client::manifest::{IMAGE_MANIFEST_MEDIA_TYPE, OCI_IMAGE_MEDIA_TYPE, OciI
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client, Reference, RegistryOperation};
 use serde_yaml::{Mapping, Value};
-use wamn_control::delivery::Candidate;
+use wamn_control::delivery::{Candidate, sibling_bases};
+use wamn_control::environment::analyse::Installed;
+use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
+use wamn_control::environment::{Platform, stage};
+use wamn_control::package_artifact::{OpenedPackage, PackageRegistry, open_package};
 use wamn_control::release_chart::{self, ImageSet, Target, ValuesInput};
+use wamn_control_registry::Triple;
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
 
 /// The operator release's namespace, where every environment release and
@@ -81,6 +89,27 @@ impl Registry {
             auth_file: docker.filter(|file| !loopback && file.is_file()),
             insecure: loopback,
             ca_paths: Vec::new(),
+        })
+    }
+}
+
+impl Registry {
+    /// The registry of the candidate's release repository, with its access.
+    ///
+    /// # Errors
+    ///
+    /// When the release repository names no registry authority.
+    pub fn releases(candidate: &Candidate) -> anyhow::Result<Self> {
+        let releases = &candidate.releases;
+        let (authority, _) = releases
+            .artifact_base
+            .split_once('/')
+            .context("the release repository names a registry")?;
+        Ok(Self {
+            authority: authority.to_owned(),
+            auth_file: Some(releases.registry_auth_file.clone()),
+            insecure: releases.insecure_registry,
+            ca_paths: releases.oci_ca_paths.clone(),
         })
     }
 }
@@ -209,6 +238,25 @@ pub async fn copy_image(
         .digest()
         .with_context(|| format!("image {source} is not pinned by digest"))?
         .to_owned();
+    let target =
+        Reference::with_digest(to.authority.clone(), repository.to_owned(), digest.clone());
+    let copied = copy(&source_reference, from, &target, to).await?;
+    ensure!(
+        copied == digest,
+        "the manifest of {source} does not hash to its digest"
+    );
+    Ok(format!("{}/{repository}@{digest}", to.authority))
+}
+
+/// Copy the manifest `source` of `from`, its config and its layers, to
+/// `target` of `to`, and return the manifest's digest. The manifest bytes are
+/// copied unchanged.
+async fn copy(
+    source: &Reference,
+    from: &Registry,
+    target: &Reference,
+    to: &Registry,
+) -> anyhow::Result<String> {
     let mut certificates = Vec::new();
     for path in from.ca_paths.iter().chain(&to.ca_paths) {
         certificates.push(Certificate {
@@ -232,32 +280,30 @@ pub async fn copy_image(
     .context("build the registry client")?;
     let (bytes, found) = client
         .pull_manifest_raw(
-            &source_reference,
+            source,
             &from.auth()?,
             &[OCI_IMAGE_MEDIA_TYPE, IMAGE_MANIFEST_MEDIA_TYPE],
         )
         .await
         .with_context(|| format!("read the manifest of {source}"))?;
     ensure!(
-        found == digest && wamn_package_artifact::sha256_digest(&bytes) == digest,
-        "the manifest of {source} does not hash to its digest"
+        wamn_package_artifact::sha256_digest(&bytes) == found,
+        "the manifest of {source} does not hash to the digest the registry names"
     );
     let manifest: OciImageManifest = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse the manifest of {source}"))?;
-    let target =
-        Reference::with_digest(to.authority.clone(), repository.to_owned(), digest.clone());
     client
-        .auth(&target, &to.auth()?, RegistryOperation::Push)
+        .auth(target, &to.auth()?, RegistryOperation::Push)
         .await
         .with_context(|| format!("log in to registry {}", to.authority))?;
     for blob in std::iter::once(&manifest.config).chain(&manifest.layers) {
         let mut data = Vec::new();
         client
-            .pull_blob(&source_reference, blob, &mut data)
+            .pull_blob(source, blob, &mut data)
             .await
             .with_context(|| format!("read blob {} of {source}", blob.digest))?;
         client
-            .push_blob(&target, data, &blob.digest)
+            .push_blob(target, data, &blob.digest)
             .await
             .with_context(|| format!("write blob {} to {}", blob.digest, to.authority))?;
     }
@@ -266,10 +312,147 @@ pub async fn copy_image(
         .as_deref()
         .unwrap_or(OCI_IMAGE_MEDIA_TYPE);
     client
-        .push_manifest_raw(&target, bytes, media_type.parse()?)
+        .push_manifest_raw(target, bytes, media_type.parse()?)
         .await
         .with_context(|| format!("write the manifest of {source} to {}", to.authority))?;
-    Ok(format!("{}/{repository}@{digest}", to.authority))
+    Ok(found)
+}
+
+/// Copy the candidate's release manifest and every component it names from
+/// the release repository and the component repository beside it into
+/// `wamn/releases` and `wamn/components` of `to`, each under the tag of its
+/// digest, the references the hosts pull.
+///
+/// # Errors
+///
+/// When an artifact cannot be copied.
+pub async fn copy_release(candidate: &Candidate, to: &Registry) -> anyhow::Result<()> {
+    let from = Registry::releases(candidate)?;
+    let (_, components) = sibling_bases(&candidate.releases.artifact_base)?;
+    let (manifest, digest) = candidate.manifest()?;
+    let artifacts = std::iter::once((
+        candidate.releases.artifact_base.as_str(),
+        "releases",
+        digest.as_str(),
+    ))
+    .chain(manifest.components.iter().map(|component| {
+        (
+            components.as_str(),
+            "components",
+            component.descriptor.component_digest.as_str(),
+        )
+    }));
+    for (base, repository, digest) in artifacts {
+        let source = tagged(base, digest)?;
+        let target = tagged(&format!("{}/wamn/{repository}", to.authority), digest)?;
+        copy(&source, &from, &target, to).await?;
+    }
+    Ok(())
+}
+
+/// The reference `<base>:<hex>` of the artifact that `digest` addresses.
+fn tagged(base: &str, digest: &str) -> anyhow::Result<Reference> {
+    let reference = wamn_catalog::component_artifact_reference(base, digest)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    Ok(Reference::with_tag(
+        reference.registry().to_owned(),
+        reference.repository().to_owned(),
+        reference.tag().to_owned(),
+    ))
+}
+
+/// The registry of the candidate's packages: the package repository beside
+/// the release repository.
+fn package_registry(candidate: &Candidate) -> anyhow::Result<PackageRegistry> {
+    let (packages, _) = sibling_bases(&candidate.releases.artifact_base)?;
+    Ok(PackageRegistry {
+        artifact_base: packages,
+        ..candidate.releases.clone()
+    })
+}
+
+/// Open each package of the candidate's release from its artifact.
+///
+/// # Errors
+///
+/// When an artifact cannot be read.
+pub async fn open_packages(candidate: &Candidate) -> anyhow::Result<Vec<OpenedPackage>> {
+    let registry = package_registry(candidate)?;
+    let (manifest, _) = candidate.manifest()?;
+    let mut opened = Vec::new();
+    for package in &manifest.release.packages {
+        opened.push(
+            open_package(&registry, package.package_id(), package.package_version())
+                .await
+                .with_context(|| {
+                    format!(
+                        "open package artifact {}@{}",
+                        package.package_id(),
+                        package.package_version()
+                    )
+                })?,
+        );
+    }
+    Ok(opened)
+}
+
+/// Install the candidate's packages in the project database of `triple` as
+/// a fresh install through the package stage of `apply` (§10.2, R17 (2)):
+/// each package from its artifact, then the release cache row, the release's
+/// connection requirements and the packages' data access.
+///
+/// # Errors
+///
+/// When the stage refuses or fails.
+pub async fn install_candidate(
+    candidate: &Candidate,
+    system_database_url: &str,
+    project_database_url: &str,
+    triple: &Triple,
+) -> anyhow::Result<()> {
+    let (manifest, digest) = candidate.manifest()?;
+    let registry = package_registry(candidate)?;
+    // The stage reads the system database and the package registry only.
+    let platform = Platform {
+        system_database_url: system_database_url.to_owned(),
+        target: Target {
+            kubeconfig: PathBuf::new(),
+            context: String::new(),
+            namespace: NAMESPACE.to_owned(),
+        },
+        chart: PathBuf::new(),
+        release_artifact_base: candidate.releases.artifact_base.clone(),
+        registry_auth_file: registry.registry_auth_file,
+        oci_ca_paths: registry.oci_ca_paths,
+        package_artifact_base: Some(registry.artifact_base),
+        database_namespace: NAMESPACE.to_owned(),
+        database_host: None,
+        database_port: 5432,
+        host_group: None,
+        pat_issuer: wamn_control::pat_client::PatIssuerConfig::default(),
+        events: None,
+    };
+    let document = EnvironmentDocument {
+        org: triple.org.clone(),
+        project: triple.project.clone(),
+        env: triple.env.as_str().to_owned(),
+        release: DeclaredRelease::Digest(digest.as_str().to_owned()),
+        route_host: String::new(),
+        policy: String::new(),
+        connections: std::collections::BTreeMap::new(),
+        floors: std::collections::BTreeMap::new(),
+    };
+    stage::stage(
+        &platform,
+        &document,
+        &std::collections::BTreeMap::<String, Installed>::new(),
+        digest.as_str(),
+        &manifest,
+        project_database_url,
+    )
+    .await
+    .context("install the candidate's packages through the package stage")?;
+    Ok(())
 }
 
 /// Copy the candidate's http and materializer images by digest into

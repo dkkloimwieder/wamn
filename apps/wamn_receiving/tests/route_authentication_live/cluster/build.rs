@@ -3,7 +3,6 @@
 use std::fmt::Write as _;
 
 use std::fs::{self, File};
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -24,23 +23,21 @@ pub(super) async fn components_and_tools(
     repository: &Path,
     evidence: &Path,
 ) -> anyhow::Result<Artifacts> {
-    let candidate = wamn_control::delivery::Candidate::from_env()?;
-    let target = candidate
-        .as_ref()
-        .map(|candidate| candidate.target_directory.clone())
-        .or_else(|| {
-            std::env::var_os("CARGO_TARGET_DIR")
-                .map(PathBuf::from)
-                .map(|path| {
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        repository.join(path)
-                    }
-                })
-        })
-        .unwrap_or_else(|| repository.join("target"));
-    if candidate.is_none() {
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .map_or_else(
+            || repository.join("target"),
+            |path| {
+                if path.is_absolute() {
+                    path
+                } else {
+                    repository.join(path)
+                }
+            },
+        );
+    // The Receiving cases still publish their own release, so they build
+    // it from this checkout, with or without a candidate.
+    {
         // `wamn build` of the packages compiles their components into the
         // target directory, against a PostgreSQL server of its own. The
         // workload guests are no package's.
@@ -89,24 +86,6 @@ pub(super) async fn components_and_tools(
             &evidence.join("build-native-tools.log"),
         )
         .await?;
-    } else {
-        for name in [
-            "wamn-ctl",
-            "wamn-identity",
-            "wamn-cdc-reader",
-            "wamn-scenario-worker",
-        ] {
-            let path = target.join("debug").join(name);
-            let metadata = fs::metadata(&path)
-                .with_context(|| format!("read supplied helper {}", path.display()))?;
-            ensure!(
-                metadata.is_file()
-                    && metadata.len() > 0
-                    && metadata.permissions().mode() & 0o111 != 0,
-                "the supplied helper is not an executable file: {}",
-                path.display()
-            );
-        }
     }
     let artifacts = Artifacts {
         components: target.join("virtualized/std-empty-environment"),

@@ -1,4 +1,4 @@
-//! Repository commands and exact artifact inputs for release qualification.
+//! Release qualification: the candidate the cases run, and the change checks.
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
@@ -8,6 +8,7 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use wamn_catalog::{ManifestDigest, PackageCoordinate, ServingManifest, ServingRelease};
 
+use crate::package_artifact::PackageRegistry;
 use crate::release_chart::{ImageSet, QualificationImages};
 
 pub mod environment;
@@ -27,12 +28,17 @@ pub struct ReleaseIdentity {
     pub packages: BTreeSet<PackageCoordinate>,
 }
 
-/// Locations of already built artifacts, with the existing application manifest.
+/// One published release and the platform it qualifies on: the manifest
+/// bytes `qualify-release` pulled by the release digest, the release
+/// registry that holds the release's packages and components, and the
+/// release chart's images (docs/plan/platform-deploy.md §8.2).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub manifest_path: PathBuf,
-    pub target_directory: PathBuf,
+    /// The release repository and its access. The packages and components
+    /// are in the repositories beside it ([`sibling_bases`]).
+    pub releases: PackageRegistry,
     /// The platform image set the cases deploy, from the release chart's
     /// defaults. Its digests are the key (R12).
     pub images: ImageSet,
@@ -42,42 +48,31 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    /// Read explicit artifact inputs without building or publishing anything.
+    /// Read the candidate that `qualify-release` wrote.
     pub fn read(path: &Path) -> anyhow::Result<Self> {
         let candidate: Self = serde_json::from_slice(
             &fs::read(path).with_context(|| format!("read candidate {}", path.display()))?,
         )
-        .context("decode candidate artifact inputs")?;
+        .context("decode the candidate")?;
         ensure!(
             candidate.manifest_path.is_absolute(),
             "candidate manifest path must be absolute"
         );
-        ensure!(
-            candidate.target_directory.is_absolute() && candidate.target_directory.is_dir(),
-            "candidate target directory must name an existing absolute directory"
-        );
         candidate.manifest()?;
-        for image in candidate.pinned() {
+        for image in [
+            &candidate.images.host,
+            &candidate.images.http,
+            &candidate.images.materializer,
+            &candidate.qualification.gates,
+            &candidate.qualification.identity,
+            &candidate.qualification.runner,
+        ] {
             require_pinned_image(image)?;
         }
         Ok(candidate)
     }
 
-    /// Every image the candidate names: the host, the two role components,
-    /// the gates, identity and runner images.
-    fn pinned(&self) -> impl Iterator<Item = &String> {
-        [
-            &self.images.host,
-            &self.images.http,
-            &self.images.materializer,
-            &self.qualification.gates,
-            &self.qualification.identity,
-            &self.qualification.runner,
-        ]
-        .into_iter()
-    }
-
-    /// Read the explicit supplied-artifact mode for an existing application case.
+    /// The candidate of a case that `qualify-release` runs.
     pub fn from_env() -> anyhow::Result<Option<Self>> {
         std::env::var_os("WAMN_DELIVERY_CANDIDATE")
             .map(|path| Self::read(Path::new(&path)))
@@ -91,7 +86,9 @@ impl Candidate {
         ServingManifest::from_canonical_bytes(&bytes).context("admit candidate serving manifest")
     }
 
-    /// Require the fresh fixture to reproduce the candidate's exact release bytes.
+    /// Require a case that publishes its own release to have published the
+    /// candidate's exact bytes. Only the Receiving cases still publish; the
+    /// WMS cases install the candidate and publish nothing.
     pub fn assert_manifest(&self, actual: &ServingManifest) -> anyhow::Result<()> {
         let (expected, _) = self.manifest()?;
         ensure!(
@@ -100,6 +97,26 @@ impl Candidate {
         );
         Ok(())
     }
+}
+
+/// The package and component repositories beside the release repository
+/// `<registry>/<path>/releases`: `<registry>/<path>/packages` and
+/// `<registry>/<path>/components`. Qualification reads the release's
+/// packages and components there (docs/plan/platform-deploy.md §8.2).
+///
+/// # Errors
+///
+/// When the release repository is not `<registry>/<path>/releases`.
+pub fn sibling_bases(release_artifact_base: &str) -> anyhow::Result<(String, String)> {
+    let parent = release_artifact_base
+        .strip_suffix("/releases")
+        .filter(|parent| parent.contains('/'))
+        .with_context(|| {
+            format!(
+                "the release repository {release_artifact_base} is not <registry>/<path>/releases"
+            )
+        })?;
+    Ok((format!("{parent}/packages"), format!("{parent}/components")))
 }
 
 fn require_pinned_image(image: &str) -> anyhow::Result<()> {
@@ -152,11 +169,8 @@ pub struct ApplicationResult {
 }
 
 /// Report success only after the owning application's assertions and cleanup succeed.
-pub fn report_candidate_success(
-    candidate: &Candidate,
-    manifest: &ServingManifest,
-) -> anyhow::Result<()> {
-    candidate.assert_manifest(manifest)?;
+pub fn report_candidate_success(candidate: &Candidate) -> anyhow::Result<()> {
+    let (manifest, _) = candidate.manifest()?;
     let path = std::env::var_os("WAMN_DELIVERY_RESULT")
         .context("WAMN_DELIVERY_RESULT is required for supplied-artifact execution")?;
     let file = OpenOptions::new()
@@ -178,7 +192,25 @@ pub fn report_candidate_success(
 
 #[cfg(test)]
 mod tests {
-    use super::require_pinned_image;
+    use super::{require_pinned_image, sibling_bases};
+
+    #[test]
+    fn the_packages_and_components_are_beside_the_releases() {
+        assert_eq!(
+            sibling_bases("registry.example:5000/wamn/releases").unwrap(),
+            (
+                "registry.example:5000/wamn/packages".to_owned(),
+                "registry.example:5000/wamn/components".to_owned()
+            )
+        );
+        for refused in [
+            "registry.example/wamn/release",
+            "registry.example/releases",
+            "registry.example/wamn/releases/x",
+        ] {
+            assert!(sibling_bases(refused).is_err(), "accepted {refused}");
+        }
+    }
 
     #[test]
     fn deployment_images_require_immutable_named_references() {

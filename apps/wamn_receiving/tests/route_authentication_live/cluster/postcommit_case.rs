@@ -53,8 +53,8 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
         }))?,
     )?;
     result?;
-    if let Some((candidate, manifest)) = &cluster.resources.candidate {
-        wamn_control::delivery::report_candidate_success(candidate, manifest)?;
+    if let Some((candidate, _)) = &cluster.resources.candidate {
+        wamn_control::delivery::report_candidate_success(candidate)?;
     }
     Ok(())
 }

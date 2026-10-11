@@ -30,7 +30,6 @@ pub(super) async fn preflight(lifecycle: &Path, cluster: &str, image: &str) -> a
             ![
                 "postgres",
                 "registry",
-                "registry-tls",
                 "nats",
                 "minio",
                 "control-plane",

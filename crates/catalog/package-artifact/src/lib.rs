@@ -96,7 +96,8 @@ impl std::error::Error for ComponentArtifactCaError {
 }
 
 /// The registry inputs that read and push package artifacts.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageRegistry {
     /// Explicit `<registry>/<repository>` base for package artifacts.
     pub artifact_base: String,

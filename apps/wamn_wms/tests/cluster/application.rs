@@ -24,16 +24,15 @@ pub(super) struct PublicationInputs<'a> {
     pub(super) minio_endpoint: &'a str,
 }
 
-pub(super) async fn prepare_application(
+/// The control store, the org and the project environment, and their
+/// workload credentials.
+pub(super) async fn provision(
     inputs: &JourneyDocument,
     work: &Path,
     admin_url: &str,
-    publication: &PublicationInputs<'_>,
-    platform: &wamn_control::environment::Platform,
-    evidence: &Path,
 ) -> anyhow::Result<(
     wamn_control::provision_project_env::ProvisionedRoute,
-    wamn_control::print_release_env::ReleaseCarrier,
+    wamn_control::dev::environment::JourneyCredentials,
 )> {
     crate::environment::install_control(admin_url, &inputs.system_pg_url).await?;
     let issuer = wamn_control::dev::pat_issuer::start_for_issuer(
@@ -56,10 +55,22 @@ pub(super) async fn prepare_application(
         }
     };
     let credentials = crate::environment::prepare_project(inputs, work, admin_url, &route).await?;
-    let release = crate::environment::publish(
+    Ok((route, credentials))
+}
+
+/// Publish the release of this checkout through the authoring path.
+pub(super) async fn publish(
+    inputs: &JourneyDocument,
+    route: &wamn_control::provision_project_env::ProvisionedRoute,
+    credentials: &wamn_control::dev::environment::JourneyCredentials,
+    publication: &PublicationInputs<'_>,
+    platform: &wamn_control::environment::Platform,
+    evidence: &Path,
+) -> anyhow::Result<wamn_control::print_release_env::ReleaseCarrier> {
+    crate::environment::publish(
         inputs,
-        &route,
-        &credentials,
+        route,
+        credentials,
         &crate::environment::PublicationArtifacts {
             scenario_worker: publication.scenario_worker,
             label_render_wasm: publication.label_render,
@@ -68,7 +79,14 @@ pub(super) async fn prepare_application(
         platform,
         evidence,
     )
-    .await?;
+    .await
+}
+
+/// Record the run plane of the installed environment and seed the fixture.
+pub(super) async fn seed(
+    route: &wamn_control::provision_project_env::ProvisionedRoute,
+    evidence: &Path,
+) -> anyhow::Result<()> {
     let (project, task) = wamn_control::dev::environment::connect(&route.database_url).await?;
     let seeded = async {
         let row = project
@@ -95,8 +113,7 @@ pub(super) async fn prepare_application(
     .await;
     drop(project);
     task.abort();
-    seeded?;
-    Ok((route, release))
+    seeded
 }
 
 pub(super) fn host_secrets(

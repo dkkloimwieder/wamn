@@ -111,7 +111,8 @@ async fn run(
     // The event broker, the labels store and the database of this application.
     let source = source_stream_config(&triple, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&triple, source.num_replicas);
-    let consumers = crate::environment::declared_consumers()?;
+    let consumers =
+        crate::environment::declared_consumers(&crate::environment::package_manifest()?);
     let broker = event_broker::prepare(
         &work,
         &triple,
@@ -188,10 +189,11 @@ async fn run(
         materializer: None,
         runtime: None,
     };
-    let (route, release) = application::prepare_application(
+    let (route, credentials) = application::provision(&document, &work, &admin_url).await?;
+    let release = application::publish(
         &document,
-        &work,
-        &admin_url,
+        &route,
+        &credentials,
         &application::PublicationInputs {
             scenario_worker: &target.join("debug/wamn-scenario-worker"),
             label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
@@ -220,6 +222,7 @@ async fn run(
         evidence,
     )
     .await?;
+    application::seed(&route, evidence).await?;
     event_broker::write_binding(&broker, &nats_url, &source)?;
     let deadline = Instant::now() + Duration::from_secs(60);
     let provisioning = loop {

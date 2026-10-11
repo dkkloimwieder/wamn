@@ -1,6 +1,8 @@
 //! WMS cluster cases call the product libraries and retain their own assertions.
 //!
-//! Each case runs the candidate that `qualify-release` names.
+//! Each case runs the candidate release that `qualify-release` names: it
+//! installs the candidate's packages through the package stage and publishes
+//! nothing (docs/plan/platform-deploy.md §8.2).
 
 mod application;
 mod bootstrap;
@@ -21,9 +23,7 @@ use futures_util::FutureExt as _;
 use serde_json::json;
 use tokio::process::Command;
 use wamn_control::delivery::Candidate;
-use wamn_control::environment::Platform;
-use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::release_chart::{self, ImageSet, Target, ValuesInput};
+use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
@@ -76,7 +76,7 @@ enum Case {
 }
 
 async fn run_case(case: Case) -> anyhow::Result<()> {
-    let (candidate, manifest) = crate::delivery::candidate()?;
+    let candidate = crate::delivery::candidate()?;
     let partial_completion = matches!(case, Case::PartialCompletion);
     // A requested hold keeps the released routes case reachable from a browser.
     let browser =
@@ -104,7 +104,6 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     let identity_image = crate::delivery::image_reference(&candidate.qualification.identity)?;
     let lifecycle = repository.join("tools/wms-cluster-journey-run");
     deployment::preflight(&lifecycle, &cluster, &image).await?;
-    let target = candidate.target_directory.clone();
     // WAMN_WMS_EVIDENCE_DIR names an existing parent directory. The parent is
     // the system temporary directory when the variable is not set.
     let parent =
@@ -128,7 +127,14 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     let work = ScratchRoot(work_path);
     let mut run = Box::pin(
         std::panic::AssertUnwindSafe(async {
-            build::build(&repository, &target, &evidence).await?;
+            // The WMS package of the candidate, from its artifact.
+            let packages = case_release::open_packages(&candidate).await?;
+            let [package] = packages.as_slice() else {
+                anyhow::bail!("the WMS candidate names one package");
+            };
+            let consumers = crate::environment::declared_consumers(
+                &crate::environment::package_manifest_at(package.root())?,
+            );
             let files = bootstrap::prepare(&repository, work.path())?;
             let scope = Triple::new(
                 crate::environment::identity().org.as_str(),
@@ -143,7 +149,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 crate::environment::identity().tenant.as_str(),
                 &source,
                 &advisory,
-                &crate::environment::declared_consumers()?,
+                &consumers,
             )?;
             crate::delivery::registry_files(&candidate, work.path()).await?;
             checked(
@@ -176,7 +182,6 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     lifecycle: &lifecycle,
                     cluster: &cluster,
                     work: work.path(),
-                    target: &target,
                     evidence: &evidence,
                     image: &image,
                     identity_image: &identity_image,
@@ -184,6 +189,8 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     files: &files,
                     broker: &broker,
                     source: &source,
+                    consumers: &consumers,
+                    packages: &packages,
                     candidate: &candidate,
                 },
                 &scope,
@@ -257,9 +264,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     .await;
     match run {
         Ok(result) => match (result, cleanup) {
-            (Ok(()), Ok(())) => {
-                wamn_control::delivery::report_candidate_success(&candidate, &manifest)
-            }
+            (Ok(()), Ok(())) => wamn_control::delivery::report_candidate_success(&candidate),
             (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
             (Err(error), Err(cleanup)) => {
                 Err(error.context(format!("WMS cleanup also failed: {cleanup:#}")))
@@ -281,7 +286,6 @@ struct CaseContext<'a> {
     lifecycle: &'a Path,
     cluster: &'a str,
     work: &'a Path,
-    target: &'a Path,
     evidence: &'a Path,
     image: &'a str,
     identity_image: &'a str,
@@ -289,7 +293,11 @@ struct CaseContext<'a> {
     files: &'a bootstrap::BootstrapFiles,
     broker: &'a EventBroker,
     source: &'a async_nats::jetstream::stream::Config,
-    /// The supplied release, whose images the case deploys.
+    /// The materializer consumers of the candidate's WMS package.
+    consumers: &'a [async_nats::jetstream::consumer::pull::Config],
+    /// The candidate's packages, from their artifacts.
+    packages: &'a [wamn_control::package_artifact::OpenedPackage],
+    /// The release the case installs and deploys.
     candidate: &'a Candidate,
 }
 
@@ -332,7 +340,6 @@ async fn run_created(
         lifecycle,
         cluster,
         work,
-        target,
         evidence,
         image,
         identity_image: _,
@@ -340,28 +347,22 @@ async fn run_created(
         files,
         broker,
         source,
+        consumers,
+        packages,
         candidate,
     } = *case_context;
+    let (manifest, manifest_digest) = candidate.manifest()?;
     let partial_completion = matches!(case, Case::PartialCompletion);
     let measure_startup = matches!(case, Case::Startup);
     let postgres = deployment::inspect(lifecycle, &format!("{cluster}-postgres")).await?;
     let postgres_ip = bootstrap::kind_address(&postgres)?.to_string();
     let registry = deployment::inspect(lifecycle, &format!("{cluster}-registry")).await?;
     let registry_authority = format!("{}:5000", bootstrap::kind_address(&registry)?);
-    // The TLS twin of the registry, which the package stage reads (§10.2).
-    let registry_tls = deployment::inspect(lifecycle, &format!("{cluster}-registry-tls")).await?;
-    let registry_tls = format!(
-        "127.0.0.1:{}",
-        registry_tls["Ports"]["5000/tcp"][0]["HostPort"]
-            .as_str()
-            .context("the TLS registry publishes a loopback port")?
-    );
     let nats = deployment::inspect(lifecycle, &format!("{cluster}-nats")).await?;
     let nats_url = format!("nats://{}:4222", bootstrap::kind_address(&nats)?);
     let minio = deployment::inspect(lifecycle, &format!("{cluster}-minio")).await?;
     let minio_endpoint = format!("http://{}:9000", bootstrap::kind_address(&minio)?);
-    let registry_auth =
-        bootstrap::write_registry_auth(files, work, [&registry_authority, &registry_tls])?;
+    let registry_auth = bootstrap::write_registry_auth(files, work, &registry_authority)?;
     let admin_url = format!("postgresql://postgres:probe@{postgres_ip}:5432/postgres");
     deployment::wait_postgres(&admin_url).await?;
     deployment::wait_registry(&registry_authority, &registry_auth).await?;
@@ -377,11 +378,12 @@ async fn run_created(
     let cache = work.join("wasmtime-cache");
     DirBuilder::new().mode(0o700).create(&host_secrets)?;
     DirBuilder::new().mode(0o700).create(&cache)?;
+    // The case reads no built component: the hosts pull the candidate's.
     let mut document = JourneyDocument {
         system_pg_url: format!("postgresql://postgres:probe@{postgres_ip}:5432/wamn_system"),
-        component_directory: target.join("virtualized/std-empty-environment"),
+        component_directory: PathBuf::new(),
         compilation_cache_directory: cache,
-        flow_http_wasm: target.join("wasm32-wasip2/release/http_route.wasm"),
+        flow_http_wasm: PathBuf::new(),
         component_artifact_base: format!("{registry_authority}/wamn/components"),
         release_artifact_base: format!("{registry_authority}/wamn/releases"),
         route_host: crate::environment::identity().route_host.clone(),
@@ -395,37 +397,18 @@ async fn run_created(
         materializer: None,
         runtime: None,
     };
-    let (route, release) = application::prepare_application(
-        &document,
-        work,
-        &admin_url,
-        &application::PublicationInputs {
-            scenario_worker: &target.join("debug/wamn-scenario-worker"),
-            label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
-            minio_endpoint: &minio_endpoint,
-        },
-        &Platform {
-            system_database_url: document.system_pg_url.clone(),
-            target: Target {
-                kubeconfig: work.join("kubeconfig"),
-                context: format!("kind-{cluster}"),
-                namespace: NAMESPACE.to_owned(),
-            },
-            chart: repository.join("deploy/platform/release"),
-            release_artifact_base: format!("{registry_tls}/wamn/releases"),
-            registry_auth_file: document.registry_auth_file.clone(),
-            oci_ca_paths: vec![work.join("registry-tls/ca.crt")],
-            package_artifact_base: Some(format!("{registry_tls}/wamn/packages")),
-            database_namespace: NAMESPACE.to_owned(),
-            database_host: Some(postgres_ip.clone()),
-            database_port: 5432,
-            host_group: None,
-            pat_issuer: PatIssuerConfig::default(),
-            events: None,
-        },
-        evidence,
-    )
-    .await?;
+    // The candidate's release, its components and its role images, copied by
+    // digest into this registry, which the hosts read (R12, R15).
+    let registry = Registry {
+        authority: registry_authority.clone(),
+        auth_file: Some(document.registry_auth_file.clone()),
+        insecure: true,
+        ca_paths: Vec::new(),
+    };
+    case_release::copy_release(candidate, &registry).await?;
+    let (route, _) = application::provision(&document, work, &admin_url).await?;
+    crate::environment::install(candidate, &document, &route, packages, &minio_endpoint).await?;
+    application::seed(&route, evidence).await?;
     event_broker::write_binding(broker, &nats_url, source)?;
     if measure_startup {
         let provisioning = event_broker::connect(&broker.provisioning, &nats_url).await?;
@@ -434,7 +417,7 @@ async fn run_created(
             scope,
             source.num_replicas,
             source.duplicate_window,
-            &crate::environment::declared_consumers()?,
+            consumers,
         )
         .await?;
         provisioning.drain().await?;
@@ -447,6 +430,7 @@ async fn run_created(
             &nats_url,
             &broker.provisioning,
             source,
+            consumers,
         )
         .await?;
     }
@@ -461,7 +445,7 @@ async fn run_created(
         &json!({
             "source":source_observed.cached_info().config,
             "advisory":advisory_observed.cached_info().config,
-            "consumers":crate::environment::declared_consumers()?,
+            "consumers":consumers,
         }),
     )?;
     drop(source_observed);
@@ -519,7 +503,7 @@ async fn run_created(
         )
         .await?;
         let (issuer, instance) =
-            start_session_issuer(case_context, &document, release.manifest_digest.as_str()).await?;
+            start_session_issuer(case_context, &document, manifest_digest.as_str()).await?;
         let replicas = if measure_startup { 1 } else { 3 };
         let (_, overlay) = application::render_host(
             &document,
@@ -527,21 +511,13 @@ async fn run_created(
                 host_tag: cluster,
                 nats_url: &nats_url,
                 database_host: &postgres_ip,
-                manifest_digest: release.manifest_digest.as_str(),
+                manifest_digest: manifest_digest.as_str(),
                 source,
                 replicas,
                 session: (&issuer, &instance),
             },
             work,
         )?;
-        // The platform image set (R12, R15): the supplied release's role
-        // images, copied by digest into this registry.
-        let registry = Registry {
-            authority: registry_authority.clone(),
-            auth_file: Some(document.registry_auth_file.clone()),
-            insecure: true,
-            ca_paths: Vec::new(),
-        };
         let (http, materializer) = case_release::copy_roles(candidate, &registry).await?;
         let host_image = if image.contains('@') {
             image.to_owned()
@@ -554,8 +530,6 @@ async fn run_created(
             identity.project.as_str(),
             identity.environment.as_str(),
         );
-        // The manifest is the bytes that `qualify-release` pulled from OCI.
-        let (manifest, _) = candidate.manifest()?;
         // The environment release installs the host group and the roles the
         // release implies, as `env apply` does (§9.2).
         let (name, label) = case_release::install(
@@ -573,8 +547,8 @@ async fn run_created(
                 org: org.to_owned(),
                 project: project_name.to_owned(),
                 env: env.to_owned(),
-                manifest_digest: release.manifest_digest.to_string(),
-                artifact_base: release.artifact_base.clone(),
+                manifest_digest: manifest_digest.to_string(),
+                artifact_base: document.release_artifact_base.clone(),
                 route_host: document.route_host.clone(),
                 roles: release_chart::roles(&manifest, org, project_name, env),
                 drain_bound_seconds: DRAIN_BOUND_SECONDS,
@@ -589,7 +563,7 @@ async fn run_created(
             namespace: NAMESPACE,
             name: &name,
             label: &label,
-            digest: release.manifest_digest.as_str(),
+            digest: manifest_digest.as_str(),
             evidence,
         };
         let service = format!("{name}-http");
