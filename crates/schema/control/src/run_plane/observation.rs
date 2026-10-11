@@ -134,9 +134,6 @@ pub struct RunPlaneObservation {
     /// Rows in `catalog.event_registrations` still carrying a retired `state`
     /// or `partition-key` key (0 when the table is absent).
     pub stale_registration_key_rows: i64,
-    /// Whether `catalog.release_components` exists without its route columns,
-    /// so every member still binds a wiring node.
-    pub release_components_without_routes: bool,
     /// Whether `catalog.package_definition_owners` has the old column
     /// `definition_kind` (docs/plan/kind-to-type.md §4.3.2).
     pub definition_owners_kind_column: bool,

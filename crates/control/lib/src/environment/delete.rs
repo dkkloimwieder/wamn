@@ -41,21 +41,12 @@ use crate::release_chart;
 /// How long CloudNativePG may take to finalize the `Database` CR.
 const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
 
-/// The control tables that key rows by `tenant_id`, leaves first, each with
-/// its immutability trigger. The foreign keys have no `ON DELETE` clause, so
-/// this order is the one that deletes.
-pub const CONTROL_TABLES: [(&str, Option<&str>); 5] = [
-    (
-        "catalog.deployment_attestations",
-        Some("deployment_attestations_immutable"),
-    ),
+/// The control tables that key rows by `tenant_id`, each with its
+/// immutability trigger.
+pub const CONTROL_TABLES: [(&str, Option<&str>); 3] = [
     (
         "catalog.connection_requirements",
         Some("connection_requirements_immutable"),
-    ),
-    (
-        "catalog.effective_releases",
-        Some("effective_releases_immutable"),
     ),
     (
         "catalog.authoring_command_audit",
@@ -523,28 +514,22 @@ mod tests {
     }
 
     #[test]
-    fn the_control_rows_go_leaves_first_with_the_trigger_off_for_one_delete() {
-        let order = CONTROL_TABLES.map(|(table, _)| table);
-        let position = |table: &str| order.iter().position(|t| *t == table).unwrap();
-        // Each child table before the table its foreign key names.
-        assert!(
-            position("catalog.deployment_attestations") < position("catalog.effective_releases")
-        );
+    fn the_control_rows_go_with_the_trigger_off_for_one_delete() {
         assert_eq!(
             delete_control_rows_sql(
-                "catalog.effective_releases",
-                Some("effective_releases_immutable"),
+                "catalog.connection_requirements",
+                Some("connection_requirements_immutable"),
                 "dev"
             ),
             [
-                "ALTER TABLE catalog.effective_releases DISABLE TRIGGER \"effective_releases_immutable\"",
-                "DELETE FROM catalog.effective_releases WHERE tenant_id = 'dev'",
-                "ALTER TABLE catalog.effective_releases ENABLE TRIGGER \"effective_releases_immutable\"",
+                "ALTER TABLE catalog.connection_requirements DISABLE TRIGGER \"connection_requirements_immutable\"",
+                "DELETE FROM catalog.connection_requirements WHERE tenant_id = 'dev'",
+                "ALTER TABLE catalog.connection_requirements ENABLE TRIGGER \"connection_requirements_immutable\"",
             ]
         );
         assert_eq!(
-            delete_control_rows_sql("catalog.effective_releases", None, "dev"),
-            ["DELETE FROM catalog.effective_releases WHERE tenant_id = 'dev'"]
+            delete_control_rows_sql("catalog.connection_requirements", None, "dev"),
+            ["DELETE FROM catalog.connection_requirements WHERE tenant_id = 'dev'"]
         );
     }
 }

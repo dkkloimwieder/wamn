@@ -35,11 +35,10 @@ use wamn_schema_control::BareSchemaName;
 /// use (for the tenant resolver alone), and the mapping relation that decides its
 /// tenant must be completely unreachable, so an author cannot re-point itself.
 ///
-/// Naming `wamn_authority.author_login_tenants` and
-/// `catalog.deployment_attestations` here also makes the probe structurally
-/// unable to pass against a project database: those relations are absent there,
-/// so the statement errors and the process refuses instead of quietly authoring
-/// into the wrong plane.
+/// Naming `wamn_authority.author_login_tenants` here also makes the probe
+/// structurally unable to pass against a project database: that relation is
+/// absent there, so the statement errors and the process refuses instead of
+/// quietly authoring into the wrong plane.
 ///
 /// Params: `$1` run schema. wamn-0h0g.8.5.5 deleted the whole reservation-era
 /// gate-report lineage and wamn-0h0g.8.5.6 put the surviving report row back, so
@@ -105,10 +104,6 @@ SELECT current_user = session_user, \
                        current_user, 'wamn_authority.author_login_tenants', \
                        mapping_privilege.privilege)) \
        ), \
-       NOT pg_catalog.has_table_privilege( \
-             current_user, 'catalog.deployment_attestations', 'SELECT') \
-         AND NOT pg_catalog.has_table_privilege( \
-             current_user, 'catalog.deployment_attestations', 'INSERT'), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_roles AS role \
             WHERE role.rolname NOT IN (session_user, 'wamn_control_author') \
@@ -480,12 +475,9 @@ mod tests {
                 "the control probe still reads project-local {project_local}"
             );
         }
-        // Conversely, relations only a CONTROL database has are named, so the probe
+        // Conversely, a relation only a CONTROL database has is named, so the probe
         // errors rather than admitting a project connection.
-        assert!(
-            AUTHORING_ROLE_PROBE_SQL.contains("'wamn_authority.author_login_tenants'")
-                && AUTHORING_ROLE_PROBE_SQL.contains("'catalog.deployment_attestations'")
-        );
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains("'wamn_authority.author_login_tenants'"));
         // Tenant authority is not self-service: no privilege at all on the mapping.
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("mapping_privilege.privilege"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains(
@@ -502,23 +494,6 @@ mod tests {
             "SELECT wamn_authority.session_author_tenant() = $1"
         );
         assert!(!AUTHORING_TENANT_BINDING_SQL.contains("app.tenant"));
-        // The publisher relation is not readable, let alone writable. Compared on
-        // whitespace-normalized text so line wrapping is not load-bearing.
-        let probe = AUTHORING_ROLE_PROBE_SQL
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        for withheld in [
-            "'catalog.deployment_attestations', 'SELECT'",
-            "'catalog.deployment_attestations', 'INSERT'",
-        ] {
-            assert!(
-                probe.contains(&format!(
-                    "NOT pg_catalog.has_table_privilege( current_user, {withheld})"
-                )),
-                "the probe stopped denying {withheld}"
-            );
-        }
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_database"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_namespace"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));

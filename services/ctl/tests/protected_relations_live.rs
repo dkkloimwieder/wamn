@@ -252,13 +252,8 @@ const DIVERGENCE_COLUMN: &str = "environment_instance";
 /// project-side and no project installer recreates these, so they have no
 /// project fingerprint by design. Comparing them across planes is what
 /// manufactured the seven-relation drift this list retires.
-const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 6] = [
+const CONTROL_ONLY_PORTABLE_RELATIONS: [&str; 4] = [
     "catalog.authoring_command_audit",
-    // The project plane keeps a release as its manifest bytes in
-    // `catalog.releases` (platform-deploy.md R1); these release identity rows
-    // are control-plane shapes.
-    "catalog.effective_releases",
-    "catalog.deployment_attestations",
     // The projected environment identity is a CONTROL fact: the project plane
     // has no `registry.project_envs` to project from, and its own catalog is
     // recreated per run (wamn-10yt.38).

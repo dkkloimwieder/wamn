@@ -6,8 +6,9 @@
 //! The first test assembles the release as the edge bundle does; the second
 //! pushes the package once to a local `registry:2` with `push_package` and
 //! publishes its verified artifact with `publish_release` into two
-//! provisioned environments on PostgreSQL. The kind half of A7, a request to
-//! each environment's route host, runs in `environment_apply_kind`.
+//! provisioned environments on PostgreSQL. A push to an unreachable registry
+//! writes nothing. The kind half of A7, a request to each environment's
+//! route host, runs in `environment_apply_kind`.
 
 use std::path::{Path, PathBuf};
 
@@ -124,7 +125,6 @@ fn one_release_published_for_two_environments_has_one_digest() {
         "acme--plant",
         "\"tenant-id\"",
         "\"environment\"",
-        "\"effective-release-id\"",
         "\"host\"",
     ] {
         assert!(!text.contains(absent), "the release names {absent}");
@@ -139,14 +139,14 @@ const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql
 
 /// Provision `environment` of `acme/plant` in `project` as `publish_release`
 /// reads it: the applied package and the projected environment policy, then
-/// publish the release of the verified artifact in `registry` and return its
-/// digest.
+/// publish the release of the verified artifact in `registry` to `releases`.
 async fn publish_through_publish_release(
     environment: &str,
     registry: &PackageRegistry,
+    releases: &str,
     control: &str,
     project: &str,
-) -> String {
+) -> anyhow::Result<wamn_catalog::ManifestDigest> {
     let package = repository().join("apps/edge_device");
     let tenant = project_env_tenant(ORG, PROJECT, environment);
     let manifest = wamn_schema_generator::PackageManifest::from_slice(
@@ -181,7 +181,6 @@ async fn publish_through_publish_release(
             database_url: project.to_owned(),
             control_database_url: control.to_owned(),
             org: ORG.to_owned(),
-            project: PROJECT.to_owned(),
             tenant,
             environment: environment.to_owned(),
             verified_publisher_principal: PUBLISHER.to_owned(),
@@ -193,15 +192,9 @@ async fn publish_through_publish_release(
             wirings: Vec::new(),
         },
         registry,
-        &format!(
-            "{}/releases",
-            registry.artifact_base.trim_end_matches("/packages")
-        ),
+        releases,
     )
     .await
-    .expect("publish the release")
-    .as_str()
-    .to_owned()
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -241,7 +234,7 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
     std::fs::write(
         &auth_file,
         format!(
-            r#"{{"auths":{{"{}":{{"username":"wamn","password":"wamn"}}}}}}"#,
+            r#"{{"auths":{{"{}":{{"username":"wamn","password":"wamn"}},"127.0.0.1:9":{{"username":"wamn","password":"wamn"}}}}}}"#,
             local.address
         ),
     )
@@ -261,45 +254,81 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
     .await
     .expect("push the package");
 
-    let dev = publish_through_publish_release("dev", &registry, control.url(), project.url()).await;
-    let prod =
-        publish_through_publish_release("prod", &registry, control.url(), project.url()).await;
+    let releases = format!("{}/wamn/releases", local.address);
+    let publish = async |environment: &str| {
+        publish_through_publish_release(
+            environment,
+            &registry,
+            &releases,
+            control.url(),
+            project.url(),
+        )
+        .await
+        .expect("publish the release")
+        .as_str()
+        .to_owned()
+    };
+    let release_rows = async || -> i64 {
+        let (client, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls)
+            .await
+            .expect("connect to the project database");
+        let connection = tokio::spawn(connection);
+        let rows = client
+            .query_one("SELECT count(*) FROM catalog.releases", &[])
+            .await
+            .expect("count the release rows")
+            .get(0);
+        drop(client);
+        connection.abort();
+        rows
+    };
+    // A push to an unreachable registry refuses, and the release is not
+    // recorded.
+    let unreachable = publish_through_publish_release(
+        "dev",
+        &registry,
+        "127.0.0.1:9/wamn/releases",
+        control.url(),
+        project.url(),
+    )
+    .await
+    .expect_err("a push to an unreachable registry refuses");
+    assert!(
+        format!("{unreachable:#}").contains("release-manifest-publish-refused"),
+        "{unreachable:#}"
+    );
+    assert_eq!(release_rows().await, 0, "a failed push wrote a release row");
+
+    let dev = publish("dev").await;
+    let prod = publish("prod").await;
     println!("A7 publish_release dev digest {dev}");
     println!("A7 publish_release prod digest {prod}");
     assert_eq!(
         dev, prod,
         "one release published for two environments has one digest"
     );
-
-    let (client, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls)
-        .await
-        .expect("connect to the project database");
-    let connection = tokio::spawn(connection);
-    let recorded: Vec<Vec<u8>> = client
-        .query(
-            "SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1 \
-              ORDER BY tenant_id",
-            &[&dev],
-        )
-        .await
-        .expect("read the recorded releases")
-        .iter()
-        .map(|row| row.get(0))
-        .collect();
-    drop(client);
-    connection.abort();
-    assert_eq!(recorded.len(), 2, "each environment recorded the release");
     assert_eq!(
-        recorded[0], recorded[1],
-        "one release has one canonical encoding"
+        release_rows().await,
+        2,
+        "each environment recorded the release after its push"
     );
-    let (manifest, _) = ServingManifest::from_canonical_bytes(&recorded[0])
-        .expect("the recorded release is canonical");
+
+    let pushed = wamn_runtime::release_manifest_source::ReleaseManifestSource::new(
+        &releases,
+        true,
+        &registry.registry_auth_file,
+    )
+    .expect("open the release repository")
+    .pull_verified(&dev)
+    .await
+    .expect("pull the pushed release");
+    let (manifest, _) =
+        ServingManifest::from_canonical_bytes(&pushed).expect("the pushed release is canonical");
     assert!(
         !manifest.attachments.is_empty(),
         "the release serves a route, so the check covers the route host"
     );
-    let text = String::from_utf8(recorded[0].clone()).expect("canonical JSON is UTF-8");
+    let text = String::from_utf8(pushed).expect("canonical JSON is UTF-8");
     for absent in ["acme--plant", "\"environment\"", "\"host\""] {
         assert!(!text.contains(absent), "the release names {absent}");
     }

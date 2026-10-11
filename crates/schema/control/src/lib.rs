@@ -5,7 +5,6 @@
 //! compiler dependency and performs no filesystem, database, clock, or network
 //! I/O. Effect shells execute each returned plan in one database transaction.
 
-pub mod attestation;
 pub mod connections;
 mod environment;
 pub mod exposure;

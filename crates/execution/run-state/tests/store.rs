@@ -481,10 +481,10 @@ DO $$ BEGIN
             FROM pg_attribute
            WHERE attrelid = 'wamn_run.runs'::regclass AND NOT attisdropped
              AND attname IN ('event_source_run_id', 'event_root_run_id', 'event_depth',
-                             'effective_release_id', 'manifest_digest'))
+                             'manifest_digest'))
        = 'event_depth:integer event_root_run_id:text '
          'event_source_run_id:text manifest_digest:text',
-    'runs carries the causation and release pin carriers, and no integer release id';
+    'runs carries the causation and release pin carriers';
 END $$;
 
 -- One effect attempt per frame node occurrence.

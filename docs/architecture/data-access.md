@@ -386,9 +386,9 @@ The participant intent stays in the hash, because the overlay does the participa
 So a key sent through the overlay route and then through the base route answers `idempotency_conflict`, and a repeat through one route in any line order answers the stored result.
 Acme's `receiving.record_receipt` inherits the claim of Receiving's.
 
-Production-claim and release-attestation errors retain PostgreSQL's primary message and constraint name.
+Production-claim errors retain PostgreSQL's primary message and constraint name.
 They omit `DETAIL` and `HINT`, which can include failing row values.
-Run rows contain application JSON, and attestation rows accept unrestricted source provenance.
+Run rows contain application JSON.
 This rule matches platform identity errors. Primary messages remain verbatim.
 
 Commands keep network effects outside transactions that hold database locks.

@@ -1454,23 +1454,23 @@ Post `gate-request.json` to `http://127.0.0.1:18090/authoring` with the PAT as a
 ```bash
 SYS="$WAMN_SYSTEM_ADMIN_URL"
 target/debug/wamn-ctl author-wiring --database-url "$T" --control-database-url "$SYS" --tenant wms \
-  --package-id wamn_wms --package-version 1.0.0 --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json
+  --package-id wamn_wms --package-version 1.0.0 --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
+  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json
 WAMN_RELEASE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/releases \
-target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk --project wms \
-  --tenant wms --effective-release-id 1 --environment dev --verified-publisher-principal wamn-management-author-dkk--wms--dev \
+target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk \
+  --tenant wms --environment dev --verified-publisher-principal wamn-management-author-dkk--wms--dev \
   --run-schema wamn_run --package wamn_wms@1.0.0 --wiring "wamn_wms@1.0.0::inventory_move_and_label=2" \
-  --attachments apps/wamn_wms/publication/attachments.json --route-host wms.wamn.dev --package-manifest apps/wamn_wms/wamn.json \
-  --registry-auth-file $A/config.json
+  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json
 echo '{"provider":"gcs","container":"wamn-dev-labels","prefix":"wms/"}' > $P/labels-store.definition.json
 target/debug/wamn-ctl bind-connection --database-url "$T" --tenant wms --environment dev --instance-id labels-store \
-  --requirement-type blobstore --definition $P/labels-store.definition.json --effective-release-id 1 \
+  --requirement-type blobstore --definition $P/labels-store.definition.json --release-digest <release digest> \
   --component-digest <blob-put digest> --store-alias labels
 target/debug/wamn-ctl qualify-release --release-digest <release digest> --release-chart "$WAMN_RELEASE_CHART" \
   --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --registry-auth-file $A/config.json \
   --target-directory <target directory> --gates-image <gates image> --identity-image <identity image>
 ```
 
-Receiving runs the same `publish-release`, `qualify-release` and `print-release-env` commands with `--project receiving --tenant dev`, no `--wiring`, and its own attachments and manifest.
+Receiving runs the same `publish-release` and `qualify-release` commands with `--tenant dev` and no `--wiring`.
 
 On 2026-09-27 the pushes took 17, 11, 10 and 20 seconds, the gate 3 seconds, `author-wiring` 2 seconds, `publish-release` 10 seconds, `bind-connection` 2 seconds and the manifest push 6 seconds. The WMS release manifest is `sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3`. The first PAT mint was refused before it reached identity, because a short Kubernetes API timeout left the password read empty. Stop when a credential read returns nothing.
 
@@ -1621,7 +1621,7 @@ Forward the database pod as in section 6.4, and set `WAMN_PG_ADMIN_URL` to the s
 
 ```bash
 echo '[{"event":"update","new":{"id":"<pallet id>","location_id":"<location id>","row_version":"<row version>","type":"pallet"}}]' > $P/input.json
-target/debug/wamn-ctl workflow start --tenant wms --environment dev --effective-release-id 1 --package-id wamn_wms \
+target/debug/wamn-ctl workflow start --tenant wms --environment dev --release-digest <release digest> --package-id wamn_wms \
   --wiring-id inventory_move_and_label --wiring-version 2 --service-principal-id 9ba1ea8e-4ad2-45bb-b96d-20dffdcc881b \
   --idempotency-key <key> --input $P/input.json
 ```

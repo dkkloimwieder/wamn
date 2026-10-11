@@ -119,7 +119,6 @@ pub fn write_package(
         database_url: String::new(),
         control_database_url: String::new(),
         org: String::new(),
-        project: String::new(),
         tenant: tenant.clone(),
         environment: release.scope.environment.to_owned(),
         verified_publisher_principal: release.publisher.to_owned(),

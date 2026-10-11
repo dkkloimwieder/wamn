@@ -90,7 +90,7 @@ use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
-use wamn_control::push_release_manifest::push_manifest_bytes;
+use wamn_control::publish_release::push_manifest_bytes;
 use wamn_control::release_chart::{ImageSet, Target, release_name, stamp};
 use wamn_control_registry::{Template, Triple};
 use wamn_engine::release_manifest::release_label;

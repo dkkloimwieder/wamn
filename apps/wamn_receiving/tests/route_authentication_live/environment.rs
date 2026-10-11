@@ -502,7 +502,6 @@ pub(super) struct JourneyReleaseTarget<'a> {
     pub(super) system_url: &'a str,
     pub(super) publisher: &'a str,
     pub(super) project: &'a Client,
-    pub(super) control: &'a Client,
 }
 
 /// The package artifact registry of the journey: `<registry>/<org>/packages`
@@ -559,7 +558,6 @@ pub(super) async fn publish_journey_release(
         system_url,
         publisher,
         project,
-        control,
     } = target;
     let wirings = released_journey_packages()
         .flat_map(|package| {
@@ -578,7 +576,6 @@ pub(super) async fn publish_journey_release(
             database_url: project_url.to_owned(),
             control_database_url: system_url.to_owned(),
             org: identity().org.clone(),
-            project: identity().project.clone(),
             tenant: identity().tenant.clone(),
             environment: identity().environment.clone(),
             verified_publisher_principal: publisher.to_owned(),
@@ -594,25 +591,6 @@ pub(super) async fn publish_journey_release(
     .await
     .context("publish the production Receiving release")?
     .to_string();
-    let inactive = control
-        .query_opt(
-            "SELECT deployed_manifest_hash FROM catalog.deployment_attestations \
-             WHERE tenant_id = $1 AND manifest_digest = $2 \
-               AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[
-                &identity().tenant.as_str(),
-                &digest.as_str(),
-                &identity().org.as_str(),
-                &identity().project.as_str(),
-                &identity().environment.as_str(),
-            ],
-        )
-        .await
-        .context("verify the published Receiving release remains inactive")?;
-    anyhow::ensure!(
-        inactive.is_none(),
-        "publishing the Receiving release activated it before deployment"
-    );
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         let bytes: Vec<u8> = project.query_one(
             "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",

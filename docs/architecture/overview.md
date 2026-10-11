@@ -66,9 +66,6 @@ PostgreSQL enforces uniqueness, row isolation, immutable records, release sealin
 Package registration retains its lineage lock, exact retry behavior, and first timestamp.
 Platform schema installation targets fresh databases, including the control database.
 
-`wamn-schema-control` compares projected release identities and deployment attestations.
-`wamn-control` writes them and compares a concurrent winner within the same transaction.
-Exact retries retain the first timestamp and nullable source provenance.
 The provisioning owner locks and compares environment identity before refreshing its tenant projection.
 That refresh clears the instance claim even when the suffix stays unchanged.
 The developer coordinator claims an instance with one update and refuses a missing projection.

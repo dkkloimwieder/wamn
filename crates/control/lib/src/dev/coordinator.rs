@@ -839,7 +839,6 @@ impl ProductionDevStageRunner {
             database_url: self.config.target_database_url().to_owned(),
             control_database_url: self.config.system_database_url().to_owned(),
             org: identity.org.clone(),
-            project: identity.project.clone(),
             tenant: identity.tenant.clone(),
             environment: identity.environment.clone(),
             verified_publisher_principal: principal,

@@ -70,13 +70,11 @@ pub struct AuthorWiringArgs {
 pub struct PublishReleaseArgs {
     #[arg(long)]
     pub database_url: String,
-    /// Owner URL of the control database. It receives the release identity.
+    /// Owner URL of the control database holding the environment policy.
     #[arg(long)]
     pub control_database_url: String,
     #[arg(long)]
     pub org: String,
-    #[arg(long)]
-    pub project: String,
     #[arg(long)]
     pub tenant: String,
     #[arg(long)]
@@ -222,7 +220,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
             database_url: args.database_url,
             control_database_url: args.control_database_url,
             org: args.org,
-            project: args.project,
             tenant: args.tenant,
             environment: args.environment,
             verified_publisher_principal: args.verified_publisher_principal,
@@ -429,7 +426,7 @@ mod tests {
         args: PublishReleaseArgs,
     }
 
-    const PUBLISH: [&str; 22] = [
+    const PUBLISH: [&str; 20] = [
         "publish-release",
         "--database-url",
         "postgres://publish.invalid/env",
@@ -437,8 +434,6 @@ mod tests {
         "postgres://publish.invalid/control",
         "--org",
         "acme",
-        "--project",
-        "plant",
         "--tenant",
         "acme--plant--dev",
         "--environment",
@@ -467,7 +462,7 @@ mod tests {
         );
         assert_eq!(args.artifact_base, "registry.invalid/wamn/packages");
         assert!(
-            PublishProbe::try_parse_from(&PUBLISH[..19]).is_err(),
+            PublishProbe::try_parse_from(&PUBLISH[..17]).is_err(),
             "publish-release parsed with no package artifact base"
         );
         for retired in [

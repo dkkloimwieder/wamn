@@ -9,7 +9,6 @@ pub fn as_postgres(values: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
         .map(|value| -> &(dyn ToSql + Sync) {
             match value {
                 Value::Text(value) => value,
-                Value::NullableText(value) => value,
                 Value::Int(value) => value,
                 Value::NullableInt(value) => value,
                 Value::Bool(value) => value,

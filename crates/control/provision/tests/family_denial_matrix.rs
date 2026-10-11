@@ -1701,12 +1701,10 @@ fn the_scenario_author_has_no_platform_membership_or_project_reads() {
 // THE PASS-ALL POLICIES of the control database
 // ---------------------------------------------------------------------------
 
-/// `catalog.qualifications` belongs to no tenant, so its policy admits every
-/// row (owner rulings of 2026-10-02 on `wamn-zua8.3`). That is safe only while
-/// it is the only pass-all policy of the control database and no role but the
-/// owner holds a privilege on the table. Both are read from the server.
+/// Every table of the control database has a tenant, so no policy admits
+/// every row. Read from the server.
 #[test]
-fn the_tenantless_tables_are_the_only_pass_all_policies_and_owner_only() {
+fn no_control_policy_passes_every_row() {
     let fixture = fixture();
     assert_eq!(
         rows(
@@ -1719,20 +1717,7 @@ fn the_tenantless_tables_are_the_only_pass_all_policies_and_owner_only() {
                  OR pg_get_expr(p.polwithcheck, p.polrelid) = 'true' \
               ORDER BY (n.nspname || '.' || c.relname || ' ' || p.polname) COLLATE \"C\"",
         ),
-        ["catalog.qualifications qualifications_all"],
-        "a pass-all policy exists on a table that has a tenant"
-    );
-    assert_eq!(
-        rows(
-            &fixture.control_url,
-            "SELECT c.relname || ' ' || pg_get_userbyid(acl.grantee) || ':' \
-                    || acl.privilege_type \
-               FROM pg_catalog.pg_class c, aclexplode(c.relacl) acl \
-              WHERE c.oid = 'catalog.qualifications'::regclass \
-                AND acl.grantee <> c.relowner \
-              ORDER BY 1",
-        ),
         Vec::<String>::new(),
-        "a role other than the owner holds a privilege on a tenant-less table"
+        "a pass-all policy exists on a table that has a tenant"
     );
 }

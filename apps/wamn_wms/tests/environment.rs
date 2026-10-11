@@ -614,7 +614,6 @@ pub async fn publish(
             database_url: route.database_url.clone(),
             control_database_url: inputs.system_pg_url.clone(),
             org: identity().org.clone(),
-            project: identity().project.clone(),
             tenant: identity().tenant.clone(),
             environment: identity().environment.clone(),
             verified_publisher_principal: route

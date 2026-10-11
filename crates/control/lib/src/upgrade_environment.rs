@@ -469,8 +469,8 @@ impl Run {
         Ok((done(!pushed), outputs))
     }
 
-    /// Stage 5: capacity, broker, `WAMN_TAP` and the attested releases, before
-    /// any change to the environment.
+    /// Stage 5: capacity, broker and `WAMN_TAP`, before any change to the
+    /// environment.
     async fn preflight(&self) -> Outcome {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
@@ -495,17 +495,8 @@ impl Run {
         outputs.insert("WAMN_TAP".to_owned(), tap.to_owned());
 
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        let attested = attested_releases(&databases, &self.arguments).await?;
         outputs.insert("tenant".to_owned(), databases.tenant.clone());
         outputs.insert("database".to_owned(), databases.database.clone());
-        outputs.insert(
-            "attested releases".to_owned(),
-            attested
-                .iter()
-                .map(|(digest, commit)| format!("{digest} {commit}"))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
         Ok((StepResult::Done, outputs))
     }
 
@@ -974,7 +965,6 @@ impl Run {
                 database_url: project_url.clone(),
                 control_database_url: system_url.clone(),
                 org: self.arguments.org.clone(),
-                project: self.arguments.project.clone(),
                 tenant: tenant.clone(),
                 environment: self.arguments.environment.clone(),
                 verified_publisher_principal: format!(
@@ -3027,28 +3017,6 @@ fn redact(text: &str) -> String {
         }
     }
     text
-}
-
-/// Each attested release of the tenant, as its manifest digest, with its
-/// source commit. The attestations live in the control store of the system
-/// database (deploy/sql/control-portable-store.sql).
-async fn attested_releases(
-    databases: &Databases,
-    arguments: &RunArguments,
-) -> anyhow::Result<Vec<(String, String)>> {
-    Ok(databases
-        .system()
-        .await?
-        .query(
-            "SELECT manifest_digest, coalesce(source_commit, '') FROM catalog.deployment_attestations
-              WHERE tenant_id = $1 AND org_id = $2 AND project_id = $3 AND environment = $4
-              ORDER BY attested_at, manifest_digest",
-            &[&databases.tenant, &arguments.org, &arguments.project, &arguments.environment],
-        )
-        .await?
-        .iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect())
 }
 
 /// A port-forward to the primary pod of a CloudNativePG cluster, on a free

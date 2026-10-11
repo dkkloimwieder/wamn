@@ -146,7 +146,7 @@ Add one `--wiring` argument for each wiring that the release keeps. Receiving ha
 ```bash
 WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
-  --org "$ORG" --project "$PROJECT" \
+  --org "$ORG" \
   --tenant "$TENANT" --environment "$ENVIRONMENT" \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \

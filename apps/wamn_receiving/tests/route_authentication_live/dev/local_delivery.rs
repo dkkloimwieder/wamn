@@ -251,13 +251,6 @@ async fn require_local_facts(
     )?;
     let (_, digest) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_type='publish'", &[&identity().tenant.as_str()]).await?.get(0);
-    let attestations: i64 = control
-        .query_one(
-            "SELECT count(*) FROM catalog.deployment_attestations WHERE tenant_id=$1",
-            &[&identity().tenant.as_str()],
-        )
-        .await?
-        .get(0);
     let (target, task) = connect(target_url).await?;
     let wirings: i64 = target
         .query_one(
@@ -279,7 +272,7 @@ async fn require_local_facts(
         .collect::<Vec<_>>();
     task.abort();
     ensure!(
-        published == 0 && attestations == 0 && wirings == 0,
+        published == 0 && wirings == 0,
         "local execution wrote permanent publication facts"
     );
     ensure!(

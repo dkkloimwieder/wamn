@@ -1,19 +1,3 @@
--- A release is named by its manifest digest (docs/plan/platform-deploy.md R1).
-CREATE TABLE catalog.effective_releases (
-    tenant_id                    text        NOT NULL CHECK (tenant_id <> ''),
-    manifest_digest              text        NOT NULL
-        CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    environment                  text        NOT NULL CHECK (environment <> ''),
-    verified_publisher_principal text CHECK (
-        verified_publisher_principal IS NULL OR verified_publisher_principal <> ''
-    ),
-    created_at                   timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT effective_releases_pkey
-        PRIMARY KEY (tenant_id, manifest_digest),
-    CONSTRAINT effective_releases_environment_key
-        UNIQUE (tenant_id, manifest_digest, environment)
-);
-
 -- `environment_instance` names WHICH CREATION of the project database this fact
 -- belongs to (wamn-10yt.52). The development loop drops and clones the project
 -- database before every run, while this control database is never recreated, so
@@ -48,7 +32,7 @@ CREATE TABLE catalog.connection_requirements (
 -- holds the facts the marker governs. The admit path reads it LOCALLY, inside
 -- its own control transaction, rather than opening the registry on every
 -- component admission for a flag that changes once in an environment's
--- lifetime — the dual-plane shape `catalog.effective_releases` already carries.
+-- lifetime.
 --
 -- The projected copy CARRIES THE AUTHORITY ROW'S IDENTITY — the (org, project,
 -- env) triple plus the provisioned `instance_suffix` — so a disagreement
@@ -132,50 +116,6 @@ CREATE TABLE wamn_run.gate_reports (
     CONSTRAINT gate_reports_pkey PRIMARY KEY (tenant_id, wiring_hash)
 );
 
--- The attestation's coordinate carries the environment instance for the same
--- reason the connection requirement does (wamn-10yt.52): keyed by the instance, a
--- recreated database is a different coordinate rather than a conflict with a
--- row whose database no longer exists.
-CREATE TABLE catalog.deployment_attestations (
-    tenant_id              text        NOT NULL CHECK (tenant_id <> ''),
-    environment_instance   text        NOT NULL,
-    manifest_digest        text        NOT NULL
-        CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    org_id                 text        NOT NULL CHECK (org_id <> ''),
-    project_id             text        NOT NULL CHECK (project_id <> ''),
-    environment            text        NOT NULL CHECK (environment <> ''),
-    deployed_manifest_hash text        NOT NULL
-        CHECK (deployed_manifest_hash ~ '^sha256:[0-9a-f]{64}$'),
-    source_commit          text        CHECK (source_commit IS NULL OR source_commit <> ''),
-    attested_at            timestamptz NOT NULL,
-    CONSTRAINT deployment_attestations_coordinate UNIQUE (
-        tenant_id, environment_instance, manifest_digest, org_id, project_id,
-        environment
-    ),
-    CONSTRAINT deployment_attestations_release_fkey
-        FOREIGN KEY (tenant_id, manifest_digest, environment)
-        REFERENCES catalog.effective_releases
-            (tenant_id, manifest_digest, environment)
-);
-
--- One row per passing qualification that a select read from a file
--- (wamn-zua8.3). A qualification proves bytes, not names: the package set is
--- the (package_id, version, component_digest) triples of the release, and the
--- image digests are those of the host, gates and identity images. It belongs
--- to no tenant, so its policy admits every row.
-CREATE TABLE catalog.qualifications (
-    qualification_sha256 text        NOT NULL
-        CHECK (qualification_sha256 ~ '^sha256:[0-9a-f]{64}$'),
-    package_set          jsonb       NOT NULL CHECK (jsonb_typeof(package_set) = 'array'),
-    image_digests        jsonb       NOT NULL CHECK (jsonb_typeof(image_digests) = 'object'),
-    recorded_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT qualifications_pkey PRIMARY KEY (qualification_sha256)
-);
-ALTER TABLE catalog.qualifications ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catalog.qualifications FORCE ROW LEVEL SECURITY;
-CREATE POLICY qualifications_all ON catalog.qualifications
-    USING (true) WITH CHECK (true);
-
 -- Tenant isolation is structural even for owner-only tables.
 DO $tenant_policies$
 DECLARE
@@ -183,8 +123,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.effective_releases', 'catalog.connection_requirements',
-        'catalog.authoring_command_audit', 'catalog.deployment_attestations',
+        'catalog.connection_requirements', 'catalog.authoring_command_audit',
         'catalog.tenant_environments',
         'wamn_run.gate_reports'
     ] LOOP
@@ -205,13 +144,12 @@ DECLARE
     trigger_name text;
 BEGIN
     -- ONE freeze for every control fact, unconditionally (wamn-10yt.52). The
-    -- connection requirements and the deployment attestations rejoined this list when they started keying by the
+    -- connection requirements rejoined this list when they started keying by the
     -- environment instance: a recreated environment now writes a DIFFERENT row
     -- rather than editing the one whose database is gone, so there is nothing
     -- left for a conditional freeze to permit.
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.effective_releases', 'catalog.authoring_command_audit', 'catalog.connection_requirements',
-        'catalog.deployment_attestations', 'catalog.qualifications',
+        'catalog.authoring_command_audit', 'catalog.connection_requirements',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -257,7 +195,6 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.effective_releases',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
         'wamn_run.gate_reports'
     ] LOOP
@@ -276,10 +213,8 @@ GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_control_author;
 GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
     TO wamn_control_author;
 
-REVOKE ALL PRIVILEGES ON catalog.effective_releases, catalog.connection_requirements
-    FROM wamn_control_author;
-GRANT SELECT ON catalog.effective_releases, catalog.connection_requirements
-    TO wamn_control_author;
+REVOKE ALL PRIVILEGES ON catalog.connection_requirements FROM wamn_control_author;
+GRANT SELECT ON catalog.connection_requirements TO wamn_control_author;
 
 REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports
     FROM wamn_control_author;
@@ -300,9 +235,7 @@ BEGIN
     SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
       FROM pg_tables WHERE schemaname = 'catalog';
     IF catalog_tables IS DISTINCT FROM ARRAY[
-        'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
-        'effective_releases', 'qualifications',
-        'tenant_environments'
+        'authoring_command_audit', 'connection_requirements', 'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';
@@ -333,7 +266,6 @@ BEGIN
                                    candidate.privilege)
            AND NOT EXISTS (
              SELECT 1 FROM (VALUES
-                 ('catalog', 'effective_releases', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),

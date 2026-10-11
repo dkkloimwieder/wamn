@@ -93,28 +93,6 @@ fn reset_and_apply(url: &str, before_store: &str) {
     psql_ok(url, "apply the control portable store", &script);
 }
 
-fn render(statement: &wamn_schema_control::SqlStatement) -> String {
-    let mut sql = statement.sql.clone();
-    for (index, value) in statement.params.iter().enumerate().rev() {
-        sql = sql.replace(&format!("${}", index + 1), &literal(value));
-    }
-    sql
-}
-
-fn literal(value: &wamn_schema_control::Value) -> String {
-    match value {
-        wamn_schema_control::Value::Text(text)
-        | wamn_schema_control::Value::NullableText(Some(text)) => {
-            format!("'{}'", text.replace('\'', "''"))
-        }
-        wamn_schema_control::Value::NullableText(None)
-        | wamn_schema_control::Value::NullableInt(None) => "NULL".to_owned(),
-        wamn_schema_control::Value::Int(value)
-        | wamn_schema_control::Value::NullableInt(Some(value)) => value.to_string(),
-        wamn_schema_control::Value::Bool(value) => value.to_string(),
-    }
-}
-
 #[test]
 fn current_database_connect_posture_is_exactly_scoped() {
     let test_database = wamn_test_postgres::database();
@@ -186,9 +164,7 @@ BEGIN
   SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
     FROM pg_tables WHERE schemaname = 'catalog';
   ASSERT catalog_tables = ARRAY[
-    'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
-    'effective_releases', 'qualifications',
-    'tenant_environments'
+    'authoring_command_audit', 'connection_requirements', 'tenant_environments'
   ]::text[], format('catalog table list drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
@@ -214,19 +190,6 @@ BEGIN
   ), 'a portable-store relation has the wrong owner';
 END
 $shape$;
-
-INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
-INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES ('tenant-a', 'sha256:' || repeat('7', 64), 'dev') ON CONFLICT (tenant_id, manifest_digest) DO NOTHING;
-DO $immutable$ BEGIN
-  BEGIN
-    UPDATE catalog.effective_releases SET environment = 'prod';
-    ASSERT false, 'the effective release mutated';
-  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
-  END;
-END
-$immutable$;
-
-
 
 -- wamn-10yt.52. A connection requirement is frozen for EVERY environment,
 -- and a RECREATED environment writes its own row under its own creation rather
@@ -366,15 +329,10 @@ INSERT INTO wamn_authority.author_login_tenants
   (login_identity, tenant_id, org_id, project_id, environment)
 VALUES ('{author_a}', 'tenant-a', 'acme', 'widgets', 'dev'),
        ('{author_b}', 'tenant-b', 'acme', 'shipping', 'dev');
-DO $seed$ DECLARE tenant text; release text; BEGIN
-  FOR tenant, release IN
-    SELECT * FROM (VALUES
-      ('tenant-a', 'sha256:' || repeat('1', 64)),
-      ('tenant-b', 'sha256:' || repeat('2', 64))
-    ) AS seed(tenant, release)
+DO $seed$ DECLARE tenant text; BEGIN
+  FOREACH tenant IN ARRAY ARRAY['tenant-a', 'tenant-b']
   LOOP
     PERFORM set_config('app.tenant', tenant, false);
-    INSERT INTO catalog.effective_releases (tenant_id, manifest_digest, environment) VALUES (tenant, release, 'dev');
     INSERT INTO catalog.connection_requirements
       (tenant_id, environment_instance, component_digest, store_alias,
        requirement_json, requirement_hash)
@@ -405,7 +363,6 @@ $identity$;
 
 SET app.tenant = 'tenant-a';
 DO $positive$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.effective_releases) = 1;
   ASSERT (SELECT count(*) FROM catalog.connection_requirements) = 1;
 END
 $positive$;
@@ -423,7 +380,7 @@ VALUES ('tenant-a', 'sha256:' || repeat('2', 64), true, '{{}}');
 
 SET app.tenant = 'tenant-b';
 DO $narrowed$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.effective_releases) = 0;
+  ASSERT (SELECT count(*) FROM catalog.connection_requirements) = 0;
   BEGIN
     INSERT INTO catalog.authoring_command_audit
       (tenant_id, command_id, command_type, principal_id, principal_type,
@@ -441,12 +398,6 @@ $narrowed$;
 
 SET app.tenant = 'tenant-a';
 DO $denied$ BEGIN
-  BEGIN PERFORM 1 FROM catalog.deployment_attestations;
-    ASSERT false, 'the author read deployment attestations';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
-  BEGIN UPDATE catalog.effective_releases SET environment = 'prod';
-    ASSERT false, 'the author rewrote an effective release';
-  EXCEPTION WHEN insufficient_privilege THEN NULL; END;
   BEGIN PERFORM 1 FROM wamn_authority.author_login_tenants;
     ASSERT false, 'the author read its tenant mapping';
   EXCEPTION WHEN insufficient_privilege THEN NULL; END;
@@ -468,7 +419,7 @@ SET app.tenant = 'tenant-b';
 DO $second$ BEGIN
   ASSERT session_user = '{author_b}';
   ASSERT wamn_authority.session_author_tenant() = 'tenant-b';
-  ASSERT (SELECT count(*) FROM catalog.effective_releases) = 1;
+  ASSERT (SELECT count(*) FROM catalog.connection_requirements) = 1;
   ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0;
   ASSERT (SELECT count(*) FROM wamn_run.gate_reports) = 0;
 END
@@ -534,75 +485,5 @@ END
 $immutable$;
 RESET ROLE;
 "#,
-    );
-}
-
-#[test]
-fn deployment_attestation_rust_binding_holds_on_postgres() {
-    let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_test_postgres::database();
-    let url = test_database.url().to_owned();
-    reset_and_apply(&url, "");
-    let hash = format!("sha256:{}", "a".repeat(64));
-    let release = format!("sha256:{}", "7".repeat(64));
-    let identity = wamn_schema_control::attestation::EffectiveReleaseIdentity {
-        tenant_id: "tenant-a",
-        manifest_digest: &release,
-        environment: "prod",
-    };
-    let attestation = wamn_schema_control::attestation::Attestation {
-        tenant_id: "tenant-a",
-        environment_instance: "",
-        manifest_digest: &release,
-        org_id: "acme",
-        project_id: "billing",
-        environment: "prod",
-        deployed_manifest_hash: &hash,
-        source_commit: Some("0123456789abcdef"),
-        attested_at: "2026-08-15T12:00:00Z",
-    };
-    let project = wamn_schema_control::attestation::project_effective_release_identity(&identity);
-    let write = wamn_schema_control::attestation::register_attestation(&attestation);
-    psql_ok(
-        &url,
-        "deployment attestation binding",
-        &format!(
-            r"
-SET ROLE wamn_system;
-SET app.tenant = 'tenant-a';
-{project};
-PREPARE wamn_rust_attestation AS {prepared};
-DO $types$ DECLARE found text[]; BEGIN
-  SELECT parameter_types::text[] INTO found
-    FROM pg_prepared_statements WHERE name = 'wamn_rust_attestation';
-  ASSERT found = ARRAY['text','text','text','text','text','text','text','text','text']::text[],
-    format('PostgreSQL types the Rust binding as %s', found);
-END $types$;
-DEALLOCATE wamn_rust_attestation;
-{write};
-{write};
-DO $binding$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 1;
-  ASSERT EXISTS (
-    SELECT 1 FROM catalog.deployment_attestations
-     WHERE tenant_id = 'tenant-a' AND environment_instance = ''
-       AND manifest_digest = '{release}' AND org_id = 'acme' AND project_id = 'billing'
-       AND environment = 'prod' AND deployed_manifest_hash = '{hash}'
-       AND source_commit = '0123456789abcdef'
-       AND attested_at = '2026-08-15T12:00:00Z'::timestamptz
-  ), 'the Rust binding placed a value in the wrong column';
-  BEGIN
-    UPDATE catalog.deployment_attestations SET source_commit = 'different';
-    ASSERT false, 'an attestation row was mutable';
-  EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'catalog.deployment_attestations is immutable';
-  END;
-END $binding$;
-RESET ROLE;
-",
-            project = render(&project),
-            prepared = write.sql,
-            write = render(&write)
-        ),
     );
 }

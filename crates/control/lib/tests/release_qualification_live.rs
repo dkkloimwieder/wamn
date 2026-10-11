@@ -10,7 +10,7 @@ use wamn_control::delivery::qualification_artifact::{
     image_set_digests,
 };
 use wamn_control::package_artifact::PackageRegistry;
-use wamn_control::push_release_manifest::push_manifest_bytes;
+use wamn_control::publish_release::push_manifest_bytes;
 use wamn_control::release_chart::ImageSet;
 
 #[path = "support/local_registry.rs"]

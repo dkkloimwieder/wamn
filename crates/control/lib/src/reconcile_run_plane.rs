@@ -1268,7 +1268,6 @@ async fn observe(
         .context("probe catalog schema")?
         .get(0);
     if obs.catalog_schema_present {
-        let mut route_columns = false;
         for row in client
             .query(select_schema_columns_sql(), &[&"catalog"])
             .await
@@ -1276,9 +1275,6 @@ async fn observe(
         {
             let table: String = row.get(0);
             let column: String = row.get(1);
-            if table == "release_components" && column == "route_operation" {
-                route_columns = true;
-            }
             if table == "package_definition_owners" && column == "definition_kind" {
                 obs.definition_owners_kind_column = true;
             }
@@ -1287,8 +1283,6 @@ async fn observe(
             }
             obs.catalog_tables.insert(table.clone());
         }
-        obs.release_components_without_routes =
-            obs.catalog_tables.contains("release_components") && !route_columns;
         if obs.catalog_tables.contains("event_registrations") {
             obs.stale_registration_key_rows = client
                 .query_one(count_stale_registration_keys_sql(), &[])

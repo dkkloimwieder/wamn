@@ -322,7 +322,7 @@ pub(super) async fn shared_runner_legacy_leg(su: &Client) {
         retained.get::<_, Option<String>>(2).as_deref(),
         Some("completed")
     );
-    for column in ["package_id", "effective_release_id", "environment"] {
+    for column in ["package_id", "environment"] {
         assert!(
             !column_exists(su, "runs", column).await,
             "refusal leaves pin column {column} absent"

@@ -481,26 +481,16 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     // serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring
     // states the registration a handler derives.
 
-    let stored: Vec<u8> = project
+    // Composition writes no release row: publish records it after the push.
+    let release_rows: i64 = project
         .query_one(
-            "SELECT canonical_bytes FROM catalog.releases \
-             WHERE tenant_id = $1 AND manifest_digest = $2",
-            &[&TENANT, &first.digest.as_str()],
-        )
-        .await
-        .expect("read the frozen release artifact")
-        .get(0);
-    assert_eq!(stored, first.canonical_bytes);
-    let snapshot_count: i64 = project
-        .query_one(
-            "SELECT count(*) FROM catalog.releases \
-             WHERE tenant_id = $1",
+            "SELECT count(*) FROM catalog.releases WHERE tenant_id = $1",
             &[&TENANT],
         )
         .await
-        .expect("count immutable release artifacts")
+        .expect("count release rows")
         .get(0);
-    assert_eq!(snapshot_count, 1);
+    assert_eq!(release_rows, 0);
 
     let mut drifted_hashes = manifest_hashes.clone();
     drifted_hashes.insert(
