@@ -67,7 +67,7 @@ The verb reads the registry row, the tenant row and the event reader row first. 
 3. Delete the source stream and the advisory stream `WAMN_EVENT_ADVISORIES_<source>`, by name. The stream delete removes the materializer consumers, and the provisioning user has no permission to list them. Answer "not found" as done.
 4. Drop the replication slot, then the database `WITH (FORCE)`. The publication goes with the database.
 5. Drop the CDC role and the generation roles of the nine families with tenant or project-environment scope, whose scope names the database, `a` and `b` of each, with one `DROP ROLE IF EXISTS` each. The names come from `workload_generation_role` with the database of this instance.
-6. In one transaction, delete the control rows of the tenant, leaves first: `deployment_attestations`, `connection_requirements`, `component_library`, `effective_release_heads`, `effective_release_packages`, `effective_releases`, `package_migrations`, `packages`, `authoring_command_audit`, `wamn_run.gate_reports`. Each immutable table gets `DISABLE TRIGGER`, the delete, and `ENABLE TRIGGER`.
+6. In one transaction, delete the control rows of the tenant, leaves first: `authoring_command_audit`, `wamn_run.gate_reports` (`delete.rs::CONTROL_TABLES`; the other control tables were dropped by wamn-vavs4, wamn-unffv, wamn-t7gif and wamn-jqdja). Each immutable table gets `DISABLE TRIGGER`, the delete, and `ENABLE TRIGGER`.
 7. In one transaction, delete `registry.project_envs` and `catalog.tenant_environments` for the triple. The trigger records the suffix, and the cascade removes the memberships, the event reader, the capture gap rows and the dumps.
 
 ### 4.3 Refusals
