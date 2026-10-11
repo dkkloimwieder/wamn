@@ -2,11 +2,11 @@
 //! each key.
 //!
 //! `wamn-edge --config <path>` or `WAMN_EDGE_CONFIG` names the file. Each key
-//! has one variable ([`OVERRIDES`]), which replaces the file's value or
-//! supplies a key that the file leaves out. The `[scope]` keys take the
-//! variables of the cloud host: `WAMN_ORG`, `WAMN_PROJECT` and
-//! `WASMCLOUD_HOST_ENVIRONMENT`. Every other key has a `WAMN_EDGE_*` variable. With no file, every key
-//! comes from its variable. An unknown key is refused.
+//! but `scope.environment` has one variable ([`OVERRIDES`]), which replaces
+//! the file's value or supplies a key that the file leaves out. The `[scope]`
+//! keys `org` and `project` take the variables of the cloud host, `WAMN_ORG`
+//! and `WAMN_PROJECT`. `scope.environment` comes only from the file. Every
+//! other key has a `WAMN_EDGE_*` variable. An unknown key is refused.
 //! `services/edge/edge.example.toml` shows every key.
 
 use std::net::SocketAddr;
@@ -32,11 +32,6 @@ enum Shape {
 const OVERRIDES: &[(&str, &[&str], Shape)] = &[
     ("WAMN_ORG", &["scope", "org"], Shape::Text),
     ("WAMN_PROJECT", &["scope", "project"], Shape::Text),
-    (
-        "WASMCLOUD_HOST_ENVIRONMENT",
-        &["scope", "environment"],
-        Shape::Text,
-    ),
     ("WAMN_EDGE_BUNDLE_DIR", &["release", "dir"], Shape::Text),
     (
         "WAMN_EDGE_BUNDLE_DIGEST",
@@ -326,11 +321,10 @@ mod tests {
         assert_eq!(config.device.expect("a device").serial.max_frame, 64);
 
         let from_variables = parse(
-            "",
+            "[scope]\nenvironment = \"edge\"",
             &[
                 ("WAMN_ORG", "org-a"),
                 ("WAMN_PROJECT", "plant"),
-                ("WASMCLOUD_HOST_ENVIRONMENT", "edge"),
                 ("WAMN_EDGE_BUNDLE_DIR", "/bundle"),
                 ("WAMN_EDGE_BUNDLE_DIGEST", "sha256:00"),
                 ("WAMN_EDGE_SESSION_KEYS", "/keys.json"),
@@ -342,7 +336,7 @@ mod tests {
                 ("WAMN_EDGE_LISTEN", "127.0.0.1:0"),
             ],
         )
-        .expect("the variables alone are a configuration");
+        .expect("the environment and the variables are a configuration");
         assert!(from_variables.device.is_none(), "no device, no loop");
         assert_eq!(
             from_variables.scope.release_scope(),

@@ -4,7 +4,8 @@
 
 [scope]
 # The environment coordinate of the box. The tenant is <org>--<project>--<environment>.
-# The variables are WAMN_ORG, WAMN_PROJECT and WASMCLOUD_HOST_ENVIRONMENT.
+# The variables of org and project are WAMN_ORG and WAMN_PROJECT. The
+# environment has no variable.
 org = "org-a"
 project = "plant"
 environment = "edge"
