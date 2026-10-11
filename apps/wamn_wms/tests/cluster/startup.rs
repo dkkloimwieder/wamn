@@ -5,6 +5,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
+use wamn_gate_harness::case_release::NAMESPACE;
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::workload::HTTP_PROBE_IMAGE;
 
@@ -31,7 +32,7 @@ pub(super) async fn cold_host(
     let host_deployment = format!("hostgroup-{group}");
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "wait",
         "--for=condition=Available",
         &format!("deployment/{host_deployment}"),
@@ -56,10 +57,9 @@ pub(super) async fn cold_host(
         .collect::<anyhow::Result<Vec<_>>>()?
         .join(",");
     let pods: Value = serde_json::from_slice(
-        &checked(
-            kubectl(cluster, work)
-                .args(["-n", cluster, "get", "pods", "-l", &selector, "-o", "json"]),
-        )
+        &checked(kubectl(cluster, work).args([
+            "-n", NAMESPACE, "get", "pods", "-l", &selector, "-o", "json",
+        ]))
         .await?,
     )?;
     write_result(evidence, "host-cold.json", &pods)?;
@@ -113,7 +113,7 @@ pub(super) async fn requests(
     );
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "exec",
         &cold.pod,
         "-c",
@@ -126,7 +126,7 @@ pub(super) async fn requests(
     .await?;
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "wait",
         "--for=jsonpath={.status.containerStatuses[0].restartCount}=1",
         &format!("pod/{}", cold.pod),
@@ -135,7 +135,7 @@ pub(super) async fn requests(
     .await?;
     checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "wait",
         "--for=condition=Ready",
         &format!("pod/{}", cold.pod),
@@ -150,7 +150,7 @@ pub(super) async fn requests(
         evidence.join("host-cold-previous.log"),
         checked(kubectl(cluster, work).args([
             "-n",
-            cluster,
+            NAMESPACE,
             "logs",
             "--previous",
             "--timestamps",
@@ -250,7 +250,7 @@ async fn request(
     );
     let job = format!("startup-request-{name}");
     let manifest = request_job(
-        cluster,
+        NAMESPACE,
         service,
         &inputs.route_host,
         secret,
@@ -263,7 +263,7 @@ async fn request(
     checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
     let completed = checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "wait",
         "--for=condition=Complete",
         &format!("job/{job}"),
@@ -273,7 +273,7 @@ async fn request(
     let pods: Value = serde_json::from_slice(
         &checked(kubectl(cluster, work).args([
             "-n",
-            cluster,
+            NAMESPACE,
             "get",
             "pods",
             "-l",
@@ -303,7 +303,7 @@ async fn request(
     // Attempt logs are retained as evidence. Assertions read the structured pod result.
     fs::write(
         evidence.join(format!("first-request-{name}-attempts.jsonl")),
-        checked(kubectl(cluster, work).args(["-n", cluster, "logs", &format!("job/{job}")]))
+        checked(kubectl(cluster, work).args(["-n", NAMESPACE, "logs", &format!("job/{job}")]))
             .await?,
     )?;
     completed?;
@@ -330,7 +330,7 @@ async fn request(
 }
 
 fn request_job(
-    cluster: &str,
+    namespace: &str,
     service: &str,
     route_host: &str,
     secret: &str,
@@ -360,10 +360,10 @@ body=$(od -An -v -tx1 /tmp/body | tr -d ' \n')
 printf '{"status":"%s","first_seconds":"%s","total_seconds":"%s","recovery_seconds":%s,"attempts":%s,"body_hex":"%s"}\n' "$1" "$2" "$3" "$elapsed" "$attempt" "$body" >/dev/termination-log
 test "$1" = 200
 "#;
-    json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":HTTP_PROBE_IMAGE,"imagePullPolicy":"IfNotPresent","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
+    json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":namespace},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":HTTP_PROBE_IMAGE,"imagePullPolicy":"IfNotPresent","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
         {"name":"OPERATOR_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
         {"name":"ROUTE_HOST","value":route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
-        {"name":"ROUTE_URL","value":format!("http://{service}.{cluster}.svc.cluster.local/packaging/get?{query}")}
+        {"name":"ROUTE_URL","value":format!("http://{service}.{namespace}.svc.cluster.local/packaging/get?{query}")}
     ]}]}}}})
 }
 
@@ -432,7 +432,7 @@ async fn route_after_restart(
         let workloads: Value = serde_json::from_slice(
             &checked(kubectl(cluster, work).args([
                 "-n",
-                cluster,
+                NAMESPACE,
                 "get",
                 "workloads",
                 "-o",
@@ -453,7 +453,7 @@ async fn route_after_restart(
         let slices: Value = serde_json::from_slice(
             &checked(kubectl(cluster, work).args([
                 "-n",
-                cluster,
+                NAMESPACE,
                 "get",
                 "endpointslices",
                 "-l",
@@ -502,7 +502,7 @@ async fn cache_files(
     let mut metadata = String::from_utf8(
         checked(kubectl(cluster, work).args([
             "-n",
-            cluster,
+            NAMESPACE,
             "exec",
             pod,
             "-c",
@@ -526,7 +526,7 @@ async fn cache_files(
     let mut hashes = String::from_utf8(
         checked(kubectl(cluster, work).args([
             "-n",
-            cluster,
+            NAMESPACE,
             "exec",
             pod,
             "-c",
@@ -682,7 +682,7 @@ async fn startup_time(
 ) -> anyhow::Result<u64> {
     let bytes = checked(kubectl(cluster, work).args([
         "-n",
-        cluster,
+        NAMESPACE,
         "logs",
         "--timestamps",
         pod,
@@ -704,7 +704,7 @@ async fn startup_time(
 
 async fn object(cluster: &str, work: &Path, kind: &str, name: &str) -> anyhow::Result<Value> {
     Ok(serde_json::from_slice(
-        &checked(kubectl(cluster, work).args(["-n", cluster, "get", kind, name, "-o", "json"]))
+        &checked(kubectl(cluster, work).args(["-n", NAMESPACE, "get", kind, name, "-o", "json"]))
             .await?,
     )?)
 }

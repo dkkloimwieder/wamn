@@ -63,13 +63,14 @@ async fn run(evidence: &Path, fresh_only: bool, session_client: bool) -> anyhow:
         let suffix = document["instance_suffix"]
             .as_str()
             .context("the selected session fixture has its instance suffix")?;
-        let secrets = deployment::native_secrets(&cluster)?;
+        let secrets = deployment::native_secrets(&cluster, &cluster.resources.name)?;
         let resources = &cluster.resources;
         install_host(
             resources,
             &cluster.inputs,
             &carrier,
             &super::HostBinding {
+                namespace: &cluster.resources.name,
                 replicas: 2,
                 nats_url: &cluster.nats_url,
                 native_nats_secrets: &secrets,

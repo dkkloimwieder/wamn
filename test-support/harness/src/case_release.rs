@@ -21,9 +21,9 @@ use wamn_control::delivery::Candidate;
 use wamn_control::release_chart::{self, ImageSet, Target, ValuesInput};
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
 
-/// The operator namespace. A release elsewhere names the operator's NATS
-/// itself, because the subchart's default is the release namespace's.
-const OPERATOR_NAMESPACE: &str = "wamn-system";
+/// The operator release's namespace, where every environment release and
+/// its hosts live (R6).
+pub const NAMESPACE: &str = "wamn-system";
 /// The host group keys and variables that the release chart derives.
 const DERIVED_KEYS: [&str; 5] = ["name", "namespace", "service", "extraArgs", "image"];
 const DERIVED_VARIABLES: [&str; 4] = [
@@ -212,19 +212,19 @@ pub fn host_group(overlay: &str) -> anyhow::Result<Mapping> {
     Ok(group)
 }
 
-/// One cluster and namespace a case installs its environment release into.
+/// One cluster a case installs its environment release into.
 #[derive(Debug)]
 pub struct Install<'a> {
     pub repository: &'a Path,
     pub cluster: &'a str,
     /// The directory that holds `kubeconfig`, and the stamped chart and values.
     pub work: &'a Path,
-    pub namespace: &'a str,
 }
 
 /// Stamp the release chart with `images`, render the values of `input`, and
-/// install the release. Returns the release name, which is the host group, and
-/// the `wamn.release` label of the manifest digest.
+/// install the release in the operator namespace, as `env apply` does (R6).
+/// Returns the release name, which is the host group, and the `wamn.release`
+/// label of the manifest digest, which the roles' `hostSelector` names.
 ///
 /// # Errors
 ///
@@ -242,14 +242,16 @@ pub async fn install(
         &at.work.join("release-chart"),
     )?;
     let name = release_chart::release_name(&input.org, &input.project, &input.env)?;
-    let values = case_values(release_chart::values(input)?, at.namespace);
     let path = at.work.join(format!("values-{name}.yaml"));
-    fs::write(&path, serde_yaml::to_string(&values)?)?;
+    fs::write(
+        &path,
+        serde_yaml::to_string(&release_chart::values(input)?)?,
+    )?;
     release_chart::upgrade(
         &Target {
             kubeconfig: at.work.join("kubeconfig"),
             context: format!("kind-{}", at.cluster),
-            namespace: at.namespace.to_owned(),
+            namespace: NAMESPACE.to_owned(),
         },
         &chart,
         &name,
@@ -259,20 +261,6 @@ pub async fn install(
     )
     .await?;
     Ok((name, label))
-}
-
-/// The values of a case release. A case namespace that is not the operator's
-/// names the operator's NATS, as `deploy/platform/values-host-default.yaml`
-/// does for the host releases it replaces.
-fn case_values(mut values: Value, namespace: &str) -> Value {
-    if namespace != OPERATOR_NAMESPACE {
-        let url = format!("nats://nats.{OPERATOR_NAMESPACE}.svc.cluster.local:4222");
-        values["global"] = serde_yaml::from_str(&format!(
-            "{{nats: {{schedulerUrl: '{url}', dataUrl: '{url}'}}}}"
-        ))
-        .expect("the NATS values are YAML");
-    }
-    values
 }
 
 #[cfg(test)]
@@ -293,16 +281,5 @@ mod tests {
                 .unwrap()
         );
         assert!(host_group("runtime: {hostGroups: []}").is_err());
-    }
-
-    #[test]
-    fn a_case_namespace_names_the_operator_nats() {
-        let values = case_values(serde_yaml::from_str("{roles: []}").unwrap(), "case");
-        assert_eq!(
-            values["global"]["nats"]["dataUrl"].as_str(),
-            Some("nats://nats.wamn-system.svc.cluster.local:4222")
-        );
-        let values = case_values(serde_yaml::from_str("{roles: []}").unwrap(), "wamn-system");
-        assert!(values.get("global").is_none());
     }
 }

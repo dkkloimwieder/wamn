@@ -29,13 +29,14 @@ async fn interrupted_durable_queue_item_completes_after_host_restart() -> anyhow
 async fn exercise(cluster: &ReceivingCluster) -> anyhow::Result<()> {
     let (route, carrier) = publish_and_push(&cluster.inputs, &cluster.artifacts).await?;
     seed_queue_rows(&route.database_url).await?;
-    let secrets = deployment::native_secrets(cluster)?;
+    let secrets = deployment::native_secrets(cluster, &cluster.resources.name)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     install_host(
         &cluster.resources,
         &cluster.inputs,
         &carrier,
         &super::HostBinding {
+            namespace: &cluster.resources.name,
             replicas: 1,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,

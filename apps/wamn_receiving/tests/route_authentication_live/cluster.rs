@@ -34,7 +34,7 @@ use wamn_control::print_release_env::{
 use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
-use wamn_gate_harness::case_release::{self, Registry};
+use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
@@ -101,6 +101,9 @@ async fn start_with(
     ]))
     .await?;
     checked(kubectl(&cluster).args(["create", "namespace", &cluster.name])).await?;
+    // The operator release, the environment releases and their hosts live in
+    // the operator namespace (R6).
+    checked(kubectl(&cluster).args(["create", "namespace", NAMESPACE])).await?;
 
     let postgres = resources::inspect(&cluster, "postgres").await?;
     let postgres_address = resources::kind_address(&postgres)?;
@@ -346,7 +349,7 @@ impl Deployed {
         wamn_test_infrastructure::release_chart::Release {
             cluster: &resources.name,
             work: &resources.work,
-            namespace: &resources.name,
+            namespace: NAMESPACE,
             name: &self.name,
             label: &self.label,
             digest: carrier.manifest_digest.as_str(),
@@ -425,7 +428,6 @@ async fn install_release(
             repository: &resources.repository,
             cluster: &resources.name,
             work: &resources.work,
-            namespace: &resources.name,
         },
         &ImageSet {
             host: host_image.clone(),
@@ -453,9 +455,12 @@ async fn install_release(
     })
 }
 
-/// What one installed host group binds to: how many replicas, which broker,
-/// and the optional session issuer the overlay pins.
+/// What one installed host group binds to: its namespace, how many replicas,
+/// which broker, and the optional session issuer the overlay pins.
 struct HostBinding<'a> {
+    /// [`NAMESPACE`] for an environment release; the cluster's own namespace
+    /// for an install-host release.
+    namespace: &'a str,
     replicas: u32,
     nats_url: &'a str,
     native_nats_secrets: &'a [PathBuf],
@@ -514,7 +519,7 @@ async fn prepare_host(
                 WorkloadRoleFamily::Administration,
             ],
             guest_secret_file: PathBuf::from("guest-sql.json"),
-            namespace: cluster.name.clone(),
+            namespace: binding.namespace.to_owned(),
             database_host,
         },
     )?;
@@ -524,13 +529,13 @@ async fn prepare_host(
     for secret in native_nats_secrets {
         apply(cluster, secret).await?;
     }
-    install_route_credential(cluster, inputs).await?;
+    install_route_credential(cluster, inputs, binding.namespace).await?;
     let registry_secret = cluster.work.join("registry-pull.json");
     write_private(
         &registry_secret,
         &serde_json::to_vec(&json!({
             "apiVersion":"v1", "kind":"Secret", "type":"kubernetes.io/dockerconfigjson",
-            "metadata":{"name":"wamn-registry-pull","namespace":cluster.name},
+            "metadata":{"name":"wamn-registry-pull","namespace":binding.namespace},
             "stringData":{".dockerconfigjson":fs::read_to_string(&inputs.registry_auth_file)?},
         }))?,
     )?;
@@ -539,7 +544,7 @@ async fn prepare_host(
     fs::write(
         &operator_values,
         serde_json::to_vec(&json!({"operator":{
-            "watchNamespaces":[cluster.name],"hostNamespaces":[cluster.name],"allowSharedHosts":false,
+            "watchNamespaces":[binding.namespace],"hostNamespaces":[binding.namespace],"allowSharedHosts":false,
         }}))?,
     )?;
     wamn_test_infrastructure::platform::install(
@@ -547,7 +552,7 @@ async fn prepare_host(
         &cluster.lifecycle,
         &cluster.name,
         &cluster.work,
-        &cluster.name,
+        binding.namespace,
         &operator_values,
     )
     .await?;
@@ -603,7 +608,7 @@ fn render_host(
         )?,
         &overlay,
         &HostValuesInput {
-            namespace: cluster.name.clone(),
+            namespace: binding.namespace.to_owned(),
             host_tag: cluster.name.clone(),
             replicas,
             component_artifact_base: inputs.component_artifact_base.clone(),
@@ -644,6 +649,7 @@ fn render_host(
 async fn install_route_credential(
     cluster: &Resources,
     inputs: &JourneyDocument,
+    namespace: &str,
 ) -> anyhow::Result<()> {
     ensure!(
         fs::metadata(&inputs.operator_secret_output)?
@@ -663,7 +669,7 @@ async fn install_route_credential(
                 .is_some_and(|token| !token.is_empty()),
         "the operator Secret must keep its declared purpose and token"
     );
-    secret["metadata"]["namespace"] = json!(cluster.name);
+    secret["metadata"]["namespace"] = json!(namespace);
     let path = cluster.work.join("operator-pat-kube.json");
     write_private(&path, &serde_json::to_vec(&secret)?)?;
     apply(cluster, &path).await
@@ -837,7 +843,7 @@ async fn serve_released_http(
     carrier: ReleaseCarrier,
 ) -> anyhow::Result<(ProvisionedRoute, String)> {
     use wamn_test_infrastructure::{release_chart, workload};
-    let secrets = deployment::native_secrets(cluster)?;
+    let secrets = deployment::native_secrets(cluster, NAMESPACE)?;
     let resources = &cluster.resources;
     let (issuer, instance) = session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
@@ -845,6 +851,7 @@ async fn serve_released_http(
         &route.database_url,
         &carrier,
         &HostBinding {
+            namespace: NAMESPACE,
             replicas,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,

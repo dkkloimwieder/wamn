@@ -9,6 +9,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
+use wamn_gate_harness::case_release::NAMESPACE;
 use wamn_gate_harness::journey::JourneyDocument;
 
 use super::bootstrap::{self, BootstrapFiles};
@@ -444,7 +445,7 @@ pub(super) async fn capture_failure(
     ] {
         if let Err(error) = capture(
             kubectl(cluster, work)
-                .args(["--request-timeout=10s", "-n", cluster])
+                .args(["--request-timeout=10s", "-n", NAMESPACE])
                 .args(arguments),
             evidence,
             name,
@@ -469,7 +470,7 @@ pub(super) async fn capture_failure(
                 command.args([
                     "--request-timeout=10s",
                     "-n",
-                    cluster,
+                    NAMESPACE,
                     "logs",
                     "--timestamps",
                     "-c",
@@ -515,7 +516,7 @@ pub(super) async fn capture_failure(
                 kubectl(cluster, work).args([
                     "--request-timeout=10s",
                     "-n",
-                    cluster,
+                    NAMESPACE,
                     "logs",
                     &format!("job/{name}"),
                     "--all-containers",

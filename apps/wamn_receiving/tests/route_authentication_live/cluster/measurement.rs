@@ -151,9 +151,13 @@ async fn requests(
     let evidence = state.resources.evidence.as_path();
     let inputs = &state.inputs;
     let caller: Value = serde_json::from_slice(&fs::read(&inputs.operator_secret_output)?)?;
-    let endpoint =
-        super::materializer_case::endpoint(state, "flow-http", "receiving-measurement-nodeport")
-            .await?;
+    let endpoint = super::materializer_case::endpoint(
+        state,
+        &state.resources.name,
+        "flow-http",
+        "receiving-measurement-nodeport",
+    )
+    .await?;
     let service_token = caller["stringData"]["token"]
         .as_str()
         .context("operator Secret has a token")?;
@@ -224,9 +228,13 @@ async fn requests(
         .await?,
     )?;
     route_after_restart(cluster, work, evidence).await?;
-    let endpoint =
-        super::materializer_case::endpoint(state, "flow-http", "receiving-measurement-nodeport")
-            .await?;
+    let endpoint = super::materializer_case::endpoint(
+        state,
+        &state.resources.name,
+        "flow-http",
+        "receiving-measurement-nodeport",
+    )
+    .await?;
     let restart = request(
         state,
         &endpoint,

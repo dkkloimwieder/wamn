@@ -22,7 +22,7 @@ use wamn_control::delivery::Candidate;
 use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
-use wamn_gate_harness::case_release::{self, Registry};
+use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::event_broker::EventBroker;
 use wamn_test_infrastructure::release_chart::{Release, hosts_ready, role_placed};
@@ -227,6 +227,10 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             )
             .await?;
             checked(kubectl(&cluster, work.path()).args(["create", "namespace", &cluster])).await?;
+            // The operator release, every environment release and its hosts
+            // live in the operator namespace (R6).
+            checked(kubectl(&cluster, work.path()).args(["create", "namespace", NAMESPACE]))
+                .await?;
             let result = Box::pin(run_created(
                 &CaseContext {
                     repository: &repository,
@@ -467,7 +471,7 @@ async fn run_created(
         route_host: crate::environment::identity().route_host.clone(),
         registry_auth_file: registry_auth,
         host_secret_directory: host_secrets,
-        host_secret_namespace: cluster.to_owned(),
+        host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: work.join("operator-pat.json"),
         fresh_only_packages: None,
         overlay_compatibility: None,
@@ -568,7 +572,7 @@ async fn run_created(
         fs::write(
             &operator_values,
             serde_json::to_vec_pretty(&json!({"operator":{
-                "watchNamespaces":[cluster],"hostNamespaces":[cluster],"allowSharedHosts":false,
+                "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
             }}))?,
         )?;
         platform::install(
@@ -576,7 +580,7 @@ async fn run_created(
             lifecycle,
             cluster,
             work,
-            cluster,
+            NAMESPACE,
             &operator_values,
         )
         .await?;
@@ -655,7 +659,6 @@ async fn run_created(
                 repository,
                 cluster,
                 work,
-                namespace: cluster,
             },
             &ImageSet {
                 host: host_image.clone(),
@@ -679,7 +682,7 @@ async fn run_created(
         let environment = Release {
             cluster,
             work,
-            namespace: cluster,
+            namespace: NAMESPACE,
             name: &name,
             label: &label,
             digest: release.manifest_digest.as_str(),
@@ -699,7 +702,7 @@ async fn run_created(
         workload::unknown_route(
             cluster,
             work,
-            cluster,
+            NAMESPACE,
             &service,
             &document.route_host,
             evidence,
@@ -708,7 +711,7 @@ async fn run_created(
         let endpoint = deployment::expose_route(
             cluster,
             work,
-            cluster,
+            NAMESPACE,
             &service,
             lifecycle,
             &document.route_host,
@@ -762,7 +765,7 @@ async fn run_created(
         if !browser {
             checked(kubectl(cluster, work).args([
                 "-n",
-                cluster,
+                NAMESPACE,
                 "delete",
                 "service",
                 "flow-http-nodeport",
@@ -770,15 +773,15 @@ async fn run_created(
             .await?;
             checked(kubectl(cluster, work).args([
                 "-n",
-                cluster,
+                NAMESPACE,
                 "delete",
                 "endpointslice",
                 "flow-http-nodeport",
             ]))
             .await?;
         }
-        workload::materializer_idle(cluster, work, cluster, &hosts, evidence).await?;
-        workload::cross_environment_refused(cluster, work, cluster, &http, evidence).await
+        workload::materializer_idle(cluster, work, NAMESPACE, &hosts, evidence).await?;
+        workload::cross_environment_refused(cluster, work, NAMESPACE, &http, evidence).await
     };
     let result = tokio::select! {
         ended = &mut reader => match ended {
@@ -807,7 +810,7 @@ async fn install_event_secrets(
 ) -> anyhow::Result<()> {
     let runtime_password = fs::read_to_string(&broker.runtime.password_file)?;
     deployment::apply_secret(cluster, work, &json!({"apiVersion":"v1","kind":"Secret",
-        "metadata":{"name":"wamn-event-nats","namespace":cluster},"type":"Opaque",
+        "metadata":{"name":"wamn-event-nats","namespace":NAMESPACE},"type":"Opaque",
         "stringData":{"username":broker.runtime.username,"password":runtime_password,
             "org":crate::environment::identity().org.as_str(),"project":crate::environment::identity().project.as_str(),"environment":crate::environment::identity().environment.as_str(),
             "stream_replicas":source.num_replicas.to_string(),"dup_window_secs":source.duplicate_window.as_secs().to_string()}
@@ -817,7 +820,7 @@ async fn install_event_secrets(
         cluster,
         work,
         &json!({"apiVersion":"v1","kind":"Secret",
-            "metadata":{"name":"wamn-materializer-nats","namespace":cluster},"type":"Opaque",
+            "metadata":{"name":"wamn-materializer-nats","namespace":NAMESPACE},"type":"Opaque",
             "stringData":{"binding.json":binding}
         }),
     )

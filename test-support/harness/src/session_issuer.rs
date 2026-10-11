@@ -230,6 +230,19 @@ pub async fn prepare(
             )),
     )
     .await?;
+    // The hosts live in the operator namespace and mount the public CA there
+    // (R6). Applied, because the kept delivery cluster serves two issuers.
+    let public_ca = cluster.work.join("session-public-ca-hosts.json");
+    fs::write(
+        &public_ca,
+        serde_json::to_vec(&json!({
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": "host-session-public-ca",
+                "namespace": crate::case_release::NAMESPACE},
+            "data": {"ca.crt": fs::read_to_string(cluster.work.join("session-ca.crt"))?},
+        }))?,
+    )?;
+    apply(cluster, &public_ca).await?;
     // The fixture stays in the private work directory and Kubernetes Secret.
     checked(
         kubectl(cluster)

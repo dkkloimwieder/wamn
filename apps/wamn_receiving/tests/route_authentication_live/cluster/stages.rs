@@ -83,13 +83,14 @@ pub(super) async fn setup(cluster: &mut ReceivingCluster) -> anyhow::Result<Read
     .await?;
     cluster.resources.reader = Some(cdc::start(reader, &evidence.join("cdc-reader.log"))?);
     reader_ready(cluster).await?;
-    let secrets = deployment::native_secrets(cluster)?;
+    let secrets = deployment::native_secrets(cluster, &cluster.resources.name)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     install_host(
         &cluster.resources,
         &cluster.inputs,
         &carrier,
         &super::HostBinding {
+            namespace: &cluster.resources.name,
             replicas: 3,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
@@ -163,13 +164,18 @@ pub(super) async fn materializer(
     let resources = &cluster.resources;
     let observer = event_broker::connect(&cluster.broker.observer, &cluster.nats_url).await?;
     let baseline = super::super::materializer::materializer_baseline(observer.clone()).await?;
-    let endpoint =
-        materializer_case::endpoint(cluster, "flow-http", "receiving-materializer-nodeport")
-            .await?;
+    let endpoint = materializer_case::endpoint(
+        cluster,
+        &cluster.resources.name,
+        "flow-http",
+        "receiving-materializer-nodeport",
+    )
+    .await?;
     let (phase, update_trace, receipt_trace) =
         materializer_case::trigger(cluster, &ready.route_database_url, &endpoint, order).await?;
     super::super::materializer::assert_materializer_causation(&phase, observer, &baseline).await?;
-    postcommit_case::assert_materializer_logs(cluster, &ready.hosts.pods).await?;
+    postcommit_case::assert_materializer_logs(cluster, &cluster.resources.name, &ready.hosts.pods)
+        .await?;
     wamn_test_infrastructure::traces::telemetry::collect(
         &wamn_test_infrastructure::traces::telemetry::TelemetryInput {
             cluster: &resources.name,

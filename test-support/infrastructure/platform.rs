@@ -141,6 +141,11 @@ pub async fn install(
     ]))
     .await?;
 
+    // In the operator namespace the hosts mount the operator release's own TLS
+    // Secrets (docs/plan/platform-deploy.md R6), so no Certificate replaces them.
+    if namespace == SYSTEM_NAMESPACE {
+        return Ok(());
+    }
     let ca = checked(kubectl(&kubeconfig, &context).args([
         "-n",
         SYSTEM_NAMESPACE,

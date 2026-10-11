@@ -14,14 +14,17 @@ use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_
 use super::super::identity;
 use super::{ReceivingCluster, apply, checked, kubectl, write_private};
 
-pub(super) fn native_secrets(cluster: &ReceivingCluster) -> anyhow::Result<Vec<PathBuf>> {
+pub(super) fn native_secrets(
+    cluster: &ReceivingCluster,
+    namespace: &str,
+) -> anyhow::Result<Vec<PathBuf>> {
     let event_path = cluster.resources.work.join("wamn-event-nats.json");
     let materializer_path = cluster.resources.work.join("wamn-materializer-nats.json");
     write_private(
         &event_path,
         &serde_json::to_vec(&json!({
             "apiVersion":"v1","kind":"Secret","type":"Opaque",
-            "metadata":{"name":"wamn-event-nats","namespace":cluster.resources.name},
+            "metadata":{"name":"wamn-event-nats","namespace":namespace},
             "stringData":{
                 "username":cluster.broker.runtime.username,
                 "password":fs::read_to_string(&cluster.broker.runtime.password_file)?,
@@ -35,7 +38,7 @@ pub(super) fn native_secrets(cluster: &ReceivingCluster) -> anyhow::Result<Vec<P
         &materializer_path,
         &serde_json::to_vec(&json!({
             "apiVersion":"v1","kind":"Secret","type":"Opaque",
-            "metadata":{"name":"wamn-materializer-nats","namespace":cluster.resources.name},
+            "metadata":{"name":"wamn-materializer-nats","namespace":namespace},
             "stringData":{"binding.json":fs::read_to_string(&cluster.broker.binding)?},
         }))?,
     )?;

@@ -10,8 +10,8 @@ use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase, PostcommitPh
 use wamn_test_infrastructure::{event_broker, release_chart, workload};
 
 use super::{
-    ReceivingCluster, cdc, checked, deployment, install_release, kubectl, materializer_case,
-    provision, resources, start,
+    NAMESPACE, ReceivingCluster, cdc, checked, deployment, install_release, kubectl,
+    materializer_case, provision, resources, start,
 };
 
 #[tokio::test]
@@ -115,13 +115,14 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &cluster.resources.evidence,
     )
     .await?;
-    let secrets = deployment::native_secrets(cluster)?;
+    let secrets = deployment::native_secrets(cluster, NAMESPACE)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
         cluster,
         &route.database_url,
         &carrier,
         &super::HostBinding {
+            namespace: NAMESPACE,
             replicas: 3,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
@@ -162,6 +163,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     release_chart::role_placed(&release, "http", &hosts).await?;
     let endpoint = materializer_case::endpoint(
         cluster,
+        NAMESPACE,
         &deployed.http_service(),
         "receiving-postcommit-nodeport",
     )
@@ -179,12 +181,12 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     super::super::materializer::assert_materializer_causation(&phase, observer.clone(), &baseline)
         .await?;
     cluster.inputs.materializer = Some(phase);
-    assert_materializer_logs(cluster, &hosts.pods).await?;
+    assert_materializer_logs(cluster, NAMESPACE, &hosts.pods).await?;
     wamn_test_infrastructure::traces::telemetry::collect(
         &wamn_test_infrastructure::traces::telemetry::TelemetryInput {
             cluster: &resources.name,
             work: &resources.work,
-            namespace: &resources.name,
+            namespace: NAMESPACE,
             source: &resources.source,
             tenant: super::super::identity().tenant.as_str(),
             project: super::super::identity().project.as_str(),
@@ -199,7 +201,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         evidence_file: resources.evidence.join("postcommit.json"),
         kubeconfig: resources.work.join("kubeconfig"),
         context: format!("kind-{}", resources.name),
-        namespace: resources.name.clone(),
+        namespace: NAMESPACE.to_owned(),
         materializer_workload: format!("{}-materializer", deployed.name),
         source_commit: resources.source.clone(),
         statement_timeout_ms: statement_timeout(resources, &deployed.name).await?,
@@ -210,7 +212,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         super::super::postcommit::assert_postcommit(
             &cluster.inputs,
             &format!("kind-{}", resources.name),
-            &resources.name,
+            NAMESPACE,
             &observer,
             &replay,
         ),
@@ -303,6 +305,7 @@ pub(super) async fn assert_unknown_route(
 
 pub(super) async fn assert_materializer_logs(
     cluster: &ReceivingCluster,
+    namespace: &str,
     pods: &Value,
 ) -> anyhow::Result<()> {
     let mut log = Vec::new();
@@ -314,7 +317,7 @@ pub(super) async fn assert_materializer_logs(
             checked(
                 kubectl(&cluster.resources).args([
                     "-n",
-                    &cluster.resources.name,
+                    namespace,
                     "logs",
                     pod["metadata"]["name"]
                         .as_str()
@@ -345,7 +348,7 @@ pub(super) async fn assert_materializer_logs(
 async fn statement_timeout(resources: &resources::Resources, group: &str) -> anyhow::Result<u64> {
     let bytes = checked(kubectl(resources).args([
         "-n",
-        &resources.name,
+        NAMESPACE,
         "get",
         "deployment",
         &format!("hostgroup-{group}"),

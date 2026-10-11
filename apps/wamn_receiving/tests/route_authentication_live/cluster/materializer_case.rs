@@ -14,13 +14,14 @@ use super::{ReceivingCluster, apply, checked, kubectl, resources};
 /// its endpoint.
 pub(super) async fn endpoint(
     cluster: &ReceivingCluster,
+    namespace: &str,
     service: &str,
     name: &str,
 ) -> anyhow::Result<String> {
     let slices: Value = serde_json::from_slice(
         &checked(kubectl(&cluster.resources).args([
             "-n",
-            &cluster.resources.name,
+            namespace,
             "get",
             "endpointslices",
             "-l",
@@ -31,15 +32,10 @@ pub(super) async fn endpoint(
         .await?,
     )?;
     let service: Value = serde_json::from_slice(
-        &checked(kubectl(&cluster.resources).args([
-            "-n",
-            &cluster.resources.name,
-            "get",
-            "service",
-            service,
-            "-o",
-            "json",
-        ]))
+        &checked(
+            kubectl(&cluster.resources)
+                .args(["-n", namespace, "get", "service", service, "-o", "json"]),
+        )
         .await?,
     )?;
     let slice = slices["items"]
@@ -50,26 +46,21 @@ pub(super) async fn endpoint(
         .iter().map(|endpoint| json!({"addresses":endpoint["addresses"],"conditions":endpoint["conditions"]}))
         .collect::<Vec<_>>();
     let objects = json!({"apiVersion":"v1","kind":"List","items":[
-        {"apiVersion":"v1","kind":"Service","metadata":{"name":name,"namespace":cluster.resources.name},
+        {"apiVersion":"v1","kind":"Service","metadata":{"name":name,"namespace":namespace},
          "spec":{"type":"NodePort","ports":[{"name":"http","protocol":"TCP",
             "port":service["spec"]["ports"][0]["port"],"targetPort":slice["ports"][0]["port"]}]}},
         {"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice",
-         "metadata":{"name":name,"namespace":cluster.resources.name,"labels":{"kubernetes.io/service-name":name}},
+         "metadata":{"name":name,"namespace":namespace,"labels":{"kubernetes.io/service-name":name}},
          "addressType":slice["addressType"],"ports":slice["ports"],"endpoints":endpoints},
     ]});
     let path = cluster.resources.work.join(format!("{name}.json"));
     fs::write(&path, serde_json::to_vec(&objects)?)?;
     apply(&cluster.resources, &path).await?;
     let observed: Value = serde_json::from_slice(
-        &checked(kubectl(&cluster.resources).args([
-            "-n",
-            &cluster.resources.name,
-            "get",
-            "service",
-            name,
-            "-o",
-            "json",
-        ]))
+        &checked(
+            kubectl(&cluster.resources)
+                .args(["-n", namespace, "get", "service", name, "-o", "json"]),
+        )
         .await?,
     )?;
     let port = observed["spec"]["ports"][0]["nodePort"]

@@ -26,7 +26,12 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         let (route, carrier) = publish_and_push(&cluster.inputs, &cluster.artifacts).await?;
         let (route, service) = serve_released_http(&cluster, 3, route, carrier).await?;
         let endpoint =
-            materializer_case::endpoint(&cluster, &service, "receiving-correctness-nodeport")
+            materializer_case::endpoint(
+                &cluster,
+                super::NAMESPACE,
+                &service,
+                "receiving-correctness-nodeport",
+            )
                 .await?;
         postcommit_case::assert_unknown_route(&cluster, &endpoint).await?;
         let mut digests = serde_json::Map::new();
@@ -105,7 +110,7 @@ async fn membership_job(
         "restartPolicy":"Never","automountServiceAccountToken":false,"containers":[{
             "name":"membership-test","image":image,"imagePullPolicy":"Never",
             "command":["/usr/local/bin/wamn-gates","membership-test"],
-            "args":["--endpoint-url",format!("http://{service}.{}.svc.cluster.local",resources.name),
+            "args":["--endpoint-url",format!("http://{service}.{}.svc.cluster.local",super::NAMESPACE),
                 "--host",cluster.inputs.route_host,"--org",super::super::identity().org.as_str(),
                 "--project",super::super::identity().project.as_str(),"--env",super::super::identity().environment.as_str(),"--tenant",super::super::identity().tenant.as_str()],
             "env":[{"name":"WAMN_SYSTEM_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"system-url"}}},

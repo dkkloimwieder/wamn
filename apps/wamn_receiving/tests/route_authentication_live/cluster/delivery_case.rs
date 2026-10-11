@@ -49,13 +49,7 @@ const DATABASE_CLUSTER: &str = "route-auth-pg18";
 #[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl, WAMN_DELIVERY_CLUSTER"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
-        "docker",
-        "kind",
-        "kubectl",
-        "helm",
-        "jq",
-        "curl",
-        "openssl",
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
     ]);
     ensure!(
         Candidate::from_env()?.is_none(),
@@ -301,6 +295,7 @@ async fn run(
         &carrier,
         &secrets,
         &HostBinding {
+            namespace: NAMESPACE,
             replicas: 1,
             nats_url: &nats_url,
             native_nats_secrets: &[],

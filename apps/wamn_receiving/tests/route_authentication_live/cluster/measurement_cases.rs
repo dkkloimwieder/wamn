@@ -53,7 +53,7 @@ async fn prepare(
 ) -> anyhow::Result<(ReceivingCluster, ProvisionedRoute, measurement::ColdHost)> {
     let cluster = start(evidence, false).await?;
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
-    let secrets = deployment::native_secrets(&cluster)?;
+    let secrets = deployment::native_secrets(&cluster, &cluster.resources.name)?;
     let resources = &cluster.resources;
     let (issuer, instance) =
         super::session_cluster::prepare_application(&cluster, &carrier).await?;
@@ -62,6 +62,7 @@ async fn prepare(
         &cluster.inputs,
         &carrier,
         &super::HostBinding {
+            namespace: &cluster.resources.name,
             replicas: 0,
             nats_url: &cluster.nats_url,
             native_nats_secrets: &secrets,
