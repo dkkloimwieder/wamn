@@ -247,9 +247,7 @@ async fn run(
         evidence,
         target,
         triple: triple.clone(),
-        tenant: identity().tenant.as_str(),
         route_host: identity().route_host.as_str(),
-        project_database_url: &route.database_url,
         system_database_url: &document.system_pg_url,
         release_digest: release.manifest_digest.as_str(),
         secrets: vec![

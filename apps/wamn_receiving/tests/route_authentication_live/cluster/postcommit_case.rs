@@ -97,7 +97,6 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
         cluster,
-        &route.database_url,
         &carrier,
         &super::HostBinding {
             replicas: 3,

@@ -749,7 +749,7 @@ The kind cases of `qualify-release` do not pull these images from the private re
 
 ### 3.14 Host values
 
-Run the host values program after `publish-release`, with the release artifact base and the manifest digest that `print-release-env` prints. The program calls `render_host_values`, the derivation of the kind cases, and writes both files:
+Run the host values program after `publish-release`, with the release artifact base and the manifest digest that `publish-release` prints. The program calls `render_host_values`, the derivation of the kind cases, and writes both files:
 
 ```bash
 cargo run -p wamn-test-infrastructure --example host_values_files -- \

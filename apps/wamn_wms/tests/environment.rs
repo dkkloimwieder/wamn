@@ -25,7 +25,7 @@ use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_control::environment::{Platform, stage};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::print_release_env::{self, ReleaseCarrier};
+use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_control::provision_org::{self, ProvisionOrgRequest};
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
@@ -693,13 +693,10 @@ pub async fn publish(
         store_alias,
     })
     .await?;
-    print_release_env::lookup_release_carrier(
-        &route.database_url,
-        identity().tenant.as_str(),
-        &release_digest,
-        &inputs.release_artifact_base,
-    )
-    .await
+    Ok(ReleaseCarrier {
+        artifact_base: inputs.release_artifact_base.clone(),
+        manifest_digest: wamn_catalog::ManifestDigest::parse(release_digest)?,
+    })
 }
 
 #[expect(clippy::too_many_arguments)]

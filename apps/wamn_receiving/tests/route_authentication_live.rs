@@ -85,9 +85,9 @@ use environment::{
     overlay_route_path, package_root, publish_and_push_journey_release,
     reconcile_journey_data_access, reference_of, released_component_digests,
     render_component_declarations, repository_root, required_journey, required_journey_path,
-    seed_materializer_trigger_rows, seed_preexisting_quality_fixture,
-    seed_receiving_business_rows, verify_journey_components_are_effectful,
-    verify_journey_operation_grants, verify_zero_case_gate_reports,
+    seed_materializer_trigger_rows, seed_preexisting_quality_fixture, seed_receiving_business_rows,
+    verify_journey_components_are_effectful, verify_journey_operation_grants,
+    verify_zero_case_gate_reports,
 };
 use routes::copy_fresh_only_package;
 use runtime::{
@@ -458,36 +458,10 @@ const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
 /// Fixed nameable port for `[RECEIVING-ROUTE-JOURNEY]`'s spawned Gate.
 const ROUTE_JOURNEY_GATE_BIND: &str = "127.0.0.1:18089";
 
-/// The ordinal of the first release the journey publishes. The journey
-/// publishes its releases in order, and a release is its manifest digest, so
-/// the fixture names a release by the order the database recorded it in.
-const FIRST_RELEASE: i64 = 1;
-
 /// The tenant and environment of the journey's host, from its coordinate.
 fn release_scope() -> wamn_engine::release_manifest::ReleaseScope {
     wamn_engine::release_manifest::ReleaseScope::new(
         identity().tenant.as_str(),
         identity().environment.as_str(),
     )
-}
-
-/// The manifest digest of the `ordinal`th release the journey recorded.
-async fn release_digest(project: &tokio_postgres::Client, ordinal: i64) -> anyhow::Result<String> {
-    Ok(project
-        .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1 \
-             ORDER BY recorded_at, manifest_digest OFFSET $2::int8 - 1 LIMIT 1",
-            &[&identity().tenant.as_str(), &ordinal],
-        )
-        .await
-        .with_context(|| format!("read the digest of release {ordinal}"))?
-        .get(0))
-}
-
-/// [`release_digest`] in the project database at `database_url`.
-async fn release_digest_at(database_url: &str, ordinal: i64) -> anyhow::Result<String> {
-    let (project, task) = wamn_control::dev::environment::connect(database_url).await?;
-    let digest = release_digest(project.as_ref(), ordinal).await;
-    task.abort();
-    digest
 }

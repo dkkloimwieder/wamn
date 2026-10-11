@@ -13,9 +13,7 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use wamn_gate_harness::case_release::NAMESPACE;
 use wamn_test_infrastructure::rendering::render_kind_cluster;
-pub(super) use wamn_test_infrastructure::workload::{
-    kind_address, postgres_host_port,
-};
+pub(super) use wamn_test_infrastructure::workload::{kind_address, postgres_host_port};
 
 const REGISTRY_USERNAME: &str = "wamn-receiving-journey";
 
@@ -104,12 +102,7 @@ pub(super) async fn prepare(
 /// The resources of the Receiving delivery case on the kept delivery cluster
 /// (`delivery_case`): `name` is the application's owned name there. The case
 /// creates and removes nothing through them.
-pub(super) fn delivery(
-    repository: &Path,
-    work: &Path,
-    evidence: &Path,
-    name: &str,
-) -> Resources {
+pub(super) fn delivery(repository: &Path, work: &Path, evidence: &Path, name: &str) -> Resources {
     Resources {
         repository: repository.to_owned(),
         work: work.to_owned(),

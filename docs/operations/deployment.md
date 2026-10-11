@@ -156,11 +156,6 @@ WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
 wamn-ctl qualify-release \
   --release-digest "$RELEASE_DIGEST" --release-chart "$WAMN_RELEASE_CHART" \
   --artifact-base "$RELEASE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
-
-wamn-ctl print-release-env \
-  --database-url "$OWNER_URL" --tenant "$TENANT" \
-  --release-digest "$RELEASE_DIGEST" \
-  --artifact-base "$PULL_BASE"
 ```
 
 `publish-release` records the release by its canonical manifest digest.
@@ -178,9 +173,9 @@ The route host is only the `host` of the http workload config; the router matche
 `publish-release` takes the same `--oci-ca-path` input as `push-package`.
 [Qualify the release](delivery.md#release-qualification) before deployment.
 `qualify-release` pushes the qualification artifact beside the release only when every case passes, and `env apply` reads it from the registry.
-`print-release-env` prints the host release settings without editing files.
+The host release settings are `--release-artifact-base=<release repository>` and `--release-manifest-digest=<release digest>` in `hostGroups[].extraArgs`.
 
-Copy its output into the selected complete host overlay.
+Write them into the selected complete host overlay.
 Commit those configuration changes together.
 The publisher and workloads can reach the registry through different hostnames.
 Their artifact repository path must identify the same bytes.

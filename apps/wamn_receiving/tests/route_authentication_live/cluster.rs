@@ -19,9 +19,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_control::print_release_env::{
-    ReleaseCarrier, lookup_release_carrier, lookup_release_snapshot,
-};
+use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_control::release_chart::{self, ImageSet, ValuesInput};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
@@ -33,7 +31,7 @@ use wamn_test_infrastructure::rendering::{
 };
 use wamn_test_infrastructure::secrets::{HostSecret, HostSecretsInput, derive_host_secrets};
 
-use super::{FIRST_RELEASE, connect, identity, release_digest_at, repository_root, routes};
+use super::{connect, identity, repository_root, routes};
 use build::Artifacts;
 use resources::{Resources, checked, write_private};
 use wamn_control_provision::events::{
@@ -290,20 +288,22 @@ async fn provision(
     inputs: &JourneyDocument,
     artifacts: &Artifacts,
 ) -> anyhow::Result<(ProvisionedRoute, ReleaseCarrier)> {
-    let route = routes::receiving_pat_journey(
+    let (route, digest) = routes::receiving_pat_journey(
         inputs,
         &artifacts.target.join("debug/wamn-scenario-worker"),
         inputs.fresh_only_packages.is_some(),
     )
     .await?;
-    let carrier = lookup_release_carrier(
-        &route.database_url,
-        identity().tenant.as_str(),
-        &release_digest_at(&route.database_url, FIRST_RELEASE).await?,
-        &inputs.release_artifact_base,
-    )
-    .await?;
-    Ok((route, carrier))
+    Ok((route, carrier(inputs, digest)?))
+}
+
+/// The carrier of the release `digest` that the journey pushed to its
+/// release repository.
+fn carrier(inputs: &JourneyDocument, digest: String) -> anyhow::Result<ReleaseCarrier> {
+    Ok(ReleaseCarrier {
+        artifact_base: inputs.release_artifact_base.clone(),
+        manifest_digest: wamn_catalog::ManifestDigest::parse(digest)?,
+    })
 }
 
 /// The drain bound of a case environment release: the host pods' grace period
@@ -352,7 +352,6 @@ impl Deployed {
 /// images are copied by digest into the case registry (R12, R15).
 async fn install_release(
     cluster: &ReceivingCluster,
-    database_url: &str,
     carrier: &ReleaseCarrier,
     binding: &HostBinding<'_>,
 ) -> anyhow::Result<Deployed> {
@@ -369,20 +368,13 @@ async fn install_release(
         insecure: true,
         ca_paths: Vec::new(),
     };
-    let (candidate, _) = resources
+    // The manifest is the bytes that `qualify-release` pulled from OCI.
+    let (candidate, manifest) = resources
         .candidate
         .as_ref()
         .context("a Receiving cluster case runs a candidate")?;
     let (http, materializer) = case_release::copy_roles(candidate, &registry).await?;
     let (host_image, runtime_digest) = host_image(resources).await?;
-    let manifest = lookup_release_snapshot(
-        database_url,
-        identity().tenant.as_str(),
-        carrier.manifest_digest.as_str(),
-        &carrier.artifact_base,
-    )
-    .await?
-    .manifest;
     let (org, project, env) = (
         identity().org.as_str(),
         identity().project.as_str(),
@@ -406,7 +398,7 @@ async fn install_release(
             manifest_digest: carrier.manifest_digest.to_string(),
             artifact_base: carrier.artifact_base.clone(),
             route_host: cluster.inputs.route_host.clone(),
-            roles: release_chart::roles(&manifest, org, project, env),
+            roles: release_chart::roles(manifest, org, project, env),
             drain_bound_seconds: DRAIN_BOUND_SECONDS,
             actor: "receiving cluster case".to_owned(),
             host_group: case_release::host_group(&fs::read_to_string(&overlay)?)?,
@@ -734,19 +726,12 @@ async fn publish_and_push(
     inputs: &JourneyDocument,
     artifacts: &Artifacts,
 ) -> anyhow::Result<(ProvisionedRoute, ReleaseCarrier)> {
-    let route = routes::publish_receiving_release(
+    let (route, digest) = routes::publish_receiving_release(
         inputs,
         &artifacts.target.join("debug/wamn-scenario-worker"),
     )
     .await?;
-    let carrier = lookup_release_carrier(
-        &route.database_url,
-        identity().tenant.as_str(),
-        &release_digest_at(&route.database_url, FIRST_RELEASE).await?,
-        &inputs.release_artifact_base,
-    )
-    .await?;
-    Ok((route, carrier))
+    Ok((route, carrier(inputs, digest)?))
 }
 
 /// Install the release through the release chart and check its hosts and its
@@ -763,7 +748,6 @@ async fn serve_released_http(
     let (issuer, instance) = session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
         cluster,
-        &route.database_url,
         &carrier,
         &HostBinding {
             replicas,

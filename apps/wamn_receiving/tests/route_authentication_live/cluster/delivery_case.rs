@@ -21,7 +21,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_control::delivery::Candidate;
 use wamn_control::environment::EventBroker;
-use wamn_control::print_release_env::lookup_release_carrier;
+
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_control_registry::Triple;
@@ -36,7 +36,7 @@ use wamn_test_infrastructure::delivery_cluster::{
 use wamn_test_infrastructure::event_broker;
 use wamn_test_infrastructure::secrets::{HostSecretsInput, derive_host_secrets};
 
-use super::super::{FIRST_RELEASE, connect, identity, release_digest_at, repository_root, routes};
+use super::super::{connect, identity, repository_root, routes};
 use super::{HostBinding, build, render_host, resources};
 
 /// The application's CloudNativePG namespace on the kept cluster.
@@ -168,7 +168,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
         materializer: None,
         runtime: None,
     };
-    let route = routes::publish_receiving_release(
+    let (route, digest) = routes::publish_receiving_release(
         &inputs,
         &artifacts.target.join("debug/wamn-scenario-worker"),
     )
@@ -177,14 +177,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
     let seeded = super::super::environment::seed_receiving_business_rows(project.as_ref()).await;
     project_task.abort();
     seeded?;
-    let carrier = lookup_release_carrier(
-        &route.database_url,
-        identity().tenant.as_str(),
-        &release_digest_at(&route.database_url, FIRST_RELEASE).await?,
-        &inputs.release_artifact_base,
-    )
-    .await?;
-    let digest = carrier.manifest_digest.to_string();
+    let carrier = super::carrier(&inputs, digest.clone())?;
 
     let app = Application {
         repository,
@@ -194,9 +187,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
         evidence,
         target: &artifacts.target,
         triple: triple.clone(),
-        tenant: identity().tenant.as_str(),
         route_host: identity().route_host.as_str(),
-        project_database_url: &route.database_url,
         system_database_url: &inputs.system_pg_url,
         release_digest: &digest,
         secrets: vec![

@@ -1,11 +1,4 @@
-//! Arguments and output of the release-environment and delivery verbs.
-//!
-//! # The host carrier uses explicit flags
-//!
-//! The host takes the release pair as `hostGroups[].extraArgs` flags. Clap
-//! exits nonzero on an unknown flag, so a misspelt
-//! `--release-manifest-diges` crashloops the pod, while a misspelt
-//! `WAMN_RELEASE_MANIFEST_DIGES` would deploy cleanly and serve nothing.
+//! Arguments of the delivery verbs.
 
 use std::path::PathBuf;
 
@@ -13,36 +6,7 @@ use anyhow::Context as _;
 use clap::Args;
 use wamn_control::delivery::qualification;
 use wamn_control::package_artifact::PackageRegistry;
-use wamn_control::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
-
-/// The host's carrier: per host group `extraArgs`, flags rather than env. The
-/// verb reads only the release, so it names the field, not an overlay file:
-/// each application and environment has its own host overlay.
-const HOST_CARRIER: &str = "hostGroups[].extraArgs of the selected host overlay";
-
-const ARTIFACT_BASE_FLAG: &str = "--release-artifact-base";
-const MANIFEST_DIGEST_FLAG: &str = "--release-manifest-digest";
-
-/// Arguments naming the published release whose lines are printed.
-#[derive(Debug, Args)]
-pub struct PrintReleaseEnvArgs {
-    /// URL to the database holding the published release snapshot.
-    #[arg(long)]
-    pub database_url: String,
-
-    /// Tenant claim carried by the published release snapshot.
-    #[arg(long)]
-    pub tenant: String,
-
-    /// The published release, as its manifest digest.
-    #[arg(long)]
-    pub release_digest: String,
-
-    /// The `<registry>/<repository>` the release manifest was pushed to.
-    #[arg(long)]
-    pub artifact_base: String,
-}
 
 /// Qualify one published release, by its digest, on the release chart's
 /// platform image set through the existing application cases, and push the
@@ -106,32 +70,6 @@ pub struct CheckChangesArgs {
     pub include_ignored: bool,
     #[arg(long)]
     pub result: PathBuf,
-}
-
-/// Print the release lines for one published release.
-pub async fn print_release_env(args: PrintReleaseEnvArgs) -> anyhow::Result<()> {
-    let carrier = lookup_release_carrier(
-        &args.database_url,
-        &args.tenant,
-        &args.release_digest,
-        &args.artifact_base,
-    )
-    .await?;
-    print!("{}", release_lines(&carrier));
-    Ok(())
-}
-
-/// Render the release lines each carrier takes, labelled by carrier file.
-fn release_lines(carrier: &ReleaseCarrier) -> String {
-    let ReleaseCarrier {
-        artifact_base,
-        manifest_digest,
-    } = carrier;
-    format!(
-        "# {HOST_CARRIER}\n\
-         {ARTIFACT_BASE_FLAG}={artifact_base}\n\
-         {MANIFEST_DIGEST_FLAG}={manifest_digest}\n"
-    )
 }
 
 /// Qualify one published release by its digest, and print the
@@ -230,91 +168,4 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
         result: args.result,
     })
     .await
-}
-
-#[cfg(test)]
-mod tests {
-    use clap::Parser as _;
-    use wamn_catalog::ManifestDigest;
-
-    use super::*;
-
-    /// Host command for the flattened argument surface under test.
-    #[derive(Debug, clap::Parser)]
-    struct PrintProbe {
-        #[command(flatten)]
-        args: PrintReleaseEnvArgs,
-    }
-
-    /// The published release the fixture coordinates name.
-    const RELEASE: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
-
-    const COORDINATE: [&str; 8] = [
-        "--database-url",
-        "postgres://release.invalid/env",
-        "--tenant",
-        "tenant-a",
-        "--release-digest",
-        RELEASE,
-        "--artifact-base",
-        "registry.example/wamn/releases",
-    ];
-
-    fn digest() -> ManifestDigest {
-        ManifestDigest::parse(format!("sha256:{}", "7".repeat(64)))
-            .expect("the fixture digest is canonical")
-    }
-
-    #[test]
-    fn one_release_prints_both_carriers_and_nothing_else() {
-        let printed = release_lines(&ReleaseCarrier {
-            artifact_base: "registry.example/wamn/releases".to_owned(),
-            manifest_digest: digest(),
-        });
-        assert_eq!(
-            printed,
-            format!(
-                "# hostGroups[].extraArgs of the selected host overlay\n\
-                 --release-artifact-base=registry.example/wamn/releases\n\
-                 --release-manifest-digest=sha256:{seven}\n",
-                seven = "7".repeat(64)
-            )
-        );
-        assert_eq!(printed.lines().count(), 3);
-    }
-
-    #[test]
-    fn the_release_coordinate_and_its_repository_are_all_required() {
-        let complete =
-            PrintProbe::try_parse_from(std::iter::once("print-release-env").chain(COORDINATE))
-                .expect("the complete coordinate parses")
-                .args;
-        assert_eq!(complete.release_digest, RELEASE);
-        assert_eq!(complete.artifact_base, "registry.example/wamn/releases");
-
-        for omitted in [
-            "--database-url",
-            "--tenant",
-            "--release-digest",
-            "--artifact-base",
-        ] {
-            let mut argv = vec!["print-release-env"];
-            let mut skip = false;
-            for entry in COORDINATE {
-                if entry == omitted {
-                    skip = true;
-                    continue;
-                }
-                if skip {
-                    skip = false;
-                    continue;
-                }
-                argv.push(entry);
-            }
-            assert!(
-                PrintProbe::try_parse_from(argv).is_err(),
-                "accepted a coordinate without {omitted}"
-            );
-        }
-    }
 }

@@ -156,9 +156,15 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     .arg(&identity_image),
             )
             .await?;
-            let digest =
-                workload::image_ready(&lifecycle, &cluster, work.path(), &image, "release", &evidence)
-                    .await?;
+            let digest = workload::image_ready(
+                &lifecycle,
+                &cluster,
+                work.path(),
+                &image,
+                "release",
+                &evidence,
+            )
+            .await?;
             checked(kubectl(&cluster, work.path()).args(["create", "namespace", &cluster])).await?;
             // The operator release, every environment release and its hosts
             // live in the operator namespace (R6).
@@ -548,14 +554,8 @@ async fn run_created(
             identity.project.as_str(),
             identity.environment.as_str(),
         );
-        let manifest = wamn_control::print_release_env::lookup_release_snapshot(
-            &route.database_url,
-            identity.tenant.as_str(),
-            release.manifest_digest.as_str(),
-            &release.artifact_base,
-        )
-        .await?
-        .manifest;
+        // The manifest is the bytes that `qualify-release` pulled from OCI.
+        let (manifest, _) = candidate.manifest()?;
         // The environment release installs the host group and the roles the
         // release implies, as `env apply` does (§9.2).
         let (name, label) = case_release::install(

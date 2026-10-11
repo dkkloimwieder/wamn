@@ -94,8 +94,7 @@ enum Command {
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(release_verbs::PublishReleaseArgs),
-    /// Print the release lines a pod template carries for one published release (wamn-duyl)
-    PrintReleaseEnv(delivery_verbs::PrintReleaseEnvArgs),
+
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
     /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
@@ -159,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::AuthorWiring(args) => release_verbs::author(args).await,
         Command::PublishRelease(args) => release_verbs::publish(args).await,
-        Command::PrintReleaseEnv(args) => delivery_verbs::print_release_env(args).await,
+
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(&args),
         Command::ReconcileReplicaIdentity(args) => {
             package_verbs::reconcile_replica_identity(args).await

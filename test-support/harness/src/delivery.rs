@@ -85,10 +85,7 @@ pub struct Application<'a> {
     /// The target directory of the built programs.
     pub target: &'a Path,
     pub triple: Triple,
-    pub tenant: &'a str,
     pub route_host: &'a str,
-    /// The owner URL of the project database the fixture published in.
-    pub project_database_url: &'a str,
     pub system_database_url: &'a str,
     /// The release the fixture published, `sha256:<hex>`.
     pub release_digest: &'a str,
@@ -232,14 +229,9 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         &app.triple.project,
         app.triple.env.as_str(),
     )?;
-    let manifest = wamn_control::print_release_env::lookup_release_snapshot(
-        app.project_database_url,
-        app.tenant,
-        app.release_digest,
-        &tls_releases,
-    )
-    .await?
-    .manifest;
+    let manifest =
+        wamn_control::environment::analyse::pull_release_manifest(&platform, app.release_digest)
+            .await?;
     check(app, &name, &host_image, &manifest).await?;
     Ok(Delivered {
         release_name: name,

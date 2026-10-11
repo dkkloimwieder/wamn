@@ -148,18 +148,26 @@ fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyho
     Ok(())
 }
 
+/// The journey, and the route and digest of the release it published.
 pub(super) async fn receiving_pat_journey(
     inputs: &JourneyDocument,
     scenario_worker: &Path,
     fresh_only: bool,
-) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
+) -> anyhow::Result<(
+    wamn_control::provision_project_env::ProvisionedRoute,
+    String,
+)> {
     receiving_release_journey(inputs, scenario_worker, fresh_only, false).await
 }
 
+/// The route and digest of the release that the publish-only path published.
 pub(super) async fn publish_receiving_release(
     inputs: &JourneyDocument,
     scenario_worker: &Path,
-) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
+) -> anyhow::Result<(
+    wamn_control::provision_project_env::ProvisionedRoute,
+    String,
+)> {
     receiving_release_journey(inputs, scenario_worker, false, true).await
 }
 
@@ -168,7 +176,10 @@ async fn receiving_release_journey(
     scenario_worker: &Path,
     fresh_only: bool,
     publish_only: bool,
-) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
+) -> anyhow::Result<(
+    wamn_control::provision_project_env::ProvisionedRoute,
+    String,
+)> {
     anyhow::ensure!(
         inputs.fresh_only_packages.is_some() == fresh_only,
         "the selected journey must match its fresh-only package fixture"
@@ -333,14 +344,14 @@ async fn receiving_release_journey(
             .context("project provisioning emitted no management-author principal")?,
     };
     if publish_only {
-        super::environment::publish_journey_release(inputs, target).await?;
+        let digest = super::environment::publish_journey_release(inputs, target).await?;
         let stopped = management_server.shutdown().await;
         project_task.abort();
         admin_task.abort();
         stopped?;
-        return Ok(route);
+        return Ok((route, digest));
     }
-    let (_, release) = publish_and_push_journey_release(inputs, target).await?;
+    let (digest, release) = publish_and_push_journey_release(inputs, target).await?;
     let component_digests = released_component_digests(&release)?;
     anyhow::ensure!(
         component_digests == admitted_component_digests,
@@ -1057,7 +1068,7 @@ async fn receiving_release_journey(
     project_task.abort();
     admin_task.abort();
     gate_stop?;
-    Ok(route)
+    Ok((route, digest))
 }
 
 /// A true no-op through the generated update keeps the row, its revision, and

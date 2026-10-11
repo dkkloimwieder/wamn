@@ -442,7 +442,11 @@ pub(crate) async fn read_project(
 }
 
 /// Pull the release manifest `digest` from the platform's release artifacts.
-pub(crate) async fn pull_release_manifest(
+///
+/// # Errors
+///
+/// When the manifest cannot be pulled or does not hash to `digest`.
+pub async fn pull_release_manifest(
     platform: &Platform,
     digest: &str,
 ) -> anyhow::Result<ServingManifest> {
