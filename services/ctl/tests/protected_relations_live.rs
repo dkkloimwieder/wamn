@@ -219,34 +219,6 @@ async fn install_project_database(client: &Client, url: &str) {
         .expect("install canonical management-admission authority");
 }
 
-/// Portable relations both planes install whose shapes DELIBERATELY diverge by
-/// one column, ruled 2026-09-09 on wamn-10yt.52. The component library left
-/// both planes in wamn-vavs4.7.
-///
-/// # What the retired arm asserted
-///
-/// These used to sit in a list of relations shared by both planes, where
-/// `assert_eq!(control_shared_fingerprints, project_shared_fingerprints,
-/// "control copies drifted from the still-authoritative project column/constraint
-/// shapes")` required their control and project copies to be IDENTICAL in every column
-/// (number, name, type, nullability, default) and every non-trigger constraint.
-/// That equality is GONE for these relations and is not asserted anywhere
-/// else. The control copies key by `environment_instance` and the project copies
-/// do not, because a project database is dropped and cloned before every
-/// development run and has no second creation to distinguish.
-///
-/// # What replaces it
-///
-/// [`assert_diverges_by_environment_instance`] below, which is narrower than the
-/// old arm but not nothing: both copies must still exist, and the control copy's
-/// columns must be the project copy's plus EXACTLY `environment_instance`. Any
-/// other drift between the planes still fails, so the loss is confined to the
-/// constraint shapes the added key column necessarily moves.
-const DIVERGED_PORTABLE_RELATIONS: [&str; 1] = ["catalog.connection_requirements"];
-
-/// The one column the diverged relations are permitted to differ by.
-const DIVERGENCE_COLUMN: &str = "environment_instance";
-
 /// Portable relations that live only in the control plane.
 /// `install_project_database` DROPs the `catalog` and `wamn_run` schemas
 /// project-side and no project installer recreates these, so they have no
@@ -329,71 +301,6 @@ async fn portable_fingerprints(
             .push(row.get(1));
     }
     fingerprints
-}
-
-/// Column NAMES of one fingerprint, in catalog order.
-///
-/// The raw fingerprint entries lead with `attnum`, which shifts for every column
-/// after an inserted one, so a divergence test has to compare names rather than
-/// those strings.
-fn column_names(fingerprint: &PortableFingerprint) -> Vec<String> {
-    fingerprint
-        .columns
-        .iter()
-        .map(|column| {
-            column
-                .split(':')
-                .nth(1)
-                .expect("a column fingerprint carries attnum:attname:...")
-                .to_owned()
-        })
-        .collect()
-}
-
-/// Show the control copy is the project copy plus exactly one key column.
-///
-/// This is the narrowed successor to the cross-plane equality
-/// [`DIVERGED_PORTABLE_RELATIONS`] documents. Both copies must exist, and the
-/// only permitted difference is [`DIVERGENCE_COLUMN`]: a control copy that grew
-/// a SECOND column the project plane lacks, or lost one it has, still fails.
-fn assert_diverges_by_environment_instance(
-    control: &BTreeMap<String, PortableFingerprint>,
-    project: &BTreeMap<String, PortableFingerprint>,
-) {
-    for relation in DIVERGED_PORTABLE_RELATIONS {
-        let control_columns = column_names(
-            control
-                .get(relation)
-                .unwrap_or_else(|| panic!("{relation} has a control fingerprint")),
-        );
-        let project_columns = column_names(
-            project
-                .get(relation)
-                .unwrap_or_else(|| panic!("{relation} has a project fingerprint")),
-        );
-        assert!(
-            !control_columns.is_empty() && !project_columns.is_empty(),
-            "{relation} must be installed in BOTH planes: control={control_columns:?} \
-             project={project_columns:?}"
-        );
-        assert!(
-            control_columns.iter().any(|name| name == DIVERGENCE_COLUMN),
-            "{relation} control copy must carry {DIVERGENCE_COLUMN}: {control_columns:?}"
-        );
-        assert!(
-            !project_columns.iter().any(|name| name == DIVERGENCE_COLUMN),
-            "{relation} project copy must NOT carry {DIVERGENCE_COLUMN}: {project_columns:?}"
-        );
-        let without_instance = control_columns
-            .iter()
-            .filter(|name| name.as_str() != DIVERGENCE_COLUMN)
-            .cloned()
-            .collect::<Vec<_>>();
-        assert_eq!(
-            without_instance, project_columns,
-            "{relation} may diverge across planes by {DIVERGENCE_COLUMN} and nothing else"
-        );
-    }
 }
 
 /// The one author-writable relation outside row security.
@@ -491,8 +398,6 @@ async fn protected_relations_match_reconciled_postgres() {
     );
     prepare_scratch_database(&client).await;
     install_control_database(&client).await;
-    let control_diverged_fingerprints =
-        portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await;
     let control_only_fingerprints =
         portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
     assert!(
@@ -503,11 +408,6 @@ async fn protected_relations_match_reconciled_postgres() {
     );
     assert_author_sql_boundaries(&client, true).await;
     install_project_database(&client, &url).await;
-    // The relation that diverges by one column (wamn-10yt.52).
-    assert_diverges_by_environment_instance(
-        &control_diverged_fingerprints,
-        &portable_fingerprints(&client, &DIVERGED_PORTABLE_RELATIONS).await,
-    );
     let project_side_control_only =
         portable_fingerprints(&client, &CONTROL_ONLY_PORTABLE_RELATIONS).await;
     assert!(

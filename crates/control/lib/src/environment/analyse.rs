@@ -159,14 +159,7 @@ pub async fn analyse(
     };
     let release = match &document.release {
         DeclaredRelease::None => None,
-        DeclaredRelease::Digest(declared) => {
-            let tenant = wamn_control_provision::project_env_tenant(
-                &document.org,
-                &document.project,
-                &document.env,
-            );
-            Some(read_release(platform, &system, declared, &tenant).await?)
-        }
+        DeclaredRelease::Digest(declared) => Some(read_release(platform, declared).await?),
     };
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
@@ -470,18 +463,9 @@ pub(crate) async fn pull_release_manifest(
     Ok(manifest)
 }
 
-async fn read_release(
-    platform: &Platform,
-    system: &Client,
-    digest: &str,
-    tenant: &str,
-) -> anyhow::Result<ReleaseFacts> {
+async fn read_release(platform: &Platform, digest: &str) -> anyhow::Result<ReleaseFacts> {
     let manifest = pull_release_manifest(platform, digest).await?;
     let image_set = release_chart::image_set(&platform.chart).await?;
-    system
-        .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
-        .await
-        .context("claim the release's tenant")?;
     // R12: the key is the release digest and every digest of the chart's
     // platform image set, the host and each role component. It is read from
     // the registry (§8.2), never from Postgres.
@@ -494,21 +478,13 @@ async fn read_release(
     let qualification = qualification_artifact::find(&releases, digest, &image_set)
         .await
         .context("refused")?;
-    let components: Vec<String> = manifest
+    // The admitted descriptors the manifest carries name the release's
+    // connections (R2 (3)).
+    let required_connections = manifest
         .components
         .iter()
-        .map(|component| component.descriptor.component_digest.as_str().to_owned())
-        .collect();
-    let required_connections = system
-        .query(
-            "SELECT DISTINCT store_alias FROM catalog.connection_requirements \
-              WHERE tenant_id = $1 AND component_digest = ANY($2)",
-            &[&tenant, &components],
-        )
-        .await
-        .context("read the release's connection requirements")?
-        .into_iter()
-        .map(|row| row.get(0))
+        .flat_map(|component| &component.descriptor.connections)
+        .map(|connection| connection.store_alias.clone())
         .collect();
     Ok(ReleaseFacts {
         digest: digest.to_owned(),

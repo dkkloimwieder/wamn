@@ -164,7 +164,7 @@ BEGIN
   SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
     FROM pg_tables WHERE schemaname = 'catalog';
   ASSERT catalog_tables = ARRAY[
-    'authoring_command_audit', 'connection_requirements', 'tenant_environments'
+    'authoring_command_audit', 'tenant_environments'
   ]::text[], format('catalog table list drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
@@ -190,93 +190,6 @@ BEGIN
   ), 'a portable-store relation has the wrong owner';
 END
 $shape$;
-
--- wamn-10yt.52. A connection requirement is frozen for EVERY environment,
--- and a RECREATED environment writes its own row under its own creation rather
--- than editing the one whose database was dropped. This replaces the
--- wamn-10yt.38 test that the disposable marker made the fact replaceable in
--- place; that overwrite is retired and the marker decides nothing here.
-INSERT INTO catalog.connection_requirements
-  (tenant_id, environment_instance, component_digest, store_alias,
-   requirement_json, requirement_hash)
-VALUES ('tenant-a', '', 'sha256:' || repeat('1', 64), 'db', '{}'::jsonb,
-        'sha256:' || repeat('2', 64));
-
-DO $unprojected_is_frozen$ BEGIN
-  ASSERT NOT EXISTS (
-    SELECT 1 FROM catalog.tenant_environments WHERE tenant_id = 'tenant-a'),
-    'the store shipped a projected environment';
-  BEGIN
-    UPDATE catalog.connection_requirements
-       SET component_digest = 'sha256:' || repeat('4', 64)
-     WHERE tenant_id = 'tenant-a';
-    ASSERT false, 'a tenant with no projected environment replaced its fact';
-  EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'catalog.connection_requirements is immutable';
-  END;
-END
-$unprojected_is_frozen$;
-
-INSERT INTO catalog.tenant_environments (tenant_id, org, project, env, instance_suffix, disposable, environment_instance) VALUES ('tenant-a', 'acme', 'widgets', 'dev', 'abcd1234', false, '');
-DO $durable_is_frozen$ BEGIN
-  ASSERT (SELECT environment_instance FROM catalog.tenant_environments
-           WHERE tenant_id = 'tenant-a') = '',
-    'provisioning claimed a database creation it did not make';
-  BEGIN
-    UPDATE catalog.connection_requirements
-       SET component_digest = 'sha256:' || repeat('4', 64)
-     WHERE tenant_id = 'tenant-a';
-    ASSERT false, 'a durable environment replaced a frozen connection requirement';
-  EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'catalog.connection_requirements is immutable';
-  END;
-END
-$durable_is_frozen$;
-
--- Re-provisioning the same triple refreshes the instance identity and the
--- marker: the projection follows its authority rather than pinning a copy.
-UPDATE catalog.tenant_environments SET instance_suffix='efgh5678', disposable=true, environment_instance='', projected_at=now() WHERE tenant_id='tenant-a';
-DO $the_marker_alone_unlocks_nothing$ BEGIN
-  BEGIN
-    UPDATE catalog.connection_requirements
-       SET component_digest = 'sha256:' || repeat('4', 64)
-     WHERE tenant_id = 'tenant-a';
-    ASSERT false, 'the disposable marker alone still replaces a frozen fact';
-  EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'catalog.connection_requirements is immutable';
-  END;
-  ASSERT (SELECT instance_suffix FROM catalog.tenant_environments
-           WHERE tenant_id = 'tenant-a') = 'efgh5678',
-    'the projection pinned a superseded instance identity';
-END
-$the_marker_alone_unlocks_nothing$;
-
--- The recreate claims a creation, and the SAME coordinate then records its own
--- requirement BESIDE the previous creation's fact rather than over it.
-UPDATE catalog.tenant_environments SET environment_instance='16384', projected_at=now() WHERE tenant_id='tenant-a';
-INSERT INTO catalog.connection_requirements
-  (tenant_id, environment_instance, component_digest, store_alias,
-   requirement_json, requirement_hash)
-VALUES ('tenant-a', '16384', 'sha256:' || repeat('4', 64), 'db', '{}'::jsonb,
-        'sha256:' || repeat('5', 64));
-DO $each_creation_keeps_its_own_fact$ BEGIN
-  ASSERT (SELECT component_digest FROM catalog.connection_requirements
-           WHERE tenant_id = 'tenant-a' AND environment_instance = '16384')
-         = 'sha256:' || repeat('4', 64),
-    'the new creation did not carry the requirement it recorded';
-  ASSERT (SELECT component_digest FROM catalog.connection_requirements
-           WHERE tenant_id = 'tenant-a' AND environment_instance = '')
-         = 'sha256:' || repeat('1', 64),
-    'the previous creation stopped resolving to the run that owns it';
-END
-$each_creation_keeps_its_own_fact$;
-
-
-
--- Back to the empty instance, so the coordinates the remaining legs write are
--- the ones they were before this claim.
-UPDATE catalog.tenant_environments SET environment_instance='', projected_at=now() WHERE tenant_id='tenant-a';
-
 
 RESET ROLE;
 ",
@@ -329,19 +242,6 @@ INSERT INTO wamn_authority.author_login_tenants
   (login_identity, tenant_id, org_id, project_id, environment)
 VALUES ('{author_a}', 'tenant-a', 'acme', 'widgets', 'dev'),
        ('{author_b}', 'tenant-b', 'acme', 'shipping', 'dev');
-DO $seed$ DECLARE tenant text; BEGIN
-  FOREACH tenant IN ARRAY ARRAY['tenant-a', 'tenant-b']
-  LOOP
-    PERFORM set_config('app.tenant', tenant, false);
-    INSERT INTO catalog.connection_requirements
-      (tenant_id, environment_instance, component_digest, store_alias,
-       requirement_json, requirement_hash)
-    VALUES
-      (tenant, '', 'sha256:' || repeat('b', 64), 'db', '{{}}',
-       'sha256:' || repeat('e', 64));
-  END LOOP;
-END
-$seed$;
 RESET ROLE;
 "
         ),
@@ -362,10 +262,6 @@ END
 $identity$;
 
 SET app.tenant = 'tenant-a';
-DO $positive$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.connection_requirements) = 1;
-END
-$positive$;
 INSERT INTO catalog.authoring_command_audit
   (tenant_id, command_id, command_type, principal_id, principal_type,
    principal_subject, effective_role, org, project, environment, target_ref,
@@ -380,7 +276,7 @@ VALUES ('tenant-a', 'sha256:' || repeat('2', 64), true, '{{}}');
 
 SET app.tenant = 'tenant-b';
 DO $narrowed$ BEGIN
-  ASSERT (SELECT count(*) FROM catalog.connection_requirements) = 0;
+  ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0;
   BEGIN
     INSERT INTO catalog.authoring_command_audit
       (tenant_id, command_id, command_type, principal_id, principal_type,
@@ -419,7 +315,6 @@ SET app.tenant = 'tenant-b';
 DO $second$ BEGIN
   ASSERT session_user = '{author_b}';
   ASSERT wamn_authority.session_author_tenant() = 'tenant-b';
-  ASSERT (SELECT count(*) FROM catalog.connection_requirements) = 1;
   ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0;
   ASSERT (SELECT count(*) FROM wamn_run.gate_reports) = 0;
 END

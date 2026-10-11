@@ -1,28 +1,3 @@
--- `environment_instance` names WHICH CREATION of the project database this fact
--- belongs to (wamn-10yt.52). The development loop drops and clones the project
--- database before every run, while this control database is never recreated, so
--- a fact keyed by the environment's NAME alone outlives the thing it describes.
---
--- THE EMPTY STRING MEANS "NEVER RECREATED". A durable environment carries `''`
--- on every row and its keys are exactly what they were before this column
--- existed, so its freeze is unchanged and the column is additive. Only an
--- environment that can be recreated carries a non-empty instance, and each
--- creation then keys its own facts instead of colliding with the last one's.
---
--- There is deliberately no `CHECK (environment_instance <> '')`: the empty
--- string IS the durable value, and the instance is whatever the recreate minted
--- (a `pg_database` oid today), not a shape this store gets to constrain.
-CREATE TABLE catalog.connection_requirements (
-    tenant_id            text  NOT NULL CHECK (tenant_id <> ''),
-    environment_instance text  NOT NULL,
-    component_digest     text  NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    store_alias          text  NOT NULL CHECK (store_alias <> ''),
-    requirement_json     jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
-    requirement_hash     text  NOT NULL CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'),
-    CONSTRAINT connection_requirements_pkey
-        PRIMARY KEY (tenant_id, environment_instance, component_digest, store_alias)
-);
-
 -- ---------------------------------------------------------------------------
 -- The environment identity behind a tenant's control facts, PROJECTED from
 -- `registry.project_envs` (wamn-10yt.38).
@@ -123,7 +98,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.connection_requirements', 'catalog.authoring_command_audit',
+        'catalog.authoring_command_audit',
         'catalog.tenant_environments',
         'wamn_run.gate_reports'
     ] LOOP
@@ -143,13 +118,9 @@ DECLARE
     relation_name text;
     trigger_name text;
 BEGIN
-    -- ONE freeze for every control fact, unconditionally (wamn-10yt.52). The
-    -- connection requirements rejoined this list when they started keying by the
-    -- environment instance: a recreated environment now writes a DIFFERENT row
-    -- rather than editing the one whose database is gone, so there is nothing
-    -- left for a conditional freeze to permit.
+    -- ONE freeze for every control fact, unconditionally (wamn-10yt.52).
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.authoring_command_audit', 'catalog.connection_requirements',
+        'catalog.authoring_command_audit',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -195,7 +166,7 @@ DECLARE
     policy_name text;
 BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
-        'catalog.connection_requirements', 'catalog.authoring_command_audit',
+        'catalog.authoring_command_audit',
         'wamn_run.gate_reports'
     ] LOOP
         policy_name := split_part(relation_name, '.', 2) || '_author_tenant';
@@ -212,9 +183,6 @@ REVOKE ALL PRIVILEGES ON SCHEMA catalog, wamn_run, wamn_authority
 GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_control_author;
 GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
     TO wamn_control_author;
-
-REVOKE ALL PRIVILEGES ON catalog.connection_requirements FROM wamn_control_author;
-GRANT SELECT ON catalog.connection_requirements TO wamn_control_author;
 
 REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports
     FROM wamn_control_author;
@@ -235,7 +203,7 @@ BEGIN
     SELECT array_agg(tablename ORDER BY tablename) INTO catalog_tables
       FROM pg_tables WHERE schemaname = 'catalog';
     IF catalog_tables IS DISTINCT FROM ARRAY[
-        'authoring_command_audit', 'connection_requirements', 'tenant_environments'
+        'authoring_command_audit', 'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-catalog-inventory-drift';
@@ -266,7 +234,6 @@ BEGIN
                                    candidate.privilege)
            AND NOT EXISTS (
              SELECT 1 FROM (VALUES
-                 ('catalog', 'connection_requirements', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),
                  ('wamn_run', 'gate_reports', 'SELECT'),

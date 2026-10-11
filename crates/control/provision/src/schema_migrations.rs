@@ -210,6 +210,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0025_remove_release_identity.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0026_remove_connection_requirement_copy.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0026_remove_connection_requirement_copy.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.

@@ -43,11 +43,7 @@ const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
 
 /// The control tables that key rows by `tenant_id`, each with its
 /// immutability trigger.
-pub const CONTROL_TABLES: [(&str, Option<&str>); 3] = [
-    (
-        "catalog.connection_requirements",
-        Some("connection_requirements_immutable"),
-    ),
+pub const CONTROL_TABLES: [(&str, Option<&str>); 2] = [
     (
         "catalog.authoring_command_audit",
         Some("authoring_command_audit_immutable"),
@@ -517,19 +513,19 @@ mod tests {
     fn the_control_rows_go_with_the_trigger_off_for_one_delete() {
         assert_eq!(
             delete_control_rows_sql(
-                "catalog.connection_requirements",
-                Some("connection_requirements_immutable"),
+                "catalog.authoring_command_audit",
+                Some("authoring_command_audit_immutable"),
                 "dev"
             ),
             [
-                "ALTER TABLE catalog.connection_requirements DISABLE TRIGGER \"connection_requirements_immutable\"",
-                "DELETE FROM catalog.connection_requirements WHERE tenant_id = 'dev'",
-                "ALTER TABLE catalog.connection_requirements ENABLE TRIGGER \"connection_requirements_immutable\"",
+                "ALTER TABLE catalog.authoring_command_audit DISABLE TRIGGER \"authoring_command_audit_immutable\"",
+                "DELETE FROM catalog.authoring_command_audit WHERE tenant_id = 'dev'",
+                "ALTER TABLE catalog.authoring_command_audit ENABLE TRIGGER \"authoring_command_audit_immutable\"",
             ]
         );
         assert_eq!(
-            delete_control_rows_sql("catalog.connection_requirements", None, "dev"),
-            ["DELETE FROM catalog.connection_requirements WHERE tenant_id = 'dev'"]
+            delete_control_rows_sql("catalog.authoring_command_audit", None, "dev"),
+            ["DELETE FROM catalog.authoring_command_audit WHERE tenant_id = 'dev'"]
         );
     }
 }
