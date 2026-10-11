@@ -743,22 +743,8 @@ impl Run {
                         .any(|root| root.package.package_id == old.package_id)),
                 "an installed package upgrade requires the complete current root set; adding or removing packages is outside this transition"
             );
-            let bases = changed
-                .iter()
-                .filter(|package| {
-                    !package.manifest.base_dependencies.values().any(|pin| {
-                        changed
-                            .iter()
-                            .any(|base| base.manifest.package.id == pin.package)
-                    })
-                })
-                .collect::<Vec<_>>();
-            let [candidate] = bases.as_slice() else {
-                bail!(
-                    "upgrade-environment requires one base transition and its affected overlay successors; found {} independent transitions",
-                    bases.len()
-                );
-            };
+            let (candidate, predecessor_release) =
+                upgrade_base(&changed, self.predecessor_release.as_deref())?;
             let artifact = artifacts
                 .iter()
                 .find(|artifact| artifact.package_id.as_ref() == candidate.manifest.package.id)
@@ -786,9 +772,7 @@ impl Run {
                     database_url: databases.project_url(),
                     tenant: databases.tenant.clone(),
                     environment: self.arguments.environment.clone(),
-                    predecessor_release: self.predecessor_release.clone().context(
-                        "an installed package upgrade needs --predecessor-release, the digest of the release the environment serves",
-                    )?,
+                    predecessor_release,
                     package: roots
                         .iter()
                         .find(|root| root.path == candidate.root)
@@ -2116,6 +2100,35 @@ impl GateService {
 /// The one release that the active connection bindings of the environment
 /// name. None when no binding is active. Refused when they name more than one
 /// release (docs/plan/platform-deploy.md §13, R22).
+/// The one base package of an installed package upgrade among the `changed`
+/// packages, and the release the environment serves, which qualify-upgrade
+/// takes as the predecessor. The other changed packages are overlays of it.
+fn upgrade_base<'a>(
+    changed: &[&'a crate::release_composition::PackageInput],
+    predecessor_release: Option<&str>,
+) -> anyhow::Result<(&'a crate::release_composition::PackageInput, String)> {
+    let bases = changed
+        .iter()
+        .filter(|package| {
+            !package.manifest.base_dependencies.values().any(|pin| {
+                changed
+                    .iter()
+                    .any(|base| base.manifest.package.id == pin.package)
+            })
+        })
+        .collect::<Vec<_>>();
+    let [candidate] = bases.as_slice() else {
+        bail!(
+            "upgrade-environment requires one base transition and its affected overlay successors; found {} independent transitions",
+            bases.len()
+        );
+    };
+    let release = predecessor_release.context(
+        "an installed package upgrade needs --predecessor-release, the digest of the release the environment serves",
+    )?;
+    Ok((**candidate, release.to_owned()))
+}
+
 async fn bound_release(
     client: &tokio_postgres::Client,
     tenant: &str,
@@ -3172,6 +3185,81 @@ impl PortForward {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An installed package upgrade without `--predecessor-release` refuses
+    /// and names the flag. With it, the upgrade qualifies against that release.
+    #[test]
+    fn an_installed_package_upgrade_refuses_without_the_predecessor_release() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
+        let package = crate::release_composition::PackageInput {
+            manifest: wamn_schema_generator::PackageManifest::from_slice(
+                &fs::read(root.join("wamn.json")).unwrap(),
+            )
+            .unwrap(),
+            root,
+        };
+        let error = upgrade_base(&[&package], None).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("needs --predecessor-release"),
+            "{error:#}"
+        );
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let (base, release) = upgrade_base(&[&package], Some(&digest)).unwrap();
+        assert_eq!(
+            (base.root.as_path(), release),
+            (package.root.as_path(), digest)
+        );
+    }
+
+    /// The current release is the one release the active connection bindings
+    /// name. Active bindings that name two releases refuse, and disabled ones
+    /// do not count.
+    #[tokio::test]
+    async fn the_bound_release_refuses_two_active_digests() {
+        let database = wamn_catalog::test_database::tenant();
+        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+            .await
+            .unwrap();
+        let connection = tokio::spawn(connection);
+        let first = format!("sha256:{}", "a".repeat(64));
+        let second = format!("sha256:{}", "b".repeat(64));
+        let insert = |release: &str, alias: &str, status: &str| {
+            format!(
+                "INSERT INTO catalog.connection_bindings (tenant_id, manifest_digest, \
+                   component_digest, store_alias, environment, instance_id, binding_status, \
+                   validation_status, validation_hash) \
+                 VALUES ('t', '{release}', '{release}', '{alias}', 'dev', 'i', '{status}', \
+                   'valid', '{release}');"
+            )
+        };
+        // The bindings stand alone: the releases, requirements and instances
+        // that their foreign keys name are not what this reads.
+        client
+            .batch_execute("SET session_replication_role = replica")
+            .await
+            .unwrap();
+        assert_eq!(bound_release(&client, "t", "dev").await.unwrap(), None);
+        client
+            .batch_execute(&(insert(&first, "one", "active") + &insert(&second, "two", "disabled")))
+            .await
+            .unwrap();
+        assert_eq!(
+            bound_release(&client, "t", "dev").await.unwrap(),
+            Some(first.clone())
+        );
+        client
+            .batch_execute(&insert(&second, "three", "active"))
+            .await
+            .unwrap();
+        let error = bound_release(&client, "t", "dev").await.unwrap_err();
+        assert!(
+            format!("{error:#}")
+                .contains(&format!("name more than one release ({first}, {second})")),
+            "{error:#}"
+        );
+        drop(client);
+        connection.await.unwrap().unwrap();
+    }
 
     /// `--predecessor-release` is an input of the package stage, which
     /// passes it to qualify-upgrade, and of no other stage.
