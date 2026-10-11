@@ -75,11 +75,18 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
     )
 }
 
-/// `docker build` of one target of the root `Dockerfile`, for amd64.
+/// `docker build` of one target of the root `Dockerfile`, for amd64. The
+/// runner's cases compile against the package outputs of `wamn build`, the
+/// named context `apps-target`.
 fn docker(repository: &Path) -> Command {
     let mut command = Command::new("docker");
     command
         .args(["build", "--platform=linux/amd64", "--provenance=false"])
+        .arg("--build-context")
+        .arg(format!(
+            "apps-target={}",
+            repository.join("apps/target/wamn").display()
+        ))
         .arg("--file")
         .arg(repository.join("Dockerfile"));
     command

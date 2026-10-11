@@ -64,9 +64,13 @@ case "$action" in
         done
       done
     done
+    # The Docker daemon resolves a bind mount on its own host. The work
+    # directory is at the same path there and in the runner; the repository
+    # is not, so the init SQL is mounted from a copy in the work directory.
+    install -m 0644 "$repository/deploy/sql/postgres-init.sql" "$work/postgres-init.sql"
     docker run --detach --name "$cluster-postgres" --network kind --env POSTGRES_PASSWORD=probe \
       --publish 127.0.0.1::5432 \
-      --volume "$repository/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro" \
+      --volume "$work/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro" \
       postgres:18 -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
     docker run --detach --name "$cluster-registry" --network kind --env REGISTRY_AUTH=htpasswd \
       --env 'REGISTRY_AUTH_HTPASSWD_REALM=WAMN WMS cluster journey' --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \

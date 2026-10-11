@@ -7,7 +7,7 @@
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 #   docker build --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
 #   docker build --target roles --output type=local,dest=DIR .  # http and materializer role components
-#   docker build --target runner -t wamn-runner:dev .  # qualification runner: FROM ctl + the case binaries
+#   docker build --build-context apps-target=apps/target/wamn --target runner -t wamn-runner:dev .  # qualification runner: FROM ctl + the case binaries
 # `wamn-ctl build-platform` builds host, runner, gates, identity and roles, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches and one
@@ -234,10 +234,48 @@ FROM scratch AS roles
 COPY --from=component-builder /component-output/http_route.wasm /http_route.wasm
 COPY --from=component-builder /component-output/materializer.wasm /materializer.wasm
 
+# ---- qualification cases: the cluster case executables ----------------------
+# The cases compile against the package outputs of `wamn build`, which the
+# build takes as the named context apps-target:
+#   docker build --build-context apps-target=apps/target/wamn --target runner .
+# Each executable is installed as /cases/<package>, and keeps reading the
+# repository files it names from /build, where the runner carries them.
+FROM root-source AS build-cases
+COPY --from=apps-target . /build/apps/target/wamn
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
+    --mount=type=cache,id=wamn-root-target-cases,target=/build/target,sharing=locked \
+    cargo test --locked --no-run --message-format=json --features cluster \
+      -p wamn-wms-tests -p wamn-receiving-tests > /tmp/cases.json \
+ && install -d /cases \
+ && for package in wamn-wms-tests wamn-receiving-tests; do \
+      target="$(printf '%s' "$package" | tr - _)"; \
+      executable="$(grep '"reason":"compiler-artifact"' /tmp/cases.json \
+        | grep "\"name\":\"$target\"" \
+        | grep -o '"executable":"[^"]*"' | cut -d'"' -f4)"; \
+      test "$(printf '%s\n' "$executable" | grep -c .)" -eq 1 \
+        && install -m 0755 "$executable" "/cases/$package" || exit 1; \
+    done
+
 # ---- runner image: the qualification runner FROM ctl -----------------------
 # ctl is unchanged; the runner adds what `qualify-release` runs the cases with
-# (docs/plan/platform-deploy.md §8.2, R15).
+# (docs/plan/platform-deploy.md §8.2, R15): the case executables, the
+# repository files they read, and the cluster tools, each pinned by version
+# and its published sha256 (the Docker CLI by the sha256 of its archive).
 FROM ctl AS runner
+ADD --checksum=sha256:5c0d19f31fece1accd0358bb8cff591fe25d7b6cba19f0fd412cbfdc07f75ff6 https://download.docker.com/linux/static/stable/x86_64/docker-28.5.1.tgz /tmp/docker.tgz
+ADD --checksum=sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6 https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz /tmp/helm.tgz
+RUN tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker \
+ && tar -xzf /tmp/helm.tgz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
+ && rm /tmp/docker.tgz /tmp/helm.tgz
+ADD --chmod=0755 --checksum=sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54 https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64 /usr/local/bin/kind
+# The cases run kubectl v1.36.2; ctl's own pin stays as it is.
+ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl /usr/local/bin/kubectl
+COPY --from=build-cases /cases /cases
+COPY --from=root-source /build/apps /build/apps
+COPY --from=apps-target . /build/apps/target/wamn
+COPY --from=root-source /build/deploy /build/deploy
+COPY tools /build/tools
 
 # ---- edge box artifact: the stripped aarch64 binary alone ------------------
 # The box runs no container; export the file with --output (header above).

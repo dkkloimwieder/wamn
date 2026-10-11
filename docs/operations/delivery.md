@@ -27,7 +27,7 @@ For a package successor with application migrations, first follow [package upgra
 
 Publish the release first with `publish-release`, as [deployment](deployment.md#publish-and-select-a-release) shows.
 It pushes the release manifest to the repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the release digest.
-Then qualify that release from a checkout of the repository:
+Then qualify that release:
 
 ```bash
 wamn-ctl qualify-release \
@@ -52,13 +52,16 @@ If the registry uses HTTP, add `--insecure-registry` for that registry.
 Receiving and WMS start the chart's identity image, because their published application routes accept sessions, and give issuer trust to their application hosts.
 When the chart's images are in a registry at a loopback port, the kind nodes reach it through the container that publishes that port on the `kind` network.
 
-The command runs in the repository of the current directory, and builds into `CARGO_TARGET_DIR` or `target`.
-The command pulls the release by its digest.
-It runs `wamn build` of every package and builds the workload guests and the native programs into the target directory.
-It pulls the host, gates and identity images by digest and builds no image.
-It runs the cluster cases on a kind cluster with the image set of the chart.
+The command needs no checkout and builds nothing.
+It pulls the release by its digest.
+It pulls the host, gates, identity and runner images by digest.
+It runs each case in the chart's runner image with `docker run`: the runner carries the case executables, the repository files they read, and pinned `docker`, `kind`, `kubectl` and `helm`.
+The runner uses the Docker daemon of this machine through its socket and the host network.
+Each case runs on its own kind cluster with the image set of the chart.
+A WMS case installs the candidate's packages from the package repository beside the release repository through the package stage of `apply`, and publishes nothing.
+A Receiving case still publishes its own release from a checkout, so it does not run in the runner yet.
 Each case installs its environment with the release chart, as `env apply` does.
-It copies the role components by digest into its own registry and stamps a copy of the chart with the same image set.
+It copies the release, its components and the role components by digest into its own registry and stamps a copy of the chart with the same image set.
 
 The package set of the release selects the cases exactly. Any other set fails.
 A Receiving release with Acme runs command histories and the baseline overlay with materializer progress.

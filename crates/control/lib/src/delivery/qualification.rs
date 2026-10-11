@@ -187,12 +187,6 @@ pub async fn qualify(
 ) -> anyhow::Result<(String, QualificationPushDisposition)> {
     let temporary = TemporaryResults::create()?;
     let candidate_path = temporary.path.join("candidate.json");
-    let repository_root = discover_repository_root(&std::env::current_dir()?).await?;
-    // The cases' programs build into this checkout's own target directory.
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map_or_else(|| repository_root.join("target"), PathBuf::from);
-    let target = repository_root.join(target);
-    fs::create_dir_all(&target)?;
     let (candidate, release_size) =
         write_candidate(&request, &temporary.path, &candidate_path).await?;
     let (manifest, digest) = candidate.manifest()?;
@@ -204,8 +198,7 @@ pub async fn qualify(
         result: "fail".to_owned(),
     };
     qualify_candidate(
-        &repository_root,
-        &target,
+        &request.release_chart,
         &candidate_path,
         temporary,
         &mut result,
@@ -260,39 +253,78 @@ async fn write_candidate(
     Ok((Candidate::read(candidate_path)?, bytes.len()))
 }
 
+/// The directory where the runner image keeps the case executables, each
+/// named after its package (the `runner` stage of the root `Dockerfile`).
+const RUNNER_CASES: &str = "/cases";
+
+/// The `docker run` of the case executable of `package` in the candidate's
+/// runner image, with `args` and `env`. The runner reaches the Docker daemon
+/// through its socket and the case clusters through the host network. The
+/// results directory is mounted at its own path, and is the runner's
+/// temporary directory, because the daemon resolves the cases' bind mounts
+/// on its own host. The release chart and the release registry's access are
+/// mounted read-only at their own paths.
+fn runner_command(
+    candidate: &Candidate,
+    release_chart: &Path,
+    results: &Path,
+    package: &str,
+    args: &[&str],
+    env: &[(&str, String)],
+) -> Vec<String> {
+    let mut command = strings(&[
+        "docker",
+        "run",
+        "--rm",
+        "--network=host",
+        "--volume=/var/run/docker.sock:/var/run/docker.sock",
+    ]);
+    command.push(format!("--volume={0}:{0}", results.display()));
+    let read_only = std::iter::once(release_chart)
+        .chain(std::iter::once(
+            candidate.releases.registry_auth_file.as_path(),
+        ))
+        .chain(candidate.releases.oci_ca_paths.iter().map(PathBuf::as_path));
+    for path in read_only {
+        command.push(format!("--volume={0}:{0}:ro", path.display()));
+    }
+    command.push(format!("--env=TMPDIR={}", results.display()));
+    command.push(format!(
+        "--env=WAMN_RELEASE_CHART={}",
+        release_chart.display()
+    ));
+    for (name, value) in env {
+        command.push(format!("--env={name}={value}"));
+    }
+    command.push(format!("--entrypoint={RUNNER_CASES}/{package}"));
+    command.push(candidate.qualification.runner.clone());
+    command.extend(args.iter().map(|arg| (*arg).to_owned()));
+    command
+}
+
 async fn qualify_candidate(
-    root: &Path,
-    target: &Path,
+    release_chart: &Path,
     candidate_path: &Path,
     temporary: TemporaryResults,
     result: &mut Qualification,
 ) -> anyhow::Result<()> {
     let app = application(&result.candidate)?;
-    let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
+    let root = temporary.path.clone();
     for command in image_commands(&result.candidate) {
-        run(root, &command, &[], &mut result.checks).await?;
+        run(&root, &command, &[], &mut result.checks).await?;
     }
-    let executable =
-        // The kind cases compile only with the `cluster` feature (wamn-ld93.33.6).
-        compile_tests(
-            root,
-            app.package,
-            None,
-            Some("cluster"),
-            &target_env,
-            &mut result.checks,
-        )
-        .await?;
     // A case the executable lacks refuses here, before any case starts a cluster (wamn-pgub).
     let listed = run(
-        root,
-        &[
-            executable.display().to_string(),
-            "--list".to_owned(),
-            "--format=terse".to_owned(),
-            "--ignored".to_owned(),
-        ],
-        &target_env,
+        &root,
+        &runner_command(
+            &result.candidate,
+            release_chart,
+            &temporary.path,
+            app.package,
+            &["--list", "--format=terse", "--ignored"],
+            &[],
+        ),
+        &[],
         &mut result.checks,
     )
     .await?;
@@ -304,31 +336,30 @@ async fn qualify_candidate(
                 "candidate inputs changed during qualification"
             );
             let case_result = temporary.path.join(format!("case-{index}.json"));
-            let mut env = target_env.clone();
-            env.extend([
+            let env = [
                 (
-                    "WAMN_DELIVERY_CANDIDATE".to_owned(),
+                    "WAMN_DELIVERY_CANDIDATE",
                     candidate_path.display().to_string(),
                 ),
-                (
-                    "WAMN_DELIVERY_RESULT".to_owned(),
-                    case_result.display().to_string(),
-                ),
+                ("WAMN_DELIVERY_RESULT", case_result.display().to_string()),
                 // The case creates its own new result directory inside this parent.
-                (
-                    app.evidence_env.to_owned(),
-                    temporary.path.display().to_string(),
-                ),
-            ]);
-            let command = vec![
-                executable.display().to_string(),
-                (*case).to_owned(),
-                "--exact".to_owned(),
-                "--ignored".to_owned(),
-                "--nocapture".to_owned(),
-                "--test-threads=1".to_owned(),
+                (app.evidence_env, temporary.path.display().to_string()),
             ];
-            let executed = run(root, &command, &env, &mut result.checks).await?;
+            let command = runner_command(
+                &result.candidate,
+                release_chart,
+                &temporary.path,
+                app.package,
+                &[
+                    case,
+                    "--exact",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ],
+                &env,
+            );
+            let executed = run(&root, &command, &[], &mut result.checks).await?;
             require_one_case(&executed)?;
             let observed: ApplicationResult = serde_json::from_slice(
                 &fs::read(&case_result)
@@ -373,7 +404,6 @@ pub async fn check_changes(request: CheckChangesRequest) -> anyhow::Result<()> {
             &workspace,
             &request.package,
             request.test.as_deref(),
-            None,
             &[],
             &mut result.checks,
         )
@@ -464,6 +494,7 @@ fn image_commands(candidate: &Candidate) -> Vec<Vec<String>> {
         &candidate.images.host,
         &candidate.qualification.identity,
         &candidate.qualification.gates,
+        &candidate.qualification.runner,
     ]
     .into_iter()
     .flat_map(|image| {
@@ -479,24 +510,17 @@ async fn compile_tests(
     root: &Path,
     package: &str,
     test: Option<&str>,
-    feature: Option<&str>,
     env: &[(String, String)],
     checks: &mut Vec<CheckResult>,
 ) -> anyhow::Result<PathBuf> {
     artifact_executable(
-        &run(
-            root,
-            &test_build_command(package, test, feature),
-            env,
-            checks,
-        )
-        .await?,
+        &run(root, &test_build_command(package, test), env, checks).await?,
         test.unwrap_or(&package.replace('-', "_")),
     )
 }
 
 /// The `cargo test --no-run` command that builds one test executable.
-fn test_build_command(package: &str, test: Option<&str>, feature: Option<&str>) -> Vec<String> {
+fn test_build_command(package: &str, test: Option<&str>) -> Vec<String> {
     let mut args = strings(&[
         "cargo",
         "test",
@@ -507,9 +531,6 @@ fn test_build_command(package: &str, test: Option<&str>, feature: Option<&str>) 
         "--no-run",
         "--message-format=json",
     ]);
-    if let Some(feature) = feature {
-        args.extend(["--features".to_owned(), feature.to_owned()]);
-    }
     match test {
         Some(test) => args.extend(["--test".to_owned(), test.to_owned()]),
         None => args.push("--lib".to_owned()),
@@ -676,7 +697,7 @@ mod tests {
                 identity: pinned("identity"),
             },
         };
-        let expected: Vec<Vec<String>> = ["host", "identity", "gates"]
+        let expected: Vec<Vec<String>> = ["host", "identity", "gates", "runner"]
             .into_iter()
             .flat_map(|name| {
                 let image = pinned(name);
@@ -687,18 +708,40 @@ mod tests {
             })
             .collect();
         assert_eq!(image_commands(&candidate), expected);
-    }
 
-    #[test]
-    fn qualification_builds_the_cases_with_the_cluster_feature() {
-        let command = test_build_command("wamn-wms-tests", None, Some("cluster"));
-        assert!(
-            command
-                .windows(2)
-                .any(|pair| pair == ["--features", "cluster"])
+        // A case runs in the runner image, never in a checkout.
+        let command = runner_command(
+            &candidate,
+            Path::new("/charts/release"),
+            Path::new("/tmp/results"),
+            "wamn-wms-tests",
+            &["cluster::released_wms_routes", "--exact"],
+            &[(
+                "WAMN_DELIVERY_RESULT",
+                "/tmp/results/case-0.json".to_owned(),
+            )],
         );
-        assert!(
-            !test_build_command("wamn-wms-tests", None, None).contains(&"--features".to_owned())
+        assert_eq!(&command[..2], ["docker", "run"]);
+        for expected in [
+            "--network=host",
+            "--volume=/var/run/docker.sock:/var/run/docker.sock",
+            "--volume=/tmp/results:/tmp/results",
+            "--volume=/charts/release:/charts/release:ro",
+            "--volume=unused:unused:ro",
+            "--env=TMPDIR=/tmp/results",
+            "--env=WAMN_RELEASE_CHART=/charts/release",
+            "--env=WAMN_DELIVERY_RESULT=/tmp/results/case-0.json",
+            "--entrypoint=/cases/wamn-wms-tests",
+        ] {
+            assert!(command.iter().any(|arg| arg == expected), "{expected}");
+        }
+        assert_eq!(
+            &command[command.len() - 3..],
+            [
+                pinned("runner").as_str(),
+                "cluster::released_wms_routes",
+                "--exact"
+            ]
         );
     }
 
