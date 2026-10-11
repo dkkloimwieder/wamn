@@ -46,7 +46,7 @@ const DATABASE_NAMESPACE: &str = "receiving-pg";
 const DATABASE_CLUSTER: &str = "route-auth-pg18";
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, cargo-sqlx, openssl, WAMN_DELIVERY_CLUSTER"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl, WAMN_DELIVERY_CLUSTER"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "docker",
@@ -55,7 +55,6 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         "helm",
         "jq",
         "curl",
-        "cargo-sqlx",
         "openssl",
     ]);
     ensure!(
