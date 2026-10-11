@@ -246,7 +246,18 @@ async fn receiving_release_journey(
         )
     })?;
     let (project, project_task) = connect(&route.database_url).await?;
-    install_journey_project(inputs, project.as_ref(), &route.database_url, fresh_only).await?;
+    // The gate and authorship read component facts from the verified package
+    // artifacts, and apply-package installs them, so the packages are pushed
+    // first.
+    let packages = super::environment::push_journey_packages(inputs, &system_url).await?;
+    install_journey_project(
+        inputs,
+        &packages,
+        project.as_ref(),
+        &route.database_url,
+        fresh_only,
+    )
+    .await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
     wamn_control::dev::environment::grant_operator_admin_role(
@@ -278,14 +289,11 @@ async fn receiving_release_journey(
             std::fs::set_permissions(&destination, Permissions::from_mode(0o600))?;
         }
     }
-    reconcile_journey_data_access(inputs, &route.database_url).await?;
+    reconcile_journey_data_access(&packages, &route.database_url).await?;
     let declarations =
         render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
     let admitted_components = admit_journey_components(inputs, &declarations)?;
     let admitted_component_digests = verify_journey_components_are_effectful(&admitted_components)?;
-    // The gate and authorship read component facts from the verified package
-    // artifacts, so the packages are pushed before the gate starts.
-    super::environment::push_journey_packages(inputs, &system_url).await?;
 
     // One gate-launch path for both live gates: the Gate is a spawned
     // `wamn-scenario-worker serve`, never a task in this process
@@ -1026,7 +1034,7 @@ async fn receiving_release_journey(
     // Return its holders to `admin` before handing this disposable release to
     // the operator-managed materializer continuation.
     restore_admins_from_authored_role(project.as_ref()).await?;
-    reconcile_journey_data_access(inputs, &route.database_url).await?;
+    reconcile_journey_data_access(&packages, &route.database_url).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     seed_materializer_trigger_rows(project.as_ref()).await?;
     if let Some(phase) = &inputs.overlay_compatibility {

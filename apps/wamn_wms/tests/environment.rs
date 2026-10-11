@@ -86,6 +86,22 @@ fn package_root() -> PathBuf {
         .to_path_buf()
 }
 
+/// The package artifact registry, `<registry>/<org>/packages` beside the
+/// component artifact base.
+fn package_registry(inputs: &JourneyDocument) -> anyhow::Result<PackageRegistry> {
+    let (artifact_parent, _) = inputs
+        .component_artifact_base
+        .rsplit_once('/')
+        .context("the component artifact base names a repository")?;
+    Ok(PackageRegistry {
+        artifact_base: format!("{artifact_parent}/packages"),
+        registry_auth_file: inputs.registry_auth_file.clone(),
+        insecure_registry: true,
+        oci_ca_paths: Vec::new(),
+        control_database_url: inputs.system_pg_url.clone(),
+    })
+}
+
 fn repository_root() -> PathBuf {
     package_root()
         .parent()
@@ -292,13 +308,22 @@ pub async fn prepare_project(
     ] {
         private_file(&path)?;
     }
+    // The package is applied as the artifact it is pushed as, so publish
+    // reads one digest for it (docs/plan/platform-deploy.md R3).
+    let pushed = push_package(&PushPackageRequest {
+        package: package_root(),
+        registry: package_registry(inputs)?,
+        component_artifact_base: inputs.component_artifact_base.clone(),
+        source_commit: None,
+    })
+    .await
+    .context("push the WMS package artifact")?;
+    let package = wamn_control::apply_package::PackageRoot {
+        path: package_root(),
+        artifact_digest: Some(pushed.digest),
+    };
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_control::apply_package::PackageRoot {
-            path: package_root(),
-            artifact_digest: Some(
-                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package_root())?,
-            ),
-        },
+        package: package.clone(),
         database_url: route.database_url.clone(),
         tenant: identity().tenant.clone(),
     })
@@ -313,12 +338,7 @@ pub async fn prepare_project(
     )
     .await?;
     shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
-        packages: vec![wamn_control::apply_package::PackageRoot {
-            path: package_root(),
-            artifact_digest: Some(
-                wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package_root())?,
-            ),
-        }],
+        packages: vec![package],
         database_url: route.database_url.clone(),
         tenant: identity().tenant.clone(),
     })
@@ -556,26 +576,8 @@ pub async fn publish(
             "blob-put":blob_digest,"jsonata":jsonata_digest}))?,
     )?;
     // The gate, authorship and the release read the component facts from
-    // the verified package artifact, beside the component artifacts.
-    let (artifact_parent, _) = inputs
-        .component_artifact_base
-        .rsplit_once('/')
-        .context("the component artifact base names a repository")?;
-    let registry = PackageRegistry {
-        artifact_base: format!("{artifact_parent}/packages"),
-        registry_auth_file: inputs.registry_auth_file.clone(),
-        insecure_registry: true,
-        oci_ca_paths: Vec::new(),
-        control_database_url: inputs.system_pg_url.clone(),
-    };
-    push_package(&PushPackageRequest {
-        package: root.clone(),
-        registry: registry.clone(),
-        component_artifact_base: inputs.component_artifact_base.clone(),
-        source_commit: None,
-    })
-    .await
-    .context("push the WMS package artifact")?;
+    // the verified package artifact that `prepare_project` pushed.
+    let registry = package_registry(inputs)?;
     let mut wirings = fs::read_dir(root.join("publication/wirings"))?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<Vec<_>, _>>()?;

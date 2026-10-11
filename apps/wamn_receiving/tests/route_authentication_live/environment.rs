@@ -68,22 +68,19 @@ pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {
         .expect("every public overlay wiring has one deployment route")
 }
 
+/// Apply each released journey package as the artifact
+/// [`push_journey_packages`] pushed, in its order.
 pub(super) async fn install_journey_project(
     inputs: &JourneyDocument,
+    packages: &[wamn_control::apply_package::PackageRoot],
     project: &Client,
     project_url: &str,
     fresh_only: bool,
 ) -> anyhow::Result<()> {
     install_journey_platform_floor(project, identity().tenant.as_str(), PLATFORM_DOMAIN).await?;
-    for package in released_journey_packages() {
-        let root = journey_package_root(package, Some(inputs));
+    for (package, root) in released_journey_packages().zip(packages) {
         apply_package::apply_package(ApplyPackageRequest {
-            package: wamn_control::apply_package::PackageRoot {
-                path: root.clone(),
-                artifact_digest: Some(
-                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&root)?,
-                ),
-            },
+            package: root.clone(),
             database_url: project_url.to_owned(),
             tenant: identity().tenant.clone(),
         })
@@ -108,23 +105,12 @@ pub(super) async fn install_journey_project(
 }
 
 pub(super) async fn reconcile_journey_data_access(
-    inputs: &JourneyDocument,
+    packages: &[wamn_control::apply_package::PackageRoot],
     project_url: &str,
 ) -> anyhow::Result<()> {
-    let packages = released_journey_packages()
-        .map(|package| {
-            let path = journey_package_root(package, Some(inputs));
-            Ok(wamn_control::apply_package::PackageRoot {
-                artifact_digest: Some(
-                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&path)?,
-                ),
-                path,
-            })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
     wamn_gate_harness::environment::reconcile_package_data_access(
         ReconcilePackageDataAccessRequest {
-            packages,
+            packages: packages.to_vec(),
             database_url: project_url.to_owned(),
             tenant: identity().tenant.clone(),
         },
@@ -539,17 +525,20 @@ pub(super) fn journey_package_registry(
 }
 
 /// Push the verified package artifact of every released journey package and
-/// return their registry. The gate, authorship and publish read component
-/// facts from these artifacts.
+/// return each root with the digest the registry records, the one
+/// apply-package installs (docs/plan/platform-deploy.md R3). The gate,
+/// authorship and publish read component facts from these artifacts.
 pub(super) async fn push_journey_packages(
     inputs: &JourneyDocument,
     system_url: &str,
-) -> anyhow::Result<wamn_control::package_artifact::PackageRegistry> {
+) -> anyhow::Result<Vec<wamn_control::apply_package::PackageRoot>> {
     let registry = journey_package_registry(inputs, system_url)?;
+    let mut packages = Vec::new();
     for package in released_journey_packages() {
-        wamn_control::package_artifact::push_package(
+        let path = journey_package_root(package, Some(inputs));
+        let pushed = wamn_control::package_artifact::push_package(
             &wamn_control::package_artifact::PushPackageRequest {
-                package: journey_package_root(package, Some(inputs)),
+                package: path.clone(),
                 registry: registry.clone(),
                 component_artifact_base: inputs.component_artifact_base.clone(),
                 source_commit: None,
@@ -557,8 +546,12 @@ pub(super) async fn push_journey_packages(
         )
         .await
         .with_context(|| format!("push the {} package artifact", package.id))?;
+        packages.push(wamn_control::apply_package::PackageRoot {
+            path,
+            artifact_digest: Some(pushed.digest),
+        });
     }
-    Ok(registry)
+    Ok(packages)
 }
 
 pub(super) async fn publish_journey_release(
@@ -582,8 +575,8 @@ pub(super) async fn publish_journey_release(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     // The release composes the verified package artifacts, which live beside
-    // the component artifacts. A package pushed before is already present.
-    let registry = push_journey_packages(inputs, system_url).await?;
+    // the component artifacts.
+    let registry = journey_package_registry(inputs, system_url)?;
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
             database_url: project_url.to_owned(),
