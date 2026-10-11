@@ -49,11 +49,6 @@ pub struct PrintReleaseEnvArgs {
 /// qualification beside the release (docs/plan/platform-deploy.md §8.2).
 #[derive(Debug, Args)]
 pub struct QualifyReleaseArgs {
-    #[arg(long, default_value = ".")]
-    pub repository: PathBuf,
-    /// Integrated main, a release tag, or an explicitly selected revision.
-    #[arg(long, default_value = "main")]
-    pub revision: String,
     /// The published release, as its manifest digest.
     #[arg(long)]
     pub release_digest: String,
@@ -75,21 +70,6 @@ pub struct QualifyReleaseArgs {
     /// image set the cases run on (R12, R15).
     #[arg(long, env = "WAMN_RELEASE_CHART")]
     pub release_chart: PathBuf,
-    /// Org the cases provision and publish under.
-    #[arg(long)]
-    pub org: String,
-    /// Project the cases provision and publish under.
-    #[arg(long)]
-    pub project: String,
-    /// Environment the cases provision and publish under.
-    #[arg(long)]
-    pub environment: String,
-    /// Tenant the cases provision and publish under.
-    #[arg(long)]
-    pub tenant: String,
-    /// Route host the cases serve under.
-    #[arg(long)]
-    pub route_host: String,
     #[arg(long)]
     pub target_directory: PathBuf,
     #[arg(long)]
@@ -100,8 +80,6 @@ pub struct QualifyReleaseArgs {
     pub native_registry_endpoint: Option<String>,
     #[arg(long, requires = "native_registry_endpoint")]
     pub native_registry_insecure: bool,
-    #[arg(long = "deployment-file")]
-    pub deployment_files: Vec<PathBuf>,
 }
 
 /// Run explicitly selected existing behavior checks before integration.
@@ -153,8 +131,6 @@ fn release_lines(carrier: &ReleaseCarrier) -> String {
 /// qualification's digest and whether this run pushed it.
 pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
     let (digest, disposition) = qualification::qualify(qualification::QualifyReleaseRequest {
-        repository: args.repository,
-        revision: args.revision,
         release_digest: args.release_digest,
         releases: PackageRegistry {
             artifact_base: args.artifact_base,
@@ -162,18 +138,12 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths,
         },
-        org: args.org,
-        project: args.project,
-        environment: args.environment,
-        tenant: args.tenant,
-        route_host: args.route_host,
         release_chart: args.release_chart,
         target_directory: args.target_directory,
         gates_image: args.gates_image,
         identity_image: args.identity_image,
         native_registry_endpoint: args.native_registry_endpoint,
         native_registry_insecure: args.native_registry_insecure,
-        deployment_files: args.deployment_files,
     })
     .await?;
     println!("{digest} {disposition:?}");

@@ -1013,7 +1013,6 @@ impl Run {
         let environment = self.environment()?;
         let kubectl = Kubectl(environment.context.clone());
         self.broker(&kubectl).await?;
-        let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
         let manifest_digest = Self::release_digest(record)?;
         // The kind cases fetch the pinned images with the login of this
         // machine (tools/registry-image-archive), so the qualification runs
@@ -1023,9 +1022,6 @@ impl Run {
             registry.command(&self.programs().join("debug/wamn-ctl").display().to_string());
         qualify
             .arg("qualify-release")
-            .arg("--repository")
-            .arg(&self.checkout)
-            .args(["--revision", &self.arguments.commit])
             .args(["--release-digest", &manifest_digest])
             .args([
                 "--artifact-base",
@@ -1035,11 +1031,6 @@ impl Run {
             .arg(registry.auth_file())
             .arg("--release-chart")
             .arg(platform(&environment)?.chart)
-            .args(["--org", &self.arguments.org])
-            .args(["--project", &self.arguments.project])
-            .args(["--environment", &self.arguments.environment])
-            .args(["--tenant", &databases.tenant])
-            .args(["--route-host", &environment.route_host])
             .arg("--target-directory")
             .arg(self.delivery())
             .args(["--gates-image", record.output(Stage::Images, "gates")?])

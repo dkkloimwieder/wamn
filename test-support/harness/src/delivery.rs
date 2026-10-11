@@ -295,27 +295,12 @@ async fn qualify(
     let mut qualify = Command::new(app.ctl());
     qualify
         .arg("qualify-release")
-        .arg("--repository")
-        .arg(app.repository)
-        .args(["--revision", app.source])
         .args(["--release-digest", app.release_digest])
         .args(["--artifact-base", releases, "--oci-ca-path", &ca])
         .arg("--registry-auth-file")
         .arg(&app.kept.registry_auth)
         .arg("--release-chart")
         .arg(&chart)
-        .args([
-            "--org",
-            &app.triple.org,
-            "--project",
-            &app.triple.project,
-            "--environment",
-            app.triple.env.as_str(),
-            "--tenant",
-            app.tenant,
-            "--route-host",
-            app.route_host,
-        ])
         .arg("--target-directory")
         .arg(app.target)
         .args(["--identity-image", &app.native("identity")?])

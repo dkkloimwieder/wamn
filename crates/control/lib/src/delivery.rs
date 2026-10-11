@@ -29,17 +29,6 @@ pub struct ReleaseIdentity {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
-    /// Org of the release. The manifest does not name it.
-    pub org: String,
-    /// Project of the release. The manifest does not name it.
-    pub project: String,
-    /// Environment of the release. The manifest does not name it (R1).
-    pub environment: String,
-    /// Tenant of the release. The manifest does not name it (R1).
-    pub tenant: String,
-    /// Route host of the release's environment. The manifest does not name it
-    /// (R1).
-    pub route_host: String,
     pub manifest_path: PathBuf,
     pub target_directory: PathBuf,
     pub host_image: String,
@@ -50,8 +39,6 @@ pub struct Candidate {
     pub materializer_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
-    #[serde(default)]
-    pub deployment_files: Vec<PathBuf>,
     #[serde(default)]
     pub native_registry_endpoint: Option<String>,
     #[serde(default)]
@@ -137,21 +124,6 @@ impl Candidate {
         ServingManifest::from_canonical_bytes(&bytes).context("admit candidate serving manifest")
     }
 
-    /// The release inputs that a fixture provisions and publishes: the org, the
-    /// project, the environment, the tenant and the route host of the
-    /// candidate, and the packages from its manifest.
-    pub fn identity(&self) -> anyhow::Result<ReleaseIdentity> {
-        let (manifest, _) = self.manifest()?;
-        Ok(ReleaseIdentity {
-            org: self.org.clone(),
-            project: self.project.clone(),
-            environment: self.environment.clone(),
-            tenant: self.tenant.clone(),
-            route_host: self.route_host.clone(),
-            packages: manifest.release.packages,
-        })
-    }
-
     /// Require the fresh fixture to reproduce the candidate's exact release bytes.
     pub fn assert_manifest(&self, actual: &ServingManifest) -> anyhow::Result<()> {
         let (expected, _) = self.manifest()?;
@@ -169,13 +141,6 @@ impl Candidate {
             require_pinned_image(image)?;
         }
         let mut files = BTreeMap::new();
-        for path in &self.deployment_files {
-            ensure!(
-                path.is_absolute(),
-                "deployment input paths must be absolute"
-            );
-            files.insert(path.clone(), file_digest(path)?);
-        }
         files.insert(
             self.manifest_path.clone(),
             file_digest(&self.manifest_path)?,
@@ -271,7 +236,6 @@ pub struct CheckResult {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Qualification {
-    pub source_commit: String,
     pub release: ServingRelease,
     pub manifest_digest: String,
     pub candidate: Candidate,
@@ -354,11 +318,6 @@ mod tests {
     #[test]
     fn registry_mapping_refuses_implicit_insecure_and_credential_endpoints() {
         let mut candidate = super::Candidate {
-            org: "acme".into(),
-            project: "unused".into(),
-            environment: "unused".into(),
-            tenant: "unused".into(),
-            route_host: "unused".into(),
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: format!("localhost:5000/host@sha256:{}", "a".repeat(64)),
@@ -369,7 +328,6 @@ mod tests {
             ),
             gates_image: None,
             identity_image: None,
-            deployment_files: Vec::new(),
             native_registry_endpoint: None,
             native_registry_insecure: true,
         };

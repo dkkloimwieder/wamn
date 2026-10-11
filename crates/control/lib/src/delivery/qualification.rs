@@ -1,4 +1,4 @@
-//! Execute repository checks against one selected revision and exact candidate.
+//! Execute repository checks against one exact candidate.
 
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -54,9 +54,6 @@ const TEST_WORKSPACES: &[&str] = &["", "apps"];
 /// cases (docs/plan/platform-deploy.md §8.2).
 #[derive(Clone, Debug)]
 pub struct QualifyReleaseRequest {
-    pub repository: PathBuf,
-    /// Integrated main, a release tag, or an explicitly selected revision.
-    pub revision: String,
     /// The release, `sha256:<hex>`.
     pub release_digest: String,
     /// The release repository: `publish-release` pushed the manifest there,
@@ -65,19 +62,11 @@ pub struct QualifyReleaseRequest {
     /// The release chart whose default values name the platform image set
     /// the cases run on (R15).
     pub release_chart: PathBuf,
-    /// The org, project, environment, tenant and route host the cases
-    /// provision and publish under. The manifest names none of them (R1).
-    pub org: String,
-    pub project: String,
-    pub environment: String,
-    pub tenant: String,
-    pub route_host: String,
     pub target_directory: PathBuf,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
     pub native_registry_endpoint: Option<String>,
     pub native_registry_insecure: bool,
-    pub deployment_files: Vec<PathBuf>,
 }
 
 /// Exact selected existing behavior checks to run before integration.
@@ -236,11 +225,9 @@ pub async fn qualify(
     let candidate_path = temporary.path.join("candidate.json");
     let (candidate, release_size) =
         write_candidate(&request, &temporary.path, &candidate_path).await?;
-    let repository_root = discover_repository_root(&request.repository).await?;
-    let snapshot = read_status(&repository_root).await?;
+    let repository_root = discover_repository_root(&std::env::current_dir()?).await?;
     let (manifest, digest) = candidate.manifest()?;
     let mut result = Qualification {
-        source_commit: snapshot.source_commit().to_owned(),
         release: manifest.release,
         manifest_digest: digest.as_str().to_owned(),
         artifact_hashes: std::collections::BTreeMap::new(),
@@ -248,14 +235,7 @@ pub async fn qualify(
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    qualify_candidate(
-        &request,
-        &repository_root,
-        &candidate_path,
-        temporary,
-        &mut result,
-    )
-    .await?;
+    qualify_candidate(&repository_root, &candidate_path, temporary, &mut result).await?;
     let image_set = crate::release_chart::image_set(&request.release_chart).await?;
     let payload = QualificationPayload {
         format: QUALIFICATION_PAYLOAD_FORMAT,
@@ -294,11 +274,6 @@ async fn write_candidate(
     fs::write(&manifest_path, &bytes)?;
     let image_set = crate::release_chart::image_set(&request.release_chart).await?;
     let candidate = Candidate {
-        org: request.org.clone(),
-        project: request.project.clone(),
-        environment: request.environment.clone(),
-        tenant: request.tenant.clone(),
-        route_host: request.route_host.clone(),
         manifest_path,
         target_directory: fs::canonicalize(&request.target_directory)?,
         host_image: image_set.host,
@@ -306,7 +281,6 @@ async fn write_candidate(
         materializer_image: image_set.materializer,
         gates_image: request.gates_image.clone(),
         identity_image: request.identity_image.clone(),
-        deployment_files: request.deployment_files.clone(),
         native_registry_endpoint: request.native_registry_endpoint.clone(),
         native_registry_insecure: request.native_registry_insecure,
     };
@@ -319,32 +293,11 @@ async fn write_candidate(
 }
 
 async fn qualify_candidate(
-    request: &QualifyReleaseRequest,
-    repository_root: &Path,
+    root: &Path,
     candidate_path: &Path,
     temporary: TemporaryResults,
     result: &mut Qualification,
 ) -> anyhow::Result<()> {
-    let snapshot = read_status(repository_root).await?;
-    ensure!(
-        snapshot.state() == GitSourceState::Clean,
-        "qualification requires a clean selected source revision"
-    );
-    let root = snapshot.repository_root();
-    let selected = Command::new("git")
-        .current_dir(root)
-        .args([
-            "rev-parse",
-            "--verify",
-            &format!("{}^{{commit}}", request.revision),
-        ])
-        .output()
-        .await?;
-    ensure!(
-        selected.status.success()
-            && String::from_utf8_lossy(&selected.stdout).trim() == snapshot.source_commit(),
-        "the current checkout does not match the selected integrated revision"
-    );
     let app = application(&result.candidate)?;
     let target = &result.candidate.target_directory.clone();
     let rust = run(
@@ -452,12 +405,6 @@ async fn qualify_candidate(
             return Err(temporary.keep(&mut result.checks, error));
         }
     }
-    let finished = read_status(repository_root).await?;
-    ensure!(
-        finished.state() == GitSourceState::Clean
-            && finished.source_commit() == result.source_commit,
-        "source changed during qualification"
-    );
     require_complete_checks(result)
 }
 
@@ -844,11 +791,6 @@ mod tests {
     fn a_candidate_with_pinned_digests_qualifies_by_pulling_them() {
         let pinned = |name: &str| format!("registry.example/{name}@sha256:{}", "a".repeat(64));
         let candidate = Candidate {
-            org: "acme".into(),
-            project: "billing".into(),
-            environment: "prod".into(),
-            tenant: "tenant-a".into(),
-            route_host: "billing.example.test".into(),
             manifest_path: "unused".into(),
             target_directory: "unused".into(),
             host_image: pinned("host"),
@@ -856,7 +798,6 @@ mod tests {
             materializer_image: pinned("materializer"),
             gates_image: Some(pinned("gates")),
             identity_image: Some(pinned("identity")),
-            deployment_files: Vec::new(),
             native_registry_endpoint: None,
             native_registry_insecure: false,
         };

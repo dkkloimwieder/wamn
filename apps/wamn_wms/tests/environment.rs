@@ -43,24 +43,29 @@ pub(crate) const CLUSTER: &str = "route-auth-pg18";
 /// Platform rows take the email `<component>@example.invalid` in this test.
 const PLATFORM_DOMAIN: &str = "example.invalid";
 
-/// The release this fixture provisions and publishes. A supplied candidate names
-/// it, and with no candidate it is the default WMS journey release.
+/// The release this fixture provisions and publishes: the default WMS
+/// journey release, with the packages of a supplied candidate's manifest.
 pub(crate) fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
         let candidate = Candidate::from_env().expect("read the supplied WMS candidate");
-        match candidate {
-            Some(candidate) => candidate
-                .identity()
-                .expect("read the release identity of the supplied WMS candidate"),
-            None => ReleaseIdentity {
-                org: "acme".to_owned(),
-                project: "wms".to_owned(),
-                environment: "dev".to_owned(),
-                tenant: "acme--wms--dev".to_owned(),
-                route_host: "wms.localhost".to_owned(),
-                packages: BTreeSet::from([
-                    package_coordinate().expect("read the WMS package coordinate")
-                ]),
+        ReleaseIdentity {
+            org: "acme".to_owned(),
+            project: "wms".to_owned(),
+            environment: "dev".to_owned(),
+            tenant: "acme--wms--dev".to_owned(),
+            route_host: "wms.localhost".to_owned(),
+            packages: match candidate {
+                Some(candidate) => {
+                    candidate
+                        .manifest()
+                        .expect("read the manifest of the supplied WMS candidate")
+                        .0
+                        .release
+                        .packages
+                }
+                None => {
+                    BTreeSet::from([package_coordinate().expect("read the WMS package coordinate")])
+                }
             },
         }
     });

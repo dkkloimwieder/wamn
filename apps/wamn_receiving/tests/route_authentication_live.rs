@@ -191,22 +191,27 @@ static OVERLAY_RECEIPT_PARTICIPANT: LazyLock<&'static str> =
     LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt-participant").leak());
 const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
 
-/// The release this fixture provisions and publishes. A supplied candidate names
-/// it, and with no candidate it is the default Receiving journey release.
+/// The release this fixture provisions and publishes: the default Receiving
+/// journey release, with the packages of a supplied candidate's manifest.
 fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
         let candidate = Candidate::from_env().expect("read the supplied Receiving candidate");
-        match candidate {
-            Some(candidate) => candidate
-                .identity()
-                .expect("read the release identity of the supplied Receiving candidate"),
-            None => ReleaseIdentity {
-                org: ORG.to_owned(),
-                project: PROJECT.to_owned(),
-                environment: ENVIRONMENT.to_owned(),
-                tenant: TENANT.to_owned(),
-                route_host: "receiving.localhost".to_owned(),
-                packages: JOURNEY_PACKAGES
+        ReleaseIdentity {
+            org: ORG.to_owned(),
+            project: PROJECT.to_owned(),
+            environment: ENVIRONMENT.to_owned(),
+            tenant: TENANT.to_owned(),
+            route_host: "receiving.localhost".to_owned(),
+            packages: match candidate {
+                Some(candidate) => {
+                    candidate
+                        .manifest()
+                        .expect("read the manifest of the supplied Receiving candidate")
+                        .0
+                        .release
+                        .packages
+                }
+                None => JOURNEY_PACKAGES
                     .iter()
                     .map(|package| {
                         wamn_catalog::PackageCoordinate::new(package.id, package.version())
