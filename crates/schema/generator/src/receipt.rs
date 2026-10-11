@@ -28,8 +28,6 @@ pub(crate) const SQLX_VERSION: &str = "0.9.0";
 /// installed dependencies. `generated` is the committed build output until it
 /// leaves git.
 const EXCLUDED_DIRECTORIES: &[&str] = &["target", "node_modules", "generated"];
-/// The web client's own build output, relative to the package root.
-const WEB_DIST: &str = "web/dist";
 /// The lock file of the enclosing Cargo workspace, relative to the package root.
 const WORKSPACE_LOCK: &str = "../Cargo.lock";
 
@@ -209,8 +207,7 @@ fn input_files(package_root: &Path) -> Result<Vec<PathBuf>> {
             if file_type.is_dir() {
                 let excluded = EXCLUDED_DIRECTORIES
                     .iter()
-                    .any(|name| entry.file_name() == *name)
-                    || path == Path::new(WEB_DIST);
+                    .any(|name| entry.file_name() == *name);
                 if !excluded {
                     pending.push(path);
                 }
@@ -260,7 +257,6 @@ mod tests {
             ("wamn.k", "a"),
             ("command/move/lock.sql", "b"),
             ("web/src/main.ts", "c"),
-            ("web/dist/index.js", "d"),
             ("web/node_modules/x/index.js", "e"),
             ("target/wamn/out", "f"),
             ("generated/wamn.json", "g"),
