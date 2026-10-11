@@ -18,6 +18,7 @@ use wamn_control::package_artifact::{
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_package_artifact::registry_credentials::read_registry_credentials;
+use wamn_package_artifact::resolve_digest;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -327,5 +328,69 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
             .collect::<Vec<_>>(),
         ["labels"],
         "the store alias comes from the wiring"
+    );
+}
+
+/// `wamn inspect` and `wamn diff` resolve a digest or a unique prefix among
+/// the verified rows of `catalog.package_artifacts` only.
+#[tokio::test]
+async fn a_digest_prefix_resolves_to_one_verified_artifact() {
+    let fixture = Fixture::start("resolve").await;
+    let digest = |head: &str| format!("sha256:{head}{}", "0".repeat(64 - head.len()));
+    for (package_id, head, verified) in [
+        ("a", "ab01", true),
+        ("b", "ab02", true),
+        ("c", "ab03", false),
+    ] {
+        fixture
+            .client
+            .execute(
+                "INSERT INTO catalog.package_artifacts (package_id, version, digest, verified_at) \
+                 VALUES ($1, '1.0.0', $2, CASE WHEN $3 THEN clock_timestamp() END)",
+                &[&package_id, &digest(head), &verified],
+            )
+            .await
+            .expect("record an artifact");
+    }
+    let registry = &fixture.registry;
+
+    for given in [
+        digest("ab01"),
+        digest("ab01").replace("sha256:", ""),
+        "ab01".to_owned(),
+    ] {
+        let artifact = resolve_digest(registry, &given)
+            .await
+            .expect("one artifact");
+        assert_eq!(
+            (
+                artifact.package_id.as_str(),
+                artifact.digest.as_str(),
+                artifact.tag()
+            ),
+            ("a", digest("ab01").as_str(), "a-1.0.0".to_owned()),
+            "{given}"
+        );
+    }
+    for unknown in ["ab03", "ef"] {
+        let message = format!("{:#}", resolve_digest(registry, unknown).await.unwrap_err());
+        assert!(
+            message.contains("no verified package artifact"),
+            "{unknown}: {message}"
+        );
+    }
+    let message = format!("{:#}", resolve_digest(registry, "ab").await.unwrap_err());
+    assert!(message.contains("ambiguous"), "{message}");
+    assert!(
+        message.contains(&format!("{} (a@1.0.0)", digest("ab01"))),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("{} (b@1.0.0)", digest("ab02"))),
+        "{message}"
+    );
+    assert!(
+        !message.contains("c@1.0.0"),
+        "an unverified row is not listed: {message}"
     );
 }
