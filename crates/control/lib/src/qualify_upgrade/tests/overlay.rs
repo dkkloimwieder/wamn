@@ -107,11 +107,10 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
         &[base_manifest, overlay_manifest.clone()],
     )
     .unwrap();
-    wamn_schema_generator::materialize_package_verified_with_existing_grants(
+    wamn_schema_generator::materialize_package_verified_with_catalog(
         &projected,
         base.source_database.url(),
         &predecessor,
-        "inventory",
     )
     .await
     .unwrap();
@@ -813,11 +812,10 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     })
     .await
     .unwrap();
-    wamn_schema_generator::materialize_package_verified_with_existing_grants(
+    wamn_schema_generator::materialize_package_verified_with_catalog(
         &projected,
         fixture.base.source_database.url(),
         &predecessor,
-        "inventory",
     )
     .await
     .unwrap();
@@ -917,11 +915,10 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     })
     .await
     .unwrap();
-    wamn_schema_generator::materialize_package_verified_with_existing_grants(
+    wamn_schema_generator::materialize_package_verified_with_catalog(
         &projected,
         generation.url(),
         &candidate,
-        "inventory",
     )
     .await
     .unwrap();

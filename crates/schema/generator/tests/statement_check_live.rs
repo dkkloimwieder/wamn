@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
 use wamn_schema_generator::{
-    classify_statements_with_existing_grants,
     classify_statements_with_existing_grants_in_transaction, materialize_package_verified,
 };
 
@@ -244,9 +243,15 @@ async fn existing_grants_planner_refuses_the_intermediate_state_and_preserves_au
             b"SELECT id FROM public_only".to_vec(),
         ),
     ]);
-    let refusal = classify_statements_with_existing_grants(&mut client, &corpus, "inventory")
-        .await
-        .expect_err("old column grants cannot read the candidate whole row");
+    let mut transaction = client.transaction().await.unwrap();
+    let refusal = classify_statements_with_existing_grants_in_transaction(
+        &mut transaction,
+        &corpus,
+        "inventory",
+    )
+    .await
+    .expect_err("old column grants cannot read the candidate whole row");
+    transaction.rollback().await.unwrap();
     let refusal = refusal.to_string();
     assert!(
         refusal.contains("predecessor/widget.list/whole_row.sql: 42501"),

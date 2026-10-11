@@ -131,25 +131,6 @@ pub(crate) async fn classify_statements(
     .await
 }
 
-/// Plan statements as `wamn_app` without replacing the database's existing grants.
-///
-/// `schema` is the single application schema supplied to the runtime. Like the
-/// runtime, this check sets that schema alone as its search path. Corpus keys
-/// identify statements in refusals; callers can include package and operation
-/// identity. The transaction rolls back every session setting and executes no
-/// application statement.
-pub async fn classify_statements_with_existing_grants(
-    client: &mut tokio_postgres::Client,
-    corpus: &BTreeMap<String, Vec<u8>>,
-    schema: &str,
-) -> Result<StatementTransactionality> {
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin the statement check transaction")?;
-    classify_with_existing_grants(transaction, corpus, schema).await
-}
-
 /// Plan under current grants while retaining the caller's surrounding transaction.
 ///
 /// A savepoint contains the role and search-path changes and is rolled back after
@@ -584,35 +565,6 @@ pub async fn materialize_package_verified_with_catalog(
     let (_, manifest) = load_manifest(package_root)?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;
     let verdicts = classify_statements(&mut client, &corpus, &schemas, &grants).await;
-    drop(client);
-    connection_task
-        .await
-        .context("join PostgreSQL connection task")?
-        .context("drive PostgreSQL connection")?;
-    let verdicts = verdicts?;
-
-    materialize_package_classified(catalog, package_root, &verdicts)
-}
-
-/// Materialize package artifacts against the runtime schema and existing grants.
-///
-/// The caller supplies the catalog projected for this package and installs the
-/// complete root set's grants before calling. This check preserves those grants
-/// and plans every statement using the exact serving runtime schema.
-pub async fn materialize_package_verified_with_existing_grants(
-    catalog: &CatalogIr,
-    database_url: &str,
-    package_root: &Path,
-    runtime_schema: &str,
-) -> Result<()> {
-    let (corpus, _) = statement_corpus(package_root, catalog)?;
-
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
-        .await
-        .context("connect to plan the package statements under existing grants")?;
-    let connection_task = tokio::spawn(connection);
-    let verdicts =
-        classify_statements_with_existing_grants(&mut client, &corpus, runtime_schema).await;
     drop(client);
     connection_task
         .await
