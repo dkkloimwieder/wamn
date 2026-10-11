@@ -158,11 +158,7 @@ export function OrgScreen(props: OrgScreenProps): JSX.Element {
                       </label>
                     </td>
                     <td>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void setActive(member.principalId, !active())}
-                      >
+                      <Button variant="outline" size="sm" onClick={() => void setActive(member.principalId, !active())}>
                         {active() ? "deactivate" : "activate"}
                       </Button>
                     </td>

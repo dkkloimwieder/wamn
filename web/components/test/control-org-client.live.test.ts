@@ -67,15 +67,20 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
       status: "completed",
       value: { projects: ["billing", "shop"] },
     });
-    expect(
-      await user.activate(transport, [{ requestId: requestId(), value: { principalId: annId } }]),
-    ).toEqual({ status: "completed", value: { principalId: annId, status: "active" } });
-    expect(
-      await user.activate(transport, [{ requestId: requestId(), value: { principalId: danId } }]),
-    ).toMatchObject({ status: "refused", code: "user_not_found", detail: { detail: { field: "principal_id" } } });
-    expect(
-      await orgAdmin.grant(transport, [{ requestId: requestId(), value: { principalId: danId } }]),
-    ).toMatchObject({ status: "refused", code: "user_not_active", detail: { detail: { field: "principal_id" } } });
+    expect(await user.activate(transport, [{ requestId: requestId(), value: { principalId: annId } }])).toEqual({
+      status: "completed",
+      value: { principalId: annId, status: "active" },
+    });
+    expect(await user.activate(transport, [{ requestId: requestId(), value: { principalId: danId } }])).toMatchObject({
+      status: "refused",
+      code: "user_not_found",
+      detail: { detail: { field: "principal_id" } },
+    });
+    expect(await orgAdmin.grant(transport, [{ requestId: requestId(), value: { principalId: danId } }])).toMatchObject({
+      status: "refused",
+      code: "user_not_active",
+      detail: { detail: { field: "principal_id" } },
+    });
     expect(
       await member.grant(transport, [
         { requestId: requestId(), value: { project: "billing", env: "prod", principalId: annId } },
