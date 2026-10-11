@@ -501,7 +501,6 @@ pub(super) struct JourneyReleaseTarget<'a> {
     pub(super) project_url: &'a str,
     pub(super) system_url: &'a str,
     pub(super) publisher: &'a str,
-    pub(super) project: &'a Client,
 }
 
 /// The package artifact registry of the journey: `<registry>/<org>/packages`
@@ -557,7 +556,6 @@ pub(super) async fn publish_journey_release(
         project_url,
         system_url,
         publisher,
-        project,
     } = target;
     let wirings = released_journey_packages()
         .flat_map(|package| {
@@ -591,14 +589,29 @@ pub(super) async fn publish_journey_release(
     .await
     .context("publish the production Receiving release")?
     .to_string();
+    // Publish writes OCI only. The journey installs the release as apply's
+    // stage does: the row from the pushed manifest (R1 (3)).
+    let bytes = ReleaseManifestSource::new(
+        &inputs.release_artifact_base,
+        true,
+        &inputs.registry_auth_file,
+    )
+    .context("configure the release puller")?
+    .pull_verified(&digest)
+    .await
+    .context("pull the exact released manifest")?;
+    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
-        let bytes: Vec<u8> = project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
-            &[&identity().tenant.as_str(), &digest.as_str()],
-        ).await?.get(0);
-        let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
         candidate.assert_manifest(&manifest)?;
     }
+    wamn_control::environment::stage::write_release(
+        project_url,
+        identity().tenant.as_str(),
+        &digest,
+        &manifest,
+    )
+    .await
+    .context("install the Receiving release row")?;
     Ok(digest)
 }
 

@@ -733,8 +733,8 @@ impl Run {
         Ok((outcomes, opened))
     }
 
-    /// Stage 7: packages, components, gated wirings, the release, and the
-    /// bindings of the current release copied to it.
+    /// Stage 7: packages, components, gated wirings and the release. Stage 9's
+    /// `env apply` writes the release row and binds its connections.
     async fn packages(&self, record: &RunRecord) -> Outcome {
         use crate::release_composition::{PackageInput, load_wirings, select_component_artifacts};
         let environment = self.environment()?;
@@ -920,10 +920,6 @@ impl Run {
         )
         .await?;
         outputs.insert("release digest".to_owned(), digest.to_string());
-
-        for copied in copy_bindings(self, &databases, digest.as_str(), &pushed).await? {
-            outputs.insert(format!("binding {}", copied.0), copied.1);
-        }
         Ok((StepResult::Done, outputs))
     }
 
@@ -1990,125 +1986,6 @@ fn upgrade_base<'a>(
     Ok((**candidate, release.to_owned()))
 }
 
-async fn bound_release(
-    client: &tokio_postgres::Client,
-    tenant: &str,
-    environment: &str,
-) -> anyhow::Result<Option<String>> {
-    let digests = client
-        .query(
-            "SELECT DISTINCT manifest_digest FROM catalog.connection_bindings
-              WHERE tenant_id = $1 AND environment = $2 AND binding_status = 'active'
-              ORDER BY manifest_digest",
-            &[&tenant, &environment],
-        )
-        .await
-        .context("read the releases of the active connection bindings")?
-        .iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<Vec<_>>();
-    match digests.as_slice() {
-        [] => Ok(None),
-        [digest] => Ok(Some(digest.clone())),
-        _ => bail!(
-            "the active connection bindings of {environment} name more than one release ({}); they must name one",
-            digests.join(", ")
-        ),
-    }
-}
-
-/// Copies each active binding of the current release of the environment to
-/// the new release, with the digest that the verified package artifacts
-/// carry for the same component (owner ruling of 2026-10-02 on `wamn-m511.5`).
-/// The current release is the one release the active bindings name; bindings
-/// that name two releases refuse. Its manifest names the component of each
-/// bound digest. When the bindings already name the new release, there is
-/// nothing to copy.
-async fn copy_bindings(
-    run: &Run,
-    databases: &Databases,
-    release: &str,
-    pushed: &BTreeMap<String, String>,
-) -> anyhow::Result<Vec<(String, String)>> {
-    let mut client = databases.project().await?;
-    // An environment with no active binding binds nothing yet.
-    let Some(current) =
-        bound_release(&client, &databases.tenant, &run.arguments.environment).await?
-    else {
-        return Ok(Vec::new());
-    };
-    if current == release {
-        return Ok(Vec::new());
-    }
-    let transaction = client.transaction().await?;
-    let bytes = crate::publish_release::read_release(&transaction, &databases.tenant, &current)
-        .await?
-        .with_context(|| format!("catalog.releases holds no release {current}"))?;
-    transaction.commit().await?;
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
-        .with_context(|| format!("read the manifest of release {current}"))?;
-    let rows = client
-        .query(
-            "SELECT b.component_digest, b.store_alias, b.instance_id,
-                    i.requirement_type, g.definition_json::text, g.credential_set_handle
-               FROM catalog.connection_bindings AS b
-               JOIN catalog.connection_instances AS i
-                 ON i.tenant_id = b.tenant_id AND i.environment = b.environment
-                AND i.instance_id = b.instance_id
-               JOIN catalog.connection_generations AS g
-                 ON g.tenant_id = i.tenant_id AND g.environment = i.environment
-                AND g.instance_id = i.instance_id AND g.generation = i.active_generation
-              WHERE b.tenant_id = $1 AND b.environment = $2 AND b.manifest_digest = $3
-                AND b.binding_status = 'active'
-              ORDER BY b.instance_id, b.store_alias",
-            &[&databases.tenant, &run.arguments.environment, &current],
-        )
-        .await?;
-    let mut copied = Vec::new();
-    for row in rows {
-        let old_digest: String = row.get(0);
-        let store_alias: String = row.get(1);
-        let instance_id: String = row.get(2);
-        let requirement: String = row.get(3);
-        let definition: String = row.get(4);
-        let credential_handle: Option<String> = row.get(5);
-        let component = &manifest
-            .components
-            .iter()
-            .find(|component| component.descriptor.component_digest.as_str() == old_digest)
-            .with_context(|| format!("release {current} names no component {old_digest}"))?
-            .descriptor
-            .component;
-        let new_digest = pushed.get(component).with_context(|| {
-            format!(
-                "release {current} binds {instance_id} to the component {component}, which no package artifact of this run carries"
-            )
-        })?;
-        let bound = crate::bind_connection::bind(&crate::bind_connection::BindConnectionRequest {
-            database_url: databases.project_url(),
-            tenant: databases.tenant.clone(),
-            environment: run.arguments.environment.clone(),
-            instance_id: instance_id.clone(),
-            requirement_type: serde_json::from_value(Value::String(requirement))?,
-            definition: serde_json::from_str(&definition)
-                .with_context(|| format!("the definition of {instance_id} is not JSON"))?,
-            credential_handle,
-            manifest_digest: release.to_owned(),
-            component_digest: new_digest.clone(),
-            store_alias: store_alias.clone(),
-        })
-        .await?;
-        copied.push((
-            instance_id,
-            format!(
-                "{store_alias}: release {current} {old_digest} to release {release} {new_digest}, generation {}",
-                bound.generation
-            ),
-        ));
-    }
-    Ok(copied)
-}
-
 /// Apply or retry the exact complete package world saved by the environment run.
 pub(crate) async fn apply_environment_package_qualification(
     mut request: crate::apply_package::ApplyPackageRequest,
@@ -3054,56 +2931,6 @@ mod tests {
             (base.root.as_path(), release),
             (package.root.as_path(), digest)
         );
-    }
-
-    /// The current release is the one release the active connection bindings
-    /// name. Active bindings that name two releases refuse, and disabled ones
-    /// do not count.
-    #[tokio::test]
-    async fn the_bound_release_refuses_two_active_digests() {
-        let database = wamn_catalog::test_database::tenant();
-        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        let connection = tokio::spawn(connection);
-        let first = format!("sha256:{}", "a".repeat(64));
-        let second = format!("sha256:{}", "b".repeat(64));
-        let insert = |release: &str, alias: &str, status: &str| {
-            format!(
-                "INSERT INTO catalog.connection_bindings (tenant_id, manifest_digest, \
-                   component_digest, store_alias, environment, instance_id, binding_status, \
-                   validation_status, validation_hash) \
-                 VALUES ('t', '{release}', '{release}', '{alias}', 'dev', 'i', '{status}', \
-                   'valid', '{release}');"
-            )
-        };
-        // The bindings stand alone: the releases, requirements and instances
-        // that their foreign keys name are not what this reads.
-        client
-            .batch_execute("SET session_replication_role = replica")
-            .await
-            .unwrap();
-        assert_eq!(bound_release(&client, "t", "dev").await.unwrap(), None);
-        client
-            .batch_execute(&(insert(&first, "one", "active") + &insert(&second, "two", "disabled")))
-            .await
-            .unwrap();
-        assert_eq!(
-            bound_release(&client, "t", "dev").await.unwrap(),
-            Some(first.clone())
-        );
-        client
-            .batch_execute(&insert(&second, "three", "active"))
-            .await
-            .unwrap();
-        let error = bound_release(&client, "t", "dev").await.unwrap_err();
-        assert!(
-            format!("{error:#}")
-                .contains(&format!("name more than one release ({first}, {second})")),
-            "{error:#}"
-        );
-        drop(client);
-        connection.await.unwrap().unwrap();
     }
 
     /// `--predecessor-release` is an input of the package stage, which

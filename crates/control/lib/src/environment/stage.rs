@@ -253,8 +253,13 @@ fn release_requirements(
 }
 
 /// Write `catalog.releases (manifest_digest, manifest)` for the release if
-/// absent (R1). The row is immutable, and its bytes hash to its key.
-async fn write_release(
+/// absent (R1). The row is immutable, and its bytes hash to its key. This is
+/// the one writer of the row (R1 (3), R2); publish writes OCI only.
+///
+/// # Errors
+///
+/// When `manifest` does not hash to `digest`, or the write fails.
+pub async fn write_release(
     project_url: &str,
     tenant: &str,
     digest: &str,

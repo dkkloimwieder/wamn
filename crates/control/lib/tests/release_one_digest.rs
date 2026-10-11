@@ -6,8 +6,9 @@
 //! The first test assembles the release as the edge bundle does; the second
 //! pushes the package once to a local `registry:2` with `push_package` and
 //! publishes its verified artifact with `publish_release` into two
-//! provisioned environments on PostgreSQL. A push to an unreachable registry
-//! writes nothing. The kind half of A7, a request to each environment's
+//! provisioned environments on PostgreSQL. Publish writes OCI only, whether
+//! its push succeeds or fails; apply's stage writes the release row from the
+//! pushed manifest (R1 (3), R2). The kind half of A7, a request to each environment's
 //! route host, runs in `environment_apply_kind`.
 
 use std::path::{Path, PathBuf};
@@ -18,6 +19,7 @@ use wamn_catalog::{
 };
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
+use wamn_control::environment::stage::write_release;
 use wamn_control::package_artifact::{
     PackageRegistry, PushPackageRequest, open_package, push_package,
 };
@@ -282,8 +284,7 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
         connection.abort();
         rows
     };
-    // A push to an unreachable registry refuses, and the release is not
-    // recorded.
+    // A push to an unreachable registry refuses and writes no row.
     let unreachable = publish_through_publish_release(
         "dev",
         &registry,
@@ -307,11 +308,7 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
         dev, prod,
         "one release published for two environments has one digest"
     );
-    assert_eq!(
-        release_rows().await,
-        2,
-        "each environment recorded the release after its push"
-    );
+    assert_eq!(release_rows().await, 0, "publish wrote a release row");
 
     let pushed = wamn_runtime::release_manifest_source::ReleaseManifestSource::new(
         &releases,
@@ -324,6 +321,23 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
     .expect("pull the pushed release");
     let (manifest, _) =
         ServingManifest::from_canonical_bytes(&pushed).expect("the pushed release is canonical");
+    // Apply's stage, the one writer, writes the row from the pushed manifest
+    // in each environment where it installs.
+    for environment in ["dev", "prod"] {
+        write_release(
+            project.url(),
+            &project_env_tenant(ORG, PROJECT, environment),
+            &dev,
+            &manifest,
+        )
+        .await
+        .expect("apply's stage writes the release row");
+    }
+    assert_eq!(
+        release_rows().await,
+        2,
+        "apply's stage wrote the release row in each environment"
+    );
     assert!(
         !manifest.attachments.is_empty(),
         "the release serves a route, so the check covers the route host"

@@ -331,7 +331,6 @@ async fn receiving_release_journey(
             .management_principal_subject
             .as_deref()
             .context("project provisioning emitted no management-author principal")?,
-        project: project.as_ref(),
     };
     if publish_only {
         super::environment::publish_journey_release(inputs, target).await?;

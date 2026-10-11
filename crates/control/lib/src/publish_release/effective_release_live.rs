@@ -481,7 +481,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     // serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring
     // states the registration a handler derives.
 
-    // Composition writes no release row: publish records it after the push.
+    // Composition writes no release row; apply's stage writes it (R1 (3)).
     let release_rows: i64 = project
         .query_one(
             "SELECT count(*) FROM catalog.releases WHERE tenant_id = $1",

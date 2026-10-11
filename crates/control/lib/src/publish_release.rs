@@ -5,9 +5,9 @@
 //! the tag of each exact package pair from the registry only, and refuses a
 //! package with no artifact before it writes anything (R11 (2)). It resolves every wiring and component from the admitted
 //! descriptors of those artifacts, and each release component carries its
-//! descriptor. It pushes the canonical manifest bytes to OCI first, then
-//! records them under their digest in `catalog.releases`, the digest-keyed
-//! cache, so a failed push writes nothing.
+//! descriptor. It pushes the canonical manifest bytes to OCI and writes no
+//! Postgres row: `apply` step 2 writes `catalog.releases` where it installs
+//! (R1 (3), R2, §10.2).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -62,11 +62,6 @@ SELECT wiring_hash, graph_json::text \
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE tenant_id = $1 AND manifest_digest = $2";
-/// The release cache row is immutable and its bytes hash to its key, so a
-/// conflict is the same release recorded before.
-const INSERT_RELEASE_SQL: &str = "\
-INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
-     VALUES ($1, $2, $3) ON CONFLICT DO NOTHING";
 
 fn projected_environment_policy_sql(run_schema: &BareSchemaName) -> String {
     format!(
@@ -355,9 +350,8 @@ impl PublishReleaseRequest {
 
 /// Publish one effective release from the package artifacts in
 /// `registry`: push its manifest to `release_artifact_base` with the
-/// credential and trust roots of `registry` (§8.1), then record it in
-/// `catalog.releases`, and return its manifest digest. A failed push writes
-/// nothing.
+/// credential and trust roots of `registry` (§8.1), and return its manifest
+/// digest. It writes OCI only.
 pub async fn publish_release(
     request: PublishReleaseRequest,
     registry: &PackageRegistry,
@@ -409,15 +403,6 @@ pub async fn publish_local(
     let projected =
         read_projected_environment_policy(&transaction, &run_schema, &args.tenant).await?;
     verify_projected_environment_policy(projected.as_ref(), &policy, &args.scope(), &run_schema)?;
-    // A run admitted under the candidate pins its digest, and the run-plane
-    // foreign key needs the release row.
-    record_release(
-        &transaction,
-        &args.tenant,
-        &assembled.published.digest,
-        &assembled.published.canonical_bytes,
-    )
-    .await?;
     transaction.commit().await?;
     drop(client);
     driver.abort();
@@ -433,7 +418,7 @@ pub struct AssembledLocalRelease {
 
 /// Assemble the manifest and local facts of a local release from the package
 /// directories `package_roots` and admitted components, as [`publish_local`]
-/// does before it records the release. Each component's descriptor comes from
+/// does. Each component's descriptor comes from
 /// its admission. It reads no database, so the two database URLs of `args` go
 /// unused.
 pub fn assemble_local_release(
@@ -781,20 +766,12 @@ async fn publish_in_transaction(
         &ReleaseScope::new(request.tenant_id, request.environment),
         run_schema,
     )?;
-    // The push comes before the one write, so a failed push writes nothing.
     push_manifest_bytes(
         &published.canonical_bytes,
         release_artifact_base,
         registry.insecure_registry,
         &registry.oci_ca_paths,
         &registry.registry_auth_file,
-    )
-    .await?;
-    record_release(
-        &transaction,
-        request.tenant_id,
-        &published.digest,
-        &published.canonical_bytes,
     )
     .await?;
     transaction
@@ -1210,25 +1187,6 @@ async fn validate_release_package_manifests(
             ));
         }
     }
-    Ok(())
-}
-
-/// Record the release under its digest in `catalog.releases`. The row is the
-/// immutable cache of the canonical manifest bytes, so recording the same
-/// release twice changes nothing.
-async fn record_release(
-    transaction: &Transaction<'_>,
-    tenant_id: &str,
-    digest: &ManifestDigest,
-    canonical_bytes: &[u8],
-) -> Result<(), PublishManifestError> {
-    transaction
-        .execute(
-            INSERT_RELEASE_SQL,
-            &[&tenant_id, &digest.as_str(), &canonical_bytes],
-        )
-        .await
-        .map_err(|error| storage("record the release", error))?;
     Ok(())
 }
 

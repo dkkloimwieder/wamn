@@ -867,6 +867,16 @@ impl ProductionDevStageRunner {
                 .map_err(|source| {
                     ProductionDevStageError::owner("assemble local application", source)
                 })?;
+        // A run admitted under the candidate pins its digest, and the run-plane
+        // foreign key needs the release row, which apply's stage writes.
+        crate::environment::stage::write_release(
+            self.config.target_database_url(),
+            &identity.tenant,
+            published.digest.as_str(),
+            &published.manifest,
+        )
+        .await
+        .map_err(|source| ProductionDevStageError::owner("install local release", source))?;
         let binding_inputs =
             prepare_local_bindings(&self.config, &self.admissions).map_err(|source| {
                 ProductionDevStageError::owner("prepare local connection selections", source)

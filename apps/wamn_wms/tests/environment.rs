@@ -635,16 +635,15 @@ pub async fn publish(
     )
     .await?
     .to_string();
-    let (project, task) = connect(&route.database_url).await?;
-    let snapshot = project.query_one(
-        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
-        &[&identity().tenant.as_str(), &release_digest.as_str()],
-    ).await;
-    drop(project);
-    task.abort();
-    let bytes: Vec<u8> = snapshot
-        .context("read the exact WMS release snapshot")?
-        .get(0);
+    // Publish writes OCI only; the package stage below writes the row.
+    let bytes = wamn_runtime::release_manifest_source::ReleaseManifestSource::new(
+        &inputs.release_artifact_base,
+        true,
+        &inputs.registry_auth_file,
+    )?
+    .pull_verified(&release_digest)
+    .await
+    .context("pull the exact WMS release")?;
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         candidate.assert_manifest(&manifest)?;
