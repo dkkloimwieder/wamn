@@ -33,12 +33,8 @@ pub struct EnvironmentFile {
     pub package_workloads: BTreeMap<String, String>,
     pub web_client: WebClient,
     pub route_host: String,
-    /// The host group of the application in the host values.
-    pub host_group: String,
     pub edge: Edge,
     pub url_map: UrlMap,
-    /// The guest workload files, relative to the repository.
-    pub workloads: Vec<PathBuf>,
     /// The pinned gates image of `qualify-release`, with its digest.
     pub gates_image: String,
 }
@@ -112,14 +108,9 @@ impl EnvironmentFile {
             "the environment file {} names no package",
             path.display()
         );
-        let named = file
-            .workloads
-            .iter()
-            .cloned()
-            .chain([file.edge.values.clone(), file.url_map.file.clone()]);
-        for named in named {
+        for named in [&file.edge.values, &file.url_map.file] {
             ensure!(
-                repository.join(&named).is_file(),
+                repository.join(named).is_file(),
                 "the environment file {} names the absent file {}",
                 path.display(),
                 named.display()
@@ -165,14 +156,8 @@ mod tests {
             BTreeMap::from([("wamn_wms".to_owned(), "wms-flow-http".to_owned())])
         );
         assert_eq!(
-            (receiving.host_group.as_str(), wms.host_group.as_str()),
-            ("default", "wms")
-        );
-        assert_eq!(
             EnvironmentFile {
                 route_host: wms.route_host.clone(),
-                host_group: wms.host_group.clone(),
-                workloads: wms.workloads.clone(),
                 packages: wms.packages.clone(),
                 package_workloads: wms.package_workloads.clone(),
                 ..receiving
