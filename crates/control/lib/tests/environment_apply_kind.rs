@@ -711,7 +711,6 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         registry_auth_file: work.join("auth.json"),
         insecure_registry: false,
         oci_ca_paths: ca.clone(),
-        control_database_url: system_url.clone(),
     };
     let mut pushed = None;
     for _ in 0..30 {
@@ -719,7 +718,6 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
             package: package.clone(),
             registry: package_registry.clone(),
             component_artifact_base: format!("{local}/wamn/components"),
-            source_commit: None,
         })
         .await
         {
@@ -731,12 +729,11 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         }
     }
     pushed.context("push the fixture package")?;
-    let device =
-        wamn_package_artifact::read_verified_descriptors(&package_registry, PACKAGE, &version)
-            .await?
-            .into_iter()
-            .find(|descriptor| descriptor.component == "device")
-            .context("the fixture package admits its device component")?;
+    let device = wamn_package_artifact::read_descriptors(&package_registry, PACKAGE, &version)
+        .await?
+        .into_iter()
+        .find(|descriptor| descriptor.component == "device")
+        .context("the fixture package admits its device component")?;
     let manifest_a = release(MANIFEST, &version, None)?;
     let manifest_b = release(MANIFEST_B, &version, None)?;
     let manifest_h = release(MANIFEST_H, &version, Some(&device))?;
@@ -844,7 +841,6 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         registry_auth_file: work.join("auth.json"),
         insecure_registry: false,
         oci_ca_paths: ca.clone(),
-        control_database_url: String::new(),
     };
     for bytes in [&manifest_a, &manifest_b, &manifest_h] {
         let (_, release) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;

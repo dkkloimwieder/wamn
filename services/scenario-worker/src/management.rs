@@ -493,10 +493,8 @@ pub struct ManagementServeArgs {
     ///
     /// The gate and `publish` judge a wiring against the component facts of
     /// its package, and those facts are the descriptors of the package's
-    /// verified artifact (R2). The surface reads them the way
-    /// `publish-release` does: the digest and `verified_at` that
-    /// `catalog.package_artifacts` records, read on the control-authoring
-    /// connection, then the artifact from this base.
+    /// artifact (R2). The surface reads them the way `publish-release` does:
+    /// the artifact under its tag, pulled from this base only.
     #[arg(long = "package-artifact-base", env = "WAMN_PACKAGE_ARTIFACT_BASE")]
     pub package_artifact_base: String,
 
@@ -704,7 +702,6 @@ async fn serve_inner(
             registry_auth_file: args.registry_auth_file.clone(),
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths.clone(),
-            control_database_url: args.control_authoring_database_url.clone(),
         },
     )
     .await?;

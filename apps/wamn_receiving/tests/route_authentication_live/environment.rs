@@ -472,7 +472,7 @@ pub(super) async fn author_journey_wirings(
     project_url: &str,
     system_url: &str,
 ) -> anyhow::Result<()> {
-    let registry = journey_package_registry(inputs, system_url)?;
+    let registry = journey_package_registry(inputs)?;
     for package in released_journey_packages() {
         for wiring in package.wirings {
             let document = author_wiring::read_wiring_document(
@@ -506,10 +506,9 @@ pub(super) struct JourneyReleaseTarget<'a> {
 }
 
 /// The package artifact registry of the journey: `<registry>/<org>/packages`
-/// beside the component artifact base, recorded in the control database.
+/// beside the component artifact base.
 pub(super) fn journey_package_registry(
     inputs: &JourneyDocument,
-    system_url: &str,
 ) -> anyhow::Result<wamn_control::package_artifact::PackageRegistry> {
     let (parent, _) = inputs
         .component_artifact_base
@@ -520,7 +519,6 @@ pub(super) fn journey_package_registry(
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
         oci_ca_paths: Vec::new(),
-        control_database_url: system_url.to_owned(),
     })
 }
 
@@ -530,9 +528,8 @@ pub(super) fn journey_package_registry(
 /// authorship and publish read component facts from these artifacts.
 pub(super) async fn push_journey_packages(
     inputs: &JourneyDocument,
-    system_url: &str,
 ) -> anyhow::Result<Vec<wamn_control::apply_package::PackageRoot>> {
-    let registry = journey_package_registry(inputs, system_url)?;
+    let registry = journey_package_registry(inputs)?;
     let mut packages = Vec::new();
     for package in released_journey_packages() {
         let path = journey_package_root(package, Some(inputs));
@@ -541,7 +538,6 @@ pub(super) async fn push_journey_packages(
                 package: path.clone(),
                 registry: registry.clone(),
                 component_artifact_base: inputs.component_artifact_base.clone(),
-                source_commit: None,
             },
         )
         .await
@@ -576,7 +572,7 @@ pub(super) async fn publish_journey_release(
         .collect::<anyhow::Result<Vec<_>>>()?;
     // The release composes the verified package artifacts, which live beside
     // the component artifacts.
-    let registry = journey_package_registry(inputs, system_url)?;
+    let registry = journey_package_registry(inputs)?;
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
             database_url: project_url.to_owned(),

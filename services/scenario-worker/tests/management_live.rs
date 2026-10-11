@@ -300,11 +300,11 @@ use local_registry::LocalRegistry;
 /// The repository of the synthetic package artifacts in the local registry.
 const PACKAGE_REPOSITORY: &str = "wamn/packages";
 
-/// A local `registry:2` holding a verified package artifact for each seeded
-/// package, and their `catalog.package_artifacts` rows in the control store.
+/// A local `registry:2` holding a package artifact for each seeded package.
+/// No database records them: the registry is the one owner of package facts.
 ///
-/// The gate and `publish` read component facts from the verified package
-/// artifact (wamn-vavs4.6), the way publish-release does. These artifacts carry
+/// The gate and `publish` read component facts from the package artifact
+/// (wamn-vavs4.6), the way publish-release does. These artifacts carry
 /// exactly the descriptors the seeded facts describe; the components behind
 /// the digests do not exist, and nothing here pulls them.
 struct ArtifactRegistry {
@@ -319,7 +319,7 @@ impl Drop for ArtifactRegistry {
 }
 
 impl ArtifactRegistry {
-    async fn start(label: &str, admin: &Client) -> anyhow::Result<Self> {
+    async fn start(label: &str) -> anyhow::Result<Self> {
         let local = LocalRegistry::start(&format!("management-{label}"));
         local.ready().await;
         let directory = std::env::temp_dir().join(format!(
@@ -340,16 +340,7 @@ impl ArtifactRegistry {
             (CANDIDATE_PACKAGE, candidate_descriptors()),
             (EFFECTFUL_PACKAGE, vec![effectful_descriptor()]),
         ] {
-            let digest = registry.push(package, &descriptors).await?;
-            admin
-                .execute(
-                    "INSERT INTO catalog.package_artifacts \
-                       (package_id, version, digest, verified_at) \
-                     VALUES ($1, $2, $3, clock_timestamp())",
-                    &[&package, &CANDIDATE_PACKAGE_VERSION, &digest],
-                )
-                .await
-                .with_context(|| format!("record the verified artifact of {package}"))?;
+            registry.push(package, &descriptors).await?;
         }
         Ok(registry)
     }
@@ -1317,12 +1308,12 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
     )
     .await
     .expect("admit the connection Gate principal");
-    let artifacts = ArtifactRegistry::start("connection", &admin)
+    let artifacts = ArtifactRegistry::start("connection")
         .await
-        .expect("push the verified package artifacts");
+        .expect("push the package artifacts");
     let surface = start_management_surface(url, &artifacts).await;
 
-    // A package with no verified artifact is a typed refusal in the gate and
+    // A package with no artifact in the registry is a typed refusal in the gate and
     // in publish, never an internal error (wamn-vavs4.6).
     let absent = candidate_graph(CANDIDATE_WIRING, "entity", "create");
     let gate = post(
@@ -1358,7 +1349,7 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
         assert!(
             refusal["reason"]["detail"]
                 .as_str()
-                .is_some_and(|detail| detail.contains("has no verified artifact")),
+                .is_some_and(|detail| detail.contains("has no package artifact in the registry")),
             "{}",
             response.body
         );
@@ -1417,9 +1408,9 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
     let principal = admitted_user(&admin, "reconnect@example.com", PROJECT, "project-author")
         .await
         .expect("admit the reconnect test principal");
-    let artifacts = ArtifactRegistry::start("reconnect", &admin)
+    let artifacts = ArtifactRegistry::start("reconnect")
         .await
-        .expect("push the verified package artifacts");
+        .expect("push the package artifacts");
     let surface = start_management_surface(url, &artifacts).await;
 
     let before = post(
@@ -1562,9 +1553,9 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("age one token past its expiry");
 
-    let artifacts = ArtifactRegistry::start("authenticates", &admin)
+    let artifacts = ArtifactRegistry::start("authenticates")
         .await
-        .expect("push the verified package artifacts");
+        .expect("push the package artifacts");
     let surface = start_management_surface(url, &artifacts).await;
 
     // ---- every untrusted presenter refuses, identically, before any command --

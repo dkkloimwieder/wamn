@@ -72,7 +72,6 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
         registry_auth_file: auth_file.clone(),
         insecure_registry: true,
         oci_ca_paths: Vec::new(),
-        control_database_url: String::new(),
     };
     let (_, digest) = ServingManifest::from_canonical_bytes(vector::CANONICAL_BYTES)
         .expect("the vector is a canonical manifest");

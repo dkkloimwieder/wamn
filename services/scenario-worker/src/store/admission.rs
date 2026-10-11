@@ -22,11 +22,11 @@
 //! DENIED, not merely unmentioned, so a wider query fails closed at runtime
 //! rather than compile-time.
 //!
-//! Both read the component facts of the package from its verified package
-//! artifact (wamn-vavs4.6, R2), not from this connection: the digest and
-//! `verified_at` that the control store's `catalog.package_artifacts` records,
-//! then the descriptor layers of that artifact, with a pull-only registry
-//! credential. That is the read publish makes.
+//! Both read the component facts of the package from its package artifact
+//! (wamn-vavs4.6, R2), not from this connection: the descriptor layers of the
+//! artifact under the tag `<package_id>-<version>`, pulled from the registry
+//! only with a pull-only registry credential. That is the read publish makes.
+//! No database is read for a package fact.
 //!
 //! # How this connection reaches a governed row at all (`wamn-0h0g.22.17`)
 //!
@@ -62,7 +62,7 @@ use wamn_catalog::{
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
 };
-use wamn_package_artifact::{NoVerifiedArtifact, PackageRegistry, load_component_facts};
+use wamn_package_artifact::{NoPackageArtifact, PackageRegistry, load_component_facts};
 use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialExactnessProbe,
     CredentialProbeError, ExpectedCredentialIdentity, MembershipExpectation, MembershipMode,
@@ -259,8 +259,8 @@ pub struct AdmissionSurface {
     connection: Option<AdmissionConnection>,
     sanitized_endpoint: Box<str>,
     tenant_id: Box<str>,
-    /// Where the component facts of a package are read: its verified package
-    /// artifact, the way publish reads them (R2).
+    /// Where the component facts of a package are read: its package artifact,
+    /// the way publish reads them (R2).
     package_registry: PackageRegistry,
 }
 
@@ -574,16 +574,16 @@ impl AdmissionSurface {
     }
 
     /// The admitted component facts of `scope`: the descriptors of the
-    /// package's verified artifact, read the way publish reads them. A
-    /// package with no verified artifact is the inner `Err`, which the gate
+    /// package's artifact, read the way publish reads them. A package with
+    /// no artifact in the registry is the inner `Err`, which the gate
     /// and `publish` answer with a typed refusal.
     async fn component_facts(
         &self,
         scope: &ComponentPackageScope,
-    ) -> anyhow::Result<Result<Vec<AdmittedComponent>, NoVerifiedArtifact>> {
+    ) -> anyhow::Result<Result<Vec<AdmittedComponent>, NoPackageArtifact>> {
         match load_component_facts(&self.package_registry, scope).await {
             Ok(components) => Ok(Ok(components)),
-            Err(error) => match NoVerifiedArtifact::find(&error) {
+            Err(error) => match NoPackageArtifact::find(&error) {
                 Some(refusal) => Ok(Err(refusal.clone())),
                 None => Err(error),
             },

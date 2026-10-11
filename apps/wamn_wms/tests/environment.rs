@@ -97,7 +97,6 @@ fn package_registry(inputs: &JourneyDocument) -> anyhow::Result<PackageRegistry>
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
         oci_ca_paths: Vec::new(),
-        control_database_url: inputs.system_pg_url.clone(),
     })
 }
 
@@ -313,7 +312,6 @@ pub async fn prepare_project(
         package: package_root(),
         registry: package_registry(inputs)?,
         component_artifact_base: inputs.component_artifact_base.clone(),
-        source_commit: None,
     })
     .await
     .context("push the WMS package artifact")?;
@@ -589,6 +587,7 @@ pub async fn publish(
         scenario_worker,
         &package,
         &registry,
+        &inputs.system_pg_url,
         &wirings,
         evidence,
     )
@@ -673,12 +672,14 @@ pub async fn publish(
     .await
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn author_wirings(
     route: &ProvisionedRoute,
     credentials: &JourneyCredentials,
     binary: &Path,
     package: &PackageCoordinate,
     registry: &PackageRegistry,
+    system_url: &str,
     wirings: &[PathBuf],
     evidence: &Path,
 ) -> anyhow::Result<()> {
@@ -773,7 +774,7 @@ async fn author_wirings(
             );
             author_wiring::author_wiring_in_databases(
                 &route.database_url,
-                &registry.control_database_url,
+                system_url,
                 registry,
                 identity().tenant.as_str(),
                 package.package_id(),

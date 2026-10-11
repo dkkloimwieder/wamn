@@ -101,18 +101,22 @@ For an installed package successor, follow [package upgrades](#package-upgrades)
 
 Push the package with `wamn-ctl push-package` first.
 It admits each component, pushes it under its digest, and then pushes the package artifact with the component descriptors.
+Before it pushes anything, it reads the tag `<package_id>-<version>`.
+If the tag holds another digest, it refuses, names both digests and pushes nothing; tags are immutable.
+If the tag holds the same digest, it reports `already present` and pushes nothing again.
+No database records the package: the artifact in the registry is the proof of its checks.
 Apply the selected package migrations to a fresh target with `wamn-ctl apply-package --package-artifact <package_id>-<version>` and the registry flags of `push-package`.
-apply-package takes only the verified artifact, never a checkout directory, and records its artifact digest in `catalog.packages`.
+apply-package takes only the package artifact, never a checkout directory, and records its artifact digest in `catalog.packages`.
 A coordinate that `wamn dev` applied from a working tree records no artifact digest, and every release verb refuses it.
 apply-package owns the grants of the `wamn_audit_retention` role on history tables.
 It grants and revokes them in the transaction that writes the log triggers.
 Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access --package-artifact <package_id>-<version>`, one for each applied package.
 If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
-`author-wiring` and the management gate read the component facts of the package from the descriptors of its verified artifact, the way `publish-release` reads them.
+`author-wiring` and the management gate read the component facts of the package from the descriptors of its artifact, the way `publish-release` reads them.
 `author-wiring` takes the same registry arguments as `publish-release`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry` and `--oci-ca-path`.
 The scenario worker reads the artifact with a pull-only registry credential scoped to the package repositories.
 It mounts that credential from the Secret `wamn-registry-package-pull` the same way the host mounts `wamn-registry-pull` ([`scenario-worker.yaml`](../../deploy/platform/scenario-worker.yaml), [`registry-credentials.example.yaml`](../../deploy/platform/registry-credentials.example.yaml)).
-It reads the artifact record on its control-author connection, so the control author may read `catalog.package_artifacts` (system migration 0024).
+It pulls each package by tag from the registry only; no database holds a package row.
 Submit their wiring with `wamn-ctl author-wiring`, and bind declared connection aliases with `wamn-ctl bind-connection`.
 Repeating `bind-connection` with identical inputs changes no records.
 Changed definitions or credential references create an immutable generation and activate it in the same transaction.
@@ -131,10 +135,10 @@ The CronJob runs `wamn-ctl-ops prune-record-history --tenant "$TENANT"` once a d
 ## Publish and select a release
 
 The example below selects Receiving.
-`publish-release` composes verified package artifacts.
-Push each package with `wamn-ctl push-package` first; it records the artifact in `catalog.package_artifacts` of the control database.
-Each `--package ID@VERSION` resolves through that record to its artifact under `--artifact-base`.
-A package with no verified artifact refuses, and the publish writes nothing.
+`publish-release` composes package artifacts.
+Push each package with `wamn-ctl push-package` first.
+Each `--package ID@VERSION` is the artifact under the tag `ID-VERSION` in `--artifact-base`, read from the registry only.
+A package with no artifact in the registry refuses, and the publish writes nothing.
 The release takes each package's `wamn.json`, attachments and component descriptors from its artifact.
 For an overlay, repeat `--package` for the exact selected package set.
 Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
@@ -492,7 +496,7 @@ Keep database credentials outside committed files. Retain the qualification resu
 Set the paths and scope below for the chosen environment. `UPGRADE_RESULT` must name a new file.
 Push the candidate with `push-package` first. For WMS, `CANDIDATE_PACKAGE` is the artifact `wamn_wms-2.1.0` and `WORKLOAD_DEPLOYMENT` identifies its serving HTTP workload.
 `CANDIDATE_ROOT` is its package root, which `reconcile-replica-identity` reads.
-`REGISTRY_FLAGS` holds the registry flags of `push-package`: `--artifact-base`, `--registry-auth-file` and `--control-database-url`.
+`REGISTRY_FLAGS` holds the registry flags of `push-package`: `--artifact-base` and `--registry-auth-file`.
 Repeat `--presented-package` for every installed lineage and `--package-workload PACKAGE=NAME` for each SQL-bearing package in the proof.
 
 ```bash

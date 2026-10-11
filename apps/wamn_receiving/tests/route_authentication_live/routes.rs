@@ -249,7 +249,7 @@ async fn receiving_release_journey(
     // The gate and authorship read component facts from the verified package
     // artifacts, and apply-package installs them, so the packages are pushed
     // first.
-    let packages = super::environment::push_journey_packages(inputs, &system_url).await?;
+    let packages = super::environment::push_journey_packages(inputs).await?;
     install_journey_project(
         inputs,
         &packages,
@@ -304,7 +304,7 @@ async fn receiving_release_journey(
         scenario_worker,
         &credentials,
         &credentials.management_admitter,
-        &super::environment::journey_package_registry(inputs, &system_url)?,
+        &super::environment::journey_package_registry(inputs)?,
         if inputs.host_secret_namespace == "wamn-receiving-correctness" {
             "127.0.0.1:18090"
         } else {

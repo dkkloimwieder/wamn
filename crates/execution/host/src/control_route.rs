@@ -26,8 +26,6 @@
 //!
 //! `project.create` writes a project of the org with no environment, and
 //! `project-admin` in it for each `org-admin` of the org (§5.1).
-//! `package.list` reads every verified package version in
-//! `catalog.package_artifacts`.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -58,17 +56,6 @@ use wamn_platform_identity::org::{
 use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
 };
-
-/// Every verified package version, as JSON text, for `package.list`. A row
-/// with no `verified_at` was never verified, so the list leaves it out. The
-/// time is UTC RFC 3339 with six fractional digits and a `Z`, as the runtime
-/// spells a `timestamptz`, whatever the session's time zone.
-const PACKAGES_SQL: &str = "SELECT coalesce(jsonb_agg(jsonb_build_object( \
-        'package_id', package_id, 'version', version, \
-        'verified_at', to_char(verified_at AT TIME ZONE 'UTC', \
-                               'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) \
-      ORDER BY package_id, version), '[]'::jsonb)::text \
-      FROM catalog.package_artifacts WHERE verified_at IS NOT NULL";
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -436,12 +423,6 @@ impl ControlRoutes<'_> {
                 create_project(&transaction, self.org, &request.project).await?;
                 transaction.commit().await?;
                 Ok(json!({ "project": request.project }))
-            }
-            HostHandler::PackageList => {
-                let packages: String = self.control.query_one(PACKAGES_SQL, &[]).await?.get(0);
-                let packages: Value =
-                    serde_json::from_str(&packages).context("decode the packages")?;
-                Ok(json!({ "packages": packages }))
             }
             handler => Err(Refusal::Failed(anyhow::anyhow!(
                 "the control host does not serve the host handler {handler:?}"

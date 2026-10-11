@@ -229,8 +229,6 @@ mod tests {
             "registry.example/wamn/packages",
             "--registry-auth-file",
             "/run/registry/config.json",
-            "--control-database-url",
-            "postgres://control.invalid/wamn_system",
             "--database-url",
             "postgres://project.invalid/project",
             "--tenant",

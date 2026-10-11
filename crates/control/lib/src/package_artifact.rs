@@ -9,9 +9,12 @@
 //! palette component its wirings name; `outputs.components` of the package's
 //! `build.json` names its bytes. A package without a `build.json`, or with one
 //! whose `inputs.digest` differs from the tree, refuses: run `wamn build`.
-//! Then it pushes each component as its own OCI artifact under its digest,
-//! pushes the package artifact, reads its manifest back, and records the
-//! manifest digest in `catalog.package_artifacts` last.
+//! It reads the tag `<package_id>-<version>` first: a tag with another digest
+//! refuses, and the same digest is already present, so nothing is pushed
+//! again. Then it pushes each component as its own OCI artifact under its
+//! digest, pushes the package artifact, and reads its manifest back. No
+//! database records the package: the artifact's existence is the proof of its
+//! checks (R11).
 //!
 //! A package artifact is one OCI image manifest with artifact type
 //! [`PACKAGE_ARTIFACT_TYPE`], the empty config, and these layers in order:
@@ -32,7 +35,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, bail, ensure};
 use oci_client::Reference;
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
-use tokio_postgres::Client as PgClient;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
     ComponentPackageScope, component_artifact_reference,
@@ -47,7 +49,7 @@ use crate::component_declaration::{
     render_palette_declaration,
 };
 pub use wamn_package_artifact::{
-    COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoVerifiedArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
+    COMPONENT_DESCRIPTOR_MEDIA_TYPE, NoPackageArtifact, PACKAGE_ARTIFACT_TYPE, PackageRegistry,
     PackedLayer,
 };
 use wamn_package_artifact::{Repository, ensure_tag, sha256_digest};
@@ -813,13 +815,11 @@ async fn push_artifact(repository: &Repository, packed: &PackedPackage) -> anyho
 pub struct PushPackageRequest {
     /// Root of the authored package.
     pub package: PathBuf,
-    /// Registry and control database.
+    /// The package registry.
     pub registry: PackageRegistry,
     /// Explicit `<registry>/<repository>` base for component artifacts, in the
     /// registry of `registry`.
     pub component_artifact_base: String,
-    /// The source commit recorded with the artifact.
-    pub source_commit: Option<String>,
 }
 
 /// Whether the run pushed the artifact or found the same bytes under its tag.
@@ -842,36 +842,27 @@ pub struct PushedPackage {
     pub disposition: PackagePushDisposition,
 }
 
-/// Verify the package, push its components and its package artifact under
-/// `<package_id>-<version>`, and record the artifact digest in
-/// `catalog.package_artifacts`.
+/// Check the package, then push its components and its package artifact
+/// under `<package_id>-<version>`.
 ///
-/// Every check runs before the first push. A recorded or pushed tag with
-/// another digest refuses and names both digests. The same artifact pushes no
-/// package manifest and leaves the record unchanged. The record is written
-/// last, after every push is read back.
+/// Every check runs before the first push, and the tag is read before
+/// anything is pushed: a tag that holds another digest refuses and names both
+/// digests, and a tag that holds the same digest is already present, so
+/// nothing is pushed again. Tags are immutable. No database records the
+/// package; the artifact's existence is the proof of its checks (R11).
 pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<PushedPackage> {
-    if let Some(source_commit) = &request.source_commit {
-        ensure!(
-            !source_commit.is_empty() && !source_commit.chars().any(char::is_whitespace),
-            "source commit must be one nonempty value"
-        );
-    }
     let verified = verify_package(&request.package)?;
     let packed = &verified.packed;
     let tag = packed.tag();
     let repository = Repository::open(&request.registry, &tag)?;
-    crate::publish_release::on_control_plane(
-        &request.registry.control_database_url,
-        async |control| {
-            let recorded = recorded_digest(control, &packed.package_id, &packed.version).await?;
-            if let Some(recorded) = &recorded {
-                ensure!(
-                    *recorded == packed.digest,
-                    "catalog.package_artifacts records {recorded} for {tag}, but the package packs to {}; nothing was pushed",
-                    packed.digest
-                );
-            }
+    let disposition = match repository.manifest().await? {
+        Some((_, existing)) if existing == packed.digest => PackagePushDisposition::AlreadyPresent,
+        Some((_, existing)) => bail!(
+            "package artifact {} holds {existing}, but the package packs to {}; tags are immutable, and nothing was pushed",
+            repository.reference,
+            packed.digest
+        ),
+        None => {
             for component in &verified.components {
                 push_component_artifact(
                     &request.registry,
@@ -880,60 +871,25 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
                 )
                 .await?;
             }
-            let disposition = match repository.manifest().await? {
-                Some((_, existing)) if existing == packed.digest => {
-                    PackagePushDisposition::AlreadyPresent
-                }
-                Some((_, existing)) => bail!(
-                    "package artifact {} holds {existing}, but the package packs to {}; tags are immutable",
-                    repository.reference,
-                    packed.digest
-                ),
-                None => {
-                    push_artifact(&repository, packed).await?;
-                    let pulled = repository.manifest().await?;
-                    ensure!(
-                        pulled.as_ref().map(|(_, digest)| digest.as_str())
-                            == Some(packed.digest.as_str()),
-                        "pushed package artifact {} reads back as {}, not {}",
-                        repository.reference,
-                        pulled.as_ref().map_or("nothing", |(_, digest)| digest.as_str()),
-                        packed.digest
-                    );
-                    PackagePushDisposition::Pushed
-                }
-            };
-            if recorded.is_none() {
-                control
-                    .execute(
-                        "INSERT INTO catalog.package_artifacts \
-                           (package_id, version, digest, source_commit, verified_at) \
-                         VALUES ($1, $2, $3, $4, clock_timestamp()) ON CONFLICT DO NOTHING",
-                        &[
-                            &packed.package_id,
-                            &packed.version,
-                            &packed.digest,
-                            &request.source_commit,
-                        ],
-                    )
-                    .await
-                    .context("record the package artifact")?;
-                let stored = recorded_digest(control, &packed.package_id, &packed.version).await?;
-                ensure!(
-                    stored.as_deref() == Some(packed.digest.as_str()),
-                    "catalog.package_artifacts records {} for {tag}, but the push was {}",
-                    stored.as_deref().unwrap_or("nothing"),
-                    packed.digest
-                );
-            }
-            Ok(PushedPackage {
-                tag: tag.clone(),
-                digest: packed.digest.clone(),
-                disposition,
-            })
-        },
-    )
-    .await
+            push_artifact(&repository, packed).await?;
+            let pulled = repository.manifest().await?;
+            ensure!(
+                pulled.as_ref().map(|(_, digest)| digest.as_str()) == Some(packed.digest.as_str()),
+                "pushed package artifact {} reads back as {}, not {}",
+                repository.reference,
+                pulled
+                    .as_ref()
+                    .map_or("nothing", |(_, digest)| digest.as_str()),
+                packed.digest
+            );
+            PackagePushDisposition::Pushed
+        }
+    };
+    Ok(PushedPackage {
+        tag,
+        digest: packed.digest.clone(),
+        disposition,
+    })
 }
 
 /// Push one admitted component under its digest and pull it back through the
@@ -966,21 +922,6 @@ async fn push_component_artifact(
     .await
 }
 
-async fn recorded_digest(
-    control: &PgClient,
-    package_id: &str,
-    version: &str,
-) -> anyhow::Result<Option<String>> {
-    Ok(control
-        .query_opt(
-            "SELECT digest FROM catalog.package_artifacts WHERE package_id = $1 AND version = $2",
-            &[&package_id, &version],
-        )
-        .await
-        .context("read catalog.package_artifacts")?
-        .map(|row| row.get(0)))
-}
-
 /// Where `apply-package` reads a package from: one of `--package` or
 /// `--package-artifact`.
 #[derive(Debug)]
@@ -991,7 +932,7 @@ pub enum PackageSource {
     Artifact {
         /// The artifact tag.
         tag: String,
-        /// Registry and control database.
+        /// The package registry.
         registry: PackageRegistry,
     },
 }
@@ -1032,10 +973,9 @@ impl Drop for OpenedPackage {
 
 static UNPACK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// Open a package source. An artifact is fetched only when its manifest digest
-/// equals the digest that `catalog.package_artifacts` records with its
-/// `verified_at`. It is unpacked
-/// into a private temporary directory, which must pack again to that digest.
+/// Open a package source. An artifact is pulled from the registry under its
+/// tag and unpacked into a private temporary directory, which must pack again
+/// to the digest the registry holds.
 pub async fn open_package_source(source: PackageSource) -> anyhow::Result<OpenedPackage> {
     let (tag, registry) = match source {
         PackageSource::Directory(root) => {
@@ -1047,54 +987,38 @@ pub async fn open_package_source(source: PackageSource) -> anyhow::Result<Opened
         }
         PackageSource::Artifact { tag, registry } => (tag, registry),
     };
-    let digest =
-        crate::publish_release::on_control_plane(&registry.control_database_url, async |control| {
-            let rows = control
-                .query(
-                    "SELECT digest FROM catalog.package_artifacts \
-                      WHERE package_id || '-' || version = $1 AND verified_at IS NOT NULL",
-                    &[&tag],
-                )
-                .await
-                .context("read catalog.package_artifacts")?;
-            let [row] = rows.as_slice() else {
-                bail!(
-                    "catalog.package_artifacts records {} artifacts for {tag}, not one",
-                    rows.len()
-                );
-            };
-            Ok(row.get::<_, String>(0))
-        })
-        .await?;
-    open_artifact(&registry, &tag, &digest).await
+    let (digest, layers) = Repository::open(&registry, &tag)?
+        .pull()
+        .await?
+        .with_context(|| format!("package artifact {tag} does not exist; run push-package"))?;
+    unpack_artifact(&tag, &digest, &layers)
 }
 
-/// Open the verified package artifact of `package_id@version`, the one
-/// `catalog.package_artifacts` records with its `verified_at` (R11 (2)).
+/// Open the package artifact of `package_id@version` from the registry.
 ///
 /// # Errors
 ///
-/// [`NoVerifiedArtifact`] when no verified artifact is recorded for the
-/// package, or an error when the artifact cannot be fetched or does not
-/// unpack to its digest.
-pub async fn open_verified_package(
+/// [`NoPackageArtifact`] when the registry holds no artifact for the package,
+/// or an error when the artifact cannot be fetched or does not unpack to its
+/// digest.
+pub async fn open_package(
     registry: &PackageRegistry,
     package_id: &str,
     version: &str,
 ) -> anyhow::Result<OpenedPackage> {
-    let digest = wamn_package_artifact::verified_digest(registry, package_id, version).await?;
-    open_artifact(registry, &format!("{package_id}-{version}"), &digest).await
+    let (digest, layers) =
+        wamn_package_artifact::pull_package(registry, package_id, version).await?;
+    unpack_artifact(&format!("{package_id}-{version}"), &digest, &layers)
 }
 
-/// Fetch the artifact `tag`, whose manifest digest must be `digest`, and
-/// unpack it into a private temporary directory, which must pack again to
+/// Unpack the `layers` of the artifact `tag`, whose manifest digest is
+/// `digest`, into a private temporary directory, which must pack again to
 /// `digest`.
-async fn open_artifact(
-    registry: &PackageRegistry,
+fn unpack_artifact(
     tag: &str,
     digest: &str,
+    layers: &[PackedLayer],
 ) -> anyhow::Result<OpenedPackage> {
-    let layers = Repository::open(registry, tag)?.pull(digest).await?;
     let root = std::env::temp_dir().join(format!(
         "wamn-package-{}-{}",
         std::process::id(),
@@ -1109,7 +1033,7 @@ async fn open_artifact(
         digest: Some(digest.to_owned()),
         temporary: true,
     };
-    unpack_layers(opened.root(), &layers)
+    unpack_layers(opened.root(), layers)
         .with_context(|| format!("unpack package artifact {tag}"))?;
     let unpacked = pack_package(opened.root())?;
     ensure!(
@@ -1536,7 +1460,8 @@ mod tests {
             "generated/wamn.json",
             &serde_json::to_vec(&document).unwrap(),
         );
-        // No registry and no database exist: the refusal comes first.
+        // No registry exists: the refusal comes first.
+
         let error = push_package(&PushPackageRequest {
             package: root.clone(),
             registry: PackageRegistry {
@@ -1544,10 +1469,8 @@ mod tests {
                 registry_auth_file: root.join("missing-auth.json"),
                 insecure_registry: false,
                 oci_ca_paths: Vec::new(),
-                control_database_url: "postgres://nobody@127.0.0.1:1/none".to_owned(),
             },
             component_artifact_base: "registry.invalid/wamn/components".to_owned(),
-            source_commit: None,
         })
         .await
         .unwrap_err();

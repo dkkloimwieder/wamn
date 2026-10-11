@@ -139,7 +139,7 @@ pub fn drain_app_role_sessions_sql() -> String {
 /// Catalog relations read by the surviving management-admission surface.
 ///
 /// Publish reads the immutable wirings. Publish and Gate read the component
-/// facts from the verified package artifact, not from this database
+/// facts from the package artifact in the registry, not from this database
 /// (`wamn-vavs4.6`). Runtime connection state is deliberately absent: an empty
 /// case set executes nothing, while a nonempty set reaches the effect posture
 /// before any binding could be relevant (`wamn-10yt.10.14`).
@@ -890,12 +890,9 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// password login of a control session is live. It writes the org
 /// memberships and the org, project and environment grants of the org
 /// operations, and it reads the projects and environments those grants
-/// cover. The `project.create` route writes a project, and the
-/// `package.list` route reads the pushed package versions (owner rulings of
-/// 2026-10-03 on `wamn-zua8.4`). It holds nothing else in the control
-/// database.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 9] = [
-    ("catalog", "package_artifacts", &["SELECT"]),
+/// cover. The `project.create` route writes a project. It holds nothing else
+/// in the control database.
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 8] = [
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
     ("identity", "password_logins", &["SELECT"]),
@@ -915,7 +912,7 @@ pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
     [("registry", "project_envs", "UPDATE", &["status"])];
 
 /// The schemas of [`CONTROL_SURFACE`], in which the control role holds `USAGE`.
-pub const CONTROL_SCHEMAS: [&str; 3] = ["catalog", "identity", "registry"];
+pub const CONTROL_SCHEMAS: [&str; 2] = ["identity", "registry"];
 
 /// Converge the stable control role to exactly [`CONTROL_SURFACE`] and
 /// [`CONTROL_COLUMN_SURFACE`] in the
@@ -931,7 +928,7 @@ pub fn grant_control_surface_sql() -> String {
 
 /// The grants of [`grant_control_surface_sql`] without the role bootstrap.
 ///
-/// The latest system migration that changes them, `remove_environment_sagas`,
+/// The latest system migration that changes them, `remove_package_copies`,
 /// runs these as `wamn_system`, which owns the tables and cannot create a
 /// role, so it carries the grants alone.
 pub fn control_surface_grants_sql() -> String {

@@ -32,7 +32,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-control-provision` | Provisioning SQL, credential roles, and native broker declarations |
 | `wamn-schema-control` | Package migration decisions and run storage declarations |
 | `wamn-catalog` | Component, wiring, and release facts |
-| `wamn-package-artifact` | Reading verified package artifacts and their component descriptors |
+| `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
 | `wamn-control` | Control operations, delivery, development orchestration, and process supervision |
 | `wamn-ctl` | Command-line and terminal clients of `wamn-control` |
 | `wamn-scenario-worker` | The authoring admission API |

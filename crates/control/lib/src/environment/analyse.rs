@@ -490,7 +490,6 @@ async fn read_release(
         registry_auth_file: platform.registry_auth_file.clone(),
         insecure_registry: false,
         oci_ca_paths: platform.oci_ca_paths.clone(),
-        control_database_url: String::new(),
     };
     let qualification = qualification_artifact::find(&releases, digest, &image_set)
         .await

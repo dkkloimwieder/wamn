@@ -2,10 +2,10 @@
 //! (docs/plan/platform-deploy.md §7.2).
 //!
 //! Layer 0 of a package artifact is the canonical `wamn.json` of the package.
-//! Both verbs take a package artifact digest or a unique prefix of one and
-//! read the verified artifact that `catalog.package_artifacts` records with
-//! that digest, through `wamn-package-artifact`, so each layer is checked
-//! against its digest.
+//! Both verbs take a full package artifact digest or the tag
+//! `<package_id>-<version>` and pull the artifact from the registry only,
+//! through `wamn-package-artifact`, so each layer is checked against its
+//! digest. No prefix is resolved and no database is read.
 
 use std::fmt::Write as _;
 
@@ -13,15 +13,15 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::Value;
 use wamn_control::package_artifact::PACKAGE_MANIFEST_MEDIA_TYPE;
-use wamn_package_artifact::{PackageRegistry, Repository, resolve_digest};
+use wamn_package_artifact::{PackageRegistry, Repository};
 
 use crate::package_verbs::RegistryArgs;
 
 /// Arguments of `wamn inspect`.
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// Digest, or unique digest prefix, of a package artifact that
-    /// `push-package` pushed.
+    /// Full digest `sha256:<hex>`, or tag `<package_id>-<version>`, of a
+    /// package artifact that `push-package` pushed.
     pub digest: String,
     /// The registry flags of `push-package`.
     #[command(flatten)]
@@ -31,9 +31,9 @@ pub struct InspectArgs {
 /// Arguments of `wamn diff`.
 #[derive(Debug, Args)]
 pub struct DiffArgs {
-    /// Digest, or unique digest prefix, of the first package artifact.
+    /// Full digest or tag of the first package artifact.
     pub from: String,
-    /// Digest, or unique digest prefix, of the second package artifact.
+    /// Full digest or tag of the second package artifact.
     pub to: String,
     /// The registry flags of `push-package`.
     #[command(flatten)]
@@ -44,7 +44,7 @@ pub struct DiffArgs {
 ///
 /// # Errors
 ///
-/// When the artifact is not verified or cannot be pulled.
+/// When the artifact does not exist or cannot be pulled.
 pub async fn inspect(args: InspectArgs) -> anyhow::Result<()> {
     let manifest = layer_zero(&args.registry.registry(), &args.digest).await?;
     println!(
@@ -58,7 +58,7 @@ pub async fn inspect(args: InspectArgs) -> anyhow::Result<()> {
 ///
 /// # Errors
 ///
-/// When an artifact is not verified, cannot be pulled, or its layer 0 is not
+/// When an artifact does not exist, cannot be pulled, or its layer 0 is not
 /// JSON.
 pub async fn diff(args: DiffArgs) -> anyhow::Result<()> {
     let registry = args.registry.registry();
@@ -74,13 +74,13 @@ pub async fn diff(args: DiffArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Layer 0 of the verified artifact whose digest is or starts with `digest`.
-async fn layer_zero(registry: &PackageRegistry, digest: &str) -> anyhow::Result<Vec<u8>> {
-    let artifact = resolve_digest(registry, digest).await?;
-    let package = &artifact.digest;
-    let layers = Repository::open(registry, &artifact.tag())?
-        .pull(package)
-        .await?;
+/// Layer 0 of the package artifact whose full digest or tag is `package`.
+async fn layer_zero(registry: &PackageRegistry, package: &str) -> anyhow::Result<Vec<u8>> {
+    let (_, layers) = Repository::open(registry, package)?
+        .pull()
+        .await?
+        .with_context(|| format!("package artifact {package} does not exist in the registry"))?;
+
     let first = layers
         .into_iter()
         .next()

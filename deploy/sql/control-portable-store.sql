@@ -158,25 +158,6 @@ CREATE TABLE catalog.deployment_attestations (
             (tenant_id, manifest_digest, environment)
 );
 
--- One row per package artifact that `push-package` verified and pushed
--- (wamn-vavs4.1, docs/plan/platform-deploy.md section 7.2): the digest of its
--- image manifest, written once after every check and push succeeds, with
--- verified_at. A row without verified_at is not verified, and every reader
--- refuses it. A package artifact belongs to no tenant, so its policy admits
--- every row; the catalog keeps its RLS floor.
-CREATE TABLE catalog.package_artifacts (
-    package_id    text        NOT NULL CHECK (package_id <> ''),
-    version       text        NOT NULL CHECK (version <> ''),
-    digest        text        NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
-    source_commit text        CHECK (source_commit IS NULL OR source_commit <> ''),
-    verified_at   timestamptz,
-    CONSTRAINT package_artifacts_pkey PRIMARY KEY (package_id, version)
-);
-ALTER TABLE catalog.package_artifacts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE catalog.package_artifacts FORCE ROW LEVEL SECURITY;
-CREATE POLICY package_artifacts_all ON catalog.package_artifacts
-    USING (true) WITH CHECK (true);
-
 -- One row per passing qualification that a select read from a file
 -- (wamn-zua8.3). A qualification proves bytes, not names: the package set is
 -- the (package_id, version, component_digest) triples of the release, and the
@@ -230,8 +211,7 @@ BEGIN
     -- left for a conditional freeze to permit.
     FOREACH relation_name IN ARRAY ARRAY[
         'catalog.effective_releases', 'catalog.authoring_command_audit', 'catalog.connection_requirements',
-        'catalog.deployment_attestations', 'catalog.package_artifacts',
-        'catalog.qualifications',
+        'catalog.deployment_attestations', 'catalog.qualifications',
         'wamn_run.gate_reports'
     ] LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -301,12 +281,6 @@ REVOKE ALL PRIVILEGES ON catalog.effective_releases, catalog.connection_requirem
 GRANT SELECT ON catalog.effective_releases, catalog.connection_requirements
     TO wamn_control_author;
 
--- The management surface reads the digest and verified_at of a package
--- artifact here before it reads the component facts from that artifact, as
--- publish-release does (wamn-vavs4.6).
-REVOKE ALL PRIVILEGES ON catalog.package_artifacts FROM wamn_control_author;
-GRANT SELECT ON catalog.package_artifacts TO wamn_control_author;
-
 REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports
     FROM wamn_control_author;
 GRANT SELECT, INSERT ON catalog.authoring_command_audit, wamn_run.gate_reports
@@ -327,7 +301,7 @@ BEGIN
       FROM pg_tables WHERE schemaname = 'catalog';
     IF catalog_tables IS DISTINCT FROM ARRAY[
         'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
-        'effective_releases', 'package_artifacts', 'qualifications',
+        'effective_releases', 'qualifications',
         'tenant_environments'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
@@ -361,7 +335,6 @@ BEGIN
              SELECT 1 FROM (VALUES
                  ('catalog', 'effective_releases', 'SELECT'),
                  ('catalog', 'connection_requirements', 'SELECT'),
-                 ('catalog', 'package_artifacts', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'SELECT'),
                  ('catalog', 'authoring_command_audit', 'INSERT'),
                  ('wamn_run', 'gate_reports', 'SELECT'),

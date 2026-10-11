@@ -565,7 +565,7 @@ target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identi
   --db-host wamn-pg-rw.platform.svc.cluster.local
 target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
   --org dkk --project receiving --tenant dev --env dev --schema wamn_run
-R="--artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json --control-database-url $WAMN_SYSTEM_ADMIN_URL"
+R="--artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json"
 target/debug/wamn-ctl apply-package --package-artifact wamn_receiving-2.1.0 $R --database-url "$T" --tenant dev
 target/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_receiving-2.1.0 $R --database-url "$T" --tenant dev
 ```
@@ -598,7 +598,7 @@ Push the package. `push-package` reads `receiving.wasm` through `outputs.compone
 target/debug/wamn-ctl push-package --package apps/wamn_receiving \
   --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages \
   --component-artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components \
-  --registry-auth-file $A/config.json --control-database-url "$WAMN_SYSTEM_ADMIN_URL"
+  --registry-auth-file $A/config.json
 rm -rf $A
 ```
 

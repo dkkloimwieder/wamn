@@ -160,8 +160,6 @@ pub enum HostHandler {
     ProjectInactivate,
     /// Create a project with no environment (docs/plan/platform-ui.md §5.1).
     ProjectCreate,
-    /// Every package version that `push-package` pushed.
-    PackageList,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -397,13 +395,6 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ProjectCreate,
-    },
-    HostRoute {
-        set: HostRouteSet::Control,
-        operation: "package.list",
-        type_: OperationType::Get,
-        authority: HostRouteAuthority::Member,
-        handler: HostHandler::PackageList,
     },
 ];
 

@@ -1,10 +1,9 @@
 //! Publish one immutable release.
 //!
 //! A release is its manifest digest (docs/plan/platform-deploy.md R1). The
-//! publisher composes verified package artifacts (§8.1): it opens the artifact
-//! that `catalog.package_artifacts` records for each exact package pair, and
-//! refuses a package with no verified artifact before it writes anything
-//! (R11 (2)). It resolves every wiring and component from the admitted
+//! publisher composes package artifacts (§8.1): it pulls the artifact under
+//! the tag of each exact package pair from the registry only, and refuses a
+//! package with no artifact before it writes anything (R11 (2)). It resolves every wiring and component from the admitted
 //! descriptors of those artifacts, and each release component carries its
 //! descriptor. It records the canonical manifest bytes under their digest in
 //! `catalog.releases`, then projects only the release identity to the control
@@ -386,7 +385,7 @@ impl PublishReleaseRequest {
     }
 }
 
-/// Publish one effective release from the verified package artifacts in
+/// Publish one effective release from the package artifacts in
 /// `registry`, project its identity, push its manifest to
 /// `release_artifact_base` with the credential and trust roots of `registry`
 /// (§8.1), and return its manifest digest.
@@ -651,12 +650,12 @@ async fn publish_candidate(
         !args.verified_publisher_principal.is_empty(),
         "verified-publisher-principal must not be empty"
     );
-    // Every package opens from its verified artifact before anything is
-    // written, so an unknown or unverified package refuses here.
+    // Every package opens from its artifact before anything is written, so a
+    // package the registry does not hold refuses here.
     let mut opened = Vec::new();
     for package in &args.packages {
         opened.push(
-            crate::package_artifact::open_verified_package(
+            crate::package_artifact::open_package(
                 registry,
                 package.package_id(),
                 package.package_version(),
@@ -691,7 +690,7 @@ async fn publish_candidate(
                 opened
                     .package_root()
                     .artifact_digest
-                    .expect("a verified package opens from its registry digest"),
+                    .expect("a package artifact opens with its registry digest"),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -2546,83 +2545,6 @@ mod tests {
             "{error:#}"
         );
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// A package with no verified artifact refuses before publish connects
-    /// to the project database or the registry (R11 (2)).
-    #[tokio::test]
-    async fn a_package_without_a_verified_artifact_refuses_before_any_write() {
-        let rendered = publish_with_recorded_artifacts("").await;
-        assert!(
-            rendered.contains("orders@1.0.0 has no verified artifact"),
-            "{rendered}"
-        );
-    }
-
-    /// A recorded artifact whose `verified_at` is NULL was never verified,
-    /// so publish refuses it as it refuses a package with no row (R11 (2)).
-    #[tokio::test]
-    async fn a_package_artifact_with_a_null_verified_at_refuses() {
-        let rendered = publish_with_recorded_artifacts(
-            "INSERT INTO catalog.package_artifacts (package_id, version, digest) \
-             VALUES ('orders', '1.0.0', 'sha256:' || repeat('a', 64));",
-        )
-        .await;
-        assert!(
-            rendered.contains("orders@1.0.0 has no verified artifact"),
-            "{rendered}"
-        );
-    }
-
-    /// Publish `orders@1.0.0` against a control database whose
-    /// `catalog.package_artifacts` holds the rows `rows` inserts, and render
-    /// its refusal.
-    async fn publish_with_recorded_artifacts(rows: &str) -> String {
-        let _lock = wamn_test_postgres::lock();
-        let database = wamn_test_postgres::database();
-        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-        let task = tokio::spawn(connection);
-        client
-            .batch_execute(
-                "CREATE SCHEMA catalog; \
-                 CREATE TABLE catalog.package_artifacts (\
-                   package_id text NOT NULL, version text NOT NULL, digest text NOT NULL, \
-                   source_commit text, verified_at timestamptz, \
-                   PRIMARY KEY (package_id, version));",
-            )
-            .await
-            .unwrap();
-        client.batch_execute(rows).await.unwrap();
-        let registry = PackageRegistry {
-            artifact_base: "127.0.0.1:9/wamn/packages".to_owned(),
-            registry_auth_file: PathBuf::from("/nonexistent/config.json"),
-            insecure_registry: true,
-            oci_ca_paths: Vec::new(),
-            control_database_url: database.url().to_owned(),
-        };
-        let error = publish_release(
-            PublishReleaseRequest {
-                database_url: "postgres://project.invalid/none".to_owned(),
-                control_database_url: database.url().to_owned(),
-                org: "acme".to_owned(),
-                project: "plant".to_owned(),
-                tenant: "acme--plant--dev".to_owned(),
-                environment: "dev".to_owned(),
-                verified_publisher_principal: "publisher".to_owned(),
-                run_schema: "wamn_run".to_owned(),
-                packages: vec![PackageCoordinate::new("orders", "1.0.0").unwrap()],
-                wirings: Vec::new(),
-            },
-            &registry,
-            "127.0.0.1:9/wamn/releases",
-        )
-        .await
-        .unwrap_err();
-        drop(client);
-        task.await.unwrap().unwrap();
-        format!("{error:#}")
     }
 
     fn closure_document(with_registered_edge: bool) -> WiringDocument {

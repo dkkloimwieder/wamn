@@ -18,7 +18,7 @@ use wamn_catalog::{
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
 use wamn_control::package_artifact::{
-    PackageRegistry, PushPackageRequest, open_verified_package, push_package,
+    PackageRegistry, PushPackageRequest, open_package, push_package,
 };
 use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
 use wamn_control::publish_release::{PublishReleaseRequest, publish_release};
@@ -156,7 +156,7 @@ async fn publish_through_publish_release(
     .expect("parse the package manifest");
     // Apply the verified artifact, whose digest the opener holds, as every
     // release verb does (R3).
-    let opened = open_verified_package(registry, &manifest.package.id, &manifest.package.version)
+    let opened = open_package(registry, &manifest.package.id, &manifest.package.version)
         .await
         .expect("open the verified package artifact");
     apply_package(ApplyPackageRequest {
@@ -251,14 +251,12 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
         registry_auth_file: auth_file,
         insecure_registry: true,
         oci_ca_paths: Vec::new(),
-        control_database_url: control.url().to_owned(),
     };
     // One push makes the one verified artifact both environments publish.
     push_package(&PushPackageRequest {
         package: repository().join("apps/edge_device"),
         registry: registry.clone(),
         component_artifact_base: format!("{}/wamn/components", local.address),
-        source_commit: None,
     })
     .await
     .expect("push the package");

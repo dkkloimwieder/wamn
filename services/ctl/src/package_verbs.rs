@@ -17,15 +17,13 @@ use wamn_control::reconcile_replica_identity::{
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 use wamn_schema_control::{ReplicaIdentity, ReplicaIdentityPlan};
 
-/// Apply the immutable pending suffix from one verified package artifact.
+/// Apply the immutable pending suffix from one package artifact.
 ///
 /// No verb applies a checkout directory, so the installed artifact digest is
 /// the digest the registry records (docs/plan/platform-deploy.md R3).
 #[derive(Debug, Args)]
 pub struct ApplyPackageArgs {
     /// Package artifact `<package_id>-<version>` that `push-package` pushed.
-    /// It is fetched only when its digest equals the one in
-    /// `catalog.package_artifacts`.
     #[arg(long)]
     pub package_artifact: String,
 
@@ -182,10 +180,6 @@ pub struct RegistryArgs {
     /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
     #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
     pub oci_ca_paths: Vec<PathBuf>,
-
-    /// Owner URL of the control database that holds `catalog.package_artifacts`.
-    #[arg(long)]
-    pub control_database_url: String,
 }
 
 impl RegistryArgs {
@@ -195,12 +189,11 @@ impl RegistryArgs {
             registry_auth_file: self.registry_auth_file.clone(),
             insecure_registry: self.insecure_registry,
             oci_ca_paths: self.oci_ca_paths.clone(),
-            control_database_url: self.control_database_url.clone(),
         }
     }
 }
 
-/// Open the verified package artifact `tag`.
+/// Open the package artifact `tag`.
 async fn open(registry: &PackageRegistry, tag: String) -> anyhow::Result<OpenedPackage> {
     package_artifact::open_package_source(PackageSource::Artifact {
         tag,
@@ -209,7 +202,7 @@ async fn open(registry: &PackageRegistry, tag: String) -> anyhow::Result<OpenedP
     .await
 }
 
-/// Open each verified package artifact of `tags`.
+/// Open each package artifact of `tags`.
 async fn open_all(
     registry: &PackageRegistry,
     tags: Vec<String>,
@@ -255,15 +248,6 @@ pub struct PushPackageArgs {
     /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
     #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
     pub oci_ca_paths: Vec<PathBuf>,
-
-    /// Owner URL of the control database that records the artifact in
-    /// `catalog.package_artifacts`.
-    #[arg(long)]
-    pub control_database_url: String,
-
-    /// Source commit recorded with the artifact.
-    #[arg(long)]
-    pub source_commit: Option<String>,
 }
 
 /// Push one package and print its tag and digest.
@@ -275,10 +259,8 @@ pub async fn push(args: PushPackageArgs) -> anyhow::Result<()> {
             registry_auth_file: args.registry_auth_file,
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths,
-            control_database_url: args.control_database_url,
         },
         component_artifact_base: args.component_artifact_base,
-        source_commit: args.source_commit,
     })
     .await?;
     match pushed.disposition {
@@ -327,7 +309,7 @@ pub struct ReconcileReplicaIdentityArgs {
     pub dry_run: bool,
 }
 
-/// Apply one verified package artifact and print the applied line.
+/// Apply one package artifact and print the applied line.
 pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let registry = args.registry.registry();
     let opened = open(&registry, args.package_artifact).await?;
@@ -471,8 +453,6 @@ mod tests {
             "registry.invalid/wamn/packages",
             "--registry-auth-file",
             "config.json",
-            "--control-database-url",
-            "unused",
             "--database-url",
             "unused",
             "--tenant",

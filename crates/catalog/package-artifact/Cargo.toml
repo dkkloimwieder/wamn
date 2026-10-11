@@ -1,6 +1,6 @@
 [package]
 name = "wamn-package-artifact"
-description = "Reads verified package artifacts and their component descriptors"
+description = "Reads package artifacts and their component descriptors"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,6 @@ ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tokio-postgres = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
 

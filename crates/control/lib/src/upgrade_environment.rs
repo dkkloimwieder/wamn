@@ -646,7 +646,6 @@ impl Run {
             registry_auth_file: registry.auth_file(),
             insecure_registry: false,
             oci_ca_paths: Vec::new(),
-            control_database_url: databases.system_url(),
         };
         let evidence_path = self.release_files().join("package-upgrade.json");
         let mut client = databases.project().await?;
@@ -667,7 +666,6 @@ impl Run {
                         package: package.root.clone(),
                         registry: package_registry.clone(),
                         component_artifact_base: format!("{}/components", environment.registry),
-                        source_commit: Some(self.arguments.commit.clone()),
                     },
                 )
                 .await?;
@@ -890,11 +888,10 @@ impl Run {
             registry_auth_file: registry.auth_file(),
             insecure_registry: false,
             oci_ca_paths: Vec::new(),
-            control_database_url: system_url.clone(),
         };
         let mut pushed = BTreeMap::<String, String>::new();
         for package in &packages {
-            let opened = crate::package_artifact::open_verified_package(
+            let opened = crate::package_artifact::open_package(
                 &package_registry,
                 &package.manifest.package.id,
                 &package.manifest.package.version,
@@ -1351,7 +1348,6 @@ impl Run {
                 registry_auth_file: registry.auth_file(),
                 insecure_registry: false,
                 oci_ca_paths: Vec::new(),
-                control_database_url: databases.system_url(),
             };
             let service = GateService::start(
                 self,

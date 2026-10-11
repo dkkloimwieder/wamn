@@ -49,7 +49,7 @@ pub struct AuthorWiringArgs {
 
     /// Explicit `<registry>/<repository>` base for package artifacts. The
     /// component facts that gate the wiring are the descriptors of the
-    /// package's verified artifact, read the way `publish-release` reads them.
+    /// package's artifact, read the way `publish-release` reads them.
     #[arg(long)]
     pub artifact_base: String,
     /// `.dockerconfigjson` file carrying the registry pull credential.
@@ -64,14 +64,13 @@ pub struct AuthorWiringArgs {
     pub oci_ca_paths: Vec<PathBuf>,
 }
 
-/// Arguments for the release publish verb. Each package is the verified
-/// artifact that `push-package` recorded in `catalog.package_artifacts`.
+/// Arguments for the release publish verb. Each package is the artifact that
+/// `push-package` pushed under the tag `<package_id>-<version>`.
 #[derive(Debug, Args)]
 pub struct PublishReleaseArgs {
     #[arg(long)]
     pub database_url: String,
-    /// Owner URL of the control database. It holds `catalog.package_artifacts`
-    /// and receives the release identity.
+    /// Owner URL of the control database. It receives the release identity.
     #[arg(long)]
     pub control_database_url: String,
     #[arg(long)]
@@ -87,8 +86,9 @@ pub struct PublishReleaseArgs {
     pub verified_publisher_principal: String,
     #[arg(long)]
     pub run_schema: String,
-    /// Exact package membership; repeat once per package. Each resolves
-    /// through `catalog.package_artifacts` to its verified artifact.
+    /// Exact package membership; repeat once per package. Each is read from
+    /// the registry under its tag.
+
     #[arg(long = "package", value_name = "ID@VERSION", value_parser = parse_package, required = true)]
     pub packages: Vec<PackageCoordinate>,
     /// Exact package-owned wiring in `catalog.wirings`; repeat once per
@@ -193,7 +193,6 @@ pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
             registry_auth_file: args.registry_auth_file,
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths,
-            control_database_url: args.control_database_url.clone(),
         },
         control_database_url: args.control_database_url,
         tenant: args.tenant,
@@ -217,7 +216,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
         registry_auth_file: args.registry_auth_file,
         insecure_registry: args.insecure_registry,
         oci_ca_paths: args.oci_ca_paths,
-        control_database_url: args.control_database_url.clone(),
     };
     let digest = publish_release::publish_release(
         PublishReleaseRequest {
@@ -457,7 +455,7 @@ mod tests {
     ];
 
     /// A package is an id and a version that the registry resolves to its
-    /// verified artifact, so argv names no package file.
+    /// artifact by tag, so argv names no package file.
     #[test]
     fn publish_release_takes_packages_from_the_registry() {
         let args = PublishProbe::try_parse_from(PUBLISH)

@@ -161,7 +161,6 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
             registry_auth_file: args.registry_auth_file,
             insecure_registry: args.insecure_registry,
             oci_ca_paths: args.oci_ca_paths,
-            control_database_url: String::new(),
         },
         org: args.org,
         project: args.project,

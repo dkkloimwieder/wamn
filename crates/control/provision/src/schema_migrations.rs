@@ -193,33 +193,15 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         ),
     },
     Migration {
-        relative_path: "migrations/system/0023_package_artifact_verification.sql",
+        relative_path: "migrations/system/0023_remove_component_library.sql",
         sql: include_str!(
-            "../../../../deploy/sql/migrations/system/0023_package_artifact_verification.sql"
+            "../../../../deploy/sql/migrations/system/0023_remove_component_library.sql"
         ),
     },
     Migration {
-        relative_path: "migrations/system/0024_control_author_package_artifacts.sql",
+        relative_path: "migrations/system/0024_remove_package_copies.sql",
         sql: include_str!(
-            "../../../../deploy/sql/migrations/system/0024_control_author_package_artifacts.sql"
-        ),
-    },
-    Migration {
-        relative_path: "migrations/system/0025_remove_component_library.sql",
-        sql: include_str!(
-            "../../../../deploy/sql/migrations/system/0025_remove_component_library.sql"
-        ),
-    },
-    Migration {
-        relative_path: "migrations/system/0026_package_artifact_verified_at.sql",
-        sql: include_str!(
-            "../../../../deploy/sql/migrations/system/0026_package_artifact_verified_at.sql"
-        ),
-    },
-    Migration {
-        relative_path: "migrations/system/0027_remove_package_copies.sql",
-        sql: include_str!(
-            "../../../../deploy/sql/migrations/system/0027_remove_package_copies.sql"
+            "../../../../deploy/sql/migrations/system/0024_remove_package_copies.sql"
         ),
     },
 ];
@@ -420,11 +402,11 @@ mod tests {
             .find(|migration| {
                 migration
                     .relative_path
-                    .ends_with("_package_artifact_verification.sql")
+                    .ends_with("_remove_package_copies.sql")
             })
-            .expect("the migration that recreates catalog.package_artifacts exists");
+            .expect("the migration that drops catalog.package_artifacts exists");
         let grants = format!(
-            "IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control') THEN\n    {}\n  END IF;",
+            "\n    {}\n  END IF;",
             crate::sql::control_surface_grants_sql()
         );
         assert!(

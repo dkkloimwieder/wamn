@@ -1,13 +1,13 @@
-//! Read verified package artifacts (docs/plan/platform-deploy.md §7.2, R2,
-//! R11 (2)).
+//! Read package artifacts (docs/plan/platform-deploy.md §7.2, R2, R11).
 //!
-//! A package artifact is the one owner of the component facts of its package.
-//! `catalog.package_artifacts` in the control database records the digest of
-//! each verified artifact with its `verified_at`. This crate reads that record,
-//! pulls the artifact under `<package_id>-<version>` from the registry, checks
-//! the manifest and every layer against their digests, and reads the component
-//! descriptor layers. Publish, wiring authorship and the management gate read
-//! component facts through it, so they read them the same way.
+//! A package artifact is the one owner of the component facts of its package,
+//! and the OCI registry is the one owner of package facts: no database holds a
+//! package row. `push-package` pushes an artifact only after every check
+//! passed, so its existence is the proof. This crate pulls an artifact by its
+//! full digest or by its tag `<package_id>-<version>`, checks the manifest and
+//! every layer against their digests, and reads the component descriptor
+//! layers. Publish, wiring authorship and the management gate read component
+//! facts through it, so they read them the same way.
 //!
 //! `wamn-control` packs and pushes package artifacts with [`Repository`]. A
 //! deployed service may depend on this crate, never on `wamn-control`.
@@ -30,7 +30,6 @@ use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use tokio_postgres::NoTls;
 use wamn_catalog::{
     AdmittedComponent, ComponentDescriptor, ComponentPackageScope, parse_component_artifact_base,
 };
@@ -107,33 +106,31 @@ pub struct PackageRegistry {
     pub insecure_registry: bool,
     /// PEM CA bundles trusted for the registry.
     pub oci_ca_paths: Vec<PathBuf>,
-    /// URL of the control database that holds `catalog.package_artifacts`.
-    pub control_database_url: String,
 }
 
-/// The refusal of a package that has no verified artifact in
-/// `catalog.package_artifacts`: it is unknown, or `push-package` never
-/// finished for it. Callers find it in the error chain to refuse with a typed
-/// answer instead of an internal error.
+/// The refusal of a package whose tag `<package_id>-<version>` the registry
+/// does not hold: it is unknown, or `push-package` never pushed it. Callers
+/// find it in the error chain to refuse with a typed answer instead of an
+/// internal error.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoVerifiedArtifact {
+pub struct NoPackageArtifact {
     pub package_id: String,
     pub version: String,
 }
 
-impl std::fmt::Display for NoVerifiedArtifact {
+impl std::fmt::Display for NoPackageArtifact {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "package {}@{} has no verified artifact in catalog.package_artifacts; run push-package",
+            "package {}@{} has no package artifact in the registry; run push-package",
             self.package_id, self.version
         )
     }
 }
 
-impl std::error::Error for NoVerifiedArtifact {}
+impl std::error::Error for NoPackageArtifact {}
 
-impl NoVerifiedArtifact {
+impl NoPackageArtifact {
     /// The refusal in the chain of `error`, if the chain holds one.
     pub fn find(error: &anyhow::Error) -> Option<&Self> {
         error.chain().find_map(|cause| cause.downcast_ref::<Self>())
@@ -178,6 +175,24 @@ pub fn ensure_tag(tag: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Refuse a package artifact digest that is not `sha256:` and 64 lowercase
+/// hex digits. A prefix is never resolved.
+///
+/// # Errors
+///
+/// When `digest` is not a full digest.
+pub fn ensure_digest(digest: &str) -> anyhow::Result<()> {
+    let hex = digest.strip_prefix("sha256:").unwrap_or_default();
+    ensure!(
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
+        "{digest:?} is not a package artifact digest: give sha256: and all 64 lowercase hex digits, or the tag"
+    );
+    Ok(())
+}
+
 /// Whether `error` says the artifact does not exist.
 pub fn artifact_is_absent(error: &OciDistributionError) -> bool {
     match error {
@@ -208,13 +223,13 @@ pub fn registry_auth(credentials: Option<&RegistryCredentials>) -> RegistryAuth 
     })
 }
 
-/// One open registry repository and the tag of one package.
+/// One open registry repository and the tag or digest of one package.
 pub struct Repository {
     /// The registry client.
     pub client: OciClient,
     /// The credential of the registry.
     pub auth: RegistryAuth,
-    /// `<registry>/<repository>:<tag>`.
+    /// `<registry>/<repository>:<tag>` or `<registry>/<repository>@<digest>`.
     pub reference: Reference,
 }
 
@@ -229,14 +244,20 @@ impl std::fmt::Debug for Repository {
 }
 
 impl Repository {
-    /// Open the repository of `registry` at `tag`.
+    /// Open the repository of `registry` at `reference`: a full digest
+    /// `sha256:<hex>` or a tag `<package_id>-<version>`.
     ///
     /// # Errors
     ///
-    /// When the tag or the base is not valid, or the credential or the CA
-    /// bundles cannot be read.
-    pub fn open(registry: &PackageRegistry, tag: &str) -> anyhow::Result<Self> {
-        ensure_tag(tag)?;
+    /// When the reference or the base is not valid, or the credential or the
+    /// CA bundles cannot be read.
+    pub fn open(registry: &PackageRegistry, reference: &str) -> anyhow::Result<Self> {
+        let by_digest = reference.starts_with("sha256:");
+        if by_digest {
+            ensure_digest(reference)?;
+        } else {
+            ensure_tag(reference)?;
+        }
         let base = parse_component_artifact_base(&registry.artifact_base)
             .context("read the package artifact base")?;
         let credentials = read_registry_credentials(&registry.registry_auth_file, base.registry())
@@ -267,21 +288,30 @@ impl Repository {
         Ok(Self {
             client,
             auth: registry_auth(Some(&credentials)),
-            reference: Reference::with_tag(
-                base.registry().to_owned(),
-                base.repository().to_owned(),
-                tag.to_owned(),
-            ),
+            reference: if by_digest {
+                Reference::with_digest(
+                    base.registry().to_owned(),
+                    base.repository().to_owned(),
+                    reference.to_owned(),
+                )
+            } else {
+                Reference::with_tag(
+                    base.registry().to_owned(),
+                    base.repository().to_owned(),
+                    reference.to_owned(),
+                )
+            },
         })
     }
 
-    /// The manifest bytes and digest of the tag, or `None` when the tag does
-    /// not exist.
+    /// The manifest bytes and digest of the reference, or `None` when it does
+    /// not exist. This is the read `push-package` makes of a tag before it
+    /// pushes it.
     ///
     /// # Errors
     ///
-    /// When the registry cannot be read or the bytes do not hash to the digest
-    /// it reports.
+    /// When the registry cannot be read, or the bytes do not hash to the
+    /// digest it reports or to the digest the reference names.
     pub async fn manifest(&self) -> anyhow::Result<Option<(Vec<u8>, String)>> {
         match self
             .client
@@ -290,7 +320,8 @@ impl Repository {
         {
             Ok((bytes, digest)) => {
                 ensure!(
-                    sha256_digest(&bytes) == digest,
+                    sha256_digest(&bytes) == digest
+                        && self.reference.digest().is_none_or(|named| named == digest),
                     "the manifest of package artifact {} does not hash to {digest}",
                     self.reference
                 );
@@ -303,23 +334,18 @@ impl Repository {
         }
     }
 
-    /// The layers of the package artifact under the tag, whose manifest
-    /// digest must be `digest`. Each layer is checked against its digest.
+    /// The manifest digest and the layers of the package artifact under the
+    /// reference, or `None` when it does not exist. Each layer is checked
+    /// against its digest.
     ///
     /// # Errors
     ///
-    /// When the tag holds another digest or no package artifact, or a layer
-    /// cannot be pulled or does not hash to its digest.
-    pub async fn pull(&self, digest: &str) -> anyhow::Result<Vec<PackedLayer>> {
-        let (bytes, found) = self
-            .manifest()
-            .await?
-            .with_context(|| format!("package artifact {} does not exist", self.reference))?;
-        ensure!(
-            found == digest,
-            "package artifact {} has digest {found}, but catalog.package_artifacts records {digest}",
-            self.reference
-        );
+    /// When the reference holds no package artifact, or a layer cannot be
+    /// pulled or does not hash to its digest.
+    pub async fn pull(&self) -> anyhow::Result<Option<(String, Vec<PackedLayer>)>> {
+        let Some((bytes, digest)) = self.manifest().await? else {
+            return Ok(None);
+        };
         let manifest: OciImageManifest = serde_json::from_slice(&bytes).with_context(|| {
             format!("parse the manifest of package artifact {}", self.reference)
         })?;
@@ -332,7 +358,7 @@ impl Repository {
         for layer in &manifest.layers {
             layers.push(self.pull_layer(layer).await?);
         }
-        Ok(layers)
+        Ok(Some((digest, layers)))
     }
 
     async fn pull_layer(&self, layer: &OciDescriptor) -> anyhow::Result<PackedLayer> {
@@ -360,133 +386,28 @@ impl Repository {
     }
 }
 
-/// The digest of the verified artifact of `package_id@version`, the one
-/// `catalog.package_artifacts` records with its `verified_at` (R11 (2)).
+/// The manifest digest and the layers of the package artifact under the tag
+/// `<package_id>-<version>`.
 ///
 /// # Errors
 ///
-/// [`NoVerifiedArtifact`] when no verified artifact is recorded for the
-/// package, or an error when the control database cannot be read.
-pub async fn verified_digest(
+/// [`NoPackageArtifact`] when the registry holds no such tag, or an error when
+/// the artifact cannot be pulled.
+pub async fn pull_package(
     registry: &PackageRegistry,
     package_id: &str,
     version: &str,
-) -> anyhow::Result<String> {
-    let (control, connection) = tokio_postgres::connect(&registry.control_database_url, NoTls)
-        .await
-        .context("connect to the control database")?;
-    let connection_task = tokio::spawn(connection);
-    let row = control
-        .query_opt(
-            "SELECT digest, verified_at IS NOT NULL FROM catalog.package_artifacts \
-              WHERE package_id = $1 AND version = $2",
-            &[&package_id, &version],
-        )
-        .await
-        .context("read catalog.package_artifacts");
-    drop(control);
-    connection_task.abort();
-    match row? {
-        Some(row) if row.get::<_, bool>(1) => Ok(row.get::<_, String>(0)),
-        _ => Err(NoVerifiedArtifact {
-            package_id: package_id.to_owned(),
-            version: version.to_owned(),
-        }
-        .into()),
-    }
-}
-
-/// One verified package artifact that `catalog.package_artifacts` records.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VerifiedArtifact {
-    pub package_id: String,
-    pub version: String,
-    /// `sha256:<hex>` of the package artifact manifest.
-    pub digest: String,
-}
-
-impl VerifiedArtifact {
-    /// The tag `push-package` pushed the artifact under.
-    pub fn tag(&self) -> String {
-        format!("{}-{}", self.package_id, self.version)
-    }
-}
-
-/// The verified artifact whose digest is `prefix` or starts with it. The
-/// prefix is lowercase hex, with or without `sha256:`.
-///
-/// # Errors
-///
-/// When the prefix is not hex, no verified artifact or more than one has a
-/// digest that starts with it, or the control database cannot be read.
-pub async fn resolve_digest(
-    registry: &PackageRegistry,
-    prefix: &str,
-) -> anyhow::Result<VerifiedArtifact> {
-    let prefix = digest_prefix(prefix)?;
-    let (control, connection) = tokio_postgres::connect(&registry.control_database_url, NoTls)
-        .await
-        .context("connect to the control database")?;
-    let connection_task = tokio::spawn(connection);
-    let rows = control
-        .query(
-            "SELECT package_id, version, digest FROM catalog.package_artifacts \
-              WHERE verified_at IS NOT NULL AND starts_with(digest, $1) \
-              ORDER BY digest",
-            &[&prefix],
-        )
-        .await
-        .context("read catalog.package_artifacts");
-    drop(control);
-    connection_task.abort();
-    let artifacts = rows?
-        .into_iter()
-        .map(|row| VerifiedArtifact {
-            package_id: row.get(0),
-            version: row.get(1),
-            digest: row.get(2),
+) -> anyhow::Result<(String, Vec<PackedLayer>)> {
+    Repository::open(registry, &format!("{package_id}-{version}"))?
+        .pull()
+        .await?
+        .ok_or_else(|| {
+            NoPackageArtifact {
+                package_id: package_id.to_owned(),
+                version: version.to_owned(),
+            }
+            .into()
         })
-        .collect();
-    one_artifact(&prefix, artifacts)
-}
-
-/// `sha256:<hex>` of a digest or digest prefix given with or without
-/// `sha256:`.
-fn digest_prefix(prefix: &str) -> anyhow::Result<String> {
-    let hex = prefix.strip_prefix("sha256:").unwrap_or(prefix);
-    ensure!(
-        !hex.is_empty()
-            && hex.len() <= 64
-            && hex
-                .bytes()
-                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')),
-        "{prefix:?} is not a package artifact digest or a prefix of one in lowercase hex"
-    );
-    Ok(format!("sha256:{hex}"))
-}
-
-/// The one artifact of `artifacts`, all of whose digests start with `prefix`.
-fn one_artifact(
-    prefix: &str,
-    mut artifacts: Vec<VerifiedArtifact>,
-) -> anyhow::Result<VerifiedArtifact> {
-    match artifacts.len() {
-        0 => anyhow::bail!(
-            "no verified package artifact in catalog.package_artifacts has a digest that starts with {prefix}"
-        ),
-        1 => Ok(artifacts.remove(0)),
-        _ => anyhow::bail!(
-            "digest prefix {prefix} is ambiguous; it starts {}; give more digits",
-            artifacts
-                .iter()
-                .map(|artifact| format!(
-                    "{} ({}@{})",
-                    artifact.digest, artifact.package_id, artifact.version
-                ))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
 }
 
 /// Parse one descriptor layer. Its bytes must be the canonical JSON of the
@@ -508,22 +429,20 @@ pub fn parse_descriptor(bytes: &[u8]) -> anyhow::Result<ComponentDescriptor> {
     Ok(descriptor)
 }
 
-/// The component descriptors of the verified artifact of
+/// The component descriptors of the package artifact of
 /// `package_id@version`, sorted by component name.
 ///
 /// # Errors
 ///
-/// [`NoVerifiedArtifact`] when the package has no verified artifact, or an
-/// error when the artifact cannot be pulled or a descriptor is not valid.
-pub async fn read_verified_descriptors(
+/// [`NoPackageArtifact`] when the registry holds no artifact for the package,
+/// or an error when the artifact cannot be pulled or a descriptor is not
+/// valid.
+pub async fn read_descriptors(
     registry: &PackageRegistry,
     package_id: &str,
     version: &str,
 ) -> anyhow::Result<Vec<ComponentDescriptor>> {
-    let digest = verified_digest(registry, package_id, version).await?;
-    let layers = Repository::open(registry, &format!("{package_id}-{version}"))?
-        .pull(&digest)
-        .await?;
+    let (_, layers) = pull_package(registry, package_id, version).await?;
     let mut descriptors = layers
         .iter()
         .filter(|layer| layer.media_type == COMPONENT_DESCRIPTOR_MEDIA_TYPE)
@@ -534,17 +453,17 @@ pub async fn read_verified_descriptors(
 }
 
 /// The admitted component facts of one package, for wiring authorship and the
-/// management gate (R2): the descriptors of its verified artifact, in `scope`.
+/// management gate (R2): the descriptors of its package artifact, in `scope`.
 ///
 /// # Errors
 ///
-/// As [`read_verified_descriptors`], or when a descriptor carries an invalid
+/// As [`read_descriptors`], or when a descriptor carries an invalid
 /// effect projection.
 pub async fn load_component_facts(
     registry: &PackageRegistry,
     scope: &ComponentPackageScope,
 ) -> anyhow::Result<Vec<AdmittedComponent>> {
-    read_verified_descriptors(registry, &scope.package_id, &scope.package_version)
+    read_descriptors(registry, &scope.package_id, &scope.package_version)
         .await
         .with_context(|| {
             format!(
@@ -571,43 +490,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_digest_prefix_is_lowercase_hex_with_or_without_its_algorithm() {
-        assert_eq!(digest_prefix("ab12").unwrap(), "sha256:ab12");
-        assert_eq!(digest_prefix("sha256:ab12").unwrap(), "sha256:ab12");
+    fn a_digest_is_given_in_full() {
+        assert!(ensure_digest(&format!("sha256:{}", "a".repeat(64))).is_ok());
         for refused in [
-            "",
-            "sha256:",
-            "AB12",
-            "ab%",
-            "wamn_wms-2.1.0",
-            &"a".repeat(65),
+            String::new(),
+            "sha256:".to_owned(),
+            "sha256:ab12".to_owned(),
+            "a".repeat(64),
+            format!("sha256:{}", "A".repeat(64)),
+            format!("sha256:{}", "a".repeat(65)),
         ] {
-            assert!(digest_prefix(refused).is_err(), "{refused:?}");
+            assert!(ensure_digest(&refused).is_err(), "{refused:?}");
         }
-    }
-
-    #[test]
-    fn a_digest_prefix_names_exactly_one_artifact() {
-        let artifact = |package_id: &str, digest: &str| VerifiedArtifact {
-            package_id: package_id.to_owned(),
-            version: "1.0.0".to_owned(),
-            digest: digest.to_owned(),
-        };
-        let one = artifact("a", "sha256:ab01");
-        assert_eq!(one_artifact("sha256:ab", vec![one.clone()]).unwrap(), one);
-        let unknown = one_artifact("sha256:ff", Vec::new())
-            .unwrap_err()
-            .to_string();
-        assert!(
-            unknown.contains("no verified package artifact"),
-            "{unknown}"
-        );
-        let ambiguous = one_artifact("sha256:ab", vec![one, artifact("b", "sha256:ab02")])
-            .unwrap_err()
-            .to_string();
-        assert!(ambiguous.contains("ambiguous"), "{ambiguous}");
-        assert!(ambiguous.contains("sha256:ab01 (a@1.0.0)"), "{ambiguous}");
-        assert!(ambiguous.contains("sha256:ab02 (b@1.0.0)"), "{ambiguous}");
     }
 
     #[test]
@@ -620,14 +514,14 @@ mod tests {
 
     #[test]
     fn the_refusal_is_found_through_context() {
-        let error = anyhow::Error::new(NoVerifiedArtifact {
+        let error = anyhow::Error::new(NoPackageArtifact {
             package_id: "orders".to_owned(),
             version: "1.0.0".to_owned(),
         })
         .context("open the package");
-        let found = NoVerifiedArtifact::find(&error).expect("the refusal is in the chain");
+        let found = NoPackageArtifact::find(&error).expect("the refusal is in the chain");
         assert_eq!(found.package_id, "orders");
-        assert!(NoVerifiedArtifact::find(&anyhow::anyhow!("other")).is_none());
+        assert!(NoPackageArtifact::find(&anyhow::anyhow!("other")).is_none());
     }
 
     #[test]

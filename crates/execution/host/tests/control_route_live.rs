@@ -1227,33 +1227,6 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     expected.sort();
     assert_eq!(admins, expected);
 
-    // An org admin and a project admin read every verified package version.
-    assert_eq!(
-        call(&delivery, "package/list", cat, json!({})).await,
-        Ok(json!({"packages": []}))
-    );
-    admin
-        .batch_execute(&format!(
-            "INSERT INTO catalog.package_artifacts (package_id, version, digest, verified_at) \
-             VALUES ('wamn_wms', '1.0.0', 'sha256:{a}', '2026-10-03T10:00:00Z'), \
-                    ('wamn_receiving', '1.1.0', 'sha256:{b}', '2026-10-03T11:00:00Z'), \
-                    ('wamn_receiving', '1.0.0', 'sha256:{a}', '2026-10-03T09:00:00Z'), \
-                    ('wamn_wms', '2.0.0', 'sha256:{b}', NULL);",
-            a = "a".repeat(64),
-            b = "b".repeat(64),
-        ))
-        .await?;
-    let expected = json!({"packages": [
-        {"package_id": "wamn_receiving", "version": "1.0.0", "verified_at": "2026-10-03T09:00:00.000000Z"},
-        {"package_id": "wamn_receiving", "version": "1.1.0", "verified_at": "2026-10-03T11:00:00.000000Z"},
-        {"package_id": "wamn_wms", "version": "1.0.0", "verified_at": "2026-10-03T10:00:00.000000Z"},
-    ]});
-    for reader in [boss, cat] {
-        assert_eq!(
-            call(&delivery, "package/list", reader, json!({})).await,
-            Ok(expected.clone())
-        );
-    }
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
 }

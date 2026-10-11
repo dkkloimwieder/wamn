@@ -187,7 +187,7 @@ BEGIN
     FROM pg_tables WHERE schemaname = 'catalog';
   ASSERT catalog_tables = ARRAY[
     'authoring_command_audit', 'connection_requirements', 'deployment_attestations',
-    'effective_releases', 'package_artifacts', 'qualifications',
+    'effective_releases', 'qualifications',
     'tenant_environments'
   ]::text[], format('catalog table list drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables

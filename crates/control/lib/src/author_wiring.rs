@@ -10,8 +10,8 @@
 //! [`WiringDocument::parse`] owns document shape,
 //! [`validate_wiring_compatibility`] owns compatibility against the gate
 //! scope's admitted component facts, and the `catalog.wirings` constraints own
-//! storage. The facts are the descriptors of the package's verified artifact
-//! (R2), read the way publish reads them
+//! storage. The facts are the descriptors of the package's artifact in the
+//! registry (R2), read the way publish reads them
 //! ([`wamn_package_artifact::load_component_facts`]). The CLI adds no rule of its own,
 //! so a wiring authored here and a wiring promoted into this environment are
 //! admitted by exactly the same predicates.
@@ -169,13 +169,13 @@ pub struct AuthorWiringRequest<'a> {
     pub package_version: &'a str,
     pub document: &'a WiringDocument,
     /// The admitted component facts of the package, which
-    /// [`load_component_facts`] reads from its verified artifact.
+    /// [`load_component_facts`] reads from its package artifact.
     pub components: &'a [AdmittedComponent],
 }
 
 /// Author one gated wiring version over its own project and control
-/// connections, gated by the component facts of the package's verified
-/// artifact in `registry`.
+/// connections, gated by the component facts of the package's artifact in
+/// `registry`.
 ///
 /// The project connection holds the authoring transaction, and the control
 /// connection reads the gate report [`author_wiring`] requires.
@@ -192,7 +192,7 @@ pub async fn author_wiring_in_databases(
         .context("name the wiring's package scope")?;
     let components = load_component_facts(registry, &scope)
         .await
-        .context("read the gate scope's component facts from its verified package artifact")?;
+        .context("read the gate scope's component facts from its package artifact")?;
     let request = AuthorWiringRequest {
         tenant_id,
         package_id,
@@ -246,7 +246,7 @@ pub struct AuthorWiringDocumentRequest {
     pub database_url: String,
     /// Owner URL to the control database holding `wamn_run.gate_reports`.
     pub control_database_url: String,
-    /// The registry of the package's verified artifact, whose descriptors are
+    /// The registry of the package's artifact, whose descriptors are
     /// the component facts that gate the wiring.
     pub registry: PackageRegistry,
     /// Tenant claim carried by the authored wiring.

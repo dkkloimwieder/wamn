@@ -77,10 +77,10 @@
 #
 # PACKAGE REGISTRY (wamn-vavs4.6): the gate and `publish` judge a wiring against
 # the component facts of its package, and those facts are the descriptors of
-# the package's verified artifact (docs/plan/platform-deploy.md R2). The surface
-# reads them the way publish-release does: the digest and verified_at that
-# catalog.package_artifacts records, read on the control-author connection
-# above, then the artifact from WAMN_PACKAGE_ARTIFACT_BASE.
+# the package's artifact (docs/plan/platform-deploy.md R2). The surface reads
+# them the way publish-release does: the artifact under its tag, pulled from
+# WAMN_PACKAGE_ARTIFACT_BASE only. No database is read for a package fact, so
+# the control-author connection above holds no grant for one.
 #   WAMN_REGISTRY_AUTH_FILE
 #                        a pull-only registry credential, scoped to the package
 #                        repositories. It comes through the same Secret path as

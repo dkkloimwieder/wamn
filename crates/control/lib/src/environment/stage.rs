@@ -149,8 +149,7 @@ pub(super) async fn installed(
         .installed)
 }
 
-/// The package artifact `<id>-<version>`, verified against the digest
-/// `catalog.package_artifacts` records.
+/// The package artifact `<id>-<version>`, pulled from the registry.
 pub(super) async fn open(
     platform: &Platform,
     id: &str,
@@ -169,7 +168,6 @@ pub(super) async fn open(
             registry_auth_file: platform.registry_auth_file.clone(),
             insecure_registry: false,
             oci_ca_paths: platform.oci_ca_paths.clone(),
-            control_database_url: platform.system_database_url.clone(),
         },
     })
     .await
