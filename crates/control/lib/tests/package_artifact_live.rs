@@ -17,10 +17,10 @@ use wamn_control::package_artifact::{
 };
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_engine::artifact_source::ArtifactSource as _;
+use wamn_package_artifact::registry_credentials::read_registry_credentials;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::registry_credentials::read_registry_credentials;
 use wamn_test_infrastructure::locked_database;
 
 #[path = "support/local_registry.rs"]

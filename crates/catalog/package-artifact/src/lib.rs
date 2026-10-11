@@ -11,9 +11,17 @@
 //!
 //! `wamn-control` packs and pushes package artifacts with [`Repository`]. A
 //! deployed service may depend on this crate, never on `wamn-control`.
+//!
+//! The crate also owns the registry credential ([`registry_credentials`]) and
+//! the OCI trust roots ([`read_ca_bundles`]) that every registry client reads,
+//! the host's included. It depends on neither `wamn-runtime` nor `wamn-engine`,
+//! so it stays small; the artifact reference rule is in `wamn-catalog`.
+
+pub mod registry_credentials;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
@@ -23,10 +31,11 @@ use oci_client::manifest::{OCI_IMAGE_MEDIA_TYPE, OciDescriptor, OciImageManifest
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::NoTls;
-use wamn_catalog::{AdmittedComponent, ComponentDescriptor, ComponentPackageScope};
-use wamn_engine::component_artifact::parse_component_artifact_base;
-use wamn_runtime::component_artifact_source::read_ca_bundles;
-use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
+use wamn_catalog::{
+    AdmittedComponent, ComponentDescriptor, ComponentPackageScope, parse_component_artifact_base,
+};
+
+use crate::registry_credentials::{RegistryCredentials, read_registry_credentials};
 
 /// Artifact type of a package artifact.
 pub const PACKAGE_ARTIFACT_TYPE: &str = "application/vnd.wamn.package.v2";
@@ -37,6 +46,55 @@ pub const COMPONENT_DESCRIPTOR_MEDIA_TYPE: &str =
 
 /// The read and connect bound of one registry request.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Read the PEM CA bundles at `paths`, in order, as extra OCI trust roots.
+///
+/// The one reader behind the host's component source
+/// (`ComponentArtifactSourceConfig::with_ca_paths` in `wamn-runtime`), the
+/// package registry client here and the ctl publishers, which build their own
+/// `oci-client` for the same registry. It reads the files and does not check that each bundle is a usable
+/// trust root; the builder above says where that check lives and what
+/// `oci-client` does without it.
+pub fn read_ca_bundles(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>, ComponentArtifactCaError> {
+    paths
+        .iter()
+        .map(|path| {
+            std::fs::read(path).map_err(|source| ComponentArtifactCaError::unreadable(path, source))
+        })
+        .collect()
+}
+
+/// Contextual refusal from the extra OCI trust-root boundary.
+#[derive(Debug)]
+pub struct ComponentArtifactCaError {
+    path: PathBuf,
+    source: std::io::Error,
+}
+
+impl ComponentArtifactCaError {
+    fn unreadable(path: &Path, source: std::io::Error) -> Self {
+        Self {
+            path: path.to_owned(),
+            source,
+        }
+    }
+}
+
+impl fmt::Display for ComponentArtifactCaError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "OCI CA bundle {}: oci-ca-bundle-unreadable",
+            self.path.display()
+        )
+    }
+}
+
+impl std::error::Error for ComponentArtifactCaError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
 
 /// The registry inputs that read and push package artifacts.
 #[derive(Debug, Clone)]

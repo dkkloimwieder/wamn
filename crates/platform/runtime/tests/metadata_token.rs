@@ -17,11 +17,11 @@ use wamn_catalog::{
 };
 use wamn_engine::artifact_source::{ArtifactSource as _, ComponentArtifactFetchErrorType};
 use wamn_engine::component_admission::component_digest;
+use wamn_package_artifact::registry_credentials::{
+    METADATA_HOST_ENV, RegistryCredentialsErrorType, read_metadata_registry_credentials,
+};
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
-};
-use wamn_runtime::registry_credentials::{
-    METADATA_HOST_ENV, RegistryCredentialsErrorType, read_metadata_registry_credentials,
 };
 use wamn_runtime::release_manifest_artifact::release_manifest_artifact_layout;
 use wamn_runtime::release_manifest_source::{ReleaseManifestFetchErrorType, ReleaseManifestSource};

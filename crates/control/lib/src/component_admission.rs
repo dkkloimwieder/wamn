@@ -26,10 +26,11 @@ use wamn_catalog::{
 use wamn_engine::artifact_source::ArtifactSource as _;
 use wamn_engine::component_admission::validate_component_admission;
 use wamn_engine::component_artifact::component_artifact_layout;
+use wamn_package_artifact::read_ca_bundles;
+use wamn_package_artifact::registry_credentials::RegistryCredentials;
 use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig, read_ca_bundles,
+    ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
-use wamn_runtime::registry_credentials::RegistryCredentials;
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_schema_control::plan_package_migrations;
 
@@ -977,12 +978,11 @@ fn ensure_component_package_matches(
 mod tests {
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageScope,
+        component_artifact_reference,
     };
-    use wamn_engine::component_artifact::{
-        component_artifact_config_bytes, component_artifact_reference,
-    };
+    use wamn_engine::component_artifact::component_artifact_config_bytes;
+    use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
     use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
-    use wamn_runtime::registry_credentials::read_registry_push_credentials;
 
     use super::*;
 

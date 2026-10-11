@@ -28,13 +28,16 @@ use std::time::Duration;
 use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use wamn_catalog::MAX_SERVING_MANIFEST_BYTES;
+use wamn_catalog::{
+    ComponentArtifactBase, MAX_SERVING_MANIFEST_BYTES, parse_component_artifact_base,
+};
+use wamn_engine::component_admission::component_digest;
+use wamn_package_artifact::registry_credentials::{
+    RegistryCredentialSource, read_registry_credentials,
+};
 
-use crate::registry_credentials::{RegistryCredentialSource, read_registry_credentials};
 use crate::registry_transport::transport_is_mismatched;
 use crate::release_manifest_artifact::verify_release_manifest_artifact_layout;
-use wamn_engine::component_admission::component_digest;
-use wamn_engine::component_artifact::{ComponentArtifactBase, parse_component_artifact_base};
 
 /// Bound each registry connect/read phase without adding a deployment knob.
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);

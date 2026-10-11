@@ -31,6 +31,7 @@ use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::NoTls;
+use wamn_catalog::component_artifact_reference;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
     ComponentDescriptor, ConnectionTypeDescriptor, SERVING_MANIFEST_FORMAT_VERSION,
@@ -40,9 +41,7 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
-use wamn_engine::component_artifact::{
-    component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
-};
+use wamn_engine::component_artifact::{component_artifact_config_bytes, component_artifact_layout};
 use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{OperationHost, OperationScope};

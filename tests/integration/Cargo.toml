@@ -42,6 +42,7 @@ wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
+wamn-package-artifact = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-project-state = { workspace = true }

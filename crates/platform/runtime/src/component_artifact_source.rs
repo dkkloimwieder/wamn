@@ -9,7 +9,7 @@
 //! local file source.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,21 +18,22 @@ use oci_client::errors::OciDistributionError;
 use oci_client::manifest::{OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
-use wamn_catalog::AdmittedComponent;
-
-use crate::registry_credentials::{
-    RegistryCredentialSource, RegistryCredentials, RegistryCredentialsError,
-    read_registry_credentials,
+use wamn_catalog::{
+    AdmittedComponent, ComponentArtifactBase, ComponentArtifactReferenceError,
+    parse_component_artifact_base,
 };
-use crate::registry_transport::transport_is_mismatched;
 use wamn_engine::artifact_source::{
     ArtifactSource, ComponentArtifactFetchError, verify_component_body, verify_config_body,
 };
 use wamn_engine::component_admission::component_digest;
-use wamn_engine::component_artifact::{
-    ComponentArtifactBase, ComponentArtifactReferenceError, component_artifact_config_bytes,
-    component_artifact_layout, parse_component_artifact_base,
+use wamn_engine::component_artifact::{component_artifact_config_bytes, component_artifact_layout};
+use wamn_package_artifact::registry_credentials::{
+    RegistryCredentialSource, RegistryCredentials, RegistryCredentialsError,
+    read_registry_credentials,
 };
+use wamn_package_artifact::{ComponentArtifactCaError, read_ca_bundles};
+
+use crate::registry_transport::transport_is_mismatched;
 
 /// Explicit, validated configuration for one component artifact repository.
 #[derive(Clone, PartialEq, Eq)]
@@ -141,54 +142,6 @@ impl fmt::Debug for ComponentArtifactSourceConfig {
 ///
 /// The spelling wash's own host CLI uses (`crates/wash/src/cli/host.rs`).
 pub const OCI_CA_PATHS_ENV: &str = "WASH_OCI_CA_PATHS";
-
-/// Read the PEM CA bundles at `paths`, in order, as extra OCI trust roots.
-///
-/// The one reader behind [`ComponentArtifactSourceConfig::with_ca_paths`] and
-/// the ctl publishers, which build their own `oci-client` for the same
-/// registry. It reads the files and does not check that each bundle is a usable
-/// trust root; the builder above says where that check lives and what
-/// `oci-client` does without it.
-pub fn read_ca_bundles(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>, ComponentArtifactCaError> {
-    paths
-        .iter()
-        .map(|path| {
-            std::fs::read(path).map_err(|source| ComponentArtifactCaError::unreadable(path, source))
-        })
-        .collect()
-}
-
-/// Contextual refusal from the extra OCI trust-root boundary.
-#[derive(Debug)]
-pub struct ComponentArtifactCaError {
-    path: PathBuf,
-    source: std::io::Error,
-}
-
-impl ComponentArtifactCaError {
-    fn unreadable(path: &Path, source: std::io::Error) -> Self {
-        Self {
-            path: path.to_owned(),
-            source,
-        }
-    }
-}
-
-impl fmt::Display for ComponentArtifactCaError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "OCI CA bundle {}: oci-ca-bundle-unreadable",
-            self.path.display()
-        )
-    }
-}
-
-impl std::error::Error for ComponentArtifactCaError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
-    }
-}
 
 /// Classify a registry transport failure as a mismatch or as absence.
 fn transport_error(

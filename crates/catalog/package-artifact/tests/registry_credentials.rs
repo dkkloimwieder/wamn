@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use wamn_runtime::registry_credentials::{
+use wamn_package_artifact::registry_credentials::{
     RegistryCredentialsErrorType, read_registry_credentials, read_registry_push_credentials,
 };
 

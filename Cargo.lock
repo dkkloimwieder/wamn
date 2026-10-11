@@ -6291,6 +6291,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-gate-harness",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-project-state",
  "wamn-run-state",
@@ -6317,14 +6318,14 @@ dependencies = [
  "anyhow",
  "hex",
  "oci-client",
+ "reqwest",
  "ring",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-postgres",
  "wamn-catalog",
- "wamn-engine",
  "wamn-execution-contract",
- "wamn-runtime",
 ]
 
 [[package]]
@@ -6512,6 +6513,7 @@ dependencies = [
  "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-package-artifact",
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-project-state",

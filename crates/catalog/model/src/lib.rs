@@ -10,6 +10,7 @@
 //! compatibility readers still live in effect crates: no connection,
 //! transaction, or clock is reachable from here.
 
+mod component_artifact_reference;
 mod component_facts;
 mod connection;
 pub mod edge_bundle;
@@ -25,6 +26,11 @@ mod wiring_compatibility;
 #[cfg(feature = "test-util")]
 pub mod test_database;
 
+pub use component_artifact_reference::{
+    ComponentArtifactBase, ComponentArtifactReference, ComponentArtifactReferenceError,
+    ComponentArtifactReferenceErrorType, component_artifact_reference, component_digest_tag,
+    parse_component_artifact_base,
+};
 pub use component_facts::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,

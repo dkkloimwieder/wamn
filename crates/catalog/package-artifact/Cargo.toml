@@ -9,14 +9,15 @@ license.workspace = true
 anyhow = { workspace = true }
 hex = { workspace = true }
 oci-client = { workspace = true }
+# The metadata server token of the registry credential.
+reqwest = { workspace = true, features = ["rustls"] }
 ring = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tokio-postgres = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-engine = { workspace = true }
 wamn-execution-contract = { workspace = true }
-wamn-runtime = { workspace = true }
 
 [lints]
 workspace = true

@@ -34,12 +34,10 @@ use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use tokio_postgres::Client as PgClient;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
-    ComponentPackageScope,
+    ComponentPackageScope, component_artifact_reference,
 };
-use wamn_engine::component_artifact::{
-    component_artifact_config_bytes, component_artifact_reference,
-};
-use wamn_runtime::registry_credentials::read_registry_push_credentials;
+use wamn_engine::component_artifact::component_artifact_config_bytes;
+use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_schema_generator::{AUTHORED_MANIFEST, PackageManifest, PolicyContractState};
 
 use crate::component_admission::{AdmitComponentRequest, admit_component, publish_and_verify};

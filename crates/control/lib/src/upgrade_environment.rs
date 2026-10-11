@@ -3307,10 +3307,11 @@ mod tests {
         let file =
             std::env::temp_dir().join(format!("wamn-upgrade-registry-{}.json", std::process::id()));
         fs::write(&file, configuration).unwrap();
-        let credentials = wamn_runtime::registry_credentials::read_registry_push_credentials(
-            &file,
-            "us-central1-docker.pkg.dev",
-        );
+        let credentials =
+            wamn_package_artifact::registry_credentials::read_registry_push_credentials(
+                &file,
+                "us-central1-docker.pkg.dev",
+            );
         fs::remove_file(&file).unwrap();
         let credentials = credentials.unwrap().unwrap();
         assert_eq!(credentials.username(), "oauth2accesstoken");

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use wamn_catalog::AdmittedComponent;
 
 use crate::component_admission::component_digest;
-use crate::component_artifact::component_digest_tag;
+use wamn_catalog::component_digest_tag;
 
 /// A source that returns only verified component bytes.
 #[async_trait]

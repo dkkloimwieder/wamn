@@ -23,7 +23,7 @@ use tokio::task::JoinSet;
 use tokio::time::timeout;
 use wamn_control::dev::activation::{HOST_SHUTDOWN_TIMEOUT, WORKLOAD_RPC_TIMEOUT};
 use wamn_control_registry::Triple;
-use wamn_runtime::registry_credentials::read_registry_credentials;
+use wamn_package_artifact::registry_credentials::read_registry_credentials;
 use wamn_test_infrastructure::event_broker::Credentials;
 use wash_runtime::washlet::{OPERATOR_API_PREFIX, rpc_subject, types::v2};
 

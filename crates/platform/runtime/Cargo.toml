@@ -22,6 +22,8 @@ wash-runtime = { workspace = true, features = ["oci"] }
 wamn-engine = { workspace = true }
 wasmtime = { workspace = true }
 wamn-catalog = { workspace = true }
+# Registry credentials and OCI trust roots.
+wamn-package-artifact = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }

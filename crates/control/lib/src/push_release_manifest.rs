@@ -21,9 +21,9 @@ use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
 use wamn_engine::release_manifest::ReleaseScope;
+use wamn_package_artifact::read_ca_bundles;
+use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 pub(crate) use wamn_package_artifact::{artifact_is_absent, registry_auth};
-use wamn_runtime::component_artifact_source::read_ca_bundles;
-use wamn_runtime::registry_credentials::read_registry_push_credentials;
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
     release_manifest_artifact_reference, verify_release_manifest_artifact_layout,

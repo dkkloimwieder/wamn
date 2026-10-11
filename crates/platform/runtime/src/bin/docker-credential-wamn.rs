@@ -12,7 +12,7 @@
 use std::io::{Read as _, Write as _};
 use std::process::ExitCode;
 
-use wamn_runtime::registry_credentials::read_metadata_registry_credentials;
+use wamn_package_artifact::registry_credentials::read_metadata_registry_credentials;
 
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() != Some("get") {
