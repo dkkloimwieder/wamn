@@ -941,12 +941,10 @@ mod tests {
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
             workflow: WorkflowSection {
-                wirings: BTreeSet::from([ServingWiring {
-                    package_id: "platform_fixture".to_owned(),
-                    wiring_id: "widget_get".to_owned(),
-                    wiring_version: 1,
-                    graph_hash: DefinitionHash::parse(DIGEST).expect("valid digest"),
-                }]),
+                wirings: BTreeSet::from([ServingWiring::new(
+                    "platform_fixture",
+                    wamn_catalog::fixture_graph("widget_get", 1),
+                )]),
                 attachments: ServingAttachment::split(BTreeMap::from([
                     ("widget-get-http".to_owned(), http),
                     ("widget-get-studio".to_owned(), studio),

@@ -11,10 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tracing::Instrument as _;
-use wamn_catalog::{
-    ArtifactHash, ConnectionTypeDescriptor, DefinitionHash, ServingComponent, ServingManifest,
-    ServingWiring,
-};
+use wamn_catalog::{ArtifactHash, ConnectionTypeDescriptor, ServingComponent, ServingManifest};
 use wamn_execution_contract::EffectOutcome;
 use wamn_execution_contract::node_contract::normalize_portable_http_target;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
@@ -604,19 +601,16 @@ pub(crate) fn authorize_release_closure(
                 })
         }
         InvocationEntry::Wiring(position) => {
-            let wiring = ServingWiring {
-                package_id: position.package_id.clone(),
-                wiring_id: position.wiring_id.clone(),
-                wiring_version: position.wiring_version,
-                graph_hash: DefinitionHash::parse(
-                    snapshot
-                        .wiring_hash
-                        .clone()
-                        .ok_or(ConnectionError::AttestationInvalid)?,
-                )
-                .map_err(|_| ConnectionError::AttestationInvalid)?,
-            };
-            manifest.workflow.wirings.contains(&wiring)
+            let graph_hash = snapshot
+                .wiring_hash
+                .as_deref()
+                .ok_or(ConnectionError::AttestationInvalid)?;
+            manifest.workflow.wirings.iter().any(|wiring| {
+                wiring.package_id == position.package_id
+                    && wiring.wiring_id == position.wiring_id
+                    && wiring.wiring_version == position.wiring_version
+                    && wiring.graph_hash.as_str() == graph_hash
+            })
         }
     };
     let root = manifest.components.iter().find(|component| {
@@ -1116,8 +1110,8 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponentOperation, ServingRelease, ServingRoute,
+        DefinitionHash, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        ServingComponentOperation, ServingRelease, ServingRoute, ServingWiring,
     };
 
     use super::*;
@@ -1281,6 +1275,10 @@ mod tests {
             attachments: BTreeMap::new(),
             workflow: wamn_catalog::WorkflowSection {
                 wirings: BTreeSet::from([ServingWiring {
+                    graph: wamn_catalog::fixture_graph(
+                        &position.wiring_id,
+                        position.wiring_version,
+                    ),
                     package_id: position.package_id,
                     wiring_id: position.wiring_id,
                     wiring_version: position.wiring_version,

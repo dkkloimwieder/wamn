@@ -444,14 +444,13 @@ fn claim_sql_is_fully_bound_with_no_interpolation() {
 fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
     for required in [
         "FROM catalog.releases AS release",
-        "JOIN catalog.wirings AS wiring",
+        "release_manifest.manifest #> '{workflow,wirings}'",
         "release.manifest_digest = $3",
         "member.package_id = $12",
-        "wiring.package_id = member.package_id",
-        "wiring.package_version = member.package_version",
-        "wiring.wiring_id = $5",
-        "wiring.version = $6",
-        "wiring.graph_json ->> 'wiring-id' = $5",
+        "wiring.value ->> 'package-id' = member.package_id",
+        "wiring.value ->> 'wiring-id' = $5",
+        "(wiring.value ->> 'wiring-version')::integer = $6",
+        "wiring.value -> 'graph' AS graph_json",
         "component.tenant_id = executing_member.tenant_id",
         "component.package_id = executing_member.package_id",
         "LEFT JOIN release_component AS component",
@@ -489,6 +488,7 @@ fn effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback() {
         "catalog_version",
         "gated_catalog_version",
         "catalog_heads",
+        "catalog.wirings",
     ] {
         assert!(!sql.contains(retired), "effect authority retains {retired}");
     }

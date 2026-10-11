@@ -745,6 +745,7 @@ mod tests {
             .wiring()
             .expect("the fixture invocation enters through a wiring");
         manifest.workflow.wirings = BTreeSet::from([ServingWiring {
+            graph: wamn_catalog::fixture_graph(&position.wiring_id, position.wiring_version),
             package_id: position.package_id.clone(),
             wiring_id: position.wiring_id.clone(),
             wiring_version: position.wiring_version,

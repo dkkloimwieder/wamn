@@ -1,6 +1,6 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
-//! Format 7 closes over exact package membership, component digests, routes,
+//! Format 8 closes over exact package membership, component digests, routes,
 //! the permissions and SQL statements of each export's call graph, and route
 //! attachments. Each component is its package, its admitted descriptor (the
 //! bytes of the descriptor layer of its package artifact,
@@ -35,12 +35,12 @@ use crate::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
     CatalogIdentityError, ComponentConnection, ComponentDescriptor, ComponentOperationDependency,
     ComponentSqlStatement, DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet,
-    ManifestDigest, PackageCoordinate, package::validate_canonical_operation_for_package,
-    validate_digest, validate_text,
+    ManifestDigest, PackageCoordinate, WiringDocument,
+    package::validate_canonical_operation_for_package, validate_digest, validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
-pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 7;
+pub const SERVING_MANIFEST_FORMAT_VERSION: u32 = 8;
 
 /// The attachment auth-policy mode that permits an unauthenticated caller.
 pub const NO_AUTHENTICATION_MODE: &str = "none";
@@ -379,14 +379,54 @@ fn fold_call_graph<'a>(
     Ok(())
 }
 
-/// One immutable wiring definition in the release closure.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// One immutable wiring definition in the release closure: its identity, its
+/// canonical graph, and the hash of that graph. The runtime walks this graph
+/// (docs/plan/platform-deploy.md §5); [`ServingManifest::from_canonical_bytes`]
+/// refuses a graph that does not hash to `graph-hash`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingWiring {
     pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
     pub graph_hash: DefinitionHash,
+    pub graph: WiringDocument,
+}
+
+impl ServingWiring {
+    /// The wiring of `package_id` whose graph is `graph`, keyed by the graph's
+    /// own identity, version and hash.
+    pub fn new(package_id: impl Into<String>, graph: WiringDocument) -> Self {
+        Self {
+            package_id: package_id.into(),
+            wiring_id: graph.wiring_id.clone(),
+            wiring_version: graph.version,
+            graph_hash: graph.wiring_hash(),
+            graph,
+        }
+    }
+
+    fn key(&self) -> (&str, &str, u32, &DefinitionHash) {
+        (
+            &self.package_id,
+            &self.wiring_id,
+            self.wiring_version,
+            &self.graph_hash,
+        )
+    }
+}
+
+/// The graph hash decides the graph, so the order is the order of the key.
+impl Ord for ServingWiring {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.key().cmp(&other.key())
+    }
+}
+
+impl PartialOrd for ServingWiring {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// The contract kind of one application operation.
@@ -1156,9 +1196,9 @@ impl ServingManifest {
         .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Parse, validate, and admit only canonical format-7 bytes.
+    /// Parse, validate, and admit only canonical format-8 bytes.
     ///
-    /// The version is classified before the format-7 schema is decoded. This is
+    /// The version is classified before the format-8 schema is decoded. This is
     /// what makes an unsupported mount an explicit typed refusal rather than a
     /// generic unknown-field parse error, and it deliberately provides no
     /// dual-version tolerance.
@@ -1367,6 +1407,21 @@ impl ServingManifest {
                 return Err(CatalogIdentityError::ZeroVersion {
                     field: "wiring-version",
                 });
+            }
+            wiring.graph.validate()?;
+            if wiring.graph.wiring_id != wiring.wiring_id
+                || wiring.graph.version != wiring.wiring_version
+            {
+                return invalid(format!(
+                    "wiring {:?} version {} carries the graph of another wiring",
+                    wiring.wiring_id, wiring.wiring_version
+                ));
+            }
+            if wiring.graph.wiring_hash() != wiring.graph_hash {
+                return invalid(format!(
+                    "the graph of wiring {:?} version {} does not hash to its graph-hash",
+                    wiring.wiring_id, wiring.wiring_version
+                ));
             }
             if !targets.insert((
                 wiring.package_id.as_str(),
@@ -1618,13 +1673,12 @@ fn within_delivery_limit(bytes: usize) -> Result<(), CatalogIdentityError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixture_graph;
 
     const COMPONENT_A: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const COMPONENT_B: &str =
         "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const GRAPH_A: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-    const GRAPH_B: &str = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
     const DEFINITION: &str =
         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
@@ -1683,18 +1737,8 @@ mod tests {
 
     fn wirings() -> BTreeSet<ServingWiring> {
         BTreeSet::from([
-            ServingWiring {
-                package_id: "overlay".into(),
-                wiring_id: "shipping".into(),
-                wiring_version: 2,
-                graph_hash: definition_hash(GRAPH_B),
-            },
-            ServingWiring {
-                package_id: "base".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 3,
-                graph_hash: definition_hash(GRAPH_A),
-            },
+            ServingWiring::new("overlay", fixture_graph("shipping", 2)),
+            ServingWiring::new("base", fixture_graph("orders", 3)),
         ])
     }
 
@@ -2072,6 +2116,54 @@ mod tests {
         assert!(error.to_string().contains("belongs to no package"));
     }
 
+    /// The manifest carries each wiring's graph, and the reader refuses a
+    /// graph that does not hash to its graph-hash or names another wiring.
+    #[test]
+    fn a_wiring_graph_must_hash_to_its_graph_hash() {
+        let manifest = manifest();
+        let mut swapped = manifest.clone();
+        swapped.workflow.wirings = manifest
+            .workflow
+            .wirings
+            .iter()
+            .map(|wiring| ServingWiring {
+                graph: fixture_graph(&wiring.wiring_id, wiring.wiring_version + 1),
+                ..wiring.clone()
+            })
+            .collect();
+        let error = ServingManifest::from_canonical_bytes(&swapped.canonical_bytes())
+            .expect_err("a graph of another version is refused");
+        assert!(
+            error
+                .to_string()
+                .contains("carries the graph of another wiring")
+        );
+
+        let mut tampered = manifest.clone();
+        tampered.workflow.wirings = manifest
+            .workflow
+            .wirings
+            .iter()
+            .map(|wiring| {
+                let mut graph = wiring.graph.clone();
+                graph.entry = "out".to_owned();
+                let node = graph.nodes.remove("in").expect("fixture node");
+                graph.nodes.insert("out".to_owned(), node);
+                ServingWiring {
+                    graph,
+                    ..wiring.clone()
+                }
+            })
+            .collect();
+        let error = ServingManifest::from_canonical_bytes(&tampered.canonical_bytes())
+            .expect_err("a graph that does not hash to graph-hash is refused");
+        assert!(
+            error
+                .to_string()
+                .contains("does not hash to its graph-hash")
+        );
+    }
+
     #[test]
     fn only_canonical_format_six_bytes_are_admitted() {
         let manifest = manifest();
@@ -2200,14 +2292,14 @@ mod tests {
 
     #[test]
     fn unsupported_formats_are_typed_refusals_not_compatibility_arms() {
-        for version in [0, 1, 2, 3, 4, 5, 6, 8] {
+        for version in [0, 1, 2, 3, 4, 5, 6, 7, 9] {
             let unsupported = serde_json::to_vec(&serde_json::json!({
                 "format-version": version,
                 "release": {}
             }))
             .unwrap();
             let error = ServingManifest::from_canonical_bytes(&unsupported)
-                .expect_err("only format seven may enter the decoder");
+                .expect_err("only format eight may enter the decoder");
             assert_eq!(
                 error,
                 CatalogIdentityError::UnsupportedServingManifestVersion {

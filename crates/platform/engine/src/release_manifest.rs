@@ -323,15 +323,14 @@ mod tests {
     use std::path::PathBuf;
 
     use wamn_catalog::{
-        DefinitionHash, PackageCoordinate, ServingComponent, ServingComponentOperation,
-        ServingRelease, ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
+        PackageCoordinate, ServingComponent, ServingComponentOperation, ServingRelease,
+        ServingWiring, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     };
 
     use super::*;
 
     const COMPONENT: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     fn fixture() -> ServingManifest {
         ServingManifest::new(
@@ -355,13 +354,10 @@ mod tests {
                 descriptor: wamn_catalog::ComponentDescriptor::named("transform", "0.1", COMPONENT),
             }]),
             BTreeSet::new(),
-            BTreeSet::from([ServingWiring {
-                package_id: "cat".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 2,
-                graph_hash: DefinitionHash::parse(GRAPH)
-                    .expect("fixture definition hash is canonical"),
-            }]),
+            BTreeSet::from([ServingWiring::new(
+                "cat",
+                wamn_catalog::fixture_graph("orders", 2),
+            )]),
             BTreeMap::new(),
             BTreeMap::new(),
         )

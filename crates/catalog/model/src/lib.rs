@@ -68,6 +68,8 @@ pub use serving_manifest::{
     UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, WiringAttachment, WorkflowSection,
     parse_attachment_auth_policy, release_manifest_configmap_name,
 };
+#[cfg(any(test, feature = "test-util"))]
+pub use wiring::fixture_graph;
 pub use wiring::{
     WIRING_DOCUMENT_FORMAT_VERSION, WiringDocument, WiringEdge, WiringEventOperation, WiringNode,
     WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,

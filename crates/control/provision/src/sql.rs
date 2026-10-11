@@ -148,13 +148,12 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 1] = ["wirings"];
 /// Catalog relations read by callable-HTTP connection authorization.
 ///
 /// `CONNECTION_EFFECT_SNAPSHOT_SQL` resolves one exact package membership and
-/// joins the immutable wiring, requirement, binding, instance, and generation
-/// facts, and the components that the release manifest carries. Unlike
+/// joins the requirement, binding, instance, and generation facts, and the
+/// components and wirings that the release manifest carries. Unlike
 /// management admission, it never consults the environment's mutable
 /// effective-release head.
-pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 6] = [
+pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 5] = [
     "releases",
-    "wirings",
     "connection_requirements",
     "connection_bindings",
     "connection_instances",
@@ -1222,7 +1221,6 @@ mod tests {
              FROM \"wamn_http_admitter\"; \
              GRANT USAGE ON SCHEMA catalog, app_system, wamn_cache TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"wirings\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
@@ -1232,7 +1230,7 @@ mod tests {
              GRANT SELECT ON TABLE app_system.\"users\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE wamn_cache.\"model_versions\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads six catalog relations, three permission relations and the \
+            "the callable-HTTP admitter reads five catalog relations, three permission relations and the \
              model versions, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.

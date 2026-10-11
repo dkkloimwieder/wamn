@@ -239,7 +239,6 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.connection_instances|SELECT|table",
             "catalog.connection_requirements|SELECT|table",
             "catalog.releases|SELECT|table",
-            "catalog.wirings|SELECT|table",
         ],
         routines: &[],
     },

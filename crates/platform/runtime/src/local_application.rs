@@ -655,12 +655,7 @@ mod tests {
                 ),
             }]),
             BTreeSet::new(),
-            BTreeSet::from([ServingWiring {
-                package_id: "orders".to_owned(),
-                wiring_id: document.wiring_id.clone(),
-                wiring_version: document.version,
-                graph_hash: document.wiring_hash(),
-            }]),
+            BTreeSet::from([ServingWiring::new("orders", document.clone())]),
             BTreeMap::new(),
             BTreeMap::new(),
         )

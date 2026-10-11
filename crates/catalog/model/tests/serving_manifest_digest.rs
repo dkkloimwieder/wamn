@@ -1,4 +1,4 @@
-//! Digest and closed-shape tests for serving-manifest format 7.
+//! Digest and closed-shape tests for serving-manifest format 8.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -7,7 +7,7 @@ use wamn_catalog::{
     AttachmentAuthPolicy, AttachmentTarget, AttachmentType, CatalogIdentityError,
     ComponentDescriptor, DefinitionHash, OperationType, PackageCoordinate, ServingAttachment,
     ServingComponent, ServingComponentOperation, ServingManifest, ServingRegistration,
-    ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring,
+    ServingRegistrationInput, ServingRelease, ServingRoute, ServingWiring, fixture_graph,
     parse_attachment_auth_policy,
 };
 
@@ -21,8 +21,6 @@ mod format_three_vector {
 
 const COMPONENT_A: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const COMPONENT_B: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
-const GRAPH_A: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
-const GRAPH_B: &str = "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 const DEFINITION: &str = "sha256:5555555555555555555555555555555555555555555555555555555555555555";
 
 fn definition_hash(value: &str) -> DefinitionHash {
@@ -79,18 +77,8 @@ fn components() -> BTreeSet<ServingComponent> {
 
 fn wirings() -> BTreeSet<ServingWiring> {
     BTreeSet::from([
-        ServingWiring {
-            package_id: "platform_fixture".into(),
-            wiring_id: "shipping".into(),
-            wiring_version: 2,
-            graph_hash: definition_hash(GRAPH_B),
-        },
-        ServingWiring {
-            package_id: "platform_fixture_overlay".into(),
-            wiring_id: "orders".into(),
-            wiring_version: 1,
-            graph_hash: definition_hash(GRAPH_A),
-        },
+        ServingWiring::new("platform_fixture", fixture_graph("shipping", 2)),
+        ServingWiring::new("platform_fixture_overlay", fixture_graph("orders", 1)),
     ])
 }
 
@@ -183,13 +171,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_seven_preimage_and_digest_are_pinned() {
+fn the_format_eight_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
-        .expect("the format-seven vector is admitted by the reader");
+        .expect("the format-eight vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), publish_vector::DIGEST);
 
@@ -213,7 +201,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
     });
     assert_eq!(format!("sha256:{hex}"), format_three_vector::DIGEST);
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
-        .expect_err("format 7 refuses the frozen format-3 bytes");
+        .expect_err("format 8 refuses the frozen format-3 bytes");
     assert!(
         matches!(
             &error,
@@ -225,7 +213,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
 }
 
 #[test]
-fn fresh_only_is_digest_bound_without_changing_format_seven_default_bytes() {
+fn fresh_only_is_digest_bound_without_changing_format_eight_default_bytes() {
     let baseline = manifest();
     let mut fresh = baseline.clone();
     fresh.components = fresh
@@ -241,9 +229,9 @@ fn fresh_only_is_digest_bound_without_changing_format_seven_default_bytes() {
         })
         .collect();
     let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
-        .expect("format-seven reader admits registered fresh-only operations");
+        .expect("format-eight reader admits registered fresh-only operations");
     assert_eq!(admitted, fresh);
-    assert_eq!(admitted.format_version, 7);
+    assert_eq!(admitted.format_version, 8);
     assert_ne!(digest, baseline.digest());
     assert_eq!(baseline.canonical_bytes(), publish_vector::CANONICAL_BYTES);
 }
@@ -568,7 +556,13 @@ fn every_manifest_field_is_pinned() {
     );
     assert_eq!(
         sorted_keys(&document["workflow"]["wirings"][0]),
-        ["graph-hash", "package-id", "wiring-id", "wiring-version"]
+        [
+            "graph",
+            "graph-hash",
+            "package-id",
+            "wiring-id",
+            "wiring-version"
+        ]
     );
     assert_eq!(
         sorted_keys(&document["workflow"]["attachments"]["orders-http"]),

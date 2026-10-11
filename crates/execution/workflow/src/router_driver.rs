@@ -11,7 +11,7 @@ use crate::router_response::{PartialEvidence, PreparedResponse, ResponseState};
 use crate::wiring_lowering::{WiringScope, lower_resolved_wiring};
 use anyhow::Context as _;
 use tracing::Instrument as _;
-use wamn_catalog::{AdmittedComponent, DefinitionHash, ServingManifest, ServingWiring};
+use wamn_catalog::{AdmittedComponent, DefinitionHash, ServingManifest};
 use wamn_engine::artifact_source::ComponentArtifactFetchErrorType;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::operation::native_workload::NativeComponent;
@@ -922,15 +922,18 @@ impl RouterDriver {
         request: &RouterDriverRequest,
         active: &ActiveWiring<CatalogFacts>,
     ) -> anyhow::Result<()> {
-        let expected = ServingWiring {
-            package_id: request.package_id.clone(),
-            wiring_id: request.wiring_id.clone(),
-            wiring_version: request.wiring_version,
-            graph_hash: DefinitionHash::parse(active.graph_hash.as_ref())
-                .context("active wiring carries a non-canonical definition hash")?,
-        };
+        let graph_hash = DefinitionHash::parse(active.graph_hash.as_ref())
+            .context("active wiring carries a non-canonical definition hash")?;
         anyhow::ensure!(
-            self.release.manifest().workflow.wirings.contains(&expected),
+            self.release
+                .manifest()
+                .workflow
+                .wirings
+                .iter()
+                .any(|wiring| wiring.package_id == request.package_id
+                    && wiring.wiring_id == request.wiring_id
+                    && wiring.wiring_version == request.wiring_version
+                    && wiring.graph_hash == graph_hash),
             "wiring-not-in-carried-release"
         );
         anyhow::ensure!(

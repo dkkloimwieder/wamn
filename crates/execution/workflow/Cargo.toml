@@ -31,6 +31,8 @@ serde_json = { workspace = true }
 tokio-postgres = { workspace = true }
 
 [dev-dependencies]
+# `wamn_catalog::fixture_graph` is gated behind `test-util`.
+wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-schema-control = { workspace = true }
 wamn-control = { workspace = true }
 wamn-test-infrastructure = { workspace = true }

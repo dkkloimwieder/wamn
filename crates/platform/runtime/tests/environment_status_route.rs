@@ -60,8 +60,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
             "type": "get"}],
         "attachments": {ROUTE: attachment},
         "workflow": {
-            "wirings": [{"package-id": "status_test", "wiring-id": "purchase", "wiring-version": 1,
-                "graph-hash": format!("sha256:{}", "b".repeat(64))}],
+            "wirings": [wamn_catalog::ServingWiring::new("status_test", wamn_catalog::fixture_graph("purchase", 1))],
             "attachments": {"purchase-http": {"type": "http", "package-id": "status_test",
                 "wiring-id": "purchase", "wiring-version": 1,
                 "definition-hash": wamn_execution_contract::canonical_json_sha256(&wiring_route),

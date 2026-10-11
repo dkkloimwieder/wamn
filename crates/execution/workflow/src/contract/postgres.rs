@@ -1,9 +1,8 @@
 //! [`PostgresWorkflows`]: the workflow contract over the run plane.
 
-use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, Transaction};
-use wamn_catalog::{ServingManifest, WiringDocument};
+use wamn_catalog::ServingManifest;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
     insert_automation_run_sql, insert_run_queue_sql, list_workflow_runs_sql, park_queued_run_sql,
@@ -114,8 +113,9 @@ impl PostgresWorkflows {
         Ok(())
     }
 
-    /// Check the request against the release and the catalog, and return the
-    /// frozen wiring hash and the durability class.
+    /// Check the request against the release, and return the frozen wiring
+    /// hash and the durability class. The release carries the wiring's graph,
+    /// verified against its hash when the release was read.
     async fn admit(
         &self,
         transaction: &Transaction<'_>,
@@ -138,17 +138,6 @@ impl PostgresWorkflows {
                     request.package_id, request.wiring_id, request.wiring_version
                 ))
             })?;
-        let package = release
-            .release
-            .packages
-            .iter()
-            .find(|package| package.package_id() == request.package_id)
-            .ok_or_else(|| {
-                refused(format!(
-                    "package {} is absent from the release",
-                    request.package_id
-                ))
-            })?;
         let policy = transaction
             .query_opt(
                 "SELECT durability_class FROM environment_policies \
@@ -161,43 +150,6 @@ impl PostgresWorkflows {
         let durability: String = policy
             .try_get(0)
             .map_err(|error| WorkflowError::storage("read the durability class", error))?;
-        let version = i32::try_from(request.wiring_version)
-            .map_err(|_| refused("the wiring version does not fit".to_owned()))?;
-        let graph = transaction
-            .query_opt(
-                "SELECT graph_json::text FROM catalog.wirings \
-                 WHERE tenant_id = $1 AND package_id = $2 AND wiring_id = $3 \
-                   AND version = $4 AND wiring_hash = $5 AND package_version = $6",
-                &[
-                    &self.tenant(),
-                    &request.package_id,
-                    &request.wiring_id,
-                    &version,
-                    &wiring.graph_hash.as_str(),
-                    &package.package_version(),
-                ],
-            )
-            .await
-            .map_err(|error| WorkflowError::storage("read the wiring", error))?
-            .ok_or_else(|| refused("the released wiring is absent from the catalog".to_owned()))?;
-        let graph: String = graph
-            .try_get(0)
-            .map_err(|error| WorkflowError::storage("read the wiring graph", error))?;
-        let document = serde_json::from_str::<Value>(&graph)
-            .map_err(anyhow::Error::from)
-            .and_then(|graph| WiringDocument::parse(&graph).map_err(anyhow::Error::from))
-            .map_err(|error| {
-                WorkflowError::with_source(
-                    WorkflowErrorType::Refused,
-                    "the catalog wiring does not parse",
-                    error,
-                )
-            })?;
-        if document.wiring_hash() != wiring.graph_hash {
-            return Err(refused(
-                "the catalog wiring hash differs from the release".to_owned(),
-            ));
-        }
         Ok((wiring.graph_hash.as_str().to_owned(), durability))
     }
 

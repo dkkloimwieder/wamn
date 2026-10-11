@@ -16,7 +16,9 @@ use super::{CandidateBindingWorld, WamnPostgres};
 /// The release is its manifest digest (docs/plan/platform-deploy.md R1).
 /// `catalog.releases` holds the verified manifest bytes under that digest, and
 /// the package membership, the wiring membership and the component closure are
-/// read from those bytes. Each component's facts are its descriptor in the
+/// read from those bytes. The wiring's graph is the one the manifest carries
+/// beside its graph hash, never a `catalog.wirings` row, so a fresh install
+/// serves every wiring its release names. Each component's facts are its descriptor in the
 /// manifest, the one owner of component facts (R2). Binds: `$1` tenant, `$2` package, `$3` wiring id,
 /// `$4` wiring version, `$5` manifest digest.
 pub const RELEASE_WIRING_SQL: &str = "\
@@ -32,26 +34,18 @@ WITH release_scope AS MATERIALIZED ( \
      CROSS JOIN LATERAL jsonb_array_elements(release_scope.manifest #> '{release,packages}') \
            AS package(value) \
 ), selected AS MATERIALIZED ( \
-    SELECT wiring.version, release_package.package_version, \
-           wiring.graph_json, wiring.wiring_hash \
+    SELECT (member.value ->> 'wiring-version')::integer AS version, \
+           release_package.package_version, \
+           member.value -> 'graph' AS graph_json, \
+           member.value ->> 'graph-hash' AS wiring_hash \
       FROM release_scope \
       JOIN release_package ON release_package.package_id = $2 \
-      JOIN catalog.wirings AS wiring \
-        ON wiring.tenant_id = $1 \
-       AND wiring.package_id = $2 \
-       AND wiring.package_version = release_package.package_version \
-       AND wiring.wiring_id = $3 \
-       AND wiring.version = $4 \
-     WHERE EXISTS ( \
-           SELECT 1 \
-             FROM jsonb_array_elements( \
-                    COALESCE(release_scope.manifest #> '{workflow,wirings}', '[]'::jsonb) \
-                  ) AS member(value) \
-            WHERE member.value ->> 'package-id' = $2 \
-              AND member.value ->> 'wiring-id' = $3 \
-              AND member.value ->> 'wiring-version' = $4::text \
-              AND member.value ->> 'graph-hash' = wiring.wiring_hash \
-       ) \
+     CROSS JOIN LATERAL jsonb_array_elements( \
+           COALESCE(release_scope.manifest #> '{workflow,wirings}', '[]'::jsonb) \
+         ) AS member(value) \
+     WHERE member.value ->> 'package-id' = $2 \
+       AND member.value ->> 'wiring-id' = $3 \
+       AND (member.value ->> 'wiring-version')::integer = $4 \
 ) \
 SELECT selected.version, selected.package_version, \
        selected.graph_json::text, selected.wiring_hash, \
@@ -1152,6 +1146,7 @@ mod tests {
         assert!(RELEASE_WIRING_SQL.contains("catalog.releases"));
         assert!(RELEASE_WIRING_SQL.contains("release.manifest_digest = $5"));
         assert!(!RELEASE_WIRING_SQL.contains("wiring_activation"));
+        assert!(!RELEASE_WIRING_SQL.contains("catalog.wirings"));
     }
 
     #[test]

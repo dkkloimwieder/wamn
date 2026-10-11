@@ -226,6 +226,28 @@ pub struct WiringDocument {
     pub response: Option<WiringResponse>,
 }
 
+/// A valid one-node graph of `wiring_id` at `version`, for tests.
+#[cfg(any(test, feature = "test-util"))]
+pub fn fixture_graph(wiring_id: &str, version: u32) -> WiringDocument {
+    let node = WiringNode {
+        component: "transform".to_owned(),
+        interface_version: "0.1".to_owned(),
+        operation: "map".to_owned(),
+        operation_dependency: None,
+        params: BTreeMap::new(),
+        terminal: None,
+    };
+    WiringDocument::new(
+        wiring_id,
+        version,
+        "in",
+        BTreeMap::from([("in".to_owned(), node)]),
+        Vec::new(),
+        Vec::new(),
+    )
+    .expect("the fixture graph is valid")
+}
+
 impl WiringDocument {
     /// Build and validate one wiring document from its parts.
     ///
@@ -283,7 +305,7 @@ impl WiringDocument {
         serde_json::to_value(self).expect("wiring document serializes")
     }
 
-    fn validate(&self) -> Result<(), CatalogIdentityError> {
+    pub(crate) fn validate(&self) -> Result<(), CatalogIdentityError> {
         if contains_secret_value(&self.as_value()) {
             return invalid(
                 "wiring document contains a secret-shaped value; supply credentials through an environment-owned connection",

@@ -213,7 +213,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         "components":[{"package-id":"automation",
           "descriptor": wamn_catalog::ComponentDescriptor::new(admitted.clone(), Vec::new()),
           "operations":{(node.operation.clone()):node.serving}}],
-        "routes":[],"attachments":{},"workflow":{"wirings":[{"package-id":"automation","wiring-id":"echo","wiring-version":1,"graph-hash":graph_hash.as_str()}]}
+        "routes":[],"attachments":{},"workflow":{"wirings":[wamn_catalog::ServingWiring::new("automation", document.clone())]}
     }))?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(

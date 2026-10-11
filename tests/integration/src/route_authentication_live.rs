@@ -269,12 +269,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
         "routes": [],
         "attachments": {},
         "workflow": {
-            "wirings": [{
-                "package-id": FIXTURE_PACKAGE_ID,
-                "wiring-id": "item-get",
-                "wiring-version": 1,
-                "graph-hash": format!("sha256:{}", "b".repeat(64))
-            }],
+            "wirings": [wamn_catalog::ServingWiring::new(FIXTURE_PACKAGE_ID, wamn_catalog::fixture_graph("item-get", 1))],
             "attachments": {
                 (ATTACHMENT_ID): {
                     "type": "http",

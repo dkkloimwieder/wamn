@@ -179,10 +179,7 @@ async fn build_with_credentials(
     let wiring_hash = document.wiring_hash().as_str().to_owned();
     let release = Arc::new(
         LoadedRelease::load_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&release_manifest(
-                &admitted,
-                &wiring_hash,
-            )),
+            &wamn_execution_contract::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
             wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
         )
@@ -306,7 +303,7 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
 /// closure makes — `manifest.components` in `invoke_node`, `manifest.wirings` in
 /// `validate_wiring_closure` and again in `authorize_release_closure` — read
 /// this document.
-fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_json::Value {
+fn release_manifest(component: &AdmittedComponent, document: &WiringDocument) -> serde_json::Value {
     let attachment_definition = serde_json::json!({
         "id": ATTACHMENT_ID,
         "kind": "http",
@@ -359,12 +356,7 @@ fn release_manifest(component: &AdmittedComponent, wiring_hash: &str) -> serde_j
         "routes": [],
         "attachments": {},
         "workflow": {
-            "wirings": [{
-                "package-id": PACKAGE,
-                "wiring-id": WIRING_ID,
-                "wiring-version": WIRING_VERSION,
-                "graph-hash": wiring_hash,
-            }],
+            "wirings": [wamn_catalog::ServingWiring::new(PACKAGE, document.clone())],
             "attachments": {
                 (ATTACHMENT_ID): {
                     "type": "http",

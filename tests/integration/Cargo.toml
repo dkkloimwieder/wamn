@@ -59,6 +59,8 @@ wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
+# `wamn_catalog::fixture_graph` is gated behind `test-util`.
+wamn-catalog = { workspace = true, features = ["test-util"] }
 # The session fixture of the runtime tests, which control_client_live includes.
 base64 = { workspace = true }
 rcgen = { workspace = true }

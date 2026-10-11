@@ -1358,7 +1358,6 @@ mod tests {
 
     const COMPONENT: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    const GRAPH: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const DEFINITION_HASH: &str =
         "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
@@ -1382,12 +1381,10 @@ mod tests {
     }
 
     fn wirings() -> BTreeSet<ServingWiring> {
-        BTreeSet::from([ServingWiring {
-            package_id: "cat".into(),
-            wiring_id: "orders".into(),
-            wiring_version: 1,
-            graph_hash: DefinitionHash::parse(GRAPH).expect("fixture definition hash is canonical"),
-        }])
+        BTreeSet::from([ServingWiring::new(
+            "cat",
+            wamn_catalog::fixture_graph("orders", 1),
+        )])
     }
 
     fn attachment(kind: AttachmentType, definition: Value) -> ServingAttachment {

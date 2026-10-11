@@ -895,11 +895,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              INSERT INTO catalog.releases \
                (tenant_id, manifest_digest, canonical_bytes) \
              VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{{}}');\n\
-             INSERT INTO catalog.wirings \
-               (tenant_id, package_id, package_version, wiring_id, version, \
-                graph_json, wiring_hash, created_at) \
-             VALUES ('tenant-a', 'orders', '1.0.0', 'hot-route', 1, \
-                     '{{}}', '{digest}', now());\n\
              INSERT INTO catalog.connection_instances \
                (tenant_id, environment, instance_id, requirement_type, contract, \
                 lifecycle_status, active_generation, revision, created_at, updated_at) \

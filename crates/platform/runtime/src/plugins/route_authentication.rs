@@ -521,12 +521,10 @@ mod tests {
                 ),
             }]),
             BTreeSet::new(),
-            BTreeSet::from([ServingWiring {
-                package_id: "cat".into(),
-                wiring_id: "orders".into(),
-                wiring_version: 1,
-                graph_hash: DefinitionHash::parse(digest('b')).unwrap(),
-            }]),
+            BTreeSet::from([ServingWiring::new(
+                "cat",
+                wamn_catalog::fixture_graph("orders", 1),
+            )]),
             BTreeMap::from([(
                 "orders".to_string(),
                 ServingAttachment {

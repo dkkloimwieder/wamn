@@ -1552,12 +1552,10 @@ fn project_wiring_document(
     resolve_component_dependency_closure(&resolved, &component_facts.facts, rule)?;
     validate_anonymous_wiring_closure(request.attachments, target, document, &resolved)?;
     let entry_operation = resolved_wiring_entry_operation(document, &resolved)?;
-    wirings.insert(ServingWiring {
-        package_id: target.package_id.clone(),
-        wiring_id: target.wiring_id.clone(),
-        wiring_version: target.wiring_version,
-        graph_hash: document.wiring_hash(),
-    });
+    wirings.insert(ServingWiring::new(
+        target.package_id.clone(),
+        document.clone(),
+    ));
     for fact in resolved.values() {
         components.insert(project_serving_component(
             fact,
@@ -3572,7 +3570,7 @@ mod manifest_push {
 
         use super::*;
 
-        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":7,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+        const CANONICAL_MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":8,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"graph-hash":"sha256:2f3e2e4bc66fdec997840e24c541545a067d84da0f1c11af8f883005edb0b777","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
 
         fn fixture_reference() -> Reference {
             Reference::with_tag(
@@ -3605,9 +3603,9 @@ mod manifest_push {
         fn unsupported_format_and_noncanonical_documents_refuse_before_transport() {
             let unsupported = std::str::from_utf8(CANONICAL_MANIFEST)
                 .expect("fixture is UTF-8")
-                .replacen("\"format-version\":7", "\"format-version\":6", 1);
+                .replacen("\"format-version\":8", "\"format-version\":7", 1);
             let unsupported = ServingManifest::from_canonical_bytes(unsupported.as_bytes())
-                .expect_err("format six refuses");
+                .expect_err("format seven refuses");
             assert!(format!("{unsupported}").contains("unsupported-serving-manifest-version"));
 
             let mut indented = CANONICAL_MANIFEST.to_vec();

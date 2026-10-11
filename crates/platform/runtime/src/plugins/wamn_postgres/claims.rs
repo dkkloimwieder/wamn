@@ -510,7 +510,9 @@ pub struct ConnectionEffectSnapshot {
 /// a database relation and must not be projected back into Postgres.
 ///
 /// The origin and executing component facts are the descriptors of the
-/// components of release `$3`, the one owner of component facts (R2).
+/// components of release `$3`, the one owner of component facts (R2). The
+/// wiring's graph is the one release `$3` carries, never a `catalog.wirings`
+/// row.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH release_manifest AS MATERIALIZED ( \
     SELECT release.tenant_id, \
@@ -540,18 +542,17 @@ WITH release_manifest AS MATERIALIZED ( \
       FROM release_member AS member \
      WHERE member.package_id = $12 \
 ), selected_wiring AS MATERIALIZED ( \
-    SELECT wiring.wiring_hash, wiring.graph_json, \
+    SELECT wiring.value ->> 'graph-hash' AS wiring_hash, wiring.value -> 'graph' AS graph_json, \
            member.tenant_id, member.package_id, member.package_version \
       FROM member \
-      JOIN catalog.wirings AS wiring \
-        ON wiring.tenant_id = member.tenant_id \
-       AND wiring.package_id = member.package_id \
-       AND wiring.package_version = member.package_version \
+     CROSS JOIN release_manifest \
+     CROSS JOIN LATERAL jsonb_array_elements( \
+           COALESCE(release_manifest.manifest #> '{workflow,wirings}', '[]'::jsonb) \
+         ) AS wiring(value) \
      WHERE $5::text IS NOT NULL \
-       AND wiring.wiring_id = $5 \
-       AND wiring.version = $6 \
-       AND wiring.graph_json ->> 'wiring-id' = $5 \
-       AND wiring.graph_json ->> 'version' = $6::text \
+       AND wiring.value ->> 'package-id' = member.package_id \
+       AND wiring.value ->> 'wiring-id' = $5 \
+       AND (wiring.value ->> 'wiring-version')::integer = $6 \
 ) \
 SELECT wiring.wiring_hash, component.component, component.interface_version, \
        $18::text, \

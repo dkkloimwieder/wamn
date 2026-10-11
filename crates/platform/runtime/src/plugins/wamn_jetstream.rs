@@ -1510,8 +1510,8 @@ mod tests {
     use std::path::Path;
 
     use wamn_catalog::{
-        DefinitionHash, PackageCoordinate, ServingManifest, ServingRegistration,
-        ServingRegistrationInput, ServingRelease, ServingWiring,
+        PackageCoordinate, ServingManifest, ServingRegistration, ServingRegistrationInput,
+        ServingRelease, ServingWiring,
     };
 
     use super::*;
@@ -1861,15 +1861,10 @@ mod tests {
             },
             BTreeSet::new(),
             BTreeSet::new(),
-            BTreeSet::from([ServingWiring {
-                package_id: "cat".into(),
-                wiring_id: "event-handler".into(),
-                wiring_version: 1,
-                graph_hash: DefinitionHash::parse(
-                    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                )
-                .expect("fixture definition hash is canonical"),
-            }]),
+            BTreeSet::from([ServingWiring::new(
+                "cat",
+                wamn_catalog::fixture_graph("event-handler", 1),
+            )]),
             BTreeMap::new(),
             BTreeMap::from([("cat::r1".to_string(), registration)]),
         )

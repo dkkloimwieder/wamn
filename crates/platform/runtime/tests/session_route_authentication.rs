@@ -208,8 +208,7 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
             READ_ROUTE: route_attachment(READ_ROUTE, "/purchase/read", READ, modes),
             WRITE_ROUTE: route_attachment(WRITE_ROUTE, "/purchase/write", WRITE, modes)},
         "workflow": {
-            "wirings": [{"package-id": "session_test", "wiring-id": "purchase", "wiring-version": 1,
-                "graph-hash": format!("sha256:{}", "b".repeat(64))}],
+            "wirings": [wamn_catalog::ServingWiring::new("session_test", wamn_catalog::fixture_graph("purchase", 1))],
             "attachments": {ATTACHMENT: {"type": "http", "package-id": "session_test", "wiring-id": "purchase",
                 "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
                 "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ}}
