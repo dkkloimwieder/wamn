@@ -184,6 +184,12 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> String {
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .expect("install the catalog schema");
+    // apply-package creates a model schema as wamn_db_owner.
+    project
+        .0
+        .batch_execute("BEGIN; SET LOCAL ROLE wamn_db_owner; CREATE SCHEMA wms; ROLLBACK")
+        .await
+        .expect("wamn_db_owner creates a model schema");
     close(project).await;
     wamn_control::reconcile_run_plane::reconcile_run_plane(
         wamn_control::reconcile_run_plane::ReconcileRunPlaneRequest {

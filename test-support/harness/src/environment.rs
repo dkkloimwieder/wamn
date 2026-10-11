@@ -89,6 +89,12 @@ pub async fn apply_project_database(
         .batch_execute(&sql::create_database_named_sql(database))
         .await
         .context("create the emitted project database")?;
+    // The Database CR names wamn_db_owner in spec.owner; package DDL runs as
+    // that role and needs the owner's CREATE on the database.
+    admin
+        .batch_execute(&sql::set_database_owner_sql(database))
+        .await
+        .context("give the emitted project database to wamn_db_owner")?;
     admin
         .batch_execute(
             &std::fs::read_to_string(privilege_path).context("read emitted privilege SQL")?,
