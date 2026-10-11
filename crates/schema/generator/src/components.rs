@@ -821,43 +821,4 @@ mod tests {
         let error = check_guest(&repository, "guest", &file, &manifest).unwrap_err();
         assert!(error.to_string().contains("pins sha256:"), "{error:#}");
     }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn an_overlay_whose_operations_object_names_a_dependency_composes() {
-        let scratch = scratch("compose");
-        let package_root = scratch.0.join("overlay");
-        let declarations = package_root.join("publication/components");
-        fs::create_dir_all(&declarations).unwrap();
-        fs::write(
-            declarations.join("overlay.json.in"),
-            serde_json::to_vec(&serde_json::json!({"operations": {
-                "overlay:p/op": {"dependencies": [{"package": "base"}]}
-            }}))
-            .unwrap(),
-        )
-        .unwrap();
-        let manifest: PackageManifest = serde_json::from_value(serde_json::json!({
-            "package": {"id": "overlay", "version": "1.0.0"},
-            "base_dependencies": {"base": {
-                "package": "base", "version": "1.0.0", "digest": "d", "operations": []
-            }},
-            "required_platform_policy_contract": {"id": "p", "state": "unsatisfied"},
-            "models": {},
-            "connections": [],
-            "components": {}
-        }))
-        .unwrap();
-        let request = BuildRequest::new(&package_root, &scratch.0.join("out"), "");
-        let file = scratch.0.join("overlay.wasm");
-
-        // Composition reads the build of the base first; a skipped
-        // composition returns the overlay as it is.
-        let error = compose(&request, &scratch.0, &manifest, "overlay", &file, &[])
-            .await
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("read the build of base base"),
-            "{error:#}"
-        );
-    }
 }

@@ -576,6 +576,7 @@ cargo test --locked --offline -p wamn-schema-generator --test build_live
 They copy the platform fixture and build it into their own output root.
 Two builds must give the same bytes and the same `build.json`.
 The tests also check that a left-out statement type is derived and that the nullability rule of [building](building.md#wamn-build) holds.
+One test composes Acme over Receiving into a copy of their build output and checks that the composed component embeds the exact bytes of the Receiving component. Run `wamn build apps/wamn_receiving apps/client_acme_receiving` first.
 
 ### Generated TypeScript bindings
 

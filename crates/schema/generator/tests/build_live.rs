@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_schema_generator::build::{BuildRequest, build_package, package_output};
+use wamn_schema_generator::build::{BuildRequest, build_components, build_package, package_output};
 use wamn_schema_generator::receipt;
 
 /// A test-owned copy of the fixture and its overlay, side by side.
@@ -231,4 +231,53 @@ async fn statement_types_are_derived_and_nullability_only_widens() {
         format!("{error:#}").contains("row value note is declared not null"),
         "{error:#}"
     );
+}
+
+/// Step 7 composes an overlay whose `operations` object names a base
+/// dependency: Acme over Receiving. The composed component embeds the base
+/// component's exact bytes, which push-package admission requires of a
+/// declared dependency. It builds into a copy of the build output of
+/// `wamn build apps/wamn_receiving apps/client_acme_receiving`, so run that
+/// first.
+#[tokio::test(flavor = "current_thread")]
+async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
+    let apps = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps");
+    let built = apps.join("target/wamn");
+    let output_root =
+        std::env::temp_dir().join(format!("wamn-build-live-{}-compose", std::process::id()));
+    let _ = fs::remove_dir_all(&output_root);
+    for package in ["wamn_receiving", "client_acme_receiving"] {
+        let source = package_output(&built, package);
+        for (path, bytes) in snapshot(&source) {
+            let target = package_output(&output_root, package).join(path);
+            fs::create_dir_all(target.parent().unwrap()).expect("create an output directory");
+            fs::write(target, bytes).expect("copy an output file");
+        }
+    }
+    let request = BuildRequest::new(&apps.join("client_acme_receiving"), &output_root, "");
+
+    let receipt = build_components(&request, "client_acme_receiving")
+        .await
+        .expect("compose Acme over Receiving");
+
+    let component = |package: &str, name: &str| {
+        fs::read(package_output(&output_root, package).join(format!("components/{name}.wasm")))
+            .expect("read a built component")
+    };
+    let base = component("wamn_receiving", "receiving");
+    let composed = component("client_acme_receiving", "client_acme_receiving");
+    assert!(composed.len() > base.len());
+    assert!(
+        composed.windows(base.len()).any(|window| window == base),
+        "the composed component embeds the base bytes"
+    );
+    assert!(
+        receipt
+            .outputs
+            .components
+            .iter()
+            .any(|entry| entry.name == "client_acme_receiving"),
+        "build.json records the composed component"
+    );
+    fs::remove_dir_all(&output_root).expect("remove the output copy");
 }
