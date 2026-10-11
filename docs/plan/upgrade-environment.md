@@ -18,7 +18,7 @@ The cutover took most of two days of wall time for one environment pair (§3.1).
 - The attestation is the contract, not the release number (owner ruling on `wamn-ld93.21`, 2026-10-02). The verb takes the next free release id of the environment. It never publishes again under an id that holds an attestation of another commit. `select-release` does not compare the attestation's commit with the qualification's commit. The attestation stays as a record, and the gate of a select is the qualification's package set and image digests (owner ruling of 2026-10-03 on `wamn-1wou`).
 - The kind cases read the host credential Secrets with `derive_host_secrets`. It refuses only a credential file, named `<family>.json`, that the case does not declare, and it names that file. Any other file beside the Secrets is ignored (owner ruling of 2026-10-03 on `wamn-h56j`). Row 10 of §3.1 stopped on a patch file beside the Secrets.
 - Tags are immutable on the `wamn` registry since 2026-10-02 (B13). A guest file is pushed once under the sha256 hex of its bytes. If that tag exists, the verb reads its digest and does not push again.
-- The verb stops only on a refusal that changes what runs: a `publish-qualified-release` bytes refusal, a migration refusal, a failed qualification, or a failed serve check after the hosts change (the stop rule of the cutover). Every other failure is either retried by a defined rule or is a defect of the verb.
+- The verb stops only on a refusal that changes what runs: a migration refusal, a failed qualification, or a failed serve check after the hosts change (the stop rule of the cutover). Every other failure is either retried by a defined rule or is a defect of the verb.
 - Each step is idempotent. It reads the state that it changes. When the state is already the target, it does nothing and records that. A second run of the verb with the same arguments after a stop resumes at the first unfinished step.
 - The run record is the only output that a person reads. It names every step, its start and end in UTC, its inputs and its result, with no credential.
 - No verb touches `wamn-dev` until it completed end to end on a kind stack with the same parts as GCP (owner ruling of 2026-10-02 after run 1, `wamn-m511.7`). Those parts are the CloudNativePG operator and a `Cluster`, NATS pods with `WAMN_TAP`, identity with its operator certificate, the control store, and a private registry with a login.
@@ -152,12 +152,11 @@ The verb runs these stages in order. Each stage is a function over the run recor
 4. Guests. Push each distinct guest file once under its sha256 hex. If the tag exists, read its digest.
 5. Preflight. Before any change to the environment: compare the CPU and memory requests of the target host groups with the allocatable capacity of the pool. Make sure that the broker runs and that `WAMN_TAP` exists. When `WAMN_TAP` is missing, run the tap Job. Read the attestations of the environment and choose the next free release id.
 6. Schema. Run `upgrade-schema` on the system database and on each project database of the environment. A migration refusal stops the run.
-7. Packages. Apply the packages, reconcile data access, author the wirings and publish the release under the chosen id. `push-package` pushes each new package version with its components; the stage pushes no component of its own. The gate, authorship and the binding copy take component facts and digests from the descriptors of the verified package artifacts. The gate service runs for the whole stage and for the retirement of stage 11.
-8. Qualify. Prepare the candidate from the stage 2 target and run `qualify-release` with `--revision <commit>`. Keep the case results of a failed case (`wamn-e6iw`). A failed qualification stops the run.
-9. Publish and select. Run `publish-qualified-release`, then one `select-release` for every environment that the run changes. A bytes refusal stops the run.
-10. Deploy. Upload the web client. Render the edge values and the URL map. Render the host values from the stage 3 host image and the workloads from the stage 4 digests. Upgrade the hosts and apply the workloads. Wait for every host group and workload to be Ready.
-11. Check and retire. Run the serve check: each released route of the manifest that the check names answers 401 without a credential, and an unknown path answers 404. A failed serve check stops the run. Then retire the old gate generation while the gate service holds its session. Revoke every management-author PAT of the environment that is not the current one. The verb revokes only what upgrades issue. A PAT of a user is not the verb's to revoke (owner ruling, 2026-10-02).
-12. Record. Write the run record. The operations page cites it, and no person writes the record by hand.
+7. Packages. Apply the packages, reconcile data access, author the wirings and publish the release under the chosen id. `push-package` pushes each new package version with its components; the stage pushes no component of its own. The gate, authorship and the binding copy take component facts and digests from the descriptors of the verified package artifacts. The gate service runs for the whole stage and for the retirement of stage 10.
+8. Qualify. Run `qualify-release` with the release digest of stage 7 and the release chart. Its output is the printed digest of the qualification artifact. Keep the case results of a failed case (`wamn-e6iw`). A failed qualification stops the run.
+9. Deploy. Upload the web client. Render the edge values and the URL map. Render the host values from the stage 3 host image and the workloads from the stage 4 digests. Upgrade the hosts and apply the workloads. Wait for every host group and workload to be Ready.
+10. Check and retire. Run the serve check: each released route of the manifest that the check names answers 401 without a credential, and an unknown path answers 404. A failed serve check stops the run. Then retire the old gate generation while the gate service holds its session. Revoke every management-author PAT of the environment that is not the current one. The verb revokes only what upgrades issue. A PAT of a user is not the verb's to revoke (owner ruling, 2026-10-02).
+11. Record. Write the run record. The operations page cites it, and no person writes the record by hand.
 
 ### 4.3 Waits and retries
 
@@ -175,9 +174,9 @@ Epic 1, one branch, each issue with its tests. No issue runs against wamn-dev un
 2. Test tools in kind against a private registry (§4.4).
 3. Failed case results kept (`wamn-e6iw`).
 4. The environment file and its two `wamn-dev` instances (§4.1). `host_values_files.rs` takes the host image as an argument.
-5. The run record and the resume rule (§2, §4.2 stage 12).
+5. The run record and the resume rule (§2, §4.2 stage 11).
 6. Stages 1 to 5: source, build, images, guests, preflight.
-7. Stages 6 to 9: schema, packages, qualify, publish and select, with the next free release id.
+7. Stages 6 to 8: schema, packages and qualify, with the next free release id.
 8. Stages 10 to 12: deploy, serve check, retirement, record, with the waits of §4.3.
 9. A kind run of stages 1 to 9 against a disposable stack and a private registry, with no switches, no MinIO and no second edge. Stages 10 to 12 have no kind test. The first live run on wamn-dev, for Receiving and WMS at one commit, is their test (owner ruling, 2026-10-02). The live run records its times beside §3.1.
 
