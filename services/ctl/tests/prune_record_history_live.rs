@@ -182,9 +182,8 @@ fn upgrade_retention(root: &Path, table: &str, retention: &str) {
 /// The `apply-package` verb takes only a pushed artifact, so the fixture tree
 /// stands in for one under a digest of its own bytes.
 async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
-    wamn_control::package_artifact::record_fixture_artifact_digest(package)?;
     apply_package::apply_package(ApplyPackageRequest {
-        package: package.to_owned(),
+        package: wamn_control::package_artifact::fixture_package_root(package)?,
         database_url: url.to_owned(),
         tenant: TENANT.to_owned(),
     })

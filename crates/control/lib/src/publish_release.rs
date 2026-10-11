@@ -678,9 +678,9 @@ async fn publish_candidate(
             (
                 package.package_id().to_owned(),
                 opened
-                    .digest()
-                    .expect("a verified package opens from its registry digest")
-                    .to_owned(),
+                    .package_root()
+                    .artifact_digest
+                    .expect("a verified package opens from its registry digest"),
             )
         })
         .collect::<BTreeMap<_, _>>();

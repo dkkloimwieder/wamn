@@ -108,12 +108,15 @@ pub(super) fn validate_transition(
                     "overlay predecessor pin or consumed operation is absent from the serving release"
                 );
                 let original = consumed_contract(
-                    &predecessor_base.root,
+                    &predecessor_base.root.path,
                     &predecessor_base.manifest,
                     operation,
                 )?;
-                let successor =
-                    consumed_contract(&candidate_base.root, &candidate_base.manifest, operation)?;
+                let successor = consumed_contract(
+                    &candidate_base.root.path,
+                    &candidate_base.manifest,
+                    operation,
+                )?;
                 ensure!(
                     original == successor,
                     "consumed base operation {operation} changes its contract; incompatible transitions belong to Epic 3"

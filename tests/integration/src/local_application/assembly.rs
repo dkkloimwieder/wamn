@@ -203,9 +203,8 @@ pub(super) async fn assemble(
     let mut wirings = Vec::new();
     let mut roots = BTreeMap::new();
     for package in input.packages {
-        wamn_control::package_artifact::record_fixture_artifact_digest(package.root)?;
         let applied = apply_package(ApplyPackageRequest {
-            package: package.root.to_owned(),
+            package: wamn_control::package_artifact::fixture_package_root(package.root)?,
             database_url: input.database_url.to_owned(),
             tenant: input.tenant.to_owned(),
         })
@@ -252,8 +251,8 @@ pub(super) async fn assemble(
             packages: input
                 .packages
                 .iter()
-                .map(|package| package.root.to_owned())
-                .collect(),
+                .map(|package| wamn_control::package_artifact::fixture_package_root(package.root))
+                .collect::<anyhow::Result<_>>()?,
             database_url: input.database_url.to_owned(),
             tenant: input.tenant.to_owned(),
         },

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::Args;
-use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
+use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest, PackageRoot};
 use wamn_control::package_artifact::{
     self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };
@@ -138,7 +138,7 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
         tenant: args.tenant,
         environment: args.environment,
         predecessor_release: args.predecessor_release,
-        package: package.root().to_owned(),
+        package: package.package_root(),
         presented_packages: roots(&presented),
         predecessor_packages: roots(&predecessors),
         base_component: args.base_component,
@@ -221,11 +221,8 @@ async fn open_all(
     Ok(opened)
 }
 
-fn roots(opened: &[OpenedPackage]) -> Vec<PathBuf> {
-    opened
-        .iter()
-        .map(|package| package.root().to_owned())
-        .collect()
+fn roots(opened: &[OpenedPackage]) -> Vec<PackageRoot> {
+    opened.iter().map(OpenedPackage::package_root).collect()
 }
 
 /// Push one authored package as a registry artifact.
@@ -336,7 +333,7 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let opened = open(&registry, args.package_artifact).await?;
     let presented = open_all(&registry, args.presented_packages).await?;
     let request = ApplyPackageRequest {
-        package: opened.root().to_path_buf(),
+        package: opened.package_root(),
         database_url: args.database_url,
         tenant: args.tenant,
     };

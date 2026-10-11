@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use anyhow::{Context as _, bail, ensure};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_schema_control::plan_package_migrations;
+
+use crate::apply_package::PackageRoot;
 use wamn_schema_generator::{
     DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationFields, EffectiveDataAccess,
     data_access_schemas, derive_effective_data_access, render_effective_data_access_sql,
@@ -69,8 +71,10 @@ type CoordinateHashes = BTreeMap<(String, String), Option<String>>;
 /// Inputs of one post-apply generated ACL reconciliation.
 #[derive(Debug)]
 pub struct ReconcilePackageDataAccessRequest {
-    /// Installed package roots containing wamn.json and generated policy evidence.
-    pub packages: Vec<PathBuf>,
+    /// Installed package roots containing wamn.json and generated policy
+    /// evidence, each with the digest of the verified artifact it was opened
+    /// from.
+    pub packages: Vec<PackageRoot>,
 
     /// Owner connection to the target project-environment database.
     pub database_url: String,
@@ -115,7 +119,7 @@ type EffectiveAcl = upgrade::UpgradePrivileges;
 
 #[derive(Debug)]
 struct PresentedPackage {
-    root: PathBuf,
+    root: PackageRoot,
     coordinate: String,
     package_id: String,
     package_version: String,
@@ -152,8 +156,16 @@ pub async fn reconcile_package_data_access(
     .await
 }
 
+/// Read the working trees of `wamn dev`, which carry no artifact digest.
 pub fn prepare_local(packages: &[PathBuf]) -> anyhow::Result<PreparedLocalDataAccess> {
-    read_presented_packages(packages).map(PreparedLocalDataAccess)
+    let roots = packages
+        .iter()
+        .map(|path| PackageRoot {
+            path: path.clone(),
+            artifact_digest: None,
+        })
+        .collect::<Vec<_>>();
+    read_presented_packages(&roots).map(PreparedLocalDataAccess)
 }
 
 /// Recheck live schema and grants using the already parsed local source inputs.
@@ -176,18 +188,18 @@ pub async fn reconcile_local(
     .await
 }
 
-fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPackage>> {
+fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<PresentedPackage>> {
     ensure!(!roots.is_empty(), "package-data-access-installed-set-empty");
     let mut packages = Vec::with_capacity(roots.len());
     let mut coordinates = BTreeSet::new();
     let mut package_ids = BTreeSet::new();
     for package_root in roots {
-        let directory = super::apply_package::read_package_directory(package_root)?;
+        let directory = super::apply_package::read_package_root(package_root)?;
         let plan = plan_package_migrations(&directory, None)
             .context("validate package directory before data-access reconciliation")?;
         let schemas = data_access_schemas(&directory.manifest_bytes)
             .context("derive package data-access schema set")?;
-        let overlay_path = wamn_schema_generator::output_root(package_root)
+        let overlay_path = wamn_schema_generator::output_root(&package_root.path)
             .join("platform-policy/data-access.json");
         let overlay_bytes = std::fs::read(&overlay_path)
             .with_context(|| format!("read {}", overlay_path.display()))?;
@@ -523,11 +535,16 @@ fn validate_recorded_manifests(
         let recorded_hash = installed
             .get(&(package_id.clone(), package_version.clone()))
             .expect("every presented coordinate was confirmed as applied");
-        let (Some(recorded_hash), Some(presented_hash)) = (recorded_hash, presented_hash) else {
+        let Some(recorded_hash) = recorded_hash else {
             bail!(
-                "package-data-access-artifact-required: package={package_id}@{package_version}; recorded-digest={}; presented-digest={}; remedy=present the verified artifact of a coordinate that apply-package installed from it",
-                recorded_hash.as_deref().unwrap_or("<working tree>"),
-                presented_hash.as_deref().unwrap_or("<working tree>")
+                "{}: package={package_id}@{package_version} was applied by wamn dev from a working tree; recreate the environment and apply verified artifacts",
+                wamn_schema_control::PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL
+            );
+        };
+        let Some(presented_hash) = presented_hash else {
+            bail!(
+                "{}: package={package_id}@{package_version} is a working tree; present its verified artifact",
+                crate::apply_package::PACKAGE_ARTIFACT_REQUIRED_REFUSAL
             );
         };
         ensure!(
@@ -956,6 +973,21 @@ mod tests {
         assert!(
             refusal.contains("unapplied-artifacts=[dock@1.1.0]"),
             "the refusal did not name the unapplied coordinate: {refusal}"
+        );
+    }
+
+    /// A coordinate that `wamn dev` applied records no artifact digest, and
+    /// reconcile refuses it as every release verb does.
+    #[test]
+    fn a_coordinate_without_an_artifact_refuses_like_every_release_verb() {
+        let installed = CoordinateHashes::from([(("dock".to_owned(), "1.0.0".to_owned()), None)]);
+        let presented = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
+        let refusal = validate_recorded_manifests(&installed, &presented)
+            .expect_err("a NULL artifact digest refuses")
+            .to_string();
+        assert!(
+            refusal.starts_with(wamn_schema_control::PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL),
+            "{refusal}"
         );
     }
 

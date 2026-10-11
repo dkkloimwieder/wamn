@@ -172,10 +172,9 @@ async fn provision_control(control: &Client) {
 
 async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
     for input in inputs {
-        crate::package_artifact::record_fixture_artifact_digest(&input.root)
-            .expect("record the fixture artifact digest");
         apply_package::apply_package(ApplyPackageRequest {
-            package: input.root.clone(),
+            package: crate::package_artifact::fixture_package_root(&input.root)
+                .expect("read the fixture package root"),
             database_url: project_url.to_owned(),
             tenant: TENANT.to_owned(),
         })
@@ -376,15 +375,16 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         .collect::<Vec<_>>();
     let (manifests, kinds) = read_package_manifests(&manifest_paths)
         .expect("consume exact package manifests and package contracts");
-    // apply-package recorded the stand-in artifact digest of each fixture tree.
+    // apply-package installed the stand-in artifact digest of each fixture tree.
     let manifest_hashes = inputs
         .iter()
         .map(|input| {
             (
                 input.id.to_owned(),
-                crate::package_artifact::recorded_artifact_digest(&input.root)
-                    .expect("read the fixture artifact digest")
-                    .expect("the apply recorded a fixture artifact digest"),
+                crate::package_artifact::fixture_package_root(&input.root)
+                    .expect("read the fixture package root")
+                    .artifact_digest
+                    .expect("a fixture package root has a stand-in digest"),
             )
         })
         .collect::<BTreeMap<_, _>>();

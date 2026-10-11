@@ -59,8 +59,6 @@ fn frozen_predecessor(source: &Path, target: &Path) {
             fs::copy(output(source, &statement.path), path).unwrap();
         }
     }
-    // The frozen copy is the artifact of the installed version.
-    record_artifacts([&target.to_owned()]);
 }
 
 async fn overlay_fixture(name: &str) -> OverlayFixture {
@@ -77,7 +75,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
         .await
         .unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
-        packages: vec![wamn_fixture_package::package_root(), predecessor.clone()],
+        packages: fixture_roots(&[wamn_fixture_package::package_root(), predecessor.clone()]),
         database_url: base.source_database.url().to_owned(),
         tenant: TENANT.to_owned(),
     })
@@ -213,18 +211,14 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
 
 fn overlay_request(fixture: &OverlayFixture, result: &str) -> QualifyUpgradeRequest {
     let mut request = request(&fixture.base, result);
-    request.predecessor_packages = vec![
+    request.predecessor_packages = fixture_roots(&[
         wamn_fixture_package::package_root(),
         fixture.predecessor.clone(),
-    ];
-    request.presented_packages.push(fixture.candidate.clone());
+    ]);
+    request
+        .presented_packages
+        .push(fixture_root(&fixture.candidate));
     request.base_component = Some(fixture.component.clone());
-    record_artifacts(
-        request
-            .predecessor_packages
-            .iter()
-            .chain(&request.presented_packages),
-    );
     request
         .workload
         .package_workloads
@@ -241,10 +235,10 @@ async fn apply_set(
             fixture.base.source_database.url(),
             &fixture.base.root.join("candidate"),
         ),
-        &[
+        &fixture_roots(&[
             fixture.base.root.join("candidate"),
             fixture.candidate.clone(),
-        ],
+        ]),
         evidence,
     )
     .await
@@ -337,7 +331,7 @@ async fn qualification_refuses_input_changes_before_publication() {
     frozen_predecessor(&wamn_fixture_package::package_root(), &predecessor);
     let original = state(&mut fixture.base.source).await;
     let mut accepted = overlay_request(&fixture, "unchanged.json");
-    accepted.predecessor_packages[0] = predecessor.clone();
+    accepted.predecessor_packages[0] = fixture_root(&predecessor);
     qualify_upgrade_with_observer(
         accepted,
         WorkloadObserver::CapturedWithChange {
@@ -411,7 +405,7 @@ async fn qualification_refuses_input_changes_before_publication() {
             .map(|(path, _)| (path.clone(), fs::read(path).unwrap()))
             .collect::<Vec<_>>();
         let mut qualification = overlay_request(&fixture, &format!("changed-{name}.json"));
-        qualification.predecessor_packages[0] = predecessor.clone();
+        qualification.predecessor_packages[0] = fixture_root(&predecessor);
         let result = qualification.result.clone();
         let error = qualify_upgrade_with_observer(
             qualification,
@@ -445,7 +439,7 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     frozen_predecessor(&wamn_fixture_package::package_root(), &base_predecessor);
     frozen_predecessor(&fixture.predecessor, &overlay_predecessor);
     let mut qualification = overlay_request(&fixture, "accepted.json");
-    qualification.predecessor_packages = vec![base_predecessor, overlay_predecessor];
+    qualification.predecessor_packages = fixture_roots(&[base_predecessor, overlay_predecessor]);
     let result = qualify_upgrade_with_observer(
         qualification,
         WorkloadObserver::Captured(fixture.base.serving.clone()),
@@ -473,10 +467,10 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     assert_eq!(overlay_note, "retained overlay value");
     crate::reconcile_package_data_access::reconcile_package_data_access(
         ReconcilePackageDataAccessRequest {
-            packages: vec![
+            packages: fixture_roots(&[
                 fixture.base.root.join("candidate"),
                 fixture.candidate.clone(),
-            ],
+            ]),
             database_url: fixture.base.source_database.url().to_owned(),
             tenant: TENANT.to_owned(),
         },
@@ -492,22 +486,22 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
     );
     assert_eq!(state(&mut fixture.base.source).await, reconciled);
     // Exercise the environment stage's production retry against the retained database.
-    let packages = [
+    let packages = fixture_roots(&[
         fixture.base.root.join("candidate"),
         fixture.candidate.clone(),
-    ]
-    .into_iter()
-    .map(|root| crate::release_composition::PackageInput {
-        manifest: PackageManifest::from_slice(
-            &fs::read(wamn_schema_generator::package_manifest_path(&root)).unwrap(),
-        )
+    ]);
+    let base_version = PackageManifest::from_slice(
+        &fs::read(wamn_schema_generator::package_manifest_path(
+            &packages[0].path,
+        ))
         .unwrap(),
-        root,
-    })
-    .collect::<Vec<_>>();
+    )
+    .unwrap()
+    .package
+    .version;
     let artifacts = vec![crate::release_composition::SelectedComponentArtifact {
         package_id: "platform_fixture".into(),
-        package_version: packages[0].manifest.package.version.clone().into(),
+        package_version: base_version.into(),
         component: "fixture".into(),
         path: fixture.component.clone(),
         digest: wamn_engine::component_admission::component_digest(
@@ -591,7 +585,7 @@ async fn single_package_accepts_frozen_predecessor_artifacts() {
     frozen_predecessor(&wamn_fixture_package::package_root(), &predecessor);
     let original = state(&mut fixture.source).await;
     let mut qualification = request(&fixture, "accepted.json");
-    qualification.predecessor_packages = vec![predecessor];
+    qualification.predecessor_packages = vec![fixture_root(&predecessor)];
     qualify_upgrade_with_observer(
         qualification,
         WorkloadObserver::Captured(fixture.serving.clone()),
@@ -711,7 +705,7 @@ async fn incomplete_or_wrong_overlay_pin_preserves_source() {
     let mut base_only = request(&fixture.base, "base-only.json");
     base_only
         .presented_packages
-        .push(fixture.predecessor.clone());
+        .push(fixture_root(&fixture.predecessor));
     base_only
         .workload
         .package_workloads
@@ -874,6 +868,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     ))
     .await
     .unwrap();
+    let original_package_roots = fixture_roots(&original_roots);
     let installed = original_roots
         .iter()
         .map(|root| {
@@ -895,7 +890,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         wamn_schema_generator::project_package_catalog(&catalog, manifest, &installed).unwrap();
     wamn_schema_generator::materialize_package_from_catalog(&projected, &predecessor).unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
-        packages: original_roots.clone(),
+        packages: original_package_roots.clone(),
         database_url: fixture.base.source_database.url().to_owned(),
         tenant: TENANT.to_owned(),
     })
@@ -982,6 +977,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
             .await
             .unwrap();
     }
+    let successor_package_roots = fixture_roots(&successor_roots);
     let installed = successor_roots
         .iter()
         .map(|root| {
@@ -1002,7 +998,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
         wamn_schema_generator::project_package_catalog(&catalog, manifest, &installed).unwrap();
     wamn_schema_generator::materialize_package_from_catalog(&projected, &candidate).unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
-        packages: successor_roots.clone(),
+        packages: successor_package_roots.clone(),
         database_url: generation.url().to_owned(),
         tenant: TENANT.to_owned(),
     })
@@ -1017,8 +1013,8 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     .await
     .unwrap();
     let mut request = overlay_request(&fixture, "two-accepted.json");
-    request.predecessor_packages = original_roots;
-    request.presented_packages = successor_roots.clone();
+    request.predecessor_packages = original_package_roots;
+    request.presented_packages = successor_package_roots.clone();
     request
         .workload
         .package_workloads
@@ -1053,7 +1049,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
             fixture.base.source_database.url(),
             &fixture.base.root.join("candidate"),
         ),
-        &successor_roots,
+        &successor_package_roots,
         &result.result,
     )
     .await

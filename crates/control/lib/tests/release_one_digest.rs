@@ -18,7 +18,9 @@ use wamn_catalog::{
 };
 use wamn_control::apply_package::{ApplyPackageRequest, apply_package};
 use wamn_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
-use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
+use wamn_control::package_artifact::{
+    PackageRegistry, PushPackageRequest, open_verified_package, push_package,
+};
 use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
 use wamn_control::publish_release::{PublishReleaseRequest, publish_release};
 use wamn_control::verification_policy::project_environment_policy;
@@ -159,10 +161,18 @@ async fn publish_through_publish_release(
 ) -> String {
     let package = repository().join("apps/edge_device");
     let tenant = project_env_tenant(ORG, PROJECT, environment);
-    wamn_control::package_artifact::record_fixture_artifact_digest(&package)
-        .expect("record the fixture artifact digest");
+    let manifest = wamn_schema_generator::PackageManifest::from_slice(
+        &std::fs::read(wamn_schema_generator::package_manifest_path(&package))
+            .expect("read the package manifest"),
+    )
+    .expect("parse the package manifest");
+    // Apply the verified artifact, whose digest the opener holds, as every
+    // release verb does (R3).
+    let opened = open_verified_package(registry, &manifest.package.id, &manifest.package.version)
+        .await
+        .expect("open the verified package artifact");
     apply_package(ApplyPackageRequest {
-        package: package.clone(),
+        package: opened.package_root(),
         database_url: project.to_owned(),
         tenant: tenant.clone(),
     })
@@ -178,11 +188,6 @@ async fn publish_through_publish_release(
     )
     .await
     .expect("project the environment policy");
-    let manifest = wamn_schema_generator::PackageManifest::from_slice(
-        &std::fs::read(wamn_schema_generator::package_manifest_path(&package))
-            .expect("read the package manifest"),
-    )
-    .expect("parse the package manifest");
     publish_release(
         PublishReleaseRequest {
             database_url: project.to_owned(),

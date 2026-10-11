@@ -332,8 +332,8 @@ async fn stage_evidence_is_strict_and_unimplemented_execution_preserves_data() {
         serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
     manifest["upgrade_stage"] = declaration;
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
-    record_artifacts([&candidate]);
-    let declared = identity_from_directory(&read_package_directory(&candidate).unwrap()).unwrap();
+    let declared =
+        identity_from_directory(&read_package_root(&fixture_root(&candidate)).unwrap()).unwrap();
     assert_ne!(
         declared.artifact_digest,
         evidence.candidate_package.artifact_digest

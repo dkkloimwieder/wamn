@@ -1,11 +1,12 @@
 //! Enforce accepted upgrade evidence at the production package and release boundaries.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
 use wamn_schema_control::{PackageDirectory, PackageMigrationPlan};
 
+use crate::apply_package::PackageRoot;
 use crate::qualify_upgrade::{
     self, MigrationIdentity, PackageIdentity, PresentedRootIdentity, UpgradeQualification,
     identity_from_directory, read_current_packages, read_release_manifest,
@@ -48,7 +49,7 @@ pub(crate) fn read_evidence(path: &Path) -> anyhow::Result<AcceptedUpgrade> {
 /// Apply the proved base and all overlay re-pins in one production transaction.
 pub(crate) async fn apply_coordinated(
     request: crate::apply_package::ApplyPackageRequest,
-    roots: &[PathBuf],
+    roots: &[PackageRoot],
     accepted: AcceptedUpgrade,
 ) -> anyhow::Result<Vec<crate::apply_package::ApplyOutcome>> {
     use crate::apply_package::{
@@ -198,12 +199,12 @@ pub(crate) async fn apply_coordinated(
 }
 
 fn require_presented_roots(
-    roots: &[PathBuf],
+    roots: &[PackageRoot],
     evidence: &UpgradeQualification,
 ) -> anyhow::Result<()> {
     let mut presented = roots
         .iter()
-        .map(|root| qualify_upgrade::presented_root_identity(root))
+        .map(qualify_upgrade::presented_root_identity)
         .collect::<anyhow::Result<Vec<_>>>()?;
     presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
     ensure!(
@@ -262,6 +263,10 @@ pub(crate) async fn require_application(
     supplied: Option<&AcceptedUpgrade>,
     coordinated: bool,
 ) -> anyhow::Result<Option<AcceptedUpgrade>> {
+    let root = &PackageRoot {
+        path: root.to_owned(),
+        artifact_digest: directory.artifact_digest.clone(),
+    };
     ensure!(
         supplied.is_none_or(|accepted| coordinated
             == (accepted.evidence.overlay.is_some()
@@ -400,7 +405,10 @@ pub(crate) async fn require_application(
     Ok(Some(accepted.clone()))
 }
 
-fn require_candidate_root(root: &Path, evidence: &UpgradeQualification) -> anyhow::Result<()> {
+fn require_candidate_root(
+    root: &PackageRoot,
+    evidence: &UpgradeQualification,
+) -> anyhow::Result<()> {
     let observed = qualify_upgrade::presented_root_identity(root)?;
     let qualified = evidence
         .presented_roots
@@ -411,7 +419,7 @@ fn require_candidate_root(root: &Path, evidence: &UpgradeQualification) -> anyho
         observed == *qualified,
         "qualified candidate statements or generated artifacts changed"
     );
-    let directory = crate::apply_package::read_package_directory(root)?;
+    let directory = crate::apply_package::read_package_root(root)?;
     let manifest = wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)?;
     ensure!(
         manifest.upgrade_stage == evidence.upgrade_stage,
@@ -497,7 +505,7 @@ pub(crate) async fn persist(
 pub(crate) async fn reconciliation_evidence(
     tx: &Transaction<'_>,
     tenant: &str,
-    roots: &[PathBuf],
+    roots: &[PackageRoot],
 ) -> anyhow::Result<Option<UpgradeQualification>> {
     let installed = read_current_packages(tx, tenant).await?;
     let mut accepted = Vec::new();
@@ -516,7 +524,7 @@ pub(crate) async fn reconciliation_evidence(
     }
     let mut presented = roots
         .iter()
-        .map(|root| qualify_upgrade::presented_root_identity(root))
+        .map(qualify_upgrade::presented_root_identity)
         .collect::<anyhow::Result<Vec<_>>>()?;
     presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
     matching_reconciliation_evidence(&accepted, &installed, &presented).map(Some)

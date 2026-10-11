@@ -108,9 +108,8 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
          id uuid CONSTRAINT counter_id_pkey PRIMARY KEY,\n\
          tenant_id text NOT NULL, count bigint NOT NULL);\n",
     )?;
-    wamn_control::package_artifact::record_fixture_artifact_digest(&package)?;
     apply_package::apply_package(ApplyPackageRequest {
-        package: package.clone(),
+        package: wamn_control::package_artifact::fixture_package_root(&package)?,
         database_url: test.project_url.to_owned(),
         tenant: identity().tenant.clone(),
     })

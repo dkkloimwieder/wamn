@@ -53,8 +53,8 @@ pub use error::{
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
 pub(crate) use local_target::{manifest_digest, record_manifest};
 pub use package_version::{
-    LOCK_PACKAGE_SQL, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
-    read_package_directory, register_package,
+    LOCK_PACKAGE_SQL, PackageRoot, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
+    read_package_directory, read_package_root, register_package,
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
@@ -62,8 +62,9 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 /// Inputs of one exact package application.
 #[derive(Debug)]
 pub struct ApplyPackageRequest {
-    /// Package root containing strict wamn.json and migrations/.
-    pub package: PathBuf,
+    /// Package root containing strict wamn.json and migrations/, with the
+    /// digest of the verified artifact it was opened from.
+    pub package: PackageRoot,
 
     /// Owner connection to the target project-environment database.
     pub database_url: String,
@@ -112,8 +113,8 @@ impl PreparedPackage {
 }
 
 /// Validate one package directory before opening an application transaction.
-pub(crate) fn prepare_package(root: &Path) -> anyhow::Result<PreparedPackage> {
-    let directory = read_package_directory(root)?;
+pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPackage> {
+    let directory = read_package_root(root)?;
     let presented = plan_package_migrations(&directory, None)
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
@@ -121,9 +122,9 @@ pub(crate) fn prepare_package(root: &Path) -> anyhow::Result<PreparedPackage> {
     crate::qualify_upgrade::stage::require_executor(&manifest, &directory)?;
     wamn_schema_generator::validate_operation_vocabulary(&manifest)
         .context("validate package manifest for registration projection")?;
-    let migration_policy = validate_migration_policy(root, &directory, &presented)?;
+    let migration_policy = validate_migration_policy(&root.path, &directory, &presented)?;
     Ok(PreparedPackage {
-        root: root.to_owned(),
+        root: root.path.clone(),
         directory,
         manifest,
         migration_policy,
@@ -156,7 +157,7 @@ pub async fn apply_qualified_package(
 /// Apply a qualified base and its overlay successors atomically, base first.
 pub async fn apply_qualified_package_set(
     request: ApplyPackageRequest,
-    presented_packages: &[PathBuf],
+    presented_packages: &[PackageRoot],
     evidence_path: &Path,
 ) -> anyhow::Result<Vec<ApplyOutcome>> {
     let evidence = crate::package_upgrade::read_evidence(evidence_path)?;
@@ -174,8 +175,8 @@ pub(crate) async fn apply_qualification_package(
 pub(crate) async fn apply_qualification_packages(
     database_url: &str,
     tenant: &str,
-    roots: &[PathBuf],
-    complete_roots: &[PathBuf],
+    roots: &[PackageRoot],
+    complete_roots: &[PackageRoot],
     manifest: &wamn_catalog::ServingManifest,
     serving: &crate::qualify_upgrade::workload::ServingWorkloads,
 ) -> anyhow::Result<Vec<ApplyOutcome>> {
@@ -186,7 +187,7 @@ pub(crate) async fn apply_qualification_packages(
     );
     let packages = roots
         .iter()
-        .map(|root| prepare_package(root))
+        .map(prepare_package)
         .collect::<anyhow::Result<Vec<_>>>()?;
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
@@ -353,7 +354,7 @@ async fn apply(
 pub(crate) async fn finish_whole_row_stage(
     tx: &mut Transaction<'_>,
     tenant: &str,
-    roots: &[PathBuf],
+    roots: &[PackageRoot],
     packages: &[PreparedPackage],
     manifest: &wamn_catalog::ServingManifest,
     serving: &crate::qualify_upgrade::workload::ServingWorkloads,

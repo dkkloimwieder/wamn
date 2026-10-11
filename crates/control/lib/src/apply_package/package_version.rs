@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
@@ -189,13 +189,30 @@ pub async fn load_applied_package(
     }))
 }
 
+/// A package tree and the digest of the verified package artifact it was
+/// opened from. The opener holds the digest in memory and passes it here; no
+/// file in the tree carries it (docs/plan/platform-deploy.md R2, R3). `None`
+/// is a working tree, which only `wamn dev` applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageRoot {
+    pub path: PathBuf,
+    pub artifact_digest: Option<String>,
+}
+
+/// Read the exact package bytes of `root`, with the artifact digest it carries.
+pub fn read_package_root(root: &PackageRoot) -> anyhow::Result<PackageDirectory> {
+    Ok(PackageDirectory {
+        artifact_digest: root.artifact_digest.clone(),
+        ..read_package_directory(&root.path)?
+    })
+}
+
 /// Read the exact package bytes under `root`. The migrations are sorted by
-/// file name, so the result does not depend on the file system order. The
-/// artifact digest is the one an opened verified artifact records
-/// ([`crate::package_artifact::recorded_artifact_digest`]), and `None` for a
-/// working tree.
+/// file name, so the result does not depend on the file system order. A tree
+/// carries no artifact digest, so the result has none
+/// ([`read_package_root`] adds it).
 pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
-    let artifact_digest = crate::package_artifact::recorded_artifact_digest(root)?;
+    let artifact_digest = None;
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;

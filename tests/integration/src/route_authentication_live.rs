@@ -197,12 +197,12 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("seed the authored role's references")?;
 
     let args = || ApplyPackageRequest {
-        package: package_root(),
+        package: wamn_control::package_artifact::fixture_package_root(&package_root())
+            .expect("read the fixture package root"),
         database_url: project_url.to_owned(),
         tenant: TENANT.to_owned(),
     };
     let before = permission_write_identity(project).await?;
-    wamn_control::package_artifact::record_fixture_artifact_digest(&package_root())?;
     apply_package::apply_package(args())
         .await
         .context("apply the route-authentication fixture package")?;

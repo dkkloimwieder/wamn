@@ -228,43 +228,8 @@ fn descriptor_files(root: &Path) -> anyhow::Result<Vec<(ComponentDescriptor, Vec
     Ok(descriptors)
 }
 
-/// The file in a package's output root that names the digest of the verified
-/// artifact the tree was unpacked from. Opening an artifact writes it after
-/// the tree packs again to that digest. A working tree has none. No layer
-/// carries it, so it never changes a digest.
-pub const ARTIFACT_DIGEST_FILE: &str = "artifact-digest";
-
-/// Record that the tree at `root` is the verified package artifact `digest`.
-///
-/// Opening an artifact calls it. A test that applies a fixture tree as a
-/// release names a digest of its own with it.
-///
-/// # Errors
-///
-/// When `digest` is not `sha256:<64 lowercase hex>`, or the file cannot be
-/// written.
-pub fn record_artifact_digest(root: &Path, digest: &str) -> anyhow::Result<()> {
-    ensure!(
-        valid_digest(digest),
-        "artifact digest {digest:?} is not sha256:<64 lowercase hex>"
-    );
-    let directory = wamn_schema_generator::output_root(root);
-    std::fs::create_dir_all(&directory)
-        .with_context(|| format!("create {}", directory.display()))?;
-    let path = directory.join(ARTIFACT_DIGEST_FILE);
-    // Write then rename, so a concurrent reader sees the old file or the new
-    // one and never a partial write.
-    let partial = path.with_extension(format!(
-        "{}-{}",
-        std::process::id(),
-        UNPACK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&partial, digest).with_context(|| format!("write {}", partial.display()))?;
-    std::fs::rename(&partial, &path).with_context(|| format!("write {}", path.display()))
-}
-
-/// Record a stand-in artifact digest for a fixture tree that a test applies as
-/// a release, and return it.
+/// The package root of a fixture tree that a test applies as a release, with
+/// a stand-in artifact digest.
 ///
 /// No registry records it. It is the SHA-256 of the length-framed `wamn.json`
 /// and migration bytes, so a test that changes those bytes under one
@@ -273,8 +238,8 @@ pub fn record_artifact_digest(root: &Path, digest: &str) -> anyhow::Result<()> {
 ///
 /// # Errors
 ///
-/// When the tree cannot be read or the digest cannot be written.
-pub fn record_fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
+/// When the tree cannot be read.
+pub fn fixture_package_root(root: &Path) -> anyhow::Result<crate::apply_package::PackageRoot> {
     let directory = crate::apply_package::read_package_directory(root)?;
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);
     let mut frame = |bytes: &[u8]| {
@@ -286,38 +251,9 @@ pub fn record_fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
         frame(migration.relative_path.as_bytes());
         frame(&migration.bytes);
     }
-    let digest = format!("sha256:{}", hex::encode(context.finish()));
-    record_artifact_digest(root, &digest)?;
-    Ok(digest)
-}
-
-/// The verified artifact digest the tree at `root` was unpacked from, or
-/// `None` for a working tree.
-///
-/// # Errors
-///
-/// When the file cannot be read or does not hold a digest.
-pub fn recorded_artifact_digest(root: &Path) -> anyhow::Result<Option<String>> {
-    let path = wamn_schema_generator::output_root(root).join(ARTIFACT_DIGEST_FILE);
-    let digest = match std::fs::read_to_string(&path) {
-        Ok(digest) => digest,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
-    };
-    ensure!(
-        valid_digest(&digest),
-        "{} does not hold an artifact digest",
-        path.display()
-    );
-    Ok(Some(digest))
-}
-
-fn valid_digest(digest: &str) -> bool {
-    digest.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    Ok(crate::apply_package::PackageRoot {
+        path: root.to_owned(),
+        artifact_digest: Some(format!("sha256:{}", hex::encode(context.finish()))),
     })
 }
 
@@ -1108,10 +1044,14 @@ impl OpenedPackage {
         &self.root
     }
 
-    /// The artifact digest the registry records, for an opened artifact. A
-    /// directory has none.
-    pub fn digest(&self) -> Option<&str> {
-        self.digest.as_deref()
+    /// The package root with the digest this opener holds in memory, the one
+    /// carrier of the digest of an opened artifact. The digest is the one the
+    /// registry records; a directory has none.
+    pub fn package_root(&self) -> crate::apply_package::PackageRoot {
+        crate::apply_package::PackageRoot {
+            path: self.root.clone(),
+            artifact_digest: self.digest.clone(),
+        }
     }
 }
 
@@ -1215,7 +1155,6 @@ async fn open_artifact(
         "package artifact {tag} unpacks to a tree that packs to {}, not {digest}",
         unpacked.digest
     );
-    record_artifact_digest(opened.root(), digest)?;
     Ok(opened)
 }
 

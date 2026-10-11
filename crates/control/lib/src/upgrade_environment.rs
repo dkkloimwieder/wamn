@@ -633,8 +633,8 @@ impl Run {
         use crate::apply_package::{ApplyPackageRequest, apply_package};
         use crate::qualify_upgrade::{presented_root_identity, read_current_packages};
 
-        let request = |root: &Path| ApplyPackageRequest {
-            package: root.to_owned(),
+        let request = |root: &crate::apply_package::PackageRoot| ApplyPackageRequest {
+            package: root.clone(),
             database_url: databases.project_url(),
             tenant: databases.tenant.clone(),
         };
@@ -711,13 +711,14 @@ impl Run {
                 },
             )
             .collect::<Vec<_>>();
-        let roots = packages
+        // The opener holds each verified digest; the roots carry it on.
+        let roots = opened
             .iter()
-            .map(|package| package.root.clone())
+            .map(crate::package_artifact::OpenedPackage::package_root)
             .collect::<Vec<_>>();
         let mut presented = roots
             .iter()
-            .map(|root| presented_root_identity(root))
+            .map(presented_root_identity)
             .collect::<anyhow::Result<Vec<_>>>()?;
         presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
 
@@ -791,11 +792,15 @@ impl Run {
                     predecessor_release: self.predecessor_release.clone().context(
                         "an installed package upgrade needs --predecessor-release, the digest of the release the environment serves",
                     )?,
-                    package: candidate.root.clone(),
+                    package: roots
+                        .iter()
+                        .find(|root| root.path == candidate.root)
+                        .context("the upgraded package has no opened artifact")?
+                        .clone(),
                     presented_packages: roots.clone(),
                     predecessor_packages: predecessors
                         .iter()
-                        .map(|package| package.root().to_owned())
+                        .map(crate::package_artifact::OpenedPackage::package_root)
                         .collect(),
                     base_component: packages
                         .iter()
@@ -815,9 +820,12 @@ impl Run {
         }
 
         let outcomes = apply_environment_package_qualification(
-            request(&self.checkout),
+            request(&crate::apply_package::PackageRoot {
+                path: self.checkout.clone(),
+                artifact_digest: None,
+            }),
             &self.arguments.environment,
-            &packages,
+            &roots,
             artifacts,
             &evidence_path,
         )
@@ -886,7 +894,7 @@ impl Run {
             crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
                 packages: opened
                     .iter()
-                    .map(|package| package.root().to_owned())
+                    .map(crate::package_artifact::OpenedPackage::package_root)
                     .collect(),
                 database_url: project_url.clone(),
                 tenant: tenant.clone(),
@@ -2245,18 +2253,15 @@ async fn copy_bindings(
 pub(crate) async fn apply_environment_package_qualification(
     mut request: crate::apply_package::ApplyPackageRequest,
     environment: &str,
-    packages: &[crate::release_composition::PackageInput],
+    roots: &[crate::apply_package::PackageRoot],
     artifacts: &[crate::release_composition::SelectedComponentArtifact],
     evidence_path: &Path,
 ) -> anyhow::Result<Vec<crate::apply_package::ApplyOutcome>> {
-    let roots = packages
+    let identities = roots
         .iter()
-        .map(|package| package.root.clone())
-        .collect::<Vec<_>>();
-    let mut presented = roots
-        .iter()
-        .map(|root| crate::qualify_upgrade::presented_root_identity(root))
+        .map(crate::qualify_upgrade::presented_root_identity)
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut presented = identities.clone();
     presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
     let (evidence, _, _) = crate::qualify_upgrade::read_qualification(evidence_path)?;
     ensure!(
@@ -2265,15 +2270,17 @@ pub(crate) async fn apply_environment_package_qualification(
             && evidence.presented_roots == presented,
         "retained package qualification differs from this exact environment and complete successor root set"
     );
-    let candidate = packages
+    let candidate_id = &evidence.candidate_package.package_id;
+    let (candidate, _) = roots
         .iter()
-        .find(|package| package.manifest.package.id == evidence.candidate_package.package_id)
+        .zip(&identities)
+        .find(|(_, identity)| identity.package.package_id == *candidate_id)
         .context("retained package qualification names an absent candidate")?;
-    request.package = candidate.root.clone();
+    request.package = candidate.clone();
     if let Some(overlay) = &evidence.overlay {
         let artifact = artifacts
             .iter()
-            .find(|artifact| artifact.package_id.as_ref() == candidate.manifest.package.id)
+            .find(|artifact| artifact.package_id.as_ref() == candidate_id.as_str())
             .context("the qualified base has no selected component artifact")?;
         ensure!(
             artifact.digest.as_ref() == overlay.component_digest
@@ -2281,7 +2288,7 @@ pub(crate) async fn apply_environment_package_qualification(
                     == overlay.component_digest,
             "the selected base component differs from the qualified overlay pin"
         );
-        crate::apply_package::apply_qualified_package_set(request, &roots, evidence_path).await
+        crate::apply_package::apply_qualified_package_set(request, roots, evidence_path).await
     } else {
         Ok(vec![
             crate::apply_package::apply_qualified_package(request, evidence_path).await?,

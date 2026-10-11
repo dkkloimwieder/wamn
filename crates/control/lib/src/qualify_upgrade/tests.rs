@@ -4,6 +4,8 @@ use super::*;
 use wamn_catalog::{ServingComponent, ServingComponentOperation, ServingRelease};
 use wamn_test_postgres::{OwnedDatabase, OwnedPostgres};
 
+use crate::apply_package::read_package_directory;
+
 mod overlay;
 mod stage;
 mod synchronization;
@@ -39,19 +41,19 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-/// Record the stand-in artifact digest of each fixture root, as a release
-/// verb presents only verified artifacts.
-fn record_artifacts<'a>(roots: impl IntoIterator<Item = &'a PathBuf>) {
-    for root in roots {
-        crate::package_artifact::record_fixture_artifact_digest(root)
-            .expect("record the fixture artifact digest");
-    }
+/// The fixture root with a stand-in artifact digest, as a release verb
+/// presents only verified artifacts.
+fn fixture_root(path: &Path) -> PackageRoot {
+    crate::package_artifact::fixture_package_root(path).expect("read the fixture package root")
+}
+
+fn fixture_roots(paths: &[PathBuf]) -> Vec<PackageRoot> {
+    paths.iter().map(|path| fixture_root(path)).collect()
 }
 
 fn apply_request(database_url: &str, package: &Path) -> ApplyPackageRequest {
-    record_artifacts([&package.to_owned()]);
     ApplyPackageRequest {
-        package: package.to_owned(),
+        package: fixture_root(package),
         database_url: database_url.to_owned(),
         tenant: TENANT.to_owned(),
     }
@@ -89,7 +91,7 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
         .await
         .unwrap();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
-        packages: vec![predecessor.clone()],
+        packages: vec![fixture_root(&predecessor)],
         database_url: source_database.url().to_owned(),
         tenant: TENANT.to_owned(),
     })
@@ -197,8 +199,7 @@ fn serving(digest: &str) -> workload::ServingWorkloads {
 }
 
 fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
-    let package = fixture.root.join("candidate");
-    record_artifacts([&package]);
+    let package = fixture_root(&fixture.root.join("candidate"));
     QualifyUpgradeRequest {
         database_url: fixture.source_database.url().to_owned(),
         tenant: TENANT.to_owned(),
@@ -401,7 +402,7 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
     assert_eq!(persisted.get::<_, String>(1), result.sha256);
     crate::reconcile_package_data_access::reconcile_package_data_access(
         ReconcilePackageDataAccessRequest {
-            packages: vec![candidate.clone()],
+            packages: vec![fixture_root(&candidate)],
             database_url: fixture.source_database.url().to_owned(),
             tenant: TENANT.to_owned(),
         },
@@ -507,7 +508,7 @@ async fn whole_row_failure_is_refused_before_grants_that_would_fix_it() {
         .await
         .unwrap_err();
     reconcile_for_upgrade(ReconcilePackageDataAccessRequest {
-        packages: vec![package],
+        packages: vec![fixture_root(&package)],
         database_url: scratch.url().to_owned(),
         tenant: TENANT.to_owned(),
     })

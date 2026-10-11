@@ -80,7 +80,7 @@ pub async fn stage(
         };
         if applies {
             crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
-                package: opened.root().to_owned(),
+                package: opened.package_root(),
                 database_url: project_url.to_owned(),
                 tenant: tenant.clone(),
             })
@@ -109,7 +109,7 @@ pub async fn stage(
             crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
                 packages: packages
                     .iter()
-                    .map(|(_, _, opened)| opened.root().to_owned())
+                    .map(|(_, _, opened)| opened.package_root())
                     .collect(),
                 database_url: project_url.to_owned(),
                 tenant: tenant.clone(),

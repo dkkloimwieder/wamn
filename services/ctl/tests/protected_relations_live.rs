@@ -195,12 +195,11 @@ async fn install_project_database(client: &Client, url: &str) {
         "the converged post-check did not name exactly the project run-plane record"
     );
 
-    wamn_control::package_artifact::record_fixture_artifact_digest(
-        &wamn_fixture_package::package_root(),
-    )
-    .expect("record the fixture artifact digest");
     apply_package::apply_package(ApplyPackageRequest {
-        package: wamn_fixture_package::package_root(),
+        package: wamn_control::package_artifact::fixture_package_root(
+            &wamn_fixture_package::package_root(),
+        )
+        .expect("read the fixture package root"),
         database_url: url.to_string(),
         tenant: "protected-relation-audit".to_string(),
     })

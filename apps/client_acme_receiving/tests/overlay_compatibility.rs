@@ -392,11 +392,10 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
         project.batch_execute("SET statement_timeout = '20s'; SET lock_timeout = '10s'").await?;
         super::install_journey_platform_floor(project.as_ref(), identity().tenant.as_str(), super::PLATFORM_DOMAIN).await?;
         let apply = |package: PathBuf| {
-            let recorded = wamn_control::package_artifact::record_fixture_artifact_digest(&package);
+            let root = wamn_control::package_artifact::fixture_package_root(&package);
             async move {
-                recorded?;
                 apply_package::apply_package(ApplyPackageRequest {
-                    package,database_url:database_url.to_owned(),tenant:identity().tenant.clone(),
+                    package: root?,database_url:database_url.to_owned(),tenant:identity().tenant.clone(),
                 }).await
             }
         };
@@ -584,9 +583,8 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     )
     .await?;
     for package in [super::package_root(), super::overlay_package_root()] {
-        wamn_control::package_artifact::record_fixture_artifact_digest(&package)?;
         apply_package::apply_package(ApplyPackageRequest {
-            package,
+            package: wamn_control::package_artifact::fixture_package_root(&package)?,
             database_url: url.clone(),
             tenant: identity().tenant.clone(),
         })
@@ -594,7 +592,12 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     }
     wamn_control::reconcile_package_data_access::reconcile_package_data_access(
         wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-            packages: vec![super::package_root(), super::overlay_package_root()],
+            packages: vec![
+                wamn_control::package_artifact::fixture_package_root(&super::package_root())?,
+                wamn_control::package_artifact::fixture_package_root(
+                    &super::overlay_package_root(),
+                )?,
+            ],
             database_url: url.clone(),
             tenant: identity().tenant.clone(),
         },

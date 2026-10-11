@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
-use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
@@ -231,7 +230,7 @@ fn validate_fact(
 pub(crate) async fn reconcile_upgrade_in_transaction(
     tx: &Transaction<'_>,
     tenant: &str,
-    roots: &[PathBuf],
+    roots: &[crate::apply_package::PackageRoot],
 ) -> anyhow::Result<DataAccessReconcileResult> {
     ensure!(!tenant.is_empty(), "tenant must not be empty");
     let packages = super::read_presented_packages(roots)?;

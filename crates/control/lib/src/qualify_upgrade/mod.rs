@@ -23,7 +23,7 @@ use wamn_schema_control::{
 use wamn_schema_generator::PackageManifest;
 
 use crate::apply_package::{
-    ApplyPackageRequest, apply_qualification_package, read_package_directory,
+    ApplyPackageRequest, PackageRoot, apply_qualification_package, read_package_root,
 };
 use crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use crate::reconcile_package_data_access::upgrade::{
@@ -40,10 +40,10 @@ pub struct QualifyUpgradeRequest {
     /// row of `catalog.releases` and name the installed package versions
     /// (docs/plan/platform-deploy.md §13).
     pub predecessor_release: String,
-    pub package: PathBuf,
-    pub presented_packages: Vec<PathBuf>,
+    pub package: PackageRoot,
+    pub presented_packages: Vec<PackageRoot>,
     /// Complete frozen original roots for an installed package upgrade.
-    pub predecessor_packages: Vec<PathBuf>,
+    pub predecessor_packages: Vec<PackageRoot>,
     /// Exact successor base artifact to which affected overlays re-pin.
     pub base_component: Option<PathBuf>,
     pub workload: workload::WorkloadTarget,
@@ -119,7 +119,7 @@ pub(crate) struct UpgradeQualification {
 }
 
 struct PresentedPackage {
-    root: PathBuf,
+    root: PackageRoot,
     directory: PackageDirectory,
     manifest: PackageManifest,
     identity: PackageIdentity,
@@ -168,11 +168,12 @@ async fn qualify_upgrade_with_observer(
     };
     let candidate_root = request
         .package
+        .path
         .canonicalize()
         .context("resolve candidate package root")?;
     let candidate = packages
         .iter()
-        .find(|package| package.root == candidate_root)
+        .find(|package| package.root.path == candidate_root)
         .context("candidate package must occur in the complete presented root set")?;
     for package in &packages {
         stage::require_executor(&package.manifest, &package.directory)?;
@@ -246,7 +247,7 @@ async fn qualify_upgrade_with_observer(
     // migration/manifest inputs before publishing an identity for those bytes.
     for package in packages.iter().chain(&predecessors) {
         ensure!(
-            read_package_directory(&package.root)? == package.directory,
+            read_package_root(&package.root)? == package.directory,
             "presented package changed during qualification: {}",
             package.identity.package_id
         );
@@ -376,7 +377,7 @@ async fn copy_predecessor(
             .find(|migration| migration.relative_path == pending.relative_path)
             .context("planned successor migration is missing")?;
         stage::validate_successor_migration(
-            candidate.root.join(&migration.relative_path),
+            candidate.root.path.join(&migration.relative_path),
             &migration.bytes,
             &policy_schemas,
             candidate.manifest.upgrade_stage.as_ref(),
@@ -732,7 +733,7 @@ fn require_predecessor_statement_facts(
     let mut corpus = BTreeMap::<String, Vec<wamn_catalog::ComponentSqlStatement>>::new();
     for package in predecessors {
         let frozen = crate::component_admission::load_package_statement_facts(
-            &package.root,
+            &package.root.path,
             &package.manifest,
         )
         .with_context(|| {
@@ -874,17 +875,21 @@ fn require_runtime_schemas(
     Ok(())
 }
 
-fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPackage>> {
+fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<PresentedPackage>> {
     ensure!(
         !roots.is_empty(),
         "upgrade requires the complete presented package root set"
     );
     let mut packages = BTreeMap::new();
     for root in roots {
-        let root = root
-            .canonicalize()
-            .context("resolve a presented package root")?;
-        let directory = read_package_directory(&root)?;
+        let root = PackageRoot {
+            path: root
+                .path
+                .canonicalize()
+                .context("resolve a presented package root")?,
+            artifact_digest: root.artifact_digest.clone(),
+        };
+        let directory = read_package_root(&root)?;
         let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
         let identity = identity_from_directory(&directory)?;
         let root_identity = presented_root_identity(&root)?;
@@ -922,15 +927,16 @@ fn package_schemas(packages: &[PresentedPackage]) -> anyhow::Result<Vec<String>>
 }
 
 /// Bind publication SQL and reconciliation artifacts to one exact package root.
-pub(crate) fn presented_root_identity(root: &Path) -> anyhow::Result<PresentedRootIdentity> {
-    let directory = read_package_directory(root)?;
+pub(crate) fn presented_root_identity(root: &PackageRoot) -> anyhow::Result<PresentedRootIdentity> {
+    let directory = read_package_root(root)?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
-    let statements = crate::component_admission::load_package_statement_facts(root, &manifest)?;
+    let statements =
+        crate::component_admission::load_package_statement_facts(&root.path, &manifest)?;
     let statement_corpus_sha256 =
         wamn_execution_contract::canonical_json_sha256(&serde_json::to_value(statements)?);
     let digest_file = |path: &str| -> anyhow::Result<String> {
         let output = Path::new(path).strip_prefix("generated")?;
-        let bytes = fs::read(wamn_schema_generator::output_root(root).join(output))
+        let bytes = fs::read(wamn_schema_generator::output_root(&root.path).join(output))
             .with_context(|| format!("read presented root artifact {path}"))?;
         Ok(bytes_digest(&bytes))
     };

@@ -162,7 +162,7 @@ async fn apply_contract(
         manifest.package.predecessor_version
     );
     crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
-        package: opened.root().to_owned(),
+        package: opened.package_root(),
         database_url: project_url.to_owned(),
         tenant: tenant.to_owned(),
     })

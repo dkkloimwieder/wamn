@@ -118,9 +118,8 @@ pub(super) async fn install_journey_project(
     install_journey_platform_floor(project, identity().tenant.as_str(), PLATFORM_DOMAIN).await?;
     for package in released_journey_packages() {
         let root = journey_package_root(package, Some(inputs));
-        wamn_control::package_artifact::record_fixture_artifact_digest(&root)?;
         apply_package::apply_package(ApplyPackageRequest {
-            package: root,
+            package: wamn_control::package_artifact::fixture_package_root(&root)?,
             database_url: project_url.to_owned(),
             tenant: identity().tenant.clone(),
         })
@@ -149,8 +148,13 @@ pub(super) async fn reconcile_journey_data_access(
     project_url: &str,
 ) -> anyhow::Result<()> {
     let packages = released_journey_packages()
-        .map(|package| journey_package_root(package, Some(inputs)))
-        .collect::<Vec<_>>();
+        .map(|package| {
+            wamn_control::package_artifact::fixture_package_root(&journey_package_root(
+                package,
+                Some(inputs),
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     wamn_gate_harness::environment::reconcile_package_data_access(
         ReconcilePackageDataAccessRequest {
             packages,

@@ -412,7 +412,10 @@ impl ProductionDevStageRunner {
         for package in package_inputs {
             let outcome = apply_package::apply_local_package(
                 ApplyPackageRequest {
-                    package: package.root,
+                    package: apply_package::PackageRoot {
+                        path: package.root,
+                        artifact_digest: None,
+                    },
                     database_url: self.config.target_database_url().to_owned(),
                     tenant: self.config.activation_identity().tenant.clone(),
                 },

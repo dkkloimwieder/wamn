@@ -408,9 +408,11 @@ async fn apply_as(
     package: &Path,
     digest: &str,
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
-    wamn_control::package_artifact::record_artifact_digest(package, digest)?;
     apply_package::apply_package(ApplyPackageRequest {
-        package: package.to_path_buf(),
+        package: apply_package::PackageRoot {
+            path: package.to_path_buf(),
+            artifact_digest: Some(digest.to_owned()),
+        },
         database_url: url.to_owned(),
         tenant: TENANT.to_owned(),
     })
@@ -424,9 +426,8 @@ async fn apply_for_tenant(
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
     // A release apply takes a verified artifact. The fixture tree stands in
     // for one under a digest of its own bytes.
-    wamn_control::package_artifact::record_fixture_artifact_digest(package)?;
     apply_package::apply_package(ApplyPackageRequest {
-        package: package.to_path_buf(),
+        package: wamn_control::package_artifact::fixture_package_root(package)?,
         database_url: url.to_owned(),
         tenant: tenant.to_owned(),
     })
@@ -1277,9 +1278,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     // Changed bytes are another artifact, which the digest refuses first. The
     // steps below keep the installed digest, so the planner's own byte checks,
     // the suffix rollback and the release seal answer.
-    let installed = wamn_control::package_artifact::recorded_artifact_digest(&package)
-        .expect("read the installed fixture digest")
-        .expect("the apply recorded a fixture digest");
+    let installed = wamn_control::package_artifact::fixture_package_root(&package)
+        .expect("read the fixture package root")
+        .artifact_digest
+        .expect("a fixture package root has a stand-in digest");
     let migration = package.join("migrations/0001_initial.sql");
     let original = std::fs::read(&migration).expect("read copied initial migration");
     let mut edited = original.clone();
@@ -2114,7 +2116,10 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
     let apply_local = || {
         apply_package::apply_local_package(
             ApplyPackageRequest {
-                package: package.clone(),
+                package: apply_package::PackageRoot {
+                    path: package.clone(),
+                    artifact_digest: None,
+                },
                 database_url: url.to_string(),
                 tenant: TENANT.to_owned(),
             },

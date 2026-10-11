@@ -186,8 +186,10 @@ mod tests {
         std::fs::create_dir(files.0.join("migrations")).unwrap();
         let fixture =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/apply_package/base");
-        crate::package_artifact::record_fixture_artifact_digest(&fixture).unwrap();
-        let original = super::super::read_package_directory(&fixture).unwrap();
+        let original = super::super::read_package_root(
+            &crate::package_artifact::fixture_package_root(&fixture).unwrap(),
+        )
+        .unwrap();
         let predecessor = qualify_upgrade::identity_from_directory(&original).unwrap();
         let mut manifest: Value = serde_json::from_slice(&original.manifest_bytes).unwrap();
         manifest["package"]["version"] = json!("2.0.0");
@@ -204,8 +206,9 @@ mod tests {
         for migration in &original.migrations {
             std::fs::write(files.0.join(&migration.relative_path), &migration.bytes).unwrap();
         }
-        crate::package_artifact::record_fixture_artifact_digest(&files.0).unwrap();
-        let prepared = prepare_package(&files.0).unwrap();
+        let prepared =
+            prepare_package(&crate::package_artifact::fixture_package_root(&files.0).unwrap())
+                .unwrap();
         let candidate = qualify_upgrade::identity_from_directory(&prepared.directory).unwrap();
         let evidence = UpgradeQualification {
             format_version: crate::qualify_upgrade::STAGE_FORMAT,
@@ -278,8 +281,9 @@ mod tests {
             .await
             .unwrap();
         tx.commit().await.unwrap();
+        // The stand-in digest follows the bytes at each call, as a new push would.
         let request = || ApplyPackageRequest {
-            package: files.0.clone(),
+            package: crate::package_artifact::fixture_package_root(&files.0).unwrap(),
             database_url: database.url().to_owned(),
             tenant: TENANT.into(),
         };
@@ -287,7 +291,6 @@ mod tests {
         let mut changed_bytes = manifest_bytes.clone();
         changed_bytes.push(b'\n');
         std::fs::write(files.0.join("wamn.json"), changed_bytes).unwrap();
-        crate::package_artifact::record_fixture_artifact_digest(&files.0).unwrap();
         assert!(
             abandon_stage(request(), &evidence_path)
                 .await
@@ -296,7 +299,6 @@ mod tests {
                 .contains("candidate package or migration bytes mismatch")
         );
         std::fs::write(files.0.join("wamn.json"), &manifest_bytes).unwrap();
-        crate::package_artifact::record_fixture_artifact_digest(&files.0).unwrap();
         let mut changed_evidence = evidence.clone();
         changed_evidence.environment = "other".into();
         write_evidence(&files.0, &changed_evidence);
