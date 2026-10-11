@@ -6,7 +6,8 @@ use std::path::PathBuf;
 
 use wamn_catalog::ServingManifest;
 use wamn_control::delivery::qualification_artifact::{
-    self, CaseResult, QualificationPayload, QualificationPushDisposition, Runner, image_set_digests,
+    self, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload, QualificationPushDisposition,
+    image_set_digests,
 };
 use wamn_control::package_artifact::PackageRegistry;
 use wamn_control::push_release_manifest::push_manifest_bytes;
@@ -34,20 +35,12 @@ fn image_set(http: char) -> ImageSet {
     }
 }
 
-fn payload(release: &str, set: &ImageSet, source_commit: &str) -> QualificationPayload {
+fn payload(release: &str, set: &ImageSet, cases: &[&str]) -> QualificationPayload {
     QualificationPayload {
-        format: 1,
+        format: QUALIFICATION_PAYLOAD_FORMAT,
         release_digest: release.to_owned(),
         image_set: image_set_digests(set).expect("the image set is pinned"),
-        chart_version: "0.1.0".to_owned(),
-        cases: vec![CaseResult {
-            name: "cluster::released_wms_routes".to_owned(),
-            result: "pass".to_owned(),
-        }],
-        runner: Runner {
-            source_commit: source_commit.to_owned(),
-            image_digest: format!("sha256:{}", "9".repeat(64)),
-        },
+        cases: cases.iter().map(|case| (*case).to_owned()).collect(),
     }
 }
 
@@ -97,15 +90,18 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
         "{missing:#}"
     );
 
-    // qualify-release pushes it; the same artifact again is already present.
-    let first = payload(release, &image_set('c'), &"0".repeat(40));
-    let (pushed, disposition) = qualification_artifact::push(&releases, &first, size)
-        .await
-        .expect("push the qualification");
+    // qualify-release pushes it. A re-run on the same inputs, by any runner,
+    // builds the same bytes and finds them already present.
+    let cases = ["cluster::released_wms_routes"];
+    let (pushed, disposition) =
+        qualification_artifact::push(&releases, &payload(release, &image_set('c'), &cases), size)
+            .await
+            .expect("push the qualification");
     assert_eq!(disposition, QualificationPushDisposition::Pushed);
-    let (again, disposition) = qualification_artifact::push(&releases, &first, size)
-        .await
-        .expect("the same qualification again");
+    let (again, disposition) =
+        qualification_artifact::push(&releases, &payload(release, &image_set('c'), &cases), size)
+            .await
+            .expect("the same inputs again");
     assert_eq!(
         (again.as_str(), disposition),
         (
@@ -115,7 +111,7 @@ async fn a_qualification_is_pushed_once_and_read_by_its_release_and_image_set() 
     );
 
     // The tag is immutable: another artifact under it refuses and names both.
-    let other = payload(release, &image_set('c'), &"1".repeat(40));
+    let other = payload(release, &image_set('c'), &["cluster::other"]);
     let refused = qualification_artifact::push(&releases, &other, size)
         .await
         .expect_err("another qualification under the same tag");

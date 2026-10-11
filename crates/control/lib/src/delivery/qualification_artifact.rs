@@ -44,20 +44,10 @@ const EMPTY_CONFIG: &[u8] = b"{}";
 /// payload.
 const IMAGE_SET_TAG_HEX: usize = 32;
 
-/// One case that ran, and its result.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CaseResult {
-    pub name: String,
-    pub result: String,
-}
-
-/// What ran the cases: provenance, not part of the key (R15).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Runner {
-    pub source_commit: String,
-    /// `sha256:<hex>` of the program that ran the cases.
-    pub image_digest: String,
-}
+/// The format of [`QualificationPayload`]. Format 2 drops the runner and the
+/// chart version: the payload is a function of the release, the image set and
+/// the cases, so a re-run on the same inputs writes the same bytes.
+pub const QUALIFICATION_PAYLOAD_FORMAT: u32 = 2;
 
 /// The payload of a qualification artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,10 +58,8 @@ pub struct QualificationPayload {
     pub release_digest: String,
     /// `host`, `http` and `materializer` to `sha256:<hex>`.
     pub image_set: BTreeMap<String, String>,
-    /// The release chart version whose defaults named the image set.
-    pub chart_version: String,
-    pub cases: Vec<CaseResult>,
-    pub runner: Runner,
+    /// The cases that passed.
+    pub cases: Vec<String>,
 }
 
 /// Whether the push wrote the artifact or found the same one under its tag.
@@ -297,6 +285,12 @@ pub async fn find(
     let payload: QualificationPayload = serde_json::from_slice(&payload)
         .with_context(|| format!("read qualification {}", repository.reference))?;
     ensure!(
+        payload.format == QUALIFICATION_PAYLOAD_FORMAT,
+        "qualification {} has payload format {}, not {QUALIFICATION_PAYLOAD_FORMAT}",
+        repository.reference,
+        payload.format
+    );
+    ensure!(
         payload.release_digest == release_digest && payload.image_set == image_set,
         "qualification {} names release {} on another image set",
         repository.reference,
@@ -361,23 +355,23 @@ mod tests {
     #[test]
     fn the_payload_is_canonical_json_with_the_spec_fields() {
         let payload = QualificationPayload {
-            format: 1,
+            format: QUALIFICATION_PAYLOAD_FORMAT,
             release_digest: format!("sha256:{}", "1".repeat(64)),
             image_set: image_set_digests(&set("r", 'c')).unwrap(),
-            chart_version: "0.1.0".to_owned(),
-            cases: vec![CaseResult {
-                name: "cluster::released_wms_routes".to_owned(),
-                result: "pass".to_owned(),
-            }],
-            runner: Runner {
-                source_commit: "0".repeat(40),
-                image_digest: format!("sha256:{}", "9".repeat(64)),
-            },
+            cases: vec!["cluster::released_wms_routes".to_owned()],
         };
         let bytes = canonical(&payload).unwrap();
         let text = String::from_utf8(bytes.clone()).unwrap();
-        assert!(text.starts_with(r#"{"cases":[{"name":"#), "{text}");
-        assert!(!text.contains(' ') && !text.contains('\n'));
+        assert_eq!(
+            text,
+            format!(
+                r#"{{"cases":["cluster::released_wms_routes"],"format":2,"image_set":{{"host":"sha256:{}","http":"sha256:{}","materializer":"sha256:{}"}},"release_digest":"sha256:{}"}}"#,
+                "b".repeat(64),
+                "c".repeat(64),
+                "d".repeat(64),
+                "1".repeat(64)
+            )
+        );
         assert_eq!(
             serde_json::from_slice::<QualificationPayload>(&bytes).unwrap(),
             payload

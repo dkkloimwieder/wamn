@@ -10,7 +10,7 @@ use serde::Serialize;
 use tokio::process::Command;
 
 use super::qualification_artifact::{
-    self, CaseResult, QualificationPayload, QualificationPushDisposition, Runner,
+    self, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload, QualificationPushDisposition,
 };
 use super::{ApplicationResult, Candidate, CheckResult, Qualification};
 use crate::git_source::{GitSourceState, discover_repository_root, read_status};
@@ -257,26 +257,15 @@ pub async fn qualify(
     )
     .await?;
     let image_set = crate::release_chart::image_set(&request.release_chart).await?;
-    let runner = std::env::current_exe().context("find the running program")?;
     let payload = QualificationPayload {
-        format: 1,
+        format: QUALIFICATION_PAYLOAD_FORMAT,
         release_digest: result.manifest_digest.clone(),
         image_set: qualification_artifact::image_set_digests(&image_set)?,
-        chart_version: crate::release_chart::chart_version(&request.release_chart).await?,
         cases: application(&result.candidate)?
             .cases
             .iter()
-            .map(|case| CaseResult {
-                name: (*case).to_owned(),
-                result: "pass".to_owned(),
-            })
+            .map(|case| (*case).to_owned())
             .collect(),
-        runner: Runner {
-            source_commit: result.source_commit.clone(),
-            image_digest: wamn_package_artifact::sha256_digest(
-                &fs::read(&runner).with_context(|| format!("read {}", runner.display()))?,
-            ),
-        },
     };
     qualification_artifact::push(&request.releases, &payload, release_size).await
 }

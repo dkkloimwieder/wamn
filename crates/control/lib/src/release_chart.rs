@@ -117,17 +117,6 @@ pub async fn image_set(chart: &Path) -> anyhow::Result<ImageSet> {
     })
 }
 
-/// The version of `chart`, with `helm show chart`.
-pub async fn chart_version(chart: &Path) -> anyhow::Result<String> {
-    let shown = helm(&["show".as_ref(), "chart".as_ref(), chart.as_os_str()]).await?;
-    let metadata: Value = serde_yaml::from_str(&shown).context("parse the chart's metadata")?;
-    metadata["version"]
-        .as_str()
-        .filter(|version| !version.is_empty())
-        .map(str::to_owned)
-        .context("the chart names no version")
-}
-
 /// One role workload: `http` or `materializer`, with its configuration.
 #[derive(Debug, Clone)]
 pub struct Role {

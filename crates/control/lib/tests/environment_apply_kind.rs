@@ -80,7 +80,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 use wamn_control::delivery::qualification_artifact::{
-    self, QualificationPayload, Runner, image_set_digests,
+    self, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload, image_set_digests,
 };
 use wamn_control::dev::environment::{connect, reset_control_store};
 use wamn_control::environment::document::{
@@ -847,15 +847,10 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         qualification_artifact::push(
             &releases,
             &QualificationPayload {
-                format: 1,
+                format: QUALIFICATION_PAYLOAD_FORMAT,
                 release_digest: release.as_str().to_owned(),
                 image_set: image_set_digests(&set)?,
-                chart_version: wamn_control::release_chart::CHART_VERSION.to_owned(),
                 cases: Vec::new(),
-                runner: Runner {
-                    source_commit: "environment_apply_kind".to_owned(),
-                    image_digest: format!("sha256:{}", "0".repeat(64)),
-                },
             },
             bytes.len(),
         )
