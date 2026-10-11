@@ -144,21 +144,19 @@ For an overlay, repeat `--package` for the exact selected package set.
 Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
 
 ```bash
-wamn-ctl publish-release \
+WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
   --org "$ORG" --project "$PROJECT" \
   --tenant "$TENANT" --environment "$ENVIRONMENT" \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
   --package "$PACKAGE_ID@$PACKAGE_VERSION" \
-  --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PULL_DOCKERCONFIG"
+  --artifact-base "$PACKAGE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
 
-wamn-ctl publish-qualified-release \
-  --qualification "$DELIVERY_QUALIFICATION" --release-chart "$WAMN_RELEASE_CHART" \
-  --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
-  --tenant "$TENANT" --release-digest "$RELEASE_DIGEST" \
-  --org "$ORG" --project "$PROJECT" --environment "$ENVIRONMENT" \
-  --artifact-base "$PUSH_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG"
+wamn-ctl qualify-release \
+  --release-digest "$RELEASE_DIGEST" --release-chart "$WAMN_RELEASE_CHART" \
+  --artifact-base "$RELEASE_BASE" --registry-auth-file "$PUSH_DOCKERCONFIG" \
+  --target-directory "$DELIVERY_TARGET" --identity-image "$IDENTITY_IMAGE"
 
 wamn-ctl print-release-env \
   --database-url "$OWNER_URL" --tenant "$TENANT" \
@@ -166,7 +164,9 @@ wamn-ctl print-release-env \
   --artifact-base "$PULL_BASE"
 ```
 
-`publish-release` records the release by its canonical manifest digest and prints that digest.
+`publish-release` records the release by its canonical manifest digest.
+It pushes the manifest to the release repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the digest.
+The credential of `--registry-auth-file` must pull the packages and push to the release repository.
 Each component of the release carries its admitted descriptor from the package artifact.
 Set `RELEASE_DIGEST` to it.
 The manifest names no tenant and no environment, so one release has one digest in every environment.
@@ -176,11 +176,10 @@ Set the host variables `WAMN_ORG`, `WAMN_PROJECT` and `WAMN_DRAIN_BOUND_SECONDS`
 The operator chart sets `WASMCLOUD_HOST_ENVIRONMENT` to the pod namespace, and Kubernetes refuses a second variable of one name.
 Add `--environment=<environment>` to the host group's `extraArgs`; the host keeps the last `--environment`.
 The route host is only the `host` of the http workload config; the router matches routes under it.
-[Qualify the exact candidate](delivery.md#candidate-qualification) before publication.
-The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
-It takes the same `--oci-ca-path` input as `push-package`.
+`publish-release` takes the same `--oci-ca-path` input as `push-package`.
+[Qualify the release](delivery.md#release-qualification) before deployment.
+`qualify-release` pushes the qualification artifact beside the release only when every case passes, and `env apply` reads it from the registry.
 `print-release-env` prints the host release settings without editing files.
-A deployment that is not a qualification pushes the published manifest with `wamn-ctl push-release-manifest`, which takes the same arguments as `publish-qualified-release` without `--qualification` and `--release-chart`. It attests the push in the control database and records no source commit.
 
 Copy its output into the selected complete host overlay.
 Commit those configuration changes together.
@@ -446,9 +445,9 @@ It copies the installed predecessor database, preserves object ownership, restor
 It plans predecessor SQL under both predecessor grants and the complete candidate grants after reconciliation.
 A failure before reconciliation refuses the upgrade even if candidate grants restore access.
 
-`qualify-release` remains the single release-qualification path defined by [release qualification](../plan/release-qualification.md).
-It proves the exact published release, source, and deployment artifacts after the package upgrade.
-An upgrade result cannot satisfy `publish-qualified-release` or replace ordinary release qualification.
+`qualify-release` remains the single release-qualification path that [release qualification](delivery.md#release-qualification) describes.
+It proves the published release on a platform image set after the package upgrade.
+An upgrade result cannot replace release qualification.
 
 ### Upgrade prerequisites
 
@@ -541,8 +540,7 @@ Run replica-identity reconciliation for each package whose registrations require
 Continue through the existing [release commands](delivery.md) in this order:
 
 ```text
-publish-release → prepare-release → qualify-release
-→ publish-qualified-release → wamn-ctl env apply
+publish-release → qualify-release → wamn-ctl env apply
 → optional wamn web upload
 ```
 

@@ -215,7 +215,7 @@ To compare two pushed versions, run `wamn diff` ([building](building.md#reading-
 
 `wamn dev clean-check` runs the existing exact test for a change, independent of the retained developer database.
 It takes the arguments and result rules of the [change checks](delivery.md#change-checks).
-Local reuse does not establish [release qualification](delivery.md#candidate-qualification).
+Local reuse does not establish [release qualification](delivery.md#release-qualification).
 
 ## Issuer connection
 

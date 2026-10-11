@@ -147,7 +147,9 @@ The test prints its work directory. `report.json` in that directory records each
 The Receiving and WMS delivery cases deliver each application's release with `wamn-ctl env apply` (docs/plan/platform-deploy.md §17.2 Epic 6).
 Both run on one kept kind cluster that `WAMN_DELIVERY_CLUSTER` names, `wamn-delivery-<suffix>`.
 The first case creates the cluster with cert-manager, CloudNativePG, the operator release and a registry with TLS and a password. The second case attaches to it.
-Each case publishes its release with its fixture, qualifies it, publishes it with `publish-qualified-release`, pushes the role images, writes `environment.k` and runs `env apply`.
+Each case publishes its release with its fixture, and `publish-release` pushes the release manifest.
+The case then runs `qualify-release` on the release digest, which pushes the qualification beside the release when all of its qualifying cases pass.
+Then the case pushes the role images, writes `environment.k` and runs `env apply`, which reads that qualification from the registry.
 It then checks the hosts, the role placement and the A1 probe. The second case also checks A12 with the two applications in `wamn-system`.
 Run Receiving first, then WMS, then remove the cluster:
 

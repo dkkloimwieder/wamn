@@ -419,7 +419,7 @@ for image in wamn-host:src-<identity> wamn-identity:src-<identity>; do
 done
 ```
 
-The kind cases of `qualify-release` start the gates image, but B0 does not build it. Since `wamn-1s38` (2026-10-02) the candidate names a pinned gates digest, and qualification pulls it without a build (`docs/plan/release-qualification.md` §4.4). When the source of the gates image changes, build and push a new gates image in its own commit:
+The kind cases of `qualify-release` start the gates image, but B0 does not build it. Since `wamn-1s38` (2026-10-02) qualification pulls a pinned gates digest without a build (`docs/plan/release-qualification.md` §4.4). When the source of the gates image changes, build and push a new gates image in its own commit:
 
 ```bash
 TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . gates gates "$(git rev-parse HEAD)" gcp gcp-wamn
@@ -1447,7 +1447,7 @@ cargo run -p wamn-test-infrastructure --example gate_request -- wamn_wms 1.0.0 w
   apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $P/gate-request.json
 ```
 
-Post `gate-request.json` to `http://127.0.0.1:18090/authoring` with the PAT as a bearer token, read from its file through a pipe. The reply has `body.outcome.status` `completed` and a `report-id`. Stop the service, then record the wiring, publish, bind the label store and push the manifest:
+Post `gate-request.json` to `http://127.0.0.1:18090/authoring` with the PAT as a bearer token, read from its file through a pipe. The reply has `body.outcome.status` `completed` and a `report-id`. Stop the service, then record the wiring, publish, bind the label store and qualify the release. `publish-release` pushes the manifest to the repository that `WAMN_RELEASE_ARTIFACT_BASE` names. `qualify-release` pushes the qualification beside it when every case passes ([delivery](delivery.md#release-qualification)):
 
 `SYS` is the superuser URL of `wamn_system`, `$WAMN_SYSTEM_ADMIN_URL` of section 3.6:
 
@@ -1455,19 +1455,22 @@ Post `gate-request.json` to `http://127.0.0.1:18090/authoring` with the PAT as a
 SYS="$WAMN_SYSTEM_ADMIN_URL"
 target/debug/wamn-ctl author-wiring --database-url "$T" --control-database-url "$SYS" --tenant wms \
   --package-id wamn_wms --package-version 1.0.0 --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json
+WAMN_RELEASE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/releases \
 target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk --project wms \
   --tenant wms --effective-release-id 1 --environment dev --verified-publisher-principal wamn-management-author-dkk--wms--dev \
   --run-schema wamn_run --package wamn_wms@1.0.0 --wiring "wamn_wms@1.0.0::inventory_move_and_label=2" \
-  --attachments apps/wamn_wms/publication/attachments.json --route-host wms.wamn.dev --package-manifest apps/wamn_wms/wamn.json
+  --attachments apps/wamn_wms/publication/attachments.json --route-host wms.wamn.dev --package-manifest apps/wamn_wms/wamn.json \
+  --registry-auth-file $A/config.json
 echo '{"provider":"gcs","container":"wamn-dev-labels","prefix":"wms/"}' > $P/labels-store.definition.json
 target/debug/wamn-ctl bind-connection --database-url "$T" --tenant wms --environment dev --instance-id labels-store \
   --requirement-type blobstore --definition $P/labels-store.definition.json --effective-release-id 1 \
   --component-digest <blob-put digest> --store-alias labels
-target/debug/wamn-ctl push-release-manifest --database-url "$T" --control-database-url "$SYS" --org dkk --project wms \
-  --tenant wms --effective-release-id 1 --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --registry-auth-file $A/config.json
+target/debug/wamn-ctl qualify-release --release-digest <release digest> --release-chart "$WAMN_RELEASE_CHART" \
+  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --registry-auth-file $A/config.json \
+  --target-directory <target directory> --gates-image <gates image> --identity-image <identity image>
 ```
 
-Receiving ran the same `publish-release`, `push-release-manifest` and `print-release-env` commands with `--project receiving --tenant dev`, no `--wiring`, and its own attachments and manifest.
+Receiving runs the same `publish-release`, `qualify-release` and `print-release-env` commands with `--project receiving --tenant dev`, no `--wiring`, and its own attachments and manifest.
 
 On 2026-09-27 the pushes took 17, 11, 10 and 20 seconds, the gate 3 seconds, `author-wiring` 2 seconds, `publish-release` 10 seconds, `bind-connection` 2 seconds and the manifest push 6 seconds. The WMS release manifest is `sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3`. The first PAT mint was refused before it reached identity, because a short Kubernetes API timeout left the password read empty. Stop when a credential read returns nothing.
 

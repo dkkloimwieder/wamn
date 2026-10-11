@@ -20,126 +20,84 @@ For an ignored case, add `--include-ignored`.
 A case that uses PostgreSQL takes its database from the [test server](running-tests.md#test-database-isolation) and needs no database input.
 A change result records its source state and cannot substitute for release qualification.
 
-## Candidate qualification
+## Release qualification
 
 For a package successor with application migrations, first follow [package upgrades](deployment.md#package-upgrades).
-`qualify-upgrade` proves the database transition before application. It does not qualify a release or replace the candidate qualification below.
+`qualify-upgrade` proves the database transition before application. It does not qualify a release or replace the release qualification below.
 
-Build the selected application artifacts through the existing [build owners](building.md).
-Build native delivery binaries with `tools/delivery-owned build-native "$DELIVERY_TARGET"` before preparing the candidate.
-The application build owners and qualification use this same command.
-It selects the host and four helper packages together, with locked dependencies, default features, and the development profile.
-It fixes compiler flags and the build environment, disables incremental compilation, and normalizes output-directory paths.
-Reproduction requires the same clean checkout path, pinned Rust version, native tools, and Cargo configuration.
-Publish its release through the existing release command.
-Upload native images as inactive artifacts when the disposable cluster needs registry access.
-Record their immutable `repository@sha256:digest` references.
-
-Capture the published manifest and explicit artifact locations:
+Publish the release first with `publish-release`, as [deployment](deployment.md#publish-and-select-a-release) shows.
+It pushes the release manifest to the repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the release digest.
+Then qualify that release from a checkout of the repository:
 
 ```bash
-wamn-ctl prepare-release \
-  --database-url "$DELIVERY_DATABASE_URL" --org "$DELIVERY_ORG" --project "$DELIVERY_PROJECT" \
-  --environment "$DELIVERY_ENVIRONMENT" --tenant "$DELIVERY_TENANT" \
-  --route-host "$DELIVERY_ROUTE_HOST" \
-  --release-digest "$DELIVERY_RELEASE_DIGEST" --artifact-base "$DELIVERY_ARTIFACT_BASE" \
+wamn-ctl qualify-release \
+  --release-digest "$RELEASE_DIGEST" --release-chart "$WAMN_RELEASE_CHART" \
+  --artifact-base "$WAMN_RELEASE_ARTIFACT_BASE" \
+  --registry-auth-file "$REGISTRY_AUTH_FILE" \
   --target-directory "$DELIVERY_TARGET" \
-  --host-image "$DELIVERY_HOST_IMAGE" \
-  --http-image "$DELIVERY_HTTP_IMAGE" --materializer-image "$DELIVERY_MATERIALIZER_IMAGE" \
-  --manifest-output "$DELIVERY_MANIFEST" --candidate-output "$DELIVERY_CANDIDATE"
+  --gates-image "$GATES_IMAGE" --identity-image "$IDENTITY_IMAGE"
 ```
 
-Use unused absolute paths for both output files.
-The candidate records the org, the project, the environment, the tenant and the route host, because the manifest does not name them.
-It also records the platform image set the cases deploy: the host image and the `http-route` and `materializer` role components, each as `repository@sha256:digest`.
-The qualification key names these digests, and publication refuses a release chart whose image set differs from them.
-The qualification fixtures take the org, the project, the tenant, the environment, the route host and the packages from the candidate.
-Add each deployment document, application request, and expected response with `--deployment-file` before qualification.
-For an owned registry reached through another address inside kind, add `--native-registry-endpoint HOST:PORT`.
-If that endpoint uses HTTP, also add `--native-registry-insecure`.
-The mapping applies only inside the newly created nodes.
-Every native image reference must name the same explicit registry authority.
+`--release-digest` is the digest that `publish-release` printed.
+`--release-chart` is the stamped release chart.
+Its default values name the platform image set: the host image and the `http-route` and `materializer` role components, each by its `@sha256` digest.
+The command line does not repeat these digests.
+`--artifact-base` is the release repository, the same repository that `WAMN_RELEASE_ARTIFACT_BASE` names.
 
-Select a clean integrated checkout and run qualification:
+Keep registry credentials in the private file that `--registry-auth-file` names.
+For a registry without authentication, write an explicit empty entry, `{"auths":{"<registry>":{}}}`, and the registry access is anonymous.
+A missing entry still refuses with `registry-credentials-not-found`.
+If the registry certificate chains to a private CA, add `--oci-ca-path` with that CA, or set `WASH_OCI_CA_PATHS`.
+If the registry uses HTTP, add `--insecure-registry` for that registry.
 
-```bash
-wamn-ctl qualify-release --repository "$SOURCE" --revision main \
-  --candidate "$DELIVERY_CANDIDATE" --result "$DELIVERY_QUALIFICATION"
-```
+The other inputs belong to the cluster cases:
 
-The checkout must match the selected revision and stay clean through all checks.
-A release tag or explicit revision can replace `main`.
-Qualification first runs `wamn build` of every package, base packages first, against a fresh PostgreSQL server from `wamn-test-postgres`.
-The repository holds no build output, and the component, native and test builds read it.
-It builds every package, not only the packages of the candidate. The build compiles the components of each package into the candidate target directory.
-Qualification then builds the workload guests `http-route` and `materializer` there with the same guest build.
-The result must record a `wamn build` of each package of the candidate.
-It rebuilds through Cargo, then refuses artifacts that differ from the candidate.
-It pulls each image by the digest that the candidate names and records its image ID. It builds no image.
-The application cases consume the supplied artifacts without replacement builds.
+- `--target-directory` is the Cargo target directory of the cases.
+- `--gates-image` and `--identity-image` name the gates and identity images, each as `repository@sha256:digest`. Receiving and WMS need the identity image, because their published application routes accept sessions. The cases start that image and give issuer trust to their application hosts.
+- For an owned registry that kind reaches through another address, add `--native-registry-endpoint HOST:PORT`. If that endpoint uses HTTP, also add `--native-registry-insecure`. The mapping applies only inside the new kind nodes.
+
+The command runs in the repository of the current directory.
+The Rust version must be the one that `rust-toolchain.toml` names.
+The command pulls the release by its digest.
+It runs `wamn build` of every package and builds the workload guests and the native programs into the target directory.
+It pulls the host, gates and identity images by digest and builds no image.
+It runs the cluster cases on a kind cluster with the image set of the chart.
 Each case installs its environment with the release chart, as `env apply` does.
-It copies the candidate's role components by digest into its own registry and stamps a copy of the chart with the candidate's image set.
+It copies the role components by digest into its own registry and stamps a copy of the chart with the same image set.
 
-The package set of the candidate selects the cases exactly. Any other set fails.
+The package set of the release selects the cases exactly. Any other set fails.
 A Receiving release with Acme runs command histories, baseline overlay compatibility, and durable queue recovery after interruption of its combined host.
 A Receiving release without Acme runs command histories, which calls no Acme route.
 Durable queue recovery starts its item from a wiring, and Receiving alone has none.
-WMS runs its released routes, partial-label completion, and restart/cache cases against the same supplied manifest and host image.
-Both require exact canonical release bytes, executed success, unchanged artifacts, and successful cleanup.
-Qualification writes pass or fail with the source commit, command results, release inputs, and artifact hashes.
-It creates temporary application results in the system temporary directory and removes them after the cases pass.
+WMS runs its released routes, partial-label completion, and restart/cache cases against the same release and host image.
+
+The cases write their results in a temporary directory under the system temporary directory.
+Qualification removes that directory after the cases pass.
 If a case fails, qualification keeps that directory and names it in the cause of the failed check.
 Read the case results there, then remove the directory.
-Keep the qualification result and candidate files until publication and deployment finish.
 No source-host or CI-provider API is required.
 
-## Qualified publication
+## The qualification artifact
 
-A qualification result binds executed application checks to exact release files and one source commit.
-Keep that result and its files available until deployment finishes.
-The publication command reads the existing immutable catalog snapshot and requires the same tenant, release ID, and canonical manifest bytes.
-Every required check must pass, and every recorded artifact must retain its digest.
+When every case passes, `qualify-release` pushes a qualification artifact beside the release and prints its digest.
+A failed qualification pushes nothing.
+The command writes no result file and no database row.
 
-Use the existing project and control database credentials for an authorized operator.
-Keep registry credentials in the private file accepted by `--registry-auth-file`.
-For a registry without authentication, write an explicit empty entry, `{"auths":{"<registry>":{}}}`, and the push is anonymous.
-A missing entry still refuses with `registry-credentials-not-found`.
-Keep credentials outside the candidate files and qualification output.
-The command uses the existing OCI publisher and records the qualification source commit with its upload record.
-An upload record establishes publication, while the deployment command separately requires readiness and an authenticated application result.
+The artifact is an OCI image manifest with the artifact type `application/vnd.wamn.release-qualification.v1`.
+Its `subject` is the release manifest.
+Its one layer is canonical JSON with payload format 2.
+It names the release digest, the platform image set, and the names of the cases that passed. It names no runner and no chart version.
+A run again on the same inputs writes the same bytes, and the command reports that the artifact is already present.
+The artifact goes into the release repository under the immutable tag `qualification-<release sha256 hex>-<first 32 hex of the image set sha256>`.
+An OCI tag holds at most 128 characters, so the tag carries only part of the image set digest. The reader compares the whole image set in the layer.
 
-Set the existing publication scope once:
+An environment can use the qualification when its platform image set is the one that the artifact names, whatever chart version selected that image set.
+A release on a new host image or role component needs a new qualification.
+The gates and identity images are not part of the key.
 
-```bash
-release_args=(
-  --database-url "$DELIVERY_DATABASE_URL"
-  --control-database-url "$DELIVERY_CONTROL_DATABASE_URL"
-  --org "$DELIVERY_ORG"
-  --project "$DELIVERY_PROJECT"
-  --environment "$DELIVERY_ENVIRONMENT"
-  --tenant "$DELIVERY_TENANT"
-  --release-digest "$DELIVERY_RELEASE_DIGEST"
-  --artifact-base "$DELIVERY_ARTIFACT_BASE"
-  --registry-auth-file "$DELIVERY_REGISTRY_AUTH_FILE"
-)
-wamn-ctl publish-qualified-release \
-  --qualification "$DELIVERY_QUALIFICATION" \
-  --release-chart "$WAMN_RELEASE_CHART" "${release_args[@]}"
-```
+## Deployment
 
-If the registry certificate chains to a private CA, add `--oci-ca-path` with that CA to `release_args`, or set `WASH_OCI_CA_PATHS`.
-If the registry uses HTTP, add `--insecure-registry` for that registry.
-The existing publisher preserves an exact retry and refuses conflicting content or source attribution.
-Different release bytes require a different identity through the existing release creation command.
-
-## Qualification record and deployment
-
-`publish-qualified-release` records the passing qualification file in `catalog.qualifications` in the control database, after the push.
-The key is the package set of the release, its `(package_id, version, component_digest)` triples, and the platform image set of the stamped release chart that `--release-chart` names: the `@sha256` digests of the host image and of each role component (R12).
-The verb refuses a chart whose host image is not the one the qualification ran on.
-The row also records the gates and identity digests the qualification ran with; they are not part of the key.
-`wamn-ctl env apply` deploys a release: the environment document names its digest, and `apply` refuses a release with no recorded qualification on the image set of the release chart.
+`wamn-ctl env apply` deploys a release: the environment document names its digest.
+`apply` derives the qualification tag from the release digest and the image set of the release chart, and reads the artifact from the registry.
+If the tag does not exist, `apply` refuses and names the tag.
 See [deployment](deployment.md) for the environment verbs.
-
-Receiving and WMS qualification require a supplied identity image through `--identity-image`, because their published application routes accept sessions.
-The owned fixtures start that image and supply issuer trust to their application hosts.
