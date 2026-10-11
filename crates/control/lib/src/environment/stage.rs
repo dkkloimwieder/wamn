@@ -235,7 +235,7 @@ async fn materialize_requirements(
 
 /// The connection requirements of the descriptors of `manifest`: exactly one
 /// for each connection of each release component.
-fn release_requirements(
+pub(super) fn release_requirements(
     manifest: &wamn_catalog::ServingManifest,
 ) -> Vec<wamn_catalog::ComponentConnectionRequirement> {
     manifest

@@ -26,12 +26,6 @@ UPDATE registry.project_envs SET policy_name = $4, route_host = $5 \
  WHERE org = $1 AND project = $2 AND env = $3 \
    AND (policy_name, route_host) IS DISTINCT FROM ($4, $5)";
 
-/// The release's components that declare a store alias, in the project
-/// database.
-const REQUIREMENTS_SQL: &str = "\
-SELECT component_digest, store_alias FROM catalog.connection_requirements \
- WHERE tenant_id = $1 AND component_digest = ANY($2)";
-
 /// Expand the environment toward the document.
 ///
 /// # Errors
@@ -107,27 +101,19 @@ pub async fn expand(
         )
         .await?;
         ensure_cdc(platform, document, &manifests).await?;
-        let components: Vec<String> = release
-            .manifest
-            .components
-            .iter()
-            .map(|component| component.descriptor.component_digest.as_str().to_owned())
-            .collect();
-        project
-            .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant])
-            .await
-            .context("claim the tenant")?;
-        for row in project
-            .query(REQUIREMENTS_SQL, &[&tenant, &components])
-            .await
-            .context("read the release's connection requirements")?
-        {
-            targets.push((
-                release.digest.clone(),
-                row.get::<_, String>(0),
-                row.get::<_, String>(1),
-            ));
-        }
+        // The admitted descriptors the manifest carries name the release's
+        // connections (R2 (3)); the projection the stage wrote is not read back.
+        targets.extend(
+            super::stage::release_requirements(&release.manifest)
+                .iter()
+                .map(|requirement| {
+                    (
+                        release.digest.clone(),
+                        requirement.component_digest().to_owned(),
+                        requirement.store_alias().to_owned(),
+                    )
+                }),
+        );
     }
     for (instance_id, declared) in &document.connections {
         let instance = ConnectionInstance {
