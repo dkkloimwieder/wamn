@@ -8,9 +8,7 @@ use super::{
     AcceptedUpgrade, matching_reconciliation_evidence, persist, read_accepted, require_prefix,
 };
 use crate::qualify_upgrade::workload::{PackageWorkload, ServingWorkloads, WorkloadTarget};
-use crate::qualify_upgrade::{
-    PackageIdentity, PresentedRootIdentity, UpgradeQualification, read_current_packages,
-};
+use crate::qualify_upgrade::{PackageIdentity, UpgradeQualification, read_current_packages};
 use crate::reconcile_package_data_access::upgrade::read_upgrade_privileges;
 
 mod vector {
@@ -43,14 +41,6 @@ fn predecessor_manifest() -> ServingManifest {
     manifest
 }
 
-fn root_identity(package: PackageIdentity) -> PresentedRootIdentity {
-    PresentedRootIdentity {
-        package,
-        statement_corpus_sha256: format!("sha256:{}", "1".repeat(64)),
-        data_access_sha256: format!("sha256:{}", "3".repeat(64)),
-    }
-}
-
 fn assert_complete_world_selection(original: &AcceptedUpgrade) {
     let mut first = original.clone();
     let mut second_old = first.evidence.predecessor_package.clone();
@@ -59,27 +49,13 @@ fn assert_complete_world_selection(original: &AcceptedUpgrade) {
     second_new.package_id = second_old.package_id.clone();
     first.evidence.predecessor_packages.push(second_old.clone());
     first.evidence.presented_packages.push(second_old.clone());
-    first.evidence.presented_roots = first
-        .evidence
-        .presented_packages
-        .iter()
-        .cloned()
-        .map(root_identity)
-        .collect();
     let mut second = first.clone();
     second.evidence.predecessor_packages = first.evidence.presented_packages.clone();
     second.evidence.predecessor_package = second_old;
     second.evidence.candidate_package = second_new.clone();
     second.evidence.presented_packages[1] = second_new;
-    second.evidence.presented_roots = second
-        .evidence
-        .presented_packages
-        .iter()
-        .cloned()
-        .map(root_identity)
-        .collect();
     let installed = &second.evidence.presented_packages;
-    let roots = &second.evidence.presented_roots;
+    let roots = &second.evidence.presented_packages;
     let chosen =
         matching_reconciliation_evidence(&[first.clone(), second.clone()], installed, roots)
             .unwrap();
@@ -89,7 +65,7 @@ fn assert_complete_world_selection(original: &AcceptedUpgrade) {
     );
     assert!(matching_reconciliation_evidence(&[first], installed, roots).is_err());
     let mut changed_roots = roots.clone();
-    changed_roots[0].statement_corpus_sha256 = format!("sha256:{}", "4".repeat(64));
+    changed_roots[0].artifact_digest = format!("sha256:{}", "4".repeat(64));
     assert!(
         matching_reconciliation_evidence(&[second.clone()], installed, &changed_roots).is_err()
     );
@@ -162,7 +138,6 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
         candidate_suffix: candidate.migrations[1..].to_vec(),
         predecessor_packages: vec![predecessor],
         presented_packages: vec![candidate],
-        presented_roots: Vec::new(),
         schemas,
         predecessor_privileges: privileges.clone(),
         post_privileges: privileges,

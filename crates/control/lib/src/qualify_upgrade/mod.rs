@@ -61,12 +61,14 @@ pub struct UpgradeQualificationOutcome {
 
 /// The evidence format of a plain upgrade. Versions 1 to 3 carried the
 /// `wamn.json` hash and the digest of the generated package metadata in place
-/// of the package artifact digest, so they no longer decode (wamn-vavs4.4).
-pub(crate) const PLAIN_FORMAT: u32 = 4;
+/// of the package artifact digest (wamn-vavs4.4). Versions 4 to 6 carried
+/// the presented roots with a statement corpus digest and a data access
+/// digest beside the artifact digest. Neither decodes.
+pub(crate) const PLAIN_FORMAT: u32 = 7;
 /// The evidence format of an upgrade with an overlay.
-pub(crate) const OVERLAY_FORMAT: u32 = 5;
+pub(crate) const OVERLAY_FORMAT: u32 = 8;
 /// The evidence format of an upgrade with an online stage.
-pub(crate) const STAGE_FORMAT: u32 = 6;
+pub(crate) const STAGE_FORMAT: u32 = 9;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -88,14 +90,6 @@ pub(crate) struct PackageIdentity {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PresentedRootIdentity {
-    pub(crate) package: PackageIdentity,
-    pub(crate) statement_corpus_sha256: String,
-    pub(crate) data_access_sha256: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct UpgradeQualification {
     pub(crate) format_version: u32,
     pub(crate) tenant: String,
@@ -106,7 +100,6 @@ pub(crate) struct UpgradeQualification {
     pub(crate) candidate_suffix: Vec<MigrationIdentity>,
     pub(crate) predecessor_packages: Vec<PackageIdentity>,
     pub(crate) presented_packages: Vec<PackageIdentity>,
-    pub(crate) presented_roots: Vec<PresentedRootIdentity>,
     pub(crate) schemas: Vec<String>,
     pub(crate) predecessor_privileges: UpgradePrivileges,
     pub(crate) post_privileges: UpgradePrivileges,
@@ -123,7 +116,6 @@ struct PresentedPackage {
     directory: PackageDirectory,
     manifest: PackageManifest,
     identity: PackageIdentity,
-    root_identity: PresentedRootIdentity,
 }
 
 enum WorkloadObserver {
@@ -249,11 +241,6 @@ async fn qualify_upgrade_with_observer(
         ensure!(
             read_package_root(&package.root)? == package.directory,
             "presented package changed during qualification: {}",
-            package.identity.package_id
-        );
-        ensure!(
-            presented_root_identity(&package.root)? == package.root_identity,
-            "presented generated or SQL bytes changed during qualification: {}",
             package.identity.package_id
         );
     }
@@ -570,10 +557,6 @@ async fn copy_predecessor(
         presented_packages: packages
             .iter()
             .map(|package| package.identity.clone())
-            .collect(),
-        presented_roots: packages
-            .iter()
-            .map(|package| package.root_identity.clone())
             .collect(),
         schemas: schemas.to_vec(),
         predecessor_privileges,
@@ -892,11 +875,6 @@ fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<Presente
         let directory = read_package_root(&root)?;
         let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
         let identity = identity_from_directory(&directory)?;
-        let root_identity = presented_root_identity(&root)?;
-        ensure!(
-            root_identity.package == identity,
-            "presented package changed while loading"
-        );
         ensure!(
             packages
                 .insert(
@@ -906,7 +884,6 @@ fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<Presente
                         directory,
                         manifest,
                         identity,
-                        root_identity,
                     }
                 )
                 .is_none(),
@@ -926,25 +903,10 @@ fn package_schemas(packages: &[PresentedPackage]) -> anyhow::Result<Vec<String>>
     Ok(schemas.into_iter().collect())
 }
 
-/// Bind publication SQL and reconciliation artifacts to one exact package root.
-pub(crate) fn presented_root_identity(root: &PackageRoot) -> anyhow::Result<PresentedRootIdentity> {
-    let directory = read_package_root(root)?;
-    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
-    let statements =
-        crate::component_admission::load_package_statement_facts(&root.path, &manifest)?;
-    let statement_corpus_sha256 =
-        wamn_execution_contract::canonical_json_sha256(&serde_json::to_value(statements)?);
-    let digest_file = |path: &str| -> anyhow::Result<String> {
-        let output = Path::new(path).strip_prefix("generated")?;
-        let bytes = fs::read(wamn_schema_generator::output_root(&root.path).join(output))
-            .with_context(|| format!("read presented root artifact {path}"))?;
-        Ok(bytes_digest(&bytes))
-    };
-    Ok(PresentedRootIdentity {
-        package: identity_from_directory(&directory)?,
-        statement_corpus_sha256,
-        data_access_sha256: digest_file(wamn_schema_generator::DATA_ACCESS_OVERLAY_PATH)?,
-    })
+/// The identity of one exact package root: its package artifact digest and
+/// migrations.
+pub(crate) fn presented_root_identity(root: &PackageRoot) -> anyhow::Result<PackageIdentity> {
+    identity_from_directory(&read_package_root(root)?)
 }
 
 pub(crate) fn identity_from_directory(

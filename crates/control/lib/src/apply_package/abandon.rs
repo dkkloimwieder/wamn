@@ -220,7 +220,6 @@ mod tests {
             candidate_suffix: Vec::new(),
             predecessor_packages: vec![predecessor.clone()],
             presented_packages: vec![candidate.clone()],
-            presented_roots: Vec::new(),
             schemas: vec!["inventory".into()],
             predecessor_privileges: UpgradePrivileges::default(),
             post_privileges: UpgradePrivileges::default(),

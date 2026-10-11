@@ -98,7 +98,7 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     .unwrap_err();
     let diagnostic = format!("{error:#}");
     assert!(
-        diagnostic.contains("qualified candidate statements or generated artifacts changed"),
+        diagnostic.contains("the candidate package artifact differs from the qualified one"),
         "{diagnostic}"
     );
     assert_eq!(state(&mut fixture.source).await, original);

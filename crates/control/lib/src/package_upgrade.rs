@@ -8,8 +8,8 @@ use wamn_schema_control::{PackageDirectory, PackageMigrationPlan};
 
 use crate::apply_package::PackageRoot;
 use crate::qualify_upgrade::{
-    self, MigrationIdentity, PackageIdentity, PresentedRootIdentity, UpgradeQualification,
-    identity_from_directory, read_current_packages, read_release_manifest,
+    self, MigrationIdentity, PackageIdentity, UpgradeQualification, identity_from_directory,
+    read_current_packages, read_release_manifest,
 };
 use crate::reconcile_package_data_access::upgrade::read_upgrade_privileges;
 
@@ -80,7 +80,7 @@ pub(crate) async fn apply_coordinated(
             .iter()
             .find(|root| {
                 qualify_upgrade::presented_root_identity(root)
-                    .is_ok_and(|identity| identity.package == overlay.candidate)
+                    .is_ok_and(|identity| identity == overlay.candidate)
             })
             .context("application roots omit a qualified overlay successor")?;
         ordered.push(prepare_package(root)?);
@@ -206,9 +206,9 @@ fn require_presented_roots(
         .iter()
         .map(qualify_upgrade::presented_root_identity)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+    presented.sort_by(|left, right| left.package_id.cmp(&right.package_id));
     ensure!(
-        presented == evidence.presented_roots,
+        presented == evidence.presented_packages,
         "application roots differ from the exact qualified complete successor set"
     );
     Ok(())
@@ -409,15 +409,9 @@ fn require_candidate_root(
     root: &PackageRoot,
     evidence: &UpgradeQualification,
 ) -> anyhow::Result<()> {
-    let observed = qualify_upgrade::presented_root_identity(root)?;
-    let qualified = evidence
-        .presented_roots
-        .iter()
-        .find(|root| root.package.package_id == evidence.candidate_package.package_id)
-        .context("qualified presented roots omit the candidate")?;
     ensure!(
-        observed == *qualified,
-        "qualified candidate statements or generated artifacts changed"
+        qualify_upgrade::presented_root_identity(root)? == evidence.candidate_package,
+        "the candidate package artifact differs from the qualified one"
     );
     let directory = crate::apply_package::read_package_root(root)?;
     let manifest = wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)?;
@@ -526,18 +520,18 @@ pub(crate) async fn reconciliation_evidence(
         .iter()
         .map(qualify_upgrade::presented_root_identity)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+    presented.sort_by(|left, right| left.package_id.cmp(&right.package_id));
     matching_reconciliation_evidence(&accepted, &installed, &presented).map(Some)
 }
 
 fn matching_reconciliation_evidence(
     accepted: &[AcceptedUpgrade],
     installed: &[PackageIdentity],
-    presented: &[PresentedRootIdentity],
+    presented: &[PackageIdentity],
 ) -> anyhow::Result<UpgradeQualification> {
     let mut matching = accepted.iter().filter(|accepted| {
         accepted.evidence.presented_packages == installed
-            && accepted.evidence.presented_roots == presented
+            && accepted.evidence.presented_packages == presented
     });
     let selected = &matching
         .next()

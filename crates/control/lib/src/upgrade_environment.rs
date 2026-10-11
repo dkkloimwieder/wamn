@@ -717,7 +717,7 @@ impl Run {
             .iter()
             .map(presented_root_identity)
             .collect::<anyhow::Result<Vec<_>>>()?;
-        presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+        presented.sort_by(|left, right| left.package_id.cmp(&right.package_id));
 
         if !evidence_path.exists() {
             let changed = packages
@@ -740,7 +740,7 @@ impl Run {
                 installed.len() == presented.len()
                     && installed.iter().all(|old| presented
                         .iter()
-                        .any(|root| root.package.package_id == old.package_id)),
+                        .any(|root| root.package_id == old.package_id)),
                 "an installed package upgrade requires the complete current root set; adding or removing packages is outside this transition"
             );
             let (candidate, predecessor_release) =
@@ -2261,19 +2261,19 @@ pub(crate) async fn apply_environment_package_qualification(
         .map(crate::qualify_upgrade::presented_root_identity)
         .collect::<anyhow::Result<Vec<_>>>()?;
     let mut presented = identities.clone();
-    presented.sort_by(|left, right| left.package.package_id.cmp(&right.package.package_id));
+    presented.sort_by(|left, right| left.package_id.cmp(&right.package_id));
     let (evidence, _, _) = crate::qualify_upgrade::read_qualification(evidence_path)?;
     ensure!(
         evidence.tenant == request.tenant
             && evidence.environment == environment
-            && evidence.presented_roots == presented,
+            && evidence.presented_packages == presented,
         "retained package qualification differs from this exact environment and complete successor root set"
     );
     let candidate_id = &evidence.candidate_package.package_id;
     let (candidate, _) = roots
         .iter()
         .zip(&identities)
-        .find(|(_, identity)| identity.package.package_id == *candidate_id)
+        .find(|(_, identity)| identity.package_id == *candidate_id)
         .context("retained package qualification names an absent candidate")?;
     request.package = candidate.clone();
     if let Some(overlay) = &evidence.overlay {

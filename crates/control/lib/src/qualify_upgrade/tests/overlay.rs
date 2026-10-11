@@ -378,13 +378,6 @@ async fn qualification_refuses_input_changes_before_publication() {
             "presented package changed during qualification",
         ),
         (
-            "sql",
-            vec![append(
-                wamn_schema_generator::output_root(&fixture.predecessor).join("sql/widget/get.sql"),
-            )],
-            "presented generated or SQL bytes changed during qualification",
-        ),
-        (
             "contract",
             vec![contract(original_contract.clone())],
             "changes its contract",
