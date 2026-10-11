@@ -517,7 +517,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         wamn_fixture_package::OVERLAY_PACKAGE_ID,
         package_version()
     )));
-    assert!(refusal.detail().contains("use the exact wamn.json"));
+    assert!(refusal.detail().contains("apply the verified artifact"));
     transaction
         .rollback()
         .await
