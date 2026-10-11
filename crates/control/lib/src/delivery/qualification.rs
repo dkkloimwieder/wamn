@@ -284,30 +284,7 @@ async fn qualify_candidate(
         "Rust differs from rust-toolchain.toml"
     );
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
-    // `wamn build` compiles the components of every package into the
-    // candidate's target directory. The workload guests are no package's.
-    build_packages(root, target, &mut result.checks).await?;
-    for package in WORKLOAD_GUESTS {
-        wamn_schema_generator::build::build_guest(
-            root,
-            &root.join("apps/Cargo.toml"),
-            package,
-            Some(target),
-        )
-        .await?;
-    }
-    run(
-        root,
-        &[
-            "bash".to_owned(),
-            "tools/delivery-owned".to_owned(),
-            "build-native".to_owned(),
-            target.display().to_string(),
-        ],
-        &target_env,
-        &mut result.checks,
-    )
-    .await?;
+    build_artifacts(root, target, &mut result.checks).await?;
     result.assert_artifacts()?;
     for command in image_commands(&result.candidate) {
         run(root, &command, &[], &mut result.checks).await?;
@@ -402,11 +379,15 @@ async fn qualify_candidate(
     require_complete_checks(result)
 }
 
-/// Build every package with `wamn build` against a fresh PostgreSQL server.
+/// Build every package with `wamn build` against a fresh PostgreSQL server,
+/// then the workload guests, which are no package's, and the native programs.
 ///
 /// The repository holds no build output, so the component, native and test
 /// builds after this step need it first (platform-deploy.md §7.1, C15).
-async fn build_packages(
+/// Qualification rebuilds the candidate's target directory with this, so a
+/// candidate is prepared after it: the rebuild then adds no guest and
+/// changes no file.
+pub async fn build_artifacts(
     root: &Path,
     target: &Path,
     checks: &mut Vec<CheckResult>,
@@ -434,6 +415,27 @@ async fn build_packages(
         .await?;
     }
     run(root, &build_command(root, target), &target_env, checks).await?;
+    for package in WORKLOAD_GUESTS {
+        wamn_schema_generator::build::build_guest(
+            root,
+            &root.join("apps/Cargo.toml"),
+            package,
+            Some(target),
+        )
+        .await?;
+    }
+    run(
+        root,
+        &[
+            "bash".to_owned(),
+            "tools/delivery-owned".to_owned(),
+            "build-native".to_owned(),
+            target.display().to_string(),
+        ],
+        &target_env,
+        checks,
+    )
+    .await?;
     Ok(())
 }
 

@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 use serde_yaml::Value as Yaml;
 use tokio::process::Command;
 use wamn_catalog::ServingManifest;
-use wamn_control::delivery::Candidate;
+use wamn_control::delivery::{Candidate, qualification};
 use wamn_control::environment::document::DeclaredRelease;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::release_chart::{ImageSet, Target, release_name, roles, stamp};
@@ -285,15 +285,22 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     })
 }
 
-/// `prepare-release`, the nodes' pull of the native images, and
-/// `qualify-release`. Returns the candidate, its manifest and the
-/// qualification result.
+/// The build of qualification, `prepare-release`, the nodes' pull of the
+/// native images, and `qualify-release`. Returns the candidate, its
+/// manifest and the qualification result.
 async fn qualify(
     app: &Application<'_>,
     host_image: &str,
     http_image: &str,
     materializer_image: &str,
 ) -> anyhow::Result<(Candidate, ServingManifest, PathBuf)> {
+    // The application built only its own packages. Qualification builds every
+    // package into the same target directory, and refuses a guest that its
+    // build adds to the candidate.
+    let mut builds = Vec::new();
+    let built = qualification::build_artifacts(app.repository, app.target, &mut builds).await;
+    write_evidence(app.evidence, "candidate-build.json", &json!(builds))?;
+    built?;
     let manifest = app.evidence.join("manifest.json");
     let candidate_path = app.evidence.join("candidate.json");
     let qualification = app.evidence.join("qualification.json");
