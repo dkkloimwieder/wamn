@@ -220,58 +220,6 @@ pub(super) async fn apply_secret(cluster: &str, work: &Path, body: &Value) -> an
     Ok(())
 }
 
-pub(super) async fn publish_runtime(
-    repository: &Path,
-    work: &Path,
-    artifact: &Path,
-    reference: &str,
-    result: &Path,
-) -> anyhow::Result<String> {
-    let binary = checked(&mut Command::new(repository.join("tools/install-wash"))).await?;
-    let binary = String::from_utf8(binary)?.trim().to_owned();
-    ensure!(
-        !binary.is_empty(),
-        "install-wash returned no executable path"
-    );
-    let output = Command::new(binary)
-        .env("DOCKER_CONFIG", work.join("docker"))
-        .args(["-o", "json", "oci", "push", "--insecure", reference])
-        .arg(artifact)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .context("publish the existing runtime component")?;
-    ensure!(
-        output.status.success(),
-        "runtime component publication failed: {}",
-        output.status
-    );
-    let body: Value =
-        serde_json::from_slice(&output.stdout).context("read the component publication result")?;
-    ensure!(
-        body["success"] == true && body["data"]["success"] == true,
-        "runtime publication did not succeed"
-    );
-    let digest = body["data"]["digest"]
-        .as_str()
-        .context("runtime publication returned its digest")?;
-    ensure!(
-        digest
-            .strip_prefix("sha256:")
-            .is_some_and(|tail| tail.len() == 64
-                && tail
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))),
-        "runtime publication digest is invalid"
-    );
-    fs::write(result, serde_json::to_vec_pretty(&body)?)?;
-    let repository = reference
-        .rsplit_once(':')
-        .context("the component publication used a tag")?
-        .0;
-    Ok(format!("{repository}@{digest}"))
-}
-
 pub(super) async fn expose_route(
     cluster: &str,
     work: &Path,
@@ -308,25 +256,20 @@ pub(super) async fn expose_route(
         !endpoints.is_empty(),
         "{service} has no placed endpoint to mirror"
     );
+    let nodeport = format!("{service}-nodeport");
     let body = json!({"apiVersion":"v1","kind":"List","items":[
-        {"apiVersion":"v1","kind":"Service","metadata":{"name":"flow-http-nodeport","namespace":namespace},
+        {"apiVersion":"v1","kind":"Service","metadata":{"name":nodeport,"namespace":namespace},
          "spec":{"type":"NodePort","ports":[{"name":"http","port":80,"targetPort":80,"protocol":"TCP"}]}},
         {"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice",
-         "metadata":{"name":"flow-http-nodeport","namespace":namespace,"labels":{"kubernetes.io/service-name":"flow-http-nodeport"}},
+         "metadata":{"name":nodeport,"namespace":namespace,"labels":{"kubernetes.io/service-name":nodeport}},
          "addressType":"IPv4","ports":[{"name":"http","port":80,"protocol":"TCP"}],"endpoints":endpoints}
     ]});
-    let path = work.join("flow-http-nodeport.json");
+    let path = work.join(format!("{nodeport}.json"));
     fs::write(&path, serde_json::to_vec_pretty(&body)?)?;
     checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
-    let service = checked(kubectl(cluster, work).args([
-        "-n",
-        namespace,
-        "get",
-        "service",
-        "flow-http-nodeport",
-        "-o",
-        "json",
-    ]))
+    let service = checked(
+        kubectl(cluster, work).args(["-n", namespace, "get", "service", &nodeport, "-o", "json"]),
+    )
     .await?;
     let service: Value = serde_json::from_slice(&service)?;
     let port = service["spec"]["ports"][0]["nodePort"]
@@ -406,6 +349,8 @@ pub(super) async fn capture_failure(
     let host_deployment = format!("hostgroup-{group}");
     let service = format!("{group}-http");
     let service_slices = format!("kubernetes.io/service-name={service}");
+    let nodeport = format!("{service}-nodeport");
+    let nodeport_slices = format!("kubernetes.io/service-name={nodeport}");
     let mut failures = Vec::new();
     for (name, arguments) in [
         (
@@ -414,16 +359,16 @@ pub(super) async fn capture_failure(
         ),
         ("failure-pods.json", vec!["get", "pods", "-o", "json"]),
         (
-            "failure-flow-http-service.json",
+            "failure-http-service.json",
             vec!["get", "service", &service, "-o", "json"],
         ),
         (
-            "failure-flow-http-endpointslices.json",
+            "failure-http-endpointslices.json",
             vec!["get", "endpointslices", "-l", &service_slices, "-o", "json"],
         ),
         (
             "failure-nodeport.json",
-            vec!["get", "service", "flow-http-nodeport", "-o", "json"],
+            vec!["get", "service", &nodeport, "-o", "json"],
         ),
         (
             "failure-nodeport-endpointslices.json",
@@ -431,7 +376,7 @@ pub(super) async fn capture_failure(
                 "get",
                 "endpointslices",
                 "-l",
-                "kubernetes.io/service-name=flow-http-nodeport",
+                &nodeport_slices,
                 "-o",
                 "json",
             ],

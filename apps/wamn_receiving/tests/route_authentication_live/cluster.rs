@@ -375,24 +375,29 @@ async fn install_release(
 ) -> anyhow::Result<Deployed> {
     let resources = &cluster.resources;
     let (_, overlay) = prepare_host(resources, &cluster.inputs, carrier, binding).await?;
-    let (http, materializer) = if let Some((candidate, _)) = &resources.candidate {
-        let authority = cluster
+    let registry = Registry {
+        authority: cluster
             .inputs
             .component_artifact_base
             .strip_suffix("/wamn/components")
-            .context("the Receiving component repository has its declared suffix")?;
-        case_release::copy_roles(
-            candidate,
-            &Registry {
-                authority: authority.to_owned(),
-                auth_file: Some(cluster.inputs.registry_auth_file.clone()),
-                insecure: true,
-                ca_paths: Vec::new(),
-            },
-        )
-        .await?
-    } else {
-        deployment::publish_platform_components(cluster).await?
+            .context("the Receiving component repository has its declared suffix")?
+            .to_owned(),
+        auth_file: Some(cluster.inputs.registry_auth_file.clone()),
+        insecure: true,
+        ca_paths: Vec::new(),
+    };
+    let (http, materializer) = match &resources.candidate {
+        Some((candidate, _)) => case_release::copy_roles(candidate, &registry).await?,
+        None => {
+            case_release::push_roles(
+                &resources.repository,
+                &cluster.artifacts.target,
+                &registry,
+                &resources.name,
+                &resources.evidence,
+            )
+            .await?
+        }
     };
     let host_image = if resources.host_image.contains('@') {
         resources.host_image.clone()

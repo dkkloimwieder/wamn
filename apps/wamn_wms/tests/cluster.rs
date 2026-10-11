@@ -602,36 +602,15 @@ async fn run_created(
         )?;
         // The platform image set (R12, R15): the supplied release's role images
         // copied by digest into this registry, or this checkout's, pushed.
-        let (flow_http, materializer) = if let Some(candidate) = candidate {
-            case_release::copy_roles(
-                candidate,
-                &Registry {
-                    authority: registry_authority.clone(),
-                    auth_file: Some(document.registry_auth_file.clone()),
-                    insecure: true,
-                    ca_paths: Vec::new(),
-                },
-            )
-            .await?
-        } else {
-            (
-                deployment::publish_runtime(
-                    repository,
-                    work,
-                    &document.flow_http_wasm,
-                    &format!("{registry_authority}/wamn/flow-http:{tag}"),
-                    &evidence.join("flow-http-push.json"),
-                )
-                .await?,
-                deployment::publish_runtime(
-                    repository,
-                    work,
-                    &target.join("wasm32-wasip2/release/materializer.wasm"),
-                    &format!("{registry_authority}/wamn/materializer:{tag}"),
-                    &evidence.join("materializer-push.json"),
-                )
-                .await?,
-            )
+        let registry = Registry {
+            authority: registry_authority.clone(),
+            auth_file: Some(document.registry_auth_file.clone()),
+            insecure: true,
+            ca_paths: Vec::new(),
+        };
+        let (http, materializer) = match candidate {
+            Some(candidate) => case_release::copy_roles(candidate, &registry).await?,
+            None => case_release::push_roles(repository, target, &registry, tag, evidence).await?,
         };
         let host_image = if image.contains('@') {
             image.to_owned()
@@ -662,7 +641,7 @@ async fn run_created(
             },
             &ImageSet {
                 host: host_image.clone(),
-                http: flow_http,
+                http,
                 materializer,
             },
             &ValuesInput {
@@ -763,22 +742,11 @@ async fn run_created(
             }
         }
         if !browser {
-            checked(kubectl(cluster, work).args([
-                "-n",
-                NAMESPACE,
-                "delete",
-                "service",
-                "flow-http-nodeport",
-            ]))
-            .await?;
-            checked(kubectl(cluster, work).args([
-                "-n",
-                NAMESPACE,
-                "delete",
-                "endpointslice",
-                "flow-http-nodeport",
-            ]))
-            .await?;
+            let nodeport = format!("{service}-nodeport");
+            for kind in ["service", "endpointslice"] {
+                checked(kubectl(cluster, work).args(["-n", NAMESPACE, "delete", kind, &nodeport]))
+                    .await?;
+            }
         }
         workload::materializer_idle(cluster, work, NAMESPACE, &hosts, evidence).await?;
         workload::cross_environment_refused(cluster, work, NAMESPACE, &http, evidence).await

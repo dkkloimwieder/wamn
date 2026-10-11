@@ -5,7 +5,8 @@
 //! does: a copy of `deploy/platform/release` stamped with the platform image
 //! set, and the values `release_chart::values` renders. A case that qualifies
 //! a candidate takes the role images from the candidate, copied by digest into
-//! its own registry, so the qualification key names the bytes the case ran.
+//! its own registry, so the qualification key names the bytes the case ran. A
+//! run without a candidate pushes this checkout's role components there.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -145,7 +146,7 @@ pub async fn copy_image(
 }
 
 /// Copy the candidate's http and materializer images by digest into
-/// `wamn/flow-http` and `wamn/materializer` of `to`, and return the copies.
+/// `wamn/http` and `wamn/materializer` of `to`, and return the copies.
 ///
 /// The candidate's registry is its owned native registry over plain HTTP, or
 /// a registry this machine's Docker login reads.
@@ -170,7 +171,7 @@ pub async fn copy_roles(candidate: &Candidate, to: &Registry) -> anyhow::Result<
         ca_paths: Vec::new(),
     };
     Ok((
-        copy_image(&candidate.http_image, &from, "wamn/flow-http", to).await?,
+        copy_image(&candidate.http_image, &from, "wamn/http", to).await?,
         copy_image(
             &candidate.materializer_image,
             &from,
@@ -179,6 +180,82 @@ pub async fn copy_roles(candidate: &Candidate, to: &Registry) -> anyhow::Result<
         )
         .await?,
     ))
+}
+
+/// Push this checkout's http and materializer role components, built in
+/// `target`, to `wamn/http` and `wamn/materializer` of `to` under `tag`, and
+/// return each as `<authority>/<repository>@sha256:<hex>`. This is the role
+/// build of a run that has no candidate; each push result is written to
+/// `evidence` as `<role>-push.json`.
+///
+/// # Errors
+///
+/// When wash cannot be installed, or a push fails or returns no digest.
+pub async fn push_roles(
+    repository: &Path,
+    target: &Path,
+    to: &Registry,
+    tag: &str,
+    evidence: &Path,
+) -> anyhow::Result<(String, String)> {
+    let installed = tokio::process::Command::new(repository.join("tools/install-wash"))
+        .kill_on_drop(true)
+        .output()
+        .await
+        .context("run install-wash")?;
+    ensure!(installed.status.success(), "install-wash failed");
+    let wash = String::from_utf8(installed.stdout)?.trim().to_owned();
+    ensure!(!wash.is_empty(), "install-wash returned no executable path");
+    let mut pushed = Vec::new();
+    for (file, role) in [
+        ("http_route.wasm", "http"),
+        ("materializer.wasm", "materializer"),
+    ] {
+        let reference = format!("{}/wamn/{role}:{tag}", to.authority);
+        let mut push = tokio::process::Command::new(&wash);
+        push.args(["-o", "json", "oci", "push"])
+            .args(to.insecure.then_some("--insecure"))
+            .arg(&reference)
+            .arg(target.join("wasm32-wasip2/release").join(file))
+            .kill_on_drop(true);
+        if let Some(file) = &to.auth_file {
+            push.env(
+                "DOCKER_CONFIG",
+                file.parent()
+                    .context("the registry credential has a directory")?,
+            );
+        }
+        let output = push.output().await.context("run wash oci push")?;
+        ensure!(
+            output.status.success(),
+            "the {role} role push failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("read the role push result")?;
+        let digest = body["data"]["digest"]
+            .as_str()
+            .filter(|digest| {
+                body["success"] == true
+                    && body["data"]["success"] == true
+                    && digest.strip_prefix("sha256:").is_some_and(|hex| {
+                        hex.len() == 64
+                            && hex
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    })
+            })
+            .with_context(|| format!("the {role} role push returned no canonical digest"))?;
+        fs::write(
+            evidence.join(format!("{role}-push.json")),
+            serde_json::to_vec_pretty(&body)?,
+        )?;
+        pushed.push(format!("{}/wamn/{role}@{digest}", to.authority));
+    }
+    let materializer = pushed.pop().context("the materializer image")?;
+    let http = pushed.pop().context("the http image")?;
+    Ok((http, materializer))
 }
 
 /// The host group body of the release chart: the one group of a rendered host

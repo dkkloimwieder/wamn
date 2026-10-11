@@ -39,7 +39,7 @@ use wamn_test_infrastructure::release_chart::{
     self as checks, Environment, Release, a1_probe, hosts_ready, role_placed,
 };
 
-use crate::case_release::{Registry, copy_image};
+use crate::case_release::{Registry, copy_image, push_roles};
 
 /// One run of an owned delivery command may take this long; `qualify-release`
 /// runs the application's cluster cases.
@@ -187,25 +187,26 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
     )
     .await?;
     let host_image = app.native("host")?;
-    let (http, materializer) = push_roles(app).await?;
-    let tls_releases = format!("{}/wamn/releases", app.kept.registry);
-    qualify(app, &tls_releases, &host_image, &http, &materializer).await?;
-
-    // The platform image set is the qualified one: the role images copied by
-    // digest to the kept registry, which the hosts pull from.
     let native = Registry {
         authority: native_authority(app)?,
         auth_file: None,
         insecure: true,
         ca_paths: Vec::new(),
     };
+    let (http, materializer) =
+        push_roles(app.repository, app.target, &native, app.owner, app.evidence).await?;
+    let tls_releases = format!("{}/wamn/releases", app.kept.registry);
+    qualify(app, &tls_releases, &host_image, &http, &materializer).await?;
+
+    // The platform image set is the qualified one: the role images copied by
+    // digest to the kept registry, which the hosts pull from.
     let kept = Registry {
         authority: app.kept.registry.clone(),
         auth_file: Some(app.kept.registry_auth.clone()),
         insecure: false,
         ca_paths: vec![app.kept.ca.clone()],
     };
-    let http = copy_image(&http, &native, "wamn/flow-http", &kept).await?;
+    let http = copy_image(&http, &native, "wamn/http", &kept).await?;
     let materializer = copy_image(&materializer, &native, "wamn/materializer", &kept).await?;
     let chart = stamp(
         &app.repository.join("deploy/platform/release"),
@@ -331,43 +332,6 @@ fn native_registry_files(endpoint: &str, host_image: &str, work: &Path) -> anyho
         ),
     )?;
     Ok(())
-}
-
-/// Push the http and materializer role components to the owned native
-/// registry, and return each as `localhost:<port>/wamn/<repository>@sha256:<hex>`,
-/// the authority of the native host image.
-async fn push_roles(app: &Application<'_>) -> anyhow::Result<(String, String)> {
-    let wash = String::from_utf8(
-        checked(&mut Command::new(app.repository.join("tools/install-wash"))).await?,
-    )?
-    .trim()
-    .to_owned();
-    ensure!(!wash.is_empty(), "install-wash returned no executable path");
-    let native = native_authority(app)?;
-    let mut pushed = Vec::new();
-    for (file, repository) in [
-        ("http_route.wasm", "flow-http"),
-        ("materializer.wasm", "materializer"),
-    ] {
-        let reference = format!("{native}/wamn/{repository}:{}", app.owner);
-        let output = checked(
-            Command::new(&wash)
-                .args(["-o", "json", "oci", "push", "--insecure", &reference])
-                .arg(app.target.join("wasm32-wasip2/release").join(file)),
-        )
-        .await?;
-        let body: Value =
-            serde_json::from_slice(&output).context("read the role publication result")?;
-        let digest = body["data"]["digest"]
-            .as_str()
-            .filter(|digest| digest.starts_with("sha256:"))
-            .context("the role publication returned no digest")?;
-        write_evidence(app.evidence, &format!("{repository}-push.json"), &body)?;
-        pushed.push(format!("{native}/wamn/{repository}@{digest}"));
-    }
-    let materializer = pushed.pop().context("the materializer image")?;
-    let http = pushed.pop().context("the http image")?;
-    Ok((http, materializer))
 }
 
 /// The owned native registry's authority as this process reaches it: the
@@ -712,26 +676,6 @@ async fn step(app: &Application<'_>, name: &str, command: &mut Command) -> anyho
         output.status.success(),
         "owned delivery {name} failed with {}; see its command result",
         output.status
-    );
-    Ok(output.stdout)
-}
-
-async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
-    let program = command
-        .as_std()
-        .get_program()
-        .to_string_lossy()
-        .into_owned();
-    let output = command
-        .kill_on_drop(true)
-        .output()
-        .await
-        .with_context(|| format!("start {program}"))?;
-    ensure!(
-        output.status.success(),
-        "{program} exited {}: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
     );
     Ok(output.stdout)
 }
