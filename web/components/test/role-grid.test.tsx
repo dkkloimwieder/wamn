@@ -101,13 +101,9 @@ describe("the role grid", () => {
   it("shows a refusal with its contract text, and the state it read again", async () => {
     const state = adminState();
     const { sent } = await open(state);
-    state.refuseNext = "release_not_current";
+    state.refuseNext = "operation_not_served";
     fireEvent.click(toggle("acme:inventory/query"));
-    expect(
-      await screen.findByText(
-        "The release of this host is no longer the current release. Try again when the host serves the current release.",
-      ),
-    ).toBeDefined();
+    expect(await screen.findByText("The current release does not serve this operation.")).toBeDefined();
     expect(toggle("acme:inventory/query").checked).toBe(false);
     expect(sent.filter((request) => request.operation.startsWith("wamn-control:permission/list@"))).toHaveLength(2);
   });

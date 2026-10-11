@@ -54,7 +54,7 @@ The fixed route sets live in [`wamn_catalog::host_route`](../../crates/catalog/m
 A serving manifest names the sets it serves in `host-routes`, and it leaves the member out when the list is empty.
 The control contract authors its package id `wamn_control`, its version and its route prefixes in [`host_route/wamn.json`](../../crates/catalog/model/src/host_route/wamn.json).
 A host route derives its sealed operation id, its path and its attachment id from that file, as generation does for a package operation.
-For example, `permission.mine` is `wamn-control:permission/mine@0.5.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
+For example, `permission.mine` is `wamn-control:permission/mine@0.6.0`, at `/wamn_control/permission/mine`, with the attachment id `wamn-control-permission-mine-http`.
 
 There are two sets.
 Release publish writes the set `application` into every application release.
@@ -73,34 +73,34 @@ Any other payload answers 400 `delivery-invalid-payload`.
 
 | Route | Answer |
 | --- | --- |
-| `wamn-control:permission/mine@0.5.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
-| `wamn-control:user/list@0.5.0` (application) | `users`: each application user with `id`, `email`, `display_name`, `roles` and `admin_covered`, which is true when `project-admin` or `org-admin` covers the user's `admin`. |
-| `wamn-control:role/list@0.5.0` | `roles`: every role of the tenant, `admin` included. |
-| `wamn-control:role/create@0.5.0` | Takes `role` and creates the empty authored role. Answers `created`. |
-| `wamn-control:role/delete@0.5.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
-| `wamn-control:permission/list@0.5.0` | Takes `role`. Answers `operations`: each operation the release serves and each stored row of the role, with `served`, `grantable`, `admin_only`, `selected` and `required_by`. |
-| `wamn-control:permission/grant@0.5.0` | Takes `role` and `operation`, selects the operation and writes its closure in the loaded release. Answers `rows_added` and `closure`. |
-| `wamn-control:permission/revoke@0.5.0` | Takes `role` and `operation`, and removes the selection and the rows it requires. Answers `still_required_by`. |
-| `wamn-control:user-role/grant@0.5.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
-| `wamn-control:user-role/revoke@0.5.0` | Takes `user_id` and `role`, and takes the role. An `admin` revoke refuses while the user holds `project-admin` in the project. Answers `revoked`. |
-| `wamn-control:control/mine@0.5.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
-| `wamn-control:user/list@0.5.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
-| `wamn-control:user/invite@0.5.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
-| `wamn-control:user/activate@0.5.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
-| `wamn-control:user/deactivate@0.5.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
-| `wamn-control:project/list@0.5.0` | `projects`: every project of the org. |
-| `wamn-control:org-admin/grant@0.5.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
-| `wamn-control:org-admin/revoke@0.5.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
-| `wamn-control:environment/list@0.5.0` | Takes `project`. Answers `environments`: every environment of the project. |
-| `wamn-control:member/list@0.5.0` | Takes `project`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
-| `wamn-control:member/grant@0.5.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
-| `wamn-control:member/revoke@0.5.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while `org-admin` or `project-admin` covers the environment. |
-| `wamn-control:project-admin/grant@0.5.0` | Takes `project` and `principal_id` of an active member, and writes `project-admin` and a membership in every environment of the project. |
-| `wamn-control:project-admin/revoke@0.5.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
-| `wamn-control:environment/activate@0.5.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
-| `wamn-control:environment/inactivate@0.5.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
-| `wamn-control:project/activate@0.5.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
-| `wamn-control:project/inactivate@0.5.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
+| `wamn-control:permission/mine@0.6.0` | `admin`, and the stable references the caller holds. An `admin` holds every operation the release serves. |
+| `wamn-control:user/list@0.6.0` (application) | `users`: each application user with `id`, `email`, `display_name`, `roles` and `admin_covered`, which is true when `project-admin` or `org-admin` covers the user's `admin`. |
+| `wamn-control:role/list@0.6.0` | `roles`: every role of the tenant, `admin` included. |
+| `wamn-control:role/create@0.6.0` | Takes `role` and creates the empty authored role. Answers `created`. |
+| `wamn-control:role/delete@0.6.0` | Takes `role` and deletes the authored role with its assignments and permissions. Answers `deleted`. |
+| `wamn-control:permission/list@0.6.0` | Takes `role`. Answers `operations`: each operation the release serves and each stored row of the role, with `served`, `grantable`, `admin_only`, `selected` and `required_by`. |
+| `wamn-control:permission/grant@0.6.0` | Takes `role` and `operation`, selects the operation and writes its closure in the loaded release. Answers `rows_added` and `closure`. |
+| `wamn-control:permission/revoke@0.6.0` | Takes `role` and `operation`, and removes the selection and the rows it requires. Answers `still_required_by`. |
+| `wamn-control:user-role/grant@0.6.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
+| `wamn-control:user-role/revoke@0.6.0` | Takes `user_id` and `role`, and takes the role. An `admin` revoke refuses while the user holds `project-admin` in the project. Answers `revoked`. |
+| `wamn-control:control/mine@0.6.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
+| `wamn-control:user/list@0.6.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
+| `wamn-control:user/invite@0.6.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
+| `wamn-control:user/activate@0.6.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
+| `wamn-control:user/deactivate@0.6.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
+| `wamn-control:project/list@0.6.0` | `projects`: every project of the org. |
+| `wamn-control:org-admin/grant@0.6.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
+| `wamn-control:org-admin/revoke@0.6.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
+| `wamn-control:environment/list@0.6.0` | Takes `project`. Answers `environments`: every environment of the project. |
+| `wamn-control:member/list@0.6.0` | Takes `project`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
+| `wamn-control:member/grant@0.6.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
+| `wamn-control:member/revoke@0.6.0` | Takes `project`, `env` and `principal_id`, and removes the membership of that environment. It refuses while `org-admin` or `project-admin` covers the environment. |
+| `wamn-control:project-admin/grant@0.6.0` | Takes `project` and `principal_id` of an active member, and writes `project-admin` and a membership in every environment of the project. |
+| `wamn-control:project-admin/revoke@0.6.0` | Takes `project` and `principal_id`, and removes `project-admin` in the project. It refuses while the user holds `org-admin`. Memberships stay. |
+| `wamn-control:environment/activate@0.6.0` | Takes `project` and `env`, and makes the environment active. Answers `project`, `env` and `status`. |
+| `wamn-control:environment/inactivate@0.6.0` | Takes `project` and `env`, and makes the environment inactive. Answers `project`, `env` and `status`. |
+| `wamn-control:project/activate@0.6.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
+| `wamn-control:project/inactivate@0.6.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
 
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
@@ -108,7 +108,7 @@ A role or permission write first takes the tenant lock that `wamn-ctl` and relea
 The writes are the functions of [`wamn_platform_identity::application`](../../crates/identity/platform/src/application.rs), which the role verbs of `wamn-ctl` also call.
 `user_role.revoke` reads `project-admin` through the identity reader of the host, because `org-admin` writes `project-admin` in every project of the org.
 `permission.grant` writes the permission root; each host expands the roots through the release it loaded.
-An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `release_not_current`, `permission_not_held`, `permission_not_selected` (with `required_by`), `user_not_found` or `admin_covered`.
+An application refusal is a declared error of its route, with `field` in its detail: `admin_fixed`, `invalid_input`, `role_not_found`, `operation_not_served`, `operation_not_grantable`, `permission_not_held`, `permission_not_selected` (with `required_by`), `user_not_found` or `admin_covered`.
 The contracts of the application routes live in [`host_route/contracts`](../../crates/catalog/model/src/host_route/contracts), and the generator projects them into the TypeScript client `@wamn/control-client` in `target/wamn/wamn_control/client-ts`, which Git does not hold ([building](../operations/building.md#host-route-clients)).
 The web screens `RoleGrid` and `UserGrid` of [`@wamn/ui/admin`](../../web/ui/README.md#the-platform-exports) call these routes through that client and write no database directly.
 `RoleGrid` shows one role's operations from `permission.list`, and `UserGrid` shows one user's roles from `user.list` and their permissions from `permission.list`.
