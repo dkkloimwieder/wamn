@@ -1,4 +1,4 @@
-//! The fixture of the control host route tests: the system schema, one org
+//! The fixture of the control host route tests: the control store, one org
 //! with two projects and one environment each, and the org's `control`
 //! login (docs/plan/platform-ui.md §4.4 and §4.5).
 //!
@@ -23,37 +23,16 @@ pub(super) async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
-/// The system schema as `wamn_system`, one org with two projects and one
-/// environment each, and the org's `control` login.
+/// The control store that `provision-system` installs, one org with two
+/// projects and one environment each, and the org's `control` login.
 pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<String> {
-    admin
-        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
-        .await?;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
         .await?
         .get(0);
-    admin
-        .batch_execute(&format!(
-            "CREATE ROLE wamn_system NOLOGIN; GRANT CREATE ON DATABASE \"{database}\" TO wamn_system; \
-             SET ROLE wamn_system"
-        ))
-        .await?;
-    admin
-        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-        .await?;
-    // The package versions that `package.list` reads. The control store
-    // creates them in `control-portable-store.sql`, which this fixture does
-    // not install.
-    admin
-        .batch_execute(
-            "CREATE SCHEMA catalog; \
-             CREATE TABLE catalog.package_artifacts ( \
-               package_id text NOT NULL, version text NOT NULL, digest text NOT NULL, \
-               source_commit text, verified_at timestamptz, \
-               PRIMARY KEY (package_id, version));",
-        )
-        .await?;
+    admin.batch_execute("CREATE ROLE wamn_system NOLOGIN").await?;
+    wamn_control::provision_system::install_control_store(admin).await?;
+    admin.batch_execute("SET ROLE wamn_system").await?;
     admin
         .batch_execute(
             "INSERT INTO registry.orgs (id, placement_type, pool_cluster) \
