@@ -91,8 +91,21 @@ pub async fn expand(
     // which name the release cache row the stage wrote.
     let mut targets = Vec::new();
     if let Some(release) = &analysis.authorities.release {
-        let manifests =
-            super::stage::stage(platform, document, analysis, release, &project_url).await?;
+        let analysed = analysis
+            .authorities
+            .project
+            .as_ref()
+            .map(|project| project.installed.clone())
+            .unwrap_or_default();
+        let manifests = super::stage::stage(
+            platform,
+            document,
+            &analysed,
+            &release.digest,
+            &release.manifest,
+            &project_url,
+        )
+        .await?;
         ensure_cdc(platform, document, &manifests).await?;
         let components: Vec<String> = release
             .manifest

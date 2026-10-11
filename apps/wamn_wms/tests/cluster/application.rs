@@ -29,6 +29,7 @@ pub(super) async fn prepare_application(
     work: &Path,
     admin_url: &str,
     publication: &PublicationInputs<'_>,
+    platform: &wamn_control::environment::Platform,
     evidence: &Path,
 ) -> anyhow::Result<(
     wamn_control::provision_project_env::ProvisionedRoute,
@@ -64,6 +65,7 @@ pub(super) async fn prepare_application(
             label_render_wasm: publication.label_render,
             minio_endpoint: publication.minio_endpoint,
         },
+        platform,
         evidence,
     )
     .await?;

@@ -19,7 +19,9 @@ use futures_util::FutureExt as _;
 use serde_json::json;
 use tokio::process::Command;
 use wamn_control::delivery::Candidate;
-use wamn_control::release_chart::{self, ImageSet, ValuesInput};
+use wamn_control::environment::Platform;
+use wamn_control::pat_client::PatIssuerConfig;
+use wamn_control::release_chart::{self, ImageSet, Target, ValuesInput};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
@@ -38,23 +40,29 @@ use deployment::{checked, kubectl};
 const DRAIN_BOUND_SECONDS: u32 = 70;
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl"]
 async fn released_wms_routes() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
+    wamn_test_postgres::require_prerequisites(&[
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+    ]);
     run_case(Case::Routes).await
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl"]
 async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
+    wamn_test_postgres::require_prerequisites(&[
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+    ]);
     run_case(Case::PartialCompletion).await
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl"]
 async fn restarted_wms_host_retains_compiled_code_and_serves_requests() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
+    wamn_test_postgres::require_prerequisites(&[
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+    ]);
     run_case(Case::Startup).await
 }
 
@@ -442,11 +450,20 @@ async fn run_created(
     let postgres_ip = bootstrap::kind_address(&postgres)?.to_string();
     let registry = deployment::inspect(lifecycle, &format!("{cluster}-registry")).await?;
     let registry_authority = format!("{}:5000", bootstrap::kind_address(&registry)?);
+    // The TLS twin of the registry, which the package stage reads (§10.2).
+    let registry_tls = deployment::inspect(lifecycle, &format!("{cluster}-registry-tls")).await?;
+    let registry_tls = format!(
+        "127.0.0.1:{}",
+        registry_tls["Ports"]["5000/tcp"][0]["HostPort"]
+            .as_str()
+            .context("the TLS registry publishes a loopback port")?
+    );
     let nats = deployment::inspect(lifecycle, &format!("{cluster}-nats")).await?;
     let nats_url = format!("nats://{}:4222", bootstrap::kind_address(&nats)?);
     let minio = deployment::inspect(lifecycle, &format!("{cluster}-minio")).await?;
     let minio_endpoint = format!("http://{}:9000", bootstrap::kind_address(&minio)?);
-    let registry_auth = bootstrap::write_registry_auth(files, work, &registry_authority)?;
+    let registry_auth =
+        bootstrap::write_registry_auth(files, work, [&registry_authority, &registry_tls])?;
     let admin_url = format!("postgresql://postgres:probe@{postgres_ip}:5432/postgres");
     deployment::wait_postgres(&admin_url).await?;
     deployment::wait_registry(&registry_authority, &registry_auth).await?;
@@ -488,6 +505,25 @@ async fn run_created(
             scenario_worker: &target.join("debug/wamn-scenario-worker"),
             label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
             minio_endpoint: &minio_endpoint,
+        },
+        &Platform {
+            system_database_url: document.system_pg_url.clone(),
+            target: Target {
+                kubeconfig: work.join("kubeconfig"),
+                context: format!("kind-{cluster}"),
+                namespace: NAMESPACE.to_owned(),
+            },
+            chart: repository.join("deploy/platform/release"),
+            release_artifact_base: format!("{registry_tls}/wamn/releases"),
+            registry_auth_file: document.registry_auth_file.clone(),
+            oci_ca_paths: vec![work.join("registry-tls/ca.crt")],
+            package_artifact_base: Some(format!("{registry_tls}/wamn/packages")),
+            database_namespace: NAMESPACE.to_owned(),
+            database_host: Some(postgres_ip.clone()),
+            database_port: 5432,
+            host_group: None,
+            pat_issuer: PatIssuerConfig::default(),
+            events: None,
         },
         evidence,
     )

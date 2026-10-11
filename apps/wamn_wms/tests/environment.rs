@@ -1,6 +1,6 @@
 //! WMS environment preparation through the existing control library.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -20,6 +20,9 @@ use wamn_control::component_declaration::declared_platform_packages;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{JourneyCredentials, connect};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
+use wamn_control::environment::analyse::Installed;
+use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
+use wamn_control::environment::{Platform, stage};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::print_release_env::{self, ReleaseCarrier};
@@ -505,11 +508,14 @@ pub struct PublicationArtifacts<'a> {
     pub minio_endpoint: &'a str,
 }
 
+/// `platform` is where the package stage of the release reads its package
+/// artifacts, over TLS.
 pub async fn publish(
     inputs: &JourneyDocument,
     route: &ProvisionedRoute,
     credentials: &JourneyCredentials,
     artifacts: &PublicationArtifacts<'_>,
+    platform: &Platform,
     evidence: &Path,
 ) -> anyhow::Result<ReleaseCarrier> {
     let PublicationArtifacts {
@@ -621,7 +627,7 @@ pub async fn publish(
                 .clone()
                 .context("WMS provisioning returned its management principal")?,
             run_schema: "wamn_run".into(),
-            packages: vec![package],
+            packages: vec![package.clone()],
             wirings: targets,
         },
         &registry,
@@ -643,14 +649,35 @@ pub async fn publish(
     if let Some(candidate) = wamn_control::delivery::Candidate::from_env()? {
         candidate.assert_manifest(&manifest)?;
     }
-    // The labels store is bound before any `env apply`, which projects the
-    // requirements a binding names, so they are projected here. The instance
-    // and its credential handle are named after the store alias, as `env
-    // apply` names the instances it binds.
-    wamn_control::environment::stage::materialize_requirements(
-        &route.database_url,
-        identity().tenant.as_str(),
+    // A binding names the connection requirements that the package stage
+    // projects, so the release's stage runs first, on the package that
+    // `prepare_project` installed (docs/plan/platform-deploy.md §10.2). The
+    // instance and its credential handle are named after the store alias, as
+    // `env apply` names the instances it binds.
+    let version = package.package_version().to_owned();
+    stage::stage(
+        platform,
+        &EnvironmentDocument {
+            org: identity().org.clone(),
+            project: identity().project.clone(),
+            env: identity().environment.clone(),
+            release: DeclaredRelease::Digest(release_digest.clone()),
+            route_host: identity().route_host.clone(),
+            policy: String::new(),
+            connections: BTreeMap::new(),
+            floors: BTreeMap::new(),
+        },
+        &BTreeMap::from([(
+            package.package_id().to_owned(),
+            Installed {
+                current: version.clone(),
+                lineage: BTreeMap::from([(version, None)]),
+                evidence: BTreeSet::new(),
+            },
+        )]),
+        &release_digest,
         &manifest,
+        &route.database_url,
     )
     .await?;
     let definition = json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"});

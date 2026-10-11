@@ -20,7 +20,9 @@ use anyhow::ensure;
 use serde_json::json;
 use tokio::process::Command;
 use wamn_control::delivery::Candidate;
-use wamn_control::environment::EventBroker;
+use wamn_control::environment::{EventBroker, Platform};
+use wamn_control::pat_client::PatIssuerConfig;
+use wamn_control::release_chart::Target;
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_gate_harness::delivery::{
@@ -206,6 +208,26 @@ async fn run(
             scenario_worker: &target.join("debug/wamn-scenario-worker"),
             label_render: &target.join("wasm32-wasip2/release/label_render.wasm"),
             minio_endpoint: &minio_endpoint,
+        },
+        // The package stage reads the kept registry over TLS.
+        &Platform {
+            system_database_url: document.system_pg_url.clone(),
+            target: Target {
+                kubeconfig: kept.kubeconfig(),
+                context: kept.context(),
+                namespace: NAMESPACE.to_owned(),
+            },
+            chart: repository.join("deploy/platform/release"),
+            release_artifact_base: format!("{}/wamn/releases", kept.registry),
+            registry_auth_file: document.registry_auth_file.clone(),
+            oci_ca_paths: vec![kept.ca.clone()],
+            package_artifact_base: Some(format!("{}/wamn/packages", kept.registry)),
+            database_namespace: DATABASE_NAMESPACE.to_owned(),
+            database_host: Some(database.host.clone()),
+            database_port: 5432,
+            host_group: None,
+            pat_issuer: PatIssuerConfig::default(),
+            events: None,
         },
         evidence,
     )

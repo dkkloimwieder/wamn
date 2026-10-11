@@ -17,11 +17,13 @@ use anyhow::{Context as _, bail, ensure};
 use wamn_schema_generator::PackageManifest;
 
 use super::Platform;
-use super::analyse::{self, Analysis, Installed, ReleaseFacts, connect};
+use super::analyse::{self, Installed, connect};
 use super::document::EnvironmentDocument;
 use crate::package_artifact::{OpenedPackage, PackageRegistry, PackageSource, open_package_source};
 
-/// Run the package stage of `release`. Returns the manifests of its packages.
+/// Run the package stage of the release `digest`, whose manifest is
+/// `manifest`, on the installed packages `analysed` that analysis read.
+/// Returns the manifests of its packages.
 ///
 /// # Errors
 ///
@@ -30,23 +32,18 @@ use crate::package_artifact::{OpenedPackage, PackageRegistry, PackageSource, ope
 pub async fn stage(
     platform: &Platform,
     document: &EnvironmentDocument,
-    analysis: &Analysis,
-    release: &ReleaseFacts,
+    analysed: &BTreeMap<String, Installed>,
+    digest: &str,
+    manifest: &wamn_catalog::ServingManifest,
     project_url: &str,
 ) -> anyhow::Result<Vec<PackageManifest>> {
     let tenant =
         wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
-    let analysed: BTreeMap<String, Installed> = analysis
-        .authorities
-        .project
-        .as_ref()
-        .map(|project| project.installed.clone())
-        .unwrap_or_default();
 
     // 1. The predecessor: the installed versions are those analysis judged.
     let observed = installed(platform, document).await?;
     let mut changed = Vec::new();
-    for (package, installed) in &analysed {
+    for (package, installed) in analysed {
         let now = observed.get(package).map(|now| now.current.as_str());
         if now != Some(installed.current.as_str()) {
             changed.push(format!(
@@ -67,7 +64,7 @@ pub async fn stage(
     // its stage evidence (`apply_coordinated` and the backfill unchanged in
     // content).
     let mut packages = Vec::new();
-    for package in &release.manifest.release.packages {
+    for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
         let opened = open(platform, id, version).await?;
         let applies = match analysed.get(id) {
@@ -92,8 +89,8 @@ pub async fn stage(
 
     // 2. The release cache row, once its package versions are installed: the
     // row seals the migrations of every version it names.
-    write_release(project_url, &tenant, release).await?;
-    materialize_requirements(project_url, &tenant, &release.manifest).await?;
+    write_release(project_url, &tenant, digest, manifest).await?;
+    materialize_requirements(project_url, &tenant, manifest).await?;
 
     // 3. The data access of the packages of the release, when each is the
     // installed version. A release on the tested predecessor keeps the
@@ -178,13 +175,8 @@ pub(super) async fn open(
 /// components in this environment: a runtime projection of the admitted
 /// descriptors the release manifest carries, one row for each connection of
 /// each component's descriptor (contract D, R2 (3)). An existing row with
-/// other bytes refuses. A binding names a requirement, so a test that binds
-/// a release it deploys without `apply` projects them first.
-///
-/// # Errors
-///
-/// When the project database cannot be written, or a row has other bytes.
-pub async fn materialize_requirements(
+/// other bytes refuses.
+async fn materialize_requirements(
     project_url: &str,
     tenant: &str,
     manifest: &wamn_catalog::ServingManifest,
@@ -265,14 +257,14 @@ fn release_requirements(
 async fn write_release(
     project_url: &str,
     tenant: &str,
-    release: &ReleaseFacts,
+    digest: &str,
+    manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<()> {
-    let bytes = release.manifest.canonical_bytes();
+    let bytes = manifest.canonical_bytes();
     ensure!(
-        release.manifest.digest().as_str() == release.digest,
-        "release manifest {} hashes to {}",
-        release.digest,
-        release.manifest.digest().as_str()
+        manifest.digest().as_str() == digest,
+        "release manifest {digest} hashes to {}",
+        manifest.digest().as_str()
     );
     let mut client = connect(project_url).await?;
     let transaction = client
@@ -287,7 +279,7 @@ async fn write_release(
         .execute(
             "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&tenant, &release.digest, &bytes],
+            &[&tenant, &digest, &bytes],
         )
         .await
         .context("write the release cache row")?;
