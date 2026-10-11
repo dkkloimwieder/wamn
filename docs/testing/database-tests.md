@@ -48,7 +48,6 @@ The owner records that live result on `wamn-orb5`, without a scheduled rollback 
 The [statement planner test](../../crates/schema/generator/tests/statement_check_live.rs) uses one exact runtime schema without an added `public` fallback.
 It requires planning to preserve grants, session authority, and the caller's surrounding transaction.
 The [workload tests](../../crates/control/lib/src/qualify_upgrade/workload.rs) exercise captured Kubernetes resources to establish convergence and the actual serving schema.
-The [carrier test](../../crates/control/lib/tests/package_upgrade_qualifications_live.rs) compares fresh installation with the numbered platform migration and requires immutable evidence.
 
 The [accepted-evidence tests](../../crates/control/lib/src/package_upgrade/tests.rs) exercise immediate-predecessor rollback against retained schema and live privileges.
 They require reconciliation evidence to match the complete current package set and presented roots, independent of timestamps or earlier qualifications.
