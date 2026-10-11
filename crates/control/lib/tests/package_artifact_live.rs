@@ -106,6 +106,7 @@ impl Fixture {
             registry: self.registry.clone(),
             component_artifact_base: format!("{}/wamn/components", self.local.address),
             source_commit: None,
+            build_database_url: None,
         }
     }
 
@@ -160,6 +161,8 @@ async fn push_repeat_fetch_and_refusals() {
     let package = apps().join("wamn_receiving");
     let request = fixture.request(package.clone());
 
+    // The tree is unchanged since wamn build, so the push does not build: the
+    // request gives no database URL, and a build would refuse without one.
     let first = push_package(&request).await.expect("the first push");
     assert_eq!(first.disposition, PackagePushDisposition::Pushed);
     let repeat = push_package(&request).await.expect("the repeat push");
@@ -327,5 +330,42 @@ async fn a_palette_component_named_by_two_packages_is_recorded_in_both() {
             .collect::<Vec<_>>(),
         ["labels"],
         "the store alias comes from the wiring"
+    );
+}
+
+/// A package without a current build.json is built, then pushed (§7.2).
+/// Edge Device is the package no other test of this file reads.
+#[tokio::test]
+async fn a_package_without_a_current_build_is_built_then_pushed() {
+    use wamn_schema_generator::receipt;
+    let fixture = Fixture::start("rebuild").await;
+    let package = apps().join("edge_device");
+    let output = wamn_schema_generator::output_root(&package);
+    std::fs::remove_file(output.join(receipt::RECEIPT_FILE)).expect("remove build.json");
+
+    let mut request = fixture.request(package.clone());
+    let refusal = push_package(&request)
+        .await
+        .expect_err("no database URL, so no build");
+    assert!(
+        format!("{refusal:#}").contains("give --database-url"),
+        "{refusal:#}"
+    );
+
+    request.build_database_url = Some(fixture.registry.control_database_url.clone());
+    let pushed = push_package(&request).await.expect("build, then push");
+    assert_eq!(pushed.disposition, PackagePushDisposition::Pushed);
+    let built = receipt::read(&output).expect("the push wrote build.json");
+    assert_eq!(
+        built.inputs.digest,
+        receipt::input_digest(&package).expect("digest the tree")
+    );
+    assert!(
+        built
+            .outputs
+            .components
+            .iter()
+            .any(|component| component.name == "device"),
+        "the build records the device component"
     );
 }

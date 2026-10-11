@@ -7,7 +7,10 @@
 //! plan, and every component admits against its built bytes, its declaration
 //! and the generated statement facts. A component is one the package owns or a
 //! palette component its wirings name; `outputs.components` of the package's
-//! `build.json` names its bytes. Then it pushes each component as
+//! `build.json` names its bytes. When the package has no `build.json`, or its
+//! `inputs.digest` differs from the tree, `push-package` first builds the
+//! package with the `wamn build` library (never by file time). Then it pushes
+//! each component as
 //! its own OCI artifact under its digest, pushes the package artifact, reads
 //! its manifest back, and records the manifest digest in
 //! `catalog.package_artifacts` last.
@@ -470,11 +473,10 @@ struct SourceComponent {
 
 /// The components that `manifest` owns or a wiring of `publication/wirings/`
 /// names, sorted by name, with their entries in `outputs.components` of the
-/// package's `build.json`. A missing receipt, a receipt whose `inputs.digest`
-/// differs from the tree, a name without an entry, a palette component without
-/// exactly one platform declaration, and a palette component with two store
-/// aliases refuse. The bytes of each entry are checked against its digest when
-/// they are read (§7.2: never by timestamp).
+/// package's `build.json`, which [`build_if_stale`] made current. A name
+/// without an entry, a palette component without exactly one platform
+/// declaration, and a palette component with two store aliases refuse. The
+/// bytes of each entry are checked against its digest when they are read.
 fn source_components(
     root: &Path,
     manifest: &PackageManifest,
@@ -511,14 +513,7 @@ fn source_components(
     }
     let output = wamn_schema_generator::output_root(root);
     let receipt = wamn_schema_generator::receipt::read(&output)
-        .with_context(|| format!("read the build of {}; run wamn build first", root.display()))?;
-    let inputs = wamn_schema_generator::receipt::input_digest(root)?;
-    ensure!(
-        receipt.inputs.digest == inputs,
-        "the build of {} is stale: build.json records inputs {}, and the tree is {inputs}; run wamn build again",
-        root.display(),
-        receipt.inputs.digest
-    );
+        .with_context(|| format!("read the build of {}", root.display()))?;
     templates
         .into_iter()
         .map(|(name, template)| {
@@ -541,6 +536,45 @@ fn source_components(
             })
         })
         .collect()
+}
+
+/// Whether the package at `root` has a `build.json` whose `inputs.digest`
+/// equals the digest of its tree (§7.2: never by file time).
+fn build_is_current(root: &Path) -> anyhow::Result<bool> {
+    use wamn_schema_generator::receipt;
+    let output = wamn_schema_generator::output_root(root);
+    if !output.join(receipt::RECEIPT_FILE).is_file() {
+        return Ok(false);
+    }
+    let recorded = receipt::read(&output)
+        .with_context(|| format!("read the build of {}", root.display()))?
+        .inputs
+        .digest;
+    Ok(recorded == receipt::input_digest(root)?)
+}
+
+/// Build the package at `root` with the `wamn build` library when it has no
+/// current `build.json`. A current build is left as it is. `database_url`
+/// names the PostgreSQL server of the build, as `wamn build --database-url`
+/// does.
+async fn build_if_stale(root: &Path, database_url: Option<&str>) -> anyhow::Result<()> {
+    if build_is_current(root)? {
+        return Ok(());
+    }
+    let database_url = database_url.with_context(|| {
+        format!(
+            "{} has no current build.json, and push-package has no database URL to build it; give --database-url",
+            root.display()
+        )
+    })?;
+    wamn_schema_generator::build::build_package(&wamn_schema_generator::build::BuildRequest::new(
+        root,
+        &wamn_schema_generator::build::default_output_root(root),
+        database_url,
+    ))
+    .await
+    .with_context(|| format!("build {}", root.display()))?;
+    Ok(())
 }
 
 /// The component names of the nodes of every wiring in `publication/wirings/`,
@@ -833,6 +867,9 @@ pub struct PushPackageRequest {
     pub component_artifact_base: String,
     /// The source commit recorded with the artifact.
     pub source_commit: Option<String>,
+    /// A superuser URL of a PostgreSQL server, for the build that runs when
+    /// the package has no current `build.json`.
+    pub build_database_url: Option<String>,
 }
 
 /// Whether the run pushed the artifact or found the same bytes under its tag.
@@ -855,7 +892,8 @@ pub struct PushedPackage {
     pub disposition: PackagePushDisposition,
 }
 
-/// Verify the package, push its components and its package artifact under
+/// Build the package when its `build.json` is missing or stale, verify it,
+/// push its components and its package artifact under
 /// `<package_id>-<version>`, and record the artifact digest in
 /// `catalog.package_artifacts`.
 ///
@@ -870,6 +908,7 @@ pub async fn push_package(request: &PushPackageRequest) -> anyhow::Result<Pushed
             "source commit must be one nonempty value"
         );
     }
+    build_if_stale(&request.package, request.build_database_url.as_deref()).await?;
     let verified = verify_package(&request.package)?;
     let packed = &verified.packed;
     let tag = packed.tag();
@@ -1461,8 +1500,62 @@ mod tests {
         remove(&root);
     }
 
+    /// An unchanged tree pushes without building: no database URL is given,
+    /// so a build would refuse.
+    #[tokio::test]
+    async fn an_unchanged_tree_is_not_built() {
+        let root = package_tree("unchanged");
+        assert!(build_is_current(&root).unwrap());
+        build_if_stale(&root, None).await.unwrap();
+        remove(&root);
+    }
+
+    /// A changed input or a missing `build.json` makes the build stale, and
+    /// push-package builds it before anything else.
+    #[tokio::test]
+    async fn a_changed_input_or_a_missing_build_is_built() {
+        let root = package_tree("stale");
+        write(&root, "migrations/0002_more.sql", b"SELECT 2;\n");
+        assert!(!build_is_current(&root).unwrap());
+        let error = format!("{:#}", build_if_stale(&root, None).await.unwrap_err());
+        assert!(error.contains("give --database-url"), "{error}");
+
+        write_receipt(&root);
+        assert!(build_is_current(&root).unwrap());
+        std::fs::remove_file(
+            wamn_schema_generator::output_root(&root)
+                .join(wamn_schema_generator::receipt::RECEIPT_FILE),
+        )
+        .unwrap();
+        assert!(!build_is_current(&root).unwrap());
+        // A refused build pushes nothing: no registry and no database exist.
+        let error = format!(
+            "{:#}",
+            push_package(&PushPackageRequest {
+                package: root.clone(),
+                registry: PackageRegistry {
+                    artifact_base: "registry.invalid/wamn/packages".to_owned(),
+                    registry_auth_file: root.join("missing-auth.json"),
+                    insecure_registry: false,
+                    oci_ca_paths: Vec::new(),
+                    control_database_url: "postgres://nobody@127.0.0.1:1/none".to_owned(),
+                },
+                component_artifact_base: "registry.invalid/wamn/components".to_owned(),
+                source_commit: None,
+                build_database_url: Some("postgres://nobody@127.0.0.1:1/none".to_owned()),
+            })
+            .await
+            .unwrap_err()
+        );
+        assert!(
+            error.contains(&format!("build {}", root.display())),
+            "{error}"
+        );
+        remove(&root);
+    }
+
     #[test]
-    fn the_build_refuses_a_stale_receipt_or_a_missing_component() {
+    fn the_build_refuses_a_missing_component() {
         let root = package_tree("index");
         let manifest = manifest(&root);
 
@@ -1484,10 +1577,6 @@ mod tests {
         assert_eq!(bytes, b"{\"component\": \"blob-put\"}\n");
         assert_eq!(store_alias.as_deref(), Some("labels"));
 
-        write(&root, "migrations/0002_more.sql", b"SELECT 2;\n");
-        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
-        assert!(error.contains("is stale"), "{error}");
-
         write(
             &root,
             "publication/wirings/shape.json",
@@ -1507,15 +1596,6 @@ mod tests {
             error.contains("0 platform declarations name component label-render"),
             "{error}"
         );
-
-        std::fs::remove_file(root.join("publication/wirings/shape.json")).unwrap();
-        std::fs::remove_file(
-            wamn_schema_generator::output_root(&root)
-                .join(wamn_schema_generator::receipt::RECEIPT_FILE),
-        )
-        .unwrap();
-        let error = format!("{:#}", source_components(&root, &manifest).unwrap_err());
-        assert!(error.contains("run wamn build first"), "{error}");
         remove(&root);
     }
 
@@ -1561,6 +1641,7 @@ mod tests {
             },
             component_artifact_base: "registry.invalid/wamn/components".to_owned(),
             source_commit: None,
+            build_database_url: None,
         })
         .await
         .unwrap_err();

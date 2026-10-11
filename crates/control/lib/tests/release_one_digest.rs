@@ -255,6 +255,7 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
         registry: registry.clone(),
         component_artifact_base: format!("{}/wamn/components", local.address),
         source_commit: None,
+        build_database_url: None,
     })
     .await
     .expect("push the package");

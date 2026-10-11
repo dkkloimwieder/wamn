@@ -565,6 +565,7 @@ pub async fn publish(
         registry: registry.clone(),
         component_artifact_base: inputs.component_artifact_base.clone(),
         source_commit: None,
+        build_database_url: None,
     })
     .await
     .context("push the WMS package artifact")?;

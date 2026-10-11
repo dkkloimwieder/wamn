@@ -716,6 +716,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
             },
             component_artifact_base: format!("{local}/wamn/components"),
             source_commit: None,
+            build_database_url: None,
         })
         .await
         {

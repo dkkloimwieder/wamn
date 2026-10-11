@@ -669,6 +669,7 @@ impl Run {
                         registry: package_registry.clone(),
                         component_artifact_base: format!("{}/components", environment.registry),
                         source_commit: Some(self.arguments.commit.clone()),
+                        build_database_url: None,
                     },
                 )
                 .await?;
