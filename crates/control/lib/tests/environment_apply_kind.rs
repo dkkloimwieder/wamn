@@ -30,10 +30,10 @@
 //!    release" and the history is unchanged.
 //! 8. `host_exits_before_its_grace_period`: a deleted host pod with a pinned
 //!    backlog it can claim finishes the run and exits with code 0 before
-//!    `terminationGracePeriodSeconds` (R20 (2)). The fixture has no
-//!    executable component, so the run is one the claim itself finishes: a
-//!    `durable` run whose lease expired after an effect attempt, which the
-//!    claim terminalizes as `effect-uncertain`.
+//!    `terminationGracePeriodSeconds`, and leaves queued the run of another
+//!    release that is ahead of it in the queue (R20 (1), (2)). The run is one
+//!    the claim itself finishes: a `durable` run whose lease expired after an
+//!    effect attempt, which the claim terminalizes as `effect-uncertain`.
 //! 9. release = none: no host pod remains, the declared instance stays
 //!    enabled, no binding remains.
 //! 10. delete with a run pinned to a release with no pod refuses.
@@ -57,7 +57,14 @@
 //! A6 (kind half) needs a staged package upgrade; this fixture has none, and
 //! the report says so.
 //!
-//! Run (epic closeout only):
+//! The fixture package is `apps/edge_device`: one stateless component,
+//! `device`, with no SQL. `push-package` admits it, so it needs the output of
+//! `wamn build apps/edge_device` of this checkout. Releases A and B name fake
+//! component digests, which no host pulls: they have no route. Release H names
+//! the admitted `device` descriptor, whose bytes `push-package` pushed, because
+//! its hosts pull and compile the component of its route.
+//!
+//! Run (epic closeout only), after `wamn build apps/edge_device`:
 //! `WAMN_SMOKE_HOST_IMAGE=wamn-host:<tag> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
 
 use std::path::{Path, PathBuf};
@@ -92,26 +99,23 @@ const ORG: &str = "acme";
 const PROJECT: &str = "orders";
 /// The policy provision-org stamps for the trials template.
 const POLICY: &str = "dev";
-/// The canonical fixture release, A: one package, no http attachment, no
-/// registration.
-const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":7,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+/// The fixture package. Its version is the one `wamn build` wrote.
+const PACKAGE: &str = "edge_device";
+/// The fixture release A: the fixture package, no http attachment, no
+/// registration, a component no host pulls. `@VERSION@` is the package version.
+const MANIFEST: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":7,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"edge_device","wiring-id":"orders","wiring-version":1}]}}"#;
 /// The second fixture release, B: the same package, another component digest.
-const MANIFEST_B: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"orders"}],"format-version":7,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+const MANIFEST_B: &str = r#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"edge_device"}],"format-version":7,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"edge_device","wiring-id":"orders","wiring-version":1}]}}"#;
 /// The third fixture release, H: the same package with one http attachment,
 /// served with no authentication, so its environments render the http role.
-const MANIFEST_H: &[u8] = br#"{"attachments":{"orders-read-http":{"auth-policy":{"modes":["none"]},"component":"http-request","definition":{"id":"orders-read-http","route":{"method":"GET","path":"/orders"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"orders:order/read@1.0.0","package-id":"orders","type":"http"}},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:6666666666666666666666666666666666666666666666666666666666666666","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"orders:order/read@1.0.0":{}},"package-id":"orders"}],"format-version":7,"release":{"packages":[{"package-id":"orders","package-version":"1.0.0"}]},"routes":[{"component":"http-request","operation":"orders:order/read@1.0.0","package-id":"orders","type":"get"}],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"orders","wiring-id":"orders","wiring-version":1}]}}"#;
+/// Its one component is the admitted `device` component, whose descriptor
+/// replaces `null`; `@OPERATION@` is that descriptor's one operation.
+const MANIFEST_H: &str = r#"{"attachments":{"sample-read-http":{"auth-policy":{"modes":["none"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","operation":"@OPERATION@","package-id":"edge_device","type":"http"}},"components":[{"descriptor":null,"operations":{"@OPERATION@":{}},"package-id":"edge_device"}],"format-version":7,"release":{"packages":[{"package-id":"edge_device","package-version":"@VERSION@"}]},"routes":[{"component":"device","operation":"@OPERATION@","package-id":"edge_device","type":"get"}],"workflow":{"wirings":[{"graph-hash":"sha256:3333333333333333333333333333333333333333333333333333333333333333","package-id":"edge_device","wiring-id":"orders","wiring-version":1}]}}"#;
 /// The route guest's refusal of a path the release does not serve.
 const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
 /// A role image no WorkloadDeployment pulls: no fixture release has a
 /// registration, so no materializer renders.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
-/// The package `orders@1.0.0` the fixture release names: no model, no
-/// migration, no SQL, and one stateless command in its one component, the
-/// shape of `apps/edge_device`.
-const PACKAGE_MANIFEST: &str = r#"{"package":{"id":"orders","version":"1.0.0"},"required_platform_policy_contract":{"id":"orders_data_access","state":"satisfied"},"models":{},"custom_operations":{"order.read":{"type":"command","visibility":"public","permission":"order.read","input":{"fields":[{"path":"request_id","type":"text","nullable":false},{"path":"value.order","type":"text","nullable":false}]},"result":{"class":"one","fields":[{"path":"order","type":"text","nullable":false}]},"errors":["invalid_input","permission_denied","internal_error"],"error_details":{},"idempotent_by":"stateless","label":"Read an order","description":"The one operation of the apply fixture. It declares no SQL."}},"connections":[],"components":{"orders":{"connections":[]}}}"#;
-/// The data access policy of [`PACKAGE_MANIFEST`]: no relation, no schema.
-const DATA_ACCESS: &str = r#"{"contract":"orders_data_access","package":"orders@1.0.0","relations":[],"role":"wamn_app","schemas":[]}"#;
-
 struct Run {
     work: PathBuf,
     cluster: String,
@@ -653,67 +657,29 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         .await?;
 
     // The package and the release, pushed from this machine.
-    let packages = work.join("apps");
-    let package = packages.join("orders");
-    let output = wamn_schema_generator::output_root(&package);
-    std::fs::create_dir_all(output.join("platform-policy"))?;
-    std::fs::create_dir_all(package.join("migrations"))?;
-    std::fs::write(
-        package.join("wamn.k"),
-        "# orders@1.0.0, the apply fixture\n",
+    let package = repository.join("apps").join(PACKAGE);
+    let built: Value = serde_json::from_slice(
+        &std::fs::read(wamn_schema_generator::output_root(&package).join("wamn.json"))
+            .context("read the fixture package's build output; run wamn build apps/edge_device")?,
     )?;
-    std::fs::write(output.join("wamn.json"), PACKAGE_MANIFEST)?;
-    std::fs::write(output.join("platform-policy/data-access.json"), DATA_ACCESS)?;
-    // The build.json entry of the component: push-package lists it, and no
-    // step pulls it.
-    std::fs::create_dir_all(output.join("components"))?;
-    std::fs::write(output.join("components/orders.wasm"), b"orders")?;
-    {
-        use wamn_schema_generator::receipt;
-        let receipt = receipt::BuildReceipt {
-            schema: receipt::RECEIPT_SCHEMA.to_owned(),
-            package: receipt::ReceiptPackage {
-                id: "orders".to_owned(),
-                version: "1.0.0".to_owned(),
-            },
-            inputs: receipt::ReceiptInputs {
-                digest: receipt::input_digest(&package)?,
-                files: std::collections::BTreeMap::new(),
-            },
-            dependencies: Vec::new(),
-            generator: receipt::ReceiptGenerator {
-                id: "generator".to_owned(),
-                toolchain: "toolchain".to_owned(),
-                sqlx: "0.9.0".to_owned(),
-            },
-            outputs: receipt::ReceiptOutputs {
-                manifest: wamn_package_artifact::sha256_digest(PACKAGE_MANIFEST.as_bytes()),
-                files: std::collections::BTreeMap::new(),
-                components: vec![receipt::ReceiptComponent {
-                    name: "orders".to_owned(),
-                    path: "components/orders.wasm".to_owned(),
-                    sha256:
-                        "sha256:1c168adb00d208e42f93314529f1fa9c0427eb63233ceda95a5db52b7012a719"
-                            .to_owned(),
-                }],
-                web: None,
-            },
-        };
-        std::fs::write(output.join(receipt::RECEIPT_FILE), receipt.to_bytes())?;
-    }
+    let version = built["package"]["version"]
+        .as_str()
+        .context("the fixture package has a version")?
+        .to_owned();
     let ca = vec![work.join("ca.crt")];
     let package_base = format!("{local}/wamn/packages");
+    let package_registry = PackageRegistry {
+        artifact_base: package_base.clone(),
+        registry_auth_file: work.join("auth.json"),
+        insecure_registry: false,
+        oci_ca_paths: ca.clone(),
+        control_database_url: system_url.clone(),
+    };
     let mut pushed = None;
     for _ in 0..30 {
         match push_package(&PushPackageRequest {
             package: package.clone(),
-            registry: PackageRegistry {
-                artifact_base: package_base.clone(),
-                registry_auth_file: work.join("auth.json"),
-                insecure_registry: false,
-                oci_ca_paths: ca.clone(),
-                control_database_url: system_url.clone(),
-            },
+            registry: package_registry.clone(),
             component_artifact_base: format!("{local}/wamn/components"),
             source_commit: None,
         })
@@ -727,6 +693,15 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         }
     }
     pushed.context("push the fixture package")?;
+    let device =
+        wamn_package_artifact::read_verified_descriptors(&package_registry, PACKAGE, &version)
+            .await?
+            .into_iter()
+            .find(|descriptor| descriptor.component == "device")
+            .context("the fixture package admits its device component")?;
+    let manifest_a = release(MANIFEST, &version, None)?;
+    let manifest_b = release(MANIFEST_B, &version, None)?;
+    let manifest_h = release(MANIFEST_H, &version, Some(&serde_json::to_value(&device)?))?;
 
     // The http role image: the route guest, built as the Dockerfile builds it
     // and pushed to the registry as a wasm component.
@@ -761,7 +736,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         "the http role push returned {http_digest}"
     );
     let digest = push_manifest_bytes(
-        MANIFEST,
+        &manifest_a,
         &format!("{local}/wamn/releases"),
         false,
         &ca,
@@ -825,7 +800,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         .await?;
 
     // The qualification of each fixture release on the chart's image set (R12).
-    for (fill, bytes) in [("9", MANIFEST), ("8", MANIFEST_B), ("7", MANIFEST_H)] {
+    for (fill, bytes) in [("9", &manifest_a), ("8", &manifest_b), ("7", &manifest_h)] {
         let (release, _) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
         system
             .execute(
@@ -1151,7 +1126,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     // The checks of wamn-snz0.4: rollback, release none, the host's one
     // shutdown budget, and delete.
     let digest_b = push_manifest_bytes(
-        MANIFEST_B,
+        &manifest_b,
         &format!("{local}/wamn/releases"),
         false,
         &platform.oci_ca_paths,
@@ -1241,7 +1216,9 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     // period (R20 (2)). The run turns claimable ten seconds after it is
     // seeded, once the pod is draining. It is `durable`, its prior lease
     // expired after an effect attempt, so the claim terminalizes it as
-    // `effect-uncertain` with no component to execute.
+    // `effect-uncertain` with no component to execute. A run of release B,
+    // claimable and ahead of it in the queue, stays queued: the draining host
+    // claims no run of another release (R20 (1), (2)).
     let (system, system_task) = connect(&system_url).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
     system
@@ -1252,6 +1229,42 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         .await?;
     system_task.abort();
     apply(&shown, "dev-short-drain").await?;
+    // The new drain bound rolls the host pod, and both pods carry release A,
+    // so apply's live set is A before the old pod is gone. Run 5 deleted the
+    // old pod, already draining with no backlog, and read the run before it
+    // turned claimable. Seed and delete only once the one pod is the new one.
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let pods = loop {
+        let pods = run
+            .json(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "pods",
+                    "-l",
+                    &format!("wasmcloud.com/hostgroup={name}"),
+                    "-o",
+                    "json",
+                ],
+            )
+            .await?;
+        let items = pods["items"].as_array().cloned().unwrap_or_default();
+        if let [pod] = items.as_slice()
+            && pod["metadata"]["deletionTimestamp"].is_null()
+            && pod["spec"]["terminationGracePeriodSeconds"] == 30
+            && pod["status"]["containerStatuses"][0]["ready"] == true
+        {
+            break pods;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "the dev host group did not settle on one pod with the 30-second drain bound: {}",
+            items.len()
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    };
     let (_, dev_url) = project_database("dev").await?;
     let (project, project_task) = connect(&dev_url).await?;
     let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
@@ -1259,12 +1272,29 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         .execute(
             "INSERT INTO wamn_run.runs \
                (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+                wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
+             VALUES ($1, 'drain-other-release', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
+                     'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
+            &[&tenant, &PACKAGE, &digest_b],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at) \
+             VALUES ($1, 'drain-other-release', now() - interval '1 minute')",
+            &[&tenant],
+        )
+        .await?;
+    project
+        .execute(
+            "INSERT INTO wamn_run.runs \
+               (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
                 wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id, \
                 durability_class) \
-             VALUES ($1, 'drain-claimable', 'orders', 1, 'orders', $2, 'dev', 'orders', 1, \
+             VALUES ($1, 'drain-claimable', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
                      'running', 'automation', '{}', '00000000-0000-0000-0000-000000000001', \
                      'durable')",
-            &[&tenant, &digest],
+            &[&tenant, &PACKAGE, &digest],
         )
         .await?;
     project
@@ -1286,21 +1316,6 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
              VALUES ($1, 'drain-claimable', $2, $2, 0, 'effect-node', $2, 'manager', 0, 1, \
                      'not-required', '2099-01-01T00:00:00Z', 'sha256:drain-effect-input')",
             &[&tenant, &hash],
-        )
-        .await?;
-    let pods = run
-        .json(
-            "kubectl",
-            &[
-                "-n",
-                NAMESPACE,
-                "get",
-                "pods",
-                "-l",
-                &format!("wasmcloud.com/hostgroup={name}"),
-                "-o",
-                "json",
-            ],
         )
         .await?;
     let pod = pods["items"][0]["metadata"]["name"]
@@ -1367,6 +1382,15 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         )
         .await?;
     let (status, queued): (String, bool) = (finished.get(0), finished.get(1));
+    let other = project
+        .query_one(
+            "SELECT r.status, EXISTS (SELECT 1 FROM wamn_run.run_queue q \
+                                      WHERE q.tenant_id = r.tenant_id AND q.run_id = r.run_id) \
+               FROM wamn_run.runs r WHERE r.tenant_id = $1 AND r.run_id = 'drain-other-release'",
+            &[&tenant],
+        )
+        .await?;
+    let (other_status, other_queued): (String, bool) = (other.get(0), other.get(1));
     let _ = follow.kill().await;
     let log = std::fs::read_to_string(&host_log).unwrap_or_default();
     let log_tail: Vec<&str> = log
@@ -1381,11 +1405,15 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         "host_exits_before_its_grace_period",
         &format!("kubectl -n {NAMESPACE} delete pod {pod}; kubectl get pod {pod} -o json"),
         json!({"grace_seconds": grace, "exit_code": exit_code, "exited_after_seconds": exited_after,
-            "run_status": status, "run_queued": queued, "host_log_tail": log_tail}),
+            "run_status": status, "run_queued": queued,
+            "other_release_run_status": other_status, "other_release_run_queued": other_queued,
+            "host_log_tail": log_tail}),
         exit_code == Some(0)
             && exited_after.is_some_and(|seconds| seconds < grace)
             && status == "effect-uncertain"
-            && !queued,
+            && !queued
+            && other_status == "dispatched"
+            && other_queued,
     );
 
     // The run that check 10 finds stranded: pinned to A and never claimable.
@@ -1394,9 +1422,9 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
             "INSERT INTO wamn_run.runs \
                (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
                 wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
-             VALUES ($1, 'pinned-backlog', 'orders', 1, 'orders', $2, 'dev', 'orders', 1, \
+             VALUES ($1, 'pinned-backlog', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
                      'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
-            &[&tenant, &digest],
+            &[&tenant, &PACKAGE, &digest],
         )
         .await?;
     project
@@ -1505,7 +1533,7 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
     );
     // 13. A7: each route host reaches only its own environment.
     let digest_h = push_manifest_bytes(
-        MANIFEST_H,
+        &manifest_h,
         &format!("{local}/wamn/releases"),
         false,
         &platform.oci_ca_paths,
@@ -1556,6 +1584,49 @@ async fn scenario(run: &mut Run, repository: &Path, host_image: &str) -> anyhow:
         operator_before == operator_after,
     );
     Ok(())
+}
+
+/// The canonical bytes of a fixture release: `template` with the package
+/// version, and with `device` as its one component's descriptor and that
+/// descriptor's one operation as the operation of its route.
+fn release(template: &str, version: &str, device: Option<&Value>) -> anyhow::Result<Vec<u8>> {
+    let mut text = template.replace("@VERSION@", version);
+    if let Some(device) = device {
+        let operations = device["operations"]
+            .as_object()
+            .context("the device descriptor has operations")?;
+        ensure!(
+            operations.len() == 1,
+            "the device descriptor has one operation"
+        );
+        let operation = operations.keys().next().context("the device operation")?;
+        text = text.replace("@OPERATION@", operation);
+    }
+    let mut value: Value = serde_json::from_str(&text)?;
+    if let Some(device) = device {
+        value["components"][0]["descriptor"] = device.clone();
+    }
+    let bytes = wamn_execution_contract::canonical_json_bytes(&value);
+    wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
+        .context("the fixture release is a valid canonical manifest")?;
+    Ok(bytes)
+}
+
+#[test]
+fn the_fixture_releases_are_canonical_manifests() {
+    for template in [MANIFEST, MANIFEST_B] {
+        release(template, "2.1.0", None).expect("a fixture release");
+    }
+    let (fixture, _) = wamn_catalog::ServingManifest::from_canonical_bytes(
+        &release(MANIFEST, "2.1.0", None).expect("release A"),
+    )
+    .expect("release A");
+    let mut device =
+        serde_json::to_value(&fixture.components.first().expect("a component").descriptor)
+            .expect("a descriptor");
+    device["component"] = json!("device");
+    device["operations"] = json!({"edge-device:sample/read@2.1.0": {"input-ports": [], "output-ports": [], "parameters": []}});
+    release(MANIFEST_H, "2.1.0", Some(&device)).expect("release H");
 }
 
 /// GET `url` from a pod in the namespace with `Host: route_host`, and return
