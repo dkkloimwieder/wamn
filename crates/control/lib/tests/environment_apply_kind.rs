@@ -347,6 +347,16 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
         serde_json::to_vec_pretty(&run.report)?,
     )?;
     run.remove().await;
+    // The key material and credentials go with the cluster; the evidence stays.
+    for secret in ["ca.key", "tls.key", "htpasswd", "auth.json", "kubeconfig"] {
+        let _ = std::fs::remove_file(run.work.join(secret));
+    }
+    let mut kept = std::fs::read_dir(&run.work)?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    kept.sort();
+    println!("kept in {}: {}", run.work.display(), kept.join(" "));
     result?;
     let failed: Vec<&Value> = run
         .report
