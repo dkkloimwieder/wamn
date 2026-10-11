@@ -70,7 +70,9 @@ The composed component replaces the overlay's virtualized output.
 The composer does not compare the base bytes with the digest pin in `wamn.json`. Publication checks the pin.
 
 Last, the build copies each component that the package owns, each palette component that its wirings name, and each no-op participant to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
-`wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component. `push-package` refuses a `build.json` whose `inputs.digest` differs from the package tree, a component without an entry, and a file whose digest differs from its entry. It never compares file times.
+`wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component.
+`push-package` refuses a component without an entry, and a file whose digest differs from its entry.
+For `push-package` and its build, see [Pushing a package](#pushing-a-package).
 The dev loop watches the package roots, `apps/platform`, and the shared platform WIT sources, so an edit of any of them rebuilds the components.
 
 WIT bindings read canonical package directories through ordered `path` lists. Put dependencies before the consumer world.
@@ -133,6 +135,35 @@ Run `pnpm install` at the repository root first.
 `build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.
 Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.
 The build compiles the package's components as [above](#native-programs-and-app-components) describes.
+
+## Pushing a package
+
+`wamn-ctl push-package --package <package root>` pushes one package artifact ([platform-deploy.md §7.2](../plan/platform-deploy.md)).
+First it compares the `inputs.digest` of the package's `build.json` with the digest of the package tree.
+If they are equal, it pushes the build output as it is, and it does not build.
+If they differ, or the package has no `build.json`, it builds the package with the `wamn build` library, and then it pushes.
+It never compares file times.
+A build needs a PostgreSQL server, as for `wamn build`.
+Give a superuser URL in `DATABASE_URL` or `--database-url`.
+If the package needs a build and no URL is given, `push-package` refuses and pushes nothing.
+An overlay reads the `build.json` of each base package, so build or push the base first.
+
+## Reading a pushed package
+
+Layer 0 of a package artifact is the canonical `wamn.json` of the package.
+`wamn inspect <package_id>-<version>` prints layer 0 of the pushed artifact, byte for byte.
+`wamn diff <package_id>-<version> <package_id>-<version>` prints each JSON pointer where layer 0 of the two artifacts differs.
+A line that starts with `-` shows the value in the first artifact, and a line that starts with `+` shows the value in the second.
+Identical documents print nothing.
+Both commands read only an artifact that `catalog.package_artifacts` records as verified, and they check each layer against its digest.
+They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry`, `--oci-ca-path` and `--control-database-url`.
+
+```bash
+"$CARGO_TARGET_DIR/debug/wamn" inspect wamn_receiving-2.1.0 \
+  --artifact-base <registry>/wamn/packages \
+  --registry-auth-file <auth file> \
+  --control-database-url <control database URL>
+```
 
 ## Host route clients
 
