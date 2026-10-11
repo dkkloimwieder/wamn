@@ -50,15 +50,15 @@ pub use manifest_push::push_manifest_bytes;
 #[cfg(test)]
 use attachments::merge_package_attachment_documents;
 
-const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, false)";
 const SELECT_APPLIED_PACKAGE_DIGEST_SQL: &str = "\
 SELECT artifact_digest FROM catalog.packages \
- WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 FOR SHARE";
+ WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3";
 const SELECT_WIRING_SQL: &str = "\
 SELECT wiring_hash, graph_json::text \
   FROM catalog.wirings \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
-   AND wiring_id = $4 AND version = $5 FOR SHARE";
+   AND wiring_id = $4 AND version = $5";
 const READ_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
  WHERE tenant_id = $1 AND manifest_digest = $2";
@@ -385,12 +385,9 @@ pub async fn publish_local(
         read_projected_environment_disposable(&args.control_database_url, &args.tenant).await?,
         "local candidates require a provisioned disposable environment"
     );
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls).await?;
+    let (client, connection) = tokio_postgres::connect(&args.database_url, NoTls).await?;
     let driver = tokio::spawn(connection);
-    let transaction = client.transaction().await?;
-    transaction
-        .query_one(CLAIM_TENANT_SQL, &[&args.tenant])
-        .await?;
+    client.query_one(CLAIM_TENANT_SQL, &[&args.tenant]).await?;
     let assembled = assemble_local_release(&args, package_roots, admissions, documents)?;
     let run_schema = args.verified_run_schema()?;
     let policy = crate::verification_policy::read_authoritative_environment_policy(
@@ -400,10 +397,8 @@ pub async fn publish_local(
         false,
     )
     .await?;
-    let projected =
-        read_projected_environment_policy(&transaction, &run_schema, &args.tenant).await?;
+    let projected = read_projected_environment_policy(&client, &run_schema, &args.tenant).await?;
     verify_projected_environment_policy(projected.as_ref(), &policy, &args.scope(), &run_schema)?;
-    transaction.commit().await?;
     drop(client);
     driver.abort();
     Ok((assembled.published, assembled.facts))
@@ -696,12 +691,12 @@ async fn publish_candidate(
     .await
     .context("read the authoritative environment policy before release publish")?;
 
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+    let (client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
         .await
         .context("connect to the release project environment")?;
     let connection_task = tokio::spawn(connection);
-    let published = publish_in_transaction(
-        &mut client,
+    let published = read_and_push(
+        &client,
         &request,
         &release_components,
         &package_manifests,
@@ -733,8 +728,8 @@ async fn publish_candidate(
     clippy::too_many_arguments,
     reason = "each input is one independent fact of the release"
 )]
-async fn publish_in_transaction(
-    client: &mut Client,
+async fn read_and_push(
+    client: &Client,
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
@@ -745,12 +740,8 @@ async fn publish_in_transaction(
     registry: &PackageRegistry,
     release_artifact_base: &str,
 ) -> anyhow::Result<PublishedRelease> {
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin the release publish")?;
     let published = publish_release_with_package_manifests(
-        &transaction,
+        client,
         request,
         components,
         package_manifests,
@@ -759,7 +750,7 @@ async fn publish_in_transaction(
     )
     .await?;
     let projected =
-        read_projected_environment_policy(&transaction, run_schema, request.tenant_id).await?;
+        read_projected_environment_policy(client, run_schema, request.tenant_id).await?;
     verify_projected_environment_policy(
         projected.as_ref(),
         source_policy,
@@ -774,10 +765,6 @@ async fn publish_in_transaction(
         &registry.registry_auth_file,
     )
     .await?;
-    transaction
-        .commit()
-        .await
-        .context("commit the release publish")?;
     Ok(published)
 }
 
@@ -789,11 +776,11 @@ pub(crate) struct ProjectedEnvironmentPolicy {
 }
 
 pub(crate) async fn read_projected_environment_policy(
-    transaction: &Transaction<'_>,
+    client: &Client,
     run_schema: &BareSchemaName,
     tenant_id: &str,
 ) -> Result<Option<ProjectedEnvironmentPolicy>, PublishManifestError> {
-    transaction
+    client
         .query_opt(&projected_environment_policy_sql(run_schema), &[&tenant_id])
         .await
         .map(|row| {
@@ -930,7 +917,7 @@ fn sha256(bytes: &[u8]) -> String {
 }
 
 async fn publish_release_with_package_manifests(
-    transaction: &Transaction<'_>,
+    client: &Client,
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
@@ -938,7 +925,7 @@ async fn publish_release_with_package_manifests(
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
     publish_release_from_sources(
-        transaction,
+        client,
         request,
         components,
         package_manifests,
@@ -949,20 +936,20 @@ async fn publish_release_with_package_manifests(
 }
 
 async fn publish_release_from_sources(
-    transaction: &Transaction<'_>,
+    client: &Client,
     request: &PublishReleaseManifest<'_>,
     component_facts: &ReleaseComponents,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
-    transaction
+    client
         .query_one(CLAIM_TENANT_SQL, &[&request.tenant_id])
         .await
         .map_err(|error| storage("claim the release tenant", error))?;
     validate_request(request)?;
     validate_release_package_manifests(
-        transaction,
+        client,
         request,
         package_manifests,
         package_artifact_digests,
@@ -994,7 +981,7 @@ async fn publish_release_from_sources(
             package_version: target.package_version.clone(),
         };
         let entry_operation = resolve_wiring(
-            transaction,
+            client,
             request,
             target,
             &scope,
@@ -1092,7 +1079,7 @@ fn validate_request(request: &PublishReleaseManifest<'_>) -> Result<(), PublishM
 /// artifact already installed by `apply-package`: the artifact digest it
 /// recorded equals the digest the registry records.
 async fn validate_release_package_manifests(
-    transaction: &Transaction<'_>,
+    client: &Client,
     request: &PublishReleaseManifest<'_>,
     package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     package_artifact_digests: &BTreeMap<String, String>,
@@ -1150,7 +1137,7 @@ async fn validate_release_package_manifests(
                     format!("package {coordinate} has no package artifact digest"),
                 )
             })?;
-        let Some(row) = transaction
+        let Some(row) = client
             .query_opt(
                 SELECT_APPLIED_PACKAGE_DIGEST_SQL,
                 &[
@@ -1445,7 +1432,7 @@ fn derive_serving_registrations(
 
 #[allow(clippy::too_many_arguments)]
 async fn resolve_wiring(
-    transaction: &Transaction<'_>,
+    client: &Client,
     request: &PublishReleaseManifest<'_>,
     target: &ReleaseWiringTarget,
     scope: &ComponentPackageScope,
@@ -1462,7 +1449,7 @@ async fn resolve_wiring(
             error,
         )
     })?;
-    let Some(row) = transaction
+    let Some(row) = client
         .query_opt(
             SELECT_WIRING_SQL,
             &[

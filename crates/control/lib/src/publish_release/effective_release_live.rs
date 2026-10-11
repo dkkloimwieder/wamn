@@ -325,26 +325,16 @@ async fn author_one_node_wiring(
 }
 
 async fn publish(
-    project: &mut Client,
+    project: &Client,
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
     manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     hashes: &BTreeMap<String, String>,
     kinds: &super::RouteContracts,
 ) -> PublishedRelease {
-    let transaction = project.transaction().await.expect("begin release publish");
-    let release = publish_release_with_package_manifests(
-        &transaction,
-        request,
-        components,
-        manifests,
-        hashes,
-        kinds,
-    )
-    .await
-    .expect("publish the exact fresh two-package release");
-    transaction.commit().await.expect("commit release publish");
-    release
+    publish_release_with_package_manifests(project, request, components, manifests, hashes, kinds)
+        .await
+        .expect("publish the exact fresh two-package release")
 }
 
 #[tokio::test]
@@ -416,7 +406,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     };
 
     let first = publish(
-        &mut project,
+        &project,
         &request,
         &components,
         &manifests,
@@ -425,7 +415,7 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     )
     .await;
     let second = publish(
-        &mut project,
+        &project,
         &request,
         &components,
         &manifests,
@@ -497,9 +487,8 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         wamn_fixture_package::OVERLAY_PACKAGE_ID.to_owned(),
         format!("sha256:{}", "f".repeat(64)),
     );
-    let transaction = project.transaction().await.expect("begin refused publish");
     let refusal = publish_release_with_package_manifests(
-        &transaction,
+        &project,
         &request,
         &components,
         &manifests,
@@ -518,10 +507,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
         package_version()
     )));
     assert!(refusal.detail().contains("apply the verified artifact"));
-    transaction
-        .rollback()
-        .await
-        .expect("close the refused publish");
 
     // A graph with no edges is a route, so publish refuses a one-node wiring
     // that no registration names.
@@ -531,9 +516,8 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     )];
     let one_node =
         BTreeSet::from([author_one_node_wiring(&mut project, &control, base_components).await]);
-    let transaction = project.transaction().await.expect("begin refused publish");
     let refusal = publish_release_with_package_manifests(
-        &transaction,
+        &project,
         &PublishReleaseManifest {
             wirings: &one_node,
             ..request
@@ -547,10 +531,6 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     .expect_err("a one-node wiring must refuse");
     assert_eq!(refusal.error_type(), PublishManifestErrorType::Wiring);
     assert!(refusal.detail().contains("has no edges"), "{refusal}");
-    transaction
-        .rollback()
-        .await
-        .expect("close the refused publish");
 
     project
         .batch_execute(
