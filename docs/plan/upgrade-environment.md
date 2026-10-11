@@ -120,9 +120,6 @@ The root cause is the test method. The agent wrote the verb stage by stage with 
 
 `deploy/gcp/environments/<org>--<project>--<env>.json` holds only what `registry.project_envs` does not hold. It names the cluster, the kubeconfig context and the registry. It names the web client bucket and prefix, the route host and the host group. It names the edge, the URL map, the guest workloads and the gates image digest. The tenant and the database names come from `registry.project_envs`. The file does not repeat them, because two copies drift (owner ruling, 2026-10-02). It holds no credential. The verb refuses an environment without this file. The `wamn-dev` files for Receiving and WMS are written from the B12 record.
 
-The environment file also names `package_workloads`, a map from package IDs to WorkloadDeployment names.
-This map records deployment topology. Qualification reads each actual schema from the live workload, not from this file.
-Receiving maps `wamn_receiving` to `flow-http`. WMS maps `wamn_wms` to `wms-flow-http`.
 
 ### 4.2 The stages
 

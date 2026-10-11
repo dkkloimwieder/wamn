@@ -118,21 +118,14 @@ Inputs:
 --environment <environment>
 --package <candidate package root being upgraded>
 --presented-package <root> ...   # complete presented root set, including candidate
---kubeconfig <file>
---context <Kubernetes context>
---namespace <runtime namespace>
---host-deployment <host Deployment>
---package-workload <package-id=WorkloadDeployment> ...
 --result <new file>
 ```
 
 The exact CLI spelling may be adjusted during implementation, but the semantic inputs are fixed: the installed predecessor database, the package being advanced, and the **complete presented package root set** required by data-access reconciliation. Epic-1 WMS happens to have one root; the interface does not encode that accident.
 
-The Kubernetes inputs select live resources. They do not assert a schema. Qualification resolves each SQL-bearing package's `WorkloadDeployment` through its current replica set to the actual serving `Workload` objects. It reads `wamn.schema`, tenant, and environment from their component or service configuration. It also proves readiness, ownership, and placement on the observed host Deployment.
+Qualification reads no Kubernetes resource (wamn-yzhrd.1). Each SQL-bearing package's runtime schema comes from its package manifest. That schema must remain unchanged for the candidate. Qualification refuses multiple application schema surfaces or a proposed schema change. Predecessor statements use that schema as their `search_path` under both grant states. Candidate statements use the same `search_path` after reconciliation.
 
-Each SQL-bearing package must expose exactly one valid schema across its serving replicas. That schema must remain unchanged for the candidate. Qualification refuses an absent or ambiguous workload, conflicting schemas, multiple application schema surfaces, or a proposed schema change. Predecessor statements use the exact observed schema as their `search_path` under both grant states. Candidate statements use that same `search_path` after reconciliation. No predecessor-schema or candidate-schema flag can replace this observation.
-
-Packages with no SQL need no package-workload selector or application schema. Host release convergence remains required. Future schema relocation or multiple-schema support requires a persisted deployment fact that describes the serving schema. That work is outside Epic 1.
+Packages with no SQL need no application schema. Future schema relocation or multiple-schema support requires a persisted deployment fact that describes the serving schema.
 
 `qualify-upgrade`:
 
