@@ -43,10 +43,10 @@ use crate::wms_runtime_live::write_result;
 const DATABASE_NAMESPACE: &str = "wms-pg";
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl, WAMN_DELIVERY_CLUSTER"]
+#[ignore = "requires: docker, kind, kubectl, helm, openssl, WAMN_DELIVERY_CLUSTER"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+        "docker", "kind", "kubectl", "helm", "openssl",
     ]);
     ensure!(
         Candidate::from_env()?.is_none(),
