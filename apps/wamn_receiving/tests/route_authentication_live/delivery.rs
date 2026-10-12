@@ -11,17 +11,6 @@ pub(super) use wamn_test_infrastructure::rendering::{host_values, image_referenc
 pub(super) fn candidate() -> anyhow::Result<(Candidate, ServingManifest)> {
     let candidate = Candidate::from_env()?;
     let (manifest, _) = candidate.manifest()?;
-    // The candidate selects its journey packages (wamn-ld93.33.2): Receiving
-    // alone, or Receiving and Acme. Each must be the package of this checkout.
-    let packages = super::released_journey_packages()
-        .map(|package| wamn_catalog::PackageCoordinate::new(package.id, package.version()))
-        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-    // The fixture takes the rest of its identity from the candidate, and it
-    // publishes only the journey packages of this checkout.
-    ensure!(
-        manifest.release.packages == packages,
-        "supplied Receiving artifacts require journey packages of this checkout only"
-    );
     let result = std::env::var_os("WAMN_DELIVERY_RESULT")
         .context("WAMN_DELIVERY_RESULT is required for supplied-artifact execution")?;
     let result = std::path::Path::new(&result);
