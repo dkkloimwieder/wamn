@@ -258,7 +258,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // the wiring membership and the component closure, each component with
     // its descriptor.
     let manifest_body = format!(
-        r#"{{"components":[{{"descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}},"workflow":{{"wirings":[{{"graph":{live_graph},"graph-hash":"{wiring_hash}","package-id":"{PACKAGE_ID}","wiring-id":"{WIRING_ID}","wiring-version":{WIRING_VERSION}}}]}}}}"#,
+        r#"{{"components":[{{"descriptor":{{"component":"entity","component-digest":"{component_digest}","connections":[{{"requirement-type":"http","store-alias":"a-store"}}],"effects":[],"imports":[],"imports-fingerprint":"{imports_fingerprint}","interface-version":"0.1","operations":{{"create":{{"input-ports":[],"output-ports":[],"parameters":[]}}}}}},"package-id":"{PACKAGE_ID}"}}],"release":{{"packages":[{{"package-id":"{PACKAGE_ID}","package-version":"{PACKAGE_VERSION}"}}]}},"workflow":{{"wirings":[{{"graph":{live_graph},"package-id":"{PACKAGE_ID}"}}]}}}}"#,
         live_graph = graph(WIRING_ID),
     );
     admin
@@ -342,15 +342,13 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         1,
         "the frozen release version resolved to no row under the executor credential"
     );
-    assert_eq!(release[0].get::<_, i32>(0), WIRING_VERSION);
-    assert_eq!(release[0].get::<_, String>(1), PACKAGE_VERSION);
-    assert_eq!(release[0].get::<_, String>(3), wiring_hash);
+    assert_eq!(release[0].get::<_, String>(0), PACKAGE_VERSION);
     assert_eq!(
-        serde_json::from_str::<Value>(&release[0].get::<_, String>(2))?,
+        serde_json::from_str::<Value>(&release[0].get::<_, String>(1))?,
         serde_json::from_str::<Value>(&graph(WIRING_ID))?,
         "the wiring graph is the one the release bytes carry"
     );
-    let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(4))?;
+    let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(2))?;
     assert_eq!(
         release_components.as_array().map(Vec::len),
         Some(1),
@@ -380,12 +378,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .context("the release-components snapshot must execute under the credential")?;
     assert_eq!(
         route_components.get::<_, String>(0),
-        release[0].get::<_, String>(4),
+        release[0].get::<_, String>(2),
         "a route must load the same release component list as a wiring"
     );
     assert_eq!(
         route_components.get::<_, i32>(1),
-        release[0].get::<_, i32>(5)
+        release[0].get::<_, i32>(3)
     );
 
     // The release path's own legitimate zero: the same coordinates under a

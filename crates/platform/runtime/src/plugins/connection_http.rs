@@ -606,10 +606,12 @@ pub(crate) fn authorize_release_closure(
                 .as_deref()
                 .ok_or(ConnectionError::AttestationInvalid)?;
             manifest.workflow.wirings.iter().any(|wiring| {
-                wiring.package_id == position.package_id
-                    && wiring.wiring_id == position.wiring_id
-                    && wiring.wiring_version == position.wiring_version
-                    && wiring.graph_hash.as_str() == graph_hash
+                wiring.package_id == position.package_id && {
+                    let (wiring_id, wiring_version, wiring_hash) = wiring.identity();
+                    wiring_id == position.wiring_id
+                        && wiring_version == position.wiring_version
+                        && wiring_hash.as_str() == graph_hash
+                }
             })
         }
     };
@@ -1110,7 +1112,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        DefinitionHash, OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
+        OperationType, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
         ServingComponentOperation, ServingRelease, ServingRoute, ServingWiring,
     };
 
@@ -1198,9 +1200,17 @@ mod tests {
         assert_eq!(plugin.invocation(component_id), Some(invocation));
     }
 
+    /// The hash of the fixture wiring's graph, the one the manifest carries.
+    fn fixture_wiring_hash() -> String {
+        wamn_catalog::fixture_graph("orders", 3)
+            .wiring_hash()
+            .as_str()
+            .to_owned()
+    }
+
     fn snapshot() -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
-            wiring_hash: Some(digest('b')),
+            wiring_hash: Some(fixture_wiring_hash()),
             component: Some("notifier".to_string()),
             interface_version: Some("0.1".to_string()),
             operation: Some("orders:notify/dispatch@1.0.0".to_string()),
@@ -1274,17 +1284,10 @@ mod tests {
             routes: BTreeSet::new(),
             attachments: BTreeMap::new(),
             workflow: wamn_catalog::WorkflowSection {
-                wirings: BTreeSet::from([ServingWiring {
-                    graph: wamn_catalog::fixture_graph(
-                        &position.wiring_id,
-                        position.wiring_version,
-                    ),
-                    package_id: position.package_id,
-                    wiring_id: position.wiring_id,
-                    wiring_version: position.wiring_version,
-                    graph_hash: DefinitionHash::parse(snapshot.wiring_hash.expect("wiring hash"))
-                        .expect("fixture definition hash is canonical"),
-                }]),
+                wirings: BTreeSet::from([ServingWiring::new(
+                    position.package_id,
+                    wamn_catalog::fixture_graph(&position.wiring_id, position.wiring_version),
+                )]),
                 ..wamn_catalog::WorkflowSection::default()
             },
             host_routes: BTreeSet::new(),

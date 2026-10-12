@@ -512,7 +512,7 @@ pub struct ConnectionEffectSnapshot {
 /// The origin and executing component facts are the descriptors of the
 /// components of release `$3`, the one owner of component facts (R2). The
 /// wiring's graph is the one release `$3` carries, never a `catalog.wirings`
-/// row.
+/// row. The query returns the graph; the reader derives its hash (format 9).
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH release_manifest AS MATERIALIZED ( \
     SELECT release.tenant_id, \
@@ -542,7 +542,7 @@ WITH release_manifest AS MATERIALIZED ( \
       FROM release_member AS member \
      WHERE member.package_id = $12 \
 ), selected_wiring AS MATERIALIZED ( \
-    SELECT wiring.value ->> 'graph-hash' AS wiring_hash, wiring.value -> 'graph' AS graph_json, \
+    SELECT wiring.value -> 'graph' AS graph_json, \
            member.tenant_id, member.package_id, member.package_version \
       FROM member \
      CROSS JOIN release_manifest \
@@ -551,10 +551,10 @@ WITH release_manifest AS MATERIALIZED ( \
          ) AS wiring(value) \
      WHERE $5::text IS NOT NULL \
        AND wiring.value ->> 'package-id' = member.package_id \
-       AND wiring.value ->> 'wiring-id' = $5 \
-       AND (wiring.value ->> 'wiring-version')::integer = $6 \
+       AND wiring.value -> 'graph' ->> 'wiring-id' = $5 \
+       AND (wiring.value -> 'graph' ->> 'version')::integer = $6 \
 ) \
-SELECT wiring.wiring_hash, component.component, component.interface_version, \
+SELECT wiring.graph_json::text, component.component, component.interface_version, \
        $18::text, \
        component.operations #>> ARRAY[$18, 'registered-operation'], \
        requirement.requirement_json::text, requirement.requirement_hash, \
@@ -619,7 +619,7 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
    AND generation.generation = COALESCE($11::bigint, instance.active_generation) \
- WHERE $5::text IS NULL OR wiring.wiring_hash IS NOT NULL";
+ WHERE $5::text IS NULL OR wiring.graph_json IS NOT NULL";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
@@ -1766,7 +1766,13 @@ impl WamnPostgres {
                     .transpose()
             };
             let snapshot = ConnectionEffectSnapshot {
-                wiring_hash: row.try_get(0)?,
+                wiring_hash: json(0)?
+                    .map(|graph| {
+                        wamn_catalog::WiringDocument::parse(&graph)
+                            .map(|graph| graph.wiring_hash().as_str().to_owned())
+                            .context("validate the released wiring graph")
+                    })
+                    .transpose()?,
                 component: row.try_get(1)?,
                 interface_version: row.try_get(2)?,
                 operation: row.try_get(3)?,

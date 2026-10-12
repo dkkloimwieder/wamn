@@ -1,4 +1,4 @@
-//! Digest and closed-shape tests for serving-manifest format 8.
+//! Digest and closed-shape tests for serving-manifest format 9.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -171,13 +171,13 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 }
 
 #[test]
-fn the_format_eight_preimage_and_digest_are_pinned() {
+fn the_format_nine_preimage_and_digest_are_pinned() {
     let expected = manifest();
     assert_eq!(expected.canonical_bytes(), publish_vector::CANONICAL_BYTES);
     assert_eq!(expected.digest().as_str(), publish_vector::DIGEST);
 
     let (read, digest) = ServingManifest::from_canonical_bytes(publish_vector::CANONICAL_BYTES)
-        .expect("the format-eight vector is admitted by the reader");
+        .expect("the format-nine vector is admitted by the reader");
     assert_eq!(read, expected);
     assert_eq!(digest.as_str(), publish_vector::DIGEST);
 
@@ -201,7 +201,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
     });
     assert_eq!(format!("sha256:{hex}"), format_three_vector::DIGEST);
     let error = ServingManifest::from_canonical_bytes(format_three_vector::CANONICAL_BYTES)
-        .expect_err("format 8 refuses the frozen format-3 bytes");
+        .expect_err("format 9 refuses the frozen format-3 bytes");
     assert!(
         matches!(
             &error,
@@ -213,7 +213,7 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
 }
 
 #[test]
-fn fresh_only_is_digest_bound_without_changing_format_eight_default_bytes() {
+fn fresh_only_is_digest_bound_without_changing_format_nine_default_bytes() {
     let baseline = manifest();
     let mut fresh = baseline.clone();
     fresh.components = fresh
@@ -229,9 +229,9 @@ fn fresh_only_is_digest_bound_without_changing_format_eight_default_bytes() {
         })
         .collect();
     let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
-        .expect("format-eight reader admits registered fresh-only operations");
+        .expect("format-nine reader admits registered fresh-only operations");
     assert_eq!(admitted, fresh);
-    assert_eq!(admitted.format_version, 8);
+    assert_eq!(admitted.format_version, 9);
     assert_ne!(digest, baseline.digest());
     assert_eq!(baseline.canonical_bytes(), publish_vector::CANONICAL_BYTES);
 }
@@ -472,12 +472,6 @@ fn every_manifest_hash_validates_during_deserialization() {
             .expect_err("an invalid component digest must be refused while decoding");
     assert!(component_error.to_string().contains("artifact-hash"));
 
-    let mut wiring_document = serde_json::to_value(manifest()).expect("manifest serializes");
-    wiring_document["workflow"]["wirings"][0]["graph-hash"] = json!(invalid);
-    let wiring_error = serde_json::from_value::<ServingManifest>(wiring_document)
-        .expect_err("an invalid wiring definition hash must be refused while decoding");
-    assert!(wiring_error.to_string().contains("definition-hash"));
-
     let mut attachment_document = serde_json::to_value(manifest()).expect("manifest serializes");
     attachment_document["workflow"]["attachments"]["orders-http"]["definition-hash"] =
         json!(invalid);
@@ -556,13 +550,7 @@ fn every_manifest_field_is_pinned() {
     );
     assert_eq!(
         sorted_keys(&document["workflow"]["wirings"][0]),
-        [
-            "graph",
-            "graph-hash",
-            "package-id",
-            "wiring-id",
-            "wiring-version"
-        ]
+        ["graph", "package-id"]
     );
     assert_eq!(
         sorted_keys(&document["workflow"]["attachments"]["orders-http"]),

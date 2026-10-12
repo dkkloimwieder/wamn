@@ -128,9 +128,10 @@ impl PostgresWorkflows {
             .wirings
             .iter()
             .find(|wiring| {
+                let (wiring_id, wiring_version, _) = wiring.identity();
                 wiring.package_id == request.package_id
-                    && wiring.wiring_id == request.wiring_id
-                    && wiring.wiring_version == request.wiring_version
+                    && wiring_id == request.wiring_id
+                    && wiring_version == request.wiring_version
             })
             .ok_or_else(|| {
                 refused(format!(
@@ -150,7 +151,7 @@ impl PostgresWorkflows {
         let durability: String = policy
             .try_get(0)
             .map_err(|error| WorkflowError::storage("read the durability class", error))?;
-        Ok((wiring.graph_hash.as_str().to_owned(), durability))
+        Ok((wiring.identity().2.as_str().to_owned(), durability))
     }
 
     /// The facts that name why a park or a release changed nothing.

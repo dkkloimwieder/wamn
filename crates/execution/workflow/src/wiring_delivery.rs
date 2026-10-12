@@ -145,11 +145,16 @@ impl RouterDriver {
         call: EventCall<'_>,
     ) -> Result<DeliveryOutcome, DeliveryError> {
         let manifest = bridge.release().manifest();
-        let Some(wiring) = manifest.workflow.wirings.iter().find(|wiring| {
-            wiring.package_id == call.package_id
-                && wiring.wiring_id == call.wiring_id
-                && wiring.wiring_version == call.wiring_version
-        }) else {
+        let Some((_, _, graph_hash)) = manifest
+            .workflow
+            .wirings
+            .iter()
+            .filter(|wiring| wiring.package_id == call.package_id)
+            .map(wamn_catalog::ServingWiring::identity)
+            .find(|(wiring_id, wiring_version, _)| {
+                *wiring_id == call.wiring_id && *wiring_version == call.wiring_version
+            })
+        else {
             tracing::warn!(
                 registration = call.registration_id,
                 "a workflow registration names a wiring absent from the release"
@@ -170,7 +175,7 @@ impl RouterDriver {
                     environment: &bridge.release().scope().environment,
                     wiring_id: call.wiring_id,
                     wiring_version,
-                    wiring_hash: wiring.graph_hash.as_str(),
+                    wiring_hash: graph_hash.as_str(),
                     registration_id: call.registration_id,
                     idempotency_key: call.delivery_id,
                     input: call.payload,

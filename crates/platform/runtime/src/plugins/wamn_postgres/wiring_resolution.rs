@@ -16,9 +16,10 @@ use super::{CandidateBindingWorld, WamnPostgres};
 /// The release is its manifest digest (docs/plan/platform-deploy.md R1).
 /// `catalog.releases` holds the verified manifest bytes under that digest, and
 /// the package membership, the wiring membership and the component closure are
-/// read from those bytes. The wiring's graph is the one the manifest carries
-/// beside its graph hash, never a `catalog.wirings` row, so a fresh install
-/// serves every wiring its release names. Each component's facts are its descriptor in the
+/// read from those bytes. The wiring's graph is the one the manifest carries,
+/// never a `catalog.wirings` row, so a fresh install serves every wiring its
+/// release names. The graph is the one carrier of the wiring id and version
+/// the query matches; the reader derives the graph hash from it (format 9). Each component's facts are its descriptor in the
 /// manifest, the one owner of component facts (R2). Binds: `$1` tenant, `$2` package, `$3` wiring id,
 /// `$4` wiring version, `$5` manifest digest.
 pub const RELEASE_WIRING_SQL: &str = "\
@@ -34,21 +35,18 @@ WITH release_scope AS MATERIALIZED ( \
      CROSS JOIN LATERAL jsonb_array_elements(release_scope.manifest #> '{release,packages}') \
            AS package(value) \
 ), selected AS MATERIALIZED ( \
-    SELECT (member.value ->> 'wiring-version')::integer AS version, \
-           release_package.package_version, \
-           member.value -> 'graph' AS graph_json, \
-           member.value ->> 'graph-hash' AS wiring_hash \
+    SELECT release_package.package_version, \
+           member.value -> 'graph' AS graph_json \
       FROM release_scope \
       JOIN release_package ON release_package.package_id = $2 \
      CROSS JOIN LATERAL jsonb_array_elements( \
            COALESCE(release_scope.manifest #> '{workflow,wirings}', '[]'::jsonb) \
          ) AS member(value) \
      WHERE member.value ->> 'package-id' = $2 \
-       AND member.value ->> 'wiring-id' = $3 \
-       AND (member.value ->> 'wiring-version')::integer = $4 \
+       AND member.value -> 'graph' ->> 'wiring-id' = $3 \
+       AND (member.value -> 'graph' ->> 'version')::integer = $4 \
 ) \
-SELECT selected.version, selected.package_version, \
-       selected.graph_json::text, selected.wiring_hash, \
+SELECT selected.package_version, selected.graph_json::text, \
        COALESCE( \
            (SELECT jsonb_agg( \
                jsonb_build_object( \
@@ -784,14 +782,26 @@ fn decode_wiring(wiring_id: &str, row: &tokio_postgres::Row) -> anyhow::Result<D
     })
 }
 
+/// Decode one [`RELEASE_WIRING_SQL`] row. The release carries only the graph,
+/// so its version and hash are derived here.
 fn decode_released_wiring(
     package_id: &str,
     manifest_digest: &str,
     wiring_id: &str,
     row: &tokio_postgres::Row,
 ) -> anyhow::Result<ResolvedActiveWiring> {
-    let decoded = decode_wiring(wiring_id, row)?;
-    let components = decode_release_components(row, 4)?;
+    let package_version: String = row.try_get(0).context("decode package version")?;
+    let graph_json: String = row.try_get(1).context("decode wiring document JSON")?;
+    let graph_json = serde_json::from_str(&graph_json).context("parse wiring document JSON")?;
+    let document = WiringDocument::parse(&graph_json).context("validate wiring document")?;
+    anyhow::ensure!(document.wiring_id == wiring_id, "active-wiring-id-mismatch");
+    let decoded = DecodedWiring {
+        version: document.version,
+        package_version,
+        graph_hash: document.wiring_hash().as_str().to_owned(),
+        document,
+    };
+    let components = decode_release_components(row, 2)?;
     let node_components = release_node_components(&decoded.document, package_id, &components)?;
     resolved_wiring(decoded, manifest_digest, node_components, components)
 }

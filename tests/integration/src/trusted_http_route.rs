@@ -120,9 +120,9 @@ pub struct TrustedHttpRoute {
     pub release: Arc<LoadedRelease>,
     /// The digest OCI serves the guest under and every seeded row keys on.
     pub component_digest: String,
-    /// The wiring document's own canonical hash — `catalog.wirings.wiring_hash`,
-    /// the activation pointer's `confirmed_definition_hash`, and the release
-    /// manifest's `graph-hash`, which must all agree.
+    /// The wiring document's own canonical hash — `catalog.wirings.wiring_hash`
+    /// and the activation pointer's `confirmed_definition_hash`, which must agree;
+    /// the release manifest carries the graph and its reader derives the hash.
     pub wiring_hash: String,
 }
 

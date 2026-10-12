@@ -434,9 +434,12 @@ pub fn validate_local_facts(
                 .wirings
                 .iter()
                 .any(|wiring| wiring.package_id == fact.scope.package_id
-                    && wiring.wiring_id == document.wiring_id
-                    && wiring.wiring_version == document.version
-                    && wiring.graph_hash == document.wiring_hash()),
+                    && wiring.identity()
+                        == (
+                            document.wiring_id.as_str(),
+                            document.version,
+                            document.wiring_hash()
+                        )),
             "local wiring differs from its manifest projection"
         );
         anyhow::ensure!(

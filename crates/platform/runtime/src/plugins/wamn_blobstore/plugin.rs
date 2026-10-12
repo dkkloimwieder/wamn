@@ -473,7 +473,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        DefinitionHash, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
+        PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
         ServingComponentOperation, ServingRelease, ServingWiring,
     };
 
@@ -481,6 +481,14 @@ mod tests {
     use crate::plugins::connection_http::ConnectionOrigin;
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
     use crate::plugins::wamn_postgres::{CandidateBindingWorld, WamnPostgresConfig};
+
+    /// The hash of the fixture wiring's graph, the one the manifest carries.
+    fn fixture_wiring_hash() -> String {
+        wamn_catalog::fixture_graph("orders", 3)
+            .wiring_hash()
+            .as_str()
+            .to_owned()
+    }
 
     fn released() -> ConnectionInvocation {
         ConnectionInvocation {
@@ -514,7 +522,7 @@ mod tests {
             closure: ConnectionExecutionClosure::Candidate {
                 manifest_digest: CANDIDATE_RELEASE.to_string(),
                 environment: "staging".to_string(),
-                wiring_hash: format!("sha256:{}", "b".repeat(64)),
+                wiring_hash: fixture_wiring_hash(),
                 component: "archiver".to_string(),
                 interface_version: "0.1.0".to_string(),
                 binding_world,
@@ -681,7 +689,7 @@ mod tests {
     /// the frozen row in every field the frozen row names.
     fn matching_snapshot(binding: &CandidateConnectionBinding) -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
-            wiring_hash: Some(format!("sha256:{}", "b".repeat(64))),
+            wiring_hash: Some(fixture_wiring_hash()),
             component: Some("archiver".to_string()),
             interface_version: Some("0.1.0".to_string()),
             operation: Some("orders:archive/store@1.0.0".to_string()),
@@ -744,19 +752,10 @@ mod tests {
             .entry
             .wiring()
             .expect("the fixture invocation enters through a wiring");
-        manifest.workflow.wirings = BTreeSet::from([ServingWiring {
-            graph: wamn_catalog::fixture_graph(&position.wiring_id, position.wiring_version),
-            package_id: position.package_id.clone(),
-            wiring_id: position.wiring_id.clone(),
-            wiring_version: position.wiring_version,
-            graph_hash: DefinitionHash::parse(
-                snapshot
-                    .wiring_hash
-                    .clone()
-                    .expect("the fixture names a wiring hash"),
-            )
-            .expect("the fixture wiring hash is canonical"),
-        }]);
+        manifest.workflow.wirings = BTreeSet::from([ServingWiring::new(
+            position.package_id.clone(),
+            wamn_catalog::fixture_graph(&position.wiring_id, position.wiring_version),
+        )]);
         manifest
     }
 

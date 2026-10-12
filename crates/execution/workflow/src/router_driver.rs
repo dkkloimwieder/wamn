@@ -931,9 +931,12 @@ impl RouterDriver {
                 .wirings
                 .iter()
                 .any(|wiring| wiring.package_id == request.package_id
-                    && wiring.wiring_id == request.wiring_id
-                    && wiring.wiring_version == request.wiring_version
-                    && wiring.graph_hash == graph_hash),
+                    && wiring.identity()
+                        == (
+                            request.wiring_id.as_str(),
+                            request.wiring_version,
+                            graph_hash.clone()
+                        )),
             "wiring-not-in-carried-release"
         );
         anyhow::ensure!(
