@@ -305,7 +305,8 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("wamn-environment-{}", std::process::id()));
         std::fs::create_dir_all(&directory).expect("create the directory");
-        let file = directory.join("acme-wms-prod.k");
+        // The name R21 gives the document, which the schema module shares.
+        let file = directory.join("environment.k");
         std::fs::write(&file, parsed.to_kcl()).expect("write the document");
         let compiled = EnvironmentDocument::compile(&file);
         std::fs::remove_dir_all(&directory).expect("remove the directory");

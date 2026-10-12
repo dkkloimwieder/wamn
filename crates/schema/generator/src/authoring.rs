@@ -182,22 +182,22 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
 /// When no `kcl` runs, or when KCL refuses the file (the error names its path
 /// and line).
 pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
-    let directory = file
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty());
-    let name = file
-        .file_name()
-        .with_context(|| format!("{} names no file", file.display()))?;
+    let source = fs::read(file).with_context(|| format!("read {}", file.display()))?;
     let module = SchemaModule::write(
         "environment",
         ENVIRONMENT_MODULE_DECLARATION,
         ENVIRONMENT_MODULE,
     )?;
-    run_kcl(
-        &module,
-        directory.unwrap_or_else(|| Path::new(".")),
-        Path::new(name),
-    )
+    // KCL resolves `import environment` in the document's own directory too,
+    // so a document named `environment.k` (R21) or a sibling `environment`
+    // would clash with the schema module. The document compiles from a
+    // directory that holds only it.
+    let directory = module.root.join("document");
+    fs::create_dir_all(&directory).with_context(|| format!("create {}", directory.display()))?;
+    fs::write(directory.join("document.k"), source)
+        .with_context(|| format!("copy {}", file.display()))?;
+    run_kcl(&module, &directory, Path::new("document.k"))
+        .with_context(|| format!("compile {}", file.display()))
 }
 
 /// Run `kcl` on one file in `directory` against one schema module.
