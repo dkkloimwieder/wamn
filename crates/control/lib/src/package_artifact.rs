@@ -90,6 +90,7 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
             "query",
             "generated/platform-policy/data-access.json",
             "generated/contracts",
+            wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH,
             "generated/sql",
             "generated/publication",
             "generated/routes",
@@ -1224,6 +1225,11 @@ mod tests {
         write(&root, "generated/wamn.json", &receiving_manifest());
         write(&root, "generated/platform-policy/data-access.json", b"{}\n");
         write(&root, "generated/contracts/receipt.json", b"{}\n");
+        write(
+            &root,
+            wamn_schema_generator::REQUIRED_SCHEMA_CONTRACT_PATH,
+            b"{\"tables\": []}\n",
+        );
         write(&root, "generated/sql/receipt.sql", b"SELECT 1;\n");
         write(&root, "migrations/0001_initial.sql", b"SELECT 1;\n");
         write(&root, "publication/attachments.json", b"{}\n");
@@ -1346,6 +1352,7 @@ mod tests {
             [
                 "generated/contracts/receipt.json",
                 "generated/platform-policy/data-access.json",
+                "generated/required-schema-contract.json",
                 "generated/sql/receipt.sql",
                 "wamn.k",
             ]
@@ -1542,6 +1549,13 @@ mod tests {
         );
         assert_eq!(web_build(&unpacked), unpacked.join("generated/web"));
         assert!(unpacked.join("generated/web/index.html").is_file());
+        assert_eq!(
+            std::fs::read(
+                wamn_schema_generator::output_root(&unpacked).join("required-schema-contract.json")
+            )
+            .unwrap(),
+            b"{\"tables\": []}\n"
+        );
         assert!(!unpacked.join("web").exists());
         let repacked = pack_package(&unpacked).unwrap();
         assert_eq!(repacked.digest, packed.digest);
