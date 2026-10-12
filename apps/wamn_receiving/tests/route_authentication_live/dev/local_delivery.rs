@@ -436,7 +436,7 @@ impl Watch {
         })
     }
 
-    async fn line(&mut self) -> anyhow::Result<(bool, String)> {
+    pub(super) async fn line(&mut self) -> anyhow::Result<(bool, String)> {
         loop {
             ensure!(
                 self.stdout_open || self.stderr_open,

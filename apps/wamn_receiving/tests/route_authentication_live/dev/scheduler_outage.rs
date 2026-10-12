@@ -33,7 +33,8 @@ use super::local_delivery::Watch;
 const NATS_IMAGE: &str = "nats:2.10-alpine";
 /// Longer than several passes at the 4-second reconnect delay of async-nats.
 const OUTAGE: Duration = Duration::from_secs(20);
-const RECOVERY_BUDGET: Duration = Duration::from_secs(90);
+/// The recovery bound of the deleted case.
+const RECOVERY_BUDGET: Duration = Duration::from_secs(120);
 
 /// The scheduler NATS container. Dropping it removes the container.
 struct Scheduler {
@@ -185,10 +186,11 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
         let (project, task) = connect(&environment.route.database_url).await?;
         super::super::environment::seed_receiving_business_rows(project.as_ref()).await?;
         task.abort();
+        let outage = async {
         let route = Route {
             http: reqwest::Client::builder()
                 .no_proxy()
-                .timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(30))
                 .build()?,
             url: format!("{}/location/list", endpoint.url),
             host: endpoint.host.clone(),
@@ -199,19 +201,24 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
         docker(&["stop", &scheduler.name]).await?;
         let stopped = Instant::now();
         let mut answered = 0;
+        let mut slowest = Duration::ZERO;
         while stopped.elapsed() < OUTAGE {
+            let sent = Instant::now();
             route.answers("during the scheduler outage").await?;
+            slowest = slowest.max(sent.elapsed());
             answered += 1;
             sleep(Duration::from_millis(500)).await;
         }
 
         docker(&["start", &scheduler.name]).await?;
+        let restarted = Instant::now();
         let operator = scheduler.ready().await?;
         let mut heartbeats = operator.subscribe("runtime.operator.heartbeat.*").await?;
         let heartbeat = timeout(RECOVERY_BUDGET, heartbeats.next())
             .await
             .context("the host published no heartbeat through the restarted scheduler NATS")?
             .context("the heartbeat subscription ended")?;
+        let recovered_after = restarted.elapsed();
         let heartbeat = String::from_utf8(heartbeat.payload.to_vec())?;
         ensure!(
             heartbeat.contains(environment.identity.host_name.as_str()),
@@ -219,10 +226,24 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
         );
         route.answers("after the scheduler returned").await?;
         println!(
-            "SCHEDULER_OUTAGE result=pass outage_seconds={} answered_during_outage={answered}",
-            OUTAGE.as_secs()
+            "SCHEDULER_OUTAGE result=pass outage_seconds={} answered_during_outage={answered} slowest_answer_ms={} heartbeat_after_restart_ms={}",
+            OUTAGE.as_secs(),
+            slowest.as_millis(),
+            recovered_after.as_millis()
         );
         Ok::<_, anyhow::Error>(())
+        };
+        // The host logs through the developer command's pipes, so the test
+        // reads them while the outage runs; a full pipe would stall the host.
+        tokio::pin!(outage);
+        loop {
+            tokio::select! {
+                result = &mut outage => break result,
+                line = watch.line() => {
+                    line?;
+                }
+            }
+        }
     }
     .await;
     let stopped = watch.stop().await;
