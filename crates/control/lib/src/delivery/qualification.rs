@@ -639,10 +639,27 @@ async fn run(
     let output = result?;
     ensure!(
         output.status.success(),
-        "required command failed: {}",
-        argv.join(" ")
+        "required command failed: {}\n{}",
+        argv.join(" "),
+        output_tail(&output)
     );
     Ok(output)
+}
+
+/// The last lines of a failed command's stdout and stderr, so the error names
+/// the failure line (wamn-5c5z1).
+fn output_tail(output: &Output) -> String {
+    const LINES: usize = 40;
+    [("stdout", &output.stdout), ("stderr", &output.stderr)]
+        .into_iter()
+        .map(|(name, bytes)| {
+            let text = String::from_utf8_lossy(bytes);
+            let lines: Vec<&str> = text.lines().collect();
+            let tail = lines[lines.len().saturating_sub(LINES)..].join("\n");
+            format!("--- {name} (last {LINES} lines) ---\n{tail}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Give each selected case time to remove its own resources on cancellation.
@@ -801,6 +818,23 @@ mod tests {
         );
         assert!(member_workspace("wamn-absent-data-access", &split).is_err());
         assert!(member_workspace("same", &workspaces("same", "same")).is_err());
+    }
+
+    #[test]
+    fn a_failed_command_names_its_output_tail() {
+        let stdout = (0..50)
+            .map(|line| format!("out {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let tail = output_tail(&Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: stdout.into_bytes(),
+            stderr: b"missing prerequisites: program jq on PATH\n".to_vec(),
+        });
+        assert!(!tail.contains("out 9\n") && tail.contains("out 10\n") && tail.contains("out 49"));
+        assert!(tail.ends_with(
+            "--- stderr (last 40 lines) ---\nmissing prerequisites: program jq on PATH"
+        ));
     }
 
     #[test]
