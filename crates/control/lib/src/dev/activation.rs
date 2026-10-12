@@ -1102,7 +1102,9 @@ where
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
 
-            // The host starts the materializer after flow-http runs.
+            // The host starts the materializer after flow-http runs, so its
+            // wait has a deadline of its own.
+            let deadline = Instant::now() + HOST_HEARTBEAT_TIMEOUT;
             loop {
                 let response: v2::WorkloadStatusResponse = request_json(
                     &mut backend,
