@@ -6,10 +6,10 @@ use wamn_control::delivery::Candidate;
 
 pub(super) use wamn_test_infrastructure::rendering::{host_values, image_reference};
 
-pub(super) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>> {
-    let Some(candidate) = Candidate::from_env()? else {
-        return Ok(None);
-    };
+/// The candidate that `qualify-release` names. A Receiving cluster case runs
+/// only with one (docs/plan/platform-deploy.md §8.2).
+pub(super) fn candidate() -> anyhow::Result<(Candidate, ServingManifest)> {
+    let candidate = Candidate::from_env()?;
     let (manifest, _) = candidate.manifest()?;
     // The candidate selects its journey packages (wamn-ld93.33.2): Receiving
     // alone, or Receiving and Acme. Each must be the package of this checkout.
@@ -29,7 +29,7 @@ pub(super) fn candidate() -> anyhow::Result<Option<(Candidate, ServingManifest)>
         result.is_absolute() && !result.exists(),
         "the supplied-artifact result must be a new absolute path"
     );
-    Ok(Some((candidate, manifest)))
+    Ok((candidate, manifest))
 }
 
 /// The files that the cluster's lifecycle tool reads to pull the candidate's

@@ -50,7 +50,10 @@ const PLATFORM_DOMAIN: &str = "example.invalid";
 /// journey release, with the packages of a supplied candidate's manifest.
 pub(crate) fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
-        let candidate = Candidate::from_env().expect("read the supplied WMS candidate");
+        // A cluster case takes its packages from its candidate; the other
+        // WMS tests run this checkout's package.
+        let candidate = std::env::var_os(wamn_control::delivery::CANDIDATE_ENV)
+            .map(|_| Candidate::from_env().expect("read the supplied WMS candidate"));
         ReleaseIdentity {
             org: "acme".to_owned(),
             project: "wms".to_owned(),

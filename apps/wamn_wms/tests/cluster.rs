@@ -514,6 +514,7 @@ async fn run_created(
                 source,
                 replicas,
                 session: (&issuer, &instance),
+                candidate: Some(candidate),
             },
             work,
         )?;

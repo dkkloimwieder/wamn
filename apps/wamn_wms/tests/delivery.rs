@@ -8,8 +8,7 @@ pub(crate) use wamn_test_infrastructure::rendering::{host_values, image_referenc
 /// The candidate that `qualify-release` names. A WMS cluster case runs only
 /// with one (docs/plan/platform-deploy.md §8.2).
 pub(crate) fn candidate() -> anyhow::Result<Candidate> {
-    let candidate = Candidate::from_env()?
-        .context("a WMS cluster case runs the candidate that qualify-release names")?;
+    let candidate = Candidate::from_env()?;
     let (manifest, _) = candidate.manifest()?;
     ensure!(
         manifest

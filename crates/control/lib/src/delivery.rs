@@ -72,11 +72,13 @@ impl Candidate {
         Ok(candidate)
     }
 
-    /// The candidate of a case that `qualify-release` runs.
-    pub fn from_env() -> anyhow::Result<Option<Self>> {
-        std::env::var_os("WAMN_DELIVERY_CANDIDATE")
-            .map(|path| Self::read(Path::new(&path)))
-            .transpose()
+    /// The candidate of a case that `qualify-release` runs, named by
+    /// [`CANDIDATE_ENV`]. A case without one is refused.
+    pub fn from_env() -> anyhow::Result<Self> {
+        let path = std::env::var_os(CANDIDATE_ENV).with_context(|| {
+            format!("{CANDIDATE_ENV} names no candidate; a qualification case runs the candidate that qualify-release names")
+        })?;
+        Self::read(Path::new(&path))
     }
 
     /// Admit the canonical manifest through the existing catalog boundary.
@@ -86,6 +88,10 @@ impl Candidate {
         ServingManifest::from_canonical_bytes(&bytes).context("admit candidate serving manifest")
     }
 }
+
+/// The variable that names the candidate file of a case that
+/// `qualify-release` runs.
+pub const CANDIDATE_ENV: &str = "WAMN_DELIVERY_CANDIDATE";
 
 /// The package and component repositories beside the release repository
 /// `<registry>/<path>/releases`: `<registry>/<path>/packages` and

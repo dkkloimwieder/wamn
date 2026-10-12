@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 use anyhow::ensure;
 use serde_json::json;
 use tokio::process::Command;
-use wamn_control::delivery::Candidate;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::release_chart::Target;
@@ -49,7 +48,7 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         "docker", "kind", "kubectl", "helm", "openssl",
     ]);
     ensure!(
-        Candidate::from_env()?.is_none(),
+        std::env::var_os(wamn_control::delivery::CANDIDATE_ENV).is_none(),
         "the owned setup mints its own candidate"
     );
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -333,6 +332,7 @@ async fn run(
             source: &source,
             replicas: 1,
             session: (&issuer, &instance),
+            candidate: None,
         },
         &work,
     )?;

@@ -46,8 +46,7 @@ pub(super) async fn prepare(
     evidence: &Path,
     gates_image: bool,
 ) -> anyhow::Result<Resources> {
-    let (candidate, manifest) = super::super::delivery::candidate()?
-        .context("a Receiving cluster case runs the candidate that qualify-release names")?;
+    let (candidate, manifest) = super::super::delivery::candidate()?;
     ensure!(
         std::env::consts::ARCH == "x86_64",
         "the amd64 Receiving images require an x86_64 machine"

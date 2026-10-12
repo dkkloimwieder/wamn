@@ -397,10 +397,7 @@ async fn qualify_candidate(
             );
             let case_result = temporary.path.join(format!("case-{index}.json"));
             let env = [
-                (
-                    "WAMN_DELIVERY_CANDIDATE",
-                    candidate_path.display().to_string(),
-                ),
+                (super::CANDIDATE_ENV, candidate_path.display().to_string()),
                 ("WAMN_DELIVERY_RESULT", case_result.display().to_string()),
                 // The case creates its own new result directory inside this parent.
                 (app.evidence_env, temporary.path.display().to_string()),

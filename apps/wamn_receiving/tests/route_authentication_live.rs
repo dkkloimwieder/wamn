@@ -143,7 +143,10 @@ static OVERLAY_RECEIPT_PARTICIPANT: LazyLock<&'static str> =
 /// journey release, with the packages of a supplied candidate's manifest.
 fn identity() -> &'static ReleaseIdentity {
     static IDENTITY: LazyLock<ReleaseIdentity> = LazyLock::new(|| {
-        let candidate = Candidate::from_env().expect("read the supplied Receiving candidate");
+        // A cluster case takes its packages from its candidate; the other
+        // Receiving tests run this checkout's packages.
+        let candidate = std::env::var_os(wamn_control::delivery::CANDIDATE_ENV)
+            .map(|_| Candidate::from_env().expect("read the supplied Receiving candidate"));
         ReleaseIdentity {
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),

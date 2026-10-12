@@ -149,6 +149,8 @@ pub(super) struct HostBinding<'a> {
     pub(super) replicas: u32,
     /// The session issuer and the instance suffix the host trusts.
     pub(super) session: (&'a str, &'a str),
+    /// The candidate a qualification case runs; the delivery case has none.
+    pub(super) candidate: Option<&'a wamn_control::delivery::Candidate>,
 }
 
 pub(super) fn render_host(
@@ -170,6 +172,7 @@ pub(super) fn render_host(
         source,
         replicas,
         session: (issuer, instance_suffix),
+        candidate,
     } = *binding;
 
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -191,7 +194,6 @@ pub(super) fn render_host(
         project: crate::environment::identity().project.clone(),
         environment: crate::environment::identity().environment.clone(),
     };
-    let candidate = wamn_control::delivery::Candidate::from_env()?;
     let mut overlay =
         std::fs::read_to_string(repository.join("deploy/platform/values-host-wms-pat.yaml"))?;
     if candidate.is_some() {

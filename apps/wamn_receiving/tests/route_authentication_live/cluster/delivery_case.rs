@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_control::delivery::Candidate;
 use wamn_control::environment::EventBroker;
 
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
@@ -51,7 +50,7 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         "docker", "kind", "kubectl", "helm", "openssl",
     ]);
     ensure!(
-        Candidate::from_env()?.is_none(),
+        std::env::var_os(wamn_control::delivery::CANDIDATE_ENV).is_none(),
         "the owned setup mints its own candidate"
     );
     wash_runtime::init_crypto();
