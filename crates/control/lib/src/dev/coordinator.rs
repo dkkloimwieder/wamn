@@ -47,7 +47,7 @@ use super::read::{
 use super::target_database;
 use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
-use crate::print_release_env::ReleaseCarrier;
+use crate::release_carrier::ReleaseCarrier;
 
 const RUN_SCHEMA: &str = "wamn_run";
 

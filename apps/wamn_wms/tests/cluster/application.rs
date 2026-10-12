@@ -66,7 +66,7 @@ pub(super) async fn publish(
     publication: &PublicationInputs<'_>,
     platform: &wamn_control::environment::Platform,
     evidence: &Path,
-) -> anyhow::Result<wamn_control::print_release_env::ReleaseCarrier> {
+) -> anyhow::Result<wamn_control::release_carrier::ReleaseCarrier> {
     crate::environment::publish(
         inputs,
         route,

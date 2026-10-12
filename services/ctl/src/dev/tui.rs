@@ -546,7 +546,7 @@ mod tests {
         test_support::{self, dev_read_channel},
     };
     use wamn_control::dev::{DEV_STAGE_ORDER, DevStage, DevStageFailure};
-    use wamn_control::print_release_env::ReleaseCarrier;
+    use wamn_control::release_carrier::ReleaseCarrier;
 
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 

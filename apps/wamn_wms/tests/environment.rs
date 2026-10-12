@@ -25,7 +25,6 @@ use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_control::environment::{Platform, stage};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::print_release_env::ReleaseCarrier;
 use wamn_control::provision_org::{self, ProvisionOrgRequest};
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
@@ -34,6 +33,7 @@ use wamn_control::provision_project_env::{
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
+use wamn_control::release_carrier::ReleaseCarrier;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_schema_generator::route_schema;
