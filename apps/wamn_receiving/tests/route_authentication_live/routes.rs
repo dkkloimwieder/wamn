@@ -283,11 +283,7 @@ pub(super) async fn publish_receiving_release(
         &credentials,
         &credentials.management_admitter,
         &super::environment::journey_package_registry(inputs)?,
-        if inputs.host_secret_namespace == "wamn-receiving-correctness" {
-            "127.0.0.1:18090"
-        } else {
-            ROUTE_JOURNEY_GATE_BIND
-        },
+        ROUTE_JOURNEY_GATE_BIND,
     )
     .await?;
     let gate_reports = gate_journey_wirings(
