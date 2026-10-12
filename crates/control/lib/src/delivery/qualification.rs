@@ -197,7 +197,7 @@ pub async fn qualify(
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    qualify_candidate(
+    let cases = qualify_candidate(
         &request.release_chart,
         &candidate_path,
         temporary,
@@ -208,11 +208,7 @@ pub async fn qualify(
         format: QUALIFICATION_PAYLOAD_FORMAT,
         release_digest: result.manifest_digest.clone(),
         image_set: qualification_artifact::image_set_digests(&result.candidate.images)?,
-        cases: application(&result.candidate)?
-            .cases
-            .iter()
-            .map(|case| (*case).to_owned())
-            .collect(),
+        cases: cases.iter().map(|case| (*case).to_owned()).collect(),
     };
     qualification_artifact::push(&request.releases, &payload, release_size).await
 }
@@ -317,12 +313,7 @@ fn runner_command(
     args: &[&str],
     env: &[(&str, String)],
 ) -> Vec<String> {
-    let mut command = strings(&[
-        "docker",
-        "run",
-        "--rm",
-        "--network=host",
-    ]);
+    let mut command = strings(&["docker", "run", "--rm", "--network=host"]);
     command.push(format!("--user={}:{}", user.uid, user.gid));
     command.push(format!("--group-add={}", user.socket_gid));
     command.push(format!("--volume={DOCKER_SOCKET}:{DOCKER_SOCKET}"));
@@ -353,12 +344,15 @@ fn runner_command(
     command
 }
 
+/// Run the candidate's cases and return them. The candidate's manifest is in
+/// `temporary`, which this removes on return, so a caller that needs the cases
+/// takes them from here and never reads the manifest again.
 async fn qualify_candidate(
     release_chart: &Path,
     candidate_path: &Path,
     temporary: TemporaryResults,
     result: &mut Qualification,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<&'static [&'static str]> {
     let app = application(&result.candidate)?;
     let user = runner_user()?;
     let root = temporary.path.clone();
@@ -438,7 +432,8 @@ async fn qualify_candidate(
             return Err(temporary.keep(&mut result.checks, error));
         }
     }
-    require_complete_checks(result)
+    require_complete_checks(result)?;
+    Ok(app.cases)
 }
 
 /// Execute exact selected tests and distinguish executed success from a skip.
