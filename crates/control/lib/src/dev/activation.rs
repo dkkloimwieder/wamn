@@ -610,7 +610,7 @@ fn materializer_request(
         MATERIALIZER_TEMPLATE,
         &MaterializerInput {
             workload: format!("{}-materializer", identity.project),
-            namespace: identity.environment.clone(),
+            namespace: host_namespace(identity).to_owned(),
             image: digest.to_owned(),
             tenant: identity.tenant.clone(),
             event: EventIdentity {
@@ -631,7 +631,7 @@ fn materializer_request(
     Ok(v2::WorkloadStartRequest {
         workload_id: MATERIALIZER_WORKLOAD_ID.to_owned(),
         workload: Some(v2::Workload {
-            namespace: identity.environment.clone(),
+            namespace: host_namespace(identity).to_owned(),
             name: document.metadata.name,
             annotations: HashMap::new(),
             service: Some(v2::Service {
@@ -801,6 +801,14 @@ fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivat
     Ok(())
 }
 
+/// The host namespace of the local host (docs/plan/platform-deploy.md §16):
+/// what it reads from `WASMCLOUD_HOST_ENVIRONMENT`, names in its heartbeat,
+/// and where its workloads are placed. A local session has no Kubernetes
+/// namespace of its own, so its workloads take the environment name.
+fn host_namespace(identity: &DevActivationIdentity) -> &str {
+    &identity.environment
+}
+
 fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
     let identity = request.identity;
     let event_identity = request.config.activation_identity();
@@ -841,6 +849,10 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         HOST_SHUTDOWN_TIMEOUT.as_secs().to_string(),
     ];
     let mut env = vec![
+        (
+            "WASMCLOUD_HOST_ENVIRONMENT".to_owned(),
+            host_namespace(identity).to_owned(),
+        ),
         (
             "WAMN_SYSTEM_URL".to_owned(),
             request.config.identity_database_url().to_owned(),
@@ -985,7 +997,7 @@ fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartReq
     v2::WorkloadStartRequest {
         workload_id: FLOW_HTTP_WORKLOAD_ID.to_owned(),
         workload: Some(v2::Workload {
-            namespace: identity.environment.clone(),
+            namespace: host_namespace(identity).to_owned(),
             name: FLOW_HTTP_NAME.to_owned(),
             annotations: HashMap::new(),
             service: None,
@@ -1244,7 +1256,7 @@ fn heartbeat_matches(
         && !subject_host_id.contains('.')
         && subject_host_id == heartbeat.id
         && heartbeat.hostname == identity.host_name
-        && heartbeat.environment == identity.environment
+        && heartbeat.environment == host_namespace(identity)
         && heartbeat.labels.get("hostgroup") == Some(&identity.host_group)
 }
 
@@ -2177,6 +2189,10 @@ mod tests {
         assert_eq!(
             &*spec.env,
             &[
+                (
+                    "WASMCLOUD_HOST_ENVIRONMENT".to_owned(),
+                    identity.environment.clone(),
+                ),
                 (
                     "WAMN_SYSTEM_URL".to_owned(),
                     "postgresql://identity:identity-secret@127.0.0.1:41004/system".to_owned(),
