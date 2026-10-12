@@ -6417,6 +6417,7 @@ dependencies = [
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "wamn-workflow",
  "wash-runtime",
  "wasmtime-wasi",
  "wat",

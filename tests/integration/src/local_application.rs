@@ -36,6 +36,22 @@ pub struct LocalApplicationRuntime {
     pub flow_http: Component,
     pub routing: Arc<FlowHttpRouting>,
     pub bridge: Arc<RouterDeliveryBridge>,
+    pub queue: LocalQueue,
+}
+
+/// What a queue service of the local release binds: its router, its
+/// PostgreSQL adapter and the release itself.
+#[derive(Clone)]
+pub struct LocalQueue {
+    pub driver: Arc<wamn_workflow::RouterDriver>,
+    pub postgres: Arc<wamn_runtime::plugins::wamn_postgres::WamnPostgres>,
+    pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+}
+
+impl std::fmt::Debug for LocalQueue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("LocalQueue").finish_non_exhaustive()
+    }
 }
 
 impl std::fmt::Debug for LocalApplicationRuntime {
@@ -100,6 +116,7 @@ pub struct LocalApplication {
     pub tenant: String,
     pub caller_role: String,
     pub component_digests: HashMap<String, String>,
+    pub queue: LocalQueue,
     task: JoinHandle<()>,
 }
 
@@ -127,6 +144,7 @@ impl LocalApplication {
             caller_role,
             component_digests,
         } = assembly::assemble(config).await?;
+        let queue = runtime.queue.clone();
         let (endpoint, task) = serve(
             Arc::clone(&runtime.engine),
             runtime.flow_http.clone(),
@@ -142,6 +160,7 @@ impl LocalApplication {
             tenant,
             caller_role,
             component_digests,
+            queue,
             task,
         })
     }

@@ -17,6 +17,7 @@ mod overlay_compatibility;
 mod package_copies;
 #[path = "postcommit.rs"]
 mod postcommit;
+mod queue_recovery;
 mod routes;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};

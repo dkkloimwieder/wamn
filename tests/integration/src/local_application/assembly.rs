@@ -39,7 +39,9 @@ use wamn_runtime::plugins::{WamnCredentials, WamnLogging};
 use wamn_workflow::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wash_runtime::wasmtime::component::Component;
 
-use super::{LocalApplicationConfig, LocalApplicationRuntime, PreparedLocalApplication};
+use super::{
+    LocalApplicationConfig, LocalApplicationRuntime, LocalQueue, PreparedLocalApplication,
+};
 
 const PASSWORD: &str = "local-application-test-only";
 const VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
@@ -338,6 +340,11 @@ pub(super) async fn assemble(
         })
         .with_release(Some(Arc::clone(&release))),
     );
+    let queue = LocalQueue {
+        driver: Arc::clone(&driver),
+        postgres: Arc::clone(&postgres),
+        release: Arc::clone(&release),
+    };
     let bridge = Arc::new(RouterDeliveryBridge::new(
         driver.operations(),
         Some(driver as Arc<dyn wamn_execution_host::WiringDelivery>),
@@ -400,6 +407,7 @@ pub(super) async fn assemble(
             flow_http,
             routing,
             bridge,
+            queue,
         },
         route_host: input.route_host.to_owned(),
         bearer,

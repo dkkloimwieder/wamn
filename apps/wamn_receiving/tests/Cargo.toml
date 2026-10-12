@@ -50,6 +50,7 @@ wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-workflow = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-schema-control = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }

@@ -306,15 +306,12 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
     );
 }
 
-/// Narrow seam check; the paired journey remains the fresh-install test.
-#[tokio::test]
-async fn installed_contract_observer_reads_a_production_install_and_refuses_changed_requirements()
--> anyhow::Result<()> {
-    // deploy/sql/postgres-init.sql creates shared roles and the database wamn,
-    // so the test applies it as the superuser postgres to a server of its own.
-    let mut postgres = wamn_test_infrastructure::postgres::start(&[])?;
-    let url = postgres.create_database("observer")?.url().to_owned();
-    let config: tokio_postgres::Config = url.parse()?;
+/// A PostgreSQL 18 server of its own, prepared by deploy/sql/postgres-init.sql,
+/// which creates shared roles and the database wamn, applied as the superuser
+/// postgres.
+async fn production_server() -> anyhow::Result<wamn_test_infrastructure::postgres::OwnedPostgres> {
+    let postgres = wamn_test_infrastructure::postgres::start(&[])?;
+    let config: tokio_postgres::Config = postgres.database("postgres")?.url().parse()?;
     let password = config
         .get_password()
         .context("the test server URL carries the superuser password")?;
@@ -335,11 +332,25 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         "deploy/sql/postgres-init.sql failed: {}",
         String::from_utf8_lossy(&init.stderr)
     );
+    Ok(postgres)
+}
+
+/// Install `packages`, bases first, into the new database `name` of `server`
+/// through the production boundary, and connect to it.
+async fn install_fresh(
+    server: &mut wamn_test_infrastructure::postgres::OwnedPostgres,
+    name: &str,
+    packages: &[std::path::PathBuf],
+) -> anyhow::Result<(
+    String,
+    std::sync::Arc<tokio_postgres::Client>,
+    tokio::task::JoinHandle<()>,
+)> {
+    let url = server.create_database(name)?.url().to_owned();
     let (project, connection_task) = super::connect(&url).await?;
-    let server = project.query_one("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL", &[]).await?;
-    let version: i32 = server.get(0);
+    let fresh = project.query_one("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL", &[]).await?;
     ensure!(
-        (180_000..190_000).contains(&version) && server.get::<_, bool>(2),
+        (180_000..190_000).contains(&fresh.get::<_, i32>(0)) && fresh.get::<_, bool>(2),
         "observer check requires fresh PostgreSQL 18"
     );
     project
@@ -347,7 +358,7 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         .await?;
     project
         .batch_execute(&wamn_control_provision::sql::set_database_owner_sql(
-            server.get(1),
+            fresh.get(1),
         ))
         .await?;
     super::install_journey_platform_floor(
@@ -356,14 +367,20 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
         super::PLATFORM_DOMAIN,
     )
     .await?;
-    for package in [super::package_root(), super::overlay_package_root()] {
-        apply_package::apply_package(ApplyPackageRequest {
-            package: wamn_control::apply_package::PackageRoot {
+    let roots = packages
+        .iter()
+        .map(|package| {
+            Ok(wamn_control::apply_package::PackageRoot {
                 path: package.clone(),
                 artifact_digest: Some(
-                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package)?,
+                    wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(package)?,
                 ),
-            },
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    for package in &roots {
+        apply_package::apply_package(ApplyPackageRequest {
+            package: package.clone(),
             database_url: url.clone(),
             tenant: identity().tenant.clone(),
         })
@@ -371,29 +388,30 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     }
     wamn_control::reconcile_package_data_access::reconcile_package_data_access(
         wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
-            packages: vec![
-                wamn_control::apply_package::PackageRoot {
-                    path: super::package_root(),
-                    artifact_digest: Some(
-                        wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
-                            &super::package_root(),
-                        )?,
-                    ),
-                },
-                wamn_control::apply_package::PackageRoot {
-                    path: super::overlay_package_root(),
-                    artifact_digest: Some(
-                        wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(
-                            &super::overlay_package_root(),
-                        )?,
-                    ),
-                },
-            ],
+            packages: roots,
             database_url: url.clone(),
             tenant: identity().tenant.clone(),
         },
     )
     .await?;
+    Ok((url, project, connection_task))
+}
+
+/// Narrow seam check; the paired journey remains the fresh-install test.
+#[tokio::test]
+async fn installed_contract_observer_reads_a_production_install_and_refuses_changed_requirements()
+-> anyhow::Result<()> {
+    let mut postgres = production_server().await?;
+    let (_, project, connection_task) = install_fresh(
+        &mut postgres,
+        "observer",
+        &[super::package_root(), super::overlay_package_root()],
+    )
+    .await?;
+    let version: i32 = project
+        .query_one("SELECT current_setting('server_version_num')::integer", &[])
+        .await?
+        .get(0);
     let schema_acl = project
         .query_one(
             "SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'",
@@ -487,5 +505,95 @@ async fn installed_contract_observer_reads_a_production_install_and_refuses_chan
     println!("{}", serde_json::to_string_pretty(&evidence)?);
     drop(project);
     connection_task.await?;
+    Ok(())
+}
+
+/// An additive base change leaves the overlay unchanged and compatible
+/// (wamn-7k2fh, the additive overlay pair that b8199fb4c deleted): a base whose
+/// initial migration adds a nullable field to `purchase_order`, rebuilt in a
+/// test-owned workspace, installs fresh with the overlay as built, and the
+/// overlay's required schema is satisfied exactly as on the unchanged base.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires: cargo, rustc"]
+async fn an_additive_base_change_leaves_the_overlay_unchanged_and_compatible() -> anyhow::Result<()>
+{
+    // The nullable field the additive base adds.
+    const FIELD: &str = "overlay_compatibility_note";
+    wamn_test_postgres::require_prerequisites(&["cargo", "rustc"]);
+    let overlay = super::overlay_package_root();
+    let overlay_before =
+        wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&overlay)?;
+    let scratch = super::ScratchRoot::create()?;
+    let copies = scratch.path().join("copies");
+    super::package_copies::create(&copies, &[super::package_root()])?;
+    let additive_base = super::package_copies::package(&copies, "wamn_receiving");
+    let migration = additive_base.join("migrations/0001_initial.sql");
+    let header = "CREATE TABLE receiving.purchase_order (\n";
+    let text = std::fs::read_to_string(&migration)?;
+    ensure!(
+        text.matches(header).count() == 1,
+        "the initial migration declares purchase_order once"
+    );
+    // Apply preflights every mutation before it runs DDL, so the change is to
+    // the fresh CREATE, not an ALTER of a relation absent at preflight.
+    std::fs::write(
+        &migration,
+        text.replacen(header, &format!("{header}    {FIELD} text,\n"), 1),
+    )?;
+    let build_server = wamn_test_postgres::database();
+    super::package_copies::build(&copies, &["wamn_receiving"], build_server.url()).await?;
+
+    let required = &required_schema_contract(&overlay)?;
+    let mut postgres = production_server().await?;
+    let mut observations = Vec::new();
+    for (name, base) in [
+        ("baseline", super::package_root()),
+        ("additive", additive_base),
+    ] {
+        let (_, project, connection_task) =
+            install_fresh(&mut postgres, name, &[base, overlay.clone()])
+                .await
+                .with_context(|| format!("install the unchanged overlay over the {name} base"))?;
+        let observed = observe_installed_contract(&project, required).await;
+        drop(project);
+        connection_task.await?;
+        observations.push(observed?);
+    }
+    let [baseline, additive] = observations.as_slice() else {
+        unreachable!("two installs were observed");
+    };
+    let field = |observed: &Value| -> anyhow::Result<Option<Value>> {
+        Ok(observed["tables"]
+            .as_array()
+            .context("observed tables are an array")?
+            .iter()
+            .find(|table| table["schema"] == "receiving" && table["name"] == "purchase_order")
+            .context("the install holds purchase_order")?["columns"]
+            .as_array()
+            .context("observed columns are an array")?
+            .iter()
+            .find(|column| column["name"] == FIELD)
+            .cloned())
+    };
+    ensure!(
+        field(baseline)?.is_none(),
+        "the baseline holds the additive field"
+    );
+    ensure!(
+        field(additive)?
+            .is_some_and(|column| column["type"] == "text" && column["nullable"] == true),
+        "the additive install lacks its nullable text field"
+    );
+    let satisfied = required_contract_observation(required, baseline)?;
+    ensure!(
+        required_contract_observation(required, additive)? == satisfied,
+        "the additive base changed the overlay's satisfied requirements"
+    );
+    ensure!(
+        wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&overlay)?
+            == overlay_before,
+        "the overlay package changed during the additive install"
+    );
+    println!("ADDITIVE_BASE_OVERLAY result=pass requirements={satisfied}");
     Ok(())
 }
