@@ -192,7 +192,7 @@ fn journey_inputs(
         route_host: super::identity().route_host.clone(),
         registry_auth_file,
         host_secret_directory: cluster.work.join("host-secrets"),
-        host_secret_namespace: cluster.name.clone(),
+        host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: cluster.work.join("operator-pat.json"),
         fresh_only_packages: None,
         postcommit: None,
