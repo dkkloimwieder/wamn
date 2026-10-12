@@ -281,6 +281,25 @@ fn runner_user() -> anyhow::Result<RunnerUser> {
     })
 }
 
+/// The file name of the identity executable in the results directory.
+const IDENTITY_BINARY: &str = "wamn-identity";
+
+/// The `docker run` that copies the identity executable out of the identity
+/// image the chart pins into the results directory, as `user`. A case that
+/// provisions an environment mints its PATs through a local identity process,
+/// and that process is this executable, never one the runner builds or
+/// carries (§8.2, R15).
+fn identity_command(candidate: &Candidate, user: RunnerUser, results: &Path) -> Vec<String> {
+    let mut command = strings(&["docker", "run", "--rm"]);
+    command.push(format!("--user={}:{}", user.uid, user.gid));
+    command.push(format!("--volume={0}:{0}", results.display()));
+    command.push("--entrypoint=cp".to_owned());
+    command.push(candidate.qualification.identity.clone());
+    command.push("/usr/local/bin/wamn-identity".to_owned());
+    command.push(results.join(IDENTITY_BINARY).display().to_string());
+    command
+}
+
 /// The `docker run` of the case executable of `package` in the candidate's
 /// runner image as `user`, with `args` and `env`. The runner reaches the
 /// Docker daemon through its socket and the case clusters through the host
@@ -318,6 +337,10 @@ fn runner_command(
     }
     command.push(format!("--env=TMPDIR={}", results.display()));
     command.push(format!(
+        "--env=WAMN_IDENTITY_BINARY={}",
+        results.join(IDENTITY_BINARY).display()
+    ));
+    command.push(format!(
         "--env=WAMN_RELEASE_CHART={}",
         release_chart.display()
     ));
@@ -342,6 +365,13 @@ async fn qualify_candidate(
     for command in image_commands(&result.candidate) {
         run(&root, &command, &[], &mut result.checks).await?;
     }
+    run(
+        &root,
+        &identity_command(&result.candidate, user, &temporary.path),
+        &[],
+        &mut result.checks,
+    )
+    .await?;
     // A case the executable lacks refuses here, before any case starts a cluster (wamn-pgub).
     let listed = run(
         &root,
@@ -757,12 +787,28 @@ mod tests {
             .collect();
         assert_eq!(image_commands(&candidate), expected);
 
-        // A case runs in the runner image, never in a checkout.
         let user = RunnerUser {
             uid: 1000,
             gid: 1001,
             socket_gid: 984,
         };
+        // The identity executable comes from the image the chart pins.
+        assert_eq!(
+            identity_command(&candidate, user, Path::new("/tmp/results")),
+            strings(&[
+                "docker",
+                "run",
+                "--rm",
+                "--user=1000:1001",
+                "--volume=/tmp/results:/tmp/results",
+                "--entrypoint=cp",
+                &pinned("identity"),
+                "/usr/local/bin/wamn-identity",
+                "/tmp/results/wamn-identity",
+            ])
+        );
+
+        // A case runs in the runner image, never in a checkout.
         let command = runner_command(
             &candidate,
             user,
@@ -785,6 +831,7 @@ mod tests {
             "--volume=/charts/release:/charts/release:ro",
             "--volume=unused:unused:ro",
             "--env=TMPDIR=/tmp/results",
+            "--env=WAMN_IDENTITY_BINARY=/tmp/results/wamn-identity",
             "--env=WAMN_RELEASE_CHART=/charts/release",
             "--env=WAMN_DELIVERY_RESULT=/tmp/results/case-0.json",
             "--entrypoint=/cases/wamn-wms-tests",
