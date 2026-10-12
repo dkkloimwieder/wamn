@@ -3,6 +3,7 @@
 use super::*;
 
 mod local_delivery;
+mod scheduler_outage;
 
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_mins(12);
 /// The migrations the dev command installs, with each package version from

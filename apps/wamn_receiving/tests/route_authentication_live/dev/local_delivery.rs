@@ -408,7 +408,7 @@ pub(super) struct Watch {
     stderr: Lines<BufReader<ChildStderr>>,
     stdout_open: bool,
     stderr_open: bool,
-    diagnostics: VecDeque<String>,
+    pub(super) diagnostics: VecDeque<String>,
 }
 
 impl Watch {
