@@ -25,9 +25,6 @@ use database::{
 use model::{Expected, History, Receipt, Step};
 
 const RECEIPT_PATH: &str = "/receiving/record_receipt";
-static RECEIPT_OPERATION: std::sync::LazyLock<&'static str> = std::sync::LazyLock::new(|| {
-    wamn_test_infrastructure::operations::sealed("wamn-receiving:receiving/record-receipt").leak()
-});
 const OCCURRED_AT: &str = "2026-09-09T12:00:00.000000Z";
 
 // Secrets cross only through this private file. The evidence excludes them.
@@ -45,6 +42,9 @@ pub(crate) struct Inputs {
     /// The root of each released package, by component, whose tree digest
     /// the record names.
     packages: BTreeMap<String, PathBuf>,
+    /// The sealed id of `wamn-receiving:receiving/record-receipt` in the
+    /// released Receiving package.
+    record_receipt_operation: String,
     seed: u64,
     cases: u32,
     history: Option<History>,
@@ -908,7 +908,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         denied.status == reqwest::StatusCode::FORBIDDEN
             && denied.body
                 == json!({"error":{
-        "code":"permission-denied","operation":*RECEIPT_OPERATION}}),
+        "code":"permission-denied","operation":inputs.record_receipt_operation}}),
         "REC-AUTHORITY expected exact operation denial: {denied:?}"
     );
     ensure!(
@@ -936,7 +936,6 @@ pub(crate) fn assert_histories_with_cancellation(
         !inputs.component_digests.is_empty(),
         "component identities are required"
     );
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let mut package_tree_digests = serde_json::Map::new();
     for (component, root) in &inputs.packages {
         package_tree_digests.insert(
@@ -946,16 +945,6 @@ pub(crate) fn assert_histories_with_cancellation(
             )?),
         );
     }
-    let compiler = std::process::Command::new("rustc")
-        .args(["--version", "--verbose"])
-        .current_dir(&repository)
-        .output()
-        .context("read the Receiving test compiler identity")?;
-    ensure!(
-        compiler.status.success(),
-        "cannot read the test compiler version"
-    );
-    let compiler_version = std::str::from_utf8(&compiler.stdout)?.trim();
     let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.operator_secret)?)?;
     let route = Route {
         client: reqwest::Client::builder()
@@ -1003,7 +992,6 @@ pub(crate) fn assert_histories_with_cancellation(
         &json!({"case":"identity",
         "component_digests":inputs.component_digests,
         "postgres_server_version_num":version,"package_tree_digests":package_tree_digests,
-        "test_compiler_version":compiler_version,
         "seed":inputs.seed,"generated_cases":inputs.cases,"max_shrink_iterations":64,
         "invariants":["REC-HISTORY","REC-REFUSAL","REC-REPLAY","REC-CONTENTION",
             "REC-ROLLBACK","REC-LOST-RESPONSE","REC-REVISION","REC-AUTHORITY"]}),

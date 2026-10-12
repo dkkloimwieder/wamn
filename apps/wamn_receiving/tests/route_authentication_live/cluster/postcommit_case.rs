@@ -196,6 +196,14 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         Duration::from_secs(600),
         super::super::postcommit::assert_postcommit(
             &cluster.inputs,
+            &wamn_test_infrastructure::operations::sealed_in(
+                &cluster
+                    .packages
+                    .get(super::super::OVERLAY_PACKAGE_ID)
+                    .context("the candidate carries the Acme package")?
+                    .manifest()?,
+                "client-acme-receiving:quality/create-inspection",
+            )?,
             &format!("kind-{}", resources.name),
             NAMESPACE,
             &observer,

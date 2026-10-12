@@ -341,8 +341,10 @@ async fn matching_delivery_advisory(
     Ok(None)
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn assert_replay_and_progress(
     document: &JourneyDocument,
+    create_inspection: &str,
     phase: &PostcommitPhase,
     project: &Client,
     lock: &Client,
@@ -383,9 +385,7 @@ async fn assert_replay_and_progress(
             .is_some_and(|nodes| nodes.len() == 1)
             && graph["entry"] == "operation"
             && graph["nodes"]["operation"]["operation"]
-                == wamn_test_infrastructure::operations::sealed(
-                    "client-acme-receiving:quality/create-inspection"
-                )
+                == create_inspection
             && graph["nodes"]["operation"]["config"].get("retry").is_none(),
         "the test requires the unchanged one-node private handler and default retry policy"
     );
@@ -634,8 +634,11 @@ async fn assert_replay_and_progress(
     Ok(())
 }
 
+/// `create_inspection` is the sealed id of the Acme handler's operation in the
+/// candidate's Acme package.
 pub(super) async fn assert_postcommit(
     document: &JourneyDocument,
+    create_inspection: &str,
     owned_context: &str,
     owned_namespace: &str,
     nats: &async_nats::Client,
@@ -678,6 +681,7 @@ pub(super) async fn assert_postcommit(
         "verdict":"fail", "invariants":["REC-EVENT-REPLAY","REC-POSTCOMMIT-PROGRESS"], "recovery_assumptions":"The owned database, broker, host, and materializer remain available. The poison lock lasts through retry exhaustion."});
     let result = assert_replay_and_progress(
         document,
+        create_inspection,
         phase,
         project.as_ref(),
         lock.as_ref(),

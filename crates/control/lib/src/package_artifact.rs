@@ -952,6 +952,17 @@ impl OpenedPackage {
         &self.root
     }
 
+    /// The package's `wamn.json`: the bytes of the artifact's layer 0, as
+    /// the opener unpacked them.
+    ///
+    /// # Errors
+    ///
+    /// When the unpacked file cannot be read.
+    pub fn manifest(&self) -> anyhow::Result<Vec<u8>> {
+        let path = self.root.join(wamn_schema_generator::COMPILED_MANIFEST);
+        std::fs::read(&path).with_context(|| format!("read {}", path.display()))
+    }
+
     /// The package root with the digest this opener holds in memory, the one
     /// carrier of the digest of an opened artifact. The digest is the one the
     /// registry records; a directory has none.

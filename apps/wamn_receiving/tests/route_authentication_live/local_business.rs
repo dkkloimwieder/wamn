@@ -325,6 +325,7 @@ async fn histories(
         "tenant":super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
         "component_digests":application.component_digests,
         "packages":super::released_package_roots(),
+        "record_receipt_operation":wamn_test_infrastructure::operations::sealed("wamn-receiving:receiving/record-receipt"),
         "seed":7701,"cases":16,"history":null,
     }))?;
     let cancellation = pg_walstream::CancellationToken::new();

@@ -3,7 +3,9 @@
 //! A test names an operation by its reference,
 //! `<package>:<interface>/<operation>`, as the authored publication files do.
 //! The version is authored once, in the package `wamn.json`, and these
-//! functions read it there (docs/plan/operation-ids.md).
+//! functions read it there (docs/plan/operation-ids.md). A cluster case reads
+//! it from the `wamn.json` of the candidate's package artifact instead
+//! ([`sealed_in`]): the runner has no checkout.
 
 use std::path::PathBuf;
 
@@ -33,6 +35,19 @@ pub fn sealed(reference: &str) -> String {
         .unwrap_or_else(|| panic!("{reference:?} is not an operation reference"));
     resolve_operation_reference(&owners(&prefix.replace('-', "_")), reference)
         .unwrap_or_else(|error| panic!("resolve {reference:?}: {error}"))
+}
+
+/// The sealed id of one operation reference of the package whose `wamn.json`
+/// is `manifest`, such as layer 0 of a candidate's package artifact.
+///
+/// # Errors
+///
+/// When the manifest does not parse, or the reference does not resolve.
+pub fn sealed_in(manifest: &[u8], reference: &str) -> anyhow::Result<String> {
+    Ok(resolve_operation_reference(
+        &OperationOwners::from_slice(manifest)?,
+        reference,
+    )?)
 }
 
 /// The version of one repository package, from its `wamn.json`.

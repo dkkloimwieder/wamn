@@ -42,13 +42,18 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             .map(|package| Ok((package.component, cluster.packages.get(package.id)
                 .context("the candidate carries every released journey package")?.root().to_path_buf())))
             .collect::<anyhow::Result<std::collections::BTreeMap<_, _>>>()?;
+        let record_receipt_operation = wamn_test_infrastructure::operations::sealed_in(
+            &cluster.packages.get(super::super::BASE_PACKAGE_ID)
+                .context("the candidate carries the Receiving package")?.manifest()?,
+            "wamn-receiving:receiving/record-receipt",
+        )?;
         let path = evidence.join("receiving-correctness.jsonl");
         let inputs = serde_json::from_value(json!({
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
             "tenant":super::super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
             "component_digests":digests,
-            "packages":packages,
+            "packages":packages,"record_receipt_operation":record_receipt_operation,
             "seed":7701,"cases":16,"history":null,
         }))?;
         let cancellation = pg_walstream::CancellationToken::new();
