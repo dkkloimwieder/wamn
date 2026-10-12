@@ -33,6 +33,12 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         "the chart output {} exists",
         request.out.display()
     );
+    let apps_target = request.repository.join("apps/target/wamn");
+    ensure!(
+        apps_target.is_dir(),
+        "{} does not exist; run `wamn build` on the apps first",
+        apps_target.display()
+    );
     let head = output(Command::new("git").current_dir(&request.repository).args([
         "rev-parse",
         "--verify",
@@ -178,4 +184,25 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).with_context(|| format!("{program} wrote text"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_checkout_without_package_outputs_is_refused_before_any_build() {
+        let repository = std::env::temp_dir().join(format!(
+            "wamn-build-platform-no-apps-target-{}",
+            std::process::id()
+        ));
+        let error = build_platform(&BuildPlatformRequest {
+            out: repository.join("chart"),
+            repository,
+            registry: "localhost:5000".to_owned(),
+        })
+        .await
+        .expect_err("a checkout without apps/target/wamn is refused");
+        assert!(error.to_string().contains("run `wamn build`"), "{error}");
+    }
 }
