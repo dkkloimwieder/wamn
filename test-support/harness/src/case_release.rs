@@ -521,20 +521,21 @@ pub fn host_group(overlay: &str) -> anyhow::Result<Mapping> {
 /// One cluster a case installs its environment release into.
 #[derive(Debug)]
 pub struct Install<'a> {
-    pub repository: &'a Path,
     pub cluster: &'a str,
     /// The directory that holds `kubeconfig`, and the stamped chart and values.
     pub work: &'a Path,
 }
 
-/// Stamp the release chart with `images`, render the values of `input`, and
-/// install the release in the operator namespace, as `env apply` does (R6).
+/// Stamp the release chart that `WAMN_RELEASE_CHART` names with `images`,
+/// render the values of `input`, and install the release in the operator
+/// namespace, as `env apply` does (R6).
 /// Returns the release name, which is the host group, and the `wamn.release`
 /// label of the manifest digest, which the roles' `hostSelector` names.
 ///
 /// # Errors
 ///
-/// When the chart cannot be stamped, the values do not render, or Helm fails.
+/// When `WAMN_RELEASE_CHART` is not set, the chart cannot be stamped, the
+/// values do not render, or Helm fails.
 pub async fn install(
     at: &Install<'_>,
     images: &ImageSet,
@@ -543,7 +544,7 @@ pub async fn install(
     let label = wamn_engine::release_manifest::release_label(&input.manifest_digest)
         .map_err(|error| anyhow::anyhow!("{error}"))?;
     let chart = release_chart::stamp(
-        &at.repository.join("deploy/platform/release"),
+        &release_chart()?,
         images,
         None,
         &at.work.join("release-chart"),

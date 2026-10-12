@@ -429,7 +429,6 @@ async fn install_release(
     );
     let (name, label) = case_release::install(
         &case_release::Install {
-            repository: &resources.repository,
             cluster: &resources.name,
             work: &resources.work,
         },

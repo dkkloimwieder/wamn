@@ -534,7 +534,6 @@ async fn run_created(
         // release implies, as `env apply` does (§9.2).
         let (name, label) = case_release::install(
             &case_release::Install {
-                repository,
                 cluster,
                 work,
             },
