@@ -58,6 +58,7 @@ fn package(root: &Path) -> PathBuf {
 
 fn placement_input(root: &Path) {
     fs::create_dir_all(root.join("grade")).unwrap();
+    fs::create_dir_all(package(root)).unwrap();
     fs::create_dir_all(wamn_schema_generator::output_root(&package(root)).join("contracts"))
         .unwrap();
     write_json(&root.join("task.json"), &json!({"task":"placement","identity":{"route_host":"test.localhost"},"overlay_root":"packages/dock","grade":{"steps":"steps.json","checks":[],"fence_reports":[]}})).unwrap();

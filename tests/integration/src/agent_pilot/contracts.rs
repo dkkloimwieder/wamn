@@ -33,7 +33,7 @@ pub(super) fn contract(root: &Path, operation: &str, side: &str) -> anyhow::Resu
     let suffix = PathBuf::from("contracts")
         .join(domain)
         .join(format!("{action}.{side}.json"));
-    files(root)?
+    files(&wamn_schema_generator::output_root(root))?
         .into_iter()
         .find(|path| path.ends_with(&suffix))
         .map(|path| read_json(&path))
