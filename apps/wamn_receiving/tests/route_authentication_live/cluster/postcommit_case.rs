@@ -192,6 +192,18 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         statement_timeout_ms: statement_timeout(resources, &deployed.name).await?,
     });
     let replay = event_broker::connect(&cluster.broker.runtime, &cluster.nats_url).await?;
+    let (_, manifest) = cluster.candidate()?;
+    let wiring = manifest
+        .workflow
+        .wirings
+        .iter()
+        .find(|wiring| {
+            wiring.package_id == super::super::OVERLAY_PACKAGE_ID
+                && wiring.graph.wiring_id == super::super::postcommit::WIRING
+                && wiring.graph.version == 1
+        })
+        .context("the candidate's release carries the Acme post-commit wiring")?;
+    let graph = serde_json::to_value(&wiring.graph)?;
     tokio::time::timeout(
         Duration::from_secs(600),
         super::super::postcommit::assert_postcommit(
@@ -204,6 +216,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
                     .manifest()?,
                 "client-acme-receiving:quality/create-inspection",
             )?,
+            &graph,
             &format!("kind-{}", resources.name),
             NAMESPACE,
             &observer,

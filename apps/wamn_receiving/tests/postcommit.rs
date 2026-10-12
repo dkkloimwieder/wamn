@@ -23,7 +23,7 @@ use super::{
 };
 
 const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
-const WIRING: &str = "quality_create_inspection";
+pub(super) const WIRING: &str = "quality_create_inspection";
 const PROGRESS_BOUND: Duration = Duration::from_secs(90);
 
 async fn kube(phase: &PostcommitPhase, arguments: &[&str]) -> anyhow::Result<Value> {
@@ -345,6 +345,7 @@ async fn matching_delivery_advisory(
 async fn assert_replay_and_progress(
     document: &JourneyDocument,
     create_inspection: &str,
+    graph: &Value,
     phase: &PostcommitPhase,
     project: &Client,
     lock: &Client,
@@ -375,21 +376,16 @@ async fn assert_replay_and_progress(
         )
         .await?;
     nats.flush().await?;
-    let graph: Value = project.query_one(
-        "SELECT graph_json FROM catalog.wirings WHERE tenant_id=$1 AND package_id=$2 AND wiring_id=$3 AND version=1",
-        &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID, &WIRING],
-    ).await?.get(0);
     ensure!(
         graph["nodes"]
             .as_object()
             .is_some_and(|nodes| nodes.len() == 1)
             && graph["entry"] == "operation"
-            && graph["nodes"]["operation"]["operation"]
-                == create_inspection
+            && graph["nodes"]["operation"]["operation"] == create_inspection
             && graph["nodes"]["operation"]["config"].get("retry").is_none(),
         "the test requires the unchanged one-node private handler and default retry policy"
     );
-    evidence["wiring"] = graph;
+    evidence["wiring"] = graph.clone();
     let registration: Value = project.query_one(
         "SELECT registration FROM catalog.event_registrations WHERE tenant_id=$1 AND package_id=$2 AND registration_id='quality.create_inspection'",
         &[&identity().tenant.as_str(), &OVERLAY_PACKAGE_ID],
@@ -635,10 +631,13 @@ async fn assert_replay_and_progress(
 }
 
 /// `create_inspection` is the sealed id of the Acme handler's operation in the
-/// candidate's Acme package.
+/// candidate's Acme package, and `graph` is the graph of its
+/// `quality_create_inspection` wiring in the candidate's release manifest:
+/// an installed candidate has no authored `catalog.wirings` row.
 pub(super) async fn assert_postcommit(
     document: &JourneyDocument,
     create_inspection: &str,
+    graph: &Value,
     owned_context: &str,
     owned_namespace: &str,
     nats: &async_nats::Client,
@@ -682,6 +681,7 @@ pub(super) async fn assert_postcommit(
     let result = assert_replay_and_progress(
         document,
         create_inspection,
+        graph,
         phase,
         project.as_ref(),
         lock.as_ref(),
