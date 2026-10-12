@@ -310,7 +310,10 @@ pub(super) async fn ensure_cdc(
     )
     .await
     .context("enable CDC")?;
-    system
+    // `CREATE ROLE` needs the operator's admin login, which `system` gave up
+    // when it set the role to the registry owner.
+    connect(&platform.system_database_url)
+        .await?
         .batch_execute(&outcome.role_sql)
         .await
         .context("run the replication role SQL")?;
