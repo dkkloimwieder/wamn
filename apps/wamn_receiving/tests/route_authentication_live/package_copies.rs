@@ -62,7 +62,16 @@ pub(super) fn create(root: &Path, sources: &[PathBuf]) -> anyhow::Result<()> {
         }
     }
     for (source, name) in sources.iter().zip(copied) {
-        copy_fresh_only_package(source, &package(root, name))?;
+        let copy = package(root, name);
+        copy_fresh_only_package(source, &copy)?;
+        // A copy has no web client, so `wamn build` skips its web build. pnpm
+        // would install that build from `<root>`, whose `node_modules` and
+        // `web` link to the repository, and rewrite the repository's links
+        // into `<root>` (wamn-q4xxd).
+        let web = copy.join("web");
+        if web.exists() {
+            std::fs::remove_dir_all(web)?;
+        }
     }
     Ok(())
 }
