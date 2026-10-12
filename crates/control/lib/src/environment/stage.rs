@@ -62,16 +62,44 @@ pub async fn stage(
     // Each package the environment never had, and each staged successor:
     // its verified artifact, applied. A staged successor's stage runs under
     // its stage evidence (`apply_coordinated` and the backfill unchanged in
-    // content).
-    let mut packages = Vec::new();
+    // content). An overlay applies after the bases it extends, which own the
+    // relations its migrations add definitions to.
+    let mut opened = Vec::new();
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
-        let opened = open(platform, id, version).await?;
-        let applies = match analysed.get(id) {
+        let package = open(platform, id, version).await?;
+        let path = wamn_schema_generator::package_manifest_path(package.root());
+        let package_manifest = PackageManifest::from_slice(
+            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+        )
+        .with_context(|| format!("parse {}", path.display()))?;
+        opened.push((id.to_owned(), version.to_owned(), package, package_manifest));
+    }
+    let order = apply_order(
+        &opened
+            .iter()
+            .map(|(id, _, _, package_manifest)| {
+                (
+                    id.as_str(),
+                    package_manifest
+                        .base_dependencies
+                        .values()
+                        .map(|dependency| dependency.package.as_str())
+                        .collect(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )?;
+    let mut opened = opened.into_iter().map(Some).collect::<Vec<_>>();
+    let mut packages = Vec::new();
+    for index in order {
+        let (id, version, opened, package_manifest) =
+            opened[index].take().context("each package applies once")?;
+        let applies = match analysed.get(&id) {
             None => true,
             Some(installed) => {
                 installed.current != version
-                    && installed.lineage.get(version).and_then(Option::as_deref)
+                    && installed.lineage.get(&version).and_then(Option::as_deref)
                         == Some(installed.current.as_str())
             }
         };
@@ -84,7 +112,7 @@ pub async fn stage(
             .await
             .with_context(|| format!("apply package {id}@{version}"))?;
         }
-        packages.push((id.to_owned(), version.to_owned(), opened));
+        packages.push((id, version, opened, package_manifest));
     }
 
     // 2. The release cache row, once its package versions are installed: the
@@ -96,7 +124,7 @@ pub async fn stage(
     // installed version. A release on the tested predecessor keeps the
     // expanded schema's grants, which qualify-upgrade tested (§14).
     let installed = installed(platform, document).await?;
-    let current = packages.iter().all(|(id, version, _)| {
+    let current = packages.iter().all(|(id, version, _, _)| {
         installed
             .get(id)
             .is_some_and(|installed| &installed.current == version)
@@ -106,7 +134,7 @@ pub async fn stage(
             crate::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
                 packages: packages
                     .iter()
-                    .map(|(_, _, opened)| opened.package_root())
+                    .map(|(_, _, opened, _)| opened.package_root())
                     .collect(),
                 database_url: project_url.to_owned(),
                 tenant: tenant.clone(),
@@ -115,16 +143,40 @@ pub async fn stage(
         .await
         .context("reconcile the packages' data access")?;
     }
-    packages
-        .iter()
-        .map(|(_, _, opened)| {
-            let path = wamn_schema_generator::package_manifest_path(opened.root());
-            PackageManifest::from_slice(
-                &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-            )
-            .with_context(|| format!("parse {}", path.display()))
-        })
-        .collect()
+    Ok(packages
+        .into_iter()
+        .map(|(_, _, _, package_manifest)| package_manifest)
+        .collect())
+}
+
+/// The order in which the stage applies the release's `packages`, each an id
+/// and the base packages it extends: every package after the release
+/// packages it extends.
+///
+/// # Errors
+///
+/// When the packages extend one another in a cycle.
+fn apply_order(packages: &[(&str, Vec<&str>)]) -> anyhow::Result<Vec<usize>> {
+    let mut order = Vec::with_capacity(packages.len());
+    while order.len() < packages.len() {
+        let ready = (0..packages.len())
+            .filter(|index| !order.contains(index))
+            .filter(|&index| {
+                packages[index].1.iter().all(|base| {
+                    packages
+                        .iter()
+                        .position(|(id, _)| id == base)
+                        .is_none_or(|base| order.contains(&base))
+                })
+            })
+            .collect::<Vec<_>>();
+        ensure!(
+            !ready.is_empty(),
+            "the release's packages extend one another in a cycle"
+        );
+        order.extend(ready);
+    }
+    Ok(order)
 }
 
 /// The installed packages of the project database, read now.
@@ -304,7 +356,20 @@ mod tests {
         ServingComponent, ServingManifest, ServingRelease, WorkflowSection,
     };
 
-    use super::release_requirements;
+    use super::{apply_order, release_requirements};
+
+    /// An overlay applies after the base it extends, whatever the manifest
+    /// order (wamn-k8127.5).
+    #[test]
+    fn an_overlay_applies_after_its_base() {
+        let packages = [
+            ("client_acme_receiving", vec!["wamn_receiving"]),
+            ("wamn_receiving", Vec::new()),
+            ("other", vec!["outside_the_release"]),
+        ];
+        assert_eq!(apply_order(&packages).unwrap(), [1, 2, 0]);
+        assert!(apply_order(&[("a", vec!["b"]), ("b", vec!["a"])]).is_err());
+    }
 
     fn component(name: &str, digest: &str, aliases: &[&str]) -> ServingComponent {
         let mut descriptor = ComponentDescriptor::named(name, "0.1", digest);
