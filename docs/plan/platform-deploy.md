@@ -225,7 +225,7 @@ A package artifact has the tag `<package_id>-<version>`. Its image manifest has 
 | 0 | `application/vnd.wamn.package.manifest.v1+json` | `wamn.json` | the exact bytes of the canonical `wamn.json` in `apps/target/wamn/<package>/`, not re-encoded |
 | 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` |
 | 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `publication/`: `attachments.json`, `wirings/`, `components/<name>.json.in`, including the declaration of each palette component a wiring names |
-| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/platform-policy/data-access.json`, `generated/contracts/`, `generated/sql/`, `generated/publication/`, `generated/routes/` |
+| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/platform-policy/data-access.json`, `generated/contracts/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/publication/`, `generated/routes/` |
 | 4 | `application/vnd.wamn.package.v1.tar` | `web` | `web/dist/`: the files of the web client build in `apps/target/wamn/<package>/web/` (§7.1 step 8), under their logical `web/dist/` paths; an empty tar when there is none |
 | 5..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per component, owned or palette, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
 
