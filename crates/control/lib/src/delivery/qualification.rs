@@ -257,15 +257,41 @@ async fn write_candidate(
 /// named after its package (the `runner` stage of the root `Dockerfile`).
 const RUNNER_CASES: &str = "/cases";
 
+/// The Docker daemon's socket, which the runner reaches the daemon through.
+const DOCKER_SOCKET: &str = "/var/run/docker.sock";
+
+/// The user the runner runs as: the caller's user and group, so that the
+/// files it leaves in the results directory are the caller's, and the group
+/// of the Docker socket, so that it reaches the daemon (§8.2).
+#[derive(Clone, Copy, Debug)]
+struct RunnerUser {
+    uid: u32,
+    gid: u32,
+    socket_gid: u32,
+}
+
+fn runner_user() -> anyhow::Result<RunnerUser> {
+    use std::os::unix::fs::MetadataExt as _;
+    let socket = fs::metadata(DOCKER_SOCKET)
+        .with_context(|| format!("read the group of {DOCKER_SOCKET}"))?;
+    Ok(RunnerUser {
+        uid: rustix::process::getuid().as_raw(),
+        gid: rustix::process::getgid().as_raw(),
+        socket_gid: socket.gid(),
+    })
+}
+
 /// The `docker run` of the case executable of `package` in the candidate's
-/// runner image, with `args` and `env`. The runner reaches the Docker daemon
-/// through its socket and the case clusters through the host network. The
+/// runner image as `user`, with `args` and `env`. The runner reaches the
+/// Docker daemon through its socket and the case clusters through the host
+/// network. The
 /// results directory is mounted at its own path, and is the runner's
 /// temporary directory, because the daemon resolves the cases' bind mounts
 /// on its own host. The release chart and the release registry's access are
 /// mounted read-only at their own paths.
 fn runner_command(
     candidate: &Candidate,
+    user: RunnerUser,
     release_chart: &Path,
     results: &Path,
     package: &str,
@@ -277,8 +303,10 @@ fn runner_command(
         "run",
         "--rm",
         "--network=host",
-        "--volume=/var/run/docker.sock:/var/run/docker.sock",
     ]);
+    command.push(format!("--user={}:{}", user.uid, user.gid));
+    command.push(format!("--group-add={}", user.socket_gid));
+    command.push(format!("--volume={DOCKER_SOCKET}:{DOCKER_SOCKET}"));
     command.push(format!("--volume={0}:{0}", results.display()));
     let read_only = std::iter::once(release_chart)
         .chain(std::iter::once(
@@ -309,6 +337,7 @@ async fn qualify_candidate(
     result: &mut Qualification,
 ) -> anyhow::Result<()> {
     let app = application(&result.candidate)?;
+    let user = runner_user()?;
     let root = temporary.path.clone();
     for command in image_commands(&result.candidate) {
         run(&root, &command, &[], &mut result.checks).await?;
@@ -318,6 +347,7 @@ async fn qualify_candidate(
         &root,
         &runner_command(
             &result.candidate,
+            user,
             release_chart,
             &temporary.path,
             app.package,
@@ -347,6 +377,7 @@ async fn qualify_candidate(
             ];
             let command = runner_command(
                 &result.candidate,
+                user,
                 release_chart,
                 &temporary.path,
                 app.package,
@@ -727,8 +758,14 @@ mod tests {
         assert_eq!(image_commands(&candidate), expected);
 
         // A case runs in the runner image, never in a checkout.
+        let user = RunnerUser {
+            uid: 1000,
+            gid: 1001,
+            socket_gid: 984,
+        };
         let command = runner_command(
             &candidate,
+            user,
             Path::new("/charts/release"),
             Path::new("/tmp/results"),
             "wamn-wms-tests",
@@ -741,6 +778,8 @@ mod tests {
         assert_eq!(&command[..2], ["docker", "run"]);
         for expected in [
             "--network=host",
+            "--user=1000:1001",
+            "--group-add=984",
             "--volume=/var/run/docker.sock:/var/run/docker.sock",
             "--volume=/tmp/results:/tmp/results",
             "--volume=/charts/release:/charts/release:ro",
