@@ -33,7 +33,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: mint-pat
-          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:0.1.0@sha256:d073179415ff807ac2e21f081bf2e7d5c95da3c75e9b911d4395f7f23929e816
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:0.1.1@sha256:e6051f97773f51d46b399c272bdd34064391f47d75a43df02d9c22d471b17fae
           command: ["/bin/sh", "-ec"]
           args:
             - |
