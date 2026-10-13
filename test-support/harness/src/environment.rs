@@ -199,7 +199,15 @@ pub async fn configure_cdc(
         .batch_execute(&sql::grant_replication_access_sql(database, role, &schema))
         .await
         .context("apply the declared CDC grants")?;
-    enable_cdc_project_env::record_event_reader(&args, &outcome)
-        .await
-        .context("record the CDC reader")
+    enable_cdc_project_env::record_event_reader(
+        args.system_database_url
+            .as_deref()
+            .context("set the system database URL")?,
+        &outcome.triple,
+        &schema,
+        &outcome.cdc_name,
+        args.secret_namespace.as_deref(),
+    )
+    .await
+    .context("record the CDC reader")
 }

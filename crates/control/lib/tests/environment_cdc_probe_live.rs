@@ -1,16 +1,16 @@
 //! Live test of the CDC ensure's observation (docs/plan/platform-deploy.md
-//! §10.1 step 4, `wamn-1d3gr`): a reader row that a failed apply left behind
-//! does not make the next apply skip CDC; only the publication together with
-//! the row does.
+//! §10.1 step 4, `wamn-1d3gr`): the publication alone is the observation, so
+//! a reader row that a failed apply left behind does not make the next apply
+//! skip CDC, and recording the reader on every apply leaves one row.
 
 use tokio_postgres::NoTls;
 
+use wamn_control::enable_cdc_project_env::record_event_reader;
 use wamn_control::environment::ensure::cdc_in_place;
-use wamn_control_provision::{cdc_object_name, event_stream_name, sql};
+use wamn_control_provision::{cdc_object_name, sql};
 use wamn_control_registry::Triple;
 use wamn_control_registry::sql::{
-    stamp_env_policy_sql, upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql,
-    upsert_project_sql,
+    stamp_env_policy_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 
 const ORG: &str = "cp0";
@@ -19,7 +19,7 @@ const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 
 #[tokio::test]
-async fn a_recorded_reader_without_its_publication_is_not_in_place() {
+async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_once() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let (db, connection) = tokio_postgres::connect(database.url(), NoTls)
@@ -77,34 +77,36 @@ async fn a_recorded_reader_without_its_publication_is_not_in_place() {
     .await
     .expect("project-env row");
 
-    let triple = Triple::new(ORG, PROJECT, ENV);
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let in_place = || cdc_in_place(&db, &db, &triple, &cdc_name);
-
-    // An apply recorded the reader, then failed before the publication.
-    db.execute(
-        upsert_event_reader_sql(),
-        &[
-            &ORG,
-            &PROJECT,
-            &ENV,
-            &cdc_name,
-            &cdc_name,
-            &event_stream_name(ORG, PROJECT, ENV),
-            &"wamn-cdc-cp0--app--dev",
-            &None::<&str>,
-            &true,
-            &"app",
-        ],
+    db.batch_execute(
+        "ALTER TABLE registry.project_envs OWNER TO wamn_system; \
+         ALTER TABLE registry.event_readers OWNER TO wamn_system",
     )
     .await
-    .expect("event-reader row");
+    .expect("registry owner");
+
+    let triple = Triple::new(ORG, PROJECT, ENV);
+    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
+    let in_place = || cdc_in_place(&db, &cdc_name);
+    let record = || record_event_reader(database.url(), &triple, "app", &cdc_name, None);
+    let readers = || async {
+        db.query_one(
+            "SELECT count(*) FROM registry.event_readers WHERE org = $1",
+            &[&ORG],
+        )
+        .await
+        .expect("count the reader rows")
+        .get::<_, i64>(0)
+    };
+
+    // No publication: not in place, with or without a reader row.
+    assert!(!in_place().await.expect("probe"), "no publication, no row");
+    record().await.expect("record the reader");
     assert!(
         !in_place().await.expect("probe"),
-        "a recorded reader without its publication must make the next apply enable CDC"
+        "a reader row a failed apply left must not skip CDC"
     );
 
-    // The next apply creates the publication and records the reader last.
+    // The publication is the observation.
     db.batch_execute(&format!(
         "{};\n{}",
         sql::ensure_schema_sql("app"),
@@ -114,12 +116,7 @@ async fn a_recorded_reader_without_its_publication_is_not_in_place() {
     .expect("the publication");
     assert!(in_place().await.expect("probe"), "CDC is in place");
 
-    // A publication whose reader was never recorded is a partial ensure too.
-    db.execute("DELETE FROM registry.event_readers WHERE org = $1", &[&ORG])
-        .await
-        .expect("drop the reader row");
-    assert!(
-        !in_place().await.expect("probe"),
-        "a publication without its recorded reader must make the next apply finish CDC"
-    );
+    // Every apply records the reader; recording it again leaves one row.
+    record().await.expect("record the reader again");
+    assert_eq!(readers().await, 1);
 }

@@ -302,34 +302,28 @@ fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
     )
 }
 
-/// Record the CDC reader registration of `outcome` in the registry
-/// (idempotent + refreshing). The caller records it last, once the role SQL,
-/// the CDC SQL, the publication and the Secret are in place, so a registration
-/// names a reader that can start. Connects as superuser and `SET ROLE
-/// wamn_system` (the registry owner), then runs the pure
-/// `wamn-control-registry` builder. The publication and slot share `cdc_name`,
-/// and `schema` is the schema that the publication covers.
+/// Record the CDC reader registration of `triple` in the registry
+/// (idempotent + refreshing: recording it again leaves one row). The caller
+/// records it last, once the role SQL, the CDC SQL, the publication and the
+/// Secret are in place, so a registration names a reader that can start.
+/// Connects as superuser and `SET ROLE wamn_system` (the registry owner), then
+/// runs the pure `wamn-control-registry` builder. The publication and slot
+/// share `cdc_name`, and `schema` is the schema that the publication covers;
+/// the stream and the Secret are named from the coordinate.
 ///
 /// # Errors
 ///
 /// When the system database refuses the connection or the write.
 pub async fn record_event_reader(
-    args: &EnableCdcProjectEnvRequest,
-    outcome: &EnableCdcProjectEnvOutcome,
+    system_url: &str,
+    triple: &Triple,
+    schema: &str,
+    cdc_name: &str,
+    secret_namespace: Option<&str>,
 ) -> anyhow::Result<()> {
-    let system_url = args
-        .system_database_url
-        .as_deref()
-        .context("--system-database-url is required to record the CDC reader")?;
-    let EnableCdcProjectEnvOutcome {
-        triple,
-        cdc_name,
-        stream,
-        secret_name,
-        ..
-    } = outcome;
-    let schema = &args.schema;
-    let secret_namespace = args.secret_namespace.as_deref();
+    let env = triple.env.as_str();
+    let stream = event_stream_name(&triple.org, &triple.project, env);
+    let secret_name = project_env_cdc_secret_name(&triple.org, &triple.project, env);
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
@@ -339,7 +333,6 @@ pub async fn record_event_reader(
             .batch_execute("SET ROLE wamn_system")
             .await
             .context("SET ROLE wamn_system")?;
-        let env = triple.env.as_str();
         client
             .execute(
                 wamn_control_registry::sql::upsert_event_reader_sql(),

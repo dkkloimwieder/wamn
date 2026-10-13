@@ -218,9 +218,10 @@ pub async fn ensure(
 
 /// Ensure CDC capture of the packages' model schema: the source stream, the
 /// replication role, the slot, the `Publication` CR and the replication
-/// Secret, then the CDC reader registration, written last. [`cdc_in_place`]
-/// is the observation that it exists; a package set with no model schema
-/// captures nothing.
+/// Secret, judged by the publication probe of [`cdc_in_place`]; then the CDC
+/// reader registration, recorded on every apply as an idempotent upsert, so a
+/// crash before the record is finished by the next apply. A package set with
+/// no model schema captures nothing.
 ///
 /// # Errors
 ///
@@ -253,14 +254,32 @@ pub(super) async fn ensure_cdc(
         &instance,
     );
     let project = connect(&project_url(platform, &triple).await?).await?;
-    let system = connect(&platform.system_database_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
-    if cdc_in_place(&system, &project, &triple, &cdc_name).await? {
-        return Ok(());
+    if !cdc_in_place(&project, &cdc_name).await? {
+        enable_cdc(platform, document, manifests, &schema, &project, &instance).await?;
     }
+    let namespace = platform.target.namespace.as_str();
+    crate::enable_cdc_project_env::record_event_reader(
+        &platform.system_database_url,
+        &triple,
+        &schema,
+        &cdc_name,
+        Some(namespace),
+    )
+    .await
+    .context("record the CDC reader")
+}
+
+/// Enable CDC of `schema`: the source stream, the replication role, the CDC
+/// SQL on `project`, the `Publication` CR and the replication Secret.
+async fn enable_cdc(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    manifests: &[wamn_schema_generator::PackageManifest],
+    schema: &str,
+    project: &tokio_postgres::Client,
+    instance: &str,
+) -> anyhow::Result<()> {
+    let triple = document.triple();
     let EventBroker {
         nats_url,
         nats_username,
@@ -279,34 +298,35 @@ pub(super) async fn ensure_cdc(
             .map(serde_json::to_string)
             .collect::<Result<Vec<_>, _>>()?;
     let namespace = platform.target.namespace.as_str();
-    let request = crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
-        org: document.org.clone(),
-        project: document.project.clone(),
-        env: document.env.clone(),
-        schema,
-        system_database_url: Some(platform.system_database_url.clone()),
-        cluster: None,
-        replication_password: random_password()?,
-        db_host: platform.database_host.clone(),
-        db_port: platform.database_port,
-        namespace: namespace.to_owned(),
-        cluster_namespace: platform.database_namespace.clone(),
-        secret_namespace: Some(namespace.to_owned()),
-        stream: None,
-        nats_url,
-        nats_username,
-        nats_password_file,
-        stream_replicas,
-        dup_window_secs,
-        consumer_config: consumers,
-        emit_role_sql: None,
-        emit_cdc_sql: None,
-        emit_publication: None,
-        emit_secret: None,
-    };
-    let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(&request)
-        .await
-        .context("enable CDC")?;
+    let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(
+        &crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
+            org: document.org.clone(),
+            project: document.project.clone(),
+            env: document.env.clone(),
+            schema: schema.to_owned(),
+            system_database_url: Some(platform.system_database_url.clone()),
+            cluster: None,
+            replication_password: random_password()?,
+            db_host: platform.database_host.clone(),
+            db_port: platform.database_port,
+            namespace: namespace.to_owned(),
+            cluster_namespace: platform.database_namespace.clone(),
+            secret_namespace: Some(namespace.to_owned()),
+            stream: None,
+            nats_url,
+            nats_username,
+            nats_password_file,
+            stream_replicas,
+            dup_window_secs,
+            consumer_config: consumers,
+            emit_role_sql: None,
+            emit_cdc_sql: None,
+            emit_publication: None,
+            emit_secret: None,
+        },
+    )
+    .await
+    .context("enable CDC")?;
     admin_sql(platform, &outcome.role_sql)
         .await
         .context("run the replication role SQL")?;
@@ -316,30 +336,29 @@ pub(super) async fn ensure_cdc(
         .context("run the CDC SQL")?;
     kubectl(
         platform,
-        &platform.database_namespace,
-        &["apply", "-f", "-"],
-        Some(&serde_json::to_vec(&outcome.publication)?),
-    )
-    .await
-    .context("apply the Publication CR")?;
-    kubectl(
-        platform,
         namespace,
         &["apply", "-f", "-"],
         Some(&serde_json::to_vec(&outcome.secret)?),
     )
     .await
     .context("apply the replication Secret")?;
+    // The publication is the observation of [`cdc_in_place`], so it is the
+    // last write.
+    kubectl(
+        platform,
+        &platform.database_namespace,
+        &["apply", "-f", "-"],
+        Some(&serde_json::to_vec(&outcome.publication)?),
+    )
+    .await
+    .context("apply the Publication CR")?;
     let database = wamn_control_provision::project_env_database_name(
         &document.org,
         &document.project,
         &document.env,
-        &instance,
+        instance,
     );
-    wait_applied(platform, "publication", &database).await?;
-    crate::enable_cdc_project_env::record_event_reader(&request, &outcome)
-        .await
-        .context("record the CDC reader")
+    wait_applied(platform, "publication", &database).await
 }
 
 /// Run role and privilege SQL on a fresh connection of the operator's admin
@@ -356,41 +375,25 @@ async fn admin_sql(platform: &Platform, sql: &str) -> anyhow::Result<()> {
 }
 
 /// Whether the environment's CDC is in place, judged by what it observes: the
-/// publication `cdc_name` exists in the project database and the CDC reader
-/// is recorded. [`ensure_cdc`] records the reader last, so a reader recorded
-/// beside a missing publication, or a publication with no reader, is a
-/// partial ensure that the next apply completes.
-///
-/// `system` reads the registry, `project` is connected to the project-env
-/// database.
+/// publication `cdc_name` exists in the project database `project`, the
+/// connection the probe runs on. [`ensure_cdc`] writes the publication last
+/// among the CDC writes and records the reader on every apply.
 ///
 /// # Errors
 ///
-/// When a read fails.
+/// When the probe fails.
 pub async fn cdc_in_place(
-    system: &tokio_postgres::Client,
     project: &tokio_postgres::Client,
-    triple: &Triple,
     cdc_name: &str,
 ) -> anyhow::Result<bool> {
-    let publication = project
+    Ok(project
         .query_opt(
             wamn_control_provision::sql::PUBLICATION_PROBE_SQL,
             &[&cdc_name],
         )
         .await
         .context("probe the CDC publication")?
-        .is_some();
-    let env = triple.env.as_str();
-    let recorded = system
-        .query_opt(
-            "SELECT 1 FROM registry.event_readers WHERE org = $1 AND project = $2 AND env = $3",
-            &[&triple.org, &triple.project, &env],
-        )
-        .await
-        .context("read the CDC reader registration")?
-        .is_some();
-    Ok(publication && recorded)
+        .is_some())
 }
 
 /// The URL of the environment's project database: the system URL's login on
