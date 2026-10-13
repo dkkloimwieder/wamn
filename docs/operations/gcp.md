@@ -2265,3 +2265,10 @@ Then run `author-wiring` and `publish-release` with `--wiring "wamn_wms@2.1.0::i
 ### 11.10 Host group files
 
 `WAMN_RELEASE_HOST_GROUP` names the platform part of an environment's host group. It is a hand-written platform install input: [deploy/gcp/host-group-receiving.yaml](../../deploy/gcp/host-group-receiving.yaml) and [deploy/gcp/host-group-wms.yaml](../../deploy/gcp/host-group-wms.yaml). Each is the group of [values-host.yaml](../../deploy/gcp/values-host.yaml) without the keys and variables that the release chart and `apply` derive. Each names the event NATS Secrets of its environment (section 11.3), the registry helper of section 3.13 and the identity CA. `WAMN_SESSION_INSTANCE_SUFFIX` is the suffix of the first apply, so write it again after a new first apply.
+
+On 2026-10-13 the platform build pushed `wamn-host:0.1.0` `sha256:55d6ce4a267620d5a6577118e76c2195dd769e7bceffb313a5459b23911b3bf2` (the same bytes as its first push), `wamn-runner` `sha256:d073179415ff807ac2e21f081bf2e7d5c95da3c75e9b911d4395f7f23929e816`, `wamn-gates` `sha256:043e77a30e8fd353c1c58b50d2fd34d12ee75ba74add7f80cb9e3a45698dbab0`, `wamn-identity` `sha256:5e5a111215d1c1498b82b066f4b3c8319a454df988c7b2564859fb154e684cac`, `wamn/http` `sha256:f114f3810cb06c1582366a6b9ca01ea7df9cffa38d9ac683cbb420bc4024607d` and `wamn/materializer` `sha256:503a7f3dc67794b7958efc5ab548936a12dc9bcf112bbe77dba22944a5f50ef4`. The releases and their qualifications were:
+
+| Application | Package artifact | Release | Qualification |
+| --- | --- | --- | --- |
+| Receiving | `wamn_receiving-2.1.0` `sha256:b600ea79529e5cef16d627e83ff595a8fb89caa46e51646fcae5e9cedc2ef66c` | `sha256:7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f` | `sha256:9a353add3b3e116d492c63bdaf0cafd032dbbef4b9db371dc25f8e909fe26ca3` |
+| WMS | `wamn_wms-2.1.0` `sha256:3822a6617e85599f4f139243ef8aee8eb9a9f1b393486737c240da1dee31fcbe` | `sha256:47171ec08678806e5722b782070a7fc3221191fb71433136664879c0d02d38c7` | `sha256:4641d4374946b98dc15657ac4186b7806eabc1fd452a4ec6fabdea745ba162f6` |
