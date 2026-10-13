@@ -394,7 +394,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
 pub struct Target {
     pub kubeconfig: PathBuf,
     pub context: String,
-    /// The operator release's namespace (R6).
+    /// The release namespace (R6).
     pub namespace: String,
 }
 
