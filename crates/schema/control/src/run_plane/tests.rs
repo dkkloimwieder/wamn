@@ -189,8 +189,6 @@ fn observation_at_record() -> RunPlaneObservation {
         "effect_attempt_dispatches_occurrence_key".to_string(),
         EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF.to_string(),
     );
-    obs.defaulted_columns
-        .insert(("runs".to_string(), "run_id".to_string()));
     obs.defaulted_columns.insert((
         "effect_attempts".to_string(),
         "attempt_started_at".to_string(),
@@ -219,24 +217,6 @@ fn observation_at_record() -> RunPlaneObservation {
         let key = ("runs".to_string(), column.to_string());
         obs.non_nullable_columns.insert(key.clone());
         obs.column_types.insert(key, ty.to_string());
-    }
-    // The candidate-admission grain carriers (wamn-0h0g.8.5.1) are all
-    // NULLABLE at record: a legacy flow row leaves the wiring leg NULL and a
-    // component-era wiring row leaves the flow leg NULL, so only the pair
-    // CHECKs constrain them. `run_wiring_identity_contract_complete` reads
-    // every one of these types, so the record observation must carry them or
-    // the at-record schema plans its own cutover forever.
-    for (column, ty) in [
-        ("flow_id", "text"),
-        ("flow_version", "integer"),
-        ("wiring_id", "text"),
-        ("wiring_version", "integer"),
-        ("wiring_hash", "text"),
-        ("binding_world_json", "jsonb"),
-        ("service_principal_id", "uuid"),
-    ] {
-        obs.column_types
-            .insert(("runs".to_string(), column.to_string()), ty.to_string());
     }
     obs.foreign_keys.insert(
         ("runs".to_string(), "runs_release_fk".to_string()),
@@ -2499,39 +2479,6 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
                 .sql
                 .contains("attempt_started_at <= attempt_deadline_at")
     }));
-}
-
-/// A database that passed the wiring identity cutover before the event grain
-/// (wamn-upl3.6) gains the event arm by one exact check repair, with no second
-/// cutover and its table rewrite.
-#[test]
-fn the_prior_grain_check_gains_the_event_arm_by_one_repair() {
-    let mut obs = observation_at_record();
-    obs.checks.insert(
-        ("runs".to_string(), "runs_execution_grain_check".to_string()),
-        super::declarations::PRIOR_RUNS_EXECUTION_GRAIN_CHECK_DEF.to_string(),
-    );
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let targets: Vec<&str> = plan
-        .actions
-        .iter()
-        .map(|action| action.target.as_str())
-        .collect();
-    assert_eq!(
-        targets,
-        ["runs.runs_execution_grain_check"],
-        "only the grain check changes: {:#?}",
-        plan.actions
-    );
-    let repair = &plan.actions[0];
-    assert_eq!(repair.kind, RunPlaneActionKind::RepairConstraint);
-    assert!(
-        repair
-            .sql
-            .contains("DROP CONSTRAINT \"runs_execution_grain_check\"")
-            && repair.sql.contains("'event'::text")
-    );
 }
 
 // `cancelled_node_error_check_is_repaired` was retired here: its subject was

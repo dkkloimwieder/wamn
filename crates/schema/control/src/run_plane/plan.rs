@@ -39,8 +39,7 @@ use super::schema_changes::{
     partition_plane_cutover_sql, rerun_lineage_cutover_needed, rerun_lineage_cutover_sql,
     retired_child_run_check, retired_effect_disposition_cutover_needed,
     retired_effect_disposition_cutover_sql, run_queue_claim_index_ready,
-    run_wiring_identity_contract_complete, stored_suite_cutover_needed, stored_suite_cutover_sql,
-    wiring_identity_cutover_sql,
+    stored_suite_cutover_needed, stored_suite_cutover_sql,
 };
 use super::type_column::{TypeColumnCutover, type_column_cutover};
 
@@ -300,13 +299,11 @@ $retire_run_projection_authority$;",
         });
         return plan;
     }
-    let has_runs = obs.tables.contains_key("runs");
     let capture_mode_present = obs
         .tables
         .get("runs")
         .is_some_and(|columns| columns.contains("capture_mode"));
     let run_capture_privileges_drifted = run_capture_privileges_drifted(schema, obs);
-    let wiring_identity_cutover_needed = has_runs && !run_wiring_identity_contract_complete(obs);
 
     let effect_table_cutover_needed = effect_table_cutover_needed(schema, obs);
     if effect_table_cutover_needed && obs.effect_record_rows != 0 {
@@ -663,14 +660,6 @@ $retire_run_projection_authority$;",
             });
     }
 
-    if wiring_identity_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::AddColumn,
-            target: "runs.wiring-identity".to_string(),
-            sql: wiring_identity_cutover_sql(schema),
-        });
-    }
-
     // The host-only role needs schema visibility even when an existing schema
     // receives only a newly missing table section (record table sections do
     // not replay file headers). Catalog from-zero carries its header grant;
@@ -861,23 +850,6 @@ $retire_run_projection_authority$;",
             };
             let record_cols = record_columns(file, "wamn_run", &table);
             for (record_column_index, (col, def)) in record_cols.iter().enumerate() {
-                if wiring_identity_cutover_needed
-                    && table == "runs"
-                    && matches!(
-                        col.as_str(),
-                        "flow_id"
-                            | "flow_version"
-                            | "wiring_id"
-                            | "wiring_version"
-                            | "wiring_hash"
-                            | "binding_world_json"
-                            | "service_principal_id"
-                            | "trigger_source"
-                            | "registration_id"
-                    )
-                {
-                    continue;
-                }
                 if frame_cutover_targets.needed() && frame_identity_column(&table, col) {
                     continue;
                 }
@@ -1019,15 +991,6 @@ $retire_run_projection_authority$;",
         .collect();
     for spec in CHECK_SPECS {
         if spec.table == "runs" && spec.name == "runs_check" {
-            continue;
-        }
-        if wiring_identity_cutover_needed
-            && spec.table == "runs"
-            && matches!(
-                spec.name,
-                "runs_wiring_identity_check" | "runs_execution_grain_check"
-            )
-        {
             continue;
         }
         if frame_cutover_targets.includes_table(spec.table)
