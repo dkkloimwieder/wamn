@@ -158,8 +158,6 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         .batch_execute("CREATE SCHEMA application_data")
         .await?;
     wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
-    admin.batch_execute("ALTER TABLE wamn_run.runs DROP COLUMN service_principal_id CASCADE; ALTER TABLE wamn_run.runs ALTER COLUMN run_id DROP DEFAULT").await?;
-    wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
     let converged = wamn_control::reconcile_run_plane::reconcile(&admin, &schema, false).await?;
     assert!(
         converged.actions.is_empty(),
