@@ -13,6 +13,7 @@ Status: single authority. Evidence cites the repo's `main` by file and symbol; f
   2. Findings first. A lane with open review findings starts nothing else.
   3. An epic is at most three issues.
   4. Reports are ten lines or fewer. There are no progress reports: a report comes at merge, at epic close, or with an invariant question.
+  5. The main checkout is read-only (owner ruling 2026-10-13). Every lane works in its own worktree, which is removed at merge. At every lane start and every merge, `git status --short` on the main checkout is empty; otherwise the orchestrator stops and reports. `git stash` is not used: unfinished work is a WIP commit on the lane branch.
 - The five shared contracts (§17.1) are written down and accepted before Epic 1 is scoped.
 - Owner rulings this plan rests on are listed in §2.
 
