@@ -1,9 +1,10 @@
 //! The platform build step (docs/plan/platform-deploy.md §9.3, R15).
 //!
 //! It builds the host, runner, gates and identity images and the two role
-//! components from the root `Dockerfile`, pushes each to one registry, and
-//! stamps their digests into a copy of the release chart's defaults. That
-//! chart is the one source of an image set.
+//! components from the root `Dockerfile`. Only when every build succeeded
+//! does it push them to one registry. It then stamps their digests into a
+//! copy of the release chart's defaults. That chart is the one source of an
+//! image set.
 
 use std::path::{Path, PathBuf};
 
@@ -24,9 +25,10 @@ pub struct BuildPlatformRequest {
     pub out: PathBuf,
 }
 
-/// Build and push the platform images, then stamp them into a copy of the
-/// release chart at `request.out`. Every image is tagged with the chart
-/// version and pinned by its pushed digest.
+/// Build every platform image and role component, then push them, then stamp
+/// them into a copy of the release chart at `request.out`. A failed build
+/// pushes nothing. Every image is tagged with the chart version and pinned by
+/// its pushed digest.
 pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
     ensure!(
         !request.out.exists(),
@@ -39,32 +41,10 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         "{} does not exist; run `wamn build` on the apps first",
         apps_target.display()
     );
-    let head = output(Command::new("git").current_dir(&request.repository).args([
-        "rev-parse",
-        "--verify",
-        "HEAD",
-    ]))
-    .await?;
-    let mut pushed = Vec::new();
-    for target in ["host", "runner", "gates", "identity"] {
-        pushed.push(push_image(request, target, head.trim()).await?);
-    }
-    let [host, runner, gates, identity] = <[String; 4]>::try_from(pushed)
-        .map_err(|_| anyhow::anyhow!("four platform images were pushed"))?;
     let roles = std::env::temp_dir().join(format!("wamn-roles-{}", std::process::id()));
-    let built = output(
-        docker(&request.repository)
-            .args(["--target", "roles", "--output"])
-            .arg(format!("type=local,dest={}", roles.display()))
-            .arg(&request.repository),
-    )
-    .await;
-    let pushed = match built {
-        Ok(_) => push_roles(&request.registry, &roles).await,
-        Err(error) => Err(error),
-    };
+    let pushed = build_then_push(request, &roles, output).await;
     let _ = std::fs::remove_dir_all(&roles);
-    let (http, materializer) = pushed?;
+    let ([host, runner, gates, identity], (http, materializer)) = pushed?;
     stamp(
         &request.repository.join("deploy/platform/release"),
         &ImageSet {
@@ -79,6 +59,53 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         }),
         &request.out,
     )
+}
+
+/// Build the host, runner, gates and identity images and export the role
+/// components to `roles`, each through `run`; only when every build
+/// succeeded, push them and return them pinned by digest.
+async fn build_then_push(
+    request: &BuildPlatformRequest,
+    roles: &Path,
+    mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
+) -> anyhow::Result<([String; 4], (String, String))> {
+    let head = run(Command::new("git").current_dir(&request.repository).args([
+        "rev-parse",
+        "--verify",
+        "HEAD",
+    ]))
+    .await?;
+    let mut references = Vec::new();
+    for target in ["host", "runner", "gates", "identity"] {
+        let reference = format!("{}/wamn-{target}:{CHART_VERSION}", request.registry);
+        run(docker(&request.repository)
+            .args(["--target", target, "--tag", &reference])
+            .arg(format!("--label=wamn.dev/source-head={}", head.trim()))
+            .arg("--label=wamn.dev/build-profile=release")
+            .arg(&request.repository))
+        .await?;
+        references.push((target, reference));
+    }
+    run(docker(&request.repository)
+        .args(["--target", "roles", "--output"])
+        .arg(format!("type=local,dest={}", roles.display()))
+        .arg(&request.repository))
+    .await?;
+    let mut components = Vec::new();
+    for (file, role) in [
+        ("http_route.wasm", "http"),
+        ("materializer.wasm", "materializer"),
+    ] {
+        let bytes = std::fs::read(roles.join(file)).with_context(|| format!("read {file}"))?;
+        components.push((role, bytes));
+    }
+    let mut pushed = Vec::new();
+    for (target, reference) in &references {
+        pushed.push(push_image(&mut run, &request.registry, target, reference).await?);
+    }
+    let images = <[String; 4]>::try_from(pushed)
+        .map_err(|_| anyhow::anyhow!("four platform images were pushed"))?;
+    Ok((images, push_roles(&request.registry, components).await?))
 }
 
 /// `docker build` of one target of the root `Dockerfile`, for amd64. The
@@ -98,32 +125,24 @@ fn docker(repository: &Path) -> Command {
     command
 }
 
-/// Build `target` as `<registry>/wamn-<target>:<chart version>`, push it and
-/// return it pinned by the digest the registry holds.
+/// Push the built `reference` and return it pinned by the digest the
+/// registry holds.
 async fn push_image(
-    request: &BuildPlatformRequest,
+    run: &mut impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
+    registry: &str,
     target: &str,
-    head: &str,
+    reference: &str,
 ) -> anyhow::Result<String> {
-    let reference = format!("{}/wamn-{target}:{CHART_VERSION}", request.registry);
-    output(
-        docker(&request.repository)
-            .args(["--target", target, "--tag", &reference])
-            .arg(format!("--label=wamn.dev/source-head={head}"))
-            .arg("--label=wamn.dev/build-profile=release")
-            .arg(&request.repository),
-    )
-    .await?;
-    output(Command::new("docker").args(["push", &reference])).await?;
-    let digests = output(Command::new("docker").args([
+    run(Command::new("docker").args(["push", reference])).await?;
+    let digests = run(Command::new("docker").args([
         "image",
         "inspect",
         "--format",
         "{{range .RepoDigests}}{{println .}}{{end}}",
-        &reference,
+        reference,
     ]))
     .await?;
-    let prefix = format!("{}/wamn-{target}@", request.registry);
+    let prefix = format!("{registry}/wamn-{target}@");
     let digest = digests
         .lines()
         .find_map(|line| line.strip_prefix(&prefix))
@@ -132,17 +151,16 @@ async fn push_image(
     Ok(format!("{reference}@{digest}"))
 }
 
-/// Push the http and materializer components exported to `directory` as
-/// `<registry>/wamn/<role>`, and return each pinned by digest.
-async fn push_roles(registry: &str, directory: &Path) -> anyhow::Result<(String, String)> {
+/// Push the http and materializer components as `<registry>/wamn/<role>`,
+/// and return each pinned by digest.
+async fn push_roles(
+    registry: &str,
+    components: Vec<(&str, Vec<u8>)>,
+) -> anyhow::Result<(String, String)> {
     let host = registry.split(':').next().unwrap_or_default();
     let insecure = matches!(host, "localhost" | "127.0.0.1");
     let mut pushed = Vec::new();
-    for (file, role) in [
-        ("http_route.wasm", "http"),
-        ("materializer.wasm", "materializer"),
-    ] {
-        let bytes = std::fs::read(directory.join(file)).with_context(|| format!("read {file}"))?;
+    for (role, bytes) in components {
         let digest = wash_runtime::oci::push_component(
             &format!("{registry}/wamn/{role}:{CHART_VERSION}"),
             &bytes,
@@ -204,5 +222,68 @@ mod tests {
         .await
         .expect_err("a checkout without apps/target/wamn is refused");
         assert!(error.to_string().contains("run `wamn build`"), "{error}");
+    }
+
+    /// `program args…` of each command `build_then_push` runs; `fail` fails
+    /// the command that contains it, and `image inspect` reports no digest.
+    async fn record(roles: &Path, fail: &str) -> (anyhow::Error, Vec<String>) {
+        let mut calls = Vec::new();
+        let error = build_then_push(
+            &BuildPlatformRequest {
+                repository: PathBuf::from("/checkout"),
+                registry: "localhost:5000".to_owned(),
+                out: PathBuf::from("/chart"),
+            },
+            roles,
+            async |command: &mut Command| {
+                let std = command.as_std();
+                let call = std::iter::once(std.get_program())
+                    .chain(std.get_args())
+                    .map(|part| part.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                calls.push(call.clone());
+                ensure!(!call.contains(fail), "{call} failed");
+                Ok(String::new())
+            },
+        )
+        .await
+        .expect_err("the run fails");
+        (error, calls)
+    }
+
+    #[tokio::test]
+    async fn a_failed_build_pushes_nothing() {
+        let (error, calls) = record(Path::new("/nonexistent"), "--target runner").await;
+        assert!(error.to_string().contains("failed"), "{error}");
+        assert!(calls.last().is_some_and(|call| call.contains("--target runner")));
+        assert!(!calls.iter().any(|call| call.contains("docker push")), "{calls:?}");
+    }
+
+    #[tokio::test]
+    async fn every_build_runs_before_the_first_push() {
+        let roles = std::env::temp_dir().join(format!(
+            "wamn-build-platform-order-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&roles).expect("create the roles directory");
+        for file in ["http_route.wasm", "materializer.wasm"] {
+            std::fs::write(roles.join(file), b"\0asm").expect("write a role component");
+        }
+        let (error, calls) = record(&roles, "\0").await;
+        let _ = std::fs::remove_dir_all(&roles);
+        assert!(error.to_string().contains("no pushed digest"), "{error}");
+        let first_push = calls
+            .iter()
+            .position(|call| call.starts_with("docker push"))
+            .expect("a push ran");
+        let builds = calls
+            .iter()
+            .enumerate()
+            .filter(|(_, call)| call.starts_with("docker build"))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert_eq!(builds.len(), 5, "{calls:?}");
+        assert!(builds.iter().all(|index| *index < first_push), "{calls:?}");
     }
 }

@@ -37,8 +37,8 @@ pub struct QualifyReleaseArgs {
     pub release_chart: PathBuf,
 }
 
-/// Build and push the platform images and stamp their digests into a copy
-/// of the release chart's defaults (docs/plan/platform-deploy.md §9.3, R15).
+/// Build every platform image, then push them, and stamp their digests into
+/// a copy of the release chart's defaults; a failed build pushes nothing (docs/plan/platform-deploy.md §9.3, R15).
 #[derive(Debug, Args)]
 pub struct BuildPlatformArgs {
     /// The `<host>[:<port>]` of the registry the images are pushed to. A
