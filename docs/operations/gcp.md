@@ -2170,7 +2170,7 @@ List the disks of the cluster first. After `gcloud container clusters delete wam
 4. Section 3.5, for both environments at once (11.3).
 5. Section 3.6, then section 3.7 up to `provision-org --admin`. `provision-project-env` does not run by hand: `env apply` does it.
 6. `provision-identity-issuer` of section 3.8, and the certificates and the `identity-ca` ConfigMaps of section 3.10.
-7. The platform inputs of 11.4, the registry helper ConfigMap of section 3.13 and the host service account of 11.5.
+7. The platform inputs of 11.4, the registry helper ConfigMap of section 3.13 and the platform install inputs of section 3.23 (11.5).
 8. `env apply` of each document with `release = "none"` (11.6).
 9. The session targets and identity (11.7).
 10. The packages, the WMS wiring and the releases (11.8), then qualification (11.9).
@@ -2212,15 +2212,9 @@ cargo run --locked --offline -p wamn-test-infrastructure --example event_broker_
 
 Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.identity.svc.cluster.local`, so this machine cannot reach identity. Without it, `apply` issues no PAT. Mint PATs with the Job of section 3.16.
 
-### 11.5 Host service account
+### 11.5 Platform install inputs
 
-Every environment's hosts run as one platform-owned Kubernetes service account, `wamn-host` in `hosts` (owner ruling of 2026-10-13, `wamn-okr8y`). It acts as `wamn-blob` through Workload Identity, so the hosts read the registry and write the label bucket. `env apply` touches no IAM. [deploy/gcp/host-serviceaccount.yaml](../../deploy/gcp/host-serviceaccount.yaml) holds it:
-
-```bash
-kubectl apply -f deploy/gcp/host-serviceaccount.yaml
-gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
-  --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
-```
+Make the service account `wamn-host`, its annotation and its binding, and the Secret `identity-resend`, as section 3.23 says. On 2026-10-13 the account and the binding were made before section 3.23 existed, from a copy of the same manifest.
 
 ### 11.6 First apply
 
@@ -2237,7 +2231,7 @@ On 2026-10-13 the suffixes were `pv6vxrkc` for Receiving and `sbx8ny3n` for WMS.
 
 Prepare the session target of each environment as in section 3.10, with `--tenant <org>--<project>--<env>` and the database of the new suffix. Then install identity. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) pins the identity image that `build-platform` stamped into the chart.
 
-`identity/identity-resend` is a platform install input of the owner, and a recreate does not restore it. Write its `api-key` from a file with no line end, for example `printf %s`. Identity refuses a key with whitespace (`Resend configuration refused`) and does not start. On 2026-10-13 the first Secret ended with a line end, so identity ran without email until the owner wrote it again:
+`identity-resend` is the owner's input of section 3.23. On 2026-10-13 the first Secret ended with a line end, so identity refused the key (`Resend configuration refused`) and ran without email until the owner wrote it again:
 
 ```bash
 helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml --set resendSecret= --set resendFrom=
