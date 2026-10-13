@@ -22,7 +22,7 @@ use wamn_engine::release_manifest::release_label;
 
 /// The chart version this module renders for. It equals `version` in
 /// `deploy/platform/release/Chart.yaml`.
-pub const CHART_VERSION: &str = "0.1.0";
+pub const CHART_VERSION: &str = "0.1.1";
 
 /// The longest slug in a release name: the env name cut to this length.
 const SLUG_LEN: usize = 24;

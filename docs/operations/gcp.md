@@ -449,7 +449,7 @@ On 2026-09-27 the third identity image, with the org and project filter of findi
 
 ### 3.4.1 Platform build
 
-`wamn-ctl env apply` takes the host image, the `http` and `materializer` role components and the qualification images from the release chart that `wamn-ctl build-platform` stamps ([delivery](delivery.md#release-qualification)). The build tags each image `0.1.0`, the version of `release_chart::CHART_VERSION`, and the repository `wamn` has immutable tags, so one chart version is pushed once. Make sure that its inputs are complete before you start it, because it pushes each image as soon as that image is built.
+`wamn-ctl env apply` takes the host image, the `http` and `materializer` role components and the qualification images from the release chart that `wamn-ctl build-platform` stamps ([delivery](delivery.md#release-qualification)). The build tags each image with the chart version, `release_chart::CHART_VERSION` (`0.1.1` since `wamn-rk9l2`), and the repository `wamn` has immutable tags, so one chart version is pushed once. Make sure that its inputs are complete before you start it, because it pushes each image as soon as that image is built.
 
 The runner image compiles the Receiving and WMS cases against the package outputs in `apps/target/wamn`. Build every package that they read first, with the Postgres server that [building](building.md#wamn-build) asks for:
 
