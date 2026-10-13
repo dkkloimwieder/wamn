@@ -108,9 +108,7 @@ pub async fn ensure(
     })
     .await
     .context("record the environment and render its database")?;
-    let system = connect(&platform.system_database_url).await?;
-    system
-        .batch_execute(&outcome.role_sql)
+    admin_sql(platform, &outcome.role_sql)
         .await
         .context("ensure the database roles")?;
     kubectl(
@@ -122,8 +120,7 @@ pub async fn ensure(
     .await
     .context("apply the Database CR")?;
     wait_applied(platform, "database", &outcome.database).await?;
-    system
-        .batch_execute(&outcome.privilege_sql)
+    admin_sql(platform, &outcome.privilege_sql)
         .await
         .context("ensure the database privilege floor")?;
     private.apply_and_shred(platform, &database_secret).await?;
@@ -310,11 +307,7 @@ pub(super) async fn ensure_cdc(
     let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(&request)
         .await
         .context("enable CDC")?;
-    // `CREATE ROLE` needs the operator's admin login, which `system` gave up
-    // when it set the role to the registry owner.
-    connect(&platform.system_database_url)
-        .await?
-        .batch_execute(&outcome.role_sql)
+    admin_sql(platform, &outcome.role_sql)
         .await
         .context("run the replication role SQL")?;
     project
@@ -347,6 +340,19 @@ pub(super) async fn ensure_cdc(
     crate::enable_cdc_project_env::record_event_reader(&request, &outcome)
         .await
         .context("record the CDC reader")
+}
+
+/// Run role and privilege SQL on a fresh connection of the operator's admin
+/// login to the system database. `CREATE ROLE` and the grants need that
+/// login, which a connection that ran `SET ROLE wamn_system` for the registry
+/// has given up, so no role or privilege statement shares a registry
+/// connection.
+async fn admin_sql(platform: &Platform, sql: &str) -> anyhow::Result<()> {
+    connect(&platform.system_database_url)
+        .await?
+        .batch_execute(sql)
+        .await
+        .map_err(anyhow::Error::from)
 }
 
 /// Whether the environment's CDC is in place, judged by what it observes: the
