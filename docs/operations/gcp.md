@@ -9,6 +9,8 @@ Run every command as the project owner, with `--project wamn-dev`. The default p
 
 Step 1 ran on 2026-09-25, before any workload existed.
 
+Only the owner runs the billing commands of this section. Section 11 does not contain them.
+
 ### 1.1 APIs
 
 ```bash
