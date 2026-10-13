@@ -188,11 +188,13 @@ mod tests {
 trap 'kill -KILL "$worker"; wait "$worker"; printf "descendant reaped\n" >&2; while :; do :; done' TERM
 sh -c 'trap "" TERM; exec sleep 600' &
 worker=$!
-printf '%s %s\n' "$$" "$worker" > "$1"
 printf 'before cancellation stdout\n'
 printf 'before cancellation stderr\n' >&2
+printf '%s %s\n' "$$" "$worker" > "$1"
 wait "$worker"
 "#, "owned-command"]).arg(&path);
+        // The fixture publishes its process IDs only after it writes both
+        // diagnostics, so the signal cannot overtake them.
         let signal_task = if mode == "TERM" {
             let ready = path.clone();
             Some(tokio::spawn(async move {
