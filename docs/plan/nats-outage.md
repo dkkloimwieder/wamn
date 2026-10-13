@@ -50,7 +50,7 @@ Two places print the same line: `washlet/mod.rs:679` for the scheduler client an
 | Flags | `nats-url`, the credentials and TLS flags, `nats-tls-first` and the manager flags (`main.go:86-147`). No flag sets the reconnect count, the first-connect window or the retry list. `NatsInitialConnectWindow` is a package variable. |
 | Needs | The operator reads host heartbeats on `runtime.operator.heartbeat.>` and sends `workload.start`, `workload.status` and `workload.stop` to hosts. Without NATS it reconciles no Host and no workload. |
 
-The source is upstream tag `v2.10.3` (wamn-ifh7, 2026-10-13). The earlier reading of the local checkout `f9b37fc` (versions 2.10.0) matches it line for line.
+The source is upstream tag `v2.10.3` (wamn-ifh7, 2026-10-13). The earlier reading of the local checkout `f9b37fc` (versions 2.10.0) matches it line for line. Accepted window (owner ruling 2026-10-13): through a scheduler outage, Kubernetes restarts the operator with backoff of at most 5 minutes, and the operator recovers when NATS returns; wamn adds no code and no fork.
 
 The first-connect crash-loop follows from the source. The exit with code 0, 64 to 133 s into an outage, does not. Code 0 means the manager stopped on a signal, which is an outside SIGTERM, for example from the kubelet. The source fails liveness only on a closed connection, which `MaxReconnects(-1)` prevents. `docs/architecture/native-alignment.md:55-57` records it as the unresolved fault-time liveness delay. The results of that run under `~/.cache/wamn-sweeps/as5u` no longer exist.
 
