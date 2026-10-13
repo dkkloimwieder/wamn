@@ -2,7 +2,9 @@
 # It runs `wamn-ctl provision-project-env` with an operator PAT flag inside
 # the cluster, so the owner's machine needs no /etc/hosts line and no identity
 # port-forward. The operator certificate reaches the Job only as the mounted
-# Secret operator-dkk.
+# Secret operator-dkk. The image is the runner of build-platform, which is
+# FROM the ctl stage and carries wamn-ctl; build-platform builds no ctl image
+# (wamn-rk9l2, 2026-10-13).
 #
 # Fill __ORG__, __PROJECT__, __ENV__, __TENANT__, __NAMESPACE__ and
 # __PAT_FLAG__ in a private copy of this file in the scratchpad, at mode 0600,
@@ -31,7 +33,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: mint-pat
-          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-bba6fe15a456083e@sha256:84fdb08b609781d995b49a49d67de528451763368a05ea19ae91410c986e766a
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:0.1.0@sha256:d073179415ff807ac2e21f081bf2e7d5c95da3c75e9b911d4395f7f23929e816
           command: ["/bin/sh", "-ec"]
           args:
             - |

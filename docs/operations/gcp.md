@@ -2153,3 +2153,111 @@ target/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env de
 An upgrade of an installed package also needs `--predecessor-release <DIGEST>`, the manifest digest of the release the environment serves.
 
 The verb keeps its work under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-upgrade/<commit>`. That directory holds the checkout, the targets, the command logs and one run record per environment in `runs/`. A second run with the same arguments resumes at the first stage without a finished step. The qualify stage starts kind clusters, so tell the other sessions on the machine before a run.
+
+## 11. Greenfield install with `env apply`
+
+On 2026-10-13 (`wamn-rk9l2`) the cluster `wamn` and every CloudNativePG database were deleted and the platform was installed again from nothing. The registry, DNS, IAM, the buckets and the load balancer stayed. This section lists the order of that install and every step that differs from sections 2 to 5. The commands of the run are in the scratchpad file named on `wamn-rk9l2`.
+
+### 11.1 Teardown
+
+List the disks of the cluster first. After `gcloud container clusters delete wamn --project wamn-dev --zone us-central1-a`, the `pvc-*` disks of `wamn-pg-1` and `data-evt-nats-0` stay. Delete each one by name with `gcloud compute disks delete <name> --project wamn-dev --zone us-central1-a`. The network endpoint group `wamn-edge` stays, because the backend service `wamn-edge-platform` names it.
+
+### 11.2 Order
+
+1. Sections 2.4 and 2.5. The binding of the cert-manager principal on the DNS zone is IAM and stays, so read it with `$U:getIamPolicy` and do not set it again.
+2. Sections 3.1 to 3.3. A new `helm install` of the operator installs its CRDs.
+3. Section 3.4.1, the platform build. It replaces the image builds of section 3.4.
+4. Section 3.5, for both environments at once (11.3).
+5. Section 3.6, then section 3.7 up to `provision-org --admin`. `provision-project-env` does not run by hand: `env apply` does it.
+6. `provision-identity-issuer` of section 3.8, and the certificates and the `identity-ca` ConfigMaps of section 3.10.
+7. The platform inputs of 11.4, the registry helper ConfigMap of section 3.13 and the host service account of 11.5.
+8. `env apply` of each document with `release = "none"` (11.6).
+9. The session targets and identity (11.7).
+10. The packages, the WMS wiring and the releases (11.8), then qualification (11.9).
+11. `env apply` of each document with its release digest. The host group files are `WAMN_RELEASE_HOST_GROUP` (11.10).
+
+### 11.3 Event NATS for two environments
+
+Run `event_broker_files` of section 3.5 once for each environment, each into its own private directory. The tenant is `<org>--<project>--<env>`, the tenant that `env apply` gives the environment, and the manifest is the build output of `wamn build`:
+
+```bash
+cargo run --locked --offline -p wamn-test-infrastructure --example event_broker_files -- \
+  $P/evt-receiving nats://evt-nats.platform.svc.cluster.local:4222 \
+  dkk receiving dev dkk--receiving--dev 1 "$PWD/apps/target/wamn/wamn_receiving/wamn.json"
+cargo run --locked --offline -p wamn-test-infrastructure --example event_broker_files -- \
+  $P/evt-wms nats://evt-nats.platform.svc.cluster.local:4222 \
+  dkk wms dev dkk--wms--dev 1 "$PWD/apps/target/wamn/wamn_wms/wamn.json"
+```
+
+`authorization.conf` is `authorization: ` followed by JSON. Merge the two files as section 5.4 says: the Receiving users, its `tap-admin`, and the WMS users without their `tap-admin`. Then make the Secrets of sections 3.5 and 5.4 from the two directories.
+
+### 11.4 Platform inputs of `env apply`
+
+`wamn-ctl env` reads environment variables, not flags (`crates/control/lib/src/environment/mod.rs`, `Platform::from_env`). On wamn-dev, with the port-forwards of sections 3.6 and 3.18:
+
+| Variable | Value |
+| --- | --- |
+| `KUBECONFIG` | your own file of section 2.1; its current context is the GKE cluster |
+| `WAMN_CONTROL_DATABASE_URL` | the superuser URL of `wamn_system` through the port-forward |
+| `WAMN_RELEASE_NAMESPACE` | `hosts`. The default `wamn-system` does not exist here |
+| `WAMN_DATABASE_NAMESPACE` | `platform` |
+| `WAMN_DATABASE_HOST` | `wamn-pg-rw.platform.svc.cluster.local` |
+| `WAMN_RELEASE_CHART` | the chart directory of `build-platform` |
+| `WAMN_RELEASE_ARTIFACT_BASE` | `us-central1-docker.pkg.dev/wamn-dev/wamn/releases` |
+| `WAMN_PACKAGE_ARTIFACT_BASE` | `us-central1-docker.pkg.dev/wamn-dev/wamn/packages` |
+| `WAMN_REGISTRY_AUTH_FILE` | the credential file of section 3.9. Its token lasts one hour |
+| `WAMN_EVENT_NATS_URL` | `nats://127.0.0.1:14222` |
+| `WAMN_EVENT_NATS_USERNAME`, `WAMN_EVENT_NATS_PASSWORD_FILE` | the provisioning user of the environment that you apply |
+| `WAMN_RELEASE_HOST_GROUP` | the host group file of the environment (11.10). Only an apply with a release reads it |
+
+Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.identity.svc.cluster.local`, so this machine cannot reach identity. Without it, `apply` issues no PAT. Mint PATs with the Job of section 3.16.
+
+### 11.5 Host service account
+
+Every environment's hosts run as one platform-owned Kubernetes service account, `wamn-host` in `hosts` (owner ruling of 2026-10-13, `wamn-okr8y`). It acts as `wamn-blob` through Workload Identity, so the hosts read the registry and write the label bucket. `env apply` touches no IAM. [deploy/gcp/host-serviceaccount.yaml](../../deploy/gcp/host-serviceaccount.yaml) holds it:
+
+```bash
+kubectl apply -f deploy/gcp/host-serviceaccount.yaml
+gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+  --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
+```
+
+### 11.6 First apply
+
+The documents are [deploy/gcp/environments/dkk--receiving--dev.k](../../deploy/gcp/environments/dkk--receiving--dev.k) and [dkk--wms--dev.k](../../deploy/gcp/environments/dkk--wms--dev.k). `publish-release` needs the environment's database and its installed packages, so the first apply names `release = "none"`. It records the environment row with a new instance suffix, and makes the `Database`, the roles, the run plane and the credential Secrets:
+
+```bash
+target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--receiving--dev.k --dry-run
+target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--receiving--dev.k
+```
+
+On 2026-10-13 the suffixes were `pv6vxrkc` for Receiving and `sbx8ny3n` for WMS.
+
+### 11.7 Session targets and identity
+
+Prepare the session target of each environment as in section 3.10, with `--tenant <org>--<project>--<env>` and the database of the new suffix. Then install identity. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) pins the identity image that `build-platform` stamped into the chart.
+
+`identity/identity-resend` is a platform install input of the owner, and a recreate does not restore it. Write its `api-key` from a file with no line end, for example `printf %s`. Identity refuses a key with whitespace (`Resend configuration refused`) and does not start. On 2026-10-13 the first Secret ended with a line end, so identity ran without email until the owner wrote it again:
+
+```bash
+helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml --set resendSecret= --set resendFrom=
+```
+
+Then publish and activate a session key (section 3.15).
+
+### 11.8 Packages, wiring and releases
+
+Push both packages with `push-package` (section 3.9). Then, for each environment, run `apply-package` and `reconcile-package-data-access` with `--tenant <org>--<project>--<env>`, and `reconcile-replica-identity` for WMS. `publish-release` refuses a package that is not applied.
+
+The WMS release keeps the wiring `inventory_move_and_label`, so it needs the gate of section 5.3 first:
+
+- `control-author` addresses the control database. It refuses `--target-admin-database-url`. `management-admitter` needs it.
+- The gate runs on this machine, so prepare both with `--db-host 127.0.0.1 --db-port 15432`, and give it the identity-reader URL of the Secret that `env apply` wrote, with the port-forward as host.
+- The gate also needs `WAMN_PACKAGE_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE`.
+- Mint the management-author PAT with the Job of section 3.16. [mint-pat.yaml](../../deploy/gcp/operator/mint-pat.yaml) runs the runner image of `build-platform`, which carries `wamn-ctl`.
+
+Then run `author-wiring` and `publish-release` with `--wiring "wamn_wms@2.1.0::inventory_move_and_label=2"`.
+
+### 11.9 Qualification
+
+`qualify-release` pulls the chart's images with `docker pull`, so give it the `DOCKER_CONFIG` of section 3.4.1. Without it, the pull of the host image is refused with `Unauthenticated request`.
