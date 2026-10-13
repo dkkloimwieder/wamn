@@ -38,3 +38,6 @@ web/components/.vitest/
 
 # Checksum-pinned local command-line tools
 /.tools/
+
+# Local agent logs and scratch files.
+scratchpad/
