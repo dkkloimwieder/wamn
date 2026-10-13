@@ -268,6 +268,10 @@ async fn record_org_rows(
     Ok(())
 }
 
+/// Held until the transaction ends; it conflicts with itself and with every
+/// principal write.
+const LOCK_PRINCIPALS_SQL: &str = "LOCK TABLE identity.principals IN SHARE ROW EXCLUSIVE MODE";
+
 /// Whether the identity store holds any user principal.
 const ANY_USER_SQL: &str = "SELECT EXISTS (SELECT FROM identity.principals WHERE type = 'user')";
 
@@ -291,6 +295,12 @@ async fn record_admin_rows(
         ))
         .await
         .context("bind wamn:provisioning as the actor")?;
+    // Two runs on an empty store serialize here, so the second sees the
+    // first's user and does not create another.
+    client
+        .batch_execute(LOCK_PRINCIPALS_SQL)
+        .await
+        .context("lock the user principals")?;
     let any_user: bool = client
         .query_one(ANY_USER_SQL, &[])
         .await
