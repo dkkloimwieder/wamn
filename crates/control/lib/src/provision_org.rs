@@ -11,11 +11,11 @@
 //!    (`trials` places on the shared `--pool`); validates the org id, placement,
 //!    and stamped policy set by running the one-org registry through
 //!    `wamn-control-registry`'s validator;
-//! 2. records the org in the T1 `wamn_system` DB (when a system-DB URL is
-//!    given): the placement row (idempotent upsert) plus the template's policy
-//!    rows — **insert-if-absent**, so re-provisioning keeps the org's per-env
-//!    customizations and a richer template only adds missing envs — in one
-//!    transaction, as the `wamn_system` owner. With an admin email, the same
+//! 2. records the org in the T1 `wamn_system` DB (when a system-DB URL and an
+//!    admin email are given): the placement row (idempotent upsert) plus the
+//!    template's policy rows — **insert-if-absent**, so re-provisioning keeps
+//!    the org's per-env customizations and a richer template only adds missing
+//!    envs — in one transaction, as the `wamn_system` owner. The same
 //!    transaction writes that user's active org membership and `org-admin`
 //!    row, stamped `wamn:provisioning` (docs/plan/platform-ui.md §4.4). On an
 //!    identity store with no user it first creates that user, the platform's
@@ -69,20 +69,27 @@ pub struct ProvisionOrgRequest {
     /// dedicated template.
     pub pool: String,
 
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`), where the org
-    /// and its policy rows are recorded and read back (for cluster sizing).
-    /// Absent to render or plan only, with the template's policies.
-    pub system_database_url: Option<String>,
+    /// Where to record the org and who its admin is. Absent to render or plan
+    /// only, with the template's policies; nothing is written.
+    pub record: Option<OrgRecord>,
 
     /// Namespace of the rendered `Cluster` CRs and of the backup CRs beside them.
     pub cluster_namespace: String,
+}
+
+/// The system database an org is recorded in and the admin it is recorded
+/// with: an org is never recorded without an admin.
+#[derive(Debug)]
+pub struct OrgRecord {
+    /// Superuser Postgres URL to the T1 system DB (`wamn_system`), where the org
+    /// and its policy rows are recorded and read back (for cluster sizing).
+    pub system_database_url: String,
 
     /// The email of the org's admin: the run writes that user's active org
     /// membership and `org-admin` row. When the identity store has no user,
     /// the run creates this user, the platform's first; otherwise the email
-    /// must name an existing user principal. It needs `system_database_url`.
-    /// A fixture that creates the org without an admin passes `None`.
-    pub admin: Option<String>,
+    /// must name an existing user principal.
+    pub admin: String,
 }
 
 /// What one org provisioning run recorded and rendered.
@@ -120,20 +127,16 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
     };
     reg.validate()
         .map_err(|issues| anyhow::anyhow!("invalid org: {}", fmt_issues(&issues)))?;
-    anyhow::ensure!(
-        request.admin.is_none() || request.system_database_url.is_some(),
-        "--admin needs --system-database-url"
-    );
 
     // Connect to the system DB once (if given) — used to record the org + stamp
     // its policies, then read the org's (possibly customized) set back for
     // cluster sizing.
-    let client = match &request.system_database_url {
-        Some(url) => {
-            let (client, conn) = tokio_postgres::connect(url, NoTls)
+    let client = match &request.record {
+        Some(record) => {
+            let (client, conn) = tokio_postgres::connect(&record.system_database_url, NoTls)
                 .await
                 .context("system db connect")?;
-            Some((client, tokio::spawn(conn)))
+            Some((client, tokio::spawn(conn), record.admin.as_str()))
         }
         None => None,
     };
@@ -142,8 +145,8 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
     // the org's post-stamp truth — existing customizations kept (insert-if-
     // absent), missing template envs added.
     let (policies, stamped_policies) = match &client {
-        Some((c, _)) => {
-            record_org(c, &org, &stamped, request.admin.as_deref()).await?;
+        Some((c, _, admin)) => {
+            record_org(c, &org, &stamped, admin).await?;
             (read_env_policies(c, &org.id).await?, Some(stamped.len()))
         }
         None => (template.policies.clone(), None),
@@ -176,7 +179,7 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
         ),
     };
 
-    if let Some((c, conn_task)) = client {
+    if let Some((c, conn_task, _)) = client {
         drop(c);
         let _ = conn_task.await;
     }
@@ -194,12 +197,12 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
 /// registry owner role — the wamn-q3n.3 apply pattern). A crash mid-stamp rolls
 /// the whole record back; re-running is idempotent (the shared-cluster
 /// guardrail: refresh placement, never clobber a customized policy). The
-/// admin's rows, when an admin is named, are written in the same transaction.
+/// admin's rows are written in the same transaction.
 async fn record_org(
     client: &tokio_postgres::Client,
     org: &Org,
     stamped: &[OrgEnvPolicy],
-    admin: Option<&str>,
+    admin: &str,
 ) -> anyhow::Result<()> {
     client
         .batch_execute("SET ROLE wamn_system")
@@ -208,10 +211,7 @@ async fn record_org(
     client.batch_execute("BEGIN").await.context("BEGIN")?;
     let result = async {
         record_org_rows(client, org, stamped).await?;
-        match admin {
-            Some(email) => record_admin_rows(client, &org.id, email).await,
-            None => Ok(()),
-        }
+        record_admin_rows(client, &org.id, admin).await
     }
     .await;
     match result {

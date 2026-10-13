@@ -25,7 +25,7 @@ use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_control::environment::{Platform, stage};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_org::{self, ProvisionOrgRequest};
+use wamn_control::provision_org::{self, OrgRecord, ProvisionOrgRequest};
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
     secret_value,
@@ -165,8 +165,10 @@ pub async fn provision_project(
         template: wamn_control_registry::Template::trials(),
         pool: CLUSTER.to_owned(),
         cluster_namespace: "wamn-system".into(),
-        admin: None,
-        system_database_url: Some(inputs.system_pg_url.clone()),
+        record: Some(OrgRecord {
+            system_database_url: inputs.system_pg_url.clone(),
+            admin: "org-admin@example.invalid".into(),
+        }),
     })
     .await?;
     let args = ProvisionProjectEnvRequest {

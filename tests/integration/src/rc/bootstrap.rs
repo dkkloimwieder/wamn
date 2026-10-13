@@ -7,7 +7,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_control::dev::{environment::connect, pat_issuer};
-use wamn_control::provision_org::{self, ProvisionOrgRequest};
+use wamn_control::provision_org::{self, OrgRecord, ProvisionOrgRequest};
 use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 use wamn_control_provision::sql;
 
@@ -75,9 +75,11 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         org: "rc".into(),
         template: wamn_control_registry::Template::trials(),
         pool: "rc-pg".into(),
-        system_database_url: Some(system_url.clone()),
+        record: Some(OrgRecord {
+            system_database_url: system_url.clone(),
+            admin: "org-admin@example.invalid".into(),
+        }),
         cluster_namespace: "wamn-system".into(),
-        admin: None,
     })
     .await?;
     save(

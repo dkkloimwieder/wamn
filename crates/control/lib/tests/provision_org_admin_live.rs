@@ -4,7 +4,7 @@
 //! roles.
 
 use tokio_postgres::{Client, NoTls};
-use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
+use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 use wamn_control::provision_project_env::provisioning_transaction;
 use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_control_registry::Template;
@@ -24,14 +24,16 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-fn request(org: &str, url: Option<&str>, admin: Option<&str>) -> ProvisionOrgRequest {
+fn request(org: &str, url: &str, admin: &str) -> ProvisionOrgRequest {
     ProvisionOrgRequest {
         org: org.to_owned(),
         template: Template::trials(),
         pool: "wamn-pg".to_owned(),
-        system_database_url: url.map(str::to_owned),
+        record: Some(OrgRecord {
+            system_database_url: url.to_owned(),
+            admin: admin.to_owned(),
+        }),
         cluster_namespace: "wamn-system".to_owned(),
-        admin: admin.map(str::to_owned),
     }
 }
 
@@ -84,11 +86,6 @@ fn expected(principal: &str) -> (Vec<String>, Vec<String>) {
 
 #[tokio::test]
 async fn provision_org_creates_the_first_admin_then_names_existing_users_only() {
-    let error = provision_org(request("planonly", None, Some(FIRST_EMAIL)))
-        .await
-        .expect_err("an admin without a system database is refused");
-    assert_eq!(error.to_string(), "--admin needs --system-database-url");
-
     let database = locked_database::database(wamn_test_postgres::database);
     let url = database.to_string();
     let mut client = connect(&url).await;
@@ -110,7 +107,7 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
     assert!(users(&client).await.is_empty(), "a fresh store has no user");
 
     // 1. A fresh store: the run creates the first user and makes it the admin.
-    provision_org(request("acme", Some(&url), Some(FIRST_EMAIL)))
+    provision_org(request("acme", &url, FIRST_EMAIL))
         .await
         .expect("provision the first org with the first admin");
     let created = users(&client).await;
@@ -146,7 +143,7 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
         .await
         .expect("reset role");
     let before = users(&client).await;
-    provision_org(request("beta", Some(&url), Some(SECOND_EMAIL)))
+    provision_org(request("beta", &url, SECOND_EMAIL))
         .await
         .expect("provision an org with an existing admin");
     assert_eq!(users(&client).await, before, "no user is created");
@@ -156,13 +153,9 @@ async fn provision_org_creates_the_first_admin_then_names_existing_users_only() 
     );
 
     // 3. Users exist: an unknown email is refused, and nothing is written.
-    let error = provision_org(request(
-        "strangers",
-        Some(&url),
-        Some("nobody@example.test"),
-    ))
-    .await
-    .expect_err("an unknown admin email is refused");
+    let error = provision_org(request("strangers", &url, "nobody@example.test"))
+        .await
+        .expect_err("an unknown admin email is refused");
     assert!(
         format!("{error:#}").contains("names no user principal"),
         "{error:#}"

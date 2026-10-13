@@ -23,7 +23,7 @@ use wamn_control::environment::stage::write_release;
 use wamn_control::package_artifact::{
     PackageRegistry, PushPackageRequest, open_package, push_package,
 };
-use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
+use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 use wamn_control::publish_release::{PublishReleaseRequest, publish_release};
 use wamn_control::verification_policy::project_environment_policy;
 use wamn_control_registry::{Template, project_env_tenant};
@@ -223,9 +223,11 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
         org: ORG.to_owned(),
         template: Template::trials(),
         pool: "wamn-pg".to_owned(),
-        system_database_url: Some(control.url().to_owned()),
+        record: Some(OrgRecord {
+            system_database_url: control.url().to_owned(),
+            admin: "org-admin@example.invalid".to_owned(),
+        }),
         cluster_namespace: "wamn-system".to_owned(),
-        admin: None,
     })
     .await
     .expect("provision the org and its policies");

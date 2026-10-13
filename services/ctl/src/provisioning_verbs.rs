@@ -15,7 +15,7 @@ use wamn_control::enable_cdc_project_env::{
     self, EnableCdcProjectEnvOutcome, EnableCdcProjectEnvRequest,
 };
 use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_org::{self, ProvisionOrgRequest, ProvisionedOrg};
+use wamn_control::provision_org::{self, OrgRecord, ProvisionOrgRequest, ProvisionedOrg};
 use wamn_control::provision_project_env::{
     self, OrgWorkloadActionRequest, ProvisionProjectEnvOutcome, ProvisionProjectEnvRequest,
     WorkloadActionOutcome, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
@@ -1201,22 +1201,22 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         args.credential.action.is_none() || args.system_database_url.is_some(),
         "an org credential action requires --system-database-url"
     );
-    anyhow::ensure!(
-        args.admin.is_none() || args.system_database_url.is_some(),
-        "--admin needs --system-database-url"
-    );
-    anyhow::ensure!(
-        args.admin.is_some() || args.system_database_url.is_none(),
-        "--system-database-url needs --admin"
-    );
     let system_database_url = args.system_database_url.clone();
+    let record = match (args.system_database_url, args.admin) {
+        (Some(system_database_url), Some(admin)) => Some(OrgRecord {
+            system_database_url,
+            admin,
+        }),
+        (None, None) => None,
+        (None, Some(_)) => anyhow::bail!("--admin needs --system-database-url"),
+        (Some(_), None) => anyhow::bail!("--system-database-url needs --admin"),
+    };
     let provisioned = provision_org::provision_org(ProvisionOrgRequest {
         org: args.org,
         template: args.template.template(),
         pool: args.pool,
-        system_database_url: args.system_database_url,
+        record,
         cluster_namespace: args.cluster_namespace,
-        admin: args.admin,
     })
     .await?;
     print_provisioned_org(&provisioned);

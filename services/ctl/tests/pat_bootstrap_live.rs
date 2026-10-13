@@ -230,9 +230,12 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     const PASSWORD: &str = "owned-development-identity-fixture-password";
     use serde_json::{Value, json};
     use wamn_control::dev::environment::{
-        ENVIRONMENT, JourneyScope, ORG, PROJECT, provision, reconcile_journey_run_plane,
+        DEVELOPER_EMAIL, ENVIRONMENT, JourneyScope, ORG, PROJECT, provision,
+        reconcile_journey_run_plane,
     };
-    use wamn_platform_identity::{assign_project_role, create_user, grant_project_env_membership};
+    use wamn_platform_identity::{
+        assign_project_role, create_or_reuse_user, grant_project_env_membership,
+    };
     async fn application_role(url: &str, user: &str, actor: &str) {
         let (project, task) = connect(url).await.ok().expect("application connection");
         project
@@ -291,20 +294,17 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         .execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:seed-identity-fixture', false)", &[&actor])
         .await
         .unwrap();
-    let user = create_user(
-        &*admin,
-        "development-user",
-        "development@example.invalid",
-        "Developer",
-    )
-    .await
-    .ok()
-    .expect("create invited user");
-    grant_project_env_membership(&*admin, user.id(), ORG, PROJECT, ENVIRONMENT)
+    // provision-org created the developer as the journey org's first admin.
+    let user = create_or_reuse_user(&*admin, DEVELOPER_EMAIL, "Developer")
+        .await
+        .ok()
+        .expect("reuse the developer")
+        .principal_id;
+    grant_project_env_membership(&*admin, &user, ORG, PROJECT, ENVIRONMENT)
         .await
         .ok()
         .expect("grant environment membership");
-    assign_project_role(&*admin, user.id(), ORG, PROJECT, "admin")
+    assign_project_role(&*admin, &user, ORG, PROJECT, "admin")
         .await
         .ok()
         .expect("assign the existing application role");
@@ -316,7 +316,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("project the user into the application");
-    application_role(&environment.route.database_url, user.id().as_str(), &actor).await;
+    application_role(&environment.route.database_url, user.as_str(), &actor).await;
     let (mut password_admin, connection) =
         tokio_postgres::connect(system.url(), tokio_postgres::NoTls)
             .await
@@ -326,18 +326,18 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     let invitation = wamn_platform_identity::password::issue_invitation(
         &mut password_admin,
         &actor.parse().unwrap(),
-        user.id(),
+        &user,
     )
     .await
     .ok()
     .expect("issue invitation");
     let enrolled = http.post(format!("{endpoint}/password/enroll"))
-        .json(&json!({"principal_id":user.id().as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
+        .json(&json!({"principal_id":user.as_str(), "invitation":invitation.secret(), "password":PASSWORD}))
         .send().await.ok().expect("HTTPS enrollment");
     assert_eq!(enrolled.status(), reqwest::StatusCode::NO_CONTENT);
     let login = || {
         http.post(format!("{endpoint}/password/session"))
-        .json(&json!({"email":"development@example.invalid", "password":PASSWORD, "aud":target["audience"]}))
+            .json(&json!({"email":DEVELOPER_EMAIL, "password":PASSWORD, "aud":target["audience"]}))
     };
     let first = login()
         .send()
@@ -394,7 +394,7 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
     .await
     .ok()
     .expect("restore application membership after recreation");
-    application_role(&environment.route.database_url, user.id().as_str(), &actor).await;
+    application_role(&environment.route.database_url, user.as_str(), &actor).await;
     let second = login()
         .send()
         .await

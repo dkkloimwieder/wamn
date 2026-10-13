@@ -94,7 +94,7 @@ use wamn_control::environment::document::{
 use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
+use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 use wamn_control::publish_release::push_manifest_bytes;
 use wamn_control::release_chart::{ImageSet, Target, image_set, release_name, stamp};
 use wamn_control_registry::{Template, Triple};
@@ -689,9 +689,11 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         org: ORG.to_owned(),
         template: Template::trials(),
         pool: PG_CLUSTER.to_owned(),
-        system_database_url: Some(system_url.clone()),
+        record: Some(OrgRecord {
+            system_database_url: system_url.clone(),
+            admin: "org-admin@example.invalid".to_owned(),
+        }),
         cluster_namespace: NAMESPACE.to_owned(),
-        admin: None,
     })
     .await?;
     system

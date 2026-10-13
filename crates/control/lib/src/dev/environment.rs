@@ -37,7 +37,7 @@ use wamn_control_provision::{
 use wamn_pg_core::Identifier;
 
 use crate::dev::activation::DevActivationIdentity;
-use crate::provision_org::{ProvisionOrgRequest, provision_org};
+use crate::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 use wamn_control_registry::Template;
 
 /// The deployment-owned inputs a standing development environment needs.
@@ -513,6 +513,10 @@ pub struct JourneyCredentials {
     pub management_admitter: String,
 }
 
+/// The email of the journey org's admin, the first user of the store, who
+/// signs in to the development environment.
+pub const DEVELOPER_EMAIL: &str = "development@example.invalid";
+
 pub async fn provision_journey_control(
     scope: &JourneyScope,
     system_url: &str,
@@ -524,9 +528,11 @@ pub async fn provision_journey_control(
         org: scope.org.clone(),
         template: Template::trials(),
         pool: "route-auth-pg18".to_owned(),
-        system_database_url: Some(system_url.to_owned()),
+        record: Some(OrgRecord {
+            system_database_url: system_url.to_owned(),
+            admin: DEVELOPER_EMAIL.to_owned(),
+        }),
         cluster_namespace: "wamn-system".to_owned(),
-        admin: None,
     })
     .await
     .context("stamp the journey org and environment policies through provision-org")

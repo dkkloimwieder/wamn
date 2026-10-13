@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control::pat_client::PatIssuerConfig;
-use wamn_control::provision_org::{ProvisionOrgRequest, provision_org};
+use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 use wamn_control::provision_project_env::{ProvisionProjectEnvRequest, provision_project_env};
 use wamn_control::upgrade_schema::{UpgradeSchemaRequest, upgrade_schema_with};
 use wamn_control_provision::schema_migrations::{Migration, MigrationTarget};
@@ -135,8 +135,10 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> String {
         template: wamn_control_registry::Template::trials(),
         pool: CLUSTER.into(),
         cluster_namespace: "platform".into(),
-        admin: None,
-        system_database_url: Some(system_url.into()),
+        record: Some(OrgRecord {
+            system_database_url: system_url.into(),
+            admin: "org-admin@example.invalid".into(),
+        }),
     })
     .await
     .expect("provision the org");
