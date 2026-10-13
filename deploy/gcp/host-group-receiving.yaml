@@ -6,6 +6,11 @@
 # of them. WAMN_SESSION_INSTANCE_SUFFIX is the instance suffix that the first
 # apply recorded; write it again after a new first apply.
 replicas: 1
+# The operator release and its control NATS run in namespace platform, not in
+# the release namespace hosts, so the host group names the scheduler and data
+# NATS (the subchart's default is nats.<release namespace>).
+schedulerNatsUrl: nats://nats.platform.svc.cluster.local:4222
+dataNatsUrl: nats://nats.platform.svc.cluster.local:4222
 env:
 - name: WAMN_PG_GUEST_POOL_MAX
   value: '14'
