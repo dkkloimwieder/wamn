@@ -133,7 +133,8 @@ Provisioning credentials create the declared streams and durable consumers.
 Provisioning compares existing configuration and refuses a mismatch.
 Runtime publishers and materializers can publish, subscribe, and attach to declared consumers.
 They cannot create, update, or delete streams or consumers.
-Activation reads and compares complete stream and consumer configuration, including foreign sources, mirrors, filters, and delivery policy.
+Activation compares declared stream fields, including foreign sources, mirrors, filters, and delivery policy.
+The consumer check compares only the fields wamn sets; the broker owns every other consumer field, and the check does not compare it.
 
 The event broker remains separate from the scheduler broker.
 NATS replication remains separate from Kubernetes workload replicas.

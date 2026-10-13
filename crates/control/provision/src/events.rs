@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use async_nats::jetstream::consumer::{self, AckPolicy, IntoConsumerConfig, pull};
+use async_nats::jetstream::consumer::{self, AckPolicy, DeliverPolicy, pull};
 use async_nats::jetstream::stream::{self, Compression, RetentionPolicy, StorageType};
 use wamn_control_registry::Triple;
 use wamn_event_wire::{
@@ -119,6 +119,7 @@ pub fn materializer_consumer_config(
         name: Some(durable.into()),
         durable_name: Some(durable.into()),
         ack_policy: AckPolicy::Explicit,
+        deliver_policy: DeliverPolicy::All,
         filter_subject: filter_subject.into(),
         ack_wait,
         max_deliver: i64::from(max_deliver),
@@ -218,15 +219,58 @@ pub fn stream_config_matches(expected: &stream::Config, actual: &stream::Config)
         && *persist_mode == actual.persist_mode
 }
 
-/// Compare every field, including push delivery and additional subject filters.
+/// Compare the fields wamn sets in the declared consumer.
+///
+/// [`materializer_consumer_config`] builds every declared consumer. The broker
+/// owns every field it leaves at its default, and a newer broker may fill
+/// them in, for example NATS 2.11 and later add `_nats.*` metadata keys.
+/// The destructure names every field, so a new upstream field needs a decision.
 pub fn consumer_config_matches(expected: &pull::Config, actual: &consumer::Config) -> bool {
-    expected.into_consumer_config() == *actual
+    let pull::Config {
+        durable_name,
+        name,
+        description: _,
+        deliver_policy,
+        ack_policy,
+        ack_wait,
+        max_deliver,
+        filter_subject,
+        filter_subjects: _,
+        replay_policy: _,
+        rate_limit: _,
+        sample_frequency: _,
+        max_waiting,
+        max_ack_pending,
+        headers_only: _,
+        max_batch,
+        max_bytes,
+        max_expires: _,
+        inactive_threshold: _,
+        num_replicas: _,
+        memory_storage: _,
+        metadata: _,
+        backoff: _,
+        priority_policy: _,
+        priority_groups: _,
+        pause_until: _,
+    } = expected;
+    *durable_name == actual.durable_name
+        && *name == actual.name
+        && *deliver_policy == actual.deliver_policy
+        && *ack_policy == actual.ack_policy
+        && *ack_wait == actual.ack_wait
+        && *max_deliver == actual.max_deliver
+        && *filter_subject == actual.filter_subject
+        && *max_waiting == actual.max_waiting
+        && *max_ack_pending == actual.max_ack_pending
+        && *max_batch == actual.max_batch
+        && *max_bytes == actual.max_bytes
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_nats::jetstream::consumer::DeliverPolicy;
+    use async_nats::jetstream::consumer::IntoConsumerConfig;
     use async_nats::jetstream::stream::{
         DiscardPolicy, PersistenceMode, Placement, Republish, Source, SubjectTransform,
     };
@@ -435,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn consumer_comparison_refuses_foreign_delivery_and_changed_bounds() {
+    fn consumer_comparison_ignores_broker_fields_and_refuses_changed_wamn_fields() {
         let expected = materializer_consumer_config(
             "mat_t_pkg_r1",
             "evt.acme.widgets.dev.widget.>",
@@ -444,21 +488,35 @@ mod tests {
         );
         let stored = expected.clone().into_consumer_config();
         assert!(consumer_config_matches(&expected, &stored));
+        let broker_filled = consumer::Config {
+            metadata: [
+                ("_nats.level", "3"),
+                ("_nats.req.level", "0"),
+                ("_nats.ver", "2.12.8"),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect(),
+            description: Some("operator note".into()),
+            num_replicas: 3,
+            memory_storage: true,
+            inactive_threshold: Duration::from_secs(5),
+            max_expires: Duration::from_secs(5),
+            replay_policy: consumer::ReplayPolicy::Original,
+            headers_only: true,
+            backoff: vec![Duration::from_secs(1)],
+            priority_policy: consumer::PriorityPolicy::Overflow,
+            priority_groups: vec!["broker".into()],
+            ..stored.clone()
+        };
+        assert!(consumer_config_matches(&expected, &broker_filled));
         let changed = [
             consumer::Config {
                 durable_name: Some("foreign".into()),
                 ..stored.clone()
             },
             consumer::Config {
-                deliver_subject: Some("foreign.inbox".into()),
-                ..stored.clone()
-            },
-            consumer::Config {
-                deliver_group: Some("foreign".into()),
-                ..stored.clone()
-            },
-            consumer::Config {
-                filter_subjects: vec!["evt.acme.billing.dev.>".into()],
+                name: Some("foreign".into()),
                 ..stored.clone()
             },
             consumer::Config {
@@ -470,15 +528,23 @@ mod tests {
                 ..stored.clone()
             },
             consumer::Config {
+                ack_wait: Duration::from_secs(1),
+                ..stored.clone()
+            },
+            consumer::Config {
                 max_deliver: -1,
                 ..stored.clone()
             },
             consumer::Config {
-                max_ack_pending: 1000,
+                filter_subject: "evt.acme.billing.dev.>".into(),
                 ..stored.clone()
             },
             consumer::Config {
                 max_waiting: 512,
+                ..stored.clone()
+            },
+            consumer::Config {
+                max_ack_pending: 1000,
                 ..stored.clone()
             },
             consumer::Config {
@@ -487,15 +553,7 @@ mod tests {
             },
             consumer::Config {
                 max_bytes: 0,
-                ..stored.clone()
-            },
-            consumer::Config {
-                headers_only: true,
-                ..stored.clone()
-            },
-            consumer::Config {
-                backoff: vec![Duration::from_secs(1)],
-                ..stored.clone()
+                ..stored
             },
         ];
         for actual in changed {
