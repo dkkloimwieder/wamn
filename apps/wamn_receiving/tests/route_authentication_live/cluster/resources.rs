@@ -167,7 +167,12 @@ pub(super) async fn prepare_files(cluster: &Resources) -> anyhow::Result<String>
 
 pub(super) async fn create(cluster: &mut Resources) -> anyhow::Result<()> {
     if let Some((candidate, _)) = &cluster.candidate {
-        super::super::delivery::registry_files(candidate, &cluster.work).await?;
+        let images = std::iter::once(&cluster.host_image)
+            .chain(&cluster.gates_image)
+            .chain(&cluster.identity_image)
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        super::super::delivery::registry_files(candidate, &cluster.work, &images).await?;
     }
     cluster.owned = true;
     checked(

@@ -516,7 +516,7 @@ These cases test connection reuse and authority isolation without measuring thro
 
 ### Registry image archive in kind
 
-This test runs `tools/journey-image-cache` and `tools/registry-image-archive` against a private registry with a login and TLS.
+This test runs `tools/journey-image-cache` and `case_release::image_archive` of `wamn-gate-harness` against a private registry with a login and TLS.
 It needs the local `registry:2`, `httpd:2-alpine` and kind node images.
 Tell the other sessions on the machine before the run, because it creates a kind cluster.
 

@@ -6136,6 +6136,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "tar",
  "tokio",
  "tokio-postgres",
  "url",

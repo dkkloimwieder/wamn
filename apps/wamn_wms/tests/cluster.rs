@@ -151,7 +151,8 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 &advisory,
                 &consumers,
             )?;
-            crate::delivery::registry_files(&candidate, work.path()).await?;
+            crate::delivery::registry_files(&candidate, work.path(), &[&image, &identity_image])
+                .await?;
             checked(
                 Command::new(&lifecycle)
                     .arg("create")

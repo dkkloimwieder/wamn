@@ -1,11 +1,12 @@
-//! `tools/registry-image-archive` and `tools/journey-image-cache` in kind,
+//! `case_release::image_archive` and `tools/journey-image-cache` in kind,
 //! against a private registry that requires a login
 //! (docs/plan/upgrade-environment.md §4.4).
 //!
 //! The cache tool builds and relabels an image, which the test pushes to the
-//! registry. The archive tool fetches it and a guest by digest with the login
-//! of this machine. Each kind node imports the image archive. CRI must report
-//! the tag and the pinned digest, and no node may hold the credential.
+//! registry. The case harness fetches it and a guest by digest with the
+//! registry's pull credential. Each kind node imports the image archive. CRI
+//! must report the tag and the pinned digest, and no node may hold the
+//! credential.
 
 use std::fs;
 use std::io::{Read as _, Write as _};
@@ -15,6 +16,7 @@ use std::process::{Command, Output, Stdio};
 
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+use wamn_gate_harness::case_release::{Registry, image_archive};
 
 const USER: &str = "wamn-test";
 /// The smallest valid component bytes: the Wasm magic and version.
@@ -210,9 +212,9 @@ fn names(index: &Value, digest: &str) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "requires: docker, kind, curl, jq, openssl, tar"]
+#[ignore = "requires: docker, kind, curl, openssl, tar"]
 fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "curl", "jq", "openssl", "tar"]);
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "curl", "openssl", "tar"]);
     let root = repository_root();
     let nonce = random_hex(8);
     let cluster = format!("wamn-registry-archive-{nonce}");
@@ -425,16 +427,31 @@ fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
     );
     fs::remove_file(&login).expect("remove curl login");
 
-    // The archive tool fetches both by digest with the login of this machine.
+    // The case harness fetches both by digest with the registry's pull
+    // credential, a `.dockerconfigjson` file.
+    let pull_secret = work.join("pull-secret.json");
+    fs::write(
+        &pull_secret,
+        serde_json::to_vec(&json!({"auths": {&host: {"username": USER, "password": password}}}))
+            .expect("encode pull secret"),
+    )
+    .expect("write pull secret");
+    fs::set_permissions(&pull_secret, fs::Permissions::from_mode(0o600))
+        .expect("set pull secret mode");
+    let registry = Registry {
+        authority: host.clone(),
+        auth_file: Some(pull_secret),
+        insecure: false,
+        ca_paths: vec![ca.clone()],
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build runtime");
     let archive = |reference: &str, path: &Path| {
-        succeed(
-            Command::new(root.join("tools/registry-image-archive"))
-                .env("DOCKER_CONFIG", &docker_config)
-                .env("CURL_CA_BUNDLE", &ca)
-                .arg(reference)
-                .arg(path),
-            None,
-        );
+        runtime
+            .block_on(image_archive(reference, &registry, path))
+            .unwrap_or_else(|error| panic!("archive {reference}: {error:#}"));
     };
     let guest = format!("{host}/{guest_repository}@{guest_digest}");
     let guest_archive = work.join("guest.tar");

@@ -21,12 +21,14 @@ pub(super) fn candidate() -> anyhow::Result<(Candidate, ServingManifest)> {
     Ok((candidate, manifest))
 }
 
-/// The files that the cluster's lifecycle tool reads to pull the candidate's
-/// images onto its nodes from a loopback registry, through the container that
-/// publishes its port on the kind network. Another registry needs none.
+/// The files that the cluster's lifecycle tool reads to put `images` onto
+/// its nodes: from a loopback registry, the files to pull them through the
+/// container that publishes its port on the kind network; from another
+/// registry, their archives, which the nodes import.
 pub(super) async fn registry_files(
     candidate: &Candidate,
     work: &std::path::Path,
+    images: &[&str],
 ) -> anyhow::Result<()> {
     let (authority, _) = candidate
         .images
@@ -34,7 +36,8 @@ pub(super) async fn registry_files(
         .split_once('/')
         .context("the candidate's host image has a registry authority")?;
     if let Some(endpoint) = wamn_gate_harness::case_release::registry_endpoint(authority).await? {
-        wamn_gate_harness::case_release::registry_files(&endpoint, &candidate.images.host, work)?;
+        wamn_gate_harness::case_release::registry_files(&endpoint, &candidate.images.host, work)
+    } else {
+        wamn_gate_harness::case_release::node_image_archives(candidate, images, work).await
     }
-    Ok(())
 }

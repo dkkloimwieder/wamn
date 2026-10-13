@@ -30,6 +30,8 @@ wamn-test-infrastructure = { workspace = true }
 # role images copied by digest.
 oci-client = { workspace = true }
 wamn-package-artifact = { workspace = true }
+# The OCI archives of the cluster cases' node images (case_release.rs).
+tar = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true, features = ["jetstream"] }

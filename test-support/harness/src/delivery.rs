@@ -184,10 +184,16 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         insecure: false,
         ca_paths: vec![app.kept.ca.clone()],
     };
-    let http = copy_image(&set.http, &Registry::of(&set.http)?, "wamn/http", &kept).await?;
+    let http = copy_image(
+        &set.http,
+        &Registry::loopback(&set.http)?,
+        "wamn/http",
+        &kept,
+    )
+    .await?;
     let materializer = copy_image(
         &set.materializer,
-        &Registry::of(&set.materializer)?,
+        &Registry::loopback(&set.materializer)?,
         "wamn/materializer",
         &kept,
     )

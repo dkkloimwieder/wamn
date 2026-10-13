@@ -932,12 +932,10 @@ impl Run {
         let kubectl = Kubectl(environment.context.clone());
         self.broker(&kubectl).await?;
         let manifest_digest = Self::release_digest(record)?;
-        // The kind cases fetch the pinned images with the login of this
-        // machine (tools/registry-image-archive), so the qualification runs
-        // as its own process with the private Docker configuration.
+        // The kind cases fetch the pinned images with the pull credential of
+        // the release registry, the file of --registry-auth-file.
         let registry = Registry::login(&environment.registry, &self.work).await?;
-        let mut qualify =
-            registry.command(&self.programs().join("debug/wamn-ctl").display().to_string());
+        let mut qualify = Command::new(self.programs().join("debug/wamn-ctl"));
         qualify
             .arg("qualify-release")
             .args(["--release-digest", &manifest_digest])

@@ -21,11 +21,11 @@ case "$action" in
     insecure=false
     [[ ! -f $work/native-registry-authority ]] || insecure=true
     if [[ $insecure != true ]]; then
-      # The registry stays private: this machine fetches each pinned image by
-      # digest with its own login, and the nodes import the same bytes.
+      # The registry stays private: the case wrote each pinned image into an
+      # archive with the release registry's pull credential
+      # (case_release::node_image_archives), and the nodes import the same bytes.
       for image in "$@"; do
-        archive="$work/node-image.tar"
-        "$(dirname -- "${BASH_SOURCE[0]}")/registry-image-archive" "$image" "$archive"
+        archive="$work/node-image-${image##*@sha256:}.tar"
         # kind load image-archive adds an import name with the digest of the
         # archive index, which CRI reports as a second repository digest.
         for node in $(kind get nodes --name "$cluster"); do
