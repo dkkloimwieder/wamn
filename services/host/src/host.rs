@@ -73,8 +73,9 @@ pub struct HostArgs {
     #[arg(long = "scheduler-nats-url", default_value = "nats://localhost:4222")]
     pub scheduler_nats_url: String,
 
-    /// Accepted for chart compatibility and unused: the scheduler client
-    /// retries its first connect without a bound (wamn-gdex).
+    /// Passed by the runtime-operator chart (runtime.natsConnectTimeoutSeconds).
+    /// Not used: the first connect retries without a bound once the server is
+    /// reachable-but-down (wamn-gdex).
     #[arg(long, default_value = "0s", value_parser = humantime::parse_duration)]
     pub nats_connect_timeout: Duration,
 

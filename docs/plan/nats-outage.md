@@ -26,8 +26,8 @@ Measured on `main` at `4db74cb1c` on 2026-09-29.
 | Place | Today |
 | --- | --- |
 | Client | `services/host/src/host.rs:723-736` calls `connect_nats` of wash-runtime (`crates/wash-runtime/src/washlet/mod.rs:640-728` at the pinned `fd2bbc0`). It passes the URL, the TLS files and `connect_retry`, and hands the client to `ClusterHostBuilder::with_nats_client` (`host.rs:1082`). The builder keeps the client for the life of the process. |
-| Options | `connect_nats` sets an event callback, the TLS files and the request timeout. It sets no `max_reconnects`, `connection_timeout`, `reconnect_delay_callback` or `name`, so the async-nats 0.49.1 defaults apply (`async-nats-0.49.1/src/options.rs:103-121`). |
-| First connect | `connect_nats` retries for `--nats-connect-timeout`. The GKE value is 60 seconds (`deploy/gcp/values-host-base.yaml:124`). |
+| Options | `connect_scheduler_nats` sets an event callback, the TLS files, the request timeout, `name`, `max_reconnects(None)`, `client_capacity(2048)` and, after a first attempt that fails with an Io, TimedOut or Dns error, `retry_on_initial_connect()` (wamn-gdex, 380fdad9d and 596085ed0). Unbounded reconnect and the 2048 buffer were already the async-nats 0.49.1 defaults (`async-nats-0.49.1/src/options.rs:103-121`). |
+| First connect | One attempt; an Io, TimedOut or Dns error connects again with `retry_on_initial_connect()`, with no bound, and any other error fails startup. `--nats-connect-timeout` is passed by the runtime-operator chart (`runtime.natsConnectTimeoutSeconds`) and not used: the first connect retries without a bound once the server is reachable-but-down (wamn-gdex). |
 | Reconnect | async-nats never stops: `max_reconnects` is `None`, and it gives up only on an authentication or authorization error (`connector.rs:256`, `:345-355`, `:373-376`). The delay is `min(2^(n-1)` ms, 4 s) (`connector.rs:173-181`). |
 | DNS | Every attempt looks the name up again with `tokio::net::lookup_host` (`connector.rs:402`, `lib.rs:1689-1690`). A new pod IP behind the Service name reaches the client on its next attempt. |
 | TLS | TLS is on by default in the chart (`charts/runtime-operator/values.yaml:24-27`). The host mounts `/runtime-cert` as a whole Secret, not by `subPath` (`templates/runtime/deployment.yaml:426-427`), so the kubelet updates the files in place. |
@@ -80,7 +80,7 @@ After this, one outage run shows the cause. It is the first step, because the fi
 
 ### 4.2 The host connects again
 
-This section is a candidate, not the design. No supervisor and no swap is built until issue 1 names the cause. If a setting removes the cause, the setting is the fix and this section is dropped.
+Dropped (2026-10-13, wamn-gdex). The client's own retry reconnects through a pause and a move in `scheduler_nats_move_live`, so no supervisor and no swap is built. The GKE cause stays open on wamn-gdex until a real move is captured. The rest of this section is the earlier candidate, kept as written.
 
 The candidate: the host keeps the connect capability: the URL and the TLS file paths. A supervisor task watches the recorded state. When the scheduler client has not connected for a bound while a fresh test connection to the same URL with the same TLS files succeeds, the held client is stuck.
 
