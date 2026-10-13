@@ -64,7 +64,6 @@ Views and child tables refer to a table definition by name.
 - **Feature bundle:** one static wamn bundle built from `gridFeatures` (`web/ui/src/grid.ts`), plus the client row models the table uses (sorted, filtered, grouped, expanded, faceted). No client pagination row model. Modes switch through options (`manualSorting`, `manualFiltering`), never by swapping bundles.
 - **Row identity:** rows are keyed by the definition's row id (TanStack `getRowId`). Selection, expansion, inline edit and reload use it.
 - **Rendering:** rows render through the Epic 17 list windowing. No table draws every row into the DOM.
-- **Layout:** the table fills its container's height. The toolbar sits above the grid and does not scroll; the grid body is the only scroll element and the windowing scroll element. The container's height belongs to the app.
 - **Aggregates:** type decides which aggregates a column allows and which is its default. Numbers (int32, decimal, float) default to sum; dates and timestamps to max; everything else to count. Keys, references and the revision column default to count. The user can pick another per column; the choice is part of the view.
 - **`int64` columns:** opaque by platform rule. Group by and count only.
 - **Reference columns:** show the display field, not the UUID. Group and pivot label by the display field and key by the id.
@@ -129,20 +128,20 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 - It loads when the row first expands. Collapsing keeps its rows while its scope value is unchanged.
 - The parent definition names its child tables. The child knows nothing of the parent beyond the scope filter.
 
-### Row actions, bulk actions, row edit
+### Row actions, bulk actions, inline edit
 
 - **Row menu:** lists the served operations that take this row. The Epic 7 row-to-form mapping fills the form.
 - **Bulk actions:** select rows, pick an operation, submit once. One call carries every selected row as one outer input per row, each run independently. It is not one transaction. Each row shows its own result; a refusal marks only its row.
-- **Row edit:** one edit button opens every editable cell of a row, and a field that names a record shows a select over its list. One save calls the model's update operation with the row's revision and the changed fields. A refusal marks the changed cells. A revision conflict shows on the row and keeps the typed values.
+- **Inline edit:** edit a cell in place; submit calls the model's update operation with the row's revision. A refusal marks the cell. A revision conflict shows on the row and keeps the typed value.
 - **Editable cells:** fields the update operation accepts and the plan does not supply.
-- **After a write:** a row edit of fields that are neither a scope filter nor the server sort field replaces its row in place. Every other write starts a new load of the scope.
+- **After a write:** an inline edit of a field that is neither a scope filter nor the server sort field replaces its row in place. Every other write starts a new load of the scope.
 
 ### Views
 
 - A view is a named table state: columns (order, visible, width, pin), sort, scope filters, refine filters, group, chosen aggregates, cap.
 - A view names only declared fields, so it is checked against the contract.
 - On a set that is not fully read, only the server parts apply.
-- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?packagings.sort=created_at:desc&packagings.cap=5000`). Child table state stays in memory.
+- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?pallets.sort=created_at:desc&pallets.cap=5000`). Child table state stays in memory.
 
 ### Export
 

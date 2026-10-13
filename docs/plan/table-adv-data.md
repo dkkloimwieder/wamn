@@ -21,8 +21,8 @@ Today a table reads one keyset page of at most 100 rows at a time, and the clien
 | Component-model streams already work in the runtime: async functions return `stream<u8>` and `stream<object-name>`, drained with a bound. | `crates/platform/runtime/wit/deps/wasmcloud-blobstore/package.wit:98-104`, `plugins/wamn_blobstore/drain.rs` |
 | The server reads `limit + 1` rows and returns a cursor only when more exist. | `apps/wamn_wms/data/src/page.rs:54-64` |
 | The page maximum is 100, hand-written in 6 app files and repeated in the contract. | `MAX_PAGE_SIZE` in fixture, WMS, Receiving; `apps/wamn_wms/wamn.json:48` |
-| Filters are per-field `IN` arrays. Sort is one declared field and direction. | `apps/wamn_wms/generated/client-ts/packaging.ts` |
-| Sort is a form control above the grid, not a header click. | `apps/wamn_wms/generated/client-ts/components/packaging.tsx` |
+| Filters are per-field `IN` arrays. Sort is one declared field and direction. | `apps/wamn_wms/generated/client-ts/pallet.ts:205-232` |
+| Sort is a form control above the grid, not a header click. | `apps/wamn_wms/generated/client-ts/components/pallet.tsx:524-533` |
 | No text match mode; a search matches the whole value. | bead `wamn-yxm6` |
 | Paging state is framework-free in the runtime; `web/ui` renders it. | `web/runtime/src/page.ts` |
 
@@ -150,7 +150,7 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 ### Search
 
 - Fully read: one search box over the visible columns, in the client. TanStack's global filter checks every column that allows it, hidden ones included, so the table restricts it to visible columns itself.
-- Otherwise: search runs on the server over declared fields. A filter declares the contains match as `"match": "contains"` (`wamn-yxm6`).
+- Otherwise: search runs on the server over declared fields. Needs a contains match (`wamn-yxm6`).
 
 ### Group and aggregates
 
@@ -200,7 +200,7 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 - A view is a named table state: columns (order, visible, width, pin), sort, scope filters, refine filters, group, chosen aggregates, cap.
 - A view names only declared fields, so it is checked against the contract.
 - On a set that is not fully read, only the server parts apply.
-- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?packagings.sort=created_at:desc&packagings.cap=5000`). Child table state stays in memory.
+- Held in memory and in the URL. Only top-level tables go in the URL, keyed by table definition name (for example `?pallets.sort=created_at:desc&pallets.cap=5000`). Child table state stays in memory.
 
 ### Export
 
@@ -210,12 +210,19 @@ Each feature follows the core rule: server work sets scope, client work needs a 
 
 Each increment is one epic, reviewed before the next is scoped. Increment 1 is platform work; the rest are UI work.
 
-1. **Streamed query (platform).** Built by epic `wamn-utci`. [Request execution](../architecture/execution.md) and [data access](../architecture/data-access.md) describe it, and the epic records its measurements. The owner set the ceiling at 100,000 rows on 2026-09-26. It is a browser bound, and it moves to client configuration with the cap.
+1. **Streamed query (platform).** Query exports yield a stream plus a final record; the host shapes it as a page or a load, picked by `shape` in the canonical GET URL; tagged NDJSON wire; `web/runtime` reads the stream and holds load state; 100,000-row server ceiling. Generated model queries first, then hand-written ones. Done when all seven hold:
+   1. The operation contract for a streamed query is defined and generated.
+   2. One SQL statement yields rows progressively, without collecting them first.
+   3. A load is consistent as of that one statement.
+   4. The cap stop, a browser abort and a disconnect each end the database query.
+   5. A refusal before the first row keeps normal HTTP semantics; a failure after it ends in the outcome line.
+   6. Measured at 1k, 10k and 50k rows at a stated column count: server time, response size, component memory, browser memory, row-model time, render time, including the batch interval. The result replaces the 100,000 ceiling.
+   7. Streaming works through the deployed edge path: no proxy or compression buffering, no idle timeout before the first row, and a 304 on unchanged data.
 2. **Load in the table (UI, after Epic 17 windowing).** Per-table cap control, "Full dataset cannot be loaded", generation guard, load times, refresh.
 3. **Client operations on a fully read set.** Sort, refine filters, search, multi-level grouping and aggregates, totals row, CSV export.
 4. **Column arrangement and views.** Header menu, column panel, views in memory and the URL.
 5. **Actions and child tables.** Row menu, bulk actions, inline edit, child tables in expanded rows.
-6. **Scope controls.** Built by epic `wamn-3nsf`. [Data access](../architecture/data-access.md) describes the filter modes, the search and the band, and [request execution](../architecture/execution.md) describes the scope bar.
+6. **Scope controls.** Server filters and sort in the UI. Filter operators beyond `IN` (`wamn-yxm6`). Required band filter.
 7. **Report display.** The table over a custom report operation: nesting and totals from its rows, drill-down on mapped dimensions.
 8. **Pivot.** Client-side on a fully read set.
 9. **Saved views.**
