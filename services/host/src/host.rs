@@ -766,17 +766,19 @@ const SCHEDULER_NATS_TARGET: &str = "wamn_host::scheduler_nats";
 const SCHEDULER_NATS_BUFFER: usize = 2048;
 
 /// The scheduler client and its `name`. Reconnecting is the client's own retry
-/// (wamn-gdex): it never gives up, it retries the first connect too, so the
-/// host starts while NATS is down, and it buffers at most
-/// `SCHEDULER_NATS_BUFFER` commands while disconnected. A `ClientError` event
-/// carries only the error kind, so each line also counts the failed passes
-/// since the last connect; async-nats logs the cause of each attempt on
+/// (wamn-gdex): it never gives up, and it buffers at most
+/// `SCHEDULER_NATS_BUFFER` commands while disconnected. The first connect is
+/// one attempt. Only a server that is not reachable yet (an IO, timeout or DNS
+/// error) hands the first connect to the client's own retry, so the host
+/// starts while NATS is down; a refused credential or TLS setup fails startup,
+/// because no probe would show a host that never connects. A `ClientError`
+/// event carries only the error kind, so each line also counts the failed
+/// passes since the last connect; async-nats logs the cause of each attempt on
 /// `async_nats::connector` at debug.
 async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
     let mut opts = async_nats::ConnectOptions::new()
         .name(name)
         .max_reconnects(None)
-        .retry_on_initial_connect()
         .client_capacity(SCHEDULER_NATS_BUFFER);
     if let Some(ca_path) = &args.scheduler_nats_tls_ca {
         opts = opts.add_root_certificates(ca_path.clone());
@@ -843,9 +845,25 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
         }
     });
 
-    opts.connect(args.scheduler_nats_url.as_str())
-        .await
-        .context("configure the scheduler NATS client")
+    let url = args.scheduler_nats_url.as_str();
+    match opts.clone().connect(url).await {
+        Ok(client) => Ok(client),
+        Err(err)
+            if matches!(
+                err.kind(),
+                async_nats::ConnectErrorKind::Io
+                    | async_nats::ConnectErrorKind::TimedOut
+                    | async_nats::ConnectErrorKind::Dns
+            ) =>
+        {
+            tracing::warn!(target: SCHEDULER_NATS_TARGET, client = name, %err, "scheduler NATS is not reachable yet; the client keeps retrying");
+            opts.retry_on_initial_connect()
+                .connect(url)
+                .await
+                .context("configure the scheduler NATS client")
+        }
+        Err(err) => Err(anyhow::Error::new(err)).context("failed to connect to scheduler NATS"),
+    }
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
