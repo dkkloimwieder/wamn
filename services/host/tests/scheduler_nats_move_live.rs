@@ -1,19 +1,19 @@
-//! Scheduler NATS outage tests for the rebuilt host (docs/plan/nats-outage.md,
-//! issue 1).
+//! Scheduler NATS outage test for the rebuilt host (docs/plan/nats-outage.md,
+//! wamn-gdex): the host reconnects by the NATS client's own retry.
 //!
-//! The ignored tests run NATS in a Docker container on its own network, under
+//! The ignored test runs NATS in a Docker container on its own network, under
 //! the alias `nats` and with TLS as the runtime-operator chart configures it.
 //! The host runs in a second container on that network against
-//! `nats://nats:4222`. The move case stops and removes the NATS container,
-//! parks a placeholder on its address, and starts a new NATS container under
-//! the same alias, so the name resolves to a new IP. The pause case first
-//! pauses the server, which keeps its connections open and answers nothing,
-//! measures what the client does, unpauses it, and then moves it. Each case
-//! requires a heartbeat RPC through the new server with no host restart, and a
-//! debug line with the cause of each failed attempt. They require Docker, the
-//! images below and an evidence directory outside the source tree, in which
-//! each case creates its own new directory. They start no PostgreSQL, operator
-//! or guest workload.
+//! `nats://nats:4222`, and starts before any NATS container exists. Then the
+//! test pauses the server, which keeps its connections open and answers
+//! nothing, measures what the client does, and unpauses it. Last, the move
+//! stops and removes the NATS container, parks a placeholder on its address,
+//! and starts a new NATS container under the same alias, so the name resolves
+//! to a new IP. Each step requires a heartbeat RPC through the current server
+//! with no host restart, and a debug line with the cause of each failed
+//! attempt. It requires Docker, the images below and an evidence directory
+//! outside the source tree, in which it creates its own new directory. It
+//! starts no PostgreSQL, operator or guest workload.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -334,7 +334,8 @@ struct Case {
 const HOST_NAME: &str = "nats-move-host";
 
 /// Creates `<WAMN_HOST_LIVE_EVIDENCE_DIR>/<case>`, which must be new, starts
-/// the first NATS container and the host, and waits for a heartbeat RPC.
+/// the host while no NATS server exists, waits for it to be ready, then starts
+/// the first NATS container and waits for a heartbeat RPC.
 async fn start_case(case: &str) -> anyhow::Result<Case> {
     wamn_test_postgres::require_prerequisites(&["WAMN_HOST_LIVE_EVIDENCE_DIR"]);
     // The host installs its provider through wash-runtime; this process has two.
@@ -373,9 +374,6 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
     };
     let network = fixture.network();
     docker(&["network", "create", &network]).await?;
-    let (nats, nats_port) = start_nats(&mut fixture, "nats-first", &evidence, &certs).await?;
-    let nats_ip = container_ip(&nats, &network).await?;
-
     let host = fixture.container("host");
     let binary_mount = format!("{}:/wamn-host:ro", env!("CARGO_BIN_EXE_wamn-host"));
     let cert_mount = format!(
@@ -409,8 +407,6 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
         "nats-move-test",
         "--scheduler-nats-url",
         "nats://nats:4222",
-        "--nats-connect-timeout",
-        "60s",
         "--scheduler-nats-tls-ca",
         "/runtime-cert/ca.crt",
         "--scheduler-nats-tls-cert",
@@ -449,6 +445,9 @@ async fn start_case(case: &str) -> anyhow::Result<Case> {
         );
         sleep(Duration::from_millis(250)).await;
     };
+    // The host is ready before any NATS server exists; the first one comes now.
+    let (nats, nats_port) = start_nats(&mut fixture, "nats-first", &evidence, &certs).await?;
+    let nats_ip = container_ip(&nats, &network).await?;
     fs::write(
         evidence.join("heartbeat-before.json"),
         heartbeat_rpc(&certs, nats_port, &host_id, HOST_NAME, STARTUP_BUDGET).await?,
@@ -583,26 +582,19 @@ async fn finish(case: &Case, result: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: Docker, nats:2.12.8-alpine, debian:trixie-slim, WAMN_HOST_LIVE_EVIDENCE_DIR"]
-async fn host_connects_again_after_scheduler_nats_moves() -> anyhow::Result<()> {
-    let mut case = start_case("move").await?;
-    let result = move_nats(&mut case).await?;
-    finish(&case, result).await
-}
-
 /// How long the case waits for the client to notice a server that holds its
 /// connection open and answers nothing. The async-nats defaults are a ping
 /// every 60 s and two outstanding pings.
 const PAUSE_DETECT_BUDGET: Duration = Duration::from_secs(240);
 
-/// A paused server keeps its TCP connections open and answers nothing, as a
-/// node that vanishes does. The case measures when the client notices, what
-/// its attempts meet, and whether it connects again on unpause, then moves.
+/// The host starts before NATS exists. Then the server pauses: it keeps its
+/// TCP connections open and answers nothing, as a node that vanishes does. The
+/// case measures when the client notices, what its attempts meet, and whether
+/// it connects again on unpause. Last, NATS moves.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: Docker, nats:2.12.8-alpine, debian:trixie-slim, WAMN_HOST_LIVE_EVIDENCE_DIR"]
-async fn host_connects_again_after_scheduler_nats_pauses() -> anyhow::Result<()> {
-    let mut case = start_case("pause").await?;
+async fn host_connects_again_through_scheduler_nats_outages() -> anyhow::Result<()> {
+    let mut case = start_case("outages").await?;
     let disconnects = |log: &str| {
         log.lines()
             .filter(|line| line.contains("disconnected from scheduler NATS"))

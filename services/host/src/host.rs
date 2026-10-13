@@ -73,7 +73,8 @@ pub struct HostArgs {
     #[arg(long = "scheduler-nats-url", default_value = "nats://localhost:4222")]
     pub scheduler_nats_url: String,
 
-    /// How long to retry the initial scheduler connection; zero fails immediately.
+    /// Accepted for chart compatibility and unused: the scheduler client
+    /// retries its first connect without a bound (wamn-gdex).
     #[arg(long, default_value = "0s", value_parser = humantime::parse_duration)]
     pub nats_connect_timeout: Duration,
 
@@ -760,12 +761,23 @@ async fn control_connection(args: &HostArgs) -> anyhow::Result<ControlConnection
 /// field tell the two lines apart (docs/plan/nats-outage.md §4.1).
 const SCHEDULER_NATS_TARGET: &str = "wamn_host::scheduler_nats";
 
-/// The scheduler client with the options of wash-runtime's `connect_nats`, and
-/// its `name`. A `ClientError` event carries only the error kind, so each line
-/// also counts the failed passes since the last connect; async-nats logs the
-/// cause of each attempt on `async_nats::connector` at debug.
+/// The commands the scheduler client buffers while it is disconnected; a full
+/// buffer makes the caller wait. The async-nats 0.49 default, stated.
+const SCHEDULER_NATS_BUFFER: usize = 2048;
+
+/// The scheduler client and its `name`. Reconnecting is the client's own retry
+/// (wamn-gdex): it never gives up, it retries the first connect too, so the
+/// host starts while NATS is down, and it buffers at most
+/// `SCHEDULER_NATS_BUFFER` commands while disconnected. A `ClientError` event
+/// carries only the error kind, so each line also counts the failed passes
+/// since the last connect; async-nats logs the cause of each attempt on
+/// `async_nats::connector` at debug.
 async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
-    let mut opts = async_nats::ConnectOptions::new().name(name);
+    let mut opts = async_nats::ConnectOptions::new()
+        .name(name)
+        .max_reconnects(None)
+        .retry_on_initial_connect()
+        .client_capacity(SCHEDULER_NATS_BUFFER);
     if let Some(ca_path) = &args.scheduler_nats_tls_ca {
         opts = opts.add_root_certificates(ca_path.clone());
     }
@@ -831,40 +843,9 @@ async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<a
         }
     });
 
-    let url = args.scheduler_nats_url.as_str();
-    let window = args.nats_connect_timeout;
-    if window.is_zero() {
-        return opts
-            .connect(url)
-            .await
-            .context("failed to connect to scheduler NATS");
-    }
-    // As `connect_nats`: retry only a server that is not up yet. A refused
-    // credential or TLS setup reads the same on every attempt.
-    let deadline = tokio::time::Instant::now() + window;
-    let mut backoff = Duration::from_millis(250);
-    loop {
-        let err = match opts.clone().connect(url).await {
-            Ok(client) => return Ok(client),
-            Err(err) => err,
-        };
-        if !matches!(
-            err.kind(),
-            async_nats::ConnectErrorKind::Io
-                | async_nats::ConnectErrorKind::TimedOut
-                | async_nats::ConnectErrorKind::Dns
-        ) {
-            return Err(anyhow::Error::new(err)).context("failed to connect to scheduler NATS");
-        }
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        if remaining.is_zero() {
-            return Err(anyhow::Error::new(err))
-                .with_context(|| format!("failed to connect to scheduler NATS within {window:?}"));
-        }
-        tracing::warn!(target: SCHEDULER_NATS_TARGET, client = name, %err, retry_in = ?backoff, "scheduler NATS is not accepting connections yet");
-        tokio::time::sleep(backoff.min(remaining)).await;
-        backoff = (backoff * 2).min(Duration::from_secs(5));
-    }
+    opts.connect(args.scheduler_nats_url.as_str())
+        .await
+        .context("configure the scheduler NATS client")
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
