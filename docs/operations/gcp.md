@@ -209,8 +209,10 @@ done
 
 gcloud cannot name the first pool of a new cluster, so the cluster starts with a temporary `default-pool` of one Spot node. The secondary range flags need `--enable-ip-alias`.
 
+The create writes the cluster into the kubeconfig and makes it the current context, so run it with `KUBECONFIG` set to your own file, as section 2.1 says:
+
 ```bash
-gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
+KUBECONFIG=<your file> gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
   --release-channel regular --network wamn --subnetwork wamn-us-central1 \
   --enable-ip-alias --cluster-secondary-range-name pods \
   --services-secondary-range-name services --workload-pool wamn-dev.svc.id.goog \
@@ -219,11 +221,11 @@ gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
   --num-nodes 1 --machine-type e2-standard-2 --spot
 ```
 
-The pool `main` has a fixed size and no autoscaler, so the scale to 0 of the guard holds. Its upgrades use a surge of 0 and one unavailable node, so an upgrade stays inside the CPU quota.
+The pool `main` has 3 nodes, the daytime count of section 1.3. It has a fixed size and no autoscaler, so the scale to 0 of the guard holds. Its upgrades use a surge of 0 and one unavailable node, so an upgrade stays inside the CPU quota.
 
 ```bash
 gcloud container node-pools create main --cluster wamn --project wamn-dev \
-  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 2 \
+  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 3 \
   --disk-type pd-standard --disk-size 30 --service-account $NSA \
   --max-surge-upgrade 0 --max-unavailable-upgrade 1
 gcloud container node-pools delete default-pool --cluster wamn --project wamn-dev \
