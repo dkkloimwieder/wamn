@@ -1868,8 +1868,8 @@ kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found >/dev/null
 kubectl apply -f "$repo/deploy/gcp/nats-jetstream.yaml" >/dev/null
 kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s >/dev/null
 stamp "tap Job complete"
-# A host built before the wamn-gdex fix can keep a scheduler NATS connection that does
-# not come back after the NATS pod moves, so start the Receiving host last.
+# The host keeps a scheduler NATS connection that does not come back after (wamn-gdex)
+# the NATS pod moves, so start the Receiving host last.
 kubectl -n hosts delete $(kubectl -n hosts get pods -o name | grep hostgroup-default) --wait=false >/dev/null
 sleep 5
 until [ "$(unready)" = 0 ]; do sleep 5; done
