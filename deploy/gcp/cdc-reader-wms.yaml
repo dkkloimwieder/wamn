@@ -7,7 +7,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cdc-reader-wms
-  namespace: platform
+  namespace: hosts
   labels: { app: event-reader-wms }
 spec:
   replicas: 1

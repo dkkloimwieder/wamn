@@ -9,12 +9,15 @@
 # The feedback and slot monitor flags keep their defaults (5 and 30 seconds).
 # The kind values 1 and 0 are test-speed settings.
 # The ServiceAccount is the one of deploy/platform/event-reader-rbac.yaml in
-# namespace platform. It has no grants, and the pod mounts no token.
+# namespace hosts. It has no grants, and the pod mounts no token. The reader
+# runs in hosts, the release namespace, because `env apply` writes the
+# replication Secret there and records that namespace on the reader row
+# (wamn-rk9l2). The publisher Secret evt-nats-publisher is copied there too.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: event-reader
-  namespace: platform
+  namespace: hosts
   labels: { app: event-reader }
 automountServiceAccountToken: false
 ---
@@ -22,7 +25,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cdc-reader
-  namespace: platform
+  namespace: hosts
   labels: { app: event-reader }
 spec:
   replicas: 1
