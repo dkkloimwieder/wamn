@@ -1032,13 +1032,13 @@ gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gservi
 
 The Secret `identity-resend` in namespace `identity`, key `api-key`. The owner supplies it from a file (section 3.10). No file in the repository holds it, so a recreate does not restore it. Identity reads it as `RESEND_API_KEY` through `secretKeyRef`, so only a pod start reads it.
 
-To create it, the owner writes the key to a file with mode 0600, never to an environment variable or the shell history, before identity is installed:
+To create it, the owner writes the key to a file with mode 0600, never to an environment variable or the shell history, before identity is installed. The file must not end with a line end: identity refuses any whitespace in the key (`Resend configuration refused`), and an editor adds a line end. Remove it with `tr -d '\r\n' < <file> > <file>.trim` and use the trimmed file:
 
 ```bash
 kubectl -n identity create secret generic identity-resend --from-file=api-key=<file>
 ```
 
-To rotate it, create the new key in Resend and write it to a new file with mode 0600. Replace the Secret and restart identity:
+To rotate it, create the new key in Resend and write it to a new file with mode 0600, with no line end. Replace the Secret and restart identity:
 
 ```bash
 kubectl -n identity create secret generic identity-resend --from-file=api-key=<file> \
