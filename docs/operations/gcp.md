@@ -2266,3 +2266,39 @@ On 2026-10-13 the platform build pushed `wamn-host:0.1.0` `sha256:55d6ce4a267620
 | --- | --- | --- | --- |
 | Receiving | `wamn_receiving-2.1.0` `sha256:b600ea79529e5cef16d627e83ff595a8fb89caa46e51646fcae5e9cedc2ef66c` | `sha256:7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f` | `sha256:9a353add3b3e116d492c63bdaf0cafd032dbbef4b9db371dc25f8e909fe26ca3` |
 | WMS | `wamn_wms-2.1.0` `sha256:3822a6617e85599f4f139243ef8aee8eb9a9f1b393486737c240da1dee31fcbe` | `sha256:47171ec08678806e5722b782070a7fc3221191fb71433136664879c0d02d38c7` | `sha256:4641d4374946b98dc15657ac4186b7806eabc1fd452a4ec6fabdea745ba162f6` |
+
+### 11.11 Platform 0.1.1 and the apply with a release
+
+The release chart changed in `wamn-okr8y` (`serviceAccount.create=false`, `name=wamn-host`), so the platform version became `0.1.1` (owner ruling of 2026-10-13, R15), and `build-platform` ran once at main `3d1bb86cd`. Both releases were qualified again on the new chart. Each image set has its own qualification.
+
+| Image (0.1.1) | Digest |
+| --- | --- |
+| `wamn-host` | `sha256:6848e22fba1f8918bc1e9d39085d24cbd55ed3dbfc93e8e4932782c0d559a8e4` |
+| `wamn-runner` | `sha256:e6051f97773f51d46b399c272bdd34064391f47d75a43df02d9c22d471b17fae` |
+| `wamn-gates` | `sha256:f2cb4318516a3e3dc0d61f9d007a0c563af6f917cfab162409f174db1b8385d0` |
+| `wamn-identity` | `sha256:0c97a7eb6cd35b0e0c0cc289bafdb9cdf984259dc2c0274043a53c1cf88d00d2` |
+| `wamn/http` | `sha256:01e28d2db1e15b36c0e9dcb3cccdf9f600f77c3daf532ab01308f5ec08755127` |
+| `wamn/materializer` | `sha256:6a2216a49a44f271491f2002e685d39784348d9887dd7ba712192b3e0de16131` |
+
+The qualifications on 0.1.1 are `sha256:4931d6cb7c770921dc75193c873fff160181735937ff0b692711ba10a80025bb` for Receiving and `sha256:decd6d60ebd51bb52bca185677f96aa58a83509b5fc3dc9fb16df4c1c070c652` for WMS. The environment documents name the two release digests. `env apply` of each document with its host group file wrote the release charts `r-dev-ee95c37ee965257ff856` (Receiving) and `r-dev-8f6b3ee8ac75e40affb1` (WMS).
+
+The steps that the apply needed:
+
+- The host group files name `schedulerNatsUrl` and `dataNatsUrl` in `platform`. The release chart's default is `nats.<release namespace>`, and the operator release runs in `platform`. Without them, the first Receiving apply failed at step 6, because the host could not resolve `nats.hosts.svc.cluster.local`. Helm removed the failed install itself.
+- The CDC readers of [cdc-reader.yaml](../../deploy/gcp/cdc-reader.yaml) and [cdc-reader-wms.yaml](../../deploy/gcp/cdc-reader-wms.yaml) run in `hosts`. `env apply` writes the replication Secret there and records `hosts` on the reader row. Copy the publisher Secret of section 3.5 into `hosts`, and prepare the registry-reader credential of section 3.19 with `--namespace hosts`.
+- `wamn web upload` reads the platform inputs of `env apply`. With `WAMN_EVENT_NATS_URL` set, it also asks for the NATS user, so unset that variable for the upload.
+- [values-edge.yaml](../../deploy/gcp/values-edge.yaml) names `api` for each application: `http://<release name>-http.hosts.svc.cluster.local`. The release name comes from the coordinate, so it stays the same from release to release.
+- The network endpoint group `wamn-edge` carries the cluster UID in its description, so a new cluster's controller refuses the old group (`found conflicting description in neg wamn-edge`). Take it off the backend service, delete it, wait until GKE makes it again for the new cluster, and add it back as in section 4.3:
+
+```bash
+gcloud compute backend-services remove-backend wamn-edge-platform --project wamn-dev --global \
+  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a
+gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
+gcloud compute backend-services add-backend wamn-edge-platform --project wamn-dev --global \
+  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a \
+  --balancing-mode RATE --max-rate-per-endpoint 100
+```
+
+- The renewal job of section 4.3.1 is a cluster object, so apply it again. Its first run moved the proxy to `wamn-edge-058397760d86`.
+
+After the apply, `https://receiving.wamn.dev/api/purchase_order/query` and `POST https://wms.wamn.dev/api/inventory/move` answered `401 unauthorized`, and `/` and `/config.json` answered `200` on both hosts.

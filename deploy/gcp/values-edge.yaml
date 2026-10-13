@@ -6,13 +6,16 @@ tlsSecret: wamn-edge-tls
 identity: https://identity.identity.svc.cluster.local
 identityCaConfigMap: identity-ca
 # Each application's api is the http Service of the environment's release
-# chart. upgrade-environment writes it from release_chart::release_name, so
-# this file names none.
+# chart, named by release_chart::release_name of the coordinate, so it does not
+# change with the release. `env apply` writes no edge values, so this file
+# names it (wamn-rk9l2).
 # bucketPath is <bucket>/<prefix>/<package>/<release digest hex>, as wamn web
 # upload writes it.
 applications:
   - host: receiving.wamn.dev
-    bucketPath: wamn-dev-web/clients/wamn_receiving/28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7
+    api: http://r-dev-ee95c37ee965257ff856-http.hosts.svc.cluster.local
+    bucketPath: wamn-dev-web/clients/wamn_receiving/7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f
   - host: wms.wamn.dev
-    bucketPath: wamn-dev-web/clients/wamn_wms/8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4
+    api: http://r-dev-8f6b3ee8ac75e40affb1-http.hosts.svc.cluster.local
+    bucketPath: wamn-dev-web/clients/wamn_wms/47171ec08678806e5722b782070a7fc3221191fb71433136664879c0d02d38c7
 neg: true
