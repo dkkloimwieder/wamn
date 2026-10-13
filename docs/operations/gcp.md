@@ -2239,7 +2239,7 @@ kubectl -n identity rollout restart deploy/identity
 kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
 
-On 2026-10-13 the first Secret ended with a line end, so identity ran without email. The owner wrote it again the same day (36 bytes), and identity revision 4 sends mail. The new admin of `provision-org --admin` has no password, so `/password/recover` answers `202` and logs `cause=no such account`. Send that user the invitation of section 4.5 instead.
+On 2026-10-13 the first Secret ended with a line end, so identity ran without email. The owner wrote it again the same day (36 bytes), and identity revision 4 started with no `Resend configuration refused`. The new admin of `provision-org --admin` has no password, so `/password/recover` answers `202` and logs `cause=no such account`. Send that user the invitation of section 4.5 instead.
 
 Then publish and activate a session key (section 3.15).
 
