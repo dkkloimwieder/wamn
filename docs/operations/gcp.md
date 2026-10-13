@@ -2231,11 +2231,15 @@ On 2026-10-13 the suffixes were `pv6vxrkc` for Receiving and `sbx8ny3n` for WMS.
 
 Prepare the session target of each environment as in section 3.10, with `--tenant <org>--<project>--<env>` and the database of the new suffix. Then install identity. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) pins the identity image that `build-platform` stamped into the chart.
 
-`identity-resend` is the owner's input of section 3.23. On 2026-10-13 the first Secret ended with a line end, so identity refused the key (`Resend configuration refused`) and ran without email until the owner wrote it again:
+`identity-resend` is the owner's input of section 3.23. Write it from a file with no line end (`tr -d '\r\n'`, section 3.23), because identity refuses whitespace in the key (`Resend configuration refused`). Install and upgrade identity from the file values only, with no `--set`, then restart it so the pod reads the Secret:
 
 ```bash
-helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml --set resendSecret= --set resendFrom=
+helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml --wait
+kubectl -n identity rollout restart deploy/identity
+kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
+
+On 2026-10-13 the first Secret ended with a line end, so identity ran without email. The owner wrote it again the same day (36 bytes), and identity revision 4 sends mail. The new admin of `provision-org --admin` has no password, so `/password/recover` answers `202` and logs `cause=no such account`. Send that user the invitation of section 4.5 instead.
 
 Then publish and activate a session key (section 3.15).
 

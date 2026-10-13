@@ -1,7 +1,9 @@
 # The invitation Job of docs/plan/operator-image.md section 4.2 (wamn-n5d1).
 # It runs `wamn-ctl invite` inside the cluster, so the owner's machine needs no
 # /etc/hosts line and no identity port-forward. The operator certificate
-# reaches the Job only as the mounted Secret operator-dkk.
+# reaches the Job only as the mounted Secret operator-dkk. The image is the
+# runner of build-platform, which carries wamn-ctl; build-platform builds no
+# ctl image (wamn-rk9l2, 2026-10-13).
 #
 # Fill __EMAIL__, __DISPLAY_NAME__, __ORG__ and __GRANT_FLAGS__ in a private
 # copy of this file in the scratchpad, at mode 0600, apply the copy and remove
@@ -28,7 +30,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: invite
-          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-bba6fe15a456083e@sha256:84fdb08b609781d995b49a49d67de528451763368a05ea19ae91410c986e766a
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:0.1.1@sha256:e6051f97773f51d46b399c272bdd34064391f47d75a43df02d9c22d471b17fae
           command: ["/bin/sh", "-ec"]
           args:
             - |
