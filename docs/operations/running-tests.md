@@ -40,7 +40,7 @@ The same rule applies to contract-diff, owned delivery, and the upstream release
 It preserves command failures and refuses absent or entirely ignored test results.
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
-`tools/test-changes` is the broad check before integration, and a single edit runs its covering exact case through [`wamn dev clean-check`](delivery.md#change-checks).
+`tools/test-changes` is the broad check before integration.
 
 `tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.
 It uses only the root workspace.

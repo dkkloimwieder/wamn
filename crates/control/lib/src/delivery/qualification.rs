@@ -6,14 +6,12 @@ use std::process::Output;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use serde::Serialize;
 use tokio::process::Command;
 
 use super::qualification_artifact::{
     self, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload, QualificationPushDisposition,
 };
 use super::{ApplicationResult, Candidate, CheckResult, Qualification};
-use crate::git_source::{GitSourceState, discover_repository_root, read_status};
 use crate::package_artifact::PackageRegistry;
 
 const RECEIVING_CASES: &[&str] = &[
@@ -33,8 +31,6 @@ const WMS_CASES: &[&str] = &[
 ];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
-/// Workspace directories, from the repository root, whose members change checks can select.
-const TEST_WORKSPACES: &[&str] = &["", "apps"];
 
 /// Exact inputs for qualifying one published release, by its digest, on the
 /// platform image set of a release chart through the existing application
@@ -49,27 +45,6 @@ pub struct QualifyReleaseRequest {
     /// The release chart whose default values name the platform image set
     /// the cases run on, and the gates, identity and runner images (R15).
     pub release_chart: PathBuf,
-}
-
-/// Exact selected existing behavior checks to run before integration.
-#[derive(Clone, Debug)]
-pub struct CheckChangesRequest {
-    pub repository: PathBuf,
-    /// A member of the root or apps workspace.
-    pub package: String,
-    /// Omit for the library test target.
-    pub test: Option<String>,
-    pub cases: Vec<String>,
-    pub include_ignored: bool,
-    pub result: PathBuf,
-}
-
-#[derive(Debug, Serialize)]
-struct ChangeResult {
-    source_commit: String,
-    source_dirty: bool,
-    checks: Vec<CheckResult>,
-    result: &'static str,
 }
 
 fn nonce() -> anyhow::Result<String> {
@@ -436,108 +411,6 @@ async fn qualify_candidate(
     Ok(app.cases)
 }
 
-/// Execute exact selected tests and distinguish executed success from a skip.
-pub async fn check_changes(request: CheckChangesRequest) -> anyhow::Result<()> {
-    let output = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&request.result)
-        .context("create a fresh change result file")?;
-    let snapshot = read_status(&discover_repository_root(&request.repository).await?).await?;
-    let mut result = ChangeResult {
-        source_commit: snapshot.source_commit().to_owned(),
-        source_dirty: snapshot.state() == GitSourceState::Dirty,
-        checks: Vec::new(),
-        result: "fail",
-    };
-    let checked = async {
-        let root = snapshot.repository_root();
-        let workspace = package_workspace(root, &request.package, &mut result.checks).await?;
-        let binary = compile_tests(
-            &workspace,
-            &request.package,
-            request.test.as_deref(),
-            &[],
-            &mut result.checks,
-        )
-        .await?;
-        for case in &request.cases {
-            ensure!(
-                !case.trim().is_empty(),
-                "a required case name cannot be empty"
-            );
-            let mut command = vec![
-                binary.display().to_string(),
-                case.clone(),
-                "--exact".to_owned(),
-                "--nocapture".to_owned(),
-                "--test-threads=1".to_owned(),
-            ];
-            if request.include_ignored {
-                command.push("--include-ignored".to_owned());
-            }
-            require_one_case(&run(&workspace, &command, &[], &mut result.checks).await?)?;
-        }
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    if checked.is_ok() {
-        result.result = "pass";
-    }
-    if let Err(error) = &checked {
-        result.checks.push(CheckResult {
-            command: vec!["check-changes".to_owned()],
-            result: "fail".to_owned(),
-            cause: Some(format!("{error:#}")),
-        });
-    }
-    serde_json::to_writer_pretty(output, &result)?;
-    checked
-}
-
-/// Select the one test workspace whose members include the package.
-async fn package_workspace(
-    root: &Path,
-    package: &str,
-    checks: &mut Vec<CheckResult>,
-) -> anyhow::Result<PathBuf> {
-    let mut metadata = Vec::new();
-    for workspace in TEST_WORKSPACES {
-        let workspace = root.join(workspace);
-        let mut command = strings(&[
-            "cargo",
-            "metadata",
-            "--locked",
-            "--offline",
-            "--no-deps",
-            "--format-version=1",
-            "--manifest-path",
-        ]);
-        command.push(workspace.join("Cargo.toml").display().to_string());
-        metadata.push((workspace, run(root, &command, &[], checks).await?.stdout));
-    }
-    member_workspace(package, &metadata)
-}
-
-fn member_workspace(package: &str, metadata: &[(PathBuf, Vec<u8>)]) -> anyhow::Result<PathBuf> {
-    let mut workspaces = Vec::new();
-    for (workspace, stdout) in metadata {
-        let value: serde_json::Value =
-            serde_json::from_slice(stdout).context("read the workspace Cargo metadata")?;
-        let members = value["packages"]
-            .as_array()
-            .context("the workspace Cargo metadata lists its members")?;
-        if members.iter().any(|member| member["name"] == package) {
-            workspaces.push(workspace);
-        }
-    }
-    ensure!(
-        workspaces.len() == 1,
-        "{package} is not a member of exactly one test workspace"
-    );
-    Ok(workspaces[0].clone())
-}
-
 /// The commands that record each image of the candidate. The candidate names
 /// every image by its pushed digest, so qualification pulls each one and
 /// records its image id, and builds none (owner ruling of 2026-10-03 on
@@ -557,53 +430,6 @@ fn image_commands(candidate: &Candidate) -> Vec<Vec<String>> {
         ]
     })
     .collect()
-}
-
-async fn compile_tests(
-    root: &Path,
-    package: &str,
-    test: Option<&str>,
-    env: &[(String, String)],
-    checks: &mut Vec<CheckResult>,
-) -> anyhow::Result<PathBuf> {
-    artifact_executable(
-        &run(root, &test_build_command(package, test), env, checks).await?,
-        test.unwrap_or(&package.replace('-', "_")),
-    )
-}
-
-/// The `cargo test --no-run` command that builds one test executable.
-fn test_build_command(package: &str, test: Option<&str>) -> Vec<String> {
-    let mut args = strings(&[
-        "cargo",
-        "test",
-        "--locked",
-        "--offline",
-        "-p",
-        package,
-        "--no-run",
-        "--message-format=json",
-    ]);
-    match test {
-        Some(test) => args.extend(["--test".to_owned(), test.to_owned()]),
-        None => args.push("--lib".to_owned()),
-    }
-    args
-}
-
-fn artifact_executable(output: &Output, name: &str) -> anyhow::Result<PathBuf> {
-    let executables: Vec<PathBuf> = output
-        .stdout
-        .split(|byte| *byte == b'\n')
-        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
-        .filter(|value| value["reason"] == "compiler-artifact" && value["target"]["name"] == name)
-        .filter_map(|value| value["executable"].as_str().map(PathBuf::from))
-        .collect();
-    ensure!(
-        executables.len() == 1,
-        "Cargo did not produce exactly one selected executable for {name}"
-    );
-    Ok(executables[0].clone())
 }
 
 /// Refuse a case name that the test executable does not list as an ignored test.
@@ -872,30 +698,6 @@ mod tests {
         ] {
             assert!(cases(refused).is_err(), "accepted {refused:?}");
         }
-    }
-
-    #[test]
-    fn change_checks_select_the_one_workspace_that_has_the_package() {
-        let workspaces = |root: &str, apps: &str| {
-            [("/r", root), ("/r/apps", apps)].map(|(workspace, member)| {
-                let metadata = serde_json::json!({"packages": [{"name": member}]});
-                (
-                    PathBuf::from(workspace),
-                    serde_json::to_vec(&metadata).unwrap(),
-                )
-            })
-        };
-        let split = workspaces("wamn-ctl", "wamn-platform-fixture-data-access");
-        assert_eq!(
-            member_workspace("wamn-ctl", &split).unwrap(),
-            Path::new("/r")
-        );
-        assert_eq!(
-            member_workspace("wamn-platform-fixture-data-access", &split).unwrap(),
-            Path::new("/r/apps")
-        );
-        assert!(member_workspace("wamn-absent-data-access", &split).is_err());
-        assert!(member_workspace("same", &workspaces("same", "same")).is_err());
     }
 
     #[test]

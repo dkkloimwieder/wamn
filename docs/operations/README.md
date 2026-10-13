@@ -9,6 +9,6 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [deployment.md](deployment.md): provisioning, release carriers, and deployed environments.
 - [gcp.md](gcp.md): the Google Cloud deployment in project `wamn-dev`, step by step.
 - [backup-and-recovery.md](backup-and-recovery.md): cluster backup, point-in-time recovery, and one-table recovery.
-- [delivery.md](delivery.md): repository change checks, qualification, publication, selection, and deployment.
+- [delivery.md](delivery.md): release qualification, publication, selection, and deployment.
 - [edge.md](edge.md): serve the edge box, read its status, and resolve refused samples and uncertain intents.
 - [queued-automation.md](queued-automation.md): start, park, release, and list queued workflow runs.

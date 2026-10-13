@@ -53,25 +53,6 @@ pub struct BuildPlatformArgs {
     pub repository: PathBuf,
 }
 
-/// Run explicitly selected existing behavior checks before integration.
-#[derive(Debug, Args)]
-pub struct CheckChangesArgs {
-    #[arg(long, default_value = ".")]
-    pub repository: PathBuf,
-    /// A member of the root or apps workspace.
-    #[arg(long)]
-    pub package: String,
-    /// Omit for the library test target.
-    #[arg(long)]
-    pub test: Option<String>,
-    #[arg(long = "case", required = true)]
-    pub cases: Vec<String>,
-    #[arg(long)]
-    pub include_ignored: bool,
-    #[arg(long)]
-    pub result: PathBuf,
-}
-
 /// Qualify one published release by its digest, and print the
 /// qualification's digest and whether this run pushed it.
 pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
@@ -155,17 +136,4 @@ pub async fn upgrade_environment(args: UpgradeEnvironmentArgs) -> anyhow::Result
     .await?;
     println!("{}", serde_json::to_string_pretty(&record)?);
     Ok(())
-}
-
-/// Execute selected existing tests before integration.
-pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
-    qualification::check_changes(qualification::CheckChangesRequest {
-        repository: args.repository,
-        package: args.package,
-        test: args.test,
-        cases: args.cases,
-        include_ignored: args.include_ignored,
-        result: args.result,
-    })
-    .await
 }

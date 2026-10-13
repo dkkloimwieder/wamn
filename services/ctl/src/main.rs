@@ -35,8 +35,6 @@ enum Command {
     /// Build and push the platform images and stamp them into the release
     /// chart's defaults.
     BuildPlatform(delivery_verbs::BuildPlatformArgs),
-    /// Execute selected existing tests before integration.
-    CheckChanges(delivery_verbs::CheckChangesArgs),
     /// Qualify one published release, by its digest, on the release chart's
     /// platform image set, and push the qualification beside the release.
     QualifyRelease(delivery_verbs::QualifyReleaseArgs),
@@ -129,7 +127,6 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::BuildPlatform(args) => delivery_verbs::build_platform(args).await,
-        Command::CheckChanges(args) => delivery_verbs::check_changes(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
         Command::UpgradeEnvironment(args) => delivery_verbs::upgrade_environment(args).await,
         Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,

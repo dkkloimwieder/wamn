@@ -31,7 +31,7 @@ Use real application and platform functions through existing Rust test owners.
 No complete simulation framework is a prerequisite for application testing.
 Generated claim tests complement full-command execution and do not replace it.
 
-The [repository delivery commands](../operations/delivery.md) invoke these existing owners for change checks and release qualification.
+The [repository delivery commands](../operations/delivery.md) invoke these existing owners for release qualification.
 Required checks must execute their named cases and pass.
 An absent case, ignored case, or explicit skip cannot establish success.
 

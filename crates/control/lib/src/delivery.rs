@@ -1,4 +1,4 @@
-//! Release qualification: the candidate the cases run, and the change checks.
+//! Release qualification: the candidate the cases run.
 
 use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};

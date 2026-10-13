@@ -1,25 +1,5 @@
 # Repository delivery
 
-## Change checks
-
-Run the existing exact tests that cover the changed behavior before integration.
-The command compiles the selected target with locked dependencies and then executes each named case.
-An empty selection, failure, ignored case, or reported skip cannot establish success.
-
-```bash
-wamn-ctl check-changes --repository "$SOURCE" \
-  --package wamn-schema-generator --test client_emitter \
-  --case generated_code_carries_release_facts_and_no_deployment_facts \
-  --result "$CHANGE_RESULT"
-```
-
-Replace the package, target, and case with the existing test for the change.
-The package must be a member of exactly one of the root and apps workspaces.
-The command builds and runs the test in that workspace.
-For an ignored case, add `--include-ignored`.
-A case that uses PostgreSQL takes its database from the [test server](running-tests.md#test-database-isolation) and needs no database input.
-A change result records its source state and cannot substitute for release qualification.
-
 ## Release qualification
 
 For a package successor with application migrations, first follow [package upgrades](deployment.md#package-upgrades).

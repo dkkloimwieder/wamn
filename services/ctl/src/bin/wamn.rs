@@ -60,8 +60,6 @@ enum DevEnvironmentCommand {
     Down(wamn_ctl::dev::up::DevDownArgs),
     /// Reset this environment's idle disposable application target.
     Reset(wamn_ctl::dev::target_database::DevResetArgs),
-    /// Execute selected correctness cases through the shared owned-fixture runner.
-    CleanCheck(wamn_ctl::delivery_verbs::CheckChangesArgs),
     /// Write the edge release bundle of the release that the loop published.
     EdgeBundle(wamn_ctl::dev::edge_bundle::DevEdgeBundleArgs),
 }
@@ -88,9 +86,6 @@ async fn main() -> anyhow::Result<()> {
             Some(DevEnvironmentCommand::Reset(args)) => {
                 wamn_ctl::dev::target_database::reset(args).await
             }
-            Some(DevEnvironmentCommand::CleanCheck(args)) => {
-                wamn_ctl::delivery_verbs::check_changes(args).await
-            }
             Some(DevEnvironmentCommand::EdgeBundle(args)) => wamn_ctl::dev::edge_bundle::run(&args),
             None => {
                 let run = dev
@@ -112,26 +107,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reset_and_clean_check_parse_without_run_inputs() {
+    fn reset_parses_without_run_inputs() {
         let reset =
             Cli::try_parse_from(["wamn", "dev", "reset", "--config", "/tmp/dev.json"]).unwrap();
         assert!(
             matches!(reset.command, Command::Dev(dev) if matches!(dev.environment, Some(DevEnvironmentCommand::Reset(_))))
-        );
-        let clean = Cli::try_parse_from([
-            "wamn",
-            "dev",
-            "clean-check",
-            "--package",
-            "wamn-ctl",
-            "--case",
-            "exact_case",
-            "--result",
-            "/tmp/new-result.json",
-        ])
-        .unwrap();
-        assert!(
-            matches!(clean.command, Command::Dev(dev) if matches!(dev.environment, Some(DevEnvironmentCommand::CleanCheck(_))))
         );
     }
 }
