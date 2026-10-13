@@ -2261,3 +2261,7 @@ Then run `author-wiring` and `publish-release` with `--wiring "wamn_wms@2.1.0::i
 ### 11.9 Qualification
 
 `qualify-release` pulls the chart's images with `docker pull`, so give it the `DOCKER_CONFIG` of section 3.4.1. Without it, the pull of the host image is refused with `Unauthenticated request`.
+
+### 11.10 Host group files
+
+`WAMN_RELEASE_HOST_GROUP` names the platform part of an environment's host group. It is a hand-written platform install input: [deploy/gcp/host-group-receiving.yaml](../../deploy/gcp/host-group-receiving.yaml) and [deploy/gcp/host-group-wms.yaml](../../deploy/gcp/host-group-wms.yaml). Each is the group of [values-host.yaml](../../deploy/gcp/values-host.yaml) without the keys and variables that the release chart and `apply` derive. Each names the event NATS Secrets of its environment (section 11.3), the registry helper of section 3.13 and the identity CA. `WAMN_SESSION_INSTANCE_SUFFIX` is the suffix of the first apply, so write it again after a new first apply.
