@@ -26,14 +26,17 @@ pub(super) fn files(directory: &Path) -> anyhow::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+/// The directory that holds the generated contracts of the package at `root`.
+pub(super) fn generated(root: &Path) -> PathBuf {
+    wamn_schema_generator::output_root(root).join("contracts")
+}
+
 pub(super) fn contract(root: &Path, operation: &str, side: &str) -> anyhow::Result<Option<Value>> {
     let Some((domain, action)) = operation.split_once('.') else {
         return Ok(None);
     };
-    let suffix = PathBuf::from("contracts")
-        .join(domain)
-        .join(format!("{action}.{side}.json"));
-    files(&wamn_schema_generator::output_root(root))?
+    let suffix = PathBuf::from(domain).join(format!("{action}.{side}.json"));
+    files(&generated(root))?
         .into_iter()
         .find(|path| path.ends_with(&suffix))
         .map(|path| read_json(&path))

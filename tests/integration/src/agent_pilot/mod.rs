@@ -482,12 +482,14 @@ fn checks(context: &GradeContext, steps: &[Value], loop_pass: bool) -> anyhow::R
     } else {
         "fail"
     };
+    let generated = contracts::generated(&context.grading.root);
+    let contract_files = contracts::files(&generated)?;
     let mut wrong = Vec::new();
-    for path in contracts::files(&context.grading.root)? {
+    for path in &contract_files {
         if wrong.len() == 5 {
             break;
         }
-        if let Ok(source) = fs::read_to_string(&path) {
+        if let Ok(source) = fs::read_to_string(path) {
             let version = source.match_indices("row_ver").any(|(at, _)| {
                 source[at + 7..]
                     .chars()
@@ -503,7 +505,9 @@ fn checks(context: &GradeContext, steps: &[Value], loop_pass: bool) -> anyhow::R
             }
         }
     }
-    let row_version = if wrong.is_empty() {
+    let row_version = if contract_files.is_empty() {
+        format!("fail: no generated contract under {}", generated.display())
+    } else if wrong.is_empty() {
         "pass".to_owned()
     } else {
         format!("fail: {} ", wrong.join(" "))

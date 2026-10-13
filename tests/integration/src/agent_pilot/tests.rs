@@ -205,6 +205,30 @@ async fn recorded_run_grades_without_live_services() {
 }
 
 #[tokio::test]
+async fn row_version_check_reads_the_generated_contracts() {
+    let root = directory();
+    recorded_input(root.path());
+    let (_, report) = replay(root.path()).await;
+    assert!(
+        report["checks"]["row_version"]
+            .as_str()
+            .unwrap()
+            .starts_with("fail: no generated contract under ")
+    );
+    contract(root.path(), "dock", "create", FLAT_CREATE, "{}");
+    let (_, report) = replay(root.path()).await;
+    assert_eq!(report["checks"]["row_version"], "pass");
+    contract(root.path(), "dock", "update", "{\"row_ver\":1}", "{}");
+    let (_, report) = replay(root.path()).await;
+    assert!(
+        report["checks"]["row_version"]
+            .as_str()
+            .unwrap()
+            .contains("update.input.json")
+    );
+}
+
+#[tokio::test]
 async fn replay_preserves_all_three_original_records() {
     let root = directory();
     recorded_input(root.path());
