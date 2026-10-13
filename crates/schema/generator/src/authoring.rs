@@ -179,8 +179,9 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
 ///
 /// # Errors
 ///
-/// When no `kcl` runs, or when KCL refuses the file (the error names its path
-/// and line).
+/// When no `kcl` runs, or when KCL refuses the file. The error names `file`
+/// and the line: KCL reports the private copy it compiled, and the error maps
+/// that copy's path back to `file`.
 pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
     let source = fs::read(file).with_context(|| format!("read {}", file.display()))?;
     let module = SchemaModule::write(
@@ -194,10 +195,14 @@ pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
     // directory that holds only it.
     let directory = module.root.join("document");
     fs::create_dir_all(&directory).with_context(|| format!("create {}", directory.display()))?;
-    fs::write(directory.join("document.k"), source)
-        .with_context(|| format!("copy {}", file.display()))?;
-    run_kcl(&module, &directory, Path::new("document.k"))
-        .with_context(|| format!("compile {}", file.display()))
+    let copy = directory.join("document.k");
+    fs::write(&copy, source).with_context(|| format!("copy {}", file.display()))?;
+    run_kcl(&module, &directory, Path::new("document.k")).map_err(|error| {
+        anyhow::anyhow!(
+            "{}",
+            format!("{error:#}").replace(&copy.display().to_string(), &file.display().to_string())
+        )
+    })
 }
 
 /// Run `kcl` on one file in `directory` against one schema module.
@@ -669,6 +674,22 @@ mod tests {
                 .expect("JSON"),
             serde_json::from_slice::<Value>(authored).expect("JSON")
         );
+    }
+
+    #[test]
+    fn an_environment_error_names_the_document_not_its_private_copy() {
+        let directory =
+            std::env::temp_dir().join(format!("wamn-authoring-environment-{}", std::process::id()));
+        fs::create_dir_all(&directory).expect("create the directory");
+        let file = directory.join("environment.k");
+        fs::write(&file, "a = 1\nb = a +\n").expect("write the document");
+        let error = format!(
+            "{:#}",
+            compile_environment(&file).expect_err("KCL refuses the document")
+        );
+        fs::remove_dir_all(&directory).expect("remove the directory");
+        assert!(error.contains(&format!("{}:2:", file.display())), "{error}");
+        assert!(!error.contains("document.k"), "{error}");
     }
 
     #[test]
