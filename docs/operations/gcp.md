@@ -447,6 +447,29 @@ On 2026-09-30 the `wamn-ctl` image of `b89dd2ea5` took 1 second to build from wa
 On 2026-10-01 the `wamn-ctl` image of `87c406afa` (`wamn-rjtf`) took 960 seconds to build and 6 seconds to push. The two Jobs pin it in place of `src-4efb827f3fd6ab78`. Do not run the old image again: it writes the registry row on a PAT run, and without `--secret-namespace` it records NULL.
 On 2026-09-27 the third identity image, with the org and project filter of finding `wamn-9a3v`, took 102 seconds to build and 6 seconds to push. The rollout took 9 seconds.
 
+### 3.4.1 Platform build
+
+`wamn-ctl env apply` takes the host image, the `http` and `materializer` role components and the qualification images from the release chart that `wamn-ctl build-platform` stamps ([delivery](delivery.md#release-qualification)). The build tags each image `0.1.0`, the version of `release_chart::CHART_VERSION`, and the repository `wamn` has immutable tags, so one chart version is pushed once. Make sure that its inputs are complete before you start it, because it pushes each image as soon as that image is built.
+
+The runner image compiles the Receiving and WMS cases against the package outputs in `apps/target/wamn`. Build every package that they read first, with the Postgres server that [building](building.md#wamn-build) asks for:
+
+```bash
+DATABASE_URL=<superuser URL> target/debug/wamn build apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
+```
+
+Without `apps/client_acme_receiving`, the runner build stops with `could not compile wamn-receiving-tests` after the host image is already pushed.
+
+A token from `docker login` expires after one hour, and the build takes longer. Give `DOCKER_CONFIG` the gcloud credential helper instead, so each push gets a new token. The file carries no credential:
+
+```bash
+mkdir -m 700 <your directory>
+echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > <your directory>/config.json
+DOCKER_CONFIG=<your directory> target/debug/wamn-ctl build-platform \
+  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out <chart directory>
+```
+
+On 2026-10-13 (`wamn-rk9l2`) the first run left out `apps/client_acme_receiving`. It pushed `wamn-host:0.1.0` (`sha256:55d6ce4a267620d5a6577118e76c2195dd769e7bceffb313a5459b23911b3bf2`) and then failed in the runner build. A local rebuild of the host target from the same commit, with no push, gave the same image ID, `sha256:ca33979a26a10fef21d85975a6392b4ab2b9e79c4b33a08ff8a08d0f7cb65048`.
+
 ### 3.5 Event NATS
 
 Write the users of the environment into a private directory. The org was `wamn` at first and is now `dkk` (section 3.7), so the program ran again and every Secret below was replaced with `kubectl create --dry-run=client -o yaml | kubectl apply -f -`. The example program calls `event_broker::prepare`, the derivation of the cluster tests, and adds the `tap-admin` user that creates the `WAMN_TAP` stream:
