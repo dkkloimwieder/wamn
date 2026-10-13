@@ -166,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
-        Command::Env(command) => env_verbs::run(command).await,
+        Command::Env(command) => Box::pin(env_verbs::run(command)).await,
     }
 }
 
