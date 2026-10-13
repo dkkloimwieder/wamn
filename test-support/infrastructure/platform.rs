@@ -117,6 +117,13 @@ pub async fn install(
         &serde_json::from_slice(&binding).context("parse operator event RoleBinding")?,
         namespace,
     )?;
+    // The platform-owned ServiceAccount every release chart host runs as.
+    checked(
+        kubectl(&kubeconfig, &context)
+            .args(["-n", namespace, "apply", "-f"])
+            .arg(repository.join("deploy/platform/wamn-host-serviceaccount.yaml")),
+    )
+    .await?;
 
     checked(
         kubectl(&kubeconfig, &context)

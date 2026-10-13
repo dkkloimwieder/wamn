@@ -46,6 +46,12 @@ runtime-operator:
         startupFailureThreshold: 60
     # The install values supply the one host group, named after the release.
     hostGroups: []
+    # Every host runs as the platform-owned ServiceAccount `wamn-host`, which the
+    # platform install creates in this namespace
+    # (deploy/platform/wamn-host-serviceaccount.yaml). The release creates none.
+    serviceAccount:
+      create: false
+      name: wamn-host
 
 platform:
   # The role component images of the platform image set: `<repository>@sha256:<hex>`.

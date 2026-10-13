@@ -1015,6 +1015,40 @@ done
 
 A later environment adds its key through the patch of its administration prepare, and `env delete` removes it.
 
+### 3.23 Platform install inputs
+
+The platform install makes these objects once. `env apply` makes none of them and touches no IAM. A recreate of the cluster must make them again before the first `env apply`.
+
+The Kubernetes service account `wamn-host`, in the release namespace `hosts` (`WAMN_RELEASE_NAMESPACE`). Every host of every environment runs as it, because the release chart sets `serviceAccount.create=false` and `name=wamn-host` (owner ruling 2026-10-13, `wamn-okr8y`). Isolation between environments stays the host selector (R6). The account carries the annotation `iam.gke.io/gcp-service-account` for the Google service account `wamn-blob` of section 5.1, and `wamn-blob` has one `roles/iam.workloadIdentityUser` binding for it:
+
+```bash
+kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
+kubectl -n hosts annotate serviceaccount wamn-host --overwrite \
+  iam.gke.io/gcp-service-account=wamn-blob@wamn-dev.iam.gserviceaccount.com
+gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+  --role roles/iam.workloadIdentityUser \
+  --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
+```
+
+The Secret `identity-resend` in namespace `identity`, key `api-key`. The owner supplies it from a file (section 3.10). No file in the repository holds it, so a recreate does not restore it. Identity reads it as `RESEND_API_KEY` through `secretKeyRef`, so only a pod start reads it.
+
+To create it, the owner writes the key to a file with mode 0600, never to an environment variable or the shell history, before identity is installed:
+
+```bash
+kubectl -n identity create secret generic identity-resend --from-file=api-key=<file>
+```
+
+To rotate it, create the new key in Resend and write it to a new file with mode 0600. Replace the Secret and restart identity:
+
+```bash
+kubectl -n identity create secret generic identity-resend --from-file=api-key=<file> \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n identity rollout restart deploy/identity
+kubectl -n identity rollout status deploy/identity --timeout=300s
+```
+
+Send one recovery mail (section 4.2.1) to prove delivery. Then revoke the old key in Resend and delete the file.
+
 ## 4. Public edge
 
 Step 4 ran on 2026-09-27. Pool `main` stays at 2 nodes until step 4 ends. If the guard scales it to 0 first, scale it back as in section 3.17.

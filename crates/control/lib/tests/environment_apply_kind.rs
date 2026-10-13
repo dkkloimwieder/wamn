@@ -448,6 +448,20 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         ],
     )
     .await?;
+    // The platform-owned ServiceAccount every release chart host runs as.
+    run.run(
+        "kubectl",
+        &[
+            "-n",
+            NAMESPACE,
+            "apply",
+            "-f",
+            &repository
+                .join("deploy/platform/wamn-host-serviceaccount.yaml")
+                .to_string_lossy(),
+        ],
+    )
+    .await?;
     run.run(
         "kubectl",
         &[
@@ -1194,8 +1208,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         &format!("kubectl -n {NAMESPACE} get deployments,services,workloaddeployments,secrets,configmaps -o name; kubectl get pods -l wasmcloud.com/hostgroup=<release> -o json"),
         json!({"dev": dev_names, "qa": qa_names, "shared": shared, "mounts": mounts,
             "review": "Shared in the namespace, by design: the operator release's TLS Secrets \
-                (wasmcloud-runtime-tls, wasmcloud-data-tls, the CA) and ServiceAccount, which \
-                every host mounts by fixed name (R6); the registry Secret apply-registry of this \
+                (wasmcloud-runtime-tls, wasmcloud-data-tls, the CA), which every host mounts by \
+                fixed name (R6); the platform ServiceAccount wamn-host, which every host runs as; the registry Secret apply-registry of this \
                 test. Every environment Secret is <family prefix><org>--<project>--<env>, every \
                 chart object is named after r-<slug>-<hash>."}),
         !dev_names.is_empty() && !qa_names.is_empty() && shared.is_empty() && own,

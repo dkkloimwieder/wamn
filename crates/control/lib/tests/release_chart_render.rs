@@ -173,15 +173,15 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     let kinds: BTreeSet<(String, String)> = documents.iter().map(kind_name).collect();
 
     // R6 (1): one Deployment, the role WorkloadDeployments and their Service, and
-    // the subchart's own ServiceAccount and NetworkPolicy (owner ruling
-    // 2026-10-07). No hook, Job, Secret, CRD or other custom resource.
+    // the subchart's own NetworkPolicy (owner ruling 2026-10-07). No
+    // ServiceAccount (owner ruling 2026-10-13), hook, Job, Secret, CRD or other
+    // custom resource.
     let expected: BTreeSet<(String, String)> = [
         ("Deployment", format!("hostgroup-{name}")),
         ("WorkloadDeployment", format!("{name}-http")),
         ("WorkloadDeployment", format!("{name}-materializer")),
         ("Service", format!("{name}-http")),
         ("NetworkPolicy", format!("hostgroup-{name}")),
-        ("ServiceAccount", format!("{name}-runtime-operator-runtime")),
     ]
     .into_iter()
     .map(|(kind, name)| (kind.to_owned(), name))
@@ -222,6 +222,8 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         pod["metadata"]["annotations"]["wamn.environment"].as_str(),
         Some("acme/wms/prod")
     );
+    // The host runs as the platform-owned ServiceAccount (owner ruling 2026-10-13).
+    assert_eq!(pod["spec"]["serviceAccountName"].as_str(), Some("wamn-host"));
     // R20: the policy's drain bound is the pod's grace period.
     assert_eq!(
         pod["spec"]["terminationGracePeriodSeconds"].as_u64(),
