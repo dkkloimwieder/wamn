@@ -43,14 +43,14 @@ Two places print the same line: `washlet/mod.rs:679` for the scheduler client an
 
 | Place | Today |
 | --- | --- |
-| Install | Chart `oci://ghcr.io/wasmcloud/charts/runtime-operator` 2.10.0 with `deploy/infra/values-wamn.yaml`, image `ghcr.io/wasmcloud/runtime-operator:2.10.0`. The chart has `restartPolicy: Always`, a startup probe (`/healthz`, 5 s × 24), a liveness probe (`/healthz`, 15 s delay, 20 s × 3) and a readiness probe (`/readyz`, 10 s × 3). WAMN sets no probe values. |
+| Install | Chart `oci://ghcr.io/wasmcloud/charts/runtime-operator` 2.10.3, image `ghcr.io/wasmcloud/runtime-operator:2.10.3` (wamn-ifh7, 2026-10-13). `pkg/wasmbus/nats.go` and `cmd/main.go` are the same at tags v2.10.0 and v2.10.3 and on upstream main. The chart has `restartPolicy: Always`, a startup probe (`/healthz`, 5 s × 24), a liveness probe (`/healthz`, 15 s delay, 20 s × 3) and a readiness probe (`/readyz`, 10 s × 3). WAMN sets no probe values. |
 | Options | `pkg/wasmbus/nats.go:58-71`: `Timeout(5s)`, `ReconnectWait(1s)`, `MaxReconnects(-1)`, `PingInterval(1m)`, `MaxPingsOutstanding(1)`. Released `runtime-operator/v2.8.0` has the same `MaxReconnects(-1)`, which came with upstream `3ee85fd8` (v2.4.0). |
 | First connect | `NatsConnectContext` retries for 60 s, but only on the errors that `worthRetrying` names: no servers, `ErrTimeout`, connection refused, host or network unreachable, and a DNS name that does not exist yet (`nats.go:108-129`). A `dial tcp ...: i/o timeout` is a general network timeout and is not on the list, so the call fails after one 5 s dial. `main.go:311-314` then exits 1. This is the upstream gap of `wamn-10yt.76`. |
 | Liveness | `/healthz` fails only when the connection is closed for good (`main.go:319-356`). With `MaxReconnects(-1)` the connection never closes, so an outage alone does not fail liveness. |
 | Flags | `nats-url`, the credentials and TLS flags, `nats-tls-first` and the manager flags (`main.go:86-147`). No flag sets the reconnect count, the first-connect window or the retry list. `NatsInitialConnectWindow` is a package variable. |
 | Needs | The operator reads host heartbeats on `runtime.operator.heartbeat.>` and sends `workload.start`, `workload.status` and `workload.stop` to hosts. Without NATS it reconciles no Host and no workload. |
 
-The source is the local checkout `f9b37fc`, whose chart and app versions read 2.10.0. No release tag of 2.10.0 is in the local wasmCloud clone, so the match with the image is by version string only.
+The source is upstream tag `v2.10.3` (wamn-ifh7, 2026-10-13). The earlier reading of the local checkout `f9b37fc` (versions 2.10.0) matches it line for line.
 
 The first-connect crash-loop follows from the source. The exit with code 0, 64 to 133 s into an outage, does not. Code 0 means the manager stopped on a signal, which is an outside SIGTERM, for example from the kubelet. The source fails liveness only on a closed connection, which `MaxReconnects(-1)` prevents. `docs/architecture/native-alignment.md:55-57` records it as the unresolved fault-time liveness delay. The results of that run under `~/.cache/wamn-sweeps/as5u` no longer exist.
 
