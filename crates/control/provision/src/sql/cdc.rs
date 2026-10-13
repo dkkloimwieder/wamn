@@ -94,6 +94,12 @@ pub fn create_publication_sql(publication: &str, schema: &str) -> String {
     )
 }
 
+/// Whether the CDC publication `$1` exists: one row when it does. Run
+/// connected to the project-env database, the database the publication is
+/// bound to. `apply` judges its CDC ensure by this observation
+/// (docs/plan/platform-deploy.md §10.1 step 4).
+pub const PUBLICATION_PROBE_SQL: &str = "SELECT 1 FROM pg_publication WHERE pubname = $1";
+
 /// The `publish` parameter of every CDC publication: insert, update and
 /// delete, never truncate. [`create_publication_sql`] and the CNPG
 /// `Publication` CR of [`crate::database::render_project_env_publication`]

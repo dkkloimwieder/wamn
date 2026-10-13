@@ -203,35 +203,33 @@ async fn enable_cdc(
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut password)
         .map_err(|_| anyhow::anyhow!("generate the replication password"))?;
     let cdc_sql_file = args.root.join("cdc.sql");
-    let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(
-        &crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
-            org: identity.org.clone(),
-            project: identity.project.clone(),
-            env: identity.environment.clone(),
-            schema: identity.schema.clone(),
-            system_database_url: Some(args.system_database_url.clone()),
-            cluster: None,
-            replication_password: hex::encode(password),
-            db_host: target.host_str().map(str::to_owned),
-            db_port: target.port_or_known_default().unwrap_or(5432),
-            namespace: "wamn-system".to_owned(),
-            cluster_namespace: "wamn-system".to_owned(),
-            secret_namespace: None,
-            stream: None,
-            nats_url: inputs.event_nats_url.clone(),
-            nats_username: args.event_provisioning_username.clone(),
-            nats_password_file: args.event_provisioning_password_file.clone(),
-            stream_replicas: inputs.stream_replicas,
-            dup_window_secs: inputs.dup_window_secs,
-            consumer_config,
-            // The role SQL carries the password, so it stays in memory.
-            emit_role_sql: None,
-            emit_cdc_sql: None,
-            emit_publication: None,
-            emit_secret: None,
-        },
-    )
-    .await?;
+    let request = crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
+        org: identity.org.clone(),
+        project: identity.project.clone(),
+        env: identity.environment.clone(),
+        schema: identity.schema.clone(),
+        system_database_url: Some(args.system_database_url.clone()),
+        cluster: None,
+        replication_password: hex::encode(password),
+        db_host: target.host_str().map(str::to_owned),
+        db_port: target.port_or_known_default().unwrap_or(5432),
+        namespace: "wamn-system".to_owned(),
+        cluster_namespace: "wamn-system".to_owned(),
+        secret_namespace: None,
+        stream: None,
+        nats_url: inputs.event_nats_url.clone(),
+        nats_username: args.event_provisioning_username.clone(),
+        nats_password_file: args.event_provisioning_password_file.clone(),
+        stream_replicas: inputs.stream_replicas,
+        dup_window_secs: inputs.dup_window_secs,
+        consumer_config,
+        // The role SQL carries the password, so it stays in memory.
+        emit_role_sql: None,
+        emit_cdc_sql: None,
+        emit_publication: None,
+        emit_secret: None,
+    };
+    let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(&request).await?;
     // No CNPG operator runs here, so the superuser that local dev holds creates
     // the publication with the statement the fixtures use. It follows the
     // schema guard of the bundle, and no write precedes it.
@@ -251,6 +249,7 @@ async fn enable_cdc(
         .batch_execute(&outcome.role_sql)
         .await
         .context("apply the replication role SQL")?;
+    crate::enable_cdc_project_env::record_event_reader(&request, &outcome).await?;
     let cdc_url = outcome.secret["stringData"]["url"]
         .as_str()
         .context("the CDC Secret carries its url")?

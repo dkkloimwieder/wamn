@@ -221,8 +221,9 @@ pub async fn ensure(
 
 /// Ensure CDC capture of the packages' model schema: the source stream, the
 /// replication role, the slot, the `Publication` CR and the replication
-/// Secret. A recorded CDC reader is the observation that it exists; a package
-/// set with no model schema captures nothing.
+/// Secret, then the CDC reader registration, written last. [`cdc_in_place`]
+/// is the observation that it exists; a package set with no model schema
+/// captures nothing.
 ///
 /// # Errors
 ///
@@ -246,20 +247,21 @@ pub(super) async fn ensure_cdc(
              one schema"
         ),
     };
+    let triple = document.triple();
+    let instance = read_project_env_instance(&platform.system_database_url, &triple).await?;
+    let cdc_name = wamn_control_provision::cdc_object_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        &instance,
+    );
+    let project = connect(&project_url(platform, &triple).await?).await?;
     let system = connect(&platform.system_database_url).await?;
     system
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("SET ROLE wamn_system")?;
-    let recorded = system
-        .query_opt(
-            "SELECT 1 FROM registry.event_readers WHERE org = $1 AND project = $2 AND env = $3",
-            &[&document.org, &document.project, &document.env],
-        )
-        .await
-        .context("read the CDC reader registration")?
-        .is_some();
-    if recorded {
+    if cdc_in_place(&system, &project, &triple, &cdc_name).await? {
         return Ok(());
     }
     let EventBroker {
@@ -272,7 +274,6 @@ pub(super) async fn ensure_cdc(
         "the release's packages declare a model schema and the environment has no CDC reader; \
          set WAMN_EVENT_NATS_URL, WAMN_EVENT_NATS_USERNAME and WAMN_EVENT_NATS_PASSWORD_FILE",
     )?;
-    let triple = document.triple();
     let tenant =
         wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
     let consumers =
@@ -281,35 +282,34 @@ pub(super) async fn ensure_cdc(
             .map(serde_json::to_string)
             .collect::<Result<Vec<_>, _>>()?;
     let namespace = platform.target.namespace.as_str();
-    let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(
-        &crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            schema,
-            system_database_url: Some(platform.system_database_url.clone()),
-            cluster: None,
-            replication_password: random_password()?,
-            db_host: platform.database_host.clone(),
-            db_port: platform.database_port,
-            namespace: namespace.to_owned(),
-            cluster_namespace: platform.database_namespace.clone(),
-            secret_namespace: Some(namespace.to_owned()),
-            stream: None,
-            nats_url,
-            nats_username,
-            nats_password_file,
-            stream_replicas,
-            dup_window_secs,
-            consumer_config: consumers,
-            emit_role_sql: None,
-            emit_cdc_sql: None,
-            emit_publication: None,
-            emit_secret: None,
-        },
-    )
-    .await
-    .context("enable CDC")?;
+    let request = crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        schema,
+        system_database_url: Some(platform.system_database_url.clone()),
+        cluster: None,
+        replication_password: random_password()?,
+        db_host: platform.database_host.clone(),
+        db_port: platform.database_port,
+        namespace: namespace.to_owned(),
+        cluster_namespace: platform.database_namespace.clone(),
+        secret_namespace: Some(namespace.to_owned()),
+        stream: None,
+        nats_url,
+        nats_username,
+        nats_password_file,
+        stream_replicas,
+        dup_window_secs,
+        consumer_config: consumers,
+        emit_role_sql: None,
+        emit_cdc_sql: None,
+        emit_publication: None,
+        emit_secret: None,
+    };
+    let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(&request)
+        .await
+        .context("enable CDC")?;
     // `CREATE ROLE` needs the operator's admin login, which `system` gave up
     // when it set the role to the registry owner.
     connect(&platform.system_database_url)
@@ -317,8 +317,7 @@ pub(super) async fn ensure_cdc(
         .batch_execute(&outcome.role_sql)
         .await
         .context("run the replication role SQL")?;
-    connect(&project_url(platform, &triple).await?)
-        .await?
+    project
         .batch_execute(&outcome.cdc_sql)
         .await
         .context("run the CDC SQL")?;
@@ -342,9 +341,50 @@ pub(super) async fn ensure_cdc(
         &document.org,
         &document.project,
         &document.env,
-        &read_project_env_instance(&platform.system_database_url, &triple).await?,
+        &instance,
     );
-    wait_applied(platform, "publication", &database).await
+    wait_applied(platform, "publication", &database).await?;
+    crate::enable_cdc_project_env::record_event_reader(&request, &outcome)
+        .await
+        .context("record the CDC reader")
+}
+
+/// Whether the environment's CDC is in place, judged by what it observes: the
+/// publication `cdc_name` exists in the project database and the CDC reader
+/// is recorded. [`ensure_cdc`] records the reader last, so a reader recorded
+/// beside a missing publication, or a publication with no reader, is a
+/// partial ensure that the next apply completes.
+///
+/// `system` reads the registry, `project` is connected to the project-env
+/// database.
+///
+/// # Errors
+///
+/// When a read fails.
+pub async fn cdc_in_place(
+    system: &tokio_postgres::Client,
+    project: &tokio_postgres::Client,
+    triple: &Triple,
+    cdc_name: &str,
+) -> anyhow::Result<bool> {
+    let publication = project
+        .query_opt(
+            wamn_control_provision::sql::PUBLICATION_PROBE_SQL,
+            &[&cdc_name],
+        )
+        .await
+        .context("probe the CDC publication")?
+        .is_some();
+    let env = triple.env.as_str();
+    let recorded = system
+        .query_opt(
+            "SELECT 1 FROM registry.event_readers WHERE org = $1 AND project = $2 AND env = $3",
+            &[&triple.org, &triple.project, &env],
+        )
+        .await
+        .context("read the CDC reader registration")?
+        .is_some();
+    Ok(publication && recorded)
 }
 
 /// The URL of the environment's project database: the system URL's login on

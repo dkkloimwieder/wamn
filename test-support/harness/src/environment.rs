@@ -159,7 +159,7 @@ pub async fn configure_cdc(
         .clone()
         .context("set the CDC Secret output path")?;
     let schema = args.schema.clone();
-    enable_cdc_project_env::enable_cdc_project_env(&args)
+    let outcome = enable_cdc_project_env::enable_cdc_project_env(&args)
         .await
         .context("configure the declared CDC reader")?;
     let configuration: tokio_postgres::Config = secret_value(&secret_path, "url")?
@@ -199,5 +199,7 @@ pub async fn configure_cdc(
         .batch_execute(&sql::grant_replication_access_sql(database, role, &schema))
         .await
         .context("apply the declared CDC grants")?;
-    Ok(())
+    enable_cdc_project_env::record_event_reader(&args, &outcome)
+        .await
+        .context("record the CDC reader")
 }

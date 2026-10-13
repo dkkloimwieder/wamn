@@ -3,8 +3,9 @@
 //! may be enabled long after provisioning, so it is its own overlay rather than
 //! a `provision-project-env` flag.
 //!
-//! Provisioning creates the declared broker objects and records the CDC reader.
-//! The runbook applies the emitted PostgreSQL and Kubernetes files in this order:
+//! Provisioning creates the declared broker objects. The runbook applies the
+//! emitted PostgreSQL and Kubernetes files in this order, then records the CDC
+//! reader with [`record_event_reader`]:
 //!
 //! 1. apply the emitted **replication-role SQL** to the target cluster's
 //!    superuser (any database — roles are cluster-global);
@@ -21,10 +22,10 @@
 //! Existing broker objects must match the fields their declarations own.
 //!
 //! What this tool does directly (given `--system-database-url`): derive the
-//! target cluster from the org's placement, and record the
-//! `registry.event_readers` registration (as the `wamn_system` owner). The
-//! registration's project-env FK makes the overlay ordering structural: an
-//! unprovisioned env is rejected.
+//! target cluster from the org's placement. [`record_event_reader`] records the
+//! `registry.event_readers` registration (as the `wamn_system` owner) once the
+//! files are applied. The registration's project-env FK makes the overlay
+//! ordering structural: an unprovisioned env is rejected.
 //!
 //! One shared name serves the publication, the slot, and the role
 //! (`wamn_cdc_<org>__<project>__<env>__<instance>` — underscored, a slot admits only
@@ -151,8 +152,9 @@ pub struct EnableCdcProjectEnvOutcome {
     pub secret: Value,
 }
 
-/// Provision the declared broker objects, write the requested CDC artifacts, and
-/// record the CDC reader registration.
+/// Provision the declared broker objects and write the requested CDC
+/// artifacts. The caller applies them, then records the CDC reader with
+/// [`record_event_reader`].
 pub async fn enable_cdc_project_env(
     args: &EnableCdcProjectEnvRequest,
 ) -> anyhow::Result<EnableCdcProjectEnvOutcome> {
@@ -268,17 +270,6 @@ pub async fn enable_cdc_project_env(
         &serde_json::to_string_pretty(&secret_doc)?,
     )?;
 
-    record_event_reader(
-        system_url,
-        &triple,
-        &args.schema,
-        &cdc_name,
-        &stream,
-        &secret_name,
-        args.secret_namespace.as_deref(),
-    )
-    .await?;
-
     Ok(EnableCdcProjectEnvOutcome {
         triple,
         cdc_name,
@@ -311,19 +302,34 @@ fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
     )
 }
 
-/// Record the CDC reader registration in the registry (idempotent + refreshing).
-/// Connects as superuser and `SET ROLE wamn_system` (the registry owner), then
-/// runs the pure `wamn-control-registry` builder. The publication and slot share
-/// `cdc_name`, and `schema` is the schema that the publication covers.
-async fn record_event_reader(
-    system_url: &str,
-    triple: &Triple,
-    schema: &str,
-    cdc_name: &str,
-    stream: &str,
-    secret_name: &str,
-    secret_namespace: Option<&str>,
+/// Record the CDC reader registration of `outcome` in the registry
+/// (idempotent + refreshing). The caller records it last, once the role SQL,
+/// the CDC SQL, the publication and the Secret are in place, so a registration
+/// names a reader that can start. Connects as superuser and `SET ROLE
+/// wamn_system` (the registry owner), then runs the pure
+/// `wamn-control-registry` builder. The publication and slot share `cdc_name`,
+/// and `schema` is the schema that the publication covers.
+///
+/// # Errors
+///
+/// When the system database refuses the connection or the write.
+pub async fn record_event_reader(
+    args: &EnableCdcProjectEnvRequest,
+    outcome: &EnableCdcProjectEnvOutcome,
 ) -> anyhow::Result<()> {
+    let system_url = args
+        .system_database_url
+        .as_deref()
+        .context("--system-database-url is required to record the CDC reader")?;
+    let EnableCdcProjectEnvOutcome {
+        triple,
+        cdc_name,
+        stream,
+        secret_name,
+        ..
+    } = outcome;
+    let schema = &args.schema;
+    let secret_namespace = args.secret_namespace.as_deref();
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
