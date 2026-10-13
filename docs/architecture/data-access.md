@@ -711,7 +711,7 @@ Every path that turns a stored principal into a caller also refuses the platform
 The identity issuer and wamn-ctl bind `wamn:provisioning` in each write transaction.
 wamn-identity issues each token in its own transaction.
 wamn-ctl creates service principals, assigns project roles, grants and revokes memberships, and revokes tokens in the same way.
-`wamn-ctl invite` and `provision-org --owner-email` write org memberships and org roles in the same way.
+`wamn-ctl invite` and `provision-org --admin` write org memberships and org roles in the same way.
 A control route of the control serving root binds the calling org admin, as the [execution page](execution.md#host-run-routes) states.
 Test fixtures bind `wamn:provisioning` for platform setup, or a principal row that they insert.
 The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` to just after `created_at`.

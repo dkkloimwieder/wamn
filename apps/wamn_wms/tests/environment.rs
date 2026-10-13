@@ -165,7 +165,7 @@ pub async fn provision_project(
         template: wamn_control_registry::Template::trials(),
         pool: CLUSTER.to_owned(),
         cluster_namespace: "wamn-system".into(),
-        owner_email: None,
+        admin: None,
         system_database_url: Some(inputs.system_pg_url.clone()),
     })
     .await?;

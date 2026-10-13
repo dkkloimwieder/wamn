@@ -691,7 +691,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         pool: PG_CLUSTER.to_owned(),
         system_database_url: Some(system_url.clone()),
         cluster_namespace: NAMESPACE.to_owned(),
-        owner_email: None,
+        admin: None,
     })
     .await?;
     system

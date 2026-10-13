@@ -50,6 +50,7 @@ wamn-ctl provision-system --system-url "$SYSTEM_ADMIN_URL" --platform-domain "$P
 The verb installs the record history, the system schema and the portable store as `wamn_system`, and closes the PUBLIC `CONNECT` and `TEMPORARY` floors.
 It refuses a database that already has the schema `registry`.
 Then run the verbs in this order: `provision-org`, `provision-project-env`, `provision-identity-issuer`, `reconcile-run-plane`, `push-package`, `apply-package`, `reconcile-package-data-access`.
+`provision-org --admin EMAIL` makes that user the org's admin. When the identity store has no user, it creates the user in the same transaction as the org, so a new install needs no other verb for its first user. When users exist, the email must name one of them, or the verb refuses and writes nothing.
 
 The control host of an org holds the administration login of each environment of the org ([host-run routes](../architecture/execution.md#host-run-routes)).
 `provision-org --emit-control-administration-secret PATH` writes the empty Secret `wamn-control-administration-<org>`. Apply it before the control host starts, because the host mounts it.

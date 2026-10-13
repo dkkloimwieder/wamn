@@ -118,7 +118,7 @@ Every other org route needs a current `org-admin` row of the caller in the token
 A project route needs that row, or a current `project-admin` row of the caller in the project that the request names.
 A write runs in one transaction on a second `control` login, which holds one write at a time.
 The transaction binds `app.user_id` to the caller and `app.operation` to the sealed operation id, and it checks the role again.
-The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --owner-email` also call.
+The writes are the functions of [`wamn_platform_identity::org`](../../crates/identity/platform/src/org.rs), which `wamn-ctl invite` and `provision-org --admin` also call.
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
 The control host reads that login from the mounted Secret `wamn-control-administration-<org>`, one file per `<project>--<env>`, at each write (`--control-administration-dir`, `WAMN_CONTROL_ADMINISTRATION_DIR`).

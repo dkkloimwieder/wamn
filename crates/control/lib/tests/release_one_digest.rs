@@ -225,7 +225,7 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
         pool: "wamn-pg".to_owned(),
         system_database_url: Some(control.url().to_owned()),
         cluster_namespace: "wamn-system".to_owned(),
-        owner_email: None,
+        admin: None,
     })
     .await
     .expect("provision the org and its policies");

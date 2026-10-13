@@ -15,9 +15,11 @@
 //!    given): the placement row (idempotent upsert) plus the template's policy
 //!    rows — **insert-if-absent**, so re-provisioning keeps the org's per-env
 //!    customizations and a richer template only adds missing envs — in one
-//!    transaction, as the `wamn_system` owner. With an owner email, the same
+//!    transaction, as the `wamn_system` owner. With an admin email, the same
 //!    transaction writes that user's active org membership and `org-admin`
-//!    row, stamped `wamn:provisioning` (docs/plan/platform-ui.md §4.4);
+//!    row, stamped `wamn:provisioning` (docs/plan/platform-ui.md §4.4). On an
+//!    identity store with no user it first creates that user, the platform's
+//!    first; otherwise the email must name an existing user;
 //! 3. for a dedicated org, renders one CNPG `Cluster` CR per distinct
 //!    recovery-domain owner across the org's (post-stamp) policies
 //!    ([`wamn_control_provision::org`]), sized by each owner env's policy, and emits
@@ -49,7 +51,7 @@ use wamn_control_provision::org::OrgClusters;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 use wamn_platform_identity::{
-    PrincipalId,
+    PrincipalId, create_or_reuse_user,
     org::{activate_org_membership, grant_org_admin},
 };
 
@@ -75,11 +77,12 @@ pub struct ProvisionOrgRequest {
     /// Namespace of the rendered `Cluster` CRs and of the backup CRs beside them.
     pub cluster_namespace: String,
 
-    /// The email of an existing user principal who owns the org: the run
-    /// writes that user's active org membership and `org-admin` row. It
-    /// needs `system_database_url`. A fixture that creates the org before any
-    /// user exists passes `None`.
-    pub owner_email: Option<String>,
+    /// The email of the org's admin: the run writes that user's active org
+    /// membership and `org-admin` row. When the identity store has no user,
+    /// the run creates this user, the platform's first; otherwise the email
+    /// must name an existing user principal. It needs `system_database_url`.
+    /// A fixture that creates the org without an admin passes `None`.
+    pub admin: Option<String>,
 }
 
 /// What one org provisioning run recorded and rendered.
@@ -118,8 +121,8 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
     reg.validate()
         .map_err(|issues| anyhow::anyhow!("invalid org: {}", fmt_issues(&issues)))?;
     anyhow::ensure!(
-        request.owner_email.is_none() || request.system_database_url.is_some(),
-        "--owner-email needs --system-database-url"
+        request.admin.is_none() || request.system_database_url.is_some(),
+        "--admin needs --system-database-url"
     );
 
     // Connect to the system DB once (if given) — used to record the org + stamp
@@ -140,7 +143,7 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
     // absent), missing template envs added.
     let (policies, stamped_policies) = match &client {
         Some((c, _)) => {
-            record_org(c, &org, &stamped, request.owner_email.as_deref()).await?;
+            record_org(c, &org, &stamped, request.admin.as_deref()).await?;
             (read_env_policies(c, &org.id).await?, Some(stamped.len()))
         }
         None => (template.policies.clone(), None),
@@ -191,12 +194,12 @@ pub async fn provision_org(request: ProvisionOrgRequest) -> anyhow::Result<Provi
 /// registry owner role — the wamn-q3n.3 apply pattern). A crash mid-stamp rolls
 /// the whole record back; re-running is idempotent (the shared-cluster
 /// guardrail: refresh placement, never clobber a customized policy). The
-/// owner's rows, when an owner is named, are written in the same transaction.
+/// admin's rows, when an admin is named, are written in the same transaction.
 async fn record_org(
     client: &tokio_postgres::Client,
     org: &Org,
     stamped: &[OrgEnvPolicy],
-    owner_email: Option<&str>,
+    admin: Option<&str>,
 ) -> anyhow::Result<()> {
     client
         .batch_execute("SET ROLE wamn_system")
@@ -205,8 +208,8 @@ async fn record_org(
     client.batch_execute("BEGIN").await.context("BEGIN")?;
     let result = async {
         record_org_rows(client, org, stamped).await?;
-        match owner_email {
-            Some(email) => record_owner_rows(client, &org.id, email).await,
+        match admin {
+            Some(email) => record_admin_rows(client, &org.id, email).await,
             None => Ok(()),
         }
     }
@@ -265,15 +268,19 @@ async fn record_org_rows(
     Ok(())
 }
 
-/// The user principal an owner email names.
-const OWNER_PRINCIPAL_SQL: &str =
+/// Whether the identity store holds any user principal.
+const ANY_USER_SQL: &str = "SELECT EXISTS (SELECT FROM identity.principals WHERE type = 'user')";
+
+/// The user principal an admin email names.
+const ADMIN_PRINCIPAL_SQL: &str =
     "SELECT id::text FROM identity.principals WHERE type = 'user' AND email = $1";
 
-/// Write the owner's active org membership and `org-admin` row, stamped
+/// Write the admin's active org membership and `org-admin` row, stamped
 /// `wamn:provisioning`, inside the caller's transaction, through the one write
-/// of each. A re-run makes an inactive owner active. An email that names no
-/// user principal is refused.
-async fn record_owner_rows(
+/// of each. On an identity store with no user, the admin is created first
+/// (the email is also its display name); otherwise an email that names no
+/// user principal is refused. A re-run makes an inactive admin active.
+async fn record_admin_rows(
     client: &tokio_postgres::Client,
     org: &str,
     email: &str,
@@ -284,20 +291,32 @@ async fn record_owner_rows(
         ))
         .await
         .context("bind wamn:provisioning as the actor")?;
-    let owner: PrincipalId = client
-        .query_opt(OWNER_PRINCIPAL_SQL, &[&email])
+    let any_user: bool = client
+        .query_one(ANY_USER_SQL, &[])
         .await
-        .context("look up the owner email")?
-        .with_context(|| format!("--owner-email {email:?} names no user principal"))?
-        .get::<_, String>(0)
-        .parse()
-        .context("the owner principal id")?;
-    activate_org_membership(client, &owner, org)
+        .context("look for an existing user")?
+        .get(0);
+    let admin: PrincipalId = if any_user {
+        client
+            .query_opt(ADMIN_PRINCIPAL_SQL, &[&email])
+            .await
+            .context("look up the admin email")?
+            .with_context(|| format!("--admin {email:?} names no user principal"))?
+            .get::<_, String>(0)
+            .parse()
+            .context("the admin principal id")?
+    } else {
+        create_or_reuse_user(client, email, email)
+            .await
+            .with_context(|| format!("create the first user {email:?}"))?
+            .principal_id
+    };
+    activate_org_membership(client, &admin, org)
         .await
-        .context("write the owner's org membership")?;
-    grant_org_admin(client, &owner, org)
+        .context("write the admin's org membership")?;
+    grant_org_admin(client, &admin, org)
         .await
-        .context("write the owner's org-admin row")?;
+        .context("write the admin's org-admin row")?;
     Ok(())
 }
 

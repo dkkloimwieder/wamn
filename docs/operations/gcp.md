@@ -527,10 +527,10 @@ The verb runs once. A second run refuses, because the schema `registry` exists. 
 
 ### 3.7 Org and project environment
 
-The org id is `dkk`, because the id `wamn` is under the reserved `wamn` prefix. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Record the org on the shared cluster `wamn-pg`:
+The org id is `dkk`, because the id `wamn` is under the reserved `wamn` prefix. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Record the org on the shared cluster `wamn-pg`. `--admin` names the org's admin. On a new `wamn_system` it creates that user, the first, in the same transaction as the org. When users exist, it must name one of them:
 
 ```bash
-target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg
+target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg --admin dkkloimwieder@gmail.com
 ```
 
 Render the project environment into a private directory `P`. The verb writes files and applies nothing:
@@ -992,7 +992,7 @@ Then prepare the control credential with `provision-org`. The run changes no reg
 ```bash
 target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm
 target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg \
-  --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --db-host wamn-pg-rw.platform.svc.cluster.local \
+  --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin dkkloimwieder@gmail.com --db-host wamn-pg-rw.platform.svc.cluster.local \
   --namespace hosts --prepare-control-generation a --emit-control-secret $P/control.json
 (umask 077; jq . $P/control.json > $P/control.cluster.out) && kubectl apply -f - < $P/control.cluster.out
 ```
@@ -1927,7 +1927,7 @@ The apply took 1 second. The table owner is `wamn_system`, and `wamn_registry_re
 
 System migration `0007_org_administration.sql` (`wamn-a40n.3`) does not run by hand. It creates `identity.org_memberships` and `identity.org_roles`, renames the principal type `human` to `user` and carries the grants of the `control` family and the identity issuer. `wamn-ctl upgrade-schema --system-database-url` applies it on wamn-dev with the other migrations of its run, after the cutover entry above.
 
-The org `dkk` was provisioned before `provision-org --owner-email` existed, so it has no owner rows. After `0007`, run the invitation Job of section 4.5 for the owner with `--org-admin`. The owner is enrolled, so identity reuses the user and sends no mail:
+The org `dkk` was provisioned before `provision-org` wrote an org admin, so it has no owner rows. After `0007`, run the invitation Job of section 4.5 for the owner with `--org-admin`. The owner is enrolled, so identity reuses the user and sends no mail:
 
 ```bash
 (umask 077; sed -e 's/__EMAIL__/dkkloimwieder@gmail.com/' -e 's/__DISPLAY_NAME__/dkk/' -e 's/__ORG__/dkk/' \
