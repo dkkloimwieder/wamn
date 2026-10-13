@@ -27,7 +27,7 @@ pub(crate) struct AcceptedUpgrade {
 
 impl AcceptedUpgrade {
     /// The evidence digest.
-    pub(crate) fn qualification_sha256(&self) -> &str {
+    pub(crate) fn evidence_digest(&self) -> &str {
         &self.sha256
     }
 

@@ -135,7 +135,7 @@ pub(super) async fn apply(
             ),
             evidence_digest: accepted.as_ref().map_or_else(
                 || artifact.clone(),
-                |accepted| accepted.qualification_sha256().to_owned(),
+                |accepted| accepted.evidence_digest().to_owned(),
             ),
         };
         progress::require_no_other_stage(&tx, tenant, package_id, version, &artifact).await?;
