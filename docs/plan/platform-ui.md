@@ -746,8 +746,9 @@ Initial org role vocabulary:
 org-admin
 ```
 
-`provision-org --owner-email <email>` is required.
-It names an existing user principal and refuses an unknown email.
+`provision-org --admin <email>` is required (`wamn-sjdxt`).
+If the identity store has no user, it creates that user as the first admin in the org's transaction.
+If users exist, it names an existing user principal and refuses an unknown email.
 It writes that user's active org membership and `org-admin` row, stamped `wamn:provisioning` as every provisioning row is ([data access](../architecture/data-access.md#actors)).
 An org provisioned before the flag gets its owner through `wamn-ctl invite` with `org-admin`.
 
