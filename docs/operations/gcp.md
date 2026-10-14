@@ -2218,6 +2218,12 @@ Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.i
 
 Make the service account `wamn-host`, its annotation and its binding, and the Secret `identity-resend`, as section 3.23 says. On 2026-10-13 the account and the binding were made before section 3.23 existed, from a copy of the same manifest.
 
+Apply the read-only access of the control operation `environment.status` (section 11.4 of docs/plan/platform-deploy.md, `wamn-esnu9`):
+
+```bash
+kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
+```
+
 ### 11.6 First apply
 
 The documents are [deploy/gcp/environments/dkk--receiving--dev.k](../../deploy/gcp/environments/dkk--receiving--dev.k) and [dkk--wms--dev.k](../../deploy/gcp/environments/dkk--wms--dev.k). `publish-release` needs the environment's database and its installed packages, so the first apply names `release = "none"`. It records the environment row with a new instance suffix, and makes the `Database`, the roles, the run plane and the credential Secrets:

@@ -4,11 +4,11 @@
 #
 #   kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
 #
-# The control host group runs in the `wamn-host` runtime-operator release in
-# `hosts`, as that release's ServiceAccount
-# `wamn-host-runtime-operator-runtime`. The chart sets
-# automountServiceAccountToken false, so only the control group, which mounts a
-# projected token (deploy/gcp/values-host.yaml), can use this grant.
+# The control host group runs as the one platform service account `wamn-host`
+# in `hosts` (docs/operations/gcp.md section 3.23, wamn-okr8y). The host
+# groups set automountServiceAccountToken false, so only the control group,
+# which mounts a projected token (deploy/gcp/values-host.yaml), can use this
+# grant.
 #
 # get, list and watch on pods, deployments and workloaddeployments in `hosts`,
 # and nothing else: no Secret, no write, no other namespace.
@@ -40,5 +40,5 @@ roleRef:
   name: wamn-control-status
 subjects:
 - kind: ServiceAccount
-  name: wamn-host-runtime-operator-runtime
+  name: wamn-host
   namespace: hosts

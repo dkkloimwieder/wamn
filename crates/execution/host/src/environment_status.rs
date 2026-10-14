@@ -241,7 +241,7 @@ mod tests {
             binding["subjects"],
             json!([{
                 "kind": "ServiceAccount",
-                "name": "wamn-host-runtime-operator-runtime",
+                "name": "wamn-host",
                 "namespace": RELEASE_NAMESPACE,
             }])
         );
