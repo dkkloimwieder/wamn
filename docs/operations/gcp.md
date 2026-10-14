@@ -712,11 +712,12 @@ openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev 
 
 ### 5.1 Pool after the daily guard
 
-The guard sets pool `main` to 0 nodes every day. Scale it back to 3 nodes. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
+The guard sets pool `main` to 0 nodes every day. Scale it back to 3 nodes. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
 
 ```bash
 gcloud container clusters resize wamn --node-pool main --num-nodes 3 --zone us-central1-a --project wamn-dev --quiet
-kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=900s
+until kubectl -n platform get pod wamn-pg-1 >/dev/null 2>&1; do sleep 5; done
+kubectl -n platform wait pod/wamn-pg-1 --for=condition=Ready --timeout=900s
 kubectl -n platform rollout status statefulset/evt-nats --timeout=600s
 kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found
 kubectl apply -f deploy/gcp/nats-jetstream.yaml
