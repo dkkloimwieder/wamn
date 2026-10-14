@@ -187,11 +187,12 @@ If a step cannot connect to `127.0.0.1:15432`, start the forward again.
 
 ### 4.6 Packages and platform build
 
-`wamn build` needs a PostgreSQL server ([building](building.md#wamn-build)). Run a local one on a loopback port, and build every package that the runner image reads:
+`wamn build` needs a PostgreSQL server ([building](building.md#wamn-build)). Run a local one on a loopback port, and build every package that the runner image reads. The server takes some seconds to start. Wait for its answer on TCP:
 
 ```bash
 docker run -d --name wamn-install-build-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:0:5432 postgres:18
 PORT=$(docker port wamn-install-build-pg 5432/tcp | head -1 | sed 's/.*://')
+until docker exec wamn-install-build-pg pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do sleep 1; done
 DATABASE_URL=postgres://postgres@127.0.0.1:$PORT/postgres target/debug/wamn build \
   apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
 docker rm -f wamn-install-build-pg
