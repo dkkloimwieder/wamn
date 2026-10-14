@@ -53,7 +53,7 @@ env:
 - name: WAMN_SESSION_ISSUER
   value: https://identity.identity.svc.cluster.local
 - name: WAMN_SESSION_INSTANCE_SUFFIX
-  value: 0vaqg341
+  value: uaoq8cmt
 - name: WAMN_SESSION_JWKS_CA
   value: /etc/identity-ca/ca.crt
 volumes:
