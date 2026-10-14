@@ -1349,6 +1349,9 @@ async fn statement_run<T: 'static>(
     })?;
     trace
         .run(async move {
+            if let Err(refused) = plugin.refuse_in_host_transaction(&component_id, "run") {
+                return Ok(Err(refused));
+            }
             let active = plugin.active_statement_set(&component_id, instance);
             let statement = match resolve_statement(active.as_deref(), &statement_path, &binds) {
                 Ok(statement) => statement,
@@ -1382,12 +1385,8 @@ async fn statement_begin<T: 'static>(
     })?;
     trace
         .run(async move {
-            // The work of an operation with a host transaction runs in it.
-            if plugin.operation_transaction_for(&component_id).is_some() {
-                return Ok(Err(StatementError::Postgres(PgError::QueryError((
-                    super::operation_transaction::BEGIN_REFUSED.to_owned(),
-                    "the operation runs in its host transaction, so begin is refused".to_owned(),
-                )))));
+            if let Err(refused) = plugin.refuse_in_host_transaction(&component_id, "begin") {
+                return Ok(Err(refused));
             }
             let project = plugin.project_for(&component_id);
             let statements = plugin.active_statement_set(&component_id, instance);

@@ -63,6 +63,7 @@ pub(super) async fn run_stream<T: 'static + Send>(
     })?;
     let opened = trace
         .run(async move {
+            plugin.refuse_in_host_transaction(&component_id, "run-stream")?;
             let project = plugin.project_for(&component_id);
             let active = plugin.active_statement_set(&component_id, instance);
             let statement = admit_transaction_statement(

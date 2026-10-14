@@ -23,7 +23,8 @@ async fn command_histories() -> anyhow::Result<()> {
     let application = start(system.url(), project.url(), scratch.path()).await?;
     let result = async {
         histories(&application, project.url(), scratch.path()).await?;
-        transactional_participation(&application, project.url()).await
+        transactional_participation(&application, project.url()).await?;
+        reads(&application).await
     }
     .await;
     application.shutdown().await?;
@@ -466,6 +467,45 @@ async fn transactional_participation(
     connection
         .await
         .context("join participation database connection")??;
+    Ok(())
+}
+
+/// The reads open their own guest transaction with begin and commit, and
+/// run outside any host transaction, so the refusals of run, run-stream and
+/// begin inside one leave them unchanged (docs/plan/trx-pkg-plan.md, Spike
+/// and acceptance A, Reads unchanged).
+async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
+    let http = reqwest::Client::new();
+    let order = "00000000-0000-0000-0000-000000000720";
+    for (path, item) in [
+        ("/location/list", json!({})),
+        (
+            "/receiving/load_receipt_screen",
+            json!({"purchase_order_id": order}),
+        ),
+        (
+            "/receiving/load_purchase_order_history",
+            json!({"id": order, "limit": 10}),
+        ),
+    ] {
+        let Value::Object(item) = item else {
+            unreachable!("each read item is an object");
+        };
+        let query = wamn_execution_contract::encode_read_query(&item);
+        let response = http
+            .get(format!("{}{path}?{query}", application.endpoint))
+            .header(reqwest::header::HOST, &application.route_host)
+            .bearer_auth(&application.bearer)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.json::<Value>().await?;
+        ensure!(status.is_success(), "{path} returned {status}: {body}");
+        ensure!(
+            body.to_string().contains("\"rows\":[{"),
+            "{path} answered no rows: {body}"
+        );
+    }
     Ok(())
 }
 

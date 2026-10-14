@@ -708,7 +708,9 @@ mod tests {
         ),
         (
             "wamn-postgres.wit",
-            "package wamn:postgres@0.1.0; interface client { query: func(); }",
+            "package wamn:postgres@0.3.0; \
+             interface statements { run: func(); } \
+             interface client { query: func(); }",
         ),
         (
             "platform-fixture.wit",
@@ -1171,6 +1173,30 @@ mod tests {
         );
     }
 
+    /// An application component may not import raw SQL, even with the
+    /// `wamn:postgres` grant: its SQL goes through its statements instance.
+    #[test]
+    fn an_application_component_importing_client_refuses() {
+        let engine = crate::build_engine(&[]).expect("engine builds");
+        let bytes = component_bytes(
+            "import wamn:postgres/statements@0.3.0; import wamn:postgres/client@0.3.0;",
+        );
+        let mut request = request();
+        request.admitted_platform_packages = BTreeSet::from(["wamn:postgres".to_string()]);
+
+        let error = validate_component_admission(&engine, &bytes, request)
+            .expect_err("a client import must refuse");
+        assert_eq!(
+            error.error_type(),
+            ComponentAdmissionErrorType::ImportPolicyRefused
+        );
+        assert!(
+            error.to_string().contains("wamn:postgres/client@0.3.0")
+                && !error.to_string().contains("statements"),
+            "refusal must name client alone: {error}"
+        );
+    }
+
     #[test]
     fn a_declared_dependency_is_admitted_when_its_base_is_embedded() {
         let engine = crate::build_engine(&[]).expect("engine builds");
@@ -1342,7 +1368,7 @@ mod tests {
         let bytes = component_bytes(
             "import wasi:clocks/monotonic-clock@0.2.12; \
              import wamn:node/types@0.1.0; \
-             import wamn:postgres/client@0.1.0; \
+             import wamn:postgres/statements@0.3.0; \
              import wamn:connection/http@0.1.0;",
         );
         let mut request = request();
@@ -1370,7 +1396,7 @@ mod tests {
                 AdmittedComponentEffect {
                     package: "wamn:postgres".to_string(),
                     provenance: ComponentEffectProvenance::Imported,
-                    interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
+                    interfaces: vec!["wamn:postgres/statements@0.3.0".to_string()],
                 },
             ]
         );

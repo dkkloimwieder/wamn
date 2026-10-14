@@ -815,11 +815,16 @@ async fn typed_native_participant_runs_inside_the_owner_transaction() {
 const OPERATION_OWNER: &str = "operation-transaction-owner";
 
 /// An owner at 0.3.0 that works in the host transaction: it takes the
-/// operation transaction, sees `begin` refused, selects its participant, runs
+/// operation transaction, sees `begin`, `run` and `run-stream` refused, runs
+/// `statement` in the operation transaction, selects its participant, runs
 /// the participant, and sees its own `commit` refused. It returns true when
-/// every step answered as expected, and drops its handle.
-fn operation_owner_component() -> &'static str {
-    r#"
+/// every step answered as expected, and drops its handle. Without a host
+/// transaction it runs `statement` and begins a transaction, trapping if
+/// either fails, and returns false.
+fn operation_owner_component(statement: &str) -> String {
+    let length = statement.len();
+    format!(
+        r#"
 (component
   (import "wamn:postgres/types@0.3.0" (instance $types
     (type $sql-value' (variant (case "null") (case "boolean" bool) (case "int32" s32)
@@ -837,6 +842,7 @@ fn operation_owner_component() -> &'static str {
       (case "query-error" (tuple string string))))
     (export "pg-error" (type $pg-error (eq $pg-error')))))
   (alias export $types "sql-value" (type $sql-value))
+  (alias export $types "column" (type $column))
   (alias export $types "row-set" (type $row-set))
   (alias export $types "pg-error" (type $pg-error))
   (import "wamn:postgres/statements@0.3.0" (instance $statements
@@ -855,6 +861,14 @@ fn operation_owner_component() -> &'static str {
       (result (result (own $transaction) (error $statement-error)))))
     (export "begin" (func async
       (result (result (own $transaction) (error $statement-error)))))
+    (export "run" (func async (param "statement" string) (param "binds" (list $sql-value))
+      (result (result $row-set (error $statement-error)))))
+    (export "run-stream" (func async (param "statement" string) (param "binds" (list $sql-value))
+      (result (result (tuple (list $column) (stream (list $sql-value))
+        (future (result (error $statement-error)))) (error $statement-error)))))
+    (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
+      (param "statement" string) (param "binds" (list $sql-value))
+      (result (result $row-set (error $statement-error)))))
     (export "[method]transaction.select-participant" (func async
       (param "self" (borrow $transaction)) (param "participant-operation" string)
       (result (result (error $statement-error)))))
@@ -866,6 +880,7 @@ fn operation_owner_component() -> &'static str {
   (core module $memory
     (memory (export "memory") 1)
     (data (i32.const 16) "peer:widgets/participate@1.0.0")
+    (data (i32.const 512) "{statement}")
     (global $next (mut i32) (i32.const 1024))
     (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
       (local $ptr i32)
@@ -879,6 +894,12 @@ fn operation_owner_component() -> &'static str {
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $begin (canon lower (func $statements "begin")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $run (canon lower (func $statements "run")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $run-stream (canon lower (func $statements "run-stream")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
+  (core func $transaction-run (canon lower (func $statements "[method]transaction.run")
+    (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $select (canon lower (func $statements "[method]transaction.select-participant")
     (memory $memory "memory") (realloc (func $memory "realloc"))))
   (core func $commit (canon lower (func $statements "[method]transaction.commit")
@@ -890,6 +911,9 @@ fn operation_owner_component() -> &'static str {
     (import "memory" "memory" (memory 1))
     (import "host" "operation-transaction" (func $operation-transaction (param i32)))
     (import "host" "begin" (func $begin (param i32)))
+    (import "host" "run" (func $run (param i32 i32 i32 i32 i32)))
+    (import "host" "run-stream" (func $run-stream (param i32 i32 i32 i32 i32)))
+    (import "host" "transaction-run" (func $transaction-run (param i32 i32 i32 i32 i32 i32)))
     (import "host" "select" (func $select (param i32 i32 i32 i32)))
     (import "host" "commit" (func $commit (param i32 i32)))
     (import "host" "participant-run" (func $participant-run (result i32)))
@@ -906,12 +930,30 @@ fn operation_owner_component() -> &'static str {
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
     (func (export "run") (result i32) (local $transaction i32) (local $nested i32)
       i32.const 64 call $operation-transaction
-      i32.const 64 i32.load8_u if i32.const 0 call $return i32.const 0 return end
+      i32.const 64 i32.load8_u if
+        ;; Outside a host transaction, run and begin work as before.
+        i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 320 call $run
+        i32.const 320 i32.load8_u if unreachable end
+        i32.const 448 call $begin
+        i32.const 448 i32.load8_u if unreachable end
+        i32.const 456 i32.load call $drop
+        i32.const 0 call $return i32.const 0 return end
       i32.const 72 i32.load local.set $transaction
       ;; "2500" of 25001, active_sql_transaction.
       i32.const 256 call $begin
       i32.const 256 i32.const 0x30303532 call $refused
       i32.eqz if i32.const 0 call $return i32.const 0 return end
+      ;; run and run-stream would each commit on a connection of their own.
+      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 320 call $run
+      i32.const 320 i32.const 0x30303532 call $refused
+      i32.eqz if i32.const 0 call $return i32.const 0 return end
+      i32.const 512 i32.const {length} i32.const 0 i32.const 0 i32.const 384 call $run-stream
+      i32.const 384 i32.const 0x30303532 call $refused
+      i32.eqz if i32.const 0 call $return i32.const 0 return end
+      ;; The same statement runs in the host transaction.
+      local.get $transaction i32.const 512 i32.const {length} i32.const 0 i32.const 0
+      i32.const 448 call $transaction-run
+      i32.const 448 i32.load8_u if i32.const 0 call $return i32.const 0 return end
       local.get $transaction i32.const 16 i32.const 30 i32.const 128 call $select
       i32.const 128 i32.load8_u if i32.const 0 call $return i32.const 0 return end
       call $participant-run local.set $nested
@@ -927,12 +969,15 @@ fn operation_owner_component() -> &'static str {
     (with "host" (instance
       (export "operation-transaction" (func $operation-transaction))
       (export "begin" (func $begin)) (export "select" (func $select))
+      (export "run" (func $run)) (export "run-stream" (func $run-stream))
+      (export "transaction-run" (func $transaction-run))
       (export "commit" (func $commit)) (export "participant-run" (func $participant-run))
       (export "drop" (func $drop)) (export "return" (func $return))))))
   (func (export "run") async (result bool)
     (canon lift (core func $main "run") (memory $memory "memory")
       (realloc (func $memory "realloc")) async (callback (func $main "callback")))))
 "#
+    )
 }
 
 /// The operation transaction of `docs/plan/host-transaction.md` 4.1: the host
@@ -1046,7 +1091,9 @@ async fn the_host_owns_the_operation_transaction_and_the_participant_works_in_it
                 components: vec![
                     WorkloadComponent {
                         name: "owner".into(),
-                        bytes: wat::parse_str(operation_owner_component()).unwrap().into(),
+                        bytes: wat::parse_str(operation_owner_component(&digest))
+                            .unwrap()
+                            .into(),
                         ..WorkloadComponent::default()
                     },
                     WorkloadComponent {
@@ -1115,6 +1162,7 @@ async fn the_host_owns_the_operation_transaction_and_the_participant_works_in_it
         matches!(owner, Val::Bool(false)),
         "without a host transaction the owner gets none: {owner:?}"
     );
+    assert_eq!(value().await, 2, "without a host transaction run commits");
 
     for commit in [true, false] {
         let transaction = postgres
@@ -1132,15 +1180,23 @@ async fn the_host_owns_the_operation_transaction_and_the_participant_works_in_it
         postgres.revoke_operation_transaction(OPERATION_OWNER);
         assert_eq!(
             value().await,
-            if commit { 1 } else { 2 },
+            if commit { 2 } else { 4 },
             "nothing commits before the host"
         );
         if commit {
             transaction.commit().await.expect("the host commits");
-            assert_eq!(value().await, 2, "the participant's update commits");
+            assert_eq!(
+                value().await,
+                4,
+                "the owner's and participant's updates commit"
+            );
         } else {
             transaction.rollback().await.expect("the host rolls back");
-            assert_eq!(value().await, 2, "the participant's update rolls back");
+            assert_eq!(
+                value().await,
+                4,
+                "the owner's and participant's updates roll back"
+            );
         }
     }
 }

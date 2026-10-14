@@ -3,8 +3,10 @@
 //!
 //! The host begins it before the guest call, under the claims of the call, in
 //! the same `BEGIN` batch as every statement transaction. The guest works in
-//! it through `statements.operation-transaction`, and its `begin` refuses
-//! while it is bound. After the call the host commits or rolls it back.
+//! it through `statements.operation-transaction`, and its `begin`, `run` and
+//! `run-stream` refuse while it is bound, because each would run on a
+//! connection of its own that the host's rollback does not reach. After the
+//! call the host commits or rolls it back.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,11 +14,11 @@ use std::sync::Arc;
 use super::resources::{
     PgTransaction, StatementConnectionGuard, begin_statement_transaction, take_conn,
 };
-use super::{PgError, WamnPostgres};
+use super::{PgError, StatementError, WamnPostgres};
 
-/// The SQLSTATE of a `begin` inside an operation that has a host transaction:
-/// `active_sql_transaction`.
-pub(super) const BEGIN_REFUSED: &str = "25001";
+/// The SQLSTATE of a `begin`, `run` or `run-stream` inside an operation that
+/// has a host transaction: `active_sql_transaction`.
+pub(super) const HOST_TRANSACTION_REFUSED: &str = "25001";
 /// The SQLSTATE of a guest `commit` or `rollback` of the host transaction:
 /// `invalid_transaction_termination`.
 pub(super) const FINISH_REFUSED: &str = "2D000";
@@ -228,5 +230,21 @@ impl WamnPostgres {
             .expect("operation transactions lock poisoned")
             .get(scope)
             .cloned()
+    }
+
+    /// The refusal of `call` when `scope` has a host transaction, which the
+    /// work of the operation must run in.
+    pub(super) fn refuse_in_host_transaction(
+        &self,
+        scope: &str,
+        call: &str,
+    ) -> Result<(), StatementError> {
+        if self.operation_transaction_for(scope).is_none() {
+            return Ok(());
+        }
+        Err(StatementError::Postgres(PgError::QueryError((
+            HOST_TRANSACTION_REFUSED.to_owned(),
+            format!("the operation runs in its host transaction, so {call} is refused"),
+        ))))
     }
 }

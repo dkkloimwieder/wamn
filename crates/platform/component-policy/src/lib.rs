@@ -206,6 +206,24 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
     },
 ];
 
+/// Interfaces an application component may not import, whatever its grant,
+/// matched on the import's interface instance type at every version.
+///
+/// `wamn:postgres/client` runs raw SQL outside the admitted statements, so it
+/// would step around each member's own statements instance
+/// (`docs/plan/trx-pkg-plan.md`, `wamn:postgres` stays 0.3). Platform
+/// components keep it: they are admitted by [`analyze`], which this list does
+/// not reach.
+pub const APPLICATION_DENIED_INTERFACES: [&str; 1] = ["wamn:postgres/client"];
+
+/// Whether an application component may not import this interface instance type.
+fn is_denied_to_applications(import_name: &str) -> bool {
+    let interface = import_name
+        .rsplit_once('@')
+        .map_or(import_name, |(interface, _)| interface);
+    APPLICATION_DENIED_INTERFACES.contains(&interface)
+}
+
 /// The registry row for one full import name, matched on package AND version.
 ///
 /// `None` means refuse: either the package is unregistered, or it is registered
@@ -301,7 +319,8 @@ impl std::error::Error for TenantImportError {}
 /// unversioned package names, each of which must appear in
 /// [`CAPABILITY_REGISTRY`]. An import is accepted when it matches a registry
 /// row on package AND version, and — if that row is [`Posture::Effect`] — when
-/// its package is also in the grant. Ambient rows need no grant.
+/// its package is also in the grant. Ambient rows need no grant. An interface
+/// in [`APPLICATION_DENIED_INTERFACES`] is refused even with its grant.
 pub fn analyze_tenant(
     imports: &ComponentImports,
     admitted_platform_packages: &BTreeSet<String>,
@@ -334,6 +353,7 @@ pub fn analyze_tenant(
     let denied: Vec<_> = imports
         .iter()
         .filter(|name| match import_posture(name) {
+            _ if is_denied_to_applications(name) => true,
             None => true,
             Some(Posture::Ambient) => false,
             Some(Posture::Effect) => !admitted_platform_packages.contains(import_pkg(name)),
@@ -525,7 +545,7 @@ mod tests {
             "wasi:clocks/monotonic-clock@0.2.12".to_string(),
             "wasi:random/random@0.2.12".to_string(),
             "wasi:logging/logging@0.1.0-draft".to_string(),
-            "wamn:postgres/client@0.1.0".to_string(),
+            "wamn:postgres/statements@0.3.0".to_string(),
             "wamn:node/types@0.1.0".to_string(),
         ]);
 
@@ -647,7 +667,7 @@ mod tests {
     /// must not widen anyone's grant — this is the test that says so.
     #[test]
     fn an_effect_without_a_grant_is_refused_but_an_ambient_is_not() {
-        let effect = ComponentImports::new(["wamn:postgres/client@0.1.0".to_string()]);
+        let effect = ComponentImports::new([STATEMENTS_INTERFACE.to_string()]);
         let error = analyze_tenant(&effect, &BTreeSet::new(), "tenant-node")
             .expect_err("an ungranted effect must refuse");
         assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
@@ -693,5 +713,36 @@ mod tests {
         let error = analyze_tenant(&unlabelled, &granted, "tenant-node")
             .expect_err("a label with no interface names no capability");
         assert_eq!(error.imports(), ["sql-0"]);
+    }
+
+    /// The one deny row: an application component may not import raw SQL,
+    /// at any version and under any label, even with the `wamn:postgres`
+    /// grant. Its statements import still passes, and a platform component,
+    /// admitted by the first-party analysis, keeps `client`.
+    #[test]
+    fn an_application_component_is_refused_client_and_a_platform_component_is_not() {
+        let granted = BTreeSet::from(["wamn:postgres".to_string()]);
+        for client in [
+            instance_type("wamn:postgres/client@0.1.0", None),
+            instance_type("wamn:postgres/client@0.3.0", None),
+            instance_type("sql-0", Some("wamn:postgres/client@0.3.0")),
+        ] {
+            let imports =
+                ComponentImports::new([STATEMENTS_INTERFACE.to_string(), client.to_string()]);
+            let error = analyze_tenant(&imports, &granted, "application")
+                .expect_err("an application component must not import client");
+            assert_eq!(error.error_type(), TenantImportErrorType::UnadmittedImport);
+            assert_eq!(error.imports(), [client]);
+        }
+        let statements = ComponentImports::new([STATEMENTS_INTERFACE.to_string()]);
+        assert!(analyze_tenant(&statements, &granted, "application").is_ok());
+
+        // The imports of apps/platform/data/postgres-sqlx and
+        // apps/platform/execution/materializer.
+        let platform = ComponentImports::new([
+            "wamn:postgres/types@0.3.0".to_string(),
+            "wamn:postgres/client@0.3.0".to_string(),
+        ]);
+        assert!(analyze(&platform, PolicyProfile::FirstParty, "postgres-sqlx").is_ok());
     }
 }

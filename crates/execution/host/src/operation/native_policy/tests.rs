@@ -355,7 +355,8 @@ fn transaction_owner_component(operation: &str) -> Vec<u8> {
     )).expect("encode composed transaction owner")
 }
 
-/// The member statements imports: types, and the two calls a member makes.
+/// The member statements imports: types, the two calls a member makes in the
+/// host transaction, and the two calls that would leave it.
 /// The statements instance exports the types it uses, as `use` in WIT does.
 const MEMBER_POSTGRES: &str = r#"
       (import "wamn:postgres/types@0.3.0" (instance $types
@@ -395,12 +396,17 @@ const MEMBER_POSTGRES: &str = r#"
           (result (result (own $transaction) (error $statement-error)))))
         (export "[method]transaction.run" (func async (param "self" (borrow $transaction))
           (param "statement" string) (param "binds" (list $used-sql-value))
+          (result (result $used-row-set (error $statement-error)))))
+        (export "begin" (func async
+          (result (result (own $transaction) (error $statement-error)))))
+        (export "run" (func async (param "statement" string) (param "binds" (list $used-sql-value))
           (result (result $used-row-set (error $statement-error)))))))
 "#;
 
-/// A member's memory with both statement paths, its two lowered calls, and
+/// A member's memory with both statement paths, its lowered calls, and
 /// `$code`, which reads one `run` result as `k` (rows), `u` (unknown
-/// statement) or `e` (another error).
+/// statement) or `e` (another error), and reads a `begin` or `run` result as
+/// `r` when it is refused with SQLSTATE 25001 (active_sql_transaction).
 fn member_prelude() -> String {
     format!(
         r#"
@@ -418,19 +424,34 @@ fn member_prelude() -> String {
         (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core func $run (canon lower (func $statements "[method]transaction.run")
         (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $begin (canon lower (func $statements "begin")
+        (memory $memory "memory") (realloc (func $memory "realloc"))))
+      (core func $plain-run (canon lower (func $statements "run")
+        (memory $memory "memory") (realloc (func $memory "realloc"))))
       (core module $code
         (import "memory" "memory" (memory 16))
         (func (export "code") (param $result i32) (result i32)
           local.get $result i32.load8_u i32.eqz if i32.const 0x6b return end
           local.get $result i32.load8_u offset=8 i32.eqz if i32.const 0x75 return end
-          i32.const 0x65))
+          i32.const 0x65)
+        ;; err(postgres(query-error((state, _)))) whose state begins "2500".
+        (func (export "refused") (param $result i32) (result i32)
+          local.get $result i32.load8_u i32.const 1 i32.eq
+          local.get $result i32.load8_u offset=8 i32.const 2 i32.eq i32.and
+          local.get $result i32.load8_u offset=16 i32.const 9 i32.eq i32.and
+          local.get $result i32.load offset=28 i32.const 5 i32.eq i32.and
+          local.get $result i32.load offset=24 i32.load i32.const 0x30303532 i32.eq i32.and
+          if (result i32) i32.const 0x72 else i32.const 0x65 end))
       (core instance $code (instantiate $code (with "memory" (instance $memory))))"#
     )
 }
 
 /// The child member: `run` takes the host transaction through its own
-/// instance, names the root's statement, then its own, and returns both
-/// codes, the root's in the second byte.
+/// instance, names the root's statement, then its own. Then it does what an
+/// existing read export does, `begin` a guest transaction, and calls `run`
+/// outside the host transaction. It returns the four codes, the own run's in
+/// the low byte, the root's in the second, `begin`'s in the third and plain
+/// `run`'s in the fourth.
 fn member_child_component() -> Vec<u8> {
     wat::parse_str(format!(
         r#"(component
@@ -439,6 +460,9 @@ fn member_child_component() -> Vec<u8> {
         (import "host" "transaction" (func $transaction (param i32)))
         (import "host" "run" (func $run (param i32 i32 i32 i32 i32 i32)))
         (import "host" "code" (func $code (param i32) (result i32)))
+        (import "host" "begin" (func $begin (param i32)))
+        (import "host" "plain-run" (func $plain-run (param i32 i32 i32 i32 i32)))
+        (import "host" "refused" (func $refused (param i32) (result i32)))
         (import "memory" "memory" (memory 16))
         (func (export "run") (result i32) (local $transaction i32) (local $foreign i32)
           i32.const 64 call $transaction
@@ -449,10 +473,16 @@ fn member_child_component() -> Vec<u8> {
           i32.const 128 call $code local.set $foreign
           local.get $transaction i32.const 48 i32.const {child_len} i32.const 0 i32.const 0
           i32.const 256 call $run
-          local.get $foreign i32.const 8 i32.shl i32.const 256 call $code i32.or))
+          local.get $foreign i32.const 8 i32.shl i32.const 256 call $code i32.or
+          i32.const 384 call $begin
+          i32.const 384 call $refused i32.const 16 i32.shl i32.or
+          i32.const 48 i32.const {child_len} i32.const 0 i32.const 0 i32.const 448 call $plain-run
+          i32.const 448 call $refused i32.const 24 i32.shl i32.or))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "transaction" (func $transaction))
-          (export "run" (func $run)) (export "code" (func $code "code"))))))
+          (export "run" (func $run)) (export "code" (func $code "code"))
+          (export "begin" (func $begin)) (export "plain-run" (func $plain-run))
+          (export "refused" (func $code "refused"))))))
       (func $run async (result u32) (canon lift (core func $main "run")))
       (instance $out (export "run" (func $run)))
       (export "{CHILD}" (instance $out)))"#,
@@ -465,8 +495,9 @@ fn member_child_component() -> Vec<u8> {
 
 /// The root member: `run` takes the host transaction through its own
 /// instance, names the child's statement, then its own, then calls the child.
-/// It answers the four codes, root then child, each foreign before own. An
-/// input of `[]` makes it fail after all of that, so the host rolls back.
+/// It answers the four codes, root then child, each foreign before own, then
+/// the child's `begin` and plain `run` codes. An input of `[]` makes it fail
+/// after all of that, so the host rolls back.
 fn member_root_component() -> Vec<u8> {
     wat::parse_str(format!(
         r#"(component
@@ -498,10 +529,12 @@ fn member_root_component() -> Vec<u8> {
           call $child local.set $child
           i32.const 702 local.get $child i32.const 8 i32.shr_u i32.store8
           i32.const 703 local.get $child i32.store8
+          i32.const 704 local.get $child i32.const 16 i32.shr_u i32.store8
+          i32.const 705 local.get $child i32.const 24 i32.shr_u i32.store8
           local.get $input i32.load offset=100 i32.const 2 i32.eq if
             i32.const 1 i32.const 2 i32.const 0 i32.const 0 i32.const 0 i32.const 0
             i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
-          i32.const 0 i32.const 700 i32.const 4 i32.const 0 i32.const 0 i32.const 0
+          i32.const 0 i32.const 700 i32.const 6 i32.const 0 i32.const 0 i32.const 0
           i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0))
       (core instance $main (instantiate $main (with "memory" (instance $memory))
         (with "host" (instance (export "transaction" (func $transaction))

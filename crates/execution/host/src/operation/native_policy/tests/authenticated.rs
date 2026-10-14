@@ -774,8 +774,9 @@ fn native_member_statement_instances() {
             if commits {
                 let emission = result.expect("the root answers its codes");
                 assert_eq!(
-                    emission.payload, "ukuk",
-                    "root and child each refuse the other's statement and run their own"
+                    emission.payload, "ukukrr",
+                    "root and child each refuse the other's statement and run their own, \
+                     and the child, nested in the command, is refused begin and plain run"
                 );
                 transaction.commit().await.expect("commit the item");
                 assert_eq!(
