@@ -539,7 +539,7 @@ kubectl -n identity logs job/mint-pat
 kubectl -n identity delete job mint-pat
 ```
 
-Run the gate on this machine, and post the gate request with the PAT as a bearer token. The PAT goes to `curl` as a header file, never on the command line:
+Run the gate on this machine, and post the gate request with the PAT as a bearer token. The PAT goes to `curl` as a header file, never on the command line. The `pkill` pattern starts with `^`. Without it, the pattern also matches the shell that runs this block, and `pkill` stops that shell:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
@@ -555,7 +555,7 @@ for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:18090/ && break; sl
 curl -sS -H @$G/auth-header -H 'content-type: application/json' --data-binary @$G/gate-request.json \
   http://127.0.0.1:18090/authoring > $G/gate-reply.json
 rm -f $G/auth-header
-pkill -f 'wamn-scenario-worker serve --bind 127.0.0.1:18090'
+pkill -f '^target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090'
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(json.dumps(d.get("body",d).get("outcome",d))[:600])' $G/gate-reply.json
 ```
 
