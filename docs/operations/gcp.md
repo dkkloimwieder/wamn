@@ -983,10 +983,10 @@ On 2026-09-27 the build took 353 seconds, the push 5 seconds, and the two worklo
 
 ### 3.21 Serve check
 
-Forward the host Service and call Receiving routes with the release host name:
+Forward the release's host Service `<release>-http` and call Receiving routes with the release host name. `wamn-ctl env status` prints the release name:
 
 ```bash
-kubectl -n hosts port-forward svc/hostgroup-default 18080:80 &
+kubectl -n hosts port-forward svc/<release>-http 18080:80 &
 curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/location/list
 curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/nope
 ```

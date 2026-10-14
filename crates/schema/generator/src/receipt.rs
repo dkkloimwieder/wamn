@@ -25,8 +25,8 @@ pub const RECEIPT_SCHEMA: &str = "wamn.build/v1";
 pub(crate) const SQLX_VERSION: &str = "0.9.0";
 
 /// Directories of a package tree that are never build inputs: build output and
-/// installed dependencies. `generated` is the committed build output until it
-/// leaves git.
+/// installed dependencies. `generated` is the old in-tree build output, which
+/// left git at 2f7271361; a checkout from before then can still hold it.
 const EXCLUDED_DIRECTORIES: &[&str] = &["target", "node_modules", "generated"];
 /// The lock file of the enclosing Cargo workspace, relative to the package root.
 const WORKSPACE_LOCK: &str = "../Cargo.lock";
