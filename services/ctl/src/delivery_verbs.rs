@@ -51,6 +51,10 @@ pub struct BuildPlatformArgs {
     /// The checkout whose `Dockerfile` and release chart are built.
     #[arg(long, default_value = ".")]
     pub repository: PathBuf,
+    /// Build and push nothing: stamp the registry's digests of the chart
+    /// version's images, and refuse when any is missing (R15).
+    #[arg(long, default_value_t = false)]
+    pub stamp_only: bool,
 }
 
 /// Qualify one published release by its digest, and print the
@@ -71,16 +75,21 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build the platform and print the stamped chart's directory.
+/// Build the platform, or with `--stamp-only` read it from the registry, and
+/// print the stamped chart's directory.
 pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
-    use wamn_control::platform_build::{BuildPlatformRequest, build_platform};
-    let chart = build_platform(&BuildPlatformRequest {
+    use wamn_control::platform_build::{BuildPlatformRequest, build_platform, stamp_only};
+    let request = BuildPlatformRequest {
         repository: std::fs::canonicalize(&args.repository)
             .with_context(|| format!("find {}", args.repository.display()))?,
         registry: args.registry,
         out: args.out,
-    })
-    .await?;
+    };
+    let chart = if args.stamp_only {
+        stamp_only(&request).await?
+    } else {
+        build_platform(&request).await?
+    };
     println!("{}", chart.display());
     Ok(())
 }
