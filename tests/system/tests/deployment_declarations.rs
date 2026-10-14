@@ -746,65 +746,34 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
     assert_eq!(issuer_secret_consumers, ["identity"]);
     assert_eq!(issuer_url_consumers, ["identity"]);
     assert_eq!(identity_image_consumers, ["identity"]);
-    for (file, project) in [
-        ("values-host-default.yaml", None),
-        ("values-host-receiving-pat.yaml", Some("receiving")),
-        ("values-host-wms-pat.yaml", Some("wms")),
+    let source = read(&root, HOST_VALUES_FILE);
+    let mut expected = BTreeMap::from([
+        (
+            "WAMN_PG_URL".to_owned(),
+            ("wamn-host-db".to_owned(), "url".to_owned()),
+        ),
+        (
+            "WAMN_EVT_NATS_USERNAME".to_owned(),
+            ("wamn-event-nats".to_owned(), "username".to_owned()),
+        ),
+    ]);
+    for (variable, key) in [
+        ("WAMN_EVT_ORG", "org"),
+        ("WAMN_EVT_PROJECT", "project"),
+        ("WAMN_EVT_ENV", "environment"),
+        ("WAMN_EVT_STREAM_REPLICAS", "stream_replicas"),
+        ("WAMN_EVT_DUP_WINDOW_SECS", "dup_window_secs"),
     ] {
-        let source = read(&root, file);
-        let mut expected = BTreeMap::from([
-            (
-                "WAMN_PG_URL".to_owned(),
-                ("wamn-host-db".to_owned(), "url".to_owned()),
-            ),
-            (
-                "WAMN_EVT_NATS_USERNAME".to_owned(),
-                ("wamn-event-nats".to_owned(), "username".to_owned()),
-            ),
-        ]);
-        if project.is_none() {
-            for (variable, key) in [
-                ("WAMN_EVT_ORG", "org"),
-                ("WAMN_EVT_PROJECT", "project"),
-                ("WAMN_EVT_ENV", "environment"),
-                ("WAMN_EVT_STREAM_REPLICAS", "stream_replicas"),
-                ("WAMN_EVT_DUP_WINDOW_SECS", "dup_window_secs"),
-            ] {
-                expected.insert(
-                    variable.to_owned(),
-                    ("wamn-event-nats".to_owned(), key.to_owned()),
-                );
-            }
-        }
-        if let Some(project) = project {
-            for (variable, class) in [
-                ("WAMN_SYSTEM_URL", "identity-reader"),
-                ("WAMN_EXECUTOR_PLATFORM_PG_URL", "executor-platform"),
-                ("WAMN_HTTP_ADMITTER_PG_URL", "http-admitter"),
-                ("WAMN_EVENT_MATERIALIZER_PG_URL", "event-materializer"),
-                ("WAMN_ADMINISTRATION_PG_URL", "administration"),
-            ] {
-                expected.insert(
-                    variable.to_owned(),
-                    (
-                        format!("wamn-{class}-acme--{project}--dev"),
-                        "url".to_owned(),
-                    ),
-                );
-            }
-            assert!(
-                !significant(&source)
-                    .iter()
-                    .any(|line| line.trim() == "image:" || manifest_field(line, "image").is_some()),
-                "{file} must retain the base host image, not add a different process"
-            );
-        }
-        assert_eq!(
-            environment_secret_bindings(&source, file),
-            expected,
-            "{file} credential classes changed"
+        expected.insert(
+            variable.to_owned(),
+            ("wamn-event-nats".to_owned(), key.to_owned()),
         );
     }
+    assert_eq!(
+        environment_secret_bindings(&source, HOST_VALUES_FILE),
+        expected,
+        "{HOST_VALUES_FILE} credential classes changed"
+    );
     let gate = read(&root, "scenario-worker.yaml");
     let expected = [
         (

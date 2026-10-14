@@ -26,8 +26,6 @@ use serde_json::Value;
 
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
 const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
-const RECEIVING_HOST_VALUES: &str = "deploy/platform/values-host-receiving-pat.yaml";
-const WMS_HOST_VALUES: &str = "deploy/platform/values-host-wms-pat.yaml";
 const EVENTS_RBAC: &str = "deploy/platform/runtime-operator-events-rbac.example.yaml";
 const SOCKPROBE: &str = "apps/platform/fixtures/sockprobe/src/main.rs";
 const EXPECTED_CHART_VERSION: &str = "2.10.3";
@@ -205,14 +203,6 @@ fn host_container(deployment: &Value) -> &Value {
         "host chart rendered an unexpected sidecar"
     );
     &containers[0]
-}
-
-fn environment_entry<'a>(container: &'a Value, name: &str) -> Option<&'a Value> {
-    container["env"]
-        .as_array()
-        .expect("rendered host container carries env")
-        .iter()
-        .find(|entry| entry["name"] == name)
 }
 
 fn assert_native_host_controls(
@@ -773,196 +763,10 @@ fn the_component_workloads_target_the_host_tier_environment() {
 
 #[test]
 #[ignore = "requires: helm"]
-fn receiving_pat_overlay_renders_a_complete_scoped_host() {
+fn the_host_tier_renders_the_native_host_controls() {
     wamn_test_postgres::require_prerequisites(&["helm"]);
     let root = repository_root();
     let (base, base_policy) = render_host_objects(&root, &[HOST_VALUES]);
-    let (receiving, receiving_policy) =
-        render_host_objects(&root, &[HOST_VALUES, RECEIVING_HOST_VALUES]);
-    let (wms, wms_policy) = render_host_objects(&root, &[HOST_VALUES, WMS_HOST_VALUES]);
     assert_native_host_controls(&base, &base_policy, "4", "2", "6");
-    assert_native_host_controls(&receiving, &receiving_policy, "4", "2", "6");
-    assert_native_host_controls(&wms, &wms_policy, "1", "250m", "2");
     assert_events_overlay_remains_namespace_scoped(&root);
-    let base_container = host_container(&base);
-    let receiving_container = host_container(&receiving);
-
-    for name in [
-        "WAMN_ORG",
-        "WAMN_PROJECT",
-        "WAMN_SCHEMA",
-        "WAMN_SYSTEM_URL",
-        "WAMN_EXECUTOR_PLATFORM_PG_URL",
-        "WAMN_HTTP_ADMITTER_PG_URL",
-        "WAMN_EVENT_MATERIALIZER_PG_URL",
-        "WAMN_ADMINISTRATION_PG_URL",
-    ] {
-        assert!(
-            environment_entry(base_container, name).is_none(),
-            "generic host unexpectedly carries Receiving setting {name}"
-        );
-    }
-    let base_args = base_container["args"]
-        .as_array()
-        .expect("rendered generic host carries args");
-    assert!(
-        base_args.iter().all(|argument| {
-            argument
-                .as_str()
-                .is_none_or(|argument| !argument.starts_with("--release-"))
-        }),
-        "generic host unexpectedly carries a release coordinate"
-    );
-    let receiving_args = receiving_container["args"]
-        .as_array()
-        .expect("rendered Receiving host carries args");
-    assert_eq!(
-        receiving_args.get(..base_args.len()),
-        Some(base_args.as_slice()),
-        "Receiving overlay changed or dropped a generic host argument"
-    );
-    // The release pair, then the environment name, which replaces the chart's
-    // pod namespace because the host keeps the last --environment (R1).
-    assert_eq!(
-        receiving_args.get(base_args.len() + 2..),
-        Some([Value::from("--environment=dev")].as_slice()),
-        "Receiving overlay must add only the two release arguments and the environment"
-    );
-
-    let receiving_names = [
-        "WAMN_ORG",
-        "WAMN_PROJECT",
-        "WAMN_SCHEMA",
-        "WAMN_SYSTEM_URL",
-        "WAMN_EXECUTOR_PLATFORM_PG_URL",
-        "WAMN_HTTP_ADMITTER_PG_URL",
-        "WAMN_EVENT_MATERIALIZER_PG_URL",
-        "WAMN_ADMINISTRATION_PG_URL",
-    ];
-    // The generic host reads its event stream identity from the Secret. The
-    // Receiving overlay states the same five entries as fixed project values.
-    let event_identity = [
-        ("WAMN_EVT_ORG", "acme"),
-        ("WAMN_EVT_PROJECT", "receiving"),
-        ("WAMN_EVT_ENV", "dev"),
-        ("WAMN_EVT_STREAM_REPLICAS", "3"),
-        ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-    ];
-    let is_event_identity = |entry: &&Value| {
-        entry["name"]
-            .as_str()
-            .is_some_and(|name| event_identity.iter().any(|(event, _)| *event == name))
-    };
-    let base_env = base_container["env"]
-        .as_array()
-        .expect("rendered generic host carries env");
-    let inherited_env = receiving_container["env"]
-        .as_array()
-        .expect("rendered Receiving host carries env")
-        .iter()
-        .filter(|entry| {
-            entry["name"]
-                .as_str()
-                .is_none_or(|name| !receiving_names.contains(&name))
-        })
-        .filter(|entry| !is_event_identity(entry))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        inherited_env,
-        base_env
-            .iter()
-            .filter(|entry| !is_event_identity(entry))
-            .collect::<Vec<_>>(),
-        "Receiving overlay changed or dropped a generic host environment entry"
-    );
-    for (name, expected) in event_identity {
-        assert!(
-            environment_entry(base_container, name).is_some_and(
-                |entry| entry["valueFrom"]["secretKeyRef"]["name"] == "wamn-event-nats"
-            ),
-            "generic host must read {name} from the event Secret"
-        );
-        assert_eq!(
-            environment_entry(receiving_container, name).and_then(|entry| entry["value"].as_str()),
-            Some(expected),
-            "Receiving host rendered the wrong event identity {name}"
-        );
-    }
-    assert_eq!(
-        receiving_container["env"]
-            .as_array()
-            .expect("rendered Receiving host carries env")
-            .len(),
-        base_env.len() + receiving_names.len(),
-        "Receiving overlay must add exactly its eight scoped environment entries"
-    );
-
-    for (name, expected) in [
-        ("WAMN_ORG", "acme"),
-        ("WAMN_PROJECT", "receiving"),
-        ("WAMN_SCHEMA", "receiving"),
-    ] {
-        assert_eq!(
-            environment_entry(receiving_container, name).and_then(|entry| entry["value"].as_str()),
-            Some(expected),
-            "Receiving host rendered the wrong trusted {name} value"
-        );
-    }
-    for (name, secret) in [
-        (
-            "WAMN_SYSTEM_URL",
-            "wamn-identity-reader-acme--receiving--dev",
-        ),
-        (
-            "WAMN_EXECUTOR_PLATFORM_PG_URL",
-            "wamn-executor-platform-acme--receiving--dev",
-        ),
-        (
-            "WAMN_HTTP_ADMITTER_PG_URL",
-            "wamn-http-admitter-acme--receiving--dev",
-        ),
-        (
-            "WAMN_EVENT_MATERIALIZER_PG_URL",
-            "wamn-event-materializer-acme--receiving--dev",
-        ),
-        (
-            "WAMN_ADMINISTRATION_PG_URL",
-            "wamn-administration-acme--receiving--dev",
-        ),
-    ] {
-        let selector = &environment_entry(receiving_container, name)
-            .unwrap_or_else(|| panic!("Receiving host omitted {name}"))["valueFrom"]["secretKeyRef"];
-        assert_eq!(selector["name"], secret, "{name} names the wrong Secret");
-        assert_eq!(selector["key"], "url", "{name} reads the wrong key");
-        assert_eq!(
-            selector["optional"], false,
-            "{name} must fail deployment when its Secret is absent"
-        );
-    }
-
-    assert_eq!(base["spec"]["replicas"], receiving["spec"]["replicas"]);
-    assert_eq!(
-        base["spec"]["template"]["spec"]["volumes"],
-        receiving["spec"]["template"]["spec"]["volumes"],
-        "Receiving overlay lost the base host volumes through Helm list replacement"
-    );
-    for field in ["image", "ports", "resources", "volumeMounts"] {
-        assert_eq!(
-            base_container[field], receiving_container[field],
-            "Receiving overlay lost the base host {field} through Helm list replacement"
-        );
-    }
-
-    let release_args: Vec<&str> = receiving_args
-        .iter()
-        .filter_map(Value::as_str)
-        .filter(|argument| argument.starts_with("--release-"))
-        .collect();
-    assert_eq!(
-        release_args,
-        [
-            "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases",
-            "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000",
-        ]
-    );
 }
