@@ -11,6 +11,8 @@ Step 1 ran on 2026-09-25, before any workload existed.
 
 Only the owner runs the billing commands of this section. Section 11 does not contain them.
 
+On 2026-10-14 the GKE control plane of cluster `wamn` ran `v1.35.8-gke.1225000`. The ctl image pins kubectl `v1.36.1` (`Dockerfile`). That is one minor version ahead, inside the supported skew, so the pin stays. If the skew becomes more than one minor version, move the pin (`wamn-iggi`).
+
 ### 1.1 APIs
 
 ```bash
