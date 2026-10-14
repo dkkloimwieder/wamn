@@ -46,7 +46,7 @@ The WMS reader logs `Sent standby status update: received=0/FE000000, flushed=0/
 
 ### 4.1 What the reader does on a gap today
 
-It exits with an error that names the slot and says `CAPTURE GAP`. Kubernetes restarts it, and it exits again, without end. That is the "stops for good" of the finding. It reports no boundary, so the operator cannot tell which rows the gap holds. The recovery of `docs/operations/gcp.md` section 6.3 drops the slot and creates it again. The reader then resumes at the new slot like a reader with no gap. No record of the gap remains outside the bead.
+It exits with an error that names the slot and says `CAPTURE GAP`. Kubernetes restarts it, and it exits again, without end. That is the "stops for good" of the finding. It reports no boundary, so the operator cannot tell which rows the gap holds. The recovery of `docs/history/gcp-install-history.md` section 6.3 drops the slot and creates it again. The reader then resumes at the new slot like a reader with no gap. No record of the gap remains outside the bead.
 
 ### 4.2 A lost slot is not recoverable
 

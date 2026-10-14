@@ -34,7 +34,7 @@ Measured on `main` at `91a6ffca9` on 2026-09-30.
 | Cache identity | `tools/journey-image-cache:80-93` leaves the test-only paths out of the identity for `host` and `identity` only. `ctl`, `gates` and `cdc-reader` hash the whole copied tree, so a test edit gives them a new identity. |
 | Jobs that run `wamn-ctl` | Only the three examples in `deploy/platform`. They take their arguments in `args`, their credentials by `secretKeyRef`, mount no token, and are read with `kubectl logs`. `deploy/gcp` has none. |
 
-The superuser URL of `wamn_system` exists only on the owner's machine, built from the Secret `wamn-pg-superuser` in namespace `platform` (`gcp.md` section 3.6).
+The superuser URL of `wamn_system` exists only on the owner's machine, built from the Secret `wamn-pg-superuser` in namespace `platform` (`docs/history/gcp-install-history.md` section 3.6).
 
 ## 4. Design
 
@@ -59,7 +59,7 @@ The fixed flags are in the manifest. The run values are placeholders in `args`: 
 
 `invite` writes no credential. The operator waits for the Job to complete, saves `kubectl logs job/<name>` to the scratchpad, and deletes the Job.
 
-`mint-pat` writes a PAT Secret file. The file must reach the owner's machine. The bench PAT is used on the client VM, and the management-author PAT is not applied (`gcp.md` section 3.16). The container writes it to a memory `emptyDir`, then waits for a fixed bound. The operator copies it with `kubectl exec cat` into a mode 0600 file, as `tools/identity-jwks-journey-run` does, and deletes the Job.
+`mint-pat` writes a PAT Secret file. The file must reach the owner's machine. The bench PAT is used on the client VM, and the management-author PAT is not applied (`docs/history/gcp-install-history.md` section 3.16). The container writes it to a memory `emptyDir`, then waits for a fixed bound. The operator copies it with `kubectl exec cat` into a mode 0600 file, as `tools/identity-jwks-journey-run` does, and deletes the Job.
 
 Both Jobs also need the superuser URL of `wamn_system`. After the apply, the operator makes the Secret `wamn-system-admin` in namespace `identity` with `kubectl`, from the CloudNativePG Secret `wamn-pg-superuser`. Nobody types the password. The Secret carries an owner reference to the Job. Kubernetes deletes it with the Job, and `ttlSecondsAfterFinished` deletes the Job.
 

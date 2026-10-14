@@ -34,7 +34,7 @@ Measured on `main` at `47dc5a3e7` on 2026-09-30.
 | History tables | `apply-package` creates each model's history table with `wamn_history.create_history_table` as `wamn_db_owner`, and skips a table that exists (`crates/control/lib/src/apply_package/record_history.rs:35-65`). `app-schema.sql` creates the `app_system` history tables. |
 | Package migrations | `catalog.package_migrations` records path, ordinal and sha256. An edited applied file refuses with `package-migration-drift`. |
 | Releases | `publish-release` refuses a package that is not applied (`crates/control/lib/src/publish_release.rs:1545-1548`). `select-release` sets the head. `deploy-release` refuses a schema-changing package on an installed database: "schema-changing deployment requires a fresh target; existing-data upgrades are unsupported" (`crates/control/lib/src/delivery/deployment.rs:474-516`). |
-| Hand record | `docs/operations/gcp.md` section 7 holds one entry: `registry.capture_gap` and its grant, applied to `wamn_system` on 2026-09-29 as `wamn_system` (`wamn-59z6`). |
+| Hand record | `docs/history/gcp-install-history.md` section 7 holds one entry: `registry.capture_gap` and its grant, applied to `wamn_system` on 2026-09-29 as `wamn_system` (`wamn-59z6`). |
 | Planned hand statements | `docs/plan/kind-to-type.md` sections 4.3.3 and 4.3.4 plan two scripts as the `postgres` superuser. The `wamn_system` script renames P1 to P7, replaces `identity.lock_password_principal`, and appends `record-history.sql`. The project script renames `kind` to `type` and two constraints on every `%_history` table, 15 tables in two databases, and appends `record-history.sql`. The `reconcile-run-plane` cutover of its section 4.3.2 carries P8 and P10 to P12. |
 
 ## 4. Design
@@ -100,7 +100,7 @@ One branch. Each issue lands with its tests.
 
 1. The record tables, the prefix check and the fresh-install record, in `provision-system` and `reconcile-run-plane`.
 2. The verb, its refusals and `--baseline`. Live test on a disposable Postgres 18: a fresh install records every file. A new file applies once, and a second run changes nothing. An edited applied file refuses. A failing file leaves no change and no record.
-3. `registry.capture_gap` as `0001_capture_gap.sql`. On wamn-dev, the run with `--baseline 1` is B2 of the `kind` → `type` cutover (`kind-to-type.md` section 3.2). It records `0001` and applies `0002` in the same run. The `gcp.md` section 7 entry of that run says so.
+3. `registry.capture_gap` as `0001_capture_gap.sql`. On wamn-dev, the run with `--baseline 1` is B2 of the `kind` → `type` cutover (`kind-to-type.md` section 3.2). It records `0001` and applies `0002` in the same run. The `docs/history/gcp-install-history.md` section 7 entry of that run says so.
 4. Closeout. The operations page gets the verb (`docs/operations/deployment.md`, "Platform schema upgrades"). `kind-to-type.md` sections 4.3.3, 4.3.4 and 4.8 name migrations in place of hand statements. Close `wamn-o8b9`.
 
 ## 6. Out of scope

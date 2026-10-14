@@ -1,4 +1,4 @@
-# A one-shot check of the event NATS of docs/operations/gcp.md section 3.5.
+# A one-shot check of the event NATS of docs/history/gcp-install-history.md section 3.5.
 # It asks for WAMN_TAP as tap-admin and for the source stream as the
 # provisioning user, by a direct STREAM.INFO request. The nats CLI command
 # "stream info" also lists stream names when a stream is missing, which no

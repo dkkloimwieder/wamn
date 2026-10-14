@@ -3,7 +3,7 @@
 # platform, so it has no cluster block, no cluster port and no anti-affinity
 # spread. The event streams use one replica. The volume is pd-standard.
 # The comments of deploy/infra/nats-jetstream.yaml explain the users and the
-# WAMN_TAP stream. docs/operations/gcp.md section 3 makes the Secrets
+# WAMN_TAP stream. docs/history/gcp-install-history.md section 3 makes the Secrets
 # evt-nats-authorization and evt-nats-bootstrap and applies this file.
 apiVersion: v1
 kind: ConfigMap

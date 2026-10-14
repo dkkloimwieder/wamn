@@ -1,370 +1,167 @@
 # Google Cloud
 
-This page holds the commands of the Google Cloud deployment in project `wamn-dev`. The [plan](../plan/gcp-deployment.md) gives the reasons, the costs and the shutdown levels.
-Each section is one finished step of that plan.
+This page installs the platform and the environments `dkk/receiving/dev` and `dkk/wms/dev` on project `wamn-dev`. It starts at an empty project with no cluster and ends with two qualified releases that serve on `receiving.wamn.dev` and `wms.wamn.dev`. Run the sections in order. The [plan](../plan/gcp-deployment.md) gives the reasons and the costs. [Install history](../history/gcp-install-history.md) holds the earlier hand procedure and the records of each run.
 
-Run every command as the project owner, with `--project wamn-dev`. The default project of the gcloud configuration here is another project, so a command without `--project` acts on the wrong one.
-
-## 1. Cost controls and storage
-
-Step 1 ran on 2026-09-25, before any workload existed.
-
-Only the owner runs the billing commands of this section. Section 11 does not contain them.
-
-On 2026-10-14 the GKE control plane of cluster `wamn` ran `v1.35.8-gke.1225000`. The ctl image pins kubectl `v1.36.1` (`Dockerfile`). That is one minor version ahead, inside the supported skew, so the pin stays. If the skew becomes more than one minor version, move the pin (`wamn-iggi`).
-
-### 1.1 APIs
+Every command on this page runs in a shell with these two variables and nothing else:
 
 ```bash
-gcloud services enable --project wamn-dev \
-  compute.googleapis.com container.googleapis.com storage.googleapis.com \
-  artifactregistry.googleapis.com iam.googleapis.com cloudquotas.googleapis.com \
-  billingbudgets.googleapis.com cloudbilling.googleapis.com pubsub.googleapis.com \
-  cloudfunctions.googleapis.com run.googleapis.com cloudbuild.googleapis.com \
-  eventarc.googleapis.com cloudscheduler.googleapis.com logging.googleapis.com
+export CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent
+export KUBECONFIG=$HOME/.kube/wamn-dev
 ```
 
-### 1.2 Quotas
+Do not run `gcloud config configurations activate`. Do not read or write `~/.config/gcloud` or `~/.kube/config`. The billing commands and the API enables are the owner's, and no step on this page runs them.
 
-A quota preference sets each cap. Google refuses a decrease of more than 10 percent without `--allow-high-percentage-quota-decrease`.
+## 1. Owner inputs
+
+The owner supplies these inputs. The install stops at the first step that reads a missing one.
+
+1. The agent identity. `CLOUDSDK_CONFIG` holds the login of `wamn-agent@wamn-dev.iam.gserviceaccount.com` and application default credentials, which `wamn web upload` reads. `KUBECONFIG` names a file of the agent's own. The cluster create of section 4.2 writes the cluster into it.
+2. The Resend key, as the Secret `identity-resend` in namespace `identity`, key `api-key`. The owner makes it after section 4.4 makes the namespace and before section 4.12. Write the key to a mode 0600 file with no line end, because identity refuses whitespace in the key (`Resend configuration refused`). Then run:
+
+   ```bash
+   kubectl -n identity create secret generic identity-resend --from-file=api-key=<file>
+   ```
+
+3. The Workload Identity binding of the host service account. The Kubernetes service account `hosts/wamn-host` acts as the Google service account `wamn-blob`. A teardown keeps this binding, because it is IAM. If the binding is missing, the owner runs:
+
+   ```bash
+   gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+     --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
+   ```
+
+4. The approval of the teardown of section 3. The teardown deletes every database.
+
+## 2. Project resources
+
+The teardown keeps these resources, and the install expects them. [Install history](../history/gcp-install-history.md) sections 1, 2.2, 2.3, 4.3, 4.3.1 and 5.1 hold the commands that made them:
+
+- The APIs, the quotas and the daily guard that sets pool `main` to 0 nodes at 03:00 New York time.
+- The Artifact Registry repositories `wamn` and `wamn-kind`, with immutable tags. `wamn` holds the platform images, the packages, the components and the releases.
+- The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
+- The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
+- The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone.
+- The Google service account `wamn-blob`, its bucket binding and its `roles/artifactregistry.reader` binding on `wamn`.
+- The load balancer: address, health check, firewall rule, backend bucket, backend service, URL map, proxy, forwarding rule and certificate entry. Also the role `wamnEdgeCert` and its binding.
+
+Make sure that they exist:
 
 ```bash
-lower() {
-  gcloud beta quotas preferences create --project=wamn-dev \
-    --service=compute.googleapis.com --quota-id="$1" --preferred-value="$2" \
-    --preference-id="$3" $4 --justification="wamn-dev test deployment cost cap" \
-    --email=dkkloimwieder@gmail.com --allow-high-percentage-quota-decrease
-}
-lower CPUS-ALL-REGIONS-per-project 8 wamn-cpus-all-regions ""
-lower CPUS-per-project-region 8 wamn-cpus-us-central1 --dimensions=region=us-central1
-lower STATIC-ADDRESSES-per-project 1 wamn-global-static-addresses ""
-lower DISKS-TOTAL-GB-per-project-region 200 wamn-disks-us-central1 --dimensions=region=us-central1
-lower SSD-TOTAL-GB-per-project-region 0 wamn-ssd-us-central1 --dimensions=region=us-central1
+gcloud artifacts repositories list --project wamn-dev --location us-central1
+gcloud storage buckets list --project wamn-dev --format="value(name)"
+gcloud compute networks subnets list --project wamn-dev --network wamn
+gcloud compute backend-services list --project wamn-dev
+gcloud iam service-accounts get-iam-policy wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev
 ```
 
-The earlier values were 32, 200, 8, 4096 and 500.
-Make sure that each preference has its granted value:
+## 3. Teardown
+
+The teardown deletes the cluster `wamn` and every object in it, the CloudNativePG databases included. Run it only with the approval of the owner.
+
+List the disks before the delete. Write down the names of the `pvc-*` disks of the cluster:
 
 ```bash
-gcloud beta quotas preferences list --project wamn-dev \
-  --format="value(quotaId,quotaConfig.grantedValue)"
+gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.basename(),description)"
+gcloud container clusters delete wamn --project wamn-dev --zone us-central1-a --quiet
+gcloud container clusters list --project wamn-dev
+gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.basename(),description)"
 ```
 
-To change a cap, run `gcloud beta quotas preferences update` with the same preference id. An increase can wait for Google review.
-
-### 1.3 The guard
-
-The guard sets pool `main` to 0 nodes every day. The daytime count is 3 nodes since 2026-10-02. On that day the control host group of `7b6e00cd3` did not fit on 2 nodes, so pool `main` was resized from 2 to 3 nodes in 284 seconds. Scale the pool back to 3 nodes after the guard (sections 3.17 and 6.1).
-
-The source is in [deploy/gcp/guard](../../deploy/gcp/guard). Its `config.json` names the project, the zone and the cluster. Run its test first:
+The disks of the volumes of `wamn-pg-1` and `data-evt-nats-0` stay after the delete. Delete each one by name, one command for each disk:
 
 ```bash
-cd deploy/gcp/guard && python3 -m unittest
+gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central1-a --quiet
 ```
 
-Create the topic, the service account and its two grants on the project:
+The network endpoint group `wamn-edge` stays, because the backend service `wamn-edge-platform` names it. Section 4.20 replaces it.
+
+## 4. Install
+
+### 4.1 Work directory and binaries
+
+The install keeps its files in the private work directory `$HOME/.cache/wamn-install`. Each step that uses it sets `W` to it, or reads the platform file of section 4.10, which sets `W`. Run every step from a checkout of `main`:
 
 ```bash
-gcloud pubsub topics create wamn-guard --project wamn-dev
-gcloud iam service-accounts create wamn-guard --project wamn-dev --display-name="wamn cost guard"
-gcloud iam roles create wamnGuard --project wamn-dev --title="wamn cost guard" \
-  --description="Read cluster wamn and set its node pool sizes" --stage=GA \
-  --permissions=container.clusters.get,container.clusters.update,container.operations.get
-SA=wamn-guard@wamn-dev.iam.gserviceaccount.com
-gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$SA \
-  --role=projects/wamn-dev/roles/wamnGuard --condition=None
-gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$SA \
-  --role=roles/billing.projectManager --condition=None
+W=$HOME/.cache/wamn-install
+mkdir -p -m 700 $W
+cargo build --locked -p wamn-ctl --bin wamn --bin wamn-ctl
+cargo build --locked -p wamn-scenario-worker
 ```
 
-Deploy the function. The Pub/Sub trigger calls it as the same service account, which needs the invoker role on the function.
+### 4.2 Cluster
+
+gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 3 Spot nodes replaces it. The create writes the cluster into `KUBECONFIG` and makes it the current context:
 
 ```bash
-gcloud functions deploy wamn-guard --gen2 --project wamn-dev --region us-central1 \
-  --runtime python314 --source deploy/gcp/guard --entry-point on_message \
-  --trigger-topic wamn-guard --service-account $SA --trigger-service-account $SA --quiet
-gcloud run services add-iam-policy-binding wamn-guard --project wamn-dev \
-  --region us-central1 --member=serviceAccount:$SA --role=roles/run.invoker
-```
-
-The invoker grant takes about a minute to apply. Until then, the log shows `403` answers, and Pub/Sub sends the message again.
-
-Create the budget. Its `--billing-project` keeps the call on `wamn-dev`.
-
-```bash
-gcloud billing budgets create --billing-account=01E392-13CC0D-277806 \
-  --billing-project=wamn-dev --display-name="wamn-dev" --budget-amount=150USD \
-  --filter-projects=projects/wamn-dev \
-  --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0 \
-  --notifications-rule-pubsub-topic=projects/wamn-dev/topics/wamn-guard \
-  --credit-types-treatment=exclude-all-credits
-```
-
-Create the daily job:
-
-```bash
-gcloud scheduler jobs create pubsub wamn-guard --project wamn-dev --location us-central1 \
-  --schedule="0 3 * * *" --time-zone="America/New_York" --topic=wamn-guard \
-  --message-body='{"action":"scale-to-zero"}'
-```
-
-### 1.4 Test the guard
-
-Run the daily job once, and read the guard log:
-
-```bash
-gcloud scheduler jobs run wamn-guard --project wamn-dev --location us-central1
-gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="wamn-guard"' \
-  --project wamn-dev --freshness=10m --format="value(timestamp,textPayload)"
-```
-
-Before the cluster exists, the log says `projects/wamn-dev/locations/us-central1-a/clusters/wamn does not exist, so no pool runs`.
-
-The unlink test stops billing. Run it only before any workload exists, and relink billing at once.
-
-```bash
-gcloud pubsub topics publish wamn-guard --project wamn-dev \
-  --message='{"costAmount":50.0,"budgetAmount":50.0,"alertThresholdExceeded":1.0,"currencyCode":"USD"}'
-gcloud billing projects describe wamn-dev --format="value(billingEnabled)"
-gcloud billing projects link wamn-dev --billing-account=01E392-13CC0D-277806
-```
-
-On 2026-09-25 the guard unlinked billing 7 seconds after the message, and billing was off for 8 seconds.
-Afterwards the APIs, the quotas, the DNS zone and the function were unchanged, and a scale-to-zero message ran again.
-
-### 1.5 Registry and buckets
-
-```bash
-gcloud artifacts repositories create wamn --project wamn-dev --location us-central1 \
-  --repository-format=docker --description="wamn images and OCI artifacts"
-gcloud storage buckets create gs://wamn-dev-web --project wamn-dev \
-  --location us-central1 --uniform-bucket-level-access
-gcloud storage buckets create gs://wamn-dev-backups --project wamn-dev \
-  --location us-central1 --uniform-bucket-level-access
-```
-
-Make sure that no machine runs:
-
-```bash
-gcloud compute instances list --project wamn-dev
-```
-
-### 1.6 Remove the guard
-
-Remove the guard only together with the project. Without it, nothing stops a machine that you forget.
-
-```bash
-gcloud scheduler jobs delete wamn-guard --project wamn-dev --location us-central1
-gcloud billing budgets list --billing-account=01E392-13CC0D-277806 --billing-project=wamn-dev
-gcloud billing budgets delete <budget id> --billing-account=01E392-13CC0D-277806 --billing-project=wamn-dev
-gcloud functions delete wamn-guard --gen2 --project wamn-dev --region us-central1
-gcloud pubsub topics delete wamn-guard --project wamn-dev
-```
-
-## 2. Cluster and certificate
-
-Step 2 ran on 2026-09-26. The cluster is `wamn` in zone `us-central1-a`, on the regular release channel.
-
-### 2.1 Prerequisite
-
-`kubectl` reaches GKE through `gke-gcloud-auth-plugin`. Install it once on the machine:
-
-```bash
-sudo apt install google-cloud-cli-gke-gcloud-auth-plugin
-```
-
-`gcloud container clusters create` and `get-credentials` write the cluster into `~/.kube/config` and make it the current context. Other sessions on the machine use that file, so write the credentials into a file of your own:
-
-```bash
-KUBECONFIG=<your file> gcloud container clusters get-credentials wamn \
-  --project wamn-dev --zone us-central1-a
-```
-
-On 2026-09-26 the create command changed the shared current context from `kind-wamn` to the GKE cluster for about 5 minutes. The context was set back, and the GKE entry was removed.
-
-### 2.2 Network
-
-The VPC has no firewall rule of ours. GKE adds its own rules, and step 4 adds the health check rule. There is no SSH rule.
-
-```bash
-gcloud compute networks create wamn --project wamn-dev --subnet-mode=custom
-gcloud compute networks subnets create wamn-us-central1 --project wamn-dev \
-  --network wamn --region us-central1 --range 10.10.0.0/24 \
-  --secondary-range pods=10.20.0.0/16,services=10.30.0.0/20
-```
-
-| Range | Name | CIDR |
-| --- | --- | --- |
-| Nodes | primary | `10.10.0.0/24` |
-| Pods | `pods` | `10.20.0.0/16` |
-| Services | `services` | `10.30.0.0/20` |
-
-### 2.3 Node service account
-
-```bash
-gcloud iam service-accounts create wamn-nodes --project wamn-dev --display-name="wamn GKE nodes"
 NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
-for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader; do
-  gcloud projects add-iam-policy-binding wamn-dev --member=serviceAccount:$NSA --role=$role --condition=None
-done
-```
-
-### 2.4 Cluster and pool
-
-gcloud cannot name the first pool of a new cluster, so the cluster starts with a temporary `default-pool` of one Spot node. The secondary range flags need `--enable-ip-alias`.
-
-The create writes the cluster into the kubeconfig and makes it the current context, so run it with `KUBECONFIG` set to your own file, as section 2.1 says:
-
-```bash
-KUBECONFIG=<your file> gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
+gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
   --release-channel regular --network wamn --subnetwork wamn-us-central1 \
   --enable-ip-alias --cluster-secondary-range-name pods \
   --services-secondary-range-name services --workload-pool wamn-dev.svc.id.goog \
   --logging=SYSTEM --monitoring=SYSTEM --no-enable-managed-prometheus \
   --service-account $NSA --disk-type pd-standard --disk-size 30 \
   --num-nodes 1 --machine-type e2-standard-2 --spot
-```
-
-The pool `main` has 3 nodes, the daytime count of section 1.3. It has a fixed size and no autoscaler, so the scale to 0 of the guard holds. Its upgrades use a surge of 0 and one unavailable node, so an upgrade stays inside the CPU quota.
-
-```bash
 gcloud container node-pools create main --cluster wamn --project wamn-dev \
   --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 3 \
   --disk-type pd-standard --disk-size 30 --service-account $NSA \
   --max-surge-upgrade 0 --max-unavailable-upgrade 1
-gcloud container node-pools delete default-pool --cluster wamn --project wamn-dev \
-  --zone us-central1-a
+gcloud container node-pools delete default-pool --cluster wamn --project wamn-dev --zone us-central1-a --quiet
+gcloud container clusters get-credentials wamn --project wamn-dev --zone us-central1-a
+kubectl get nodes
 ```
 
-### 2.5 cert-manager and the certificate
+The pool has a fixed size and no autoscaler, so the scale to 0 of the guard holds. If `kubectl get nodes` lists no node after 03:00 New York time, run section 5.1.
 
-Install cert-manager from the repository manifest:
+### 4.3 cert-manager and the edge certificate
+
+[deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 
 ```bash
 kubectl apply -f deploy/infra/cert-manager.yaml
-kubectl -n cert-manager rollout status deploy/cert-manager deploy/cert-manager-webhook \
-  deploy/cert-manager-cainjector
-```
-
-Give the cert-manager Kubernetes service account `roles/dns.admin` on the zone `wamn-dev` only. The Workload Identity principal needs no Google service account and no key. gcloud has no zone-level IAM command, so call the Cloud DNS API:
-
-```bash
-M=principal://iam.googleapis.com/projects/540250462877/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns/cert-manager/sa/cert-manager
-U=https://dns.googleapis.com/dns/v1/projects/wamn-dev/managedZones/wamn-dev
-curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  -H "x-goog-user-project: wamn-dev" -H "Content-Type: application/json" \
-  -d "{\"policy\":{\"bindings\":[{\"role\":\"roles/dns.admin\",\"members\":[\"$M\"]}]}}" \
-  $U:setIamPolicy
-```
-
-That call replaces the whole policy of the zone. Read it first with `$U:getIamPolicy`, and keep its other bindings.
-
-[deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first:
-
-```bash
+kubectl -n cert-manager rollout status deploy/cert-manager deploy/cert-manager-webhook deploy/cert-manager-cainjector
 sed -e 's#acme-v02.api#acme-staging-v02.api#' -e 's#^      name: letsencrypt$#      name: letsencrypt-staging#' \
   deploy/gcp/letsencrypt.yaml | kubectl apply -f -
 kubectl -n edge wait certificate/wamn-edge-tls --for=condition=Ready --timeout=600s
-```
-
-When staging issues, switch to production and issue again:
-
-```bash
 kubectl apply -f deploy/gcp/letsencrypt.yaml
 kubectl wait clusterissuer/letsencrypt --for=condition=Ready --timeout=120s
 kubectl -n edge delete secret wamn-edge-tls
 kubectl -n edge wait certificate/wamn-edge-tls --for=condition=Ready --timeout=600s
 kubectl -n cert-manager delete secret letsencrypt-staging
+kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -issuer -enddate
 ```
 
-Make sure that the issuer is Let's Encrypt production, not `(STAGING)`:
+The issuer must be Let's Encrypt production, not `(STAGING)`.
 
-```bash
-kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.crt}' | base64 -d \
-  | openssl x509 -noout -issuer -subject -enddate
-```
-
-On 2026-09-26 staging issued in 86 seconds and production in 84 seconds. The production issuer was `CN=YR1`, and the certificate is valid until 2026-12-25.
-
-### 2.6 Pause
-
-```bash
-gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a \
-  --node-pool main --num-nodes 0
-gcloud compute instances list --project wamn-dev
-```
-
-The list must be empty.
-
-### 2.7 The failed first attempts
-
-On 2026-09-25 and 2026-09-26, two cluster creates and several deletes failed before the create above succeeded:
-
-- The first create on the `default` network ran 32 minutes and ended with `Failed to create cluster`. Every patch of the `default` subnet got `The resource 'projects/wamn-dev/global/networks/default' is not ready`. In the same second, GKE created and deleted two Network Connectivity internal ranges. It also failed to grant a role to the Network Connectivity service agent, because that account did not exist yet.
-- Two deletes of that cluster ended with `Failed to delete cluster`. A create of `wamn-dev` on the VPC `wamn` ended with `[INACTIVE_BILLING_STATE]: Project 'wamn-dev' cannot accept requests to 'compute.instanceGroupManagers.insert' while in an inactive billing state.` Its delete ended with `Timed out waiting for Google Compute Engine operation.`
-- These failures started after the unlink test of section 1.4. Nobody found the cause. The owner deleted the clusters from the console, and they were gone at 05:47 UTC on 2026-09-26.
-
-If a create stays in `PROVISIONING` with no machine, read the Compute errors instead of waiting:
-
-```bash
-gcloud logging read 'protoPayload.status.code>0' --project wamn-dev --freshness=30m \
-  --format="value(timestamp,resource.type,protoPayload.methodName,protoPayload.status.message)"
-```
-
-## 3. Platform and Receiving
-
-Step 3 started on 2026-09-26. This section grows as each part runs.
-The cluster cases in kind are not a deployment to repeat. They run PostgreSQL, the event NATS and the registry as local Docker containers, and they provision and publish inside the test process. Step 3 uses the commands of [deployment](deployment.md) with the manifests in `deploy/infra`, `deploy/platform` and `deploy/gcp`.
-
-Run `kubectl` and `helm` with your own kubeconfig file, as section 2.1 says.
-
-### 3.1 Namespaces
+### 4.4 Namespaces, runtime operator and internal CA
 
 | Namespace | Holds |
 | --- | --- |
 | `platform` | the runtime operator, its NATS and CA, the event NATS, PostgreSQL |
 | `identity` | identity |
-| `hosts` | the hosts |
+| `hosts` | the release namespace: the hosts of every environment and the CDC readers |
 | `edge` | the edge and the public certificate |
-| `cert-manager`, `cnpg-system` | the two operators, in the namespaces that their manifests fix |
+
+The operator release runs in `platform`. [values-operator.yaml](../../deploy/gcp/values-operator.yaml) makes it watch `hosts`. cert-manager reads a ClusterIssuer CA from its own namespace, so the operator CA is copied there:
 
 ```bash
-gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a \
-  --node-pool main --num-nodes 2
 for n in platform identity hosts; do kubectl create namespace $n; done
-```
-
-### 3.2 Runtime operator and internal CA
-
-[deploy/gcp/values-operator.yaml](../../deploy/gcp/values-operator.yaml) moves the watched and host namespaces to `hosts`.
-
-```bash
-helm upgrade --install --namespace platform wamn \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 \
+helm upgrade --install --namespace platform wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 \
   -f deploy/infra/values-wamn.yaml -f deploy/gcp/values-operator.yaml --wait --timeout 5m
 sed -e 's/__ENVIRONMENT_NAMESPACE__/hosts/' -e 's/namespace: wamn-system/namespace: platform/' \
   deploy/platform/runtime-operator-events-rbac.example.yaml | kubectl apply -f -
-```
-
-The operator writes its CA into `platform/wasmcloud-ca`. cert-manager reads a ClusterIssuer CA from its own namespace, so copy the Secret there:
-
-```bash
 kubectl -n platform get secret wasmcloud-ca -o json | python3 -c "
 import json,sys;d=json.load(sys.stdin);m=d['metadata'];d['metadata']={'name':m['name'],'namespace':'cert-manager'};print(json.dumps(d))" \
   | kubectl apply -f -
 kubectl apply -f deploy/infra/wasmcloud-ca-issuer.yaml
 kubectl wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s
-sed 's/__ENVIRONMENT_NAMESPACE__/hosts/' deploy/platform/host-environment-certs.example.yaml \
-  | kubectl apply -f -
-kubectl -n hosts wait --for=condition=Ready certificate/wasmcloud-runtime-tls \
-  certificate/wasmcloud-data-tls --timeout=120s
+sed 's/__ENVIRONMENT_NAMESPACE__/hosts/' deploy/platform/host-environment-certs.example.yaml | kubectl apply -f -
+kubectl -n hosts wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
 ```
 
-On 2026-09-26 the operator install took 35 seconds, and the CA and certificates took 11 seconds.
+The owner can now make the Secret `identity-resend` of section 1.
 
-### 3.3 PostgreSQL
+### 4.5 PostgreSQL
 
-[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is `deploy/infra/cnpg-cluster.yaml` in namespace `platform`, with storage class `standard` (`pd-standard`). Its one instance holds the system database and every tenant database. Its `initdb` bootstrap creates the database `wamn_system` with the owner `wamn_system`, as `deploy/platform/wamn-sysdb.yaml` does. CloudNativePG keeps the owner login in the Secret `wamn-pg-app` and the superuser login in `wamn-pg-superuser`. The Cluster sets `enablePDB: false`. With one instance, the PodDisruptionBudget of the primary blocks every drain, and a resize of pool `main` to 0 then waits up to one hour (`wamn-7huhc`).
+[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is one instance that holds the system database `wamn_system` and every environment database. CloudNativePG keeps the superuser login in the Secret `wamn-pg-superuser`:
 
 ```bash
 kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
@@ -373,163 +170,145 @@ kubectl apply -f deploy/gcp/cnpg-cluster.yaml
 kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=600s
 ```
 
-On 2026-09-26 this took 76 seconds. The first cluster used the database `app`. It was empty, so it was deleted and applied again with `wamn_system`, in 43 seconds:
+Forward the database pod to this machine. Later steps use the forward. A forward to the Service closes long connections, so forward the pod:
 
 ```bash
-kubectl -n platform delete cluster wamn-pg --wait=true
-kubectl -n platform wait pvc/wamn-pg-1 --for=delete --timeout=120s
-kubectl apply -f deploy/gcp/cnpg-cluster.yaml
-kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=600s
+W=$HOME/.cache/wamn-install
+setsid kubectl -n platform port-forward pod/wamn-pg-1 15432:5432 > $W/pf-pg.log 2>&1 < /dev/null &
 ```
 
-Backups are not configured. The `wamn-dev-backups` bucket exists, but no ObjectStore or ScheduledBackup uses it yet.
+If a step cannot connect to `127.0.0.1:15432`, start the forward again.
 
-### 3.4 Images
+### 4.6 Packages and platform build
 
-Build the host and identity images by their source identity, with `TMPDIR` on the main disk, because `/tmp` has a per-user quota:
+`wamn build` needs a PostgreSQL server ([building](building.md#wamn-build)). Run a local one on a loopback port, and build every package that the runner image reads:
 
 ```bash
-TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . host host "$(git rev-parse HEAD)" gcp gcp-wamn
-TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . identity identity "$(git rev-parse HEAD)" gcp gcp-wamn
+docker run -d --name wamn-install-build-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:0:5432 postgres:18
+PORT=$(docker port wamn-install-build-pg 5432/tcp | head -1 | sed 's/.*://')
+DATABASE_URL=postgres://postgres@127.0.0.1:$PORT/postgres target/debug/wamn build \
+  apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
+docker rm -f wamn-install-build-pg
 ```
 
-The operator image `wamn-ctl` of sections 3.16 and 4.5 builds the same way, from a clean worktree, because the build copies the working tree:
+`wamn-ctl build-platform` builds the host, runner, gates and identity images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The repository `wamn` has immutable tags. If the chart version is already in the registry, a build with other bytes cannot push. Read the version and look for its host image:
 
 ```bash
-TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . ctl ctl "$(git rev-parse HEAD)" gcp gcp-wamn
+V=$(sed -n 's/^pub const CHART_VERSION: &str = "\(.*\)";/\1/p' crates/control/lib/src/release_chart.rs)
+gcloud artifacts docker images describe us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:$V --format="value(image_summary.digest)"
 ```
 
-Push them with a Docker configuration of your own, so the shared `~/.docker/config.json` stays unchanged:
+If the describe prints a digest, stop. A new platform version is an owner ruling (`docs/plan/platform-deploy.md` R15).
+
+The build pushes for longer than one hour, and a `docker login` token expires after one hour. Give Docker a configuration of its own with the gcloud credential helper, which gets a new token for each push. The file holds no credential:
 
 ```bash
-export DOCKER_CONFIG=<your directory>
-gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://us-central1-docker.pkg.dev
+W=$HOME/.cache/wamn-install
+mkdir -m 700 $W/docker
+echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > $W/docker/config.json
+DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform \
+  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out $W/release-chart
 ```
 
-The nodes pull these images as `wamn-nodes`, which has `roles/artifactregistry.reader`, so no pull Secret exists.
-
-The repository `us-central1-docker.pkg.dev/wamn-dev/wamn-kind` holds the test pushes of the kind run of `upgrade-environment` (`wamn-m511.7`). Test pushes never go into `wamn`, because its tags are immutable and the live environments read it. `wamn-kind` is private, has immutable tags and deletes every version older than 7 days. Only the environment file of the kind stack names it. On 2026-10-02 the create and the policy took 4 seconds:
+Three files in `deploy/gcp` pin images of the chart. Write the new runner and identity images into them:
 
 ```bash
-gcloud artifacts repositories create wamn-kind --project wamn-dev --location us-central1 \
-  --repository-format=docker --description="kind test pushes of upgrade-environment" --immutable-tags
-echo '[{"name":"delete-older-than-7-days","action":{"type":"Delete"},"condition":{"tagState":"any","olderThan":"7d"}}]' > policy.json
-gcloud artifacts repositories set-cleanup-policies wamn-kind --project wamn-dev --location us-central1 \
-  --policy=policy.json --no-dry-run
+W=$HOME/.cache/wamn-install
+RUNNER=$(grep -o 'us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:[^ ]*' $W/release-chart/values.yaml)
+IDENTITY=$(grep -o 'us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:[^ ]*' $W/release-chart/values.yaml)
+sed -i "s#image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:.*#image: $RUNNER#" \
+  deploy/gcp/operator/mint-pat.yaml deploy/gcp/operator/invite.yaml
+sed -i "s/^  tag: .*/  tag: ${IDENTITY##*@sha256:}/" deploy/gcp/values-identity.yaml
+git diff --stat
 ```
 
+### 4.7 System database, org and identity issuer
+
+`provision-system` installs the control store. `provision-org --admin` records the org `dkk` and creates its first admin user. `provision-identity-issuer` prepares the login of identity, which the whole platform shares:
+
 ```bash
-R=us-central1-docker.pkg.dev/wamn-dev/wamn
-for image in wamn-host:src-<identity> wamn-identity:src-<identity>; do
-  docker tag $image $R/$image && docker push $R/$image
+W=$HOME/.cache/wamn-install
+PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
+export WAMN_SYSTEM_ADMIN_URL="postgresql://postgres:${PW}@127.0.0.1:15432/wamn_system"
+target/debug/wamn-ctl provision-system --platform-domain wamn.dev
+target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg --admin dkkloimwieder@gmail.com
+(umask 077; target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
+  --prepare-generation a --namespace identity --emit-secret $W/identity-db.json \
+  --db-host wamn-pg-rw.platform.svc.cluster.local)
+kubectl apply -f $W/identity-db.json
+rm $W/identity-db.json
+```
+
+Make the serving certificate and the operator CA of identity. Copy the CA of the serving certificate into `hosts` and `edge`:
+
+```bash
+W=$HOME/.cache/wamn-install
+kubectl apply -f deploy/gcp/identity-certificate.yaml -f deploy/gcp/identity-operator-ca.yaml
+kubectl -n identity wait certificate --all --for=condition=Ready --timeout=120s
+kubectl -n identity get secret identity-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > $W/identity-ca.crt
+for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file=ca.crt=$W/identity-ca.crt; done
+```
+
+### 4.8 Event NATS
+
+One event NATS serves both environments. Write the users of each environment into its own private directory. The tenant is `<org>--<project>--<env>`, the tenant that `env apply` gives the environment:
+
+```bash
+W=$HOME/.cache/wamn-install
+for project in receiving wms; do
+  mkdir -m 700 $W/evt-$project
+  cargo run --locked -p wamn-test-infrastructure --example event_broker_files -- \
+    $W/evt-$project nats://evt-nats.platform.svc.cluster.local:4222 \
+    dkk $project dev dkk--$project--dev 1 "$PWD/apps/target/wamn/wamn_$project/wamn.json"
 done
 ```
 
-The kind cases of `qualify-release` start the gates image, but B0 does not build it. Since `wamn-1s38` (2026-10-02) qualification pulls a pinned gates digest without a build (`docs/plan/release-qualification.md` §4.4). When the source of the gates image changes, build and push a new gates image in its own commit:
+`authorization.conf` is `authorization: ` followed by JSON. Merge the two files: the Receiving users, its `tap-admin`, and the WMS users without their `tap-admin`:
 
 ```bash
-TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . gates gates "$(git rev-parse HEAD)" gcp gcp-wamn
-docker tag wamn-gates:gcp $R/wamn-gates:src-<identity> && docker push $R/wamn-gates:src-<identity>
+W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-nats
+(umask 077; python3 - $E/authorization.conf $F/authorization.conf > $W/merged-authorization.conf <<'PY'
+import json, sys
+def users(path):
+    return json.loads(open(path).read().split(':', 1)[1])['users']
+merged = users(sys.argv[1]) + [u for u in users(sys.argv[2]) if u['user'] != 'tap-admin']
+print('authorization: ' + json.dumps({'users': merged}))
+PY
+)
 ```
 
-Push the relabeled image `wamn-gates:gcp`, as for the host and identity images (`docs/plan/kind-to-type.md` §3.2 B0 step 3). Then write the new digest into `docs/plan/release-qualification.md` §4.4.
-
-On 2026-09-26 the host image took 419 seconds to build and the identity image 59 seconds. The pushed images are:
-
-| Image | Digest |
-| --- | --- |
-| `wamn-host:src-490a0d098a176e39` | `sha256:b44a6f944a410ca42dccf378c0948226946c54fefa17c4bf3cc246e25dcd9dd2` |
-| `wamn-identity:src-bf477a549dc55932` | `sha256:b0896c8fb3f94920c097762f75019fe68a81254fc49a4fa6768a29db97794827` |
-| `wamn-identity:src-cb10274981e78f44` | `sha256:0fe43f6bc52e98e327cb7abd9898a3e1268f9298e37ec56e12504fe7ffdeab42` |
-| `wamn-ctl:src-4efb827f3fd6ab78` | `sha256:1322d637113f2934340620556f1ef491d2d2e28f4991ddeb9236a7d4f48eae10` |
-| `wamn-identity:src-4d7d761fa53551b2` | `sha256:5ba5e9dc09043d36f6fbc2cf830b09d08dea2f5a63bde2be74dc246411a55164` |
-| `wamn-ctl:src-61412780c14f9a3b` | `sha256:94a87fe53ba0765c61ae03075c5f81c294ae2e79c617071dc1966d4d105d3584` |
-
-On 2026-09-27 the second identity image, with the invitation link, took 53 seconds to build and 5 seconds to push. Roll it out with `helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml`.
-
-On 2026-09-30 the `wamn-ctl` image of `b89dd2ea5` took 1 second to build from warm layers and 6 seconds to push. The two Jobs of `deploy/gcp/operator/` pin it by digest.
-On 2026-10-01 the `wamn-ctl` image of `87c406afa` (`wamn-rjtf`) took 960 seconds to build and 6 seconds to push. The two Jobs pin it in place of `src-4efb827f3fd6ab78`. Do not run the old image again: it writes the registry row on a PAT run, and without `--secret-namespace` it records NULL.
-On 2026-09-27 the third identity image, with the org and project filter of finding `wamn-9a3v`, took 102 seconds to build and 6 seconds to push. The rollout took 9 seconds.
-
-### 3.4.1 Platform build
-
-`wamn-ctl env apply` takes the host image, the `http` and `materializer` role components and the qualification images from the release chart that `wamn-ctl build-platform` stamps ([delivery](delivery.md#release-qualification)). The build tags each image with the chart version, `release_chart::CHART_VERSION` (`0.1.1` since `wamn-rk9l2`), and the repository `wamn` has immutable tags, so one chart version is pushed once. Make sure that its inputs are complete before you start it, because it pushes each image as soon as that image is built.
-
-The runner image compiles the Receiving and WMS cases against the package outputs in `apps/target/wamn`. Build every package that they read first, with the Postgres server that [building](building.md#wamn-build) asks for:
+Make the broker Secrets, install the broker, and make the user Secrets:
 
 ```bash
-DATABASE_URL=<superuser URL> target/debug/wamn build apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
-```
-
-Without `apps/client_acme_receiving`, the runner build stops with `could not compile wamn-receiving-tests` after the host image is already pushed.
-
-A token from `docker login` expires after one hour, and the build takes longer. Give `DOCKER_CONFIG` the gcloud credential helper instead, so each push gets a new token. The file carries no credential:
-
-```bash
-mkdir -m 700 <your directory>
-echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > <your directory>/config.json
-DOCKER_CONFIG=<your directory> target/debug/wamn-ctl build-platform \
-  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out <chart directory>
-```
-
-On 2026-10-13 (`wamn-rk9l2`) the first run left out `apps/client_acme_receiving`. It pushed `wamn-host:0.1.0` (`sha256:55d6ce4a267620d5a6577118e76c2195dd769e7bceffb313a5459b23911b3bf2`) and then failed in the runner build. A local rebuild of the host target from the same commit, with no push, gave the same image ID, `sha256:ca33979a26a10fef21d85975a6392b4ab2b9e79c4b33a08ff8a08d0f7cb65048`.
-
-### 3.5 Event NATS
-
-Write the users of the environment into a private directory. The org was `wamn` at first and is now `dkk` (section 3.7), so the program ran again and every Secret below was replaced with `kubectl create --dry-run=client -o yaml | kubectl apply -f -`. The example program calls `event_broker::prepare`, the derivation of the cluster tests, and adds the `tap-admin` user that creates the `WAMN_TAP` stream:
-
-```bash
-mkdir -m 700 <private directory>
-cargo run -p wamn-test-infrastructure --example event_broker_files -- \
-  <private directory> nats://evt-nats.platform.svc.cluster.local:4222 \
-  dkk receiving dev dev 1 "$PWD/apps/wamn_receiving/wamn.json"
-E=<private directory>/event-nats
-```
-
-The Receiving manifest declares no event registration, so the program makes no materializer consumer.
-
-Make the two broker Secrets, then install the broker:
-
-```bash
-kubectl -n platform create secret generic evt-nats-authorization --from-file=authorization.conf=$E/authorization.conf
+W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-nats
+kubectl -n platform create secret generic evt-nats-authorization --from-file=authorization.conf=$W/merged-authorization.conf
 kubectl -n platform create secret generic evt-nats-bootstrap --from-file=context.json=$E/context.json
 kubectl apply -f deploy/gcp/nats-jetstream.yaml
 kubectl -n platform rollout status statefulset/evt-nats --timeout=300s
 kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s
-```
-
-Keep the other three users in `platform`. The provisioning step uses `evt-nats-provisioning`, and no host mounts these Secrets:
-
-```bash
 for role in provisioning publisher observer; do
   kubectl -n platform create secret generic evt-nats-$role \
     --from-file=username=$E/$role-username --from-file=password=$E/$role-password
+  kubectl -n platform create secret generic evt-nats-wms-$role \
+    --from-file=username=$F/$role-username --from-file=password=$F/$role-password
 done
-```
-
-Make the two host Secrets. The host connects as the `runtime` user, and the materializer reads the binding:
-
-```bash
+kubectl -n hosts create secret generic evt-nats-publisher \
+  --from-file=username=$E/publisher-username --from-file=password=$E/publisher-password
+kubectl -n hosts create secret generic evt-nats-wms-publisher \
+  --from-file=username=$F/publisher-username --from-file=password=$F/publisher-password
 kubectl -n hosts create secret generic wamn-event-nats \
   --from-file=username=$E/runtime-username --from-file=password=$E/runtime-password \
   --from-literal=org=dkk --from-literal=project=receiving --from-literal=environment=dev \
   --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
 kubectl -n hosts create secret generic wamn-materializer-nats --from-file=binding.json=$E/binding.json
+kubectl -n hosts create secret generic wamn-event-nats-wms \
+  --from-file=username=$F/runtime-username --from-file=password=$F/runtime-password \
+  --from-literal=org=dkk --from-literal=project=wms --from-literal=environment=dev \
+  --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
+kubectl -n hosts create secret generic wamn-materializer-nats-wms --from-file=binding.json=$F/binding.json
 ```
 
-On 2026-09-26 the first start failed. The broker crash-looped, because `deploy/infra/nats-jetstream.yaml` includes the authorization file by an absolute path, and nats-server resolves an include relative to the configuration file (finding `wamn-lrf1`). The Google Cloud copy uses a relative path. The tap-stream Job reached its backoff limit while the broker was down, so it was deleted and applied again. It then completed in 18 seconds.
-
-After the Secrets change, restart the broker so that it reads the new users. `WAMN_TAP` uses memory storage, so a restart drops it by design. Run the tap-stream Job again after every event NATS restart:
-
-```bash
-kubectl -n platform delete pod evt-nats-0
-kubectl -n platform rollout status statefulset/evt-nats --timeout=180s
-kubectl -n platform delete job evt-nats-tap-stream
-kubectl apply -f deploy/gcp/nats-jetstream.yaml
-kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=120s
-```
-
-Make sure that `WAMN_TAP` exists and that the provisioning user connects:
+Make sure that the stream `WAMN_TAP` exists. The log shows `"config":{"name":"WAMN_TAP"`:
 
 ```bash
 kubectl apply -f deploy/gcp/evt-nats-check.yaml
@@ -538,134 +317,136 @@ kubectl -n platform logs evt-nats-check
 kubectl -n platform delete pod evt-nats-check
 ```
 
-The log shows `"config":{"name":"WAMN_TAP"` for tap-admin. For the provisioning user it shows `"err_code":10059,"description":"stream not found"`, because the source stream does not exist yet. A wrong password or permission gives an authorization or permissions error instead. On 2026-09-26 the restart took 23 seconds, the Job 24 seconds and the check 7 seconds.
-
-### 3.6 System database
-
-Install the control store and set the platform domain with `wamn-ctl provision-system`. Run it from this machine through a port-forward. Read the superuser password from its Secret into a variable, and do not print it:
+Forward the event NATS to this machine:
 
 ```bash
-kubectl -n platform port-forward svc/wamn-pg-rw 15432:5432 &
+W=$HOME/.cache/wamn-install
+setsid kubectl -n platform port-forward svc/evt-nats 14222:4222 > $W/pf-nats.log 2>&1 < /dev/null &
+```
+
+### 4.9 Platform install inputs
+
+`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Every host runs as the service account `wamn-host`, which acts as `wamn-blob` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The two platform manifests state no namespace, so apply them into the release namespace:
+
+```bash
+kubectl apply -f deploy/gcp/registry-helper.yaml
+kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
+kubectl -n hosts annotate serviceaccount wamn-host --overwrite \
+  iam.gke.io/gcp-service-account=wamn-blob@wamn-dev.iam.gserviceaccount.com
+kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
+gcloud iam service-accounts get-iam-policy wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+  --format=json | grep -c 'hosts/wamn-host'
+```
+
+The count must be 1. If it is 0, the binding of section 1 is missing.
+
+### 4.10 Platform file
+
+`wamn-ctl env` reads its platform inputs from the environment (`Platform::from_env` in `crates/control/lib/src/environment/mod.rs`). Write them into one file. Every later step starts with `. $HOME/.cache/wamn-install/platform.sh`:
+
+```bash
+W=$HOME/.cache/wamn-install
+cat > $W/platform.sh <<'EOF'
+export W=$HOME/.cache/wamn-install
 PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
 export WAMN_SYSTEM_ADMIN_URL="postgresql://postgres:${PW}@127.0.0.1:15432/wamn_system"
-cargo build -p wamn-ctl
-target/debug/wamn-ctl provision-system --platform-domain wamn.dev
-```
-
-The verb runs once. A second run refuses, because the schema `registry` exists. On 2026-09-26 it took 2 seconds. `deploy/sql/postgres-init.sql` is a test fixture and is not applied.
-
-### 3.7 Org and project environment
-
-The org id is `dkk`, because the id `wamn` is under the reserved `wamn` prefix. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Record the org on the shared cluster `wamn-pg`. `--admin` names the org's admin. On a new `wamn_system` it creates that user, the first, in the same transaction as the org. When users exist, it must name one of them:
-
-```bash
-target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg --admin dkkloimwieder@gmail.com
-```
-
-Render the project environment into a private directory `P`. The verb writes files and applies nothing:
-
-```bash
-target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --cluster-namespace platform --namespace hosts --secret-namespace hosts \
-  --emit-database $P/database.json --emit-role-sql $P/role.sql \
-  --emit-privilege-sql $P/privilege.sql --emit-secret $P/secret.json
-```
-
-Apply the files in this order. `--cluster-namespace` names the namespace of the Cluster, which the `Database` shares. `--namespace` names the namespace of the Secret:
-
-```bash
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/role.sql
-kubectl apply -f $P/database.json
-kubectl -n platform wait database/wamn-db-dkk--receiving--dev--4pqjfmli --for=jsonpath='{.status.applied}'=true --timeout=120s
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $P/privilege.sql
-kubectl apply -f $P/secret.json
-```
-
-The instance suffix `4pqjfmli` comes from the registry, so a new environment has a different database name. The first suffix was `zf7o454t`, and section 6.7 tells why it changed. On 2026-09-26 `provision-org` took 2 seconds, `provision-project-env` 3 seconds, and the apply steps 8 seconds. On 2026-09-29 the fixed verb ran again for Receiving and WMS in 2 and 1 seconds. Both `Database` files applied as `unchanged`. Both Secrets applied as `configured`, but their `resourceVersion` stayed the same. `kubectl apply` prints `configured` for a Secret with `stringData` even when the server writes nothing.
-
-### 3.8 Identity issuer, run plane and package
-
-Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Set the superuser URL of the tenant database, without printing it:
-
-```bash
-T="postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--receiving--dev--4pqjfmli"
-target/debug/wamn-ctl provision-identity-issuer --issuer https://identity.identity.svc.cluster.local \
-  --prepare-generation a --namespace identity --emit-secret $P/identity-db.json \
-  --db-host wamn-pg-rw.platform.svc.cluster.local
-target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
-  --org dkk --project receiving --tenant dev --env dev --schema wamn_run
-R="--artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json"
-target/debug/wamn-ctl apply-package --package-artifact wamn_receiving-2.1.0 $R --database-url "$T" --tenant dev
-target/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_receiving-2.1.0 $R --database-url "$T" --tenant dev
-```
-
-`apply-package` and `reconcile-package-data-access` take the artifact that `push-package` pushed, never the checkout directory, so run the push below before these two verbs. `reconcile-run-plane` runs before `apply-package`, because it installs the catalog schema that `apply-package` writes into. On 2026-09-26 the four verbs took 4, 13, 37 and 16 seconds.
-
-Every emitted credential URL names the host and port of `--db-host` and `--db-port`, never the port-forward of the admin URL (finding `wamn-lczu`). `provision-identity-issuer` has no default host. `provision-project-env` defaults to `<cluster>-rw:5432`, and a Secret outside the namespace of the cluster needs the full service name. Apply the Secret:
-
-```bash
-kubectl apply -f $P/identity-db.json
-```
-
-### 3.9 Component
-
-Write a push credential for Artifact Registry into a private temporary directory. The token goes through a pipe, so it never appears on a command line. `wamn-ctl` reads only the `username` and `password` fields:
-
-```bash
-A=$(mktemp -d); chmod 700 $A
-gcloud auth print-access-token | python3 -c '
+export WAMN_CONTROL_DATABASE_URL="$WAMN_SYSTEM_ADMIN_URL"
+export WAMN_RELEASE_NAMESPACE=hosts
+export WAMN_DATABASE_NAMESPACE=platform
+export WAMN_DATABASE_HOST=wamn-pg-rw.platform.svc.cluster.local
+export WAMN_RELEASE_CHART=$W/release-chart
+export WAMN_RELEASE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
+export WAMN_PACKAGE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/packages
+export WAMN_REGISTRY_AUTH_FILE=$W/registry/config.json
+export WAMN_EVENT_NATS_URL=nats://127.0.0.1:14222
+export DOCKER_CONFIG=$W/docker
+# The registry token lasts one hour. Write a new one before each step that reads it.
+registry_token() {
+  rm -rf $W/registry; mkdir -m 700 $W/registry
+  gcloud auth print-access-token | python3 -c '
 import json, os, sys
 token = sys.stdin.read().strip()
 fd = os.open(os.path.join(sys.argv[1], "config.json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 os.write(fd, json.dumps({"auths": {"us-central1-docker.pkg.dev": {"username": "oauth2accesstoken", "password": token}}}).encode())
-os.close(fd)' $A
+os.close(fd)' $W/registry
+}
+# The provisioning user of the event NATS for one environment.
+use_env() {
+  export WAMN_EVENT_NATS_USERNAME="$(cat $W/evt-$1/event-nats/provisioning-username)"
+  export WAMN_EVENT_NATS_PASSWORD_FILE=$W/evt-$1/event-nats/provisioning-password
+}
+# The instance suffix and the superuser URL of one environment database.
+suffix() { kubectl -n platform get database -o name | sed -n "s#.*/wamn-db-dkk--$1--dev--##p"; }
+db_url() { echo "postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--$1--dev--$(suffix $1)"; }
+# The private directory of the authoring gate, and the URL of one emitted Secret file.
+G=$W/gate
+url() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["stringData"]["url"])' "$1"; }
+EOF
+chmod 600 $W/platform.sh
 ```
 
-Push the package. `push-package` reads `receiving.wasm` through `outputs.components` of the package's `build.json`, admits it, pushes it under its digest to the component repository, and then pushes the package artifact:
+Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.identity.svc.cluster.local`, so this machine cannot reach identity, and `apply` issues no PAT. Section 4.14 mints the PAT in the cluster.
+
+### 4.11 First apply
+
+`publish-release` needs the environment database and its installed packages, so the first apply names no release. The documents in [deploy/gcp/environments](../../deploy/gcp/environments) name a release, so apply a private copy with `release = "none"`. The apply records the environment with a new instance suffix, and makes the `Database`, the roles, the run plane and the credential Secrets:
 
 ```bash
-target/debug/wamn-ctl push-package --package apps/wamn_receiving \
-  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages \
-  --component-artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components \
-  --registry-auth-file $A/config.json
-rm -rf $A
+. $HOME/.cache/wamn-install/platform.sh
+for project in receiving wms; do
+  use_env $project
+  sed 's/^    release = .*/    release = "none"/' deploy/gcp/environments/dkk--$project--dev.k > $W/dkk--$project--dev.k
+  target/debug/wamn-ctl env apply $W/dkk--$project--dev.k --dry-run
+  target/debug/wamn-ctl env apply $W/dkk--$project--dev.k
+  echo "$project $(suffix $project)"
+done
 ```
 
-The component digest must equal the `sha256sum` of the local `receiving.wasm`. On 2026-09-26 the retired `push-component` verb pushed `sha256:36b94783af587a75c3054deeb7ab4f721a89a3832b3b2d788e86a60981a36d0e` in 14 seconds. This credential is for the operator push only. The host pulls with the CronJob token of finding `wamn-i87m`.
-
-### 3.10 Identity
-
-Make the serving certificate and the operator CA. Copy the CA of the serving certificate into `hosts` and `edge`:
+Each host group file holds the suffix of its environment's first apply. Write the new suffixes:
 
 ```bash
-kubectl apply -f deploy/gcp/identity-certificate.yaml -f deploy/gcp/identity-operator-ca.yaml
-kubectl -n identity wait certificate --all --for=condition=Ready --timeout=120s
-kubectl -n identity get secret identity-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > $P/identity-ca.crt
-for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file=ca.crt=$P/identity-ca.crt; done
+. $HOME/.cache/wamn-install/platform.sh
+for project in receiving wms; do
+  sed -i "/name: WAMN_SESSION_INSTANCE_SUFFIX/{n;s/value: .*/value: $(suffix $project)/}" deploy/gcp/host-group-$project.yaml
+done
+git diff deploy/gcp/host-group-*.yaml
 ```
 
-To send an invitation, the owner reads `tls.crt` and `tls.key` of the Secret `operator-dkk` into mode 0600 files. Never commit them.
+### 4.12 Identity and session key
 
-Prepare the session target and apply it:
+Prepare the session target of each environment in namespace `identity`. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) names both Secrets:
 
 ```bash
-target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace identity --target-admin-database-url "$T" --db-host wamn-pg-rw.platform.svc.cluster.local \
-  --prepare-session-role-reader-generation a --emit-session-role-reader-secret $P/session-target.json
-kubectl apply -f $P/session-target.json
+. $HOME/.cache/wamn-install/platform.sh
+for project in receiving wms; do
+  (umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev --tenant dkk--$project--dev \
+    --namespace identity --target-admin-database-url "$(db_url $project)" --db-host wamn-pg-rw.platform.svc.cluster.local \
+    --prepare-session-role-reader-generation a --emit-session-role-reader-secret $W/session-target-$project.json)
+  kubectl apply -f $W/session-target-$project.json
+  rm $W/session-target-$project.json
+done
 ```
 
-The verb prints two PostgreSQL warnings that the `postgres` role did not grant a role membership. The generation still authenticates, as the verb reports. On 2026-09-26 the certificates took 5 seconds and the session target 11 seconds.
+The verb prints two PostgreSQL warnings that the `postgres` role did not grant a role membership. The generation still authenticates.
 
-The owner creates the Secret `identity-resend` (namespace `identity`, key `api-key`) from a file, as plan section 4.2 states. Then install identity with [values-identity.yaml](../../deploy/gcp/values-identity.yaml), which names the image by digest:
+Make sure that the owner's Resend Secret exists and that its key holds no whitespace. The second command prints a count, never the key, and the count must be 0:
 
 ```bash
-kubectl -n identity get secret identity-resend
+. $HOME/.cache/wamn-install/platform.sh
+kubectl -n identity get secret identity-resend -o name
+kubectl -n identity get secret identity-resend -o jsonpath='{.data.api-key}' | base64 -d | tr -dc '[:space:]' | wc -c
+```
+
+Install identity from the file values only, with no `--set`. Then publish a session key, and activate it with the `kid` that `publish` prints:
+
+```bash
 helm install identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml
 kubectl -n identity rollout status deploy/identity --timeout=300s
+kubectl -n identity exec deploy/identity -- wamn-identity publish
+kubectl -n identity exec deploy/identity -- wamn-identity activate --kid <kid>
 ```
 
-Make sure that identity answers over TLS from a pod in `hosts`, verified against `identity-ca`:
+Make sure that identity answers over TLS from a pod in `hosts`. The answer is the key set with the `kid`, and `HTTP 200`:
 
 ```bash
 kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
@@ -673,1634 +454,364 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
   --overrides='{"spec":{"volumes":[{"name":"ca","configMap":{"name":"identity-ca"}}],"containers":[{"name":"identity-check","image":"curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777","command":["curl","-sS","-w","\\nHTTP %{http_code}\\n","--cacert","/ca/ca.crt","https://identity.identity.svc.cluster.local/.well-known/jwks.json"],"volumeMounts":[{"name":"ca","mountPath":"/ca"}]}]}}'
 ```
 
-On 2026-09-26 the install took 8 seconds, and the check returned `{"keys":[]}` with `HTTP 200`. The key set is empty until a session key is published.
+### 4.13 Packages
 
-### 3.11 Host Secrets
-
-Prepare generation `a` of the five host credentials, one family for each run. `identity-reader` addresses the system database, so it takes no `--target-admin-database-url`:
+The package artifacts `wamn_receiving-2.1.0` and `wamn_wms-2.1.0` are in the registry. If a tag is missing, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
 
 ```bash
-for f in guest executor-platform http-admitter event-materializer; do
-  target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-    --namespace hosts --target-admin-database-url "$T" --db-host wamn-pg-rw.platform.svc.cluster.local \
-    --prepare-$f-generation a --emit-$f-secret $P/$f.json
-done
-target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace hosts --db-host wamn-pg-rw.platform.svc.cluster.local \
-  --prepare-identity-reader-generation a --emit-identity-reader-secret $P/identity-reader.json
-```
-
-Name the guest Secret `wamn-host-db`, and apply them:
-
-```bash
-for f in guest executor-platform identity-reader http-admitter event-materializer; do
-  filter='.'
-  [ $f = guest ] && filter='.metadata.name = "wamn-host-db"'
-  (umask 077; jq "$filter" $P/$f.json > $P/$f.cluster.out) && kubectl apply -f - < $P/$f.cluster.out
+. $HOME/.cache/wamn-install/platform.sh
+registry_token
+for project in receiving wms; do
+  gcloud artifacts docker images describe $WAMN_PACKAGE_ARTIFACT_BASE:wamn_$project-2.1.0 --format="value(image_summary.digest)" \
+  || target/debug/wamn-ctl push-package --package apps/wamn_$project --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE \
+       --component-artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
 done
 ```
 
-On 2026-09-26 the five generations took 107 seconds and the apply 13 seconds.
-
-Since `wamn-a40n.2`, a host also reads a sixth credential, `WAMN_ADMINISTRATION_PG_URL`, from the Secret `wamn-administration-dkk--<project>--dev`.
-On an installed project database, `upgrade-schema` applies its grants as `project/0003_administration_grants.sql`.
-Prepare it and apply it the same way for `receiving`, and again with `--project wms` for the WMS host group:
+Install each package into its environment. `reconcile-replica-identity` runs for WMS, because the workflow `movement_label` compares the old location of `wms.packaging`:
 
 ```bash
-target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace hosts --target-admin-database-url "$T" --db-host wamn-pg-rw.platform.svc.cluster.local \
-  --prepare-administration-generation a --emit-administration-secret $P/administration.json
-(umask 077; jq . $P/administration.json > $P/administration.cluster.out) && kubectl apply -f - < $P/administration.cluster.out
+. $HOME/.cache/wamn-install/platform.sh
+R="--artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE"
+for project in receiving wms; do
+  target/debug/wamn-ctl apply-package --package-artifact wamn_$project-2.1.0 $R \
+    --database-url "$(db_url $project)" --tenant dkk--$project--dev
+  target/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_$project-2.1.0 $R \
+    --database-url "$(db_url $project)" --tenant dkk--$project--dev
+done
+target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url wms)" --package apps/wamn_wms
 ```
 
-Apply the Secret before the host rollout, because [values-host.yaml](../../deploy/gcp/values-host.yaml) names it with `optional: false`.
+### 4.14 Releases
 
-Since `wamn-a40n.6`, an administration prepare also needs `--emit-control-administration-patch $P/administration.patch.json`, because the control host of the org holds the same login. A rotation writes both files too. Apply the patch to the Secret of section 3.22 after that Secret exists:
+`publish-release` prints the digest of the release manifest. Publish Receiving, which has no wiring:
 
 ```bash
-kubectl -n hosts patch secret wamn-control-administration-dkk --type merge --patch-file $P/administration.patch.json
+. $HOME/.cache/wamn-install/platform.sh
+registry_token
+RELEASE_receiving=$(target/debug/wamn-ctl publish-release --database-url "$(db_url receiving)" \
+  --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--receiving--dev --environment dev \
+  --verified-publisher-principal wamn-management-author-dkk--receiving--dev \
+  --run-schema wamn_run --package wamn_receiving@2.1.0 \
+  --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
+echo "$RELEASE_receiving" > $W/release-receiving
 ```
 
-### 3.12 Registry pull
-
-The hosts pull the release manifest and the components with a token from the GKE metadata server (`--registry-token-metadata`). The token belongs to the Google service account `wamn-blob` of section 5.1, through Workload Identity. No Secret holds a registry credential.
-
-Give `wamn-blob` read access to repository `wamn` only:
+The WMS release has the wiring `inventory_move_and_label`. The authoring gate must pass the wiring before `author-wiring` records it. The gate runs on this machine, so its database logins name the port-forward. Prepare the gate logins into a private directory `G`, and do not apply them:
 
 ```bash
-gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
-  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/artifactregistry.reader
+. $HOME/.cache/wamn-install/platform.sh
+mkdir -m 700 $G
+(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
+  --namespace hosts --target-admin-database-url "$(db_url wms)" --db-host 127.0.0.1 --db-port 15432 \
+  --prepare-management-admitter-generation a --emit-management-admitter-secret $G/management-admitter.json)
+(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant dkk--wms--dev \
+  --namespace hosts --db-host 127.0.0.1 --db-port 15432 \
+  --prepare-control-author-generation a --emit-control-author-secret $G/control-author.json)
+(umask 077; kubectl -n hosts get secret wamn-identity-reader-dkk--wms--dev -o jsonpath='{.data.url}' | base64 -d \
+  | sed 's#@wamn-pg-rw.platform.svc.cluster.local:5432/#@127.0.0.1:15432/#' > $G/identity-reader.url)
 ```
 
-`deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`. It names the `wamn` credential helper for the registry, and it holds no credential. The host values mount it at `/etc/wamn/registry`, which `DOCKER_CONFIG` names. Apply it before the host rollout:
+`control-author` addresses the control database, so it takes no `--target-admin-database-url`.
+
+Mint the management-author PAT of WMS in the cluster. The Job [mint-pat.yaml](../../deploy/gcp/operator/mint-pat.yaml) runs in namespace `identity` with the mounted operator certificate, so the certificate never reaches this machine. Fill a private copy of the manifest, apply it and remove it:
 
 ```bash
-kubectl apply -f deploy/gcp/registry-helper.yaml
+. $HOME/.cache/wamn-install/platform.sh
+(umask 077; sed -e 's/__ORG__/dkk/' -e 's/__PROJECT__/wms/' -e 's/__ENV__/dev/' -e 's/__TENANT__/dkk--wms--dev/' \
+  -e 's/__NAMESPACE__/hosts/' -e 's/__PAT_FLAG__/--emit-management-author-pat-secret/' \
+  deploy/gcp/operator/mint-pat.yaml > $G/mint-pat.yaml)
+kubectl apply -f $G/mint-pat.yaml
+rm $G/mint-pat.yaml
 ```
 
-To make sure that a service account gets the Google identity you expect from the metadata server, run a pod as that service account:
+The pod waits for the Secret `wamn-system-admin`, the superuser URL of `wamn_system`. Make it with an owner reference to the Job, so that Kubernetes deletes it with the Job. Use `kubectl create`, because `kubectl apply` copies the data into an annotation. The pod keeps the PAT file for at most 300 seconds, so read it at once:
 
 ```bash
-kubectl -n hosts run wi-check --restart=Never --rm -i --quiet \
-  --image=curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 \
-  --overrides='{"spec":{"serviceAccountName":"<service account>"}}' -- \
-  curl -sS -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
-```
-
-B10 of `docs/plan/kind-to-type.md` section 3.2 applied the grant and the ConfigMap on 2026-10-02. Before B10, a CronJob wrote a token into the Secret `wamn-registry-pull` as the Google service account `wamn-registry-reader`. The cutover deleted the CronJob, the Secret and the account.
-
-### 3.13 Pinned images
-
-| Image | Digest | Use |
-| --- | --- | --- |
-| `wamn-host:src-bba6fe15a456083e` | `sha256:d6abaac5b196afe72a576619efa4194f15287835d3994757ae41c923fb54dbfa` | host |
-| `wamn-identity:src-bba6fe15a456083e` | `sha256:1899c98fecc0b5bd0533929902646b6ef1f0189c786a1bdbd44f84418d4cdf0d` | identity |
-| `wamn-gates:src-38f6225813d8b634` | `sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4` | gates of `qualify-release` |
-| `wamn-ctl:src-bba6fe15a456083e` | `sha256:84fdb08b609781d995b49a49d67de528451763368a05ea19ae91410c986e766a` | `mint-pat` and `invite` Jobs |
-| `wamn-cdc-reader:src-596c8e6604d119a0` | `sha256:9b1ed15e87122ce208114582b27ce23af7cc06c80653c798fcac5b79172e1c52` | CDC reader |
-| `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | identity TLS check |
-
-The four `wamn` images come from the cutover commit `351f71337` of branch `cutover` (`docs/plan/kind-to-type.md` section 3.2, 2026-10-02). They carry the label `wamn.dev/source-head`, because `qualify-release` compares each pin with the labeled build of `tools/journey-image-cache`.
-
-The kind cases of `qualify-release` do not pull these images from the private registry. The case (`case_release::node_image_archives` of `wamn-gate-harness`) fetches each pinned manifest and its blobs by digest with the pull credential of the release registry, the file of `--registry-auth-file`, and each kind node imports that archive with `ctr`, so the node holds the pinned digest. No credential reaches a node. The owned registry of a kind delivery case is plain HTTP with no login, and its candidate sets `native_registry_insecure`. The kind nodes pull from that registry through the containerd hosts directory instead.
-
-### 3.14 Host values
-
-Run the host values program after `publish-release`, with the release artifact base and the manifest digest that `publish-release` prints. The program calls `render_host_values`, the derivation of the kind cases, and writes both files:
-
-```bash
-cargo run -p wamn-test-infrastructure --example host_values_files -- \
-  deploy/gcp <release artifact base> <release manifest digest>
-```
-
-The program makes these differences from kind:
-
-| Difference | Reason |
-| --- | --- |
-| `WAMN_ORG` and the four role Secret names say `dkk`, not `acme`. | The org id is `dkk`, and the checked-in overlay names `acme`. |
-| No `--allow-insecure-registries`. | The flag switches every registry to plain HTTP. Artifact Registry uses HTTPS with public roots. |
-| No `OTEL_*` entries. | No collector runs on Google Cloud. |
-| `global.nats.schedulerUrl` and `dataUrl` are `nats://nats.platform.svc.cluster.local:4222`. | The control NATS runs in `platform`. |
-| The event NATS URL is in `platform`, and the images come from Artifact Registry by digest. | The event NATS runs in `platform`. |
-| Requests are 500m CPU and 256Mi, and limits are 2 CPU and 4Gi. | One replica runs on an `e2-standard-2` node. |
-| `WAMN_SESSION_ISSUER`, `WAMN_SESSION_INSTANCE_SUFFIX` and `WAMN_SESSION_JWKS_CA`, with the ConfigMap `identity-ca` at `/etc/identity-ca`. | The session routes need the identity issuer, as in `session_cluster::adjust_host` of the kind cases. |
-
-The two `wamn-system` values in the base host group have no effect, because the overlay replaces the whole `hostGroups` list. Install the host as release `wamn-host`, with the base file first:
-
-```bash
-helm install wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
-  -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 5m
-```
-
-### 3.15 Session key
-
-Publish a session key in the identity pod, and activate it with the printed `kid`:
-
-```bash
-kubectl -n identity exec deploy/identity -- wamn-identity publish
-kubectl -n identity exec deploy/identity -- wamn-identity activate --kid <kid>
-```
-
-Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09-26 the key was `a24410b7-e7da-423c-944a-27479ed4b0f2`.
-
-### 3.16 PAT mint in the cluster
-
-The Job `deploy/gcp/operator/mint-pat.yaml` mints a PAT inside the cluster, in namespace `identity` (`docs/plan/operator-image.md`, `wamn-n5d1`). It runs the operator image `wamn-ctl`, which the manifest pins by digest. It reads the `operator-dkk` certificate as a mounted Secret, so the certificate never reaches this machine. It needs no `/etc/hosts` line and no identity port-forward.
-
-No mint and no invitation runs on wamn-dev until step B2 of the kind to type cutover (`docs/plan/kind-to-type.md` §3.2). The image pinned in `mint-pat.yaml` and `invite.yaml` comes from `main` after the cutover commit, and it reads `placement_type`, which wamn-dev does not have before B2. The two operator Jobs are part of the binaries of the cutover. No image from a commit that is not on `main` runs in them (`wamn-rjtf`).
-
-Fill the run values in a private copy of the manifest, apply the copy and remove it. This run mints the management-author PAT of Receiving. A run with only a PAT flag reads the recorded environment and writes nothing to the registry. It refuses `--secret-namespace` and `--disposable`, and it refuses an environment that the registry does not hold (`wamn-rjtf`):
-
-```bash
-(umask 077; sed -e 's/__ORG__/dkk/' -e 's/__PROJECT__/receiving/' -e 's/__ENV__/dev/' -e 's/__TENANT__/dev/' \
-  -e 's/__NAMESPACE__/platform/' \
-  -e 's/__PAT_FLAG__/--emit-management-author-pat-secret/' deploy/gcp/operator/mint-pat.yaml > $P/mint-pat.yaml)
-kubectl apply -f $P/mint-pat.yaml
-rm $P/mint-pat.yaml
-```
-
-The pod waits for the Secret `wamn-system-admin`, which holds the superuser URL of `wamn_system`. Make it from the CloudNativePG Secret, with an owner reference to the Job, so that Kubernetes deletes it with the Job. Use `kubectl create`, because `kubectl apply` copies the data into an annotation:
-
-```bash
+. $HOME/.cache/wamn-install/platform.sh
 JOB_UID=$(kubectl -n identity get job mint-pat -o jsonpath='{.metadata.uid}')
-PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
 printf 'postgresql://postgres:%s@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system' "$PW" |
   kubectl -n identity create secret generic wamn-system-admin --from-file=url=/dev/stdin --dry-run=client -o json |
   jq --arg uid "$JOB_UID" '.metadata.ownerReferences = [{apiVersion: "batch/v1", kind: "Job", name: "mint-pat", uid: $uid}]' |
   kubectl create -f -
-```
-
-The verb writes the PAT Secret file into a memory volume of the pod. The pod keeps it for at most 300 seconds. Wait for the file, then read and delete it with one command into a mode 0600 file:
-
-```bash
-for i in $(seq 60); do kubectl -n identity exec job/mint-pat -- test -e /out/pat.json && break; sleep 2; done
-(umask 077; kubectl -n identity exec job/mint-pat -- sh -c 'cat /out/pat.json && rm /out/pat.json' > $P/management-author-pat.json)
+for i in $(seq 150); do kubectl -n identity exec job/mint-pat -- test -e /out/pat.json 2>/dev/null && break; sleep 2; done
+(umask 077; kubectl -n identity exec job/mint-pat -- sh -c 'cat /out/pat.json && rm /out/pat.json' > $G/management-author-pat.json)
 kubectl -n identity wait --for=condition=complete job/mint-pat --timeout=60s
-kubectl -n identity logs job/mint-pat > $P/mint-pat.log
+kubectl -n identity logs job/mint-pat
 kubectl -n identity delete job mint-pat
 ```
 
-The Job and its Secret also go 600 seconds after the Job ends (`ttlSecondsAfterFinished`). For an operator PAT, pass `--emit-operator-pat-secret` and read the file into `$P/operator-pat.json`.
-
-On 2026-09-30 the Job minted the operator PAT of the Receiving bench operator `wamn-operator-dkk--receiving--dev` in 10 seconds, with `--emit-operator-pat-secret`. The file was read 3 seconds after the mint. The PAT has prefix `5b0649d6dc4dd3bf` and expires on 2026-10-30. The log holds no credential, and `registry.project_envs` kept `secret_namespace` `hosts`. Revoke the previous PAT of the service from this machine, through a forward to the pod:
+Run the gate on this machine, and post the gate request with the PAT as a bearer token. The PAT goes to `curl` as a header file, never on the command line:
 
 ```bash
-kubectl -n platform port-forward pod/wamn-pg-1 15435:5432 &
-target/debug/wamn-ctl provision-project-env --revoke-pat-prefix 1a98d582140907ed \
-  --system-database-url "postgresql://postgres:${PW}@127.0.0.1:15435/wamn_system"
+. $HOME/.cache/wamn-install/platform.sh
+WAMN_SYSTEM_URL="$(cat $G/identity-reader.url)" WAMN_CONTROL_AUTHORING_PG_URL="$(url $G/control-author.json)" \
+WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
+WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=dkk--wms--dev \
+  setsid target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $G/gate.log 2>&1 < /dev/null &
+cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.0 wms dev \
+  apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $G/gate-request.json
+for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:18090/ && break; sleep 1; done
+(umask 077; python3 -c 'import json,sys;print("Authorization: Bearer "+json.load(open(sys.argv[1]))["stringData"]["token"])' \
+  $G/management-author-pat.json > $G/auth-header)
+curl -sS -H @$G/auth-header -H 'content-type: application/json' --data-binary @$G/gate-request.json \
+  http://127.0.0.1:18090/authoring > $G/gate-reply.json
+rm -f $G/auth-header
+pkill -f 'wamn-scenario-worker serve --bind 127.0.0.1:18090'
+python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(json.dumps(d.get("body",d).get("outcome",d))[:600])' $G/gate-reply.json
 ```
 
-The revoke took less than 1 second. `identity.pats` then showed `1a98d582140907ed` revoked and `5b0649d6dc4dd3bf` live. The new PAT file stays at mode 0600 in the private directory, and a new client VM takes it (section 6.4).
-
-The first mint ran from this machine, through a temporary `/etc/hosts` line and an identity port-forward. On 2026-09-26 the mint took 5 seconds. It made the service principal `wamn-management-author-dkk--receiving--dev` and a PAT with prefix `6922769387dc9a19` that expires on 2026-10-27. The PAT Secret file stays at mode 0600 in the work directory and is not applied.
-
-### 3.17 Pool after the daily guard
-
-The guard job of section 1.3 sets pool `main` to 0 nodes every day at 03:00 New York time. On 2026-09-27 it removed both nodes, and every pod waited in `Pending`. Scale the pool back to 3 nodes for the work:
+The outcome has `status` `completed`. Record the wiring and publish WMS:
 
 ```bash
-gcloud container clusters resize wamn --node-pool main --num-nodes 3 --zone us-central1-a --project wamn-dev --quiet
+. $HOME/.cache/wamn-install/platform.sh
+registry_token
+target/debug/wamn-ctl author-wiring --database-url "$(db_url wms)" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
+  --tenant dkk--wms--dev --package-id wamn_wms --package-version 2.1.0 \
+  --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
+  --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
+RELEASE_wms=$(target/debug/wamn-ctl publish-release --database-url "$(db_url wms)" \
+  --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--wms--dev --environment dev \
+  --verified-publisher-principal wamn-management-author-dkk--wms--dev \
+  --run-schema wamn_run --package wamn_wms@2.1.0 --wiring "wamn_wms@2.1.0::inventory_move_and_label=2" \
+  --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
+echo "$RELEASE_wms" > $W/release-wms
+shred -u $G/management-author-pat.json
 ```
 
-The event NATS starts again without `WAMN_TAP`, so run the tap-stream Job and the check of section 3.5 again. On 2026-09-27 the resize took 69 seconds, the pods were running 34 seconds later, the Job took 35 seconds and the check 6 seconds.
+### 4.15 Qualification
 
-### 3.18 Event streams and CDC
-
-Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Forward the event NATS, and write the replication password into a mode 0600 file of a private directory `C`:
+`qualify-release` runs the release's cases in kind clusters on this machine against the release chart. If every case passes, it pushes the qualification beside the release ([delivery](delivery.md#release-qualification)). It pulls the chart images with `docker pull`, so it reads `DOCKER_CONFIG` of the platform file. Each run takes longer than one hour, so each run gets a new registry token:
 
 ```bash
-kubectl -n platform port-forward svc/evt-nats 14222:4222 &
-(umask 077; openssl rand -hex 32 > $C/replication-password)
-```
-
-Run `enable-cdc-project-env` as the provisioning user of section 3.5. It makes the source stream, records the reader registration and writes three files:
-
-```bash
-WAMN_REPLICATION_PASSWORD="$(cat $C/replication-password)" target/debug/wamn-ctl enable-cdc-project-env \
-  --org dkk --project receiving --env dev --schema receiving \
-  --stream-replicas 1 --dup-window-secs 120 \
-  --db-host wamn-pg-rw.platform.svc.cluster.local --namespace platform --secret-namespace platform \
-  --stream EVT_3_dkk_9_receiving_3_dev \
-  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $E/provisioning-username)" \
-  --nats-password-file $E/provisioning-password \
-  --emit-role-sql $C/role.sql --emit-cdc-sql $C/cdc.sql --emit-secret $C/secret.json
-```
-
-Apply the role SQL, then the CDC SQL, then the Secret. Then delete the files that hold the password:
-
-```bash
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $C/role.sql
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- \
-  psql -U postgres -d wamn-db-dkk--receiving--dev--4pqjfmli -v ON_ERROR_STOP=1 -q < $C/cdc.sql
-kubectl apply -f $C/secret.json
-rm -f $C/replication-password $C/role.sql $C/secret.json
-```
-
-The verb writes `role.sql` with mode 0664, so keep `C` at mode 0700. The `--db-host` flag puts the cluster host into the Secret URL, so no `jq` step is necessary here. On 2026-09-27 the verb took 3 seconds and the apply 5 seconds. The publication and the slot are `wamn_cdc_dkk__receiving__dev__4pqjfmli`, and the Secret is `platform/wamn-cdc-dkk--receiving--dev`.
-
-### 3.19 CDC reader
-
-The reader reads the registration with generation `a` of the registry-reader credential, as the Receiving cluster tests do. Prepare it and apply it:
-
-```bash
-(umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project receiving --env dev --tenant dev \
-  --namespace platform --db-host wamn-pg-rw.platform.svc.cluster.local \
-  --prepare-registry-reader-generation a --emit-registry-reader-secret $C/registry-reader.json)
-kubectl apply -f $C/registry-reader.json
-rm -f $C/registry-reader.json
-```
-
-On 2026-09-30 a prepare of generation `b` with `--db-host` emitted `@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system`, and the abort of `b` followed at once. The Secret was never applied. An abort keeps the role as an inactive slot with no login, no password and no memberships. The issuer generation `a` took the same test, and identity still answered the JWKS check of section 3.10 with `HTTP 200`.
-
-Build the image by its source identity and push it as in section 3.4:
-
-```bash
-TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . cdc-reader cdc-reader "$(git rev-parse HEAD)" gcp gcp-wamn
-docker tag wamn-cdc-reader:src-<identity> $R/wamn-cdc-reader:src-<identity> && docker push $R/wamn-cdc-reader:src-<identity>
-```
-
-The reader uses its default feedback and slot monitor intervals, 5 and 30 seconds. The kind values 1 and 0 are test-speed settings. The Deployment uses `strategy: Recreate`, because one replication slot has one reader. Deploy the reader, then restart the host so that it starts after the reader:
-
-```bash
-kubectl apply -f deploy/gcp/cdc-reader.yaml
-kubectl -n platform rollout status deploy/cdc-reader --timeout=180s
-kubectl -n platform logs deploy/cdc-reader
-kubectl -n hosts rollout restart deploy/hostgroup-default
-kubectl -n hosts rollout status deploy/hostgroup-default --timeout=300s
-```
-
-The reader log shows `registration loaded`, the three `preflight` lines and `walsender session open`. The slot then shows `active` as true in `pg_replication_slots`. On 2026-09-27 the credential took 12 seconds and its apply 2 seconds. The image build took 63 seconds, the push 6 seconds, the reader rollout 6 seconds and the host restart 10 seconds.
-
-On 2026-09-27 the change to the defaults and `Recreate` rolled out in 5 seconds, and the reader opened its session again. The host crash-looped until the source stream existed. It then became Ready by itself at its next restart, before the reader started, so the ruled restart was its second start.
-
-On 2026-09-29 the reader image `src-596c8e6604d119a0` (`wamn-59z6`) rolled out to both readers in 6 seconds. It confirms the keepalive position of an idle database, and it stays stopped on a capture gap. Before the roll, the WMS slot was at `0/E9004398` while the WAL was at `1/2000148`. The WMS reader confirmed `1/20070D0` within 8 seconds of its start. Then a 15-second `wamn-bench --call update --concurrency 1` run from the repository machine made 98 Receiving updates with no error. The WMS slot followed the Receiving writes to `1/205E130`, and 12 seconds later both slots were at `1/2062A98`, level with the WAL. The restart count of both readers stayed 0. Run the bench client as in section 6.4, and read the slots with:
-
-```bash
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
-  "select slot_name, confirmed_flush_lsn, pg_current_wal_lsn() from pg_replication_slots"
-```
-
-### 3.20 HTTP and materializer workloads
-
-Build the HTTP ingress and the materializer with the guest RUSTFLAGS ([building](building.md#native-programs-and-app-components)). They land in `apps/target/wasm32-wasip2/release`:
-
-```bash
-for guest in http-route materializer; do
-  RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
-    --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p "$guest"
-done
-```
-
-Push both with `wash`, as the kind cases do. Write the push credential into a mode 0600 file of a private directory `D`, and delete the directory after the push:
-
-```bash
-W=$(tools/install-wash)
-R=us-central1-docker.pkg.dev/wamn-dev/wamn/components
-(umask 077; gcloud auth print-access-token | python3 -c 'import sys,json,base64; t=sys.stdin.read().strip(); print(json.dumps({"auths":{"us-central1-docker.pkg.dev":{"username":"oauth2accesstoken","password":t,"auth":base64.b64encode(("oauth2accesstoken:"+t).encode()).decode()}}}))' > $D/config.json)
-DOCKER_CONFIG=$D $W -o json oci push $R:flow-http apps/target/wasm32-wasip2/release/http_route.wasm
-DOCKER_CONFIG=$D $W -o json oci push $R:materializer apps/target/wasm32-wasip2/release/materializer.wasm
-rm -rf $D
-```
-
-Render both workloads with the example program, which calls `rendering::render_http_workload` of the kind cases and `wamn_control_provision::materializer_workload::render_materializer`, and apply them:
-
-```bash
-cargo run -p wamn-test-infrastructure --example workload_files -- deploy/gcp $R@<flow-http digest> $R@<materializer digest>
-kubectl apply -f deploy/gcp/flow-http.yaml -f deploy/gcp/materializer.yaml
-kubectl -n hosts wait --for=condition=Ready workloaddeployment/flow-http workloaddeployment/receiving-materializer --timeout=240s
-```
-
-The HTTP claims are catalog `default`, environment `hosts`, and project and schema `receiving`. The materializer fetches every 1000 ms and sweeps every 5000 ms. These are deployment values, and the kind cases use 500 ms for both.
-
-| Component | File SHA-256 | Pushed digest |
-| --- | --- | --- |
-| `flow-http` (`http_route.wasm`) | `2b56f55d0e39e69eb2e715ea416d99fef80d295c03794f8d97dfd55fa472891c` | `sha256:7ac3316eb660a630efe7fae991bc7931013c0bcadbb3e3b1a1234c1f7f621105` |
-| `materializer` | `3e862a372407a1582f499fbd38fedad0cfd473f8a819952f4c620003311bdf3f` | `sha256:f98dbc816d281b815f4e5d57f1ac92548b478802c1e62198dac92607fb0b296c` |
-
-These are the guests of the cutover commit `351f71337`, pushed on 2026-10-02 with the file SHA-256 as tag. Receiving and WMS run the same two digests. Until then the workloads ran `flow-http` `sha256:f3d8d1bea0e3d9dd69dc2e30c004663a95ef234ed36a80faf4e8bcc35dc42fb4` (file `ad1124555cfaeb7f342d4596b5848c0675edefa1725c770c35fb94699d8130f4`) and `materializer` `sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0` (file `7d78a4ad93a2484a3964e5d631e857f439316663f8227f4c08676659bf8f8153`).
-
-On 2026-09-27 the build took 353 seconds, the push 5 seconds, and the two workloads were Ready 8 seconds after the apply.
-
-### 3.21 Serve check
-
-Forward the release's host Service `<release>-http` and call Receiving routes with the release host name. `wamn-ctl env status` prints the release name:
-
-```bash
-kubectl -n hosts port-forward svc/<release>-http 18080:80 &
-curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/location/list
-curl -s -i -H 'Host: receiving.wamn.dev' http://127.0.0.1:18080/nope
-```
-
-A released route answers `401` with `{"error":{"code":"unauthorized"}}`, because the call has no session. An unknown path answers `404` with `route-not-found`.
-Before the workloads existed, every path answered `503`, and the host log said `router is temporarily unavailable`. The host router in `crates/platform/engine/src/expected_router.rs` gives this answer when the release names the host but no workload is bound to it.
-
-### 3.22 Control host
-
-The control host serves the control routes of org `dkk` as `hostgroup-control` (docs/plan/platform-ui.md §4.2, `wamn-a40n.2`).
-It has no application release and no project credential.
-It reads `wamn_system` through the `control` login of the org, from the Secret `wamn-control-dkk`.
-Run these steps only with a host image that contains `wamn-a40n.2`.
-
-Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6.
-Apply system migration `0006_control_audience_reads.sql` before `provision-org` emits the control credential.
-The migration gives the identity issuer its two reads of the control audience.
-Then prepare the control credential with `provision-org`. The run changes no registry row:
-
-```bash
-target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm
-target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg \
-  --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin dkkloimwieder@gmail.com --db-host wamn-pg-rw.platform.svc.cluster.local \
-  --namespace hosts --prepare-control-generation a --emit-control-secret $P/control.json
-(umask 077; jq . $P/control.json > $P/control.cluster.out) && kubectl apply -f - < $P/control.cluster.out
-```
-
-Apply the Secret before the host rollout, because [values-host.yaml](../../deploy/gcp/values-host.yaml) names it with `optional: false`.
-The host values program of section 5.5 renders the control group, so the same `helm upgrade` starts it.
-
-Since `wamn-a40n.6`, the control host also holds the administration login of each environment of the org, in the Secret `wamn-control-administration-dkk` with one key per `<project>--<env>`.
-Emit the empty Secret with `provision-org --emit-control-administration-secret $P/control-administration.json` and apply it.
-Then copy the login of each environment that already exists into it, so no rotation is needed:
-
-```bash
+. $HOME/.cache/wamn-install/platform.sh
 for project in receiving wms; do
-  (umask 077; kubectl -n hosts get secret wamn-administration-dkk--$project--dev -o json \
-    | jq --arg key "$project--dev" '{data: {($key): .data.url}}' > $P/control-administration-$project.patch.json)
-  kubectl -n hosts patch secret wamn-control-administration-dkk --type merge \
-    --patch-file $P/control-administration-$project.patch.json
+  registry_token
+  target/debug/wamn-ctl qualify-release --release-digest "$(cat $W/release-$project)" \
+    --release-chart $WAMN_RELEASE_CHART --artifact-base $WAMN_RELEASE_ARTIFACT_BASE \
+    --registry-auth-file $WAMN_REGISTRY_AUTH_FILE || break
 done
 ```
 
-A later environment adds its key through the patch of its administration prepare, and `env delete` removes it.
+### 4.16 Record the releases
 
-### 3.23 Platform install inputs
-
-The platform install makes these objects once. `env apply` makes none of them and touches no IAM. A recreate of the cluster must make them again before the first `env apply`.
-
-The Kubernetes service account `wamn-host`, in the release namespace `hosts` (`WAMN_RELEASE_NAMESPACE`). Every host of every environment runs as it, because the release chart sets `serviceAccount.create=false` and `name=wamn-host` (owner ruling 2026-10-13, `wamn-okr8y`). Isolation between environments stays the host selector (R6). The account carries the annotation `iam.gke.io/gcp-service-account` for the Google service account `wamn-blob` of section 5.1, and `wamn-blob` has one `roles/iam.workloadIdentityUser` binding for it:
+Each environment document names its release digest. The edge values and the URL map name the bucket path of each web client, which holds the digest hex. Write the new digests into the four files:
 
 ```bash
-kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
-kubectl -n hosts annotate serviceaccount wamn-host --overwrite \
-  iam.gke.io/gcp-service-account=wamn-blob@wamn-dev.iam.gserviceaccount.com
-gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
-  --role roles/iam.workloadIdentityUser \
-  --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
+. $HOME/.cache/wamn-install/platform.sh
+for project in receiving wms; do
+  NEW=$(cat $W/release-$project)
+  OLD=$(sed -n 's/^    release = "\(sha256:[0-9a-f]*\)"/\1/p' deploy/gcp/environments/dkk--$project--dev.k)
+  sed -i "s/$OLD/$NEW/" deploy/gcp/environments/dkk--$project--dev.k
+  sed -i "s/${OLD#sha256:}/${NEW#sha256:}/g" deploy/gcp/values-edge.yaml deploy/gcp/url-map.yaml
+done
+git diff --stat
 ```
 
-The Secret `identity-resend` in namespace `identity`, key `api-key`. The owner supplies it from a file (section 3.10). No file in the repository holds it, so a recreate does not restore it. Identity reads it as `RESEND_API_KEY` through `secretKeyRef`, so only a pod start reads it.
+Commit every change of `deploy/gcp` from sections 4.6, 4.11 and 4.16 in one commit, and push it.
 
-To create it, the owner writes the key to a file with mode 0600, never to an environment variable or the shell history, before identity is installed. The file must not end with a line end: identity refuses any whitespace in the key (`Resend configuration refused`), and an editor adds a line end. Remove it with `tr -d '\r\n' < <file> > <file>.trim` and use the trimmed file:
+### 4.17 Apply with the release
+
+The apply installs the release chart of each environment in `hosts`. `WAMN_RELEASE_HOST_GROUP` names the platform part of its host group: the NATS URLs, the event NATS Secrets, the registry helper and the identity CA:
 
 ```bash
-kubectl -n identity create secret generic identity-resend --from-file=api-key=<file>
+. $HOME/.cache/wamn-install/platform.sh
+for project in receiving wms; do
+  use_env $project
+  export WAMN_RELEASE_HOST_GROUP=deploy/gcp/host-group-$project.yaml
+  target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k --dry-run
+  target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k
+done
+target/debug/wamn-ctl env show dkk/receiving/dev
+target/debug/wamn-ctl env show dkk/wms/dev
 ```
 
-To rotate it, create the new key in Resend and write it to a new file with mode 0600, with no line end. Replace the Secret and restart identity:
+### 4.18 CDC readers
+
+The CDC readers run in `hosts`. `env apply` wrote their replication Secrets there and recorded `hosts` on each reader row. Each reader reads its registration with the registry-reader login:
 
 ```bash
-kubectl -n identity create secret generic identity-resend --from-file=api-key=<file> \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n identity rollout restart deploy/identity
-kubectl -n identity rollout status deploy/identity --timeout=300s
+. $HOME/.cache/wamn-install/platform.sh
+for project in receiving wms; do
+  (umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev --tenant dkk--$project--dev \
+    --namespace hosts --db-host wamn-pg-rw.platform.svc.cluster.local \
+    --prepare-registry-reader-generation a --emit-registry-reader-secret $W/registry-reader-$project.json)
+  kubectl apply -f $W/registry-reader-$project.json
+  rm $W/registry-reader-$project.json
+done
+kubectl apply -f deploy/gcp/cdc-reader.yaml -f deploy/gcp/cdc-reader-wms.yaml
+kubectl -n hosts rollout status deploy/cdc-reader deploy/cdc-reader-wms --timeout=180s
+kubectl -n hosts logs deploy/cdc-reader --tail=20
+kubectl -n hosts logs deploy/cdc-reader-wms --tail=20
 ```
 
-Send one recovery mail (section 4.2.1) to prove delivery. Then revoke the old key in Resend and delete the file.
+Each log shows `registration loaded`, the three `preflight` lines and `walsender session open`.
 
-## 4. Public edge
+### 4.19 Web clients
 
-Step 4 ran on 2026-09-27. Pool `main` stays at 2 nodes until step 4 ends. If the guard scales it to 0 first, scale it back as in section 3.17.
-
-### 4.1 Edge
-
-The edge chart renders no Google Cloud resource. Its `neg: true` value annotates the Service, so GKE creates the network endpoint group `wamn-edge` in the zone of the edge pod. The wildcard certificate of section 2.5 is already in `edge/wamn-edge-tls`, so the values set no issuer. Install the release `wamn-edge`:
+`wamn web upload` reads the built client from the package artifact and writes it to `gs://wamn-dev-web/clients/<package>/<digest hex>/` with the application default credentials. It reads the platform inputs of `env apply`. With `WAMN_EVENT_NATS_URL` set, it also asks for a NATS user, so unset that variable:
 
 ```bash
-helm install wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml --wait --timeout 3m
-gcloud compute network-endpoint-groups list --project wamn-dev
+. $HOME/.cache/wamn-install/platform.sh
+registry_token
+unset WAMN_EVENT_NATS_URL
+for project in receiving wms; do
+  target/debug/wamn web upload dkk/$project/dev --release "$(cat $W/release-$project)" --bucket gs://wamn-dev-web/clients
+done
 ```
 
-The edge refuses to start until the Service `hosts/flow-http` of section 3.20 exists, because nginx resolves its upstream at start. On 2026-09-27 the first install timed out for this reason, and `helm upgrade` with the same values then took 43 seconds.
+### 4.20 Edge and load balancer
 
-### 4.2 Web client
-
-`wamn web upload` writes to Cloud Storage with a `gs://` sink and Application Default Credentials. No HMAC key exists. The owner runs this once on the machine. It stores a user OAuth token in the gcloud configuration, not a key:
+The edge chart annotates its Service with `neg: true`, so GKE makes the network endpoint group `wamn-edge`. The group of the deleted cluster carries the old cluster UID, and the new cluster's controller refuses it (`found conflicting description in neg wamn-edge`). Install the edge, take the old group off the backend service, delete it, wait for the new group, and add it back:
 
 ```bash
-gcloud auth application-default login
-```
-
-Build the `wamn` binary and upload the Receiving client of release 1:
-
-```bash
-cargo build -p wamn-ctl --bin wamn
-target/debug/wamn web upload apps/wamn_receiving \
-  --release sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc \
-  --bucket gs://wamn-dev-web/clients --org dkk
-```
-
-On 2026-09-27 the upload wrote 10 files in 17 seconds, after a 54 second build of `wamn`. The files go to `clients/wamn_receiving/<digest hex>/`, which `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name. The first ruling asked for an HMAC key on the owner's account. `gsutil hmac create` and `gcloud storage hmac create` accept only a service account, so that ruling was replaced.
-The second upload on 2026-09-27 added the `/invite` page and took 10 seconds. Run the same command after each change to the client.
-From `wamn-snz0.6` the command takes the environment coordinate, reads the built client from each package artifact, and refuses a release that the environment's release chart does not serve. [Web client files](deployment.md#web-client-files) has the current command.
-The `--org` value is a deployment value. The project comes from the client package name `@wamn/<project>-client`. The build receives both as `WAMN_ORG` and `WAMN_PROJECT`, and the shell offers and accepts only environments of that org and project. The third upload on 2026-09-27 added `--org` and took 15 seconds.
-
-### 4.2.1 Password recovery mail
-
-The reset mail carries one link, `<inviteUrl>/reset#<secret>`, from commit `2b9f62a7e`. The secret is in the fragment, so the browser never sends it. On 2026-09-29 the identity image `wamn-identity:src-6b96a6486078165d` was built from main `f51854018` with the command of section 3.4 in 78 seconds and pushed in 2 seconds. Pin its digest in `deploy/gcp/values-identity.yaml` and roll it out:
-
-```bash
-helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml
-kubectl -n identity rollout status deploy/identity --timeout=180s
-```
-
-The rollout took 5 seconds. Restart the identity port-forward after it, because the forward ends with the old pod. Then build `wamn` again and upload the Receiving client with the command above, which adds the `/recover` and `/reset` pages. The build took 22 seconds and the upload 8 seconds.
-
-Request one recovery mail as the check, the same request that the `/recover` page sends:
-
-```bash
-curl -s -o /dev/null -w '%{http_code}\n' -H 'content-type: application/json' \
-  -d '{"email":"<owner email>"}' https://receiving.wamn.dev/password/recover
-```
-
-Identity answers `202` for every address, known or not, so the check is the mail in the owner's mailbox. On 2026-09-29 the request took 7 seconds.
-
-The mail states the time at which the link expires, in UTC. Identity answers every refusal with the same `400 {"error":"password request refused"}`. It logs the cause at info level with the email and never the secret. The cause is one of expired, consumed, unknown secret, no such account, already enrolled or password rule. Read the log of the running pod:
-
-```bash
-kubectl -n identity logs deploy/identity | grep 'password request refused'
-```
-
-On 2026-09-30 identity was rolled with this log from commit `082af74dc` (`wamn-ghx2.9`). The image `wamn-identity:src-bb57cc3a679703c1` took 164 seconds to build and 3 seconds to push. The Helm upgrade took 5 seconds (revision 8), and the rollout took 3 seconds. The check of section 3.10 returned the key set with `HTTP 200` in 3 seconds. One recovery for the unknown address `nobody-ghx29@example.invalid` answered `202` in 6 seconds, and the new pod logged `password request refused email=nobody-ghx29@example.invalid cause=no such account`. During a rollout, `logs deploy/identity` can read the old pod, so name the new pod.
-
-Before that roll, identity logged no reason. For a refusal from that time, read the edge log for the request and the token row:
-
-```bash
-kubectl -n edge logs deploy/wamn-edge --since=1h | grep 'POST /password/reset'
-psql "$WAMN_SYSTEM_ADMIN_URL" -Atc "select to_jsonb(t) - 'token_hash' from identity.password_tokens t join identity.principals p on p.id=t.principal_id where p.email='<owner email>' and t.purpose='reset' order by t.created_at desc limit 1"
-```
-
-On 2026-09-29 the first reset was refused. The secret expired at 15:21:41 UTC, and the page submitted at 15:40:27, so the row stayed unconsumed. The request body matched the contract. The second mail went out at 15:43:13 UTC. The owner reset the password at 15:57:35 with `200`, 32 seconds before that secret expired, and the transaction consumed both reset secrets.
-
-### 4.2.2 Identity reconnects after Postgres ends its sessions
-
-Commit `a616abae8` (`wamn-fwzc`) makes identity open a closed database connection again, so a Postgres restart no longer leaves `/healthz` at 503. On 2026-09-29 the image `wamn-identity:src-c2cfa0047530e945` was built from main `a616abae8` in 56 seconds and pushed in 3 seconds. The Helm upgrade took 1 second (revision 7), and the rollout took 4 seconds. The in-cluster check of section 3.10 returned the key set with `HTTP 200` in 3 seconds.
-
-Prove the fix live. List the identity sessions on the primary:
-
-```bash
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -Atc \
-  "select usename, count(*) from pg_stat_activity where usename like 'wamn_identity%' group by 1"
-```
-
-The identity service logs in as the issuer role `wamn_identity_issuer_<hash>_b`. The `wamn_identity_reader_*` sessions belong to the hosts. End only the issuer sessions:
-
-```bash
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -Atc \
-  "select count(*) filter (where pg_terminate_backend(pid)) from pg_stat_activity where usename='<issuer role>'"
-```
-
-Then poll `/healthz` from a pod in `hosts`, as in the check of section 3.10, with the command `curl -s -o /dev/null -w %{http_code} --cacert /ca/ca.crt https://identity.identity.svc.cluster.local/healthz` every 2 seconds. Read the restart count after:
-
-```bash
-kubectl -n identity get pod -o custom-columns=N:.metadata.name,R:.status.containerStatuses[0].restartCount,READY:.status.containerStatuses[0].ready
-```
-
-On 2026-09-29 the command ended 3 issuer sessions at 16:38:26 UTC. `/healthz` answered `200` at 16:38:28 and at each probe to 16:38:36. A new issuer session (pid 7010) started at 16:38:28. The pod `identity-749bc76b9d-5z6sj` stayed ready with 0 restarts.
-
-### 4.2.3 Mail DNS records
-
-Resend signs the mail of identity for `wamn.dev` and sends it with a return path on `send.wamn.dev`. The wamn-dev Cloud DNS zone is authoritative for `wamn.dev`, so the records go there, with the TTL 3600 of the other records of the zone. The values come from the Resend domain page:
-
-```bash
-Z="--zone wamn-dev --project wamn-dev --ttl 3600"
-gcloud dns record-sets create resend._domainkey.wamn.dev. --type TXT $Z --rrdatas='"<DKIM key of the Resend page>"'
-gcloud dns record-sets create rsend.wamn.dev. --type CNAME $Z --rrdatas=rsend.forge.rmta.net.
-gcloud dns record-sets create send.wamn.dev. --type CNAME $Z --rrdatas=send.forge.rmta.net.
-gcloud dns record-sets create _dmarc.wamn.dev. --type TXT $Z --rrdatas='"v=DMARC1; p=none;"'
-```
-
-On 2026-09-30 the Resend page showed DKIM and SPF verified, but no zone served them. The status was stale after `wamn.dev` moved to Cloud DNS, and Gmail showed "via amazonses.com" for that reason (`wamn-ghx2.8`). The four records took 4 seconds to create, and `ns-cloud-a1.googledomains.com` answered them at once. The DKIM key starts with `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDOXZsw`.
-
-Resend checked the domain only when it was added, so it kept the old "verified" status. Amazon SES then sent with its default return path on `amazonses.com`. After the records were added, the owner pressed the restart button on the Resend domain page, and Resend verified the domain again in 3 minutes. Check the result with one recovery mail of section 4.2.1, and read "Show original" in Gmail:
-
-- The sender line shows `noreply@wamn.dev` with no "via" part.
-- `DKIM: 'PASS' with domain wamn.dev`, from `header.s=resend`.
-- `Return-Path` ends in `@rsend.wamn.dev`, and SPF passes for that domain.
-- `dmarc=pass` for `header.from=wamn.dev`.
-
-On 2026-09-30 the mail of 13:57 UTC, before the restart, passed DKIM and DMARC with no "via" line, but its return path was on `amazonses.com`. The mail of 14:24 UTC, after the restart, passed all four checks.
-
-### 4.3 Load balancer
-
-Create the resources in this order. The names come from the release `wamn-edge`, as in the removed Config Connector template:
-
-```bash
-P="--project wamn-dev"
-gcloud compute firewall-rules create wamn-edge-health-check $P --network wamn --direction INGRESS \
-  --allow tcp:8443 --source-ranges 35.191.0.0/16,130.211.0.0/22
-gcloud compute health-checks create https wamn-edge $P --global --port 8443 --request-path /healthz
-gcloud compute addresses create wamn-edge $P --global --ip-version IPV4
-gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web $P --member allUsers --role roles/storage.objectViewer
-gcloud compute backend-buckets create wamn-edge-files $P --gcs-bucket-name wamn-dev-web \
-  --enable-cdn --cache-mode USE_ORIGIN_HEADERS
-```
-
-Upload the certificate from its Secret through mode 0600 files of a private directory `C`, and delete the directory after the upload:
-
-```bash
-(umask 077
- kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > $C/tls.crt
- kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.key}' | base64 -d > $C/tls.key)
-gcloud compute ssl-certificates create wamn-edge $P --global --certificate $C/tls.crt --private-key $C/tls.key
-rm -rf $C
-```
-
-The load balancer keeps this copy when cert-manager renews the Secret. The copy expires on 2026-12-25. Section 4.3.1 renews it.
-
-Create the backend service over the endpoint group, then the URL map, the proxy and the forwarding rule. `deploy/gcp/url-map.yaml` holds the rules of the removed template and the release path in the bucket:
-
-```bash
-gcloud compute backend-services create wamn-edge-platform $P --global \
-  --load-balancing-scheme EXTERNAL_MANAGED --protocol HTTPS --health-checks wamn-edge
-gcloud compute backend-services add-backend wamn-edge-platform $P --global \
+helm install wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml
+gcloud compute backend-services remove-backend wamn-edge-platform --project wamn-dev --global \
+  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a
+gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
+until gcloud compute network-endpoint-groups describe wamn-edge --zone us-central1-a --project wamn-dev >/dev/null 2>&1; do sleep 10; done
+gcloud compute backend-services add-backend wamn-edge-platform --project wamn-dev --global \
   --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a \
   --balancing-mode RATE --max-rate-per-endpoint 100
-gcloud compute url-maps import wamn-edge $P --global --source deploy/gcp/url-map.yaml --quiet
-gcloud compute target-https-proxies create wamn-edge $P --global --url-map wamn-edge --ssl-certificates wamn-edge
-gcloud compute forwarding-rules create wamn-edge $P --global --load-balancing-scheme EXTERNAL_MANAGED \
-  --address wamn-edge --target-https-proxy wamn-edge --ports 443
+kubectl -n edge rollout status deploy/wamn-edge --timeout=600s
+gcloud compute url-maps import wamn-edge --global --project wamn-dev --source deploy/gcp/url-map.yaml --quiet
 ```
 
-Add the DNS record with the address:
-
-```bash
-gcloud dns record-sets create receiving.wamn.dev. $P --zone wamn-dev --type A --ttl 300 \
-  --rrdatas "$(gcloud compute addresses describe wamn-edge $P --global --format='value(address)')"
-```
-
-On 2026-09-27 the address was `8.232.230.139`. The first six commands took 45 seconds, the backend service 97 seconds, the URL map 6 seconds, and the proxy, rule and record 29 seconds.
-
-The bucket root answers with a listing of every object, because `allUsers` holds `roles/storage.objectViewer`. Only the two host rules reach the bucket. The default route of the URL map aborts every other request with the load balancer's own 404 (finding `wamn-uo2p`). Make sure that the bare address and an unknown host answer 404 with no `ListBucketResult`:
-
-```bash
-curl -sk -o /dev/null -w '%{http_code}\n' https://8.232.230.139/
-curl -sk -o /dev/null -w '%{http_code}\n' -H 'Host: nothing.wamn.dev' https://8.232.230.139/
-```
-
-On 2026-09-30 both answered `200` with the XML listing before the change. The import took 24 seconds, and both answered `404` with the body `fault filter abort` about 3 minutes after it. `receiving.wamn.dev` and `wms.wamn.dev` still answered `200` for `/` and for their script under `/assets/`.
-
-### 4.3.1 Certificate renewal
-
-[deploy/gcp/edge-cert.yaml](../../deploy/gcp/edge-cert.yaml) holds the CronJob `edge/edge-cert` of finding `wamn-ghx2.7`. At 14:00 New York time every day, it compares the serial of `edge/wamn-edge-tls` with the serial of the entry that the proxy `wamn-edge` serves. If the serials differ, it uploads the Secret as `wamn-edge-<first 12 hex digits of the serial>`, moves the proxy, and deletes the old entry.
-
-Create the custom role and bind it to the Workload Identity principal of `edge/edge-cert`. No Google service account is used:
-
-```bash
-gcloud iam roles create wamnEdgeCert $P --title "wamn edge certificate" \
-  --description "Replace the load balancer certificate entry (wamn-ghx2.7)" --stage GA \
-  --permissions compute.sslCertificates.create,compute.sslCertificates.get,compute.sslCertificates.delete,compute.targetHttpsProxies.get,compute.targetHttpsProxies.setSslCertificates,compute.globalOperations.get
-gcloud projects add-iam-policy-binding wamn-dev --role projects/wamn-dev/roles/wamnEdgeCert --condition None \
-  --member principal://iam.googleapis.com/projects/540250462877/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns/edge/sa/edge-cert
-```
-
-Install the job, and run it once:
+The CronJob `edge/edge-cert` copies a renewed certificate to the load balancer every day ([edge-cert.yaml](../../deploy/gcp/edge-cert.yaml)). Its role and binding stay after a teardown. Install it and run it once. The run uploads the certificate of section 4.3 and moves the proxy to it:
 
 ```bash
 kubectl apply -f deploy/gcp/edge-cert.yaml
 kubectl -n edge create job edge-cert-1 --from=cronjob/edge-cert
-kubectl -n edge wait job/edge-cert-1 --for=condition=Complete --timeout=180s
+kubectl -n edge wait job/edge-cert-1 --for=condition=Complete --timeout=300s
 kubectl -n edge logs job/edge-cert-1
 ```
 
-Make sure that the load balancer serves the serial of the Secret:
+### 4.21 Check
+
+Run these from this machine. The load balancer can take some minutes to use a new group and a new URL map:
 
 ```bash
-openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev </dev/null 2>/dev/null \
-  | openssl x509 -noout -serial -enddate
+for h in receiving.wamn.dev wms.wamn.dev; do
+  curl -s -o /dev/null -w "$h / %{http_code}\n" https://$h/
+  curl -s -o /dev/null -w "$h /config.json %{http_code}\n" https://$h/config.json
+done
+curl -s -w ' %{http_code}\n' https://receiving.wamn.dev/api/purchase_order/query
+curl -s -w ' %{http_code}\n' -X POST -H 'content-type: application/json' -d '{}' https://wms.wamn.dev/api/inventory/move
+openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev </dev/null 2>/dev/null | openssl x509 -noout -serial -enddate
 ```
 
-On 2026-09-29 the first run found the same serial `06ccf3ff54175c089af96483743efd28e56b` in the Secret and at the proxy, and did nothing in 5 seconds. The Secret was then deleted as section 2.5 does, and cert-manager issued serial `059522f2075be58b8a66f5ddeb356437f93a` in 5 seconds. The second run created `wamn-edge-059522f2075b` and then failed with 404 on the move, because `setSslCertificates` of a global proxy has no `/global` in its path. After the fix, the third run moved the proxy and deleted `wamn-edge` in 32 seconds. The load balancer served the new serial 37 seconds after the move.
+`/` and `/config.json` answer `200` on both hosts. The two API calls answer `401` with `{"error":{"code":"unauthorized"}}`, because they carry no session. The serial is the serial of the Secret `edge/wamn-edge-tls`. The install is done. To stop the cost of the nodes, run section 5.2.
 
-### 4.4 Measurements
+## 5. Operations
 
-Run these from outside the cluster:
+### 5.1 Pool after the daily guard
+
+The guard sets pool `main` to 0 nodes every day. Scale it back to 3 nodes. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
 
 ```bash
-curl -s -D - -o index.html https://receiving.wamn.dev/
-A=$(grep -o '/assets/[^"]*\.js' index.html | head -1)
-curl -s -D - -o /dev/null https://receiving.wamn.dev$A
-curl -s -D - -o /dev/null https://receiving.wamn.dev$A
-curl -s -D - -o /dev/null https://receiving.wamn.dev/api/location/list
-curl -s -D - https://receiving.wamn.dev/password/session
+gcloud container clusters resize wamn --node-pool main --num-nodes 3 --zone us-central1-a --project wamn-dev --quiet
+kubectl -n platform wait cluster/wamn-pg --for=condition=Ready --timeout=900s
+kubectl -n platform rollout status statefulset/evt-nats --timeout=600s
+kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found
+kubectl apply -f deploy/gcp/nats-jetstream.yaml
+kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=300s
 ```
 
-On 2026-09-27 the results were these:
+The port-forwards end with their pods, so start them again (sections 4.5 and 4.8).
 
-| Request | Result |
-| --- | --- |
-| `/` | 200, `cache-control: no-cache`, `text/html` |
-| `/assets/index-CLU_h-Iu.js`, first | 200, `cache-control: public, max-age=31536000, immutable`, no `age` |
-| the same asset, second | the same headers and `age: 3`, a Cloud CDN hit |
-| `/api/location/list` | 401 `unauthorized`, `cache-control: no-store`, no `age` on two requests |
-| `GET /password/session` | 404 `text/plain` `not found`, the answer of identity (`services/identity/src/lib.rs`), because the password routes take only POST. The bucket answers a missing key with XML `NoSuchKey`. |
+### 5.2 Pause
 
-### 4.5 Invitation
-
-Invite the owner with the Job `deploy/gcp/operator/invite.yaml`, which runs in namespace `identity` with the mounted `operator-dkk` certificate (section 3.16). The Job creates or reuses the user of the email, writes the org membership and the grants of `__GRANT_FLAGS__`, and mails the invitation when the user has no password. Fill the run values in a private copy of the manifest, apply the copy and remove it:
+Set pool `main` to 0 nodes. The PostgreSQL volume keeps the data:
 
 ```bash
-(umask 077; sed -e 's/__EMAIL__/dkkloimwieder@gmail.com/' -e 's/__DISPLAY_NAME__/dkk/' -e 's/__ORG__/dkk/' \
-  -e 's|__GRANT_FLAGS__|--membership receiving/dev|' deploy/gcp/operator/invite.yaml > $P/invite.yaml)
-kubectl apply -f $P/invite.yaml
-rm $P/invite.yaml
+gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool main --num-nodes 0 --quiet
+gcloud compute instances list --project wamn-dev
 ```
 
-The pod waits for the Secret `wamn-system-admin`. Make it as in section 3.16, with the owner reference to the Job `invite`:
+The list must be empty.
+
+### 5.3 Invite a user
+
+The admin that `provision-org --admin` made has no password, so `/password/recover` answers `202` and sends no mail. Invite that user with the Job [invite.yaml](../../deploy/gcp/operator/invite.yaml). It runs in namespace `identity` with the mounted operator certificate. `__GRANT_FLAGS__` takes `--membership <project>/<env>` or `--org-admin`:
 
 ```bash
+. $HOME/.cache/wamn-install/platform.sh
+(umask 077; sed -e 's/__EMAIL__/<email>/' -e 's/__DISPLAY_NAME__/<name>/' -e 's/__ORG__/dkk/' \
+  -e 's|__GRANT_FLAGS__|--membership receiving/dev|' deploy/gcp/operator/invite.yaml > $W/invite.yaml)
+kubectl apply -f $W/invite.yaml
+rm $W/invite.yaml
 JOB_UID=$(kubectl -n identity get job invite -o jsonpath='{.metadata.uid}')
-PW=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
 printf 'postgresql://postgres:%s@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system' "$PW" |
   kubectl -n identity create secret generic wamn-system-admin --from-file=url=/dev/stdin --dry-run=client -o json |
   jq --arg uid "$JOB_UID" '.metadata.ownerReferences = [{apiVersion: "batch/v1", kind: "Job", name: "invite", uid: $uid}]' |
   kubectl create -f -
 kubectl -n identity wait --for=condition=complete job/invite --timeout=120s
-kubectl -n identity logs job/invite > $P/invite.log
+kubectl -n identity logs job/invite
 kubectl -n identity delete job invite
 ```
 
-The log holds the principal id and the identity answer. Write the tenant user row of the new member. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6 and `T` of section 3.8:
+Identity answers `201 {"status":"accepted_for_delivery"}`. Then give the user a role in the environment ([deployment](deployment.md#user-roles)):
 
 ```bash
-target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
-  --org dkk --project receiving --tenant dev --env dev --schema wamn_run
+. $HOME/.cache/wamn-install/platform.sh
+target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$(db_url receiving)" \
+  --org dkk --project receiving --tenant dkk--receiving--dev --env dev --schema wamn_run
+target/debug/wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$(db_url receiving)" \
+  --org dkk --project receiving --env dev --tenant dkk--receiving--dev --user <email> --role admin
 ```
 
-On 2026-09-27 the invitation ran as three verbs, `create-user`, `grant-project-env-membership` and `reconcile-run-plane`, then `wamn-ctl invite --principal <principal id>`. The first invitations ran from this machine, through a temporary `/etc/hosts` line and an identity port-forward. On 2026-09-27 the principal was `ccc4533d-a81a-465d-8a44-1414369ae2fd`. The three verbs took 2, 1 and 25 seconds, and identity answered `201 {"status":"accepted_for_delivery"}` in 1 second.
-The first invitation showed a code for the terminal client, and the web client had no page to accept it (`wamn-ch2w`). With `inviteUrl` set in `deploy/gcp/values-identity.yaml`, the mail carries one link to `https://receiving.wamn.dev/invite#<code>`. The second invitation went out the same way and took 1 second. Restart the identity port-forward after identity rolls, because the forward ends with the old pod:
+### 5.4 Rotate the Resend key
+
+The owner makes the new key in Resend and writes it to a new mode 0600 file with no line end. Replace the Secret and restart identity:
 
 ```bash
-kubectl -n identity port-forward svc/identity 8443:443
+kubectl -n identity create secret generic identity-resend --from-file=api-key=<file> --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n identity rollout restart deploy/identity
+kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
 
-Give the owner the role `admin` after the reconcile. `apply-package` writes the built-in role `admin` (see [deployment](deployment.md#user-roles)):
+Send one recovery mail to an enrolled address to prove delivery. Then the owner revokes the old key in Resend and deletes the file.
+
+### 5.5 Delete an environment
+
+`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document makes a new suffix (`docs/plan/platform-deploy.md` §12.3). It uninstalls the release chart, revokes the PATs, deletes the credential Secrets, the streams, the slot, the `Database` and the registry rows. With `--data` it also drops the database and its roles, and asks for the coordinate again at a terminal. Every step is "if present", so run it again after a failure:
 
 ```bash
-target/debug/wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
-  --org dkk --project receiving --env dev --tenant dev --user dkkloimwieder@gmail.com --role admin
+. $HOME/.cache/wamn-install/platform.sh
+use_env receiving
+target/debug/wamn-ctl env delete dkk/receiving/dev
 ```
 
-On 2026-09-29 the grant took 1 second.
+### 5.6 Upgrade an environment
 
-Load the small Receiving dataset through the same port-forward, as the superuser. It writes 10 items, 10 locations, 5 suppliers, 10 purchase orders and 55 lines:
+`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). An upgrade of an installed package also needs `--predecessor-release <digest>`, the release that the environment serves. The qualify stage starts kind clusters on this machine. No live run of the verb exists yet, and its first live run waits for the word of the owner (`wamn-m511.7`):
 
 ```bash
-psql -h 127.0.0.1 -p 15432 -U postgres -d wamn-db-dkk--receiving--dev--4pqjfmli \
-  -v ON_ERROR_STOP=1 -f apps/wamn_receiving/tests/fixtures/receiving-seed-small.sql
+. $HOME/.cache/wamn-install/platform.sh
+target/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>
 ```
 
-On 2026-09-27 the load took 3 seconds.
+### 5.7 CDC slot lost
 
-On 2026-09-27 the owner completed step 4 in a browser. The owner signed up from the mail link, signed in at `https://receiving.wamn.dev`, and changed the supplier of `PO-0006` to `SUPPLIER-0005`. Make sure that the change landed with this query in the Receiving database:
-
-```sql
-SELECT position, kind, operation, changed_by, after->>'supplier_id', after->>'row_version'
-FROM receiving.purchase_order_history ORDER BY position DESC LIMIT 1;
-```
-
-The result was history row 11, kind `update`, operation `wamn-receiving:purchase-order/update@1.0.0`, by the owner's principal, at `row_version` 2.
-
-### 4.6 Delete the public edge
-
-Delete in the reverse order. The forwarding rule and the address bill while they exist. The renewal job of section 4.3.1 goes first, and `E` keeps the name of the certificate entry that the proxy serves:
-
-```bash
-kubectl delete -f deploy/gcp/edge-cert.yaml
-gcloud projects remove-iam-policy-binding wamn-dev --role projects/wamn-dev/roles/wamnEdgeCert --condition None \
-  --member principal://iam.googleapis.com/projects/540250462877/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/subject/ns/edge/sa/edge-cert
-gcloud iam roles delete wamnEdgeCert $P
-E=$(gcloud compute target-https-proxies describe wamn-edge $P --global --format='value(sslCertificates[0].basename())')
-gcloud dns record-sets delete receiving.wamn.dev. $P --zone wamn-dev --type A
-gcloud compute forwarding-rules delete wamn-edge $P --global --quiet
-gcloud compute target-https-proxies delete wamn-edge $P --global --quiet
-gcloud compute url-maps delete wamn-edge $P --global --quiet
-gcloud compute backend-services delete wamn-edge-platform $P --global --quiet
-gcloud compute ssl-certificates delete $E $P --global --quiet
-gcloud compute backend-buckets delete wamn-edge-files $P --quiet
-gcloud storage buckets remove-iam-policy-binding gs://wamn-dev-web $P --member allUsers --role roles/storage.objectViewer
-gcloud compute addresses delete wamn-edge $P --global --quiet
-gcloud compute health-checks delete wamn-edge $P --global --quiet
-gcloud compute firewall-rules delete wamn-edge-health-check $P --quiet
-helm uninstall wamn-edge -n edge
-```
-
-## 5. Second application: WMS
-
-WMS runs beside Receiving at `wms.wamn.dev`, behind the same certificate and load balancer. The edge chart takes a list of `applications`, one entry for each public host.
-
-### 5.1 Label store
-
-A WMS move stores a pallet label through the blob store capability. On Google Cloud the store is a Cloud Storage bucket, and the host signs with its pod's Google service account through Workload Identity. No HMAC key and no credential handle exist. Make the bucket, with uniform access and no public read:
-
-```bash
-gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location us-central1 \
-  --uniform-bucket-level-access --public-access-prevention
-```
-
-Make the Google service account `wamn-blob`, and give it `roles/storage.objectAdmin` on that bucket only:
-
-```bash
-gcloud iam service-accounts create wamn-blob --project wamn-dev --display-name "wamn host blob store"
-gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels --project wamn-dev \
-  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectAdmin
-```
-
-If the bucket binding answers that the service account does not exist, the new account is not visible yet. Run the binding again after the account shows in `gcloud iam service-accounts describe`.
-
-Let the host's Kubernetes service account `hosts/wamn-host-runtime-operator-runtime` act as `wamn-blob`:
-
-```bash
-gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
-  --role roles/iam.workloadIdentityUser \
-  --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host-runtime-operator-runtime]"
-```
-
-The host values annotate that service account with `iam.gke.io/gcp-service-account: wamn-blob@wamn-dev.iam.gserviceaccount.com`. The WMS label binding names the `gcs` provider and no credential handle:
-
-```json
-{"provider": "gcs", "container": "wamn-dev-labels", "prefix": "wms/"}
-```
-
-On 2026-09-27 the bucket, the account and the two bindings took 6 seconds. The first bucket binding failed because the account was not visible yet, and the second attempt passed.
-
-The host values program writes the annotation into `runtime.serviceAccount` of `deploy/gcp/values-host-base.yaml`. The same run pins the host image `wamn-host:src-b68fac526bdd771b`, `sha256:dc6b737abb8c0efc000489433d529939df015cb54901acf46f58180c2fb0aaa5`, which carries the `gcs` store. Render the values again and upgrade the host:
-
-```bash
-cargo run -p wamn-test-infrastructure --example host_values_files -- \
-  deploy/gcp us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving release manifest digest>
-helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
-  -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 5m
-```
-
-Make sure that a pod with that service account gets the `wamn-blob` identity from the metadata server, with the check of section 3.12 and `"serviceAccountName":"wamn-host-runtime-operator-runtime"`. On 2026-09-27 the image build took 411 seconds, the push 13 seconds and the upgrade 24 seconds. The check printed `wamn-blob@wamn-dev.iam.gserviceaccount.com`, and Receiving still answered `/api/location/list` with 401.
-
-### 5.2 WMS project environment
-
-WMS uses org `dkk`, project `wms`, env `dev` and tenant `wms`. A tenant is one per project database, so tenant `dev` stays with Receiving. With tenant `dev`, `provision-project-env` refused with `tenant-environment-identity-projection-content-conflict`, after it had already recorded the registry row `dkk/wms/dev`. The run with tenant `wms` then reused that row.
-
-Run the commands of sections 3.7, 3.8 and 3.11 with `--project wms --tenant wms` and the WMS database `wamn-db-dkk--wms--dev--0nk1lrpr`. Name the guest Secret `wamn-host-db-wms`, because `wamn-host-db` belongs to Receiving in the same namespace. Prepare the session target of section 3.10 with `--project wms --tenant wms`, and apply it in `identity`. Add its Secret `wamn-session-role-reader-dkk--wms--dev` to `sessionTargetSecrets` in [values-identity.yaml](../../deploy/gcp/values-identity.yaml), and upgrade identity as in section 3.10. Without it, the sign-in page lists only Receiving, and the WMS host refuses the Receiving session with `You are not signed in.` On 2026-09-27 this step was first left out, and the upgrade then took 5 seconds.
-
-After `apply-package`, run `reconcile-replica-identity` as [deployment](deployment.md) states, because the workflow `movement_label` compares the old location of `wms.packaging`:
-
-```bash
-target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$T" --package apps/wamn_wms
-```
-
-On 2026-09-29 this step was first left out. The first move then wrote no label, and the host logged `REFUSED registration=wamn_wms::movement_label ... reason=OldImageAbsent`. The verb took 1 second.
-
-On 2026-09-27 the project environment took 3 seconds and its apply 9 seconds. `reconcile-run-plane`, `apply-package` and `reconcile-package-data-access` took 12, 37 and 9 seconds. The session target took 21 seconds and the five host credentials 108 seconds.
-
-### 5.3 WMS components, wiring and release
-
-Build the package with `wamn build apps/wamn_wms`, which compiles its components. The WMS components land in `apps/target/virtualized/std-empty-environment`, and `label_render.wasm` lands in `apps/platform/no-std/target/wasm32-wasip2/release`. Render the three platform declarations with tenant `wms`, package `wamn_wms` `1.0.0`, and the store alias `labels` for `blob-put`, as the WMS cluster case does:
-
-```bash
-for pair in label-render:apps/platform/no-std/label-render/declaration.json.in \
-  blob-put:apps/platform/execution/blob-put/declaration.json.in \
-  jsonata:apps/platform/execution/jsonata/declaration.json.in; do
-  sed -e 's/__TENANT_ID__/wms/g; s/__PACKAGE_ID__/wamn_wms/g; s/__PACKAGE_VERSION__/1.0.0/g; s/__STORE_ALIAS__/labels/g' \
-    ${pair#*:} > $P/${pair%%:*}.declaration.json
-done
-```
-
-Push each component with the credential file of section 3.9, `--package apps/wamn_wms --tenant wms --declaration $P/<name>.declaration.json`, and these admitted packages.
-Push `wms` with `--declaration-template apps/wamn_wms/publication/components/wms.json.in` in place of `--declaration`, because the render adds the entries of the generated operations from `generated/publication/component-operations.json`:
-
-| Component | Bytes | `--admit-platform-package` | Digest on 2026-09-27 | Digest of 2.0.0 on 2026-10-02 |
-| --- | --- | --- | --- | --- |
-| `wms` | `wms.wasm` | `wamn:node`, `wamn:postgres` | `sha256:db401f0d89c1059e3d396b0643f26277c611f2dc65279b7f2ace64f18df91c87` | `sha256:e2b6aaf7c7f63c4553f0157af2e769b2e53cd5fa82053b8895a779bf34411884` |
-| `label-render` | `label_render.wasm` | `wamn:node` | `sha256:57852602eddef0be442587ba7cc14eddfc4c73b049d3e9c8d85bf3ebc321b4c1` | `sha256:587434540bb0173ae447be16d89876ae0b70047b6c9241bf375c87f8c08efc91` |
-| `blob-put` | `blob_put.wasm` | `wamn:node`, `wasmcloud:blobstore` | `sha256:d93e0c6662ac885d1793b29dfe7a390e79cc494ca7653d58b990a74d6dcd2f8c` | `sha256:d93e0c6662ac885d1793b29dfe7a390e79cc494ca7653d58b990a74d6dcd2f8c` |
-| `jsonata` | `jsonata_expression.wasm` | `wamn:node` | `sha256:4da6d8c78df00e81ea29a02b931ab553abc31ae86556749359294f7fbfa4b64c` | `sha256:f3f6f01cb49ee10a52adbabd86388597d875d7225d9393e11c4a1e0c3d3674bb` |
-
-The 2.0.0 column comes from `catalog.component_library` of the WMS database after B8 of the cutover. Each 2.0.0 digest equals the SHA-256 of its file. `wms` changed at `71fc165f8`, and `jsonata` changed because A8 renamed a field of its error struct.
-
-Each printed digest equals the `sha256sum` of the local file.
-
-The wiring `inventory_move_and_label` passes the authoring gate before `author-wiring` records it. Prepare the gate credentials `control-author` and `management-admitter` with `--prepare-<family>-generation a` into a private directory, and do not apply them. Mint the WMS management-author PAT as in section 3.16, with `--project wms --tenant wms`. Run the gate service on this machine, with the URLs of the identity-reader, control-author and management-admitter files:
-
-```bash
-cargo build -p wamn-scenario-worker
-WAMN_SYSTEM_URL=<identity-reader url> WAMN_CONTROL_AUTHORING_PG_URL=<control-author url> \
-WAMN_MANAGEMENT_ADMISSION_PG_URL=<management-admitter url> WAMN_MANAGEMENT_ORG=dkk \
-WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=wms \
-  target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 &
-cargo run -p wamn-test-infrastructure --example gate_request -- wamn_wms 1.0.0 wms dev \
-  apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $P/gate-request.json
-```
-
-Post `gate-request.json` to `http://127.0.0.1:18090/authoring` with the PAT as a bearer token, read from its file through a pipe. The reply has `body.outcome.status` `completed` and a `report-id`. Stop the service, then record the wiring, publish, bind the label store and qualify the release. `publish-release` pushes the manifest to the repository that `WAMN_RELEASE_ARTIFACT_BASE` names. `qualify-release` pushes the qualification beside it when every case passes ([delivery](delivery.md#release-qualification)):
-
-`SYS` is the superuser URL of `wamn_system`, `$WAMN_SYSTEM_ADMIN_URL` of section 3.6:
-
-```bash
-SYS="$WAMN_SYSTEM_ADMIN_URL"
-target/debug/wamn-ctl author-wiring --database-url "$T" --control-database-url "$SYS" --tenant wms \
-  --package-id wamn_wms --package-version 1.0.0 --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
-  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json
-WAMN_RELEASE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/releases \
-target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk \
-  --tenant wms --environment dev --verified-publisher-principal wamn-management-author-dkk--wms--dev \
-  --run-schema wamn_run --package wamn_wms@1.0.0 --wiring "wamn_wms@1.0.0::inventory_move_and_label=2" \
-  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/packages --registry-auth-file $A/config.json
-echo '{"provider":"gcs","container":"wamn-dev-labels","prefix":"wms/"}' > $P/labels-store.definition.json
-target/debug/wamn-ctl bind-connection --database-url "$T" --tenant wms --environment dev --instance-id labels-store \
-  --requirement-type blobstore --definition $P/labels-store.definition.json --release-digest <release digest> \
-  --component-digest <blob-put digest> --store-alias labels
-target/debug/wamn-ctl qualify-release --release-digest <release digest> --release-chart "$WAMN_RELEASE_CHART" \
-  --artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/releases --registry-auth-file $A/config.json
-```
-
-Receiving runs the same `publish-release` and `qualify-release` commands with `--tenant dev` and no `--wiring`.
-
-On 2026-09-27 the pushes took 17, 11, 10 and 20 seconds, the gate 3 seconds, `author-wiring` 2 seconds, `publish-release` 10 seconds, `bind-connection` 2 seconds and the manifest push 6 seconds. The WMS release manifest is `sha256:6649148172e83eea8af3c9a5f133cb5f961d634de4f85244909da046475890a3`. The first PAT mint was refused before it reached identity, because a short Kubernetes API timeout left the password read empty. Stop when a credential read returns nothing.
-
-### 5.4 WMS event streams and CDC reader
-
-The event NATS serves both environments. Its users are named after their stream, so the users of the two environments do not clash. Write the WMS users with tenant `wms` and the WMS manifest:
-
-```bash
-cargo run -p wamn-test-infrastructure --example event_broker_files -- \
-  $P/evt nats://evt-nats.platform.svc.cluster.local:4222 dkk wms dev wms 1 "$PWD/apps/wamn_wms/wamn.json"
-E=$P/evt/event-nats
-```
-
-The program derives a consumer from each registration of the manifest, handlers and workflows. WMS has one, `mat_wms_wamn_wms_movement_label` on `evt.dkk.wms.dev.inventory_movement.>`, from the workflow `movement_label`. The program writes its configuration into `consumers.jsonl` for `enable-cdc-project-env`. The first run on 2026-09-27 took handlers only, so the WMS materializer user had no consumer. The program was corrected and run again, and the users were replaced.
-
-Read the current `authorization.conf` from the Secret `evt-nats-authorization` into a mode 0600 file. Keep its Receiving users and `tap-admin`, add the five WMS users of `$E/authorization.conf` without their `tap-admin`, and apply the result. Make the WMS user Secrets. Restart the broker and run the tap-stream Job again as in section 3.5:
-
-```bash
-kubectl -n platform create secret generic evt-nats-authorization \
-  --from-file=authorization.conf=$P/evt/merged-authorization.conf --dry-run=client -o yaml | kubectl apply -f -
-for role in provisioning publisher observer; do
-  kubectl -n platform create secret generic evt-nats-wms-$role --from-file=username=$E/$role-username --from-file=password=$E/$role-password
-done
-kubectl -n hosts create secret generic wamn-event-nats-wms \
-  --from-file=username=$E/runtime-username --from-file=password=$E/runtime-password \
-  --from-literal=org=dkk --from-literal=project=wms --from-literal=environment=dev \
-  --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
-kubectl -n hosts create secret generic wamn-materializer-nats-wms --from-file=binding.json=$E/binding.json
-```
-
-The restart stops the Receiving event connections for a few seconds. The Receiving CDC reader logged `connected successfully` 11 seconds after the restart, and the host warnings stopped at the same time. After a broker restart, restart the port-forward of section 3.18 too, because it still points at the old pod.
-
-Enable CDC for WMS as in section 3.18, with `--project wms --schema wms --stream EVT_3_dkk_3_wms_3_dev`, the WMS provisioning user, and `--consumer-config "$(cat $P/evt/consumers.jsonl)"`. Apply its role SQL, its CDC SQL in `wamn-db-dkk--wms--dev--0nk1lrpr`, and its Secret. Prepare the WMS registry-reader credential as in section 3.19 and apply it. Then deploy the reader of [cdc-reader-wms.yaml](../../deploy/gcp/cdc-reader-wms.yaml):
-
-```bash
-kubectl apply -f deploy/gcp/cdc-reader-wms.yaml
-kubectl -n platform rollout status deploy/cdc-reader-wms --timeout=180s
-```
-
-On 2026-09-27 the Secrets took 6 seconds, the restart and the Job 41 seconds, `enable-cdc-project-env` 3 seconds, its apply 5 seconds, the registry-reader credential 18 seconds and the reader rollout 3 seconds. The reader logged `registration loaded`, the three `preflight` lines and `walsender session open`.
-
-### 5.5 WMS host group and workloads
-
-The host values program renders the WMS overlay as host group `wms` next to Receiving. It names the WMS guest, event NATS and materializer Secrets and the instance suffix `0nk1lrpr`. It removes the object-store credentials of the kind overlay, because the `gcs` store needs none. `HOST_IMAGE` is the host image with its digest (section 3.13). Render with both release digests and upgrade the host:
-
-```bash
-cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp "$HOST_IMAGE" \
-  us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving manifest digest> <WMS manifest digest>
-helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
-  -f deploy/gcp/values-host-base.yaml -f deploy/gcp/values-host.yaml --wait --timeout 6m
-```
-
-Push the HTTP ingress and the materializer of the current build with `wash`, as in section 3.20, under the tags `wms-flow-http` and `wms-materializer`. Render the four workloads and apply the WMS ones:
-
-```bash
-cargo run -p wamn-test-infrastructure --example workload_files -- deploy/gcp \
-  $R@<Receiving flow-http digest> $R@<Receiving materializer digest> $R@<WMS flow-http digest> $R@<WMS materializer digest>
-kubectl apply -f deploy/gcp/wms-flow-http.yaml -f deploy/gcp/wms-materializer.yaml
-kubectl -n hosts wait --for=condition=Ready workloaddeployment/wms-flow-http workloaddeployment/wms-materializer --timeout=240s
-```
-
-| Component | File SHA-256 | Pushed digest |
-| --- | --- | --- |
-| `wms-flow-http` (`http_route.wasm`) | `09e74ca57c22b7f396f1f07adb7cbcfa4d65ae4e37dcb1285fc97d8e82dd88a9` | `sha256:923f270bb7425cad48e46a12fa3bb5843f9b1bd174851298ee68485cc8deea7e` |
-| `wms-materializer` | `7d78a4ad93a2484a3964e5d631e857f439316663f8227f4c08676659bf8f8153` | `sha256:581fd2ed52bf349d2adc6cfbad22d0b2c33b157c99f3ef1b3a61aa92bac6ca7a` |
-
-On 2026-09-27 the upgrade took 17 seconds, and the WMS host loaded release 1 with 20 routes and 4 components. The push took 5 seconds, and the workloads were Ready 6 seconds after the apply. Through a port-forward to `hostgroup-wms`, `GET /pallet/query` with `Host: wms.wamn.dev` answered 401 and an unknown path 404.
-
-Give the owner WMS access as in section 4.5: `grant-project-env-membership --project wms`, then `reconcile-run-plane --project wms --tenant wms`, then `grant-role --project wms --tenant wms --role admin`. Load the small WMS dataset inside the database pod, because the port-forward of section 3.6 drops after one connection at times:
-
-```bash
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--wms--dev--0nk1lrpr \
-  -v ON_ERROR_STOP=1 -q < apps/wamn_wms/tests/fixtures/wms-seed-small.sql
-```
-
-It writes 10 locations, 10 pallets, 10 products and 19 pallet quantities. On 2026-09-27 the grant took under 1 second, the reconcile 12 seconds, the role insert 1 second and the load 1 second.
-
-### 5.6 WMS public edge
-
-Upload the WMS client of release 1, as in section 4.2:
-
-```bash
-target/debug/wamn web upload apps/wamn_wms \
-  --release sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6 --bucket gs://wamn-dev-web/clients \
-  --org dkk
-```
-
-From `wamn-snz0.6` the command takes the environment coordinate, reads the built client from each package artifact, and refuses a release that the environment's release chart does not serve. [Web client files](deployment.md#web-client-files) has the current command.
-
-[values-edge.yaml](../../deploy/gcp/values-edge.yaml) lists WMS with its host, `http://wms-flow-http.hosts.svc.cluster.local` and its bucket path. [url-map.yaml](../../deploy/gcp/url-map.yaml) has the host rule `wms.wamn.dev` and the path matcher `wms`, with the same rules as Receiving. Upgrade the edge, import the URL map and add the record:
-
-```bash
-helm upgrade wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml --wait --timeout 3m
-gcloud compute url-maps import wamn-edge --global --project wamn-dev --source deploy/gcp/url-map.yaml --quiet
-gcloud dns record-sets create wms.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 --rrdatas 8.232.230.139
-```
-
-The same certificate `*.wamn.dev` serves both hosts. On 2026-09-27 the upload took 14 seconds, and the upload again with `--org` took 12 seconds. The edge upgrade 12 seconds, the import 17 seconds and the record 1 second. Until the new host rule spreads, `wms.wamn.dev` reaches the default bucket, which answers with a listing of the whole web bucket (finding `wamn-uo2p`).
-
-### 5.7 WMS pallet move and label
-
-The owner signs in at `https://wms.wamn.dev` and moves one pallet from the move form. Read the movement row:
-
-```bash
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -d wamn-db-dkk--wms--dev--0nk1lrpr -Atc \
-  "select * from wms.inventory_movement order by created_at desc limit 3;"
-```
-
-List the label objects and read one. The object name is the movement id:
-
-```bash
-gcloud storage ls -l -r gs://wamn-dev-labels/ --project wamn-dev
-gcloud storage cat gs://wamn-dev-labels/wms/<movement id> --project wamn-dev
-```
-
-Find the workflow run in the host log:
-
-```bash
-kubectl -n hosts logs -l app.kubernetes.io/instance=wamn-host --all-containers --since=30m --max-log-requests 10 \
-  | grep movement_label
-```
-
-On 2026-09-27 the owner moved one pallet. The movement `8743151e-e335-491e-ac80-258072b2503d` was written at 17:35:45.416 UTC. The host started the `wamn_wms::movement_label` run 111 milliseconds later. The label `wms/8743151e-e335-491e-ac80-258072b2503d` is a 276 byte ZPL document, written in the same second. The row action `move` of the Pallets table was out of reach, because the table cuts off its last columns (finding `wamn-po31`).
-
-On 2026-09-29, on the new environments, the owner signed in at both hosts with the role `admin`. At Receiving the lists of purchase orders, receipts and suppliers answered 200. The owner moved `PAL-000006` at 13:28:21.644 UTC, and the host started the `wamn_wms::movement_label` run 250 milliseconds later. The label `wms/252da141-b014-fe2f-ebe0-103105cd75cc/2` is a 282 byte ZPL document. On main the object name is the packaging id and its row version. The move also showed the toast `query: uncertain` for a list refresh that the page cancelled itself (finding `wamn-v43a`).
-
-### 5.8 WMS host crash during a queued run
-
-This section kills the WMS host process while a durable queue run is `running`, and records what the queue does. [Cluster tests](cluster-tests.md#deployed-queue-recovery-on-wamn-dev) holds the case and its numbers. The kill is a SIGKILL of the host process, so it models a crash and not an operator action.
-
-Start a privileged debug pod on the node of `hostgroup-wms`. Its image is the pinned `wamn-ctl` image of section 3.4:
-
-```bash
-kubectl -n hosts get pod -o wide | grep hostgroup-wms
-kubectl -n default debug node/<node> --profile=sysadmin \
-  --image=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-ctl:src-4efb827f3fd6ab78@sha256:1322d637113f2934340620556f1ef491d2d2e28f4991ddeb9236a7d4f48eae10 \
-  -- /bin/sleep 7200
-```
-
-Both host groups can run on one node, so find the PID by the pod UID in the process cgroup. The cgroup path can spell the UID with underscores:
-
-```bash
-U=$(kubectl -n hosts get pod <wms pod> -o jsonpath='{.metadata.uid}')
-kubectl -n default exec <debug pod> -- /bin/sh -c "for p in /proc/[0-9]*; do [ \"\$(cat \$p/comm)\" = wamn-host ] && grep -q -e $U -e ${U//-/_} \$p/cgroup && echo \${p#/proc/}; done"
-```
-
-Forward the database pod as in section 6.4, and set `WAMN_PG_ADMIN_URL` to the superuser URL of the WMS database. Start one run of the published wiring. The input is one pallet `update` event. The service principal is the WMS management author, the one active service principal in the WMS database:
-
-```bash
-echo '[{"event":"update","new":{"id":"<pallet id>","location_id":"<location id>","row_version":"<row version>","type":"pallet"}}]' > $P/input.json
-target/debug/wamn-ctl workflow start --tenant wms --environment dev --release-digest <release digest> --package-id wamn_wms \
-  --wiring-id inventory_move_and_label --wiring-version 2 --service-principal-id 9ba1ea8e-4ad2-45bb-b96d-20dffdcc881b \
-  --idempotency-key <key> --input $P/input.json
-```
-
-Read the run status in a loop. When it shows `running`, kill the process:
-
-```bash
-kubectl -n default exec <debug pod> -- kill -KILL <pid>
-```
-
-Then read the run and its queue row once a second until the run ends:
-
-```sql
-SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.lease_expires_at
-  FROM wamn_run.runs AS r
-  LEFT JOIN wamn_run.run_queue AS q USING (tenant_id, run_id)
- WHERE r.run_id = '<run id>';
-```
-
-Read the pod `Ready` time and the label object, then save the debug pod log and delete the pod:
-
-```bash
-kubectl -n hosts get pod <wms pod> -o jsonpath='{range .status.conditions[*]}{.type}={.status}@{.lastTransitionTime} {end}'
-gcloud storage objects describe gs://wamn-dev-labels/wms/<pallet id>/<row version> --project wamn-dev
-gcloud storage ls -l --soft-deleted "gs://wamn-dev-labels/wms/<pallet id>/**" --project wamn-dev
-kubectl -n default logs <debug pod> > $P/debug-pod.log
-kubectl -n default delete pod <debug pod>
-```
-
-On 2026-09-30 the first attempt landed inside the window, so no second run was needed. The pallet was `PAL-000001` (`82b2ffa1-142a-20e7-bc58-93751f88bd7d`) at location `97d88290-feb6-1874-f784-7ae7603e645c`, row version 1. The pallet did not move, because the wiring moves nothing. The label is `gs://wamn-dev-labels/wms/82b2ffa1-142a-20e7-bc58-93751f88bd7d/1`. The debug pod was `node-debugger-gke-wamn-main-cb3380eb-prq4-tzp69` on node `gke-wamn-main-cb3380eb-prq4`. `wms.wamn.dev` was down from 21:10:58 to 21:11:13 UTC, which is 15 seconds.
-
-## 6. Benchmark
-
-### 6.1 Morning start and the 1000 seed
-
-If the guard scaled `main` to 0 overnight, resize it and run the tap Job again (section 3.5):
-
-```bash
-gcloud container clusters resize wamn --node-pool main --num-nodes 3 --zone us-central1-a --project wamn-dev --quiet
-```
-
-On 2026-09-28 the resize took 73 seconds and the tap Job 25 seconds. About 40 minutes later Google replaced both Spot nodes. Every pod started again in 549 seconds, and the tap Job ran again in 19 seconds.
-
-Load the 1000 seed of Receiving through the database port-forward, as the superuser. The reset empties every Receiving table, so the supplier change of step 4 and every receipt go with it. Run it inside the database pod, because the port-forward drops at times:
-
-```bash
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn-db-dkk--receiving--dev--4pqjfmli \
-  -v ON_ERROR_STOP=1 -v reset=1 -v scale=1000 -q < apps/wamn_receiving/tests/fixtures/receiving-seed.sql
-```
-
-On 2026-09-28 the load wrote 1000 items, 1000 locations, 5 suppliers, 1000 purchase orders and 500500 lines in 258 seconds. The first run, with the reset line, stopped at that line and rolled back, because release 1 of that day had no `app_system.write_log` table. On 2026-09-29 the load on the new database took 264 seconds, with the reset line.
-
-### 6.2 Postgres volume
-
-The 1000 seed filled the 2 Gi volume of `wamn-pg-1`, and Postgres stopped with "Detected low-disk space condition". Identity, both host groups and both CDC readers stopped with it. The volume is now 10 Gi in [cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml). CloudNativePG does not reconcile while the disk is full, so also patch the claim:
-
-```bash
-kubectl apply -f deploy/gcp/cnpg-cluster.yaml
-kubectl -n platform patch pvc wamn-pg-1 --type merge -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
-```
-
-On 2026-09-28 the apply alone did not grow the claim in 408 seconds. The patch grew it in 32 seconds, and Postgres was ready 167 seconds later. Only the two live CDC slots existed, so no slot was dropped (finding `wamn-6jit`).
-
-The slot limit `max_slot_wal_keep_size` is 4 GB in the same file (plan `docs/plan/cdc-reader-slot.md` section 4.5). Apply it and read it back. It takes effect without a restart:
-
-```bash
-kubectl apply -f deploy/gcp/cnpg-cluster.yaml
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "show max_slot_wal_keep_size"
-kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc "select slot_name, wal_status, safe_wal_size from pg_replication_slots"
-```
-
-On 2026-09-29 the apply took 1 second, and the server showed `4GB` with no restart. The WMS slot's `safe_wal_size` rose from 738097816 to 3942627736 bytes.
-
-Restart identity and the CDC readers after an outage of Postgres. Do not restart the host groups while they run. Since 2026-10-02 the three host groups need three nodes, and a fourth host pod does not fit, so the new pods wait in `Pending`. If that happens, run `kubectl -n hosts rollout undo deploy/<name>`.
-
-### 6.3 CDC slot lost
-
-If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader then stays running and stopped. It logs `CDC_CAPTURE_GAP` once and reads its gap row every 30 seconds (`docs/plan/cdc-reader-slot.md` section 4.3). Look at the slots:
+If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader stays running and stopped, and logs `CDC_CAPTURE_GAP` once (`docs/plan/cdc-reader-slot.md` §4.3). Look at the slots:
 
 ```bash
 kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
   "select slot_name, active, wal_status, invalidation_reason from pg_replication_slots"
 ```
 
-Keep the port-forwards of sections 3.6 and 3.18. Write the observer user of the environment into a private directory `G` at mode 0700:
+`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It connects as the observer user of the environment:
 
 ```bash
-(umask 077
- kubectl -n platform get secret evt-nats-wms-observer -o jsonpath='{.data.username}' | base64 -d > $G/observer-username
- kubectl -n platform get secret evt-nats-wms-observer -o jsonpath='{.data.password}' | base64 -d > $G/observer-password)
+. $HOME/.cache/wamn-install/platform.sh
+WAMN_PG_ADMIN_URL="$(db_url wms)" target/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev \
+  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $W/evt-wms/event-nats/observer-username)" \
+  --nats-password-file $W/evt-wms/event-nats/observer-password
 ```
 
-Run `recover-capture-gap`. It drops the lost slot, creates it again under the same name, and writes the open gap row. The reader stays stopped on the new slot:
+After the resync, or on the owner's word while no resync exists, run `close-capture-gap`. The reader resumes within 30 seconds:
 
 ```bash
-WAMN_PG_ADMIN_URL="${WAMN_SYSTEM_ADMIN_URL%/*}/wamn-db-dkk--wms--dev--0nk1lrpr" target/debug/wamn-ctl recover-capture-gap \
-  --org dkk --project wms --env dev \
-  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $G/observer-username)" \
-  --nats-password-file $G/observer-password
-rm -f $G/observer-username $G/observer-password
-```
-
-After the resync, or on the owner's word while no resync exists, run `close-capture-gap`. The reader resumes within 30 seconds, with no restart:
-
-```bash
+. $HOME/.cache/wamn-install/platform.sh
 target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 ```
-
-### 6.4 Bench client and PAT
-
-Mint the bench PAT as in section 3.16, with `--emit-operator-pat-secret <private dir>/operator-pat.json`. Then write the tenant `users` row of the service with `reconcile-run-plane` (section 4.5), and give it the role `admin` with `grant-role --user wamn-operator-dkk--receiving--dev@wamn.dev --role admin`. Use a forward to the pod, `kubectl -n platform port-forward pod/wamn-pg-1 15435:5432`, because the forward to the service closed the connections of the verb.
-
-Make the client VM, copy the source of the commit and the PAT, and build:
-
-```bash
-gcloud compute instances create wamn-bench-client --project wamn-dev --zone us-central1-a --machine-type e2-small \
-  --image-family debian-13 --image-project debian-cloud --boot-disk-size 30GB --boot-disk-type pd-standard \
-  --no-service-account --no-scopes --labels purpose=bench
-gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile && sudo apt-get update && sudo apt-get install -y clang mold build-essential cmake pkg-config curl && curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none'
-git archive --format=tar.gz -o src.tar.gz HEAD
-gcloud compute scp src.tar.gz wamn-bench-client:src.tar.gz --project wamn-dev --zone us-central1-a
-gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'mkdir -p wamn && tar -xzf src.tar.gz -C wamn && umask 077 && mkdir -p ~/pat'
-gcloud compute scp <private dir>/operator-pat.json wamn-bench-client:pat/operator-pat.json --project wamn-dev --zone us-central1-a
-gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'cd wamn && . ~/.cargo/env && cargo build --release -j 2 -p wamn-bench'
-```
-
-On 2026-09-28 the VM took 15 seconds to create, the tools 86 seconds, the copy 5 seconds and the build 803 seconds. The VM counts 1 CPU against the quota of 8.
-
-After the runs, shred the PAT on the VM, delete the VM, and shred the local copy:
-
-```bash
-gcloud compute ssh wamn-bench-client --project wamn-dev --zone us-central1-a --command 'shred -u ~/pat/* && rmdir ~/pat'
-gcloud compute instances delete wamn-bench-client --project wamn-dev --zone us-central1-a --quiet
-shred -u <private dir>/operator-pat.json
-```
-
-On 2026-09-28 the shred took 3 seconds and the delete 23 seconds.
-
-### 6.5 One tier
-
-Run `tier.sh <tier> <machine type> <count> <spot|on-demand>` from the repository machine. `tier.sh <tier> teardown` runs only the second half. The script:
-
-```bash
-#!/usr/bin/env bash
-# One benchmark tier: tier.sh <tier> <machine type> <count> <spot|on-demand>
-# main goes to 0, the pool bench-<tier> takes the platform, the six runs go
-# from the client VM, and the results come back to tests/bench/.
-set -euo pipefail
-tier=$1 machine=$2 count=${3:-} kind=${4:-}
-export KUBECONFIG=/tmp/claude-1000/-home-kaalin-dev-wamn/8f6326b9-1dc5-4a4f-b106-5a08992a6757/scratchpad/gke.kubeconfig
-P="--project wamn-dev"
-Z="--zone us-central1-a"
-repo=$HOME/.cache/wamn-f8-gcp
-t0=$(date +%s)
-stamp() { echo "[$(date -u +%H:%M:%S)] $* (+$(( $(date +%s)-t0 ))s)"; }
-
-teardown_only=false
-[ "$machine" = teardown ] && teardown_only=true
-spot=()
-[ "$kind" = spot ] && spot=(--spot)
-if ! $teardown_only; then
-# The CloudNativePG budget wamn-pg-primary allows no eviction, so a drain
-# waits on Postgres for up to an hour. Delete the pod once its node is
-# cordoned; the volume keeps the data.
-gcloud container clusters resize wamn --node-pool main --num-nodes 0 $Z $P --quiet >/dev/null 2>&1 &
-resize=$!
-pg_node=$(kubectl -n platform get pod wamn-pg-1 -o jsonpath='{.spec.nodeName}')
-until kubectl get node "$pg_node" -o jsonpath='{.spec.unschedulable}' 2>/dev/null | grep -q true; do sleep 5; done
-kubectl -n platform delete pod wamn-pg-1 --wait=false >/dev/null
-wait $resize
-stamp "main at 0"
-gcloud container node-pools create "bench-$tier" --cluster wamn $P $Z \
-  --machine-type "$machine" "${spot[@]}" --num-nodes "$count" \
-  --disk-type pd-standard --disk-size 30 \
-  --service-account wamn-nodes@wamn-dev.iam.gserviceaccount.com \
-  --workload-metadata GKE_METADATA \
-  --max-surge-upgrade 0 --max-unavailable-upgrade 1 --quiet >/dev/null 2>&1
-stamp "pool bench-$tier ready: $count x $machine $kind"
-
-unready() {
-  kubectl get pods -A --no-headers 2>/dev/null | awk '{split($3,a,"/"); if(($4!="Running"||a[1]!=a[2]) && $4!="Completed") n++} END{print n+0}'
-}
-until [ "$(unready)" = 0 ]; do sleep 10; done
-stamp "every pod ready"
-kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found >/dev/null
-kubectl apply -f "$repo/deploy/gcp/nats-jetstream.yaml" >/dev/null
-kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s >/dev/null
-stamp "tap Job complete"
-# The host keeps a scheduler NATS connection that does not come back after (wamn-gdex)
-# the NATS pod moves, so start the Receiving host last.
-kubectl -n hosts delete $(kubectl -n hosts get pods -o name | grep hostgroup-default) --wait=false >/dev/null
-sleep 5
-until [ "$(unready)" = 0 ]; do sleep 5; done
-until [ "$(curl -s -o /dev/null -w '%{http_code}' https://receiving.wamn.dev/api/purchase_order/query)" = 401 ]; do sleep 5; done
-stamp "Receiving host restarted and answering"
-
-gcloud compute ssh wamn-bench-client $P $Z --quiet --command "
-set -e
-cd wamn && mkdir -p tests/bench
-for call in get update query; do
-  for c in 4 16; do
-    target/release/wamn-bench --host receiving.wamn.dev --pat-file ~/pat/operator-pat.json \
-      --call \$call --concurrency \$c --duration-secs 60 --tier $tier \
-      --output tests/bench/$tier-\$call-c\$c.json > /dev/null
-    echo \"$tier \$call c\$c done\"
-  done
-done"
-stamp "six runs done"
-mkdir -p "$repo/tests/bench"
-gcloud compute ssh wamn-bench-client $P $Z --quiet --command "cd wamn/tests/bench && tar -cf - $tier-*.json" 2>/dev/null \
-  | tar -xf - -C "$repo/tests/bench"
-stamp "results copied"
-fi
-
-# The quota of 8 CPUs holds the pool, the client VM and one main node, not two.
-gcloud container clusters resize wamn --node-pool main --num-nodes 1 $Z $P --quiet >/dev/null
-stamp "main at 1"
-kubectl cordon -l cloud.google.com/gke-nodepool="bench-$tier" >/dev/null
-kubectl -n platform delete pod wamn-pg-1 --wait=false >/dev/null
-gcloud container node-pools delete "bench-$tier" --cluster wamn $P $Z --quiet >/dev/null
-stamp "pool bench-$tier deleted"
-gcloud container clusters resize wamn --node-pool main --num-nodes 2 $Z $P --quiet >/dev/null
-stamp "main at 2"
-until [ "$(unready)" = 0 ]; do sleep 10; done
-kubectl -n platform delete job evt-nats-tap-stream --ignore-not-found >/dev/null
-kubectl apply -f "$repo/deploy/gcp/nats-jetstream.yaml" >/dev/null
-kubectl -n platform wait --for=condition=complete job/evt-nats-tap-stream --timeout=180s >/dev/null
-kubectl -n hosts delete $(kubectl -n hosts get pods -o name | grep hostgroup-default) --wait=false >/dev/null
-until [ "$(curl -s -o /dev/null -w '%{http_code}' https://receiving.wamn.dev/api/purchase_order/query)" = 401 ]; do sleep 5; done
-stamp "platform back on main, tap Job complete, Receiving answering"
-```
-
-A move of `main` to 0 waits for up to an hour on the CloudNativePG budget `wamn-pg-primary`, which allows no eviction, so the script deletes the Postgres pod once its node is cordoned. The data stays on the volume. The quota of 8 CPUs holds a 4 CPU pool, the VM and one `main` node, but not two, so the teardown grows `main` in two steps. `gcloud compute scp` failed once with a 300 second read timeout, so the results come back with `tar` over ssh.
-
-### 6.6 Tier results
-
-The tier table is in section 6.1 of [the deployment plan](../plan/gcp-deployment.md#61-tier-results).
-
-### 6.7 Tear down an environment
-
-`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document mints a new suffix (docs/plan/platform-deploy.md §12.3). Under the lifecycle lock it uninstalls the release chart and waits for the host pods to drain, refuses if a run is pinned to a release with no pod, revokes the provisioning PATs, deletes the credential Secrets, removes the environment's key of `wamn-control-administration-<org>`, deletes the source and advisory streams, drops the slot, deletes the CloudNativePG `Database`, deletes the control rows of the tenant and deletes the registry rows. The `Database` keeps `databaseReclaimPolicy: retain`, so the database and its owner roles stay on the cluster. With `--data` it drops the database and the instance roles too, and asks for the coordinate again at a terminal. It reads the platform inputs of `env apply`; set `WAMN_EVENT_NATS_URL`, `WAMN_EVENT_NATS_USERNAME` and `WAMN_EVENT_NATS_PASSWORD_FILE` when the environment captures events:
-
-```bash
-target/debug/wamn-ctl env delete $ORG/$PROJECT/$ENV
-```
-
-Every step is "if present", so a failed run is finished by running it again. A trigger records the old suffix in `registry.retired_project_envs`. The delete also removes the memberships of the environment and its `registry.event_readers` row, so grant the memberships of section 4.5 again after the new provision. A second run finds no registry row and stops there.
-
-No user may purge a stream, and a torn-down environment's stream is deleted, not purged. After `enable-cdc-project-env` runs again, run the tap-stream Job of section 3.5 again. Since finding `wamn-fipl`, the role SQL of every `enable-cdc-project-env` run sets the Secret's password and attributes on an existing role. The reader reads the Secret at start, so restart it after the Secret changes:
-
-```bash
-kubectl -n platform rollout restart deploy/cdc-reader
-kubectl -n platform rollout status deploy/cdc-reader --timeout=180s
-```
-
-On 2026-09-29 the Receiving run of section 3.18 took 1 second with a new password, and its apply took 2 seconds. The `passwd` of the role in `pg_authid` changed, and the attributes stayed the same. The reader restart took 4 seconds, and the new reader was `streaming` from 21:06:03 UTC with 0 restarts. The first attempt failed at 21:02, because the Spot node `gke-wamn-main-cb3380eb-bvs4` was preempted and `evt-nats-0` moved. The cluster recovered by 21:05.
-
-The records below used the hand procedure that the verb replaced. Its commands are in this section at commit `0d6c1cfd0`.
-
-On 2026-09-28 and 2026-09-29 this procedure removed Receiving `zf7o454t` and WMS `bnarqpnc`. The stop took 23 seconds, the slots and the databases 1 second, the 13 roles 1 second, the registry rows under 1 second, the control rows 1 second and the gate rows under 1 second. The WMS consumer was deleted by itself first, then both streams, each in under 1 second. The WMS stream held 51 events and the Receiving stream 581397. The new suffixes are `4pqjfmli` for Receiving and `0nk1lrpr` for WMS.
-
-The first new Receiving environment, `ra3cel54`, was torn down unused, because its package steps ran with a `wamn-ctl` built before a rebase on main, so it recorded the old manifest.
-
-The new provision needed generation `b` in one place. `provision-identity-issuer --prepare-generation a` refused with "prepare requires an inactive identity credential slot", because the issuer serves the whole platform. Generation `b` took 2 seconds, and `--retire-generation a` took 2 seconds after identity ran on `b`. Every other credential took generation `a`. On 2026-09-29 the releases were:
-
-| Application | Release | Manifest digest | Component digests |
-| --- | --- | --- | --- |
-| Receiving | 1 | `sha256:900d35fbd2da116aac3d76abcf3895da7810cedeaf75fd5fdc4f9858f578fdfc` | `receiving` `sha256:1d034a09179b5c1a1eb74643d8a9376d612653116e7f7edddd8666dc74712fdb` |
-| WMS | 1 | `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6` | `wms` `sha256:0533b015d675921df8529bdd58913730d36a8f97dbbb2b0f4affae963422ce58`, `label-render` `sha256:587434540bb0173ae447be16d89876ae0b70047b6c9241bf375c87f8c08efc91`, `blob-put` and `jsonata` unchanged |
-
-The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. On 2026-09-30 the PAT of prefix `5b0649d6dc4dd3bf`, which expires on 2026-10-30, replaced it (section 3.16). The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
-
-On 2026-10-02 the `kind` → `type` cutover (`docs/plan/kind-to-type.md` section 3.2) published and selected these releases at the cutover commit `351f71337`:
-
-| Application | Release | Manifest digest | Source commit of the attestation | Component digests |
-| --- | --- | --- | --- | --- |
-| Receiving | 2 | `sha256:d2b6c3063066c7fdc4a575b029fa10987db9f44c4d3e8acae5faba584f38531d` | `ebc75d513` | `receiving` `sha256:0855fd4cfc5bd6202321134a6bf8331b5266b521f6814bc7c88c3689029fba81` |
-| Receiving | 3 | `sha256:28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7` | `351f71337` | the same bytes as release 2 |
-| WMS | 2 | `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4` | `351f71337` | the 2.0.0 column of section 5.3 |
-
-All three are format 4. Receiving release 2 is attested and never selected. Its attestation names `ebc75d513`, and an attestation does not change, so the qualified publish of the same bytes at `351f71337` refused `deployment-attestation-content-conflict`. The owner ruled release 3 with the same bytes (`wamn-ld93.21`). Release numbers are not a contract, and the attestation is. The heads are Receiving release 3 and WMS release 2.
-
-The web clients are at `gs://wamn-dev-web/clients/wamn_receiving/28e0b694e45b2410e5a087691641e075a0726e1e7eed508360ef50ceff542be7/` (22 files, 8 seconds) and `gs://wamn-dev-web/clients/wamn_wms/8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4/` (24 files, 9 seconds). `deploy/gcp/values-edge.yaml` and `deploy/gcp/url-map.yaml` name both paths. The host upgrade timed out once at 605 seconds, because the new control host group did not fit on 2 nodes (section 1.3). After the resize to 3 nodes it took 5 seconds, and the Helm release reads `deployed` at revision 9.
-
-The PAT of prefix `0403da0ed832b723`, which expires on 2026-11-01, replaced `5b0649d6dc4dd3bf` for `wamn-operator-dkk--receiving--dev`. The WMS management-author PAT is `fdae8133ac59ae6d`, which expires on 2026-11-01. The older WMS PATs `035c1540a0cedefc` and `8c047af277dd545a` are revoked, so each environment holds one current PAT. Generation `a` of the WMS `control-author` and `management-admitter` families is retired, and generation `b` is active.
-
-## 7. Schema changes applied by hand
-
-`wamn-ctl upgrade-schema` applies a platform schema change to an installed database ([deployment](deployment.md#platform-schema-upgrades), `wamn-o8b9`). This section records the statements that ran by hand on wamn-dev before the verb existed, with their date and their finding. Its last entry is the first run of the verb on each database, with `--baseline`, at the `kind` → `type` cutover (`docs/plan/kind-to-type.md` §4.8). After that entry, no schema change runs by hand.
-
-On 2026-09-29 (`wamn-59z6`, `wamn-o8b9`), the capture gap table of `deploy/sql/system-schema.sql` went into `wamn_system` as its owner, with the read grant of the CDC reader. Write the `CREATE TABLE registry.capture_gap` block of that file between the two lines below into `$P/capture-gap.sql`, and apply it:
-
-```sql
-SET ROLE wamn_system;
-CREATE TABLE registry.capture_gap (...);
-GRANT SELECT ON TABLE registry.capture_gap TO wamn_registry_reader;
-```
-
-```bash
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $P/capture-gap.sql
-```
-
-The apply took 1 second. The table owner is `wamn_system`, and `wamn_registry_reader` holds `SELECT` only.
-
-System migration `0007_org_administration.sql` (`wamn-a40n.3`) does not run by hand. It creates `identity.org_memberships` and `identity.org_roles`, renames the principal type `human` to `user` and carries the grants of the `control` family and the identity issuer. `wamn-ctl upgrade-schema --system-database-url` applies it on wamn-dev with the other migrations of its run, after the cutover entry above.
-
-The org `dkk` was provisioned before `provision-org` wrote an org admin, so it has no owner rows. After `0007`, run the invitation Job of section 4.5 for the owner with `--org-admin`. The owner is enrolled, so identity reuses the user and sends no mail:
-
-```bash
-(umask 077; sed -e 's/__EMAIL__/dkkloimwieder@gmail.com/' -e 's/__DISPLAY_NAME__/dkk/' -e 's/__ORG__/dkk/' \
-  -e 's|__GRANT_FLAGS__|--org-admin|' deploy/gcp/operator/invite.yaml > $P/invite.yaml)
-kubectl apply -f $P/invite.yaml
-rm $P/invite.yaml
-```
-
-Then make the Secret `wamn-system-admin`, wait for the Job and save its log as in section 4.5.
-
-On 2026-10-02 (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit `71fc165f8` ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/plan/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered false, so the migration did not rename P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
-
-```bash
-target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --baseline 1 --confirm
-for db in wamn-db-dkk--receiving--dev--4pqjfmli wamn-db-dkk--wms--dev--0nk1lrpr; do
-  target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
-    --admin-database-url "postgresql://postgres:${PW}@127.0.0.1:15432/$db" --baseline 0 --confirm
-done
-```
-
-B0 step 8 answered that `registry.capture_gap` exists and `registry.event_readers.schema` does not, so the baseline was 1. The wamn_system run printed `baseline` for `0001_capture_gap.sql`, then `applied` for `0002_event_reader_schema.sql`, `0003_kind_to_type.sql`, `0004_env_policy_durability.sql`, `0005_admin_role.sql`, `0006_control_audience_reads.sql` and `0007_org_administration.sql`. Each project-env run printed `applied` for `0001_kind_to_type.sql`, `0002_authored_roles.sql`, `0003_administration_grants.sql` and `0004_user_type.sql`. The runs took 3, 2 and 1 seconds. The history notices named `app_system.api_keys_history`, `configurations_history`, `permissions_history`, `roles_history`, `user_roles_history` and `users_history` in both project-env databases, `receiving.purchase_order_history` and `receiving.purchase_order_line_history` in Receiving, and `wms.packaging_history` in WMS. The owner table took <not recorded> rows in wamn_system, <not recorded> in Receiving and <not recorded> in WMS. The snapshot notices named the eleven `release_manifest_v3_snapshots_*` constraints in each project-env database (`canonical_bytes_check`, `canonical_bytes_not_null`, `effective_release_id_check`, `effective_release_id_not_null`, `exact_hash`, `manifest_digest_check`, `manifest_digest_not_null`, `pkey`, `release_fkey`, `tenant_id_check` and `tenant_id_not_null`). The check of §4.3.6 listed no `component_library_digest_key` and no `release_manifest_v3` name. `registry.schema_migrations` holds rows 1 to 7, and `app_system.schema_migrations` held rows 1 to 4 in each project-env database.
-
-`reconcile-run-plane` of commit `71fc165f8` then applied P8 and P10 to P12 by its `TypeColumnCutover` action. Run it for each project-env as in sections 3.8 and 5.2:
-
-```bash
-target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$T" \
-  --org dkk --project <project> --tenant <tenant> --env dev --schema wamn_run
-```
-
-It reported `applied TypeColumnCutover: type-columns` for Receiving and for WMS, and a second run reported no action (7 tables at target). The check query of §4.3 returned no row in any of the three databases afterwards.
-
-The listing of PAT Secrets with the label `app.kubernetes.io/component=project-env-pat` returned 0 Secrets, so no annotation ran.
-
-Later in the cutover, project migration `0005_wiring_definition_key.sql` of commit `ebac92ef4` (`wamn-ld93.21`) added `package_version` to `wirings_definition_key`. `upgrade-schema` ran on both project-env databases without `--baseline`, because the verb refuses `--baseline` after its first run. Each run took 1 second and printed `applied` for `0005_wiring_definition_key.sql`. `app_system.schema_migrations` holds rows 1 to 5 in each project-env database, and wamn_system had no pending file.
-
-On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four fixed guest tags of the `components` repository were deleted, one command per tag. They named no running digest after B10:
-
-| Tag | Digest |
-|---|---|
-| `flow-http` | `sha256:f3d8d1bea0e3d9dd69dc2e30c004663a95ef234ed36a80faf4e8bcc35dc42fb4` |
-| `materializer` | `sha256:5c310006273e00f8d24cbdd5604207162b723f4fbb7c545fb77d9ebcfe696db0` |
-| `wms-flow-http` | `sha256:923f270bb7425cad48e46a12fa3bb5843f9b1bd174851298ee68485cc8deea7e` |
-| `wms-materializer` | `sha256:581fd2ed52bf349d2adc6cfbad22d0b2c33b157c99f3ef1b3a61aa92bac6ca7a` |
-
-Then `gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags` turned immutable tags on at 17:12 UTC. The deletes and the update took 6 seconds. `gcloud artifacts repositories describe wamn` shows `immutableTags: true`, and every tag of `components` is a sha256 hex.
-
-### Provisioning login
-
-The provisioning login `wamn_provisioner` is not a superuser (`wamn-zua8.3`, `docs/plan/platform-ui.md` §5.5). Three superuser statements prepare an installed deployment for it. Apply each one once, as the superuser, connected to `wamn_system`. Keep the port-forward and `WAMN_SYSTEM_ADMIN_URL` of section 3.6. Make a private work directory, mode 0700:
-
-```bash
-D=$(mktemp -d)
-```
-
-The fingerprint statement is not yet applied on wamn-dev. It records a password fingerprint for every generation that was prepared before system migration `0009_generation_passwords.sql`. It reads `pg_authid`, so it runs only after `upgrade-schema` applied `0009`:
-
-```bash
-target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm \
-  --emit-fingerprint-sql $D/fingerprint.sql
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $D/fingerprint.sql
-rm $D/fingerprint.sql
-```
-
-The `wamn_provisioner` role statement is not yet applied on wamn-dev. One run of `provision-system` writes the Secret `wamn-provisioner` with a new password and the role statement with only the SCRAM-SHA-256 verifier of that password. The statement creates the login, or brings an existing one to its attributes, and grants its memberships:
-
-```bash
-(umask 077; target/debug/wamn-ctl provision-system --system-url "$WAMN_SYSTEM_ADMIN_URL" \
-  --emit-secret $D/provisioner-secret.json --emit-provisioner-sql $D/provisioner.sql \
-  --db-host wamn-pg-rw.platform.svc.cluster.local)
-kubectl apply -f $D/provisioner-secret.json
-kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 < $D/provisioner.sql
-rm $D/provisioner-secret.json
-rm $D/provisioner.sql
-```
-
-The `ADMIN OPTION` statement is not yet applied on wamn-dev. It is the second block of `$D/provisioner.sql` above, so the same `psql` run applies it. It grants `wamn_provisioner` `ADMIN OPTION`, with `INHERIT FALSE` and `SET FALSE`, on each stable ACL role of `WorkloadRoleFamily::ALL` that exists, and nothing else. A superuser made those roles on wamn-dev, so without this grant the provisioning login cannot make a new environment's generations their members.
-
-## 8. Package upgrade acceptance prerequisite audit
-
-On 2026-10-01, the owner accepted proceeding after `wamn-ld93.33` closed. Remote `main` was `3e8ff89392d3548a0968374ebb3bc922ededf834`. The final WMS acceptance remains pending under `wamn-xvu5.5`. Finding `wamn-v533` records the zero-node condition.
-
-The read-only audit used the existing GKE kubeconfig:
-
-```bash
-KUBECONFIG=/tmp/claude-1000/-home-kaalin-dev-wamn/8f6326b9-1dc5-4a4f-b106-5a08992a6757/scratchpad/gke.kubeconfig
-kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get deployments -o json
-kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get pods -o wide
-kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s get nodes
-kubectl --kubeconfig "$KUBECONFIG" --request-timeout=20s -n hosts get events \
-  --field-selector involvedObject.name=hostgroup-wms-76df684b4-kdmmg -o json
-```
-
-Both host Deployments requested one replica and reported zero ready replicas. Their pods were Pending with no assigned node. `get nodes` returned `No resources found`. The WMS event reported `FailedScheduling` with `no nodes available to schedule pods`.
-
-`hostgroup-wms` still named release 1 digest `sha256:3d6b13f9c7864e2b34317b6822d85b6d6a5542c36f9b5ae5d2ae049c1fcab2f6`. The cutover tasks B0 through B13 remained open. Thus the environment did not establish the required serving WMS 2.0.0 predecessor.
-
-No live upgrade, schema change, release selection, or deployment ran. `wamn-xvu5.5` now depends on `wamn-ld93.24`, the cutover end-to-end check. Epic 1 remains open.
-
-## 9. Package upgrade acceptance preparation
-
-On 2026-10-02, the cutover check `wamn-ld93.24` closed. The cluster had three Ready nodes, and all three host groups reported 1/1 ready replicas. This supersedes the prerequisite failure recorded in section 8. WMS has package `2.0.0` installed and release 2 selected and ready, with manifest digest `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4`.
-
-The acceptance branch incorporates main commit `51208d6f7`. The WMS candidate is `2.1.0`, with predecessor `2.0.0`. Its only application schema change is `apps/wamn_wms/migrations/0003_location_description.sql`:
-
-```sql
-ALTER TABLE wms.location ADD COLUMN description text;
-```
-
-`cargo check --locked --offline -p wamn-ctl --all-targets` passed in 3 minutes 43 seconds. All eight runtime qualification tests passed after 12 minutes 4 seconds of compilation and 55.02 seconds of test execution. WMS generation and its comparison passed through `/tmp/wamn-epic1-live-20261002/generate-wms-candidate.sh`. SQLx metadata preparation and its comparison also passed. The qualification carrier test passed in 1.99 seconds. The missing-proof application test passed in 2.71 seconds, and the retained-schema selection test passed in 1.39 seconds. Read-only live upgrade qualification has not run, and this acceptance preparation has made no production change. The final `2.0.0 → 2.1.0 → 2.0.0 → 2.1.0` cycle remains pending under `wamn-xvu5.5`.
-
-The following generation and SQLx commands passed. The component build remains pending. Each runner invocation creates a disposable PostgreSQL database. It compiles the authored `wamn.k` for history declarations; do not pass generated manifest JSON in its place. Follow [application generation and SQLx](running-tests.md#application-generation-and-sqlx) for prerequisites, including SQLx CLI 0.9.0.
-
-```bash
-(
-set -e
-for mode in write check; do
-  cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
-    --database wamn_wms --schema wms \
-    --migration-dir apps/wamn_wms/migrations \
-    --history-manifest apps/wamn_wms/wamn.k \
-    --url-env DATABASE_URL -- \
-    cargo run --locked --offline -p wamn-schema-generator --example materialize_package -- \
-      "$mode" apps/wamn_wms
-done
-
-for mode in prepare check; do
-  cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
-    --database wamn_wms --schema wms \
-    --migration-dir apps/wamn_wms/migrations \
-    --history-manifest apps/wamn_wms/wamn.k \
-    --url-env DATABASE_URL -- \
-    cargo run --locked --offline -p wamn-schema-generator --example sqlx_metadata -- \
-      "$mode" apps/wamn_wms
-done
-)
-
-# After successful checks and review of generated changes:
-tools/build-components app apps/wamn_wms
-```
-
-This record predates `wamn build`. The `materialize_package` and `sqlx_metadata` examples no longer exist: `wamn build apps/wamn_wms` now generates the package into `apps/target/wamn/wamn_wms`, outside Git ([building](building.md#wamn-build)).
-
-Review generated changes and require both generation and SQLx checks to pass before building. Then follow [package upgrades](deployment.md#package-upgrades) for live qualification, evidence-bound application, privilege reconciliation, release qualification, publication, selection, and rollout. Record the actual workload schema and identities, retained-row checks, authenticated WMS operation results, and release digests for each stage. Rollback selects the immediate predecessor on the upgraded database; it does not reverse the migration. None of these final-cycle results is claimed here.
-
-The generated client exposed finding `wamn-xvu5.5.2`. The nullable `description` field replaces `location_code` as the inferred location label and removes selector search. Existing rows then display `"null"`. Generated model queries have no supported display override in the current manifest. The owner requires an explicit label field, with the record ID as the fallback because it always exists. The implementation retains `description`, adds an explicit `location_code` label, and removes first-text-field inference. Regeneration and targeted label tests follow this ruling. No production change occurred.
-
-The explicit-label fix passed 134 generator tests in 71.98 seconds, including compilation. Formatting passed after correcting three changed files. Clippy for the generator and CLI passed in 67.85 seconds. The CLI rebuild passed in 36.05 seconds. All five affected application roots passed regeneration and comparison. The WMS inventory and packaging selector files match their previous labels and search behavior.
-
-Read-only live `qualify-upgrade` ran on 2026-10-02 at 18:28:21 UTC and refused after 0.36 seconds: `upgrade-schema must install the package qualification carrier before qualification`. It wrote no qualification result. A direct `BEGIN READ ONLY` query found platform migrations 1–5, with hashes that match the source. The pending suffix is `0006_administration_release_head.sql` and `0007_package_upgrade_qualifications.sql`. Automatic approval review rejected the `upgrade-schema` plan command as a possible production mutation. The direct read-only query replaced that inspection step. No platform migration, application migration, owner token, release selection, or rollout occurred in this preparation.
-
-`tools/build-components app apps/wamn_wms` passed in 224.11 seconds, from 18:28:24.625954 UTC to 18:32:08.739608 UTC. It built and normalized the three declared components. The candidate is ready for the pending platform migration and live qualification steps.
-
-
-## 10. Upgrade an environment
-
-Package qualification reads no Kubernetes resource. It reads each package's application schema from the package manifest.
-
-`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
-
-```bash
-target/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>
-```
-
-An upgrade of an installed package also needs `--predecessor-release <DIGEST>`, the manifest digest of the release the environment serves.
-
-The verb keeps its work under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-upgrade/<commit>`. That directory holds the checkout, the targets, the command logs and one run record per environment in `runs/`. A second run with the same arguments resumes at the first stage without a finished step. The qualify stage starts kind clusters, so tell the other sessions on the machine before a run.
-
-## 11. Greenfield install with `env apply`
-
-On 2026-10-13 (`wamn-rk9l2`) the cluster `wamn` and every CloudNativePG database were deleted and the platform was installed again from nothing. The registry, DNS, IAM, the buckets and the load balancer stayed. This section lists the order of that install and every step that differs from sections 2 to 5. The commands of the run are in the scratchpad file named on `wamn-rk9l2`.
-
-### 11.1 Teardown
-
-List the disks of the cluster first. After `gcloud container clusters delete wamn --project wamn-dev --zone us-central1-a`, the `pvc-*` disks of `wamn-pg-1` and `data-evt-nats-0` stay. Delete each one by name with `gcloud compute disks delete <name> --project wamn-dev --zone us-central1-a`. The network endpoint group `wamn-edge` stays, because the backend service `wamn-edge-platform` names it.
-
-### 11.2 Order
-
-1. Sections 2.4 and 2.5. The binding of the cert-manager principal on the DNS zone is IAM and stays, so read it with `$U:getIamPolicy` and do not set it again.
-2. Sections 3.1 to 3.3. A new `helm install` of the operator installs its CRDs.
-3. Section 3.4.1, the platform build. It replaces the image builds of section 3.4.
-4. Section 3.5, for both environments at once (11.3).
-5. Section 3.6, then section 3.7 up to `provision-org --admin`. `provision-project-env` does not run by hand: `env apply` does it.
-6. `provision-identity-issuer` of section 3.8, and the certificates and the `identity-ca` ConfigMaps of section 3.10.
-7. The platform inputs of 11.4, the registry pull of section 3.12 and the platform install inputs of section 3.23 (11.5).
-8. `env apply` of each document with `release = "none"` (11.6).
-9. The session targets and identity (11.7).
-10. The packages, the WMS wiring and the releases (11.8), then qualification (11.9).
-11. `env apply` of each document with its release digest. The host group files are `WAMN_RELEASE_HOST_GROUP` (11.10).
-
-### 11.3 Event NATS for two environments
-
-Run `event_broker_files` of section 3.5 once for each environment, each into its own private directory. The tenant is `<org>--<project>--<env>`, the tenant that `env apply` gives the environment, and the manifest is the build output of `wamn build`:
-
-```bash
-cargo run --locked --offline -p wamn-test-infrastructure --example event_broker_files -- \
-  $P/evt-receiving nats://evt-nats.platform.svc.cluster.local:4222 \
-  dkk receiving dev dkk--receiving--dev 1 "$PWD/apps/target/wamn/wamn_receiving/wamn.json"
-cargo run --locked --offline -p wamn-test-infrastructure --example event_broker_files -- \
-  $P/evt-wms nats://evt-nats.platform.svc.cluster.local:4222 \
-  dkk wms dev dkk--wms--dev 1 "$PWD/apps/target/wamn/wamn_wms/wamn.json"
-```
-
-`authorization.conf` is `authorization: ` followed by JSON. Merge the two files as section 5.4 says: the Receiving users, its `tap-admin`, and the WMS users without their `tap-admin`. Then make the Secrets of sections 3.5 and 5.4 from the two directories.
-
-### 11.4 Platform inputs of `env apply`
-
-`wamn-ctl env` reads environment variables, not flags (`crates/control/lib/src/environment/mod.rs`, `Platform::from_env`). On wamn-dev, with the port-forwards of sections 3.6 and 3.18:
-
-| Variable | Value |
-| --- | --- |
-| `KUBECONFIG` | your own file of section 2.1; its current context is the GKE cluster |
-| `WAMN_CONTROL_DATABASE_URL` | the superuser URL of `wamn_system` through the port-forward |
-| `WAMN_RELEASE_NAMESPACE` | `hosts`. The default `wamn-system` does not exist here |
-| `WAMN_DATABASE_NAMESPACE` | `platform` |
-| `WAMN_DATABASE_HOST` | `wamn-pg-rw.platform.svc.cluster.local` |
-| `WAMN_RELEASE_CHART` | the chart directory of `build-platform` |
-| `WAMN_RELEASE_ARTIFACT_BASE` | `us-central1-docker.pkg.dev/wamn-dev/wamn/releases` |
-| `WAMN_PACKAGE_ARTIFACT_BASE` | `us-central1-docker.pkg.dev/wamn-dev/wamn/packages` |
-| `WAMN_REGISTRY_AUTH_FILE` | the credential file of section 3.9. Its token lasts one hour |
-| `WAMN_EVENT_NATS_URL` | `nats://127.0.0.1:14222` |
-| `WAMN_EVENT_NATS_USERNAME`, `WAMN_EVENT_NATS_PASSWORD_FILE` | the provisioning user of the environment that you apply |
-| `WAMN_RELEASE_HOST_GROUP` | the host group file of the environment (11.10). Only an apply with a release reads it |
-
-Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.identity.svc.cluster.local`, so this machine cannot reach identity. Without it, `apply` issues no PAT. Mint PATs with the Job of section 3.16.
-
-### 11.5 Platform install inputs
-
-Make the service account `wamn-host`, its annotation and its binding, and the Secret `identity-resend`, as section 3.23 says. On 2026-10-13 the account and the binding were made before section 3.23 existed, from a copy of the same manifest.
-
-Apply the read-only access of the control operation `environment.status` (section 11.4 of docs/plan/platform-deploy.md, `wamn-esnu9`) into the release namespace `hosts`. The manifest states no namespace:
-
-```bash
-kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
-```
-
-### 11.6 First apply
-
-The documents are [deploy/gcp/environments/dkk--receiving--dev.k](../../deploy/gcp/environments/dkk--receiving--dev.k) and [dkk--wms--dev.k](../../deploy/gcp/environments/dkk--wms--dev.k). `publish-release` needs the environment's database and its installed packages, so the first apply names `release = "none"`. It records the environment row with a new instance suffix, and makes the `Database`, the roles, the run plane and the credential Secrets:
-
-```bash
-target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--receiving--dev.k --dry-run
-target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--receiving--dev.k
-```
-
-On 2026-10-13 the suffixes were `pv6vxrkc` for Receiving and `sbx8ny3n` for WMS.
-
-### 11.7 Session targets and identity
-
-Prepare the session target of each environment as in section 3.10, with `--tenant <org>--<project>--<env>` and the database of the new suffix. Then install identity. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) pins the identity image that `build-platform` stamped into the chart.
-
-`identity-resend` is the owner's input of section 3.23. Write it from a file with no line end (`tr -d '\r\n'`, section 3.23), because identity refuses whitespace in the key (`Resend configuration refused`). Install and upgrade identity from the file values only, with no `--set`, then restart it so the pod reads the Secret:
-
-```bash
-helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml --wait
-kubectl -n identity rollout restart deploy/identity
-kubectl -n identity rollout status deploy/identity --timeout=300s
-```
-
-On 2026-10-13 the first Secret ended with a line end, so identity ran without email. The owner wrote it again the same day (36 bytes), and identity revision 4 started with no `Resend configuration refused`. The invitation of section 4.5 then answered `201 {"status":"accepted_for_delivery"}`, and the owner received the mail. The new admin of `provision-org --admin` has no password, so `/password/recover` answers `202` and logs `cause=no such account`. Send that user the invitation of section 4.5 instead.
-
-Then publish and activate a session key (section 3.15).
-
-### 11.8 Packages, wiring and releases
-
-Push both packages with `push-package` (section 3.9). Then, for each environment, run `apply-package` and `reconcile-package-data-access` with `--tenant <org>--<project>--<env>`, and `reconcile-replica-identity` for WMS. `publish-release` refuses a package that is not applied.
-
-The WMS release keeps the wiring `inventory_move_and_label`, so it needs the gate of section 5.3 first:
-
-- `control-author` addresses the control database. It refuses `--target-admin-database-url`. `management-admitter` needs it.
-- The gate runs on this machine, so prepare both with `--db-host 127.0.0.1 --db-port 15432`, and give it the identity-reader URL of the Secret that `env apply` wrote, with the port-forward as host.
-- The gate also needs `WAMN_PACKAGE_ARTIFACT_BASE` and `WAMN_REGISTRY_AUTH_FILE`.
-- Mint the management-author PAT with the Job of section 3.16. [mint-pat.yaml](../../deploy/gcp/operator/mint-pat.yaml) runs the runner image of `build-platform`, which carries `wamn-ctl`.
-
-Then run `author-wiring` and `publish-release` with `--wiring "wamn_wms@2.1.0::inventory_move_and_label=2"`.
-
-### 11.9 Qualification
-
-`qualify-release` pulls the chart's images with `docker pull`, so give it the `DOCKER_CONFIG` of section 3.4.1. Without it, the pull of the host image is refused with `Unauthenticated request`.
-
-### 11.10 Host group files
-
-`WAMN_RELEASE_HOST_GROUP` names the platform part of an environment's host group. It is a hand-written platform install input: [deploy/gcp/host-group-receiving.yaml](../../deploy/gcp/host-group-receiving.yaml) and [deploy/gcp/host-group-wms.yaml](../../deploy/gcp/host-group-wms.yaml). Each is the group of [values-host.yaml](../../deploy/gcp/values-host.yaml) without the keys and variables that the release chart and `apply` derive. Each names the event NATS Secrets of its environment (section 11.3), the registry helper of section 3.13 and the identity CA. `WAMN_SESSION_INSTANCE_SUFFIX` is the suffix of the first apply, so write it again after a new first apply.
-
-On 2026-10-13 the platform build pushed `wamn-host:0.1.0` `sha256:55d6ce4a267620d5a6577118e76c2195dd769e7bceffb313a5459b23911b3bf2` (the same bytes as its first push), `wamn-runner` `sha256:d073179415ff807ac2e21f081bf2e7d5c95da3c75e9b911d4395f7f23929e816`, `wamn-gates` `sha256:043e77a30e8fd353c1c58b50d2fd34d12ee75ba74add7f80cb9e3a45698dbab0`, `wamn-identity` `sha256:5e5a111215d1c1498b82b066f4b3c8319a454df988c7b2564859fb154e684cac`, `wamn/http` `sha256:f114f3810cb06c1582366a6b9ca01ea7df9cffa38d9ac683cbb420bc4024607d` and `wamn/materializer` `sha256:503a7f3dc67794b7958efc5ab548936a12dc9bcf112bbe77dba22944a5f50ef4`. The releases and their qualifications were:
-
-| Application | Package artifact | Release | Qualification |
-| --- | --- | --- | --- |
-| Receiving | `wamn_receiving-2.1.0` `sha256:b600ea79529e5cef16d627e83ff595a8fb89caa46e51646fcae5e9cedc2ef66c` | `sha256:7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f` | `sha256:9a353add3b3e116d492c63bdaf0cafd032dbbef4b9db371dc25f8e909fe26ca3` |
-| WMS | `wamn_wms-2.1.0` `sha256:3822a6617e85599f4f139243ef8aee8eb9a9f1b393486737c240da1dee31fcbe` | `sha256:47171ec08678806e5722b782070a7fc3221191fb71433136664879c0d02d38c7` | `sha256:4641d4374946b98dc15657ac4186b7806eabc1fd452a4ec6fabdea745ba162f6` |
-
-### 11.11 Platform 0.1.1 and the apply with a release
-
-The release chart changed in `wamn-okr8y` (`serviceAccount.create=false`, `name=wamn-host`), so the platform version became `0.1.1` (owner ruling of 2026-10-13, R15), and `build-platform` ran once at main `3d1bb86cd`. Both releases were qualified again on the new chart. Each image set has its own qualification.
-
-| Image (0.1.1) | Digest |
-| --- | --- |
-| `wamn-host` | `sha256:6848e22fba1f8918bc1e9d39085d24cbd55ed3dbfc93e8e4932782c0d559a8e4` |
-| `wamn-runner` | `sha256:e6051f97773f51d46b399c272bdd34064391f47d75a43df02d9c22d471b17fae` |
-| `wamn-gates` | `sha256:f2cb4318516a3e3dc0d61f9d007a0c563af6f917cfab162409f174db1b8385d0` |
-| `wamn-identity` | `sha256:0c97a7eb6cd35b0e0c0cc289bafdb9cdf984259dc2c0274043a53c1cf88d00d2` |
-| `wamn/http` | `sha256:01e28d2db1e15b36c0e9dcb3cccdf9f600f77c3daf532ab01308f5ec08755127` |
-| `wamn/materializer` | `sha256:6a2216a49a44f271491f2002e685d39784348d9887dd7ba712192b3e0de16131` |
-
-The qualifications on 0.1.1 are `sha256:4931d6cb7c770921dc75193c873fff160181735937ff0b692711ba10a80025bb` for Receiving and `sha256:decd6d60ebd51bb52bca185677f96aa58a83509b5fc3dc9fb16df4c1c070c652` for WMS. The environment documents name the two release digests. `env apply` of each document with its host group file wrote the release charts `r-dev-ee95c37ee965257ff856` (Receiving) and `r-dev-8f6b3ee8ac75e40affb1` (WMS).
-
-The steps that the apply needed:
-
-- The host group files name `schedulerNatsUrl` and `dataNatsUrl` in `platform`. The release chart's default is `nats.<release namespace>`, and the operator release runs in `platform`. Without them, the first Receiving apply failed at step 6, because the host could not resolve `nats.hosts.svc.cluster.local`. Helm removed the failed install itself.
-- The CDC readers of [cdc-reader.yaml](../../deploy/gcp/cdc-reader.yaml) and [cdc-reader-wms.yaml](../../deploy/gcp/cdc-reader-wms.yaml) run in `hosts`. `env apply` writes the replication Secret there and records `hosts` on the reader row. Copy the publisher Secret of section 3.5 into `hosts`, and prepare the registry-reader credential of section 3.19 with `--namespace hosts`.
-- `wamn web upload` reads the platform inputs of `env apply`. With `WAMN_EVENT_NATS_URL` set, it also asks for the NATS user, so unset that variable for the upload.
-- [values-edge.yaml](../../deploy/gcp/values-edge.yaml) names `api` for each application: `http://<release name>-http.hosts.svc.cluster.local`. The release name comes from the coordinate, so it stays the same from release to release.
-- The network endpoint group `wamn-edge` carries the cluster UID in its description, so a new cluster's controller refuses the old group (`found conflicting description in neg wamn-edge`). Take it off the backend service, delete it, wait until GKE makes it again for the new cluster, and add it back as in section 4.3:
-
-```bash
-gcloud compute backend-services remove-backend wamn-edge-platform --project wamn-dev --global \
-  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a
-gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
-gcloud compute backend-services add-backend wamn-edge-platform --project wamn-dev --global \
-  --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a \
-  --balancing-mode RATE --max-rate-per-endpoint 100
-```
-
-- The renewal job of section 4.3.1 is a cluster object, so apply it again. Its first run moved the proxy to `wamn-edge-058397760d86`.
-
-After the apply, `https://receiving.wamn.dev/api/purchase_order/query` and `POST https://wms.wamn.dev/api/inventory/move` answered `401 unauthorized`, and `/` and `/config.json` answered `200` on both hosts.

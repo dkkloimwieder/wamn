@@ -94,7 +94,7 @@ Local unit tests do not replace these deployed checks.
 
 ### Deployed queue recovery on wamn-dev
 
-This case records what the durable queue does when a host crashes during a run. It ran on the deployed wamn-dev environment, not on a kind cluster. [Section 5.8 of the GCP page](gcp.md#58-wms-host-crash-during-a-queued-run) holds the commands. The run is the published WMS wiring `inventory_move_and_label` version 2. It runs no SQL. It shapes one pallet `update` event, renders a label and stores it in Cloud Storage. So nothing holds the run, and the kill must land while the run shows `running`.
+This case records what the durable queue does when a host crashes during a run. It ran on the deployed wamn-dev environment, not on a kind cluster. [Section 5.8 of the Google Cloud install history](../history/gcp-install-history.md#58-wms-host-crash-during-a-queued-run) holds the commands. The run is the published WMS wiring `inventory_move_and_label` version 2. It runs no SQL. It shapes one pallet `update` event, renders a label and stores it in Cloud Storage. So nothing holds the run, and the kill must land while the run shows `running`.
 
 The kill is a SIGKILL of the `wamn-host` process of the WMS pod, sent from a node debug pod. A forced pod delete is an operator action, so the case does not use it. This query reads the run and its queue row once a second:
 

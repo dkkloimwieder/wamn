@@ -424,14 +424,14 @@ After A8, no later commit changes platform code that compiles into a guest. So t
 
 **A10. Overlays: `client_acme_receiving` to 4.0.0 and `platform_fixture_overlay` to 2.0.0.** One commit each, after its base.
 
-- Changes: `package.version` becomes `4.0.0` (Acme) or `2.0.0` (fixture overlay). `package.predecessor_version` becomes `3.0.0` or `1.0.0`. `base_dependencies.*.version` becomes `2.0.0`, and `base_dependencies.*.digest` becomes the base component digest recorded in A9 (`apps/client_acme_receiving/wamn.json:9`, `:10`, `apps/platform_fixture_overlay/wamn.json:9`, `:10`). That field is the one authored site of the base pin (`crates/control/lib/src/component_declaration.rs:112` to `:122`). The current Acme pin `sha256:4bc28f01…` (`apps/client_acme_receiving/wamn.json:10`) is not the `receiving` digest of wamn-dev release 1 (`sha256:1d034a09…`, `gcp.md` §6.7 table). The pin moves to the A9 build by this rule. It is not checked against a deployed digest, because Acme is not deployed (§3.2 "Installed environments").
+- Changes: `package.version` becomes `4.0.0` (Acme) or `2.0.0` (fixture overlay). `package.predecessor_version` becomes `3.0.0` or `1.0.0`. `base_dependencies.*.version` becomes `2.0.0`, and `base_dependencies.*.digest` becomes the base component digest recorded in A9 (`apps/client_acme_receiving/wamn.json:9`, `:10`, `apps/platform_fixture_overlay/wamn.json:9`, `:10`). That field is the one authored site of the base pin (`crates/control/lib/src/component_declaration.rs:112` to `:122`). The current Acme pin `sha256:4bc28f01…` (`apps/client_acme_receiving/wamn.json:10`) is not the `receiving` digest of wamn-dev release 1 (`sha256:1d034a09…`, `docs/history/gcp-install-history.md` §6.7 table). The pin moves to the A9 build by this rule. It is not checked against a deployed digest, because Acme is not deployed (§3.2 "Installed environments").
 - Regenerate with the base migrations first, then the overlay migrations, and the overlay manifest (`running-tests.md` "Capture a run", the Acme and fixture overlay paragraphs). Prepare SQLx metadata the same way.
 - Build: `tools/build-components app apps/wamn_receiving apps/client_acme_receiving` (`building.md:29`). The fixture overlay takes `apps/platform_fixture apps/platform_fixture_overlay`. An overlay build without its base fails (`building.md:35`, `:36`).
 - Proof: `cargo test --locked --offline -p wamn-client-acme-receiving-tests`, which runs `apps/client_acme_receiving/tests/acme_overlay_publication.rs` against the authored base pin. `materialize_package check` and `sqlx_metadata check` for the overlay. The general proof.
 
 **A11. Test fixtures that are not package trees.** Most fixtures land in their owning commits. The rest land here: A3 `crates/control/lib/tests/fixtures/observer_package/wamn.json`, `crates/control/lib/tests/fixtures/apply_package/overlay/wamn.json`, `services/ctl/tests/fixtures/ui_scaffold/`. W5 tap bodies at `crates/platform/runtime/src/plugins/wamn_jetstream.rs:2190`. The gate command id of `test-support/infrastructure/examples/gate_request.rs:39` to `:43` becomes `gate-<package>-<version>-<wiring>`, for example `gate-wamn_wms-2.0.0-inventory_move_and_label`. The 1.0.0 audit row stays where it is (§3.2 B8 step 3). Proof: `tools/test-changes run --base HEAD~1`.
 
-**A12. Final build and pins.** On the final commit, run `tools/build-components all` once. It must pass the router pin with no edit. Record the sha256 of every guest that wamn-dev takes: `receiving.wasm`, `wms.wasm`, `label_render.wasm`, `blob_put.wasm`, `jsonata_expression.wasm`, `http_route.wasm`, `materializer.wasm` (`docs/operations/gcp.md` §3.9, §3.20, §5.3). Then check the tree:
+**A12. Final build and pins.** On the final commit, run `tools/build-components all` once. It must pass the router pin with no edit. Record the sha256 of every guest that wamn-dev takes: `receiving.wasm`, `wms.wasm`, `label_render.wasm`, `blob_put.wasm`, `jsonata_expression.wasm`, `http_route.wasm`, `materializer.wasm` (`docs/history/gcp-install-history.md` §3.9, §3.20, §5.3). Then check the tree:
 
 ```bash
 git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!tests/sweeps' ':!docs/plan/kind-to-type.md' ':!docs/plan/platform-ui.md' ':!crates/schema/control/src/run_plane/type_column.rs' ':!crates/schema/control/src/run_plane/tests.rs' ':!crates/schema/control/src/run_plane/observation.rs' ':!crates/control/lib/src/reconcile_run_plane.rs' ':!crates/control/lib/tests/run_plane_live/type_columns.rs' ':!deploy/sql/migrations/system/0003_kind_to_type.sql' ':!crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit'
@@ -448,15 +448,15 @@ Both print nothing. The two plan files name the old words on purpose, and so do 
 
 | Environment | Tenant | Database | Package | Host group | Route host | Release now | Cite |
 |---|---|---|---|---|---|---|---|
-| wamn_system | none | `wamn_system` | none | none | none | none | `gcp.md` §3.6 |
-| Receiving | `dev` | `wamn-db-dkk--receiving--dev--4pqjfmli` | `wamn_receiving@1.0.0` | `default` | `receiving.wamn.dev` | 1, `sha256:900d35fb…` | `gcp.md` §3.7, §3.8, §6.7 table |
-| WMS | `wms` | `wamn-db-dkk--wms--dev--0nk1lrpr` | `wamn_wms@1.0.0` | `wms` | `wms.wamn.dev` | 1, `sha256:3d6b13f9…` | `gcp.md` §5.2, §5.3, §6.7 table |
+| wamn_system | none | `wamn_system` | none | none | none | none | `docs/history/gcp-install-history.md` §3.6 |
+| Receiving | `dev` | `wamn-db-dkk--receiving--dev--4pqjfmli` | `wamn_receiving@1.0.0` | `default` | `receiving.wamn.dev` | 1, `sha256:900d35fb…` | `docs/history/gcp-install-history.md` §3.7, §3.8, §6.7 table |
+| WMS | `wms` | `wamn-db-dkk--wms--dev--0nk1lrpr` | `wamn_wms@1.0.0` | `wms` | `wms.wamn.dev` | 1, `sha256:3d6b13f9…` | `docs/history/gcp-install-history.md` §5.2, §5.3, §6.7 table |
 
 The hosts select a release by `--release-manifest-digest` (`deploy/gcp/values-host.yaml:110`, `:250`). The edge serves each web client from a bucket path keyed by the release digest (`deploy/gcp/values-edge.yaml:13`, `:16`, `deploy/gcp/url-map.yaml:47` to `:93`).
 
 The base-then-overlay rule has nothing to order on wamn-dev, because each environment holds one base package. Receiving runs before WMS in the steps below. The two environments share no package, so that order is for the record only.
 
-Run everything in one session. The daily guard sets pool `main` to 0 nodes at 03:00 New York time (`gcp.md` §1.3). Start with pool `main` at 2 nodes. Then run the tap-stream Job and the check of `gcp.md` §3.5 once (`gcp.md` §3.17):
+Run everything in one session. The daily guard sets pool `main` to 0 nodes at 03:00 New York time (`docs/history/gcp-install-history.md` §1.3). Start with pool `main` at 2 nodes. Then run the tap-stream Job and the check of `docs/history/gcp-install-history.md` §3.5 once (`docs/history/gcp-install-history.md` §3.17):
 
 ```bash
 gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-central1-a --project wamn-dev --quiet
@@ -470,9 +470,9 @@ kubectl -n platform logs evt-nats-check
 kubectl -n platform delete pod evt-nats-check
 ```
 
-`WAMN_TAP` uses memory storage and goes only with the broker (`gcp.md` §3.5). No step from B1 to B13 restarts the broker, so the Job runs once, here. If a step restarts the broker, run the Job again.
+`WAMN_TAP` uses memory storage and goes only with the broker (`docs/history/gcp-install-history.md` §3.5). No step from B1 to B13 restarts the broker, so the Job runs once, here. If a step restarts the broker, run the Job again.
 
-Make a private directory `P` on the main disk, because `/tmp` has a per-user quota (`gcp.md` §3.4). Every credential file below goes into `P` at mode 0600. Forward the database. Set the URLs from the CloudNativePG superuser Secret, without printing them (`gcp.md` §3.6, §3.8). `SYS` is the superuser URL of `wamn_system`. `TR` and `TW` are the superuser URLs of the Receiving and WMS databases. B7 and B8 set `T` from them:
+Make a private directory `P` on the main disk, because `/tmp` has a per-user quota (`docs/history/gcp-install-history.md` §3.4). Every credential file below goes into `P` at mode 0600. Forward the database. Set the URLs from the CloudNativePG superuser Secret, without printing them (`docs/history/gcp-install-history.md` §3.6, §3.8). `SYS` is the superuser URL of `wamn_system`. `TR` and `TW` are the superuser URLs of the Receiving and WMS databases. B7 and B8 set `T` from them:
 
 ```bash
 P=<new directory on the main disk>; mkdir -m 700 "$P"
@@ -484,7 +484,7 @@ TR="postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--receiving--dev--4pq
 TW="postgresql://postgres:${PW}@127.0.0.1:15432/wamn-db-dkk--wms--dev--0nk1lrpr"
 ```
 
-A push to Artifact Registry reads the credential file `$A/config.json`. The token lasts one hour. Write the file again before each step that pushes (`gcp.md` §3.9 "gcloud"). Delete `A` after the push:
+A push to Artifact Registry reads the credential file `$A/config.json`. The token lasts one hour. Write the file again before each step that pushes (`docs/history/gcp-install-history.md` §3.9 "gcloud"). Delete `A` after the push:
 
 ```bash
 A=$(mktemp -d -p "$P"); chmod 700 $A
@@ -502,7 +502,7 @@ os.close(fd)' $A
 
 §3.2 as a whole runs from one commit: the head of `main` on the day, recorded in B12. It is called the cutover commit below. The binaries, the images, the guests and the packages all come from it.
 
-1. Check out the head of `main` on a clean checkout. Build the programs and the native delivery binaries (`gcp.md` §3.6, §4.2, §5.3, `docs/operations/delivery.md` §Candidate qualification). `DELIVERY_TARGET` is a new directory on the main disk:
+1. Check out the head of `main` on a clean checkout. Build the programs and the native delivery binaries (`docs/history/gcp-install-history.md` §3.6, §4.2, §5.3, `docs/operations/delivery.md` §Candidate qualification). `DELIVERY_TARGET` is a new directory on the main disk:
 
    ```bash
    git fetch origin && git checkout --detach origin/main && git status --short
@@ -513,17 +513,17 @@ os.close(fd)' $A
    tools/delivery-owned build-native "$DELIVERY_TARGET"
    ```
 
-2. Build the guests into `$DELIVERY_TARGET` (`gcp.md` §3.20). `prepare-release` reads the guests there, and `qualify-release` rebuilds them there (`wamn-ld93.33.5`). Each sha256 must equal the value recorded in A12:
+2. Build the guests into `$DELIVERY_TARGET` (`docs/history/gcp-install-history.md` §3.20). `prepare-release` reads the guests there, and `qualify-release` rebuilds them there (`wamn-ld93.33.5`). Each sha256 must equal the value recorded in A12:
 
    ```bash
    CARGO_TARGET_DIR="$DELIVERY_TARGET" tools/build-components all
    ```
 
-3. Build and push the host and identity images by source identity (`gcp.md` §3.4). The gates image is not built: `GATES_IMAGE` is the pinned digest of `docs/plan/release-qualification.md` §4.4 (`wamn-1s38`). Push the image that `tools/journey-image-cache` relabels, `wamn-<name>:gcp` with the label `wamn.dev/source-head`, under the `src-` tag. `qualify-release` compares each pin with that relabeled build, so an unlabeled push fails qualification. Build and push the ctl image the same way. Record the three digests. Set `IDENTITY_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:src-<identity>@<digest>`. The kind cases of `qualify-release` start the identity service and the gates from these two images (`docs/operations/delivery.md` §Candidate qualification, `docs/plan/release-qualification.md` §4.4). Set `HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-<identity>@<digest>`. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:271`, `:398`, `:530` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
-4. Push each distinct workload guest file once with `wash`, as `gcp.md` §3.20 does, from `$DELIVERY_TARGET/wasm32-wasip2/release`. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:538`). Receiving and WMS run the same bytes, so both name the same digest. A second push of the same file gives a new manifest digest and moves the tag. B10 uses the digest that the tag names after the last push. The running workloads name their guests by digest (`gcp.md` §3.20 "cargo"), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
+3. Build and push the host and identity images by source identity (`docs/history/gcp-install-history.md` §3.4). The gates image is not built: `GATES_IMAGE` is the pinned digest of `docs/plan/release-qualification.md` §4.4 (`wamn-1s38`). Push the image that `tools/journey-image-cache` relabels, `wamn-<name>:gcp` with the label `wamn.dev/source-head`, under the `src-` tag. `qualify-release` compares each pin with that relabeled build, so an unlabeled push fails qualification. Build and push the ctl image the same way. Record the three digests. Set `IDENTITY_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:src-<identity>@<digest>`. The kind cases of `qualify-release` start the identity service and the gates from these two images (`docs/operations/delivery.md` §Candidate qualification, `docs/plan/release-qualification.md` §4.4). Set `HOST_IMAGE=us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:src-<identity>@<digest>`. The identity image carries the renamed `principals.type` reads of `services/identity/src/password.rs:271`, `:398`, `:530` (§4.5 group "Identity service"). The CDC reader image does not change, because the CDC readers keep running (§4.6, §4.7 step 1).
+4. Push each distinct workload guest file once with `wash`, as `docs/history/gcp-install-history.md` §3.20 does, from `$DELIVERY_TARGET/wasm32-wasip2/release`. `http_route.wasm` goes to `components/flow-http` and `materializer.wasm` goes to `components/materializer`. The tag of each push is the sha256 hex of its file, the tag rule of application components (`crates/control/lib/src/push_component.rs:538`). Receiving and WMS run the same bytes, so both name the same digest. A second push of the same file gives a new manifest digest and moves the tag. B10 uses the digest that the tag names after the last push. The running workloads name their guests by digest (`docs/history/gcp-install-history.md` §3.20 "cargo"), so a new push does not move them. Record the two pushed digests. Owner ruling of 2026-09-30 on `wamn-orba`.
 5. Run the ops-schema query of §4.3.4 on wamn_system and the PAT Secret listing of §4.3.5. Record both answers.
 6. Run the check query of §4.3 on the three databases. Record the result. It must equal the §4.1 names for that database plus the function bodies of §4.3.
-7. Choose the gate branch of B8 step 3. Read the `VALID UNTIL` of the generation `a` roles in the gate files of `gcp.md` §5.3, and the expiry of the WMS management-author PAT. `G` names the private directory of those files. B0 runs before B2, so the query joins on columns that B2 does not rename:
+7. Choose the gate branch of B8 step 3. Read the `VALID UNTIL` of the generation `a` roles in the gate files of `docs/history/gcp-install-history.md` §5.3, and the expiry of the WMS management-author PAT. `G` names the private directory of those files. B0 runs before B2, so the query joins on columns that B2 does not rename:
 
    ```bash
    for f in control-author management-admitter; do
@@ -616,7 +616,7 @@ kubectl -n hosts get pods
 kubectl -n identity get pods
 ```
 
-The scale form is the one of `gcp.md` §6.7 "kubectl". The hosts run the HTTP and materializer workloads, so both stop with them. The scenario-worker is not deployed on wamn-dev. It runs on the operator machine only for a gate (`gcp.md` §5.3 "target/debug/wamn-scenario-worker"), so make sure none runs. The CDC readers keep running (§4.6). Run no `bootstrap.sh`. wamn-dev never runs it (`gcp.md` has no `bootstrap.sh` step), so the rule of §4.3.5 holds by default.
+The scale form is the one of `docs/history/gcp-install-history.md` §6.7 "kubectl". The hosts run the HTTP and materializer workloads, so both stop with them. The scenario-worker is not deployed on wamn-dev. It runs on the operator machine only for a gate (`docs/history/gcp-install-history.md` §5.3 "target/debug/wamn-scenario-worker"), so make sure none runs. The CDC readers keep running (§4.6). Run no `bootstrap.sh`. wamn-dev never runs it (`gcp.md` has no `bootstrap.sh` step), so the rule of §4.3.5 holds by default.
 
 Then run the open-run query of the drain once more on each project-env database. Ingress is off, so it must still print nothing. A run pins its release id and manifest digest (`run-state.sql:190` to `:227`). A new host reads the snapshot of that release (`crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs:17` to `:30`), and a format 4 reader cannot read a release 1 snapshot. If a query prints a row, stop here and restart the old binaries (3.4 row R1).
 
@@ -642,7 +642,7 @@ Each project database was installed before its record table and holds no project
 `0004_user_type.sql` changes the user type `person` to `user` (`wamn-a40n.3`). No hand statement does this.
 `0005_wiring_definition_key.sql` adds `package_version` to `wirings_definition_key` (`wamn-ld93.21`). Without it, B8 step 4 refuses a 2.0.0 wiring whose graph equals the 1.0.0 graph. Cutover record (2026-10-02): `0005` came at `ebac92ef4`, after B3 had run. It ran on both project databases without `--baseline`, because the verb refuses `--baseline` after its first run.
 
-B4. Run the new `reconcile-run-plane` twice for each environment (§4.3.2, §4.8, `gcp.md` §3.8, §5.2). The second run of each reports no action:
+B4. Run the new `reconcile-run-plane` twice for each environment (§4.3.2, §4.8, `docs/history/gcp-install-history.md` §3.8, §5.2). The second run of each reports no action:
 
 ```bash
 for i in 1 2; do
@@ -653,7 +653,7 @@ for i in 1 2; do
 done
 ```
 
-Then run `enable-cdc-project-env` once for each environment. It writes the schema into each `registry.event_readers` row (`0002_event_reader_schema.sql`). A second run is safe since `wamn-fipl`. It runs as the provisioning user of each environment, read from its Secret into the private directory `C`. The WMS run takes the consumer configuration that `event_broker_files` derives from the WMS manifest. Forward the event NATS first (`gcp.md` §3.18, §5.4):
+Then run `enable-cdc-project-env` once for each environment. It writes the schema into each `registry.event_readers` row (`0002_event_reader_schema.sql`). A second run is safe since `wamn-fipl`. It runs as the provisioning user of each environment, read from its Secret into the private directory `C`. The WMS run takes the consumer configuration that `event_broker_files` derives from the WMS manifest. Forward the event NATS first (`docs/history/gcp-install-history.md` §3.18, §5.4):
 
 ```bash
 kubectl -n platform port-forward svc/evt-nats 14222:4222 &
@@ -687,7 +687,7 @@ WAMN_REPLICATION_PASSWORD="$(cat $C/replication-password-wms)" target/debug/wamn
   --emit-role-sql $C/wms-role.sql --emit-cdc-sql $C/wms-cdc.sql --emit-secret $C/wms-secret.json
 ```
 
-Apply the role SQL, the CDC SQL and the Secret of each run. Then delete `C`, because its files hold passwords (`gcp.md` §3.18 "kubectl"):
+Apply the role SQL, the CDC SQL and the Secret of each run. Then delete `C`, because its files hold passwords (`docs/history/gcp-install-history.md` §3.18 "kubectl"):
 
 ```bash
 kubectl -n platform exec -i wamn-pg-1 -c postgres -- psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q < $C/receiving-role.sql
@@ -701,7 +701,7 @@ kubectl apply -f $C/wms-secret.json
 rm -rf $C
 ```
 
-Restart the two readers once, so that they read the new Secrets (`gcp.md` §3.19 "kubectl"):
+Restart the two readers once, so that they read the new Secrets (`docs/history/gcp-install-history.md` §3.19 "kubectl"):
 
 ```bash
 kubectl -n platform rollout restart deploy/cdc-reader deploy/cdc-reader-wms
@@ -730,7 +730,7 @@ helm upgrade identity deploy/platform/identity -n identity -f deploy/gcp/values-
 kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
 
-The command is the one of `gcp.md` §3.4 "helm". The chart sets `replicas: 1` (`deploy/platform/identity/templates/deployment.yaml:19`). If `kubectl -n identity get deploy identity` still shows 0 replicas, run `kubectl -n identity scale deploy/identity --replicas=1`. Proof: the TLS check of `gcp.md` §3.10 answers, and the key set still lists the active `kid` (`gcp.md` §3.15).
+The command is the one of `docs/history/gcp-install-history.md` §3.4 "helm". The chart sets `replicas: 1` (`deploy/platform/identity/templates/deployment.yaml:19`). If `kubectl -n identity get deploy identity` still shows 0 replicas, run `kubectl -n identity scale deploy/identity --replicas=1`. Proof: the TLS check of `docs/history/gcp-install-history.md` §3.10 answers, and the key set still lists the active `kid` (`docs/history/gcp-install-history.md` §3.15).
 
 Cutover record (2026-10-02): B6 to B10 wrote their values into private copies, so the cutover checkout stayed clean for `qualify-release`. B12 commits the same edits. The identity check failed once with HTTP 000 right after the rollout, because the Service did not route yet. The rerun answered 200.
 
@@ -738,19 +738,19 @@ The hosts stay stopped until B10. At this point the host values name only format
 
 **B7. Receiving republish.** Set `T="$TR"`, and write `$A/config.json` again before step 3.
 
-1. Apply the package (`gcp.md` §3.8). It records `wamn_receiving@2.0.0` with predecessor `1.0.0`, and it writes `definition_type`:
+1. Apply the package (`docs/history/gcp-install-history.md` §3.8). It records `wamn_receiving@2.0.0` with predecessor `1.0.0`, and it writes `definition_type`:
 
    ```bash
    target/debug/wamn-ctl apply-package --package apps/wamn_receiving --database-url "$T" --tenant dev
    ```
 
-2. Reconcile the data access (`gcp.md` §3.8):
+2. Reconcile the data access (`docs/history/gcp-install-history.md` §3.8):
 
    ```bash
    target/debug/wamn-ctl reconcile-package-data-access --package apps/wamn_receiving --database-url "$T" --tenant dev
    ```
 
-3. Push `receiving.wasm` with the declaration template (`gcp.md` §3.9 "target/debug/wamn-ctl push-component"). The printed digest equals the local sha256. This is the first push of the new verb. It writes an owner row, so it needs the component key that B2 and B3 install (§4.7 step 3):
+3. Push `receiving.wasm` with the declaration template (`docs/history/gcp-install-history.md` §3.9 "target/debug/wamn-ctl push-component"). The printed digest equals the local sha256. This is the first push of the new verb. It writes an owner row, so it needs the component key that B2 and B3 install (§4.7 step 3):
 
    ```bash
    target/debug/wamn-ctl push-component --package apps/wamn_receiving \
@@ -762,7 +762,7 @@ The hosts stay stopped until B10. At this point the host values name only format
    sha256sum "$DELIVERY_TARGET"/virtualized/std-empty-environment/receiving.wasm
    ```
 
-4. Publish release 2 with no `--wiring` (`docs/operations/deployment.md` §Publish and select a release, `gcp.md` §5.3 "target/debug/wamn-ctl publish-release"). Release 1 exists, so release 2 is the next id (`deploy/sql/control-portable-store.sql:50` to `:62`):
+4. Publish release 2 with no `--wiring` (`docs/operations/deployment.md` §Publish and select a release, `docs/history/gcp-install-history.md` §5.3 "target/debug/wamn-ctl publish-release"). Release 1 exists, so release 2 is the next id (`deploy/sql/control-portable-store.sql:50` to `:62`):
 
    ```bash
    target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk --project receiving \
@@ -819,7 +819,7 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
 
 **B8. WMS republish.** Set `T="$TW"`, and write `$A/config.json` again before step 2.
 
-1. Apply the package, reconcile its data access and its replica identity (`gcp.md` §5.2, `docs/operations/deployment.md` §Deployment ordering). `reconcile-replica-identity` takes no tenant:
+1. Apply the package, reconcile its data access and its replica identity (`docs/history/gcp-install-history.md` §5.2, `docs/operations/deployment.md` §Deployment ordering). `reconcile-replica-identity` takes no tenant:
 
    ```bash
    target/debug/wamn-ctl apply-package --package apps/wamn_wms --database-url "$T" --tenant wms
@@ -827,7 +827,7 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
    target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$T" --package apps/wamn_wms
    ```
 
-2. Render the three platform declarations for `wamn_wms` 2.0.0, then push the four components under `wamn_wms` 2.0.0 (`gcp.md` §5.3 "for pair"). Each component is admitted again under the new coordinate (§2.3). Its bytes are the B0 step 2 build, so its digest is the sha256 that B0 recorded. `label-render` has new bytes since release 1, because `cacde6a8e` renamed its template id `pallet` to `packaging` (`wamn-ld93.33.5`). `jsonata` has new bytes, because A8 renamed a field of its error struct (`wamn-ld93.21`). A component with new bytes gets a new digest and a new owner row under `wamn_wms`. Each push writes a new `catalog.component_library` row in the WMS database and in wamn_system. Its key is `(tenant_id, package_id, package_version, component, interface_version)`, with `environment_instance` added in wamn_system (`deploy/sql/catalog-schema.sql`, `deploy/sql/control-portable-store.sql`). The owner row of a digest that did not change already names `wamn_wms`, so that push is admitted. This works only with the key of §4.3.6, which B2 and B3 install. Under the old key the push refuses `component-fact-conflict` (`crates/control/lib/src/push_component.rs:2054` to `:2071`):
+2. Render the three platform declarations for `wamn_wms` 2.0.0, then push the four components under `wamn_wms` 2.0.0 (`docs/history/gcp-install-history.md` §5.3 "for pair"). Each component is admitted again under the new coordinate (§2.3). Its bytes are the B0 step 2 build, so its digest is the sha256 that B0 recorded. `label-render` has new bytes since release 1, because `cacde6a8e` renamed its template id `pallet` to `packaging` (`wamn-ld93.33.5`). `jsonata` has new bytes, because A8 renamed a field of its error struct (`wamn-ld93.21`). A component with new bytes gets a new digest and a new owner row under `wamn_wms`. Each push writes a new `catalog.component_library` row in the WMS database and in wamn_system. Its key is `(tenant_id, package_id, package_version, component, interface_version)`, with `environment_instance` added in wamn_system (`deploy/sql/catalog-schema.sql`, `deploy/sql/control-portable-store.sql`). The owner row of a digest that did not change already names `wamn_wms`, so that push is admitted. This works only with the key of §4.3.6, which B2 and B3 install. Under the old key the push refuses `component-fact-conflict` (`crates/control/lib/src/push_component.rs:2054` to `:2071`):
 
    ```bash
    for pair in label-render:apps/platform/no-std/label-render/declaration.json.in \
@@ -853,12 +853,12 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
    sha256sum $V/wms.wasm "$DELIVERY_TARGET"/wasm32-wasip2/release/label_render.wasm $V/blob_put.wasm $V/jsonata_expression.wasm
    ```
 
-   Proof: each `sha256sum` line equals the sha256 of that file that B0 step 2 recorded. The component listing of `gcp.md` §5.3 shows the four B0 digests under 2.0.0 and the digests of `gcp.md` §5.3 under 1.0.0. A B0 digest that equals its 1.0.0 digest shows under both coordinates. `SELECT component_digest, package_id FROM catalog.component_digest_owners` shows one row per digest.
+   Proof: each `sha256sum` line equals the sha256 of that file that B0 step 2 recorded. The component listing of `docs/history/gcp-install-history.md` §5.3 shows the four B0 digests under 2.0.0 and the digests of `docs/history/gcp-install-history.md` §5.3 under 1.0.0. A B0 digest that equals its 1.0.0 digest shows under both coordinates. `SELECT component_digest, package_id FROM catalog.component_digest_owners` shows one row per digest.
 
-3. Gate the wiring (`gcp.md` §5.3 "cargo build -p wamn-scenario-worker"). The gate service takes the `identity-reader` Secret of WMS and the `control-author` and `management-admitter` generation files. It also takes the WMS management-author PAT. B0 step 7 chose one of two branches:
+3. Gate the wiring (`docs/history/gcp-install-history.md` §5.3 "cargo build -p wamn-scenario-worker"). The gate service takes the `identity-reader` Secret of WMS and the `control-author` and `management-admitter` generation files. It also takes the WMS management-author PAT. B0 step 7 chose one of two branches:
 
-   - Branch `a`: if every generation `a` role and the PAT are valid on the day, reuse their files. These are the generation `a` files of `gcp.md` §5.3 and the PAT file of that mint. `G` names their private directory.
-   - Branch `b`: if one of them is expired or a file is missing, prepare generation `b` into `P`. Mint a new PAT through the `mint-pat` Job of `gcp.md` §3.16. The §3.16 ban on a mint ends at B2. Then set `G="$P"`:
+   - Branch `a`: if every generation `a` role and the PAT are valid on the day, reuse their files. These are the generation `a` files of `docs/history/gcp-install-history.md` §5.3 and the PAT file of that mint. `G` names their private directory.
+   - Branch `b`: if one of them is expired or a file is missing, prepare generation `b` into `P`. Mint a new PAT through the `mint-pat` Job of `docs/history/gcp-install-history.md` §3.16. The §3.16 ban on a mint ends at B2. Then set `G="$P"`:
 
      ```bash
      target/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant wms \
@@ -895,7 +895,7 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
 
    Cutover record (2026-10-02): The gate service runs on the operator machine, so its three URLs must name the database forward `127.0.0.1:15432` in place of `wamn-pg-rw.platform.svc.cluster.local:5432`. The gate refuses a query on these URLs, so they carry no `sslmode`. Run 3 completed in 6 seconds with report `sha256:4f683ca7a42ee5b291c11650f8b1e2a5758ffe0b910c4e95dce5edd8bc067a74`.
 
-4. Record the wiring (`gcp.md` §5.3 "target/debug/wamn-ctl author-wiring"). It prints the digest of the validated draft, which equals the `report-id` of the gate. The wiring version `<V>` of step 5 is the `version` field of the wiring document (`wamn-ld93.33.5`):
+4. Record the wiring (`docs/history/gcp-install-history.md` §5.3 "target/debug/wamn-ctl author-wiring"). It prints the digest of the validated draft, which equals the `report-id` of the gate. The wiring version `<V>` of step 5 is the `version` field of the wiring document (`wamn-ld93.33.5`):
 
    ```bash
    target/debug/wamn-ctl author-wiring --database-url "$T" --control-database-url "$SYS" --tenant wms \
@@ -903,7 +903,7 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
      --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json
    ```
 
-5. Publish release 2 (`gcp.md` §5.3 "target/debug/wamn-ctl publish-release"):
+5. Publish release 2 (`docs/history/gcp-install-history.md` §5.3 "target/debug/wamn-ctl publish-release"):
 
    ```bash
    target/debug/wamn-ctl publish-release --database-url "$T" --control-database-url "$SYS" --org dkk --project wms \
@@ -914,7 +914,7 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
      --package-manifest apps/wamn_wms/wamn.json
    ```
 
-6. Bind the label store to release 2 with the new `blob-put` digest of step 2 (`gcp.md` §5.3 "target/debug/wamn-ctl bind-connection"):
+6. Bind the label store to release 2 with the new `blob-put` digest of step 2 (`docs/history/gcp-install-history.md` §5.3 "target/debug/wamn-ctl bind-connection"):
 
    ```bash
    echo '{"provider":"gcs","container":"wamn-dev-labels","prefix":"wms/"}' > $P/labels-store.definition.json
@@ -944,14 +944,14 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
 
    Record the manifest digest.
 
-   Cutover record (2026-10-02): WMS release 2 is `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4`. qualify-release failed three times before it passed. A candidate prepared before the target was built at the cutover commit failed with "qualified artifacts changed or disappeared". Two runs failed the idle materializer check: three host replicas pull one consumer that allows one waiting pull (`max_waiting: 1`), and the others logged `Exceeded MaxWaiting`. The fix `351f71337` (`wamn-z9cp`) treats `limit-exceeded` as an empty fetch and refuses `WAMN_MAT_BATCH` above 64. A Spot preemption at 15:03 UTC restarted the broker and the database, so the tap-stream Job and the check of `gcp.md` §3.5 ran again. The passing run took 677 seconds.
+   Cutover record (2026-10-02): WMS release 2 is `sha256:8f4c8241b50210d9c366ed8372e0832793e66b1bc92067686ce317050085eac4`. qualify-release failed three times before it passed. A candidate prepared before the target was built at the cutover commit failed with "qualified artifacts changed or disappeared". Two runs failed the idle materializer check: three host replicas pull one consumer that allows one waiting pull (`max_waiting: 1`), and the others logged `Exceeded MaxWaiting`. The fix `351f71337` (`wamn-z9cp`) treats `limit-exceeded` as an empty fetch and refuses `WAMN_MAT_BATCH` above 64. A Spot preemption at 15:03 UTC restarted the broker and the database, so the tap-stream Job and the check of `docs/history/gcp-install-history.md` §3.5 ran again. The passing run took 677 seconds.
 
 Proof: the snapshot query of B7 on the WMS database prints release 1 with format 3 and release 2 with format 4.
 
-The event users and consumers need no change. The consumer names come from the package id and the registration name (`gcp.md` §5.4), and neither changes. As a check, compare the `consumers.jsonl` that B4 wrote with the one of `gcp.md` §5.4. They are equal:
+The event users and consumers need no change. The consumer names come from the package id and the registration name (`docs/history/gcp-install-history.md` §5.4), and neither changes. As a check, compare the `consumers.jsonl` that B4 wrote with the one of `docs/history/gcp-install-history.md` §5.4. They are equal:
 
 ```bash
-diff $P/evt-check/consumers.jsonl <private directory of gcp.md §5.4>/consumers.jsonl
+diff $P/evt-check/consumers.jsonl <private directory of docs/history/gcp-install-history.md §5.4>/consumers.jsonl
 ```
 
 **B9. Web clients and edge. The hosts are still stopped.** Write `$A/config.json` again before step 0.
@@ -974,7 +974,7 @@ Cutover record (2026-10-02): the heads are Receiving release 3 and WMS release 2
 
    The release 1 of Receiving and the release 1 of WMS were pushed unqualified with `push-release-manifest`. Release 2 is the first qualified release of each, so the gcp.md record of B9 keeps both qualification files with their releases. This writes `catalog.effective_release_heads` in each project-env database. wamn-dev writes heads from this cutover on. Proof: `SELECT tenant_id, environment, effective_release_id FROM catalog.effective_release_heads` prints release 2 on the Receiving database and on the WMS database.
 
-1. Upload both clients of release 2 (`gcp.md` §4.2 "target/debug/wamn web upload", §5.6):
+1. Upload both clients of release 2 (`docs/history/gcp-install-history.md` §4.2 "target/debug/wamn web upload", §5.6):
 
    ```bash
    target/debug/wamn web upload apps/wamn_receiving --release <Receiving release 2 digest> \
@@ -997,7 +997,7 @@ Cutover record (2026-10-02): the heads are Receiving release 3 and WMS release 2
 
    The count is 2 for `values-edge.yaml` and 6 for `url-map.yaml`.
 
-3. Upgrade the edge and import the URL map (`gcp.md` §5.6 "helm upgrade wamn-edge"). The Services `hosts/flow-http` and `hosts/wms-flow-http` still exist, so the edge starts (`gcp.md` §4.1):
+3. Upgrade the edge and import the URL map (`docs/history/gcp-install-history.md` §5.6 "helm upgrade wamn-edge"). The Services `hosts/flow-http` and `hosts/wms-flow-http` still exist, so the edge starts (`docs/history/gcp-install-history.md` §4.1):
 
    ```bash
    helm upgrade wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml --wait --timeout 3m
@@ -1008,7 +1008,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
 
 **B10. Hosts and workloads (the router switch).** The hosts change their registry credential here (`wamn-i87m.1`). They pull components with a token from the GKE metadata server, as `wamn-blob`, in place of the token Secret of the CronJob.
 
-1. Give `wamn-blob` read access to repository `wamn`, and apply the helper ConfigMap. Both come before the `helm upgrade` (`gcp.md` §3.12):
+1. Give `wamn-blob` read access to repository `wamn`, and apply the helper ConfigMap. Both come before the `helm upgrade` (`docs/history/gcp-install-history.md` §3.12):
 
    ```bash
    gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
@@ -1016,14 +1016,14 @@ The switch comes before the hosts start. So no old client ever calls a new host,
    kubectl apply -f deploy/gcp/registry-helper.yaml
    ```
 
-2. Write `HOST_IMAGE` of B0 into the constant `HOST_IMAGE` of `test-support/infrastructure/examples/host_values_files.rs`. Render the values with the digests of the two selected releases (Receiving release 3 and WMS release 2 on 2026-10-02) (`gcp.md` §5.5 "cargo run"). The program writes the metadata token pull: no `WAMN_REGISTRY_AUTH_FILE`, `WAMN_REGISTRY_TOKEN_METADATA=true`, and the `registry-pull` volume from ConfigMap `wamn-registry-helper`:
+2. Write `HOST_IMAGE` of B0 into the constant `HOST_IMAGE` of `test-support/infrastructure/examples/host_values_files.rs`. Render the values with the digests of the two selected releases (Receiving release 3 and WMS release 2 on 2026-10-02) (`docs/history/gcp-install-history.md` §5.5 "cargo run"). The program writes the metadata token pull: no `WAMN_REGISTRY_AUTH_FILE`, `WAMN_REGISTRY_TOKEN_METADATA=true`, and the `registry-pull` volume from ConfigMap `wamn-registry-helper`:
 
    ```bash
    cargo run -p wamn-test-infrastructure --example host_values_files -- deploy/gcp \
      us-central1-docker.pkg.dev/wamn-dev/wamn/releases <Receiving release 2 digest> <WMS release 2 digest>
    ```
 
-3. Render the four workloads with the two digests of B0 step 4 (`gcp.md` §5.5 "cargo run"). Each digest goes in twice, because Receiving and WMS run the same guests:
+3. Render the four workloads with the two digests of B0 step 4 (`docs/history/gcp-install-history.md` §5.5 "cargo run"). Each digest goes in twice, because Receiving and WMS run the same guests:
 
    ```bash
    R=us-central1-docker.pkg.dev/wamn-dev/wamn/components
@@ -1031,7 +1031,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
      $R@<flow-http digest> $R@<materializer digest> $R@<flow-http digest> $R@<materializer digest>
    ```
 
-4. Upgrade the hosts (`gcp.md` §5.5 "helm upgrade", the timeout of `gcp.md` §6.7). The values set one replica per host group. If `kubectl -n hosts get deploy` shows 0 for a host group, scale it to 1:
+4. Upgrade the hosts (`docs/history/gcp-install-history.md` §5.5 "helm upgrade", the timeout of `docs/history/gcp-install-history.md` §6.7). The values set one replica per host group. If `kubectl -n hosts get deploy` shows 0 for a host group, scale it to 1:
 
    ```bash
    helm upgrade wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.10.3 -n hosts \
@@ -1039,9 +1039,9 @@ The switch comes before the hosts start. So no old client ever calls a new host,
    kubectl -n hosts get deploy
    ```
 
-   Cutover record (2026-10-02): the values start `hostgroup-control` (`7b6e00cd3`), which needs the Secrets `wamn-control-dkk` and `wamn-control-administration-dkk` of `gcp.md` §3.22 before this upgrade. wamn-dev had no administration Secret, so each environment prepared administration generation `a` with `--prepare-administration-generation a --emit-administration-secret PATH --emit-control-administration-patch PATH`, and the Secret and the patch were applied. `provision-org` with `--system-database-url` needs `--owner-email`. The control host requests 500m CPU and did not fit on 2 nodes, so by owner ruling pool `main` went to 3 nodes in 284 seconds (`gcp.md` §1.3). The first upgrade timed out at 605 seconds. Spot preemptions at about 16:08 and 16:15 UTC restarted the broker, so the hosts restarted on `JsError::ConnectionUnavailable`. The tap-stream Job ran again, the CDC readers were restarted, and the second upgrade took 5 seconds (revision 9).
+   Cutover record (2026-10-02): the values start `hostgroup-control` (`7b6e00cd3`), which needs the Secrets `wamn-control-dkk` and `wamn-control-administration-dkk` of `docs/history/gcp-install-history.md` §3.22 before this upgrade. wamn-dev had no administration Secret, so each environment prepared administration generation `a` with `--prepare-administration-generation a --emit-administration-secret PATH --emit-control-administration-patch PATH`, and the Secret and the patch were applied. `provision-org` with `--system-database-url` needs `--owner-email`. The control host requests 500m CPU and did not fit on 2 nodes, so by owner ruling pool `main` went to 3 nodes in 284 seconds (`docs/history/gcp-install-history.md` §1.3). The first upgrade timed out at 605 seconds. Spot preemptions at about 16:08 and 16:15 UTC restarted the broker, so the hosts restarted on `JsError::ConnectionUnavailable`. The tap-stream Job ran again, the CDC readers were restarted, and the second upgrade took 5 seconds (revision 9).
 
-5. Apply the four workloads and wait for them (`gcp.md` §3.20 "kubectl apply", §5.5). Before this apply, the operator can place the old `flow-http` guest on a new host. That guest imports `wamn:router-delivery@0.2.0`, so it does not link. No traffic reaches it, because the apply follows at once:
+5. Apply the four workloads and wait for them (`docs/history/gcp-install-history.md` §3.20 "kubectl apply", §5.5). Before this apply, the operator can place the old `flow-http` guest on a new host. That guest imports `wamn:router-delivery@0.2.0`, so it does not link. No traffic reaches it, because the apply follows at once:
 
    ```bash
    kubectl apply -f deploy/gcp/flow-http.yaml -f deploy/gcp/materializer.yaml \
@@ -1050,7 +1050,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
    kubectl -n hosts wait --for=condition=Ready workloaddeployment/wms-flow-http workloaddeployment/wms-materializer --timeout=240s
    ```
 
-Proof: the serve check of `gcp.md` §3.21 and §5.5 for both route hosts. A released route answers 401, and an unknown path answers 404. The host log says that each host loaded release 2 (`gcp.md` §5.5 shows the form of that line):
+Proof: the serve check of `docs/history/gcp-install-history.md` §3.21 and §5.5 for both route hosts. A released route answers 401, and an unknown path answers 404. The host log says that each host loaded release 2 (`docs/history/gcp-install-history.md` §5.5 shows the form of that line):
 
 ```bash
 kubectl -n hosts port-forward svc/hostgroup-default 18080:80 &
@@ -1063,7 +1063,7 @@ curl -s -i -H 'Host: wms.wamn.dev' http://127.0.0.1:18081/nope
 
 WMS 2.0.0 renamed `pallet` to `packaging` (`cacde6a8e`), so the released read route is `/packaging/query`. Cutover record (2026-10-02): both hosts answered 401 on the released routes and 404 on `/nope`.
 
-History: the greenfield recreate of 2026-10-13 made neither of these, and `wamn-i87m` (06b3b771a) removed them from `gcp.md`. After the serve check passes, delete the token CronJob with its Secret and its service account. Then delete the Google service account `wamn-registry-reader` and its two bindings (`gcp.md` §3.11, §3.12):
+History: the greenfield recreate of 2026-10-13 made neither of these, and `wamn-i87m` (06b3b771a) removed them from `gcp.md`. After the serve check passes, delete the token CronJob with its Secret and its service account. Then delete the Google service account `wamn-registry-reader` and its two bindings (`docs/history/gcp-install-history.md` §3.11, §3.12):
 
 ```bash
 kubectl delete -f deploy/gcp/registry-token.yaml
@@ -1076,13 +1076,13 @@ gcloud iam service-accounts delete wamn-registry-reader@wamn-dev.iam.gserviceacc
 
 B12 deletes `deploy/gcp/registry-token.yaml` in the commit with the rendered `values-host.yaml`, because the committed files state what runs.
 
-After B10, run the live check of `wamn-rjtf`. Mint a new operator PAT of the Receiving bench operator with the `mint-pat` Job (`gcp.md` §3.16). Revoke the PAT of prefix `5b0649d6dc4dd3bf`. Before and after the mint, read the `registry.project_envs` row of `dkk/receiving/dev` with its `xmin` and `ctid`, and make sure that the two answers are byte-equal. Then close `wamn-rjtf`.
+After B10, run the live check of `wamn-rjtf`. Mint a new operator PAT of the Receiving bench operator with the `mint-pat` Job (`docs/history/gcp-install-history.md` §3.16). Revoke the PAT of prefix `5b0649d6dc4dd3bf`. Before and after the mint, read the `registry.project_envs` row of `dkk/receiving/dev` with its `xmin` and `ctid`, and make sure that the two answers are byte-equal. Then close `wamn-rjtf`.
 
-**B11. End-to-end check.** The owner signs in at both hosts. At Receiving the lists answer 200. At WMS the owner moves one pallet, and the label object appears (`gcp.md` §5.7). One history row of the move is readable in `wms.packaging_history` of the WMS database. This shows the renamed `type` column from write to read.
+**B11. End-to-end check.** The owner signs in at both hosts. At Receiving the lists answer 200. At WMS the owner moves one pallet, and the label object appears (`docs/history/gcp-install-history.md` §5.7). One history row of the move is readable in `wms.packaging_history` of the WMS database. This shows the renamed `type` column from write to read.
 
-**B12. Record.** Add the §4.8 entry to `gcp.md` §7. It names the cutover commit that B0 checked out. Add the new images to the table of `gcp.md` §3.13. Add the new digests to the component tables of `gcp.md` §3.20 and §5.3. Add a release table like the one of `gcp.md` §6.7. Commit `deploy/gcp/values-identity.yaml`, `values-host.yaml`, `values-host-base.yaml`, the four workload files, `values-edge.yaml`, `url-map.yaml`, `host_values_files.rs` and `gcp.md` together (`deployment.md:156`, `:157`). Delete `deploy/gcp/registry-token.yaml` in the same commit, because the CronJob stopped at B10.
+**B12. Record.** Add the §4.8 entry to `docs/history/gcp-install-history.md` §7. It names the cutover commit that B0 checked out. Add the new images to the table of `docs/history/gcp-install-history.md` §3.13. Add the new digests to the component tables of `docs/history/gcp-install-history.md` §3.20 and §5.3. Add a release table like the one of `docs/history/gcp-install-history.md` §6.7. Commit `deploy/gcp/values-identity.yaml`, `values-host.yaml`, `values-host-base.yaml`, the four workload files, `values-edge.yaml`, `url-map.yaml`, `host_values_files.rs` and `gcp.md` together (`deployment.md:156`, `:157`). Delete `deploy/gcp/registry-token.yaml` in the same commit, because the CronJob stopped at B10.
 
-If B8 took branch `b`, retire generation `a` of the two gate families and revoke the previous WMS management-author PAT (`gcp.md` §3.16 "target/debug/wamn-ctl provision-project-env"). Record both:
+If B8 took branch `b`, retire generation `a` of the two gate families and revoke the previous WMS management-author PAT (`docs/history/gcp-install-history.md` §3.16 "target/debug/wamn-ctl provision-project-env"). Record both:
 
 ```bash
 target/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev --tenant wms \
@@ -1097,7 +1097,7 @@ The retire refuses while no session of the replacement generation is live (`crat
 
 **B13. Immutable tags on the `wamn` registry. After B12.**
 
-B13 runs after B12, because the B12 acceptance compares the before and after tag listings of §5.3, and B13 removes tag lines. The four fixed guest tags `flow-http`, `materializer`, `wms-flow-http` and `wms-materializer` of the `components` repository name no running digest after B10. Every other push into the repository already uses a content tag. Component tags are the digest hex (`crates/control/lib/src/push_component.rs:538`). Release tags derive from the manifest digest (`crates/control/lib/src/push_release_manifest.rs:1` to `:5`). Host, identity and ctl images are tagged by source identity (`gcp.md` §3.4 "tools/journey-image-cache"). The workload guests carry their file sha256 from B0 step 4. The repository was created without `--immutable-tags` (`docs/operations/gcp.md` §1.5 "gcloud").
+B13 runs after B12, because the B12 acceptance compares the before and after tag listings of §5.3, and B13 removes tag lines. The four fixed guest tags `flow-http`, `materializer`, `wms-flow-http` and `wms-materializer` of the `components` repository name no running digest after B10. Every other push into the repository already uses a content tag. Component tags are the digest hex (`crates/control/lib/src/push_component.rs:538`). Release tags derive from the manifest digest (`crates/control/lib/src/push_release_manifest.rs:1` to `:5`). Host, identity and ctl images are tagged by source identity (`docs/history/gcp-install-history.md` §3.4 "tools/journey-image-cache"). The workload guests carry their file sha256 from B0 step 4. The repository was created without `--immutable-tags` (`docs/history/gcp-install-history.md` §1.5 "gcloud").
 
 1. Delete the four fixed tags, one command per tag:
 
@@ -1114,7 +1114,7 @@ B13 runs after B12, because the B12 acceptance compares the before and after tag
    gcloud artifacts repositories update wamn --project wamn-dev --location us-central1 --immutable-tags
    ```
 
-3. Add the record to `gcp.md` §7. It names the four deleted tags with their digests and the date of the update.
+3. Add the record to `docs/history/gcp-install-history.md` §7. It names the four deleted tags with their digests and the date of the update.
 
 Proof: `gcloud artifacts repositories describe wamn --project wamn-dev --location us-central1` shows immutable tags enabled, and the tag listing of `components` holds no fixed tag.
 
@@ -1471,7 +1471,7 @@ $$;
 
 wamn_system holds the record-history functions (`SYSTEM_SCHEMA_SQL`, `crates/control/provision/src/lib.rs:156`) but no history table. Its identity relations carry stamp triggers only (`system-schema.sql:296` and the other `wamn_record_history_stamp` triggers), and `record-history-app-grants.sql:6` says the system database never applies the app grants. So P9 in wamn_system is the function replacement only.
 
-**Each project-env database, P9 only.** In wamn-dev these are `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr` (`docs/operations/gcp.md` §3.18 and §5.4). `SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-%'` confirms the list. The file is `deploy/sql/migrations/project/0001_kind_to_type.sql`:
+**Each project-env database, P9 only.** In wamn-dev these are `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr` (`docs/history/gcp-install-history.md` §3.18 and §5.4). `SELECT datname FROM pg_database WHERE datname LIKE 'wamn-db-%'` confirms the list. The file is `deploy/sql/migrations/project/0001_kind_to_type.sql`:
 
 ```sql
 -- P9 tables. The set varies by package, so the block finds each history table
@@ -1512,7 +1512,7 @@ No history entry holds a renamed key. The `before` and `after` images copy the c
 
 #### 4.3.5 PAT Secret annotations (P15)
 
-The PAT Secret annotation becomes `wamn.io/principal-type`. Each installed Secret is re-annotated by one `kubectl annotate`, recorded under `gcp.md` §7 (§4.8).
+The PAT Secret annotation becomes `wamn.io/principal-type`. Each installed Secret is re-annotated by one `kubectl annotate`, recorded under `docs/history/gcp-install-history.md` §7 (§4.8).
 
 The code change: `crates/control/lib/src/provision_project_env/pat_secrets.rs:268` writes `wamn.io/principal-type`, and the template at `deploy/mvp/bootstrap.sh:118` reads it. The value stays `service`, which `bootstrap.sh:161` checks. The fixtures in `crates/control/lib/src/provision_project_env/tests.rs:117` and `deploy/mvp/tests/bootstrap.sh` follow.
 
@@ -1529,7 +1529,7 @@ Then run one command per Secret. It sets the new key and removes the old key in 
 kubectl -n <namespace> annotate secret <name> wamn.io/principal-type=service wamn.io/principal-kind-
 ```
 
-The wamn-dev listing is possibly empty. `docs/operations/gcp.md` §3.16 writes the management-author PAT Secret to a file that is not applied (`gcp.md:758`), and §6.4 copies the operator PAT file to the bench client. The listing answers it, and the record states the count.
+The wamn-dev listing is possibly empty. `docs/history/gcp-install-history.md` §3.16 writes the management-author PAT Secret to a file that is not applied (`gcp.md:758`), and §6.4 copies the operator PAT file to the bench client. The listing answers it, and the record states the count.
 
 `bootstrap.sh` reads one annotation key, so the transition matters. When the principal annotation is missing or is not `service`, it classifies a Secret that has a PAT prefix as `invalid` (`bootstrap.sh:161`, `:176` to `:179`). For an `invalid` Secret it issues a new PAT and revokes the old prefix (`bootstrap.sh:317` to `:322`, `:436`, `:437`). So an old `bootstrap.sh` run against a re-annotated Secret, or a new one run against an old Secret, rotates that PAT without an error. The rule: no `bootstrap.sh` runs between the stop of the workloads and the re-annotation of every Secret, and any later run uses the new `bootstrap.sh`. wamn-dev never runs `bootstrap.sh`, so the rule holds there by default (§4.7).
 
@@ -1765,7 +1765,7 @@ The `tests/sweeps/*.log` files that name `principal_kind` are records of past ru
 
 No change-event payload key changes.
 
-- The publication covers the application data schema only, `FOR TABLES IN SCHEMA <schema>` (`crates/control/provision/src/sql/cdc.rs:82`). In wamn-dev that is `receiving` and `wms` (`docs/operations/gcp.md` §3.18 and §5.4). The P1 to P8 and P10 to P12 tables live in `registry`, `identity`, `provisioning`, `catalog` and `wamn_run`, which no publication covers.
+- The publication covers the application data schema only, `FOR TABLES IN SCHEMA <schema>` (`crates/control/provision/src/sql/cdc.rs:82`). In wamn-dev that is `receiving` and `wms` (`docs/history/gcp-install-history.md` §3.18 and §5.4). The P1 to P8 and P10 to P12 tables live in `registry`, `identity`, `provisioning`, `catalog` and `wamn_run`, which no publication covers.
 - The package history tables do live in the published schema. But each one is a declared CDC exclusion (`crates/schema/control/src/package_migrations.rs:385`). The reader classifies each relation by OID and drops an excluded relation before it builds a payload (`services/cdc-reader/src/lib.rs:339`, `:398`). A rename keeps the OID, so the classification holds.
 - The payload is the column map of the changed row (`services/cdc-reader/src/lib.rs:478`). No published entity relation has a renamed column (§4.3).
 - Logical decoding carries no DDL. After the rename, pgoutput sends a new relation message for a history table at its next change, and the reader drops that change as before. The slot and the publication need no change, and the CDC readers may keep running through the apply.
@@ -1792,9 +1792,9 @@ No `bootstrap.sh` runs at any point of the cutover. wamn-dev never runs it (§3.
 
 Rollback swaps the names back. It is a new migration with the names swapped, because the verb never runs a file backward and no record row is deleted by hand. If the rollback happens, the swapped file is written then. It takes the next free ordinal of each directory at that time, in `migrations/system/` and `migrations/project/`, committed with the rollback, and `upgrade-schema` applies it. It ends with the text of `deploy/sql/record-history.sql` of the old commit. It renames P8 and P10 to P12 back with the statements of §4.3.2, names swapped, because the old verb has no rename. It swaps the annotation keys back. It renames the snapshot table and its names back and restores the old function body. It restores `component_library_digest_key` and the old requirement key and drops `catalog.component_digest_owners`, which works only while no digest has two library rows (§3.4 rows R2 and R4).
 
-### 4.8 Record for gcp.md §7
+### 4.8 Record for docs/history/gcp-install-history.md §7
 
-`docs/operations/gcp.md` §7 "Schema changes applied by hand" gets this entry as its last entry when the changes run. The entry records the two `upgrade-schema` runs, each with its baseline rows and its applied file. It also records the verb run that applied P8 and P10 to P12, and the annotations. Before B2, the deployment agent runs the ops-schema query of §4.3.4 on wamn_system and the Secret listing of §4.3.5, and the entry states both answers. The angle-bracket fields are filled in at apply time.
+`docs/history/gcp-install-history.md` §7 "Schema changes applied by hand" gets this entry as its last entry when the changes run. The entry records the two `upgrade-schema` runs, each with its baseline rows and its applied file. It also records the verb run that applied P8 and P10 to P12, and the annotations. Before B2, the deployment agent runs the ops-schema query of §4.3.4 on wamn_system and the Secret listing of §4.3.5, and the entry states both answers. The angle-bracket fields are filled in at apply time.
 
 ````markdown
 On <date> (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit <commit> ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/plan/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered <true|false>, so the migration <renamed|did not rename> P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
@@ -2093,7 +2093,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 
 **B6. kind → type B6: new identity service (docs/plan/kind-to-type.md §3.2)**
 - Scope: write the B0 identity digest into `deploy/gcp/values-identity.yaml` and upgrade the identity release. The hosts stay stopped.
-- Acceptance: the TLS check of `gcp.md` §3.10 answers, and the key set still lists the active `kid`.
+- Acceptance: the TLS check of `docs/history/gcp-install-history.md` §3.10 answers, and the key set still lists the active `kid`.
 - Depends on: B5.
 
 **B7. kind → type B7: Receiving republish (docs/plan/kind-to-type.md §3.2)**
@@ -2113,7 +2113,7 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 
 **B10. kind → type B10: new hosts and workloads (docs/plan/kind-to-type.md §3.2)**
 - Scope: render the host values with both release 2 digests and the new host image, upgrade the host release, and apply the four workloads with the two B0 guest digests. This is the router switch.
-- Acceptance: the serve check of `gcp.md` §3.21 answers 401 on a released route and 404 on an unknown path for both route hosts. Each host log says it loaded release 2.
+- Acceptance: the serve check of `docs/history/gcp-install-history.md` §3.21 answers 401 on a released route and 404 on an unknown path for both route hosts. Each host log says it loaded release 2.
 - Depends on: B9.
 
 **B11. kind → type B11: end-to-end check (docs/plan/kind-to-type.md §3.2)**
@@ -2122,11 +2122,11 @@ One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 
 - Depends on: B10.
 
 **B12. kind → type B12: record in gcp.md (docs/plan/kind-to-type.md §3.2)**
-- Scope: add the §4.8 entry to `gcp.md` §7, naming the cutover commit, and add the images, component digests and release table. Commit the values files, the workload files, `host_values_files.rs` and `gcp.md` together.
+- Scope: add the §4.8 entry to `docs/history/gcp-install-history.md` §7, naming the cutover commit, and add the images, component digests and release table. Commit the values files, the workload files, `host_values_files.rs` and `gcp.md` together.
 - Acceptance: the commit holds every file that §3.2 B12 lists. The §5.3 before and after listings show no removed line, and the drain records are in the entry.
 - Depends on: B11.
 
 **B13. kind → type B13: immutable tags on the wamn registry (docs/plan/kind-to-type.md §3.2)**
-- Scope: delete the four fixed guest tags of the `components` repository, turn immutable tags on, and add the record to `gcp.md` §7.
+- Scope: delete the four fixed guest tags of the `components` repository, turn immutable tags on, and add the record to `docs/history/gcp-install-history.md` §7.
 - Acceptance: the repository shows immutable tags enabled, and no fixed tag remains in `components`.
 - Depends on: B12.

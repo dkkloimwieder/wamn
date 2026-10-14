@@ -75,10 +75,10 @@ Eleven stops came from code or tools on their first live run. They are rows 3, 6
 | Workloads | `test-support/infrastructure/examples/workload_files.rs` renders the four workloads from four guest digests. |
 | Deploy | `deploy-release` exists (`crates/control/lib/src/delivery/deployment.rs:109`). It applies a rendered native Deployment and checks one request. Only the kind cases call it. The cutover used `helm upgrade` and `kubectl apply` by hand (B10). |
 | Edge | `wamn web upload`, `helm upgrade wamn-edge` and `gcloud compute url-maps import` by hand, after a manual digest edit of two private files (B9). |
-| Broker | `WAMN_TAP` is memory storage. Every broker restart needs the tap-stream Job and the check of `gcp.md` §3.5 again. Two Spot preemptions restarted the broker during the run (`wamn-qjcd`). |
+| Broker | `WAMN_TAP` is memory storage. Every broker restart needs the tap-stream Job and the check of `docs/history/gcp-install-history.md` §3.5 again. Two Spot preemptions restarted the broker during the run (`wamn-qjcd`). |
 | Capacity | No step compares host requests with node capacity. The new control host group did not fit on 2 nodes (B10). |
 | Gate credentials | Retiring a generation needs a live session of the replacement (`crates/control/lib/src/provision_project_env/workload.rs:942`). The gate service runs only for one request at B8, so B12 started it again by hand. |
-| Record | `gcp.md` §7 and `kind-to-type.md` §3.2 were written by hand from 17 drifts and the logs, at B12. |
+| Record | `docs/history/gcp-install-history.md` §7 and `kind-to-type.md` §3.2 were written by hand from 17 drifts and the logs, at B12. |
 
 ### 3.3 Post-mortem of run 1
 

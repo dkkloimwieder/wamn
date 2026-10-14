@@ -2,7 +2,7 @@
 # answers the Let's Encrypt DNS-01 challenge in the Cloud DNS zone wamn-dev.
 # Its service account has roles/dns.admin on that zone only, through Workload
 # Identity, so the solver names the zone and never lists zones.
-# docs/operations/gcp.md section 2 applies this file with the staging server
+# docs/history/gcp-install-history.md section 2 applies this file with the staging server
 # first and then as written.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer

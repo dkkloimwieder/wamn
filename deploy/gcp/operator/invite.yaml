@@ -7,10 +7,10 @@
 #
 # Fill __EMAIL__, __DISPLAY_NAME__, __ORG__ and __GRANT_FLAGS__ in a private
 # copy of this file in the scratchpad, at mode 0600, apply the copy and remove
-# it (docs/operations/gcp.md section 4.5). __GRANT_FLAGS__ holds --org-admin,
+# it (docs/history/gcp-install-history.md section 4.5). __GRANT_FLAGS__ holds --org-admin,
 # --project-admin <project> and --membership <project>/<env> as needed, or
 # nothing. Then make the Secret wamn-system-admin with an owner reference to
-# this Job (docs/operations/gcp.md section 3.16). The pod waits for that
+# this Job (docs/history/gcp-install-history.md section 3.16). The pod waits for that
 # Secret before it starts.
 #
 # The verb prints the identity answer and writes no credential. Save the log to

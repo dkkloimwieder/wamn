@@ -444,7 +444,7 @@ Issue 1 therefore remeasures this entire table against its starting `main` and c
 | Run-plane mirror | `reconcile-run-plane` creates application `users` rows from system identity but does not remove stale user rows. |
 | Shell | Environment choice, invitation/recovery/reset, and application screens. No administration route. |
 | Provisioning | Environment creation and release installation are CLI/runbook operations with infrastructure credentials. |
-| Installed schema changes | No general installed-schema upgrade verb exists. Hand-applied wamn-dev statements are recorded in `docs/operations/gcp.md` §7 under `wamn-o8b9`. |
+| Installed schema changes | No general installed-schema upgrade verb exists. Hand-applied wamn-dev statements are recorded in `docs/history/gcp-install-history.md` §7 under `wamn-o8b9`. |
 
 ### 3.1 Remeasured at `4495e0d20` (issue 1, `wamn-a40n.1`)
 
@@ -469,7 +469,7 @@ Issue 1 starts from `main` `4495e0d20`, 163 commits after `3a81dcfec`. The kind 
 | Invitation | Issued only for an active user without a password (`crates/identity/platform/src/password.rs:326–418`, `system-schema.sql:755–763`). | Refusals are typed `RefusalCause` values. `Invitation` returns `expires_at`. |
 | Run-plane mirror | `reconcile-run-plane` inserts service and user `users` rows and never deletes or updates stale rows (`crates/control/lib/src/reconcile_run_plane.rs:404–424`, 570–684). | It now also records the fresh-install migrations (632–641). |
 | Shell | Routes `/`, `/invite`, `/recover`, `/reset` and `/:aud` with application screens (`web/shell/src/shell.tsx:215–239`). No administration route. | A Suspense root and direct navigation to the first screen (`wamn-28n8`). |
-| Provisioning | CLI verbs in `services/ctl/src/main.rs` and the runbook `docs/operations/gcp.md` §3.6–3.8. `provisioning.sagas` runs in process (`crates/control/provision/src/saga.rs`). No separate worker. | `upgrade-schema` added. |
+| Provisioning | CLI verbs in `services/ctl/src/main.rs` and the runbook `docs/history/gcp-install-history.md` §3.6–3.8. `provisioning.sagas` runs in process (`crates/control/provision/src/saga.rs`). No separate worker. | `upgrade-schema` added. |
 | Installed schema changes | `wamn-ctl upgrade-schema` applies numbered files in one transaction each (`crates/control/lib/src/upgrade_schema.rs`). The files are `deploy/sql/migrations/system/0001` to `0003` and `project/0001`. | The verb exists (`wamn-o8b9`). The owner ruled on 2026-09-30 that issue 1 ships its installed-database change as `system/0004` and `project/0002`, not as hand statements. |
 
 ---
@@ -1235,7 +1235,7 @@ The provisioning worker of [§5.5](#55-provisioning-worker) runs the role and pr
 - `CREATE PUBLICATION ... FOR TABLES IN SCHEMA` becomes a CNPG `Publication` CR with `target.objects[].tablesInSchema`. The worker applies it under the RBAC that it holds for `Database` CRs, extended to `publications.postgresql.cnpg.io`, and the operator creates the publication as superuser. `create_publication_sql` in `crates/control/provision/src/sql/cdc.rs` leaves the SQL path.
 - A role hardener reads `pg_roles.rolsuper` and writes the `NOSUPERUSER` clause only when it is true. A role that was never a superuser gets no clause, so a replay stays idempotent.
 - Role attributes come from `pg_roles`, not `pg_authid`. Prepare does not read `rolpassword`. It records a fingerprint of the password of the generation in the system database and compares the fingerprint there.
-- The `Database` CR sets the owner in `spec.owner` when it creates the database, so the worker never runs `ALTER DATABASE ... OWNER TO`. For the two existing databases on wamn-dev, the operator runs that statement once by hand, recorded in `docs/operations/gcp.md` §7.
+- The `Database` CR sets the owner in `spec.owner` when it creates the database, so the worker never runs `ALTER DATABASE ... OWNER TO`. For the two existing databases on wamn-dev, the operator runs that statement once by hand, recorded in `docs/history/gcp-install-history.md` §7.
 
 ---
 
@@ -1459,7 +1459,7 @@ Commits, each one green:
 3. The identity call that creates or reuses a user by email and display name. `wamn-ctl invite` takes the logical input of `user.invite`.
 4. Control admission and `control.mine` accept `org-admin`.
 5. The org host routes of §4.4: `user.list`, `user.invite`, `user.activate`, `user.deactivate`, `project.list`, `org_admin.grant` and `org_admin.revoke`. Each write runs in one transaction on the `control` login, with `app.user_id` and `app.operation` bound.
-6. Documentation: execution, data access (the system identity tables record the actor only), and `gcp.md` §7, which records `0007` as a migration run and the dkk owner as a `wamn-ctl invite` with `org-admin`.
+6. Documentation: execution, data access (the system identity tables record the actor only), and `docs/history/gcp-install-history.md` §7, which records `0007` as a migration run and the dkk owner as a `wamn-ctl invite` with `org-admin`.
 
 Exit includes:
 
@@ -1672,7 +1672,7 @@ Measured on main `6eba50b90` on 2026-10-02:
 - No table holds an environment status. `registry.project_envs` has `org`, `project`, `env`, `secret_name`, `secret_namespace`, `instance_suffix` and `disposable`. `catalog.tenant_environments` in the control store has no status either.
 - `wamn-o8b9` closed. A system schema change is now a file in `deploy/sql/migrations/system/` (0001 to 0007), applied by `wamn-ctl upgrade-schema`.
 - The application host holds only its project database login. It has no connection to the system database, where `registry.project_envs` lives.
-- Identity offers an application audience for each `--session-target` file it reads at start. Helm builds those files from `sessionTargetSecrets`. A new environment therefore needs a new Secret and an identity upgrade, as `docs/operations/gcp.md` section 3.10 does by hand.
+- Identity offers an application audience for each `--session-target` file it reads at start. Helm builds those files from `sessionTargetSecrets`. A new environment therefore needs a new Secret and an identity upgrade, as `docs/history/gcp-install-history.md` section 3.10 does by hand.
 - A host serves the one release that its pod arguments pin. Nothing turns off the routes of one environment.
 - `control.mine` answers projects only. `environment.list` reads `registry.project_envs`.
 - `provisioning.sagas` exists with `type` in (`provision-org`, `provision-project-env`), one `step` number and `last_error`. It has no steps table, and no code writes it. The only saga writer is `copy-project-env` in `wamn-ctl-ops`, which copies data into `provisioning.copy_sagas`. That verb is not the environment copy of [§5.3](#53-environment-copy).
@@ -1790,7 +1790,7 @@ The epic closes on one kind run after B13 of the cutover.
 14. Issue 8, answered 2026-10-02 with option A. The browser test completes a membership grant and an `org-admin` grant through the control host's test database, as `control_route_live` does. The invite form is a stub in the component tests.
 
 15. Lifecycle numbering, answered 2026-10-02. The lifecycle items are numbered 9 to 11, with the bead id in parentheses after each.
-16. Issue 9, answered 2026-10-02. The status column comes in system migration `0008` through `upgrade-schema`. The plan names no hand-applied statement, and `docs/operations/gcp.md` §7 drops one if it records one, once `0008` runs on wamn-dev.
+16. Issue 9, answered 2026-10-02. The status column comes in system migration `0008` through `upgrade-schema`. The plan names no hand-applied statement, and `docs/history/gcp-install-history.md` §7 drops one if it records one, once `0008` runs on wamn-dev.
 17. Issue 9, answered 2026-10-02. `registry.project_envs.status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive'))`.
 18. Issue 9, answered 2026-10-02. Identity offers no audience, and the router serves no routes, after each reads the status. The host workload keeps running in this epic. Stopping it is a Kubernetes action of the worker, filed as its own bead and not in scope.
 19. Issue 9, answered 2026-10-02. Four routes: `environment.activate`, `environment.inactivate`, `project.activate` and `project.inactivate`. The project routes apply to every environment of the project. `org-admin` only.
@@ -1814,4 +1814,4 @@ The epic closes on one kind run after B13 of the cutover.
 37. Issue 10, answered 2026-10-02. The worker holds a Role on Secrets in each of `hosts`, `identity` and `platform`, and nothing else in those namespaces. No Secret moves to the operator step.
 38. Issue 10, answered 2026-10-02. The worker runs `kubectl`, as `deploy-release` does, and the binary is in the worker image. No `kube` crate.
 39. Issue 10, answered 2026-10-02. `registry.generation_passwords (role, sha256, recorded_at)`, from system migration `0009`.
-40. Issue 10, answered 2026-10-02. `wamn_provisioner` holds exactly the measured list: `REPLICATION`, `BYPASSRLS`, membership of `pg_signal_backend`, `wamn_system` and the owner role of the project schemas, and `createrole_self_grant = 'set, inherit'`. `provision-system` creates it, run once by the operator as superuser, and `docs/operations/gcp.md` §7 records the statement.
+40. Issue 10, answered 2026-10-02. `wamn_provisioner` holds exactly the measured list: `REPLICATION`, `BYPASSRLS`, membership of `pg_signal_backend`, `wamn_system` and the owner role of the project schemas, and `createrole_self_grant = 'set, inherit'`. `provision-system` creates it, run once by the operator as superuser, and `docs/history/gcp-install-history.md` §7 records the statement.

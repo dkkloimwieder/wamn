@@ -3,7 +3,7 @@
 Deployment has one path: `wamn-ctl env apply` of one environment document.
 The document names the environment and its release.
 The verb creates the environment and installs the release chart of the release ([platform deploy plan §10.1](../plan/platform-deploy.md#101-the-environment-document-and-apply)).
-[Google Cloud operations §11](gcp.md#11-greenfield-install-with-env-apply) is the runbook of a full install.
+[Google Cloud install](gcp.md#4-install) is the runbook of a full install.
 The [repository delivery commands](delivery.md) qualify, publish, select, and deploy exact releases without a CI-provider API.
 CI-provider configuration remains [delivery work](../plan/delivery.md).
 [Components](../architecture/components.md) defines the artifact boundary.
@@ -62,7 +62,7 @@ Then run these steps in this order:
 `env apply` creates the environment row, its `Database`, its roles, its run plane, and its credential Secrets.
 The first apply names `release = "none"`, because `publish-release` needs the environment's database.
 A later apply names the release digest and installs the release chart ([platform deploy plan §9.2](../plan/platform-deploy.md#92-chart-release)).
-The verb reads its platform inputs from environment variables ([Google Cloud operations §11.4](gcp.md#114-platform-inputs-of-env-apply)):
+The verb reads its platform inputs from environment variables ([Google Cloud platform file](gcp.md#410-platform-file)):
 
 ```bash
 wamn-ctl env apply <document> --dry-run
@@ -172,7 +172,7 @@ In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests
 
 On Google Cloud, a global load balancer sends `/api/` and `/password/` to the edge and serves every other path from a Cloud CDN backend bucket, as the [web deployment plan](../plan/web-deployment.md) describes.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create a network endpoint group, and the chart needs no `bucket.endpoint`, because the load balancer serves the bucket.
-The chart renders no Google Cloud resource. [Google Cloud operations](gcp.md) creates the bucket access, the load balancer and the DNS record with `gcloud`, and lists their deletion.
+The chart renders no Google Cloud resource. [Google Cloud install history](../history/gcp-install-history.md) sections 4.3 and 4.6 create the bucket access, the load balancer and the DNS record with `gcloud`, and delete them.
 The edge itself still removes `/api` and checks the identity certificate, as it does in kind.
 
 ## Identity password configuration
@@ -236,7 +236,7 @@ The admin URL must be SUPERUSER or BYPASSRLS.
 The verbs refuse a role that does not exist in the tenant, an unknown email, and an email that names more than one user.
 The user needs its tenant `users` row, which `reconcile-run-plane` writes, so run that verb first after a new principal.
 The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
-`env apply` writes its PAT Secret when it can reach identity. When it cannot, mint the PAT with the Job of [Google Cloud operations §11.4](gcp.md#114-platform-inputs-of-env-apply).
+`env apply` writes its PAT Secret when it can reach identity. When it cannot, mint the PAT with the Job of [Google Cloud releases](gcp.md#414-releases).
 
 ### Authored roles
 
@@ -408,7 +408,7 @@ An additive base upgrade and all affected overlay successors apply in one transa
 A retry requires the saved qualification to match the exact environment, complete package roots, and selected base component bytes.
 The verb refuses multiple independent base transitions in one run.
 Prepare the complete candidate root set, including generated artifacts. Ordinary release qualification must support the environment's candidate shape.
-The completed Epic 1 WMS proof is recorded in [Google Cloud operations](gcp.md).
+The completed Epic 1 WMS proof is recorded in [Google Cloud install history](../history/gcp-install-history.md).
 
 Run qualification on a machine authorized to hold copied production data, with PostgreSQL 18 tools and enough temporary storage.
 The command owns its temporary PostgreSQL server and private dump directory and removes them after use.
@@ -417,7 +417,7 @@ Keep database credentials outside committed files. Retain the qualification resu
 
 ### Upgrade order
 
-Run `wamn-ctl upgrade-environment` as [Google Cloud operations §10](gcp.md#10-upgrade-an-environment) shows.
+Run `wamn-ctl upgrade-environment` as [Google Cloud operations](gcp.md#56-upgrade-an-environment) shows.
 The package stage of `env apply` is in [platform deploy plan §10.2](../plan/platform-deploy.md#102-the-package-stage).
 
 ### Upgrade failures

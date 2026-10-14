@@ -12,7 +12,7 @@
 # --emit-management-author-pat-secret. A run with only a PAT flag reads the
 # recorded environment and writes nothing to the registry (wamn-rjtf). Then
 # make the Secret wamn-system-admin
-# with an owner reference to this Job (docs/operations/gcp.md section 3.16).
+# with an owner reference to this Job (docs/history/gcp-install-history.md section 3.16).
 # The pod waits for that Secret before it starts.
 #
 # The verb writes the PAT Secret file into a memory volume. The operator reads

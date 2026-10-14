@@ -1,4 +1,4 @@
-# The CDC event reader of WMS, docs/operations/gcp.md section 5. It is the
+# The CDC event reader of WMS, docs/history/gcp-install-history.md section 5. It is the
 # Receiving reader of cdc-reader.yaml with the WMS names: project wms, the
 # replication Secret of enable-cdc-project-env, generation a of the WMS
 # registry-reader credential and the WMS publisher user. It runs as the

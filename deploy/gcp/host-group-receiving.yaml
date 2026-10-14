@@ -1,5 +1,5 @@
 # The platform part of the host group of dkk/receiving/dev: WAMN_RELEASE_HOST_GROUP of
-# `wamn-ctl env apply` (docs/operations/gcp.md section 11.10). It is hand-written
+# `wamn-ctl env apply` (docs/history/gcp-install-history.md section 11.10). It is hand-written
 # from the group `default` of values-host.yaml. The release chart derives the name,
 # namespace, service, release arguments, WAMN_ORG, WAMN_PROJECT and the drain
 # bound, and `apply` adds the six credential variables, so this file sets none
