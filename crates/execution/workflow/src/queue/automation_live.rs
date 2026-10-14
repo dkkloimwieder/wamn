@@ -143,7 +143,7 @@ impl Node {
             }),
             operation: OPERATION.to_owned(),
             params: json!({"deadline-ms":60000}),
-            serving: json!({"registered-operation":OPERATION,"permissions":[OPERATION],"fresh-only":false,"statements":{}}),
+            serving: json!({"registered-operation":OPERATION,"permissions":[OPERATION],"statements":{}}),
         }
     }
 }
@@ -176,7 +176,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
     admin.batch_execute(&format!("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
       INSERT INTO app_system.roles (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');
-      INSERT INTO app_system.permissions (tenant_id,role_name,permission,required_by) VALUES ('{TENANT}','automation','{REFERENCE}','{REFERENCE}');
+      INSERT INTO app_system.permissions (tenant_id,role_name,permission) VALUES ('{TENANT}','automation','{REFERENCE}');
       INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('{TENANT}','test','standard');
       INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('{TENANT}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
@@ -271,17 +271,14 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         url.set_password(Some("automation-test-only")).unwrap();
         credentials = credentials.with_class(class, url.to_string());
     }
-    let postgres = Arc::new(
-        WamnPostgres::new(WamnPostgresConfig {
-            credentials: Some(credentials),
-            guest_pool_max_size: 2,
-            platform_pool_max_size: 2,
-            wait_timeout_ms: 5000,
-            statement_timeout_ms: 10000,
-            row_limit: 100,
-        })?
-        .with_release_closures(&release),
-    );
+    let postgres = Arc::new(WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(credentials),
+        guest_pool_max_size: 2,
+        platform_pool_max_size: 2,
+        wait_timeout_ms: 5000,
+        statement_timeout_ms: 10000,
+        row_limit: 100,
+    })?);
     postgres
         .bind_session_claims(
             QUEUE_CLAIM_SCOPE,

@@ -53,10 +53,9 @@ impl std::fmt::Debug for NativePolicyResources {
 
 /// One admitted component and the operations its release publishes for it.
 ///
-/// Publish folds each export's call graph into its released operation: the
-/// permission union, `fresh_only` and the statement union. An application
-/// composes at build, so a call inside it reaches no host, and the entry
-/// carries the authority of the whole graph.
+/// Publish folds each export's call graph into its released operation's
+/// statement union. An application composes at build, so a call inside it
+/// reaches no host, and the entry runs under its own grant.
 #[derive(Debug)]
 struct ComponentPolicy {
     fact: AdmittedComponent,

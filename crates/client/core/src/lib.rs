@@ -148,37 +148,10 @@ impl WamnClient {
         parameters: &BTreeMap<String, String>,
         items: &[serde_json::Value],
     ) -> Result<Vec<ItemOutcome>, ClientError> {
-        self.invoke_with_freshness(route, parameters, items, false)
-            .await
-    }
-
-    /// Invoke an operation with legacy freshness metadata using the normal credential.
-    /// A refusal is never replayed.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as [`Self::invoke`], including an unavailable PAT.
-    pub async fn invoke_fresh(
-        &self,
-        route: &RouteMetadata,
-        parameters: &BTreeMap<String, String>,
-        items: &[serde_json::Value],
-    ) -> Result<Vec<ItemOutcome>, ClientError> {
-        self.invoke_with_freshness(route, parameters, items, true)
-            .await
-    }
-
-    async fn invoke_with_freshness(
-        &self,
-        route: &RouteMetadata,
-        parameters: &BTreeMap<String, String>,
-        items: &[serde_json::Value],
-        fresh_only: bool,
-    ) -> Result<Vec<ItemOutcome>, ClientError> {
         let body = wamn_execution_contract::canonical_json_bytes(&serde_json::Value::Array(
             items.to_vec(),
         ));
-        let response = self.send_body(route, parameters, body, fresh_only).await?;
+        let response = self.send_body(route, parameters, body).await?;
 
         if response.status != 200 {
             return Err(ClientError::from_status(response.status, &response.body));
@@ -207,23 +180,7 @@ impl WamnClient {
         parameters: &BTreeMap<String, String>,
         request: &request::BuiltRequest,
     ) -> Result<HttpResponse, ClientError> {
-        self.send_body(route, parameters, request.body().to_vec(), false)
-            .await
-    }
-
-    /// Submit a captured request using the ordinary renewable credential.
-    /// The legacy operation flag no longer selects a PAT.
-    ///
-    /// # Errors
-    ///
-    /// Refuses an unavailable credential or returns a route or transport error.
-    pub async fn submit_fresh(
-        &self,
-        route: &RouteMetadata,
-        parameters: &BTreeMap<String, String>,
-        request: &request::BuiltRequest,
-    ) -> Result<HttpResponse, ClientError> {
-        self.send_body(route, parameters, request.body().to_vec(), true)
+        self.send_body(route, parameters, request.body().to_vec())
             .await
     }
 
@@ -232,7 +189,6 @@ impl WamnClient {
         route: &RouteMetadata,
         parameters: &BTreeMap<String, String>,
         body: Vec<u8>,
-        _fresh_only: bool,
     ) -> Result<HttpResponse, ClientError> {
         let path = route
             .path(parameters)

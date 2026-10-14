@@ -194,7 +194,6 @@ fn journey_inputs(
         host_secret_directory: cluster.work.join("host-secrets"),
         host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: cluster.work.join("operator-pat.json"),
-        fresh_only_packages: None,
         postcommit: None,
         materializer: None,
         runtime: None,

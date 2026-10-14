@@ -42,12 +42,6 @@
       "type": "boolean",
       "nullable": false,
       "values": []
-    },
-    {
-      "path": "operations[].required_by[]",
-      "type": "text",
-      "nullable": false,
-      "values": []
     }
   ]
 }

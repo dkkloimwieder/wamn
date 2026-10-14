@@ -739,7 +739,6 @@ mod tests {
                     .expect("the fixture snapshot names an operation"),
                 ServingComponentOperation {
                     pre_commit: None,
-                    fresh_only: false,
                     committed_result_schema: None,
                     registered_operation: snapshot.registered_operation.clone(),
                     permissions: snapshot.registered_operation.iter().cloned().collect(),

@@ -36,7 +36,7 @@ describe("the user grid", () => {
     await open("ann@example.test");
     expect(roleSwitch("clerk")?.checked).toBe(true);
     expect(roleSwitch("admin")?.checked).toBe(false);
-    await waitFor(() => expect(effective()).toEqual(["acme:purchase/get", "acme:receiving/record"]));
+    await waitFor(() => expect(effective()).toEqual(["acme:receiving/record"]));
   });
 
   it("grants and revokes a role, and reads the user again", async () => {

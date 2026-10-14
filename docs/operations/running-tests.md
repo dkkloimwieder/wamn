@@ -155,26 +155,6 @@ The edge runs the `sample.read` command of the `edge_device` bundle on each fram
 The test sends each of its two samples twice, and prints the tag of its frames.
 Count the rows of that tag in `edge_samples.sample` of the session's target database: the count must be 2.
 
-Run the prior-commit fixture admission and exact forwarding assertions.
-The tests compose the fixture with the built Receiving base and its no-op participant.
-Build Receiving first with `wamn build apps/wamn_receiving` and a PostgreSQL server URL in `DATABASE_URL`. The build compiles the Receiving component and its no-op participant.
-
-```bash
-target/debug/wamn build apps/wamn_receiving
-cargo build --manifest-path apps/Cargo.toml --locked --offline \
-  --target wasm32-wasip2 -p prior-commit
-cargo build --locked --offline -p wamn-component-virtualizer
-mkdir -p target/virtualized/std-empty-environment
-target/debug/wamn-component-virtualizer \
-  --input apps/target/wasm32-wasip2/debug/prior_commit.wasm \
-  --output target/virtualized/std-empty-environment/prior_commit.wasm
-WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
-WAMN_PRIOR_COMMIT_COMPONENT="$PWD/target/virtualized/std-empty-environment/prior_commit.wasm" \
-  cargo test --locked --offline -p wamn-receiving-tests --lib counter_parent_ -- --ignored
-```
-
-The fixture uses generated typed Receiving bindings and the current asynchronous PostgreSQL interface.
-
 Run the local SQLx transaction case with its component:
 
 ```bash

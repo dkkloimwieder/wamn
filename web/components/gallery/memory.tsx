@@ -18,7 +18,6 @@ export const memoryRoute = (name: string, verb = "query"): OperationRoute => ({
   operation: `gallery:${name}/${verb}@1.0.0`,
   method: verb === "query" ? "GET" : "POST",
   template: `/${name}/${verb}`,
-  freshOnly: false,
   contract: {
     resultClass: "page",
     partialSchema: null,

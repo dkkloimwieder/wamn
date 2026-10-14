@@ -129,9 +129,13 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
         (TENANT, "purchase-writer", WRITE),
         ("tenant-b", "purchase-reader", OTHER_TENANT),
     ] {
-        admin.execute("INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
-            &[&tenant, &role, &permission]).await?;
+        admin
+            .execute(
+                "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''))",
+                &[&tenant, &role, &permission],
+            )
+            .await?;
     }
     for (principal, email) in [
         (first.as_str(), "first@example.test"),
@@ -147,9 +151,8 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A permission reader that expands roots through the closures of `release`,
-/// the release its host loaded.
-fn permission_reader(url: &str, release: &LoadedRelease) -> anyhow::Result<Arc<WamnPostgres>> {
+/// A permission reader over the callable-HTTP login at `url`.
+fn permission_reader(url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
         guest_pool_max_size: 1,
@@ -161,10 +164,9 @@ fn permission_reader(url: &str, release: &LoadedRelease) -> anyhow::Result<Arc<W
     let configuration =
         json!({PROJECT: {"credentials": {(AuthorityClass::CallableHttp.as_str()): url}}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
-    Ok(Arc::new(
-        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)))
-            .with_release_closures(release),
-    ))
+    Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
+        StaticCredentialProvider::new(projects, None),
+    ))))
 }
 
 /// One HTTP attachment that targets the route of `operation` directly.
@@ -341,7 +343,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     );
     drop(scoped);
 
-    let labels = permission_reader(url.as_str(), &*load_release(&["session"])?)?;
+    let labels = permission_reader(url.as_str())?;
     admin.execute("UPDATE app_system.users SET display_name = 'Alice Operator' WHERE tenant_id = $1 AND id = $2::text::uuid",
         &[&TENANT, &SECOND_PRINCIPAL]).await?;
     admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES ('tenant-b', $1::text::uuid, 'user', 'other@example.test', 'Other tenant')",
@@ -387,7 +389,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     let authentication = Arc::new(SessionRouteAuthentication::new(
         verifier.clone(),
         Arc::clone(&identity_reader),
-        permission_reader(url.as_str(), &*load_release(&["session"])?)?,
+        permission_reader(url.as_str())?,
         PROJECT,
     ));
     let route = routing(authentication.clone(), &["session"])?;
@@ -423,25 +425,16 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     }
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 5);
 
-    // R18 (4) and (5): a grant stores a root the loaded release does not
-    // serve. It expands to nothing on this host, and it expands on a host
-    // whose release serves it, with no write in between.
+    // A grant stores a reference the loaded release does not serve. It holds
+    // on a host whose release serves it, with no write in between.
     let granted = wamn_platform_identity::application::grant_permission(
         &admin,
         TENANT,
         "purchase-writer",
         "session-test:purchase/approve",
-        None,
     )
     .await?;
-    assert_eq!(granted.rows_added, 1, "the unserved root is stored");
-    assert!(granted.closure.is_empty());
-    let dormant = accepted(&route, &first).await;
-    assert!(dormant.permits(READ) && dormant.permits(WRITE));
-    assert!(
-        !dormant.permits(APPROVE),
-        "a root the loaded release does not serve expands to nothing"
-    );
+    assert_eq!(granted.rows_added, 1, "the unserved reference is stored");
     let serving = load_release_serving(&["session"], &[READ, WRITE, APPROVE])?;
     let later = FlowHttpRouting::new(Some(Arc::clone(&serving)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
@@ -449,18 +442,18 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
                 SessionRouteAuthentication::new(
                     verifier,
                     identity_reader,
-                    permission_reader(url.as_str(), &serving)?,
+                    permission_reader(url.as_str())?,
                     PROJECT,
                 ),
             )),
         ));
     assert!(
         accepted(&later, &first).await.permits(APPROVE),
-        "the stored root expands once a release that serves it loads"
+        "the stored reference holds once a release that serves it loads"
     );
     assert!(
         !accepted(&later, &second).await.permits(APPROVE),
-        "the root expands only for the roles that hold it"
+        "the reference holds only for the roles that hold it"
     );
 
     // A browser sends the signed token in its cookie and the CSRF token in a header.
@@ -530,8 +523,13 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         admitted.permits(WRITE),
         "permission change does not cancel already-admitted work"
     );
-    admin.execute("INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ($1, 'purchase-writer', regexp_replace($2, '@[^@]*$', ''), regexp_replace($2, '@[^@]*$', ''))", &[&TENANT, &WRITE]).await?;
+    admin
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+         VALUES ($1, 'purchase-writer', regexp_replace($2, '@[^@]*$', ''))",
+            &[&TENANT, &WRITE],
+        )
+        .await?;
     admin
         .execute(
             "DELETE FROM app_system.user_roles WHERE tenant_id = $1",

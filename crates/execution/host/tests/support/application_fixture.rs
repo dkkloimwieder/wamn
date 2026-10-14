@@ -114,8 +114,8 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
     }
     admin
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ($1, 'purchase-reader', 'session-test:purchase/read', 'session-test:purchase/read')",
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ($1, 'purchase-reader', 'session-test:purchase/read')",
             &[&TENANT],
         )
         .await?;
@@ -144,7 +144,6 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
 pub(super) fn credentials(
     admitter: &str,
     administration: &str,
-    release: &LoadedRelease,
 ) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
@@ -159,10 +158,9 @@ pub(super) fn credentials(
         (AuthorityClass::Administration.as_str()): administration,
     }}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
-    Ok(Arc::new(
-        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)))
-            .with_release_closures(release),
-    ))
+    Ok(Arc::new(WamnPostgres::with_provider(Arc::new(
+        StaticCredentialProvider::new(projects, None),
+    ))))
 }
 
 /// A release of one component with two registered operations that serves
@@ -245,7 +243,6 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
         &login(admin_url, &administration)?,
-        &release,
     )?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(

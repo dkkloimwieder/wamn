@@ -45,7 +45,6 @@ fn components() -> BTreeSet<ServingComponent> {
                 ServingComponentOperation {
                     pre_commit: None,
                     committed_result_schema: None,
-                    fresh_only: false,
                     registered_operation: None,
                     permissions: BTreeSet::new(),
                     participant: None,
@@ -61,7 +60,6 @@ fn components() -> BTreeSet<ServingComponent> {
                 ServingComponentOperation {
                     pre_commit: None,
                     committed_result_schema: None,
-                    fresh_only: false,
                     registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
                     permissions: BTreeSet::from([
                         "platform-fixture-overlay:widget/get@3.0.0".into()
@@ -213,69 +211,6 @@ fn the_frozen_format_three_vector_refuses_with_its_version() {
 }
 
 #[test]
-fn fresh_only_is_digest_bound_without_changing_format_nine_default_bytes() {
-    let baseline = manifest();
-    let mut fresh = baseline.clone();
-    fresh.components = fresh
-        .components
-        .into_iter()
-        .map(|mut component| {
-            for operation in component.operations.values_mut() {
-                if operation.registered_operation.is_some() {
-                    operation.fresh_only = true;
-                }
-            }
-            component
-        })
-        .collect();
-    let (admitted, digest) = ServingManifest::from_canonical_bytes(&fresh.canonical_bytes())
-        .expect("format-nine reader admits registered fresh-only operations");
-    assert_eq!(admitted, fresh);
-    assert_eq!(admitted.format_version, 9);
-    assert_ne!(digest, baseline.digest());
-    assert_eq!(baseline.canonical_bytes(), publish_vector::CANONICAL_BYTES);
-}
-
-#[test]
-fn fresh_only_release_reader_refuses_unregistered_exports_and_non_boolean_flags() {
-    let mut unregistered = manifest();
-    unregistered.components = unregistered
-        .components
-        .into_iter()
-        .map(|mut component| {
-            for operation in component.operations.values_mut() {
-                if operation.registered_operation.is_none() {
-                    operation.fresh_only = true;
-                }
-            }
-            component
-        })
-        .collect();
-    let error = ServingManifest::from_canonical_bytes(&unregistered.canonical_bytes())
-        .expect_err("unregistered palette export cannot require fresh authentication");
-    assert!(error.to_string().contains("requires no permission"));
-
-    for value in [json!(null), json!("true"), json!(1)] {
-        let mut document = serde_json::to_value(manifest()).unwrap();
-        let operation = document["components"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .flat_map(|component| {
-                component["operations"]
-                    .as_object_mut()
-                    .unwrap()
-                    .values_mut()
-            })
-            .find(|operation| operation.get("registered-operation").is_some())
-            .unwrap();
-        operation["fresh-only"] = value;
-        let bytes = wamn_execution_contract::canonical_json_bytes(&document);
-        assert!(ServingManifest::from_canonical_bytes(&bytes).is_err());
-    }
-}
-
-#[test]
 fn authentication_modes_are_shared_and_bound_into_canonical_bytes() {
     let mut authenticated_digests = BTreeSet::new();
     for (modes, expected, allows_pat, allows_session) in [
@@ -381,7 +316,6 @@ fn operation_provider_manifest(package: &str, export: &str, version: &str) -> Se
     let operation = ServingComponentOperation {
         pre_commit: None,
         registered_operation: None,
-        fresh_only: false,
         committed_result_schema: None,
         permissions: BTreeSet::new(),
         participant: None,

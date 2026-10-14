@@ -344,7 +344,6 @@ mod tests {
                     ServingComponentOperation {
                         pre_commit: None,
                         committed_result_schema: None,
-                        fresh_only: false,
                         registered_operation: None,
                         permissions: BTreeSet::new(),
                         participant: None,
@@ -555,7 +554,6 @@ mod tests {
                     pre_commit: None,
                     pre_commit_required: false,
                     registered_operation: None,
-                    fresh_only: false,
                     committed_result_schema: None,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),

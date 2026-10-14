@@ -137,15 +137,6 @@ impl ClientError {
             }
             403 => {
                 let body = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
-                let error = &body["error"];
-                if error["code"].as_str() == Some("fresh-credential-required") {
-                    return Self::Operation {
-                        literal: "fresh-credential-required".to_owned(),
-                        detail: serde_json::json!({
-                            "operation": error["operation"].as_str().unwrap_or_default(),
-                        }),
-                    };
-                }
                 Self::PermissionDenied {
                     operation: body["operation"].as_str().unwrap_or_default().to_owned(),
                 }
@@ -172,11 +163,6 @@ impl core::fmt::Display for ClientError {
                 "the row moved: wrote against revision {expected_row_version}, it now carries \
                  {observed_row_version}"
             ),
-            Self::Operation { literal, .. } if literal == "fresh-credential-required" => {
-                formatter.write_str(
-                    "fresh-credential-required: the server refused this credential. The request was not retried",
-                )
-            }
             Self::Operation { literal, detail } if literal == "schema-invalid" => {
                 match detail["pointer"].as_str() {
                     Some(pointer) => write!(formatter, "{literal} at JSON pointer {pointer:?}"),

@@ -215,7 +215,6 @@ describe("the transport's streamed read", () => {
     operation: "wamn-wms:pallet/query@2.0.0",
     method: "GET",
     template: "/pallet/query",
-    freshOnly: false,
     contract: {
       resultClass: "page",
       partialSchema: null,

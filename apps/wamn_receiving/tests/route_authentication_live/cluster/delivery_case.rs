@@ -46,9 +46,7 @@ const DATABASE_CLUSTER: &str = "route-auth-pg18";
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, openssl, WAMN_DELIVERY_CLUSTER"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "openssl",
-    ]);
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
     ensure!(
         std::env::var_os(wamn_control::delivery::CANDIDATE_ENV).is_none(),
         "the owned setup mints its own candidate"
@@ -92,7 +90,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
     let source = source_stream_config(&triple, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&triple, 1);
     let roots = super::super::released_journey_packages()
-        .map(|package| super::super::journey_package_root(package, None))
+        .map(|package| super::super::journey_package_root(package))
         .collect::<Vec<_>>();
     let consumers = super::declared_consumers(roots.iter().map(PathBuf::as_path))?;
     let broker = event_broker::prepare(
@@ -164,7 +162,6 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
         host_secret_directory: work.join("host-secrets"),
         host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: work.join("operator-pat.json"),
-        fresh_only_packages: None,
         postcommit: None,
         materializer: None,
         runtime: None,

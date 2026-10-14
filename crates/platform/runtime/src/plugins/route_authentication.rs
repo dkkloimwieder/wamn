@@ -4,14 +4,12 @@
 //! attachment and its policy. For a policy that names a credential it calls
 //! [`PlatformRouteAuthenticator`]. That authenticator verifies a PAT through
 //! the system identity reader, or a session through the issuer keys. It then
-//! reads the caller's permission roots through the existing callable-HTTP
-//! project pool and expands them through the closures of the loaded release
-//! (platform-deploy.md R18).
+//! reads the caller's permissions through the existing callable-HTTP
+//! project pool.
 
 use std::sync::Arc;
 
 use tracing::Instrument as _;
-use wamn_catalog::ReleaseClosures;
 use wamn_engine::flow_http_routing::{
     AuthRejection, AuthenticatedCaller, AuthenticationRequest, CredentialType, Header,
     RouteAuthenticator, RouteCredential, authentication_unavailable, check_csrf,
@@ -24,24 +22,11 @@ use wamn_session::verifier::SessionVerifier;
 use crate::session_keys::IssuerKeys;
 
 /// Resolve an admitted service against its current tenant status and role
-/// grants, with no loaded release: every root expands to nothing, so the
-/// caller holds `admin` or no operation (platform-deploy.md R18 (5)).
+/// grants. Its permissions are the rows of its roles.
 pub async fn queued_service_caller(
     client: &(impl tokio_postgres::GenericClient + Sync),
     tenant: &str,
     principal_id: &str,
-) -> anyhow::Result<AuthenticatedCaller> {
-    queued_service_caller_in(client, tenant, principal_id, &ReleaseClosures::default()).await
-}
-
-/// Resolve an admitted service against its current tenant status and role
-/// grants. Its permissions are the closure of its roots under `closures`, the
-/// closures of the release the host loaded (platform-deploy.md R18).
-pub async fn queued_service_caller_in(
-    client: &(impl tokio_postgres::GenericClient + Sync),
-    tenant: &str,
-    principal_id: &str,
-    closures: &ReleaseClosures,
 ) -> anyhow::Result<AuthenticatedCaller> {
     let rows = client
         .query(
@@ -52,7 +37,6 @@ pub async fn queued_service_caller_in(
              LEFT JOIN app_system.permissions AS permissions \
                ON permissions.tenant_id = user_roles.tenant_id \
               AND permissions.role_name = user_roles.role_name \
-              AND permissions.permission = permissions.required_by \
              WHERE users.tenant_id = $1 AND users.id = $2::text::uuid \
                AND users.type = 'service' AND users.status = 'active'",
             &[&tenant, &principal_id],
@@ -63,20 +47,17 @@ pub async fn queued_service_caller_in(
         .ok_or_else(|| anyhow::anyhow!("queued service principal is absent or inactive"))?
         .try_get::<_, String>(0)?;
     let mut admin = false;
-    let mut roots = std::collections::BTreeSet::new();
+    let mut permissions = std::collections::HashSet::new();
     for row in &rows {
         admin |= row.try_get::<_, Option<String>>(1)?.as_deref() == Some(ADMIN_ROLE);
-        roots.extend(row.try_get::<_, Option<String>>(2)?);
+        permissions.extend(row.try_get::<_, Option<String>>(2)?);
     }
     Ok(AuthenticatedCaller::new(
         "automation",
         principal,
         CredentialType::QueuedService,
         admin,
-        closures
-            .expand(roots.iter().map(String::as_str))
-            .into_iter()
-            .collect(),
+        permissions,
     ))
 }
 
@@ -507,7 +488,6 @@ mod tests {
                     ServingComponentOperation {
                         pre_commit: None,
                         committed_result_schema: None,
-                        fresh_only: false,
                         registered_operation: None,
                         permissions: BTreeSet::new(),
                         participant: None,

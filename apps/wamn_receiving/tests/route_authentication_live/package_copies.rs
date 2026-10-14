@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use tokio::process::Command;
 
-use super::copy_fresh_only_package;
+use super::copy_package;
 
 /// The entries of a repository or an apps directory that are copied or built,
 /// never linked.
@@ -63,7 +63,7 @@ pub(super) fn create(root: &Path, sources: &[PathBuf]) -> anyhow::Result<()> {
     }
     for (source, name) in sources.iter().zip(copied) {
         let copy = package(root, name);
-        copy_fresh_only_package(source, &copy)?;
+        copy_package(source, &copy)?;
         // A copy has no web client, so `wamn build` skips its web build. pnpm
         // would install that build from `<root>`, whose `node_modules` and
         // `web` link to the repository, and rewrite the repository's links

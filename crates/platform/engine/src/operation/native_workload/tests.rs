@@ -52,7 +52,6 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
                     pre_commit: None,
                     pre_commit_required: false,
                     registered_operation: None,
-                    fresh_only: false,
                     committed_result_schema: None,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),

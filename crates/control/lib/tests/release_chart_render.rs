@@ -223,7 +223,10 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         Some("acme/wms/prod")
     );
     // The host runs as the platform-owned ServiceAccount (owner ruling 2026-10-13).
-    assert_eq!(pod["spec"]["serviceAccountName"].as_str(), Some("wamn-host"));
+    assert_eq!(
+        pod["spec"]["serviceAccountName"].as_str(),
+        Some("wamn-host")
+    );
     // R20: the policy's drain bound is the pod's grace period.
     assert_eq!(
         pod["spec"]["terminationGracePeriodSeconds"].as_u64(),

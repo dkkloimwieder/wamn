@@ -80,7 +80,6 @@ const READ: ScreenSpec = ScreenSpec {
         replay: Replay::Unknown,
     },
     route: Some(route),
-    fresh_only: false,
     record: Some(RECORD),
     revision: None,
     revision_inputs: &[],

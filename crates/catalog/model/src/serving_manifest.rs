@@ -152,15 +152,9 @@ pub struct ServingComponentOperation {
     /// Explicit application permission identity. Palette exports carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
-    /// Every registered operation in this export's call graph, its own included.
-    ///
-    /// Publish computes the set. The caller must hold each member.
+    /// The export's own registered operation. The caller must hold it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub permissions: BTreeSet<String>,
-    /// Require a fresh originating credential. Publish sets it when any
-    /// operation in the call graph requires one.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub fresh_only: bool,
     /// Canonical JSON for this registered operation's admitted committed result schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<String>,
@@ -192,7 +186,6 @@ impl ServingComponentOperation {
         self.pre_commit == admitted.pre_commit
             && self.registered_operation == admitted.registered_operation
             && self.committed_result_schema == schema
-            && (self.fresh_only || !admitted.fresh_only)
             && admitted
                 .registered_operation
                 .as_ref()
@@ -261,9 +254,9 @@ impl ServingComponent {
     /// dependency is a component-model call inside these bytes, with no host
     /// between. Publish decides the authority of that call here, once:
     /// `resolve` returns the admitted fact of each dependency's base. Every
-    /// export then carries the union of the permissions and SQL statements of
-    /// its call graph, the fresh-credential rule of any callee, and the
-    /// participant that the base selects. The descriptor is `fact` with its
+    /// export then carries its own permission, the union of the SQL
+    /// statements of its call graph, and the participant that the base
+    /// selects. The descriptor is `fact` with its
     /// `connections`.
     pub fn project<'a>(
         fact: &'a AdmittedComponent,
@@ -276,8 +269,7 @@ impl ServingComponent {
             let mut folded = ServingComponentOperation {
                 pre_commit: operation.pre_commit.clone(),
                 registered_operation: operation.registered_operation.clone(),
-                permissions: BTreeSet::new(),
-                fresh_only: false,
+                permissions: operation.registered_operation.iter().cloned().collect(),
                 committed_result_schema: operation.committed_result_schema.as_ref().map(|schema| {
                     String::from_utf8(wamn_execution_contract::canonical_json_bytes(
                         &schema.schema,
@@ -321,10 +313,6 @@ fn fold_call_graph<'a>(
                 ),
             })?;
     path.push(key);
-    folded
-        .permissions
-        .extend(operation.registered_operation.iter().cloned());
-    folded.fresh_only |= operation.fresh_only;
     for (path, statement) in &operation.statements {
         if let Some(previous) = folded.statements.insert(path.clone(), statement.clone())
             && &previous != statement
@@ -1273,11 +1261,6 @@ impl ServingManifest {
                         );
                     }
                 }
-                if operation.fresh_only && operation.permissions.is_empty() {
-                    return invalid(format!(
-                        "export {export:?} requires no permission, so it must not require a fresh credential"
-                    ));
-                }
                 validate_registered_operation(
                     &package_versions,
                     &component.package_id,
@@ -1294,13 +1277,12 @@ impl ServingManifest {
                     validate_release_operation(&package_versions, permission)?;
                 }
                 if let Some(participant) = &operation.participant
-                    && !(operation.permissions.contains(participant)
-                        && component.operations.get(participant).is_some_and(|local| {
-                            local.registered_operation.as_deref() == Some(participant.as_str())
-                        }))
+                    && !component.operations.get(participant).is_some_and(|local| {
+                        local.registered_operation.as_deref() == Some(participant.as_str())
+                    })
                 {
                     return invalid(format!(
-                        "participant {participant:?} of export {export:?} is not a registered local operation in its permissions"
+                        "participant {participant:?} of export {export:?} is not a registered local operation"
                     ));
                 }
                 if operation
@@ -1680,7 +1662,6 @@ mod tests {
                     ServingComponentOperation {
                         pre_commit: None,
                         committed_result_schema: None,
-                        fresh_only: false,
                         registered_operation: Some("overlay:transform/map@3.0.0".into()),
                         permissions: BTreeSet::from([
                             "base:widget/get@1.0.0".into(),
@@ -1699,7 +1680,6 @@ mod tests {
                     ServingComponentOperation {
                         pre_commit: None,
                         committed_result_schema: None,
-                        fresh_only: false,
                         registered_operation: Some("base:widget/get@1.0.0".into()),
                         permissions: BTreeSet::from(["base:widget/get@1.0.0".into()]),
                         participant: None,
@@ -1887,7 +1867,6 @@ mod tests {
             pre_commit: None,
             pre_commit_required: false,
             registered_operation: Some(registered.into()),
-            fresh_only: false,
             committed_result_schema: None,
             dependencies,
             input_ports: Vec::new(),
@@ -1920,7 +1899,6 @@ mod tests {
         let mut base_operation =
             admitted_operation(BASE, Some("INSERT INTO receipt DEFAULT VALUES"), Vec::new());
         base_operation.pre_commit = Some("base:receiving/record-pre-commit@1.0.0".into());
-        base_operation.fresh_only = true;
         let base = admitted("base", "1.0.0", COMPONENT_A, vec![(BASE, base_operation)]);
         let dependency = ComponentOperationDependency {
             participant: Some(PARTICIPANT.into()),
@@ -1954,11 +1932,8 @@ mod tests {
         let entry = &projected.operations[OVERLAY];
         assert_eq!(
             entry.permissions,
-            BTreeSet::from([BASE.into(), OVERLAY.into(), PARTICIPANT.into()])
-        );
-        assert!(
-            entry.fresh_only,
-            "the entry inherits the callee's fresh-credential rule"
+            BTreeSet::from([OVERLAY.into()]),
+            "the entry requires its own permission only"
         );
         assert_eq!(entry.participant.as_deref(), Some(PARTICIPANT));
         assert_eq!(
@@ -1971,7 +1946,7 @@ mod tests {
             participant.permissions,
             BTreeSet::from([PARTICIPANT.into()])
         );
-        assert!(participant.participant.is_none() && !participant.fresh_only);
+        assert!(participant.participant.is_none());
 
         let unresolved = |_: &ComponentOperationDependency| None;
         let error = ServingComponent::project(&overlay, Vec::new(), &unresolved)

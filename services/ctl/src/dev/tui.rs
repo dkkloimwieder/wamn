@@ -912,7 +912,6 @@ mod tests {
         let operation = ServingComponentOperation {
             pre_commit: None,
             committed_result_schema: None,
-            fresh_only: false,
             registered_operation: Some("platform-fixture:widget/get@1.0.0".to_owned()),
             permissions: BTreeSet::from([
                 "platform-fixture:widget/get@1.0.0".to_owned(),

@@ -525,7 +525,6 @@ fn emit_operation(
     writeln!(source, "  operation: {:?},", operation.operation).expect("write");
     writeln!(source, "  method: {:?},", route.method).expect("write");
     writeln!(source, "  template: {:?},", route.template).expect("write");
-    writeln!(source, "  freshOnly: {},", operation.fresh_only).expect("write");
     source.push_str("  contract: {\n");
     writeln!(
         source,

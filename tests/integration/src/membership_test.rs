@@ -277,8 +277,8 @@ async fn seed_tenant_role(
     .await
     .context("seed the dedicated test role")?;
     tx.execute(
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ($1, $2, $3, $3)",
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+         VALUES ($1, $2, $3)",
         &[&args.tenant, &role, &operation_grant()?],
     )
     .await

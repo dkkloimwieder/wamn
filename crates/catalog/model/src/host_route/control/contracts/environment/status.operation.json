@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:environment/status@0.6.0",
+  "operation": "wamn-control:environment/status@0.7.0",
   "type": "get",
   "label": "Status of an environment",
-  "grant": "wamn-control:environment/status@0.6.0",
+  "grant": "wamn-control:environment/status@0.7.0",
   "permission_token": "environment.status",
   "result": "one",
   "transaction": "implicit",

@@ -1,17 +1,15 @@
-//! Live test of authored role permissions as roots
-//! (docs/plan/platform-ui.md §4.1, docs/plan/platform-deploy.md R18).
+//! Live test of authored role permissions as rows
+//! (docs/plan/trx-pkg-plan.md, Authorization).
 //!
-//! A grant stores the root, served by a release or not, and no row holds a
-//! closure. Project migration 0011 removes the closure rows an installed
-//! database still holds. The test holds the process lock of its server,
-//! because the schema installer creates cluster-wide roles.
+//! A grant stores one row, served by a release or not, and a revoke removes
+//! it. The test holds the process lock of its server, because the schema
+//! installer creates cluster-wide roles.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{ServingComponent, ServingComponentOperation};
 use wamn_control::role_permissions::{
-    ReleaseClosures, create_role, delete_role, grant_permission, revoke_permission,
+    create_role, delete_role, grant_permission, revoke_permission,
 };
 use wamn_test_infrastructure::locked_database::{self, LockedDatabase};
 
@@ -19,48 +17,11 @@ const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history
 const RECORD_HISTORY_APP_GRANTS: &str =
     include_str!("../../../../deploy/sql/record-history-app-grants.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const PERMISSION_ROOTS: &str =
-    include_str!("../../../../deploy/sql/migrations/project/0011_permission_roots.sql");
-const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
-
-/// One component of `package` whose exports register the given operations,
-/// each with its folded call-graph permissions.
-fn component(package: &str, operations: &[(&str, &[&str])]) -> ServingComponent {
-    ServingComponent {
-        package_id: package.to_owned(),
-        operations: operations
-            .iter()
-            .enumerate()
-            .map(|(index, (sealed, required))| {
-                (
-                    format!("export-{index}"),
-                    ServingComponentOperation {
-                        pre_commit: None,
-                        registered_operation: Some((*sealed).to_owned()),
-                        permissions: std::iter::once(*sealed)
-                            .chain(required.iter().copied())
-                            .map(str::to_owned)
-                            .collect(),
-                        fresh_only: false,
-                        committed_result_schema: None,
-                        participant: None,
-                        statements: BTreeMap::new(),
-                    },
-                )
-            })
-            .collect(),
-        descriptor: wamn_catalog::ComponentDescriptor::named(
-            package,
-            "1",
-            format!("sha256:{}", "0".repeat(64)),
-        ),
-    }
-}
 
 async fn rows(client: &Client) -> BTreeSet<String> {
     client
         .query(
-            "SELECT permission || ' by ' || required_by FROM app_system.permissions \
+            "SELECT permission FROM app_system.permissions \
              WHERE tenant_id = 't1' AND role_name = 'clerk'",
             &[],
         )
@@ -95,36 +56,6 @@ fn set(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|item| (*item).to_owned()).collect()
 }
 
-#[tokio::test]
-async fn migration_0011_removes_the_closure_rows_and_keeps_the_roots() {
-    let (_database, client) = install().await;
-    client
-        .batch_execute(&format!(
-            "BEGIN; SELECT set_config('app.user_id', '{PROVISIONING}', true), \
-               set_config('app.operation', 'admin:release-permission-fixture', true); \
-             INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'clerk'); \
-             INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ('t1', 'clerk', 'shop:order/create', 'shop:order/create'), \
-                    ('t1', 'clerk', 'shop:order/get', 'shop:order/create'), \
-                    ('t1', 'clerk', 'shop:line/list', 'shop:line/list'); \
-             COMMIT;"
-        ))
-        .await
-        .expect("seed a root with its closure row");
-    client
-        .batch_execute(&format!("BEGIN; {PERMISSION_ROOTS} COMMIT;"))
-        .await
-        .expect("apply migration 0011");
-    assert_eq!(
-        rows(&client).await,
-        set(&[
-            "shop:order/create by shop:order/create",
-            "shop:line/list by shop:line/list",
-        ]),
-        "only the roots remain"
-    );
-}
-
 /// Run one change in its own transaction and return its result.
 macro_rules! change {
     ($client:expr, |$tx:ident| $body:expr) => {{
@@ -138,17 +69,8 @@ macro_rules! change {
 }
 
 #[tokio::test]
-async fn permission_grants_and_revokes_store_roots_only() {
+async fn permission_grants_and_revokes_store_rows() {
     let (_database, mut client) = install().await;
-    // report/run requires line/list, and order/create requires line/list too.
-    let current = ReleaseClosures::from_components(&[component(
-        "shop",
-        &[
-            ("shop:report/run@1.0.0", &["shop:line/list@1.0.0"]),
-            ("shop:order/create@1.0.0", &["shop:line/list@1.0.0"]),
-            ("shop:line/list@1.0.0", &[]),
-        ],
-    )]);
 
     let refused = change!(client, |tx| create_role(&tx, "t1", "admin")).unwrap_err();
     assert!(format!("{refused:#}").contains("built-in"), "{refused:#}");
@@ -164,8 +86,7 @@ async fn permission_grants_and_revokes_store_roots_only() {
         &tx,
         "t1",
         "admin",
-        "shop:line/list",
-        &current
+        "shop:line/list"
     ))
     .unwrap_err();
     assert!(
@@ -173,38 +94,29 @@ async fn permission_grants_and_revokes_store_roots_only() {
         "{refused:#}"
     );
 
-    // R18 (4): a reference the release does not serve is stored as a root.
+    // A reference the release does not serve is stored.
     let dormant = change!(client, |tx| grant_permission(
         &tx,
         "t1",
         "clerk",
-        "shop:order/delete",
-        &current
+        "shop:order/delete"
     ))
     .unwrap();
     assert_eq!(dormant.rows_added, 1);
-    assert!(dormant.closure.is_empty());
 
     let granted = change!(client, |tx| grant_permission(
         &tx,
         "t1",
         "clerk",
-        "shop:report/run",
-        &current
+        "shop:report/run"
     ))
     .unwrap();
-    assert_eq!(granted.rows_added, 1, "the root alone is stored");
-    assert_eq!(
-        granted.closure,
-        set(&["shop:report/run", "shop:line/list"]),
-        "the outcome reports the closure under the given release"
-    );
+    assert_eq!(granted.rows_added, 1, "the grant alone is stored");
     let again = change!(client, |tx| grant_permission(
         &tx,
         "t1",
         "clerk",
-        "shop:report/run",
-        &current
+        "shop:report/run"
     ))
     .unwrap();
     assert_eq!(again.rows_added, 0, "a second grant writes nothing");
@@ -212,34 +124,25 @@ async fn permission_grants_and_revokes_store_roots_only() {
         &tx,
         "t1",
         "clerk",
-        "shop:line/list",
-        &current
+        "shop:line/list"
     ))
     .unwrap();
     assert_eq!(
         rows(&client).await,
-        set(&[
-            "shop:order/delete by shop:order/delete",
-            "shop:report/run by shop:report/run",
-            "shop:line/list by shop:line/list",
-        ]),
-        "no row holds a closure"
+        set(&["shop:order/delete", "shop:report/run", "shop:line/list"]),
+        "each grant is one row"
     );
 
-    let revoked = change!(client, |tx| revoke_permission(
+    change!(client, |tx| revoke_permission(
         &tx,
         "t1",
         "clerk",
         "shop:line/list"
     ))
     .unwrap();
-    assert!(revoked.still_required_by.is_empty());
     assert_eq!(
         rows(&client).await,
-        set(&[
-            "shop:order/delete by shop:order/delete",
-            "shop:report/run by shop:report/run",
-        ])
+        set(&["shop:order/delete", "shop:report/run"])
     );
     let refused = change!(client, |tx| revoke_permission(
         &tx,

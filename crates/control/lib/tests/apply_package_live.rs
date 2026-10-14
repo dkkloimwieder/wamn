@@ -766,10 +766,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                  VALUES ('{TENANT}', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
              INSERT INTO app_system.roles (tenant_id, name) \
                  VALUES ('{TENANT}', 'clerk'); \
-             INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES \
-                 ('{TENANT}', 'clerk', 'wamn-inventory:obsolete/operation', \
-                  'wamn-inventory:obsolete/operation'), \
-                 ('{TENANT}', 'clerk', 'client-overlay:rack/get', 'client-overlay:rack/get'); \
+             INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
+                 ('{TENANT}', 'clerk', 'wamn-inventory:obsolete/operation'), \
+                 ('{TENANT}', 'clerk', 'client-overlay:rack/get'); \
              COMMIT;"
         ))
         .await

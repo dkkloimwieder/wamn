@@ -163,7 +163,7 @@ pub async fn delete_role(args: RoleArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Select the operation for the role with its closure and print the result.
+/// Grant the operation to the role and print the result.
 pub async fn grant_permission(args: PermissionArgs) -> anyhow::Result<()> {
     let outcome = role_permissions::grant_permission_in(
         &args.environment.target(),
@@ -176,33 +176,14 @@ pub async fn grant_permission(args: PermissionArgs) -> anyhow::Result<()> {
     } else {
         "unchanged"
     };
-    let required = outcome
-        .closure
-        .iter()
-        .filter(|permission| **permission != args.operation)
-        .map(String::as_str)
-        .collect::<Vec<_>>();
     println!("{state}: {} to role {}", args.operation, args.role);
-    if !required.is_empty() {
-        println!("requires: {}", required.join(", "));
-    }
     Ok(())
 }
 
-/// Remove the selection of the operation from the role and print the result.
+/// Remove the operation from the role and print the result.
 pub async fn revoke_permission(args: PermissionArgs) -> anyhow::Result<()> {
-    let outcome = role_permissions::revoke_permission_in(
-        &args.environment.target(),
-        &args.role,
-        &args.operation,
-    )
-    .await?;
+    role_permissions::revoke_permission_in(&args.environment.target(), &args.role, &args.operation)
+        .await?;
     println!("revoked: {} from role {}", args.operation, args.role);
-    if !outcome.still_required_by.is_empty() {
-        println!(
-            "still effective: {} requires it",
-            outcome.still_required_by.join(", ")
-        );
-    }
     Ok(())
 }

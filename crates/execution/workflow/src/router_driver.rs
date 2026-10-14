@@ -581,7 +581,6 @@ impl RouterDriver {
                             authorize_registered_operation(
                                 request.caller.as_ref(),
                                 operation.registered_operation.as_deref(),
-                                operation.fresh_only,
                             )?;
                             if let Some(requested_ms) = call.deadline_ms {
                                 let effective_ms = bounded_node_deadline_ms(Some(requested_ms));

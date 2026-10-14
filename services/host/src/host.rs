@@ -553,9 +553,7 @@ fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
         .environment
         .as_deref()
         .filter(|environment| !environment.is_empty())
-        .context(
-            "a host that serves a release requires --environment",
-        )?;
+        .context("a host that serves a release requires --environment")?;
     Ok(ReleaseScope::new(
         project_env_tenant(org, &args.project, environment),
         environment,
@@ -1126,11 +1124,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         )
         .await?;
         postgres = postgres.with_local_application(local);
-    }
-    if let Some(release) = release.as_ref() {
-        // Built once at load. Every caller path expands the caller's
-        // permission roots through it (platform-deploy.md R18).
-        postgres = postgres.with_release_closures(release);
     }
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);

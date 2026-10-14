@@ -11,7 +11,7 @@ use super::*;
 /// The build's input digest covers the lock file of the enclosing workspace,
 /// `<package>/../Cargo.lock`, so the copy takes it too. Without it the copy's
 /// tree differs from its `build.json` and push-package refuses it as stale.
-pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
+pub(super) fn copy_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
     copy_package_tree(source, destination)?;
     let lock = |root: &Path| root.parent().map(|parent| parent.join("Cargo.lock"));
     if let (Some(from), Some(to)) = (lock(source), lock(destination))
@@ -42,78 +42,10 @@ fn copy_package_tree(source: &Path, destination: &Path) -> anyhow::Result<()> {
         if kind.is_dir() {
             copy_package_tree(&entry.path(), &target)?;
         } else {
-            anyhow::ensure!(
-                kind.is_file(),
-                "fresh-only package sources must be regular files"
-            );
+            anyhow::ensure!(kind.is_file(), "package sources must be regular files");
             std::fs::copy(entry.path(), target)?;
         }
     }
-    Ok(())
-}
-
-/// The authored line of the base's record_receipt command, which the
-/// fresh-only copy follows with `fresh_only = True`.
-const RECORD_RECEIPT_COMMAND: &str =
-    "\"receiving.record_receipt\" = manifest.Command(\"receiving.record_receipt\") {\n";
-
-/// Copy the base and the overlay into a test-owned workspace at `root` and
-/// make the base's record_receipt fresh-only in its wamn.k and its component
-/// declaration. [`build_fresh_only_packages`] builds the copies.
-pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
-    anyhow::ensure!(!root.exists(), "fresh-only package directory must be new");
-    super::package_copies::create(root, &[package_root(), overlay_package_root()])?;
-    let base = super::package_copies::package(root, "wamn_receiving");
-    let authored_path = base.join("wamn.k");
-    let authored = std::fs::read_to_string(&authored_path)?;
-    anyhow::ensure!(
-        authored.matches(RECORD_RECEIPT_COMMAND).count() == 1,
-        "the base wamn.k must declare record_receipt once"
-    );
-    std::fs::write(
-        &authored_path,
-        authored.replace(
-            RECORD_RECEIPT_COMMAND,
-            &format!("{RECORD_RECEIPT_COMMAND}            fresh_only = True\n"),
-        ),
-    )?;
-    let declaration_path = base.join("publication/components/receiving.json.in");
-    let mut declaration: Value = serde_json::from_slice(&std::fs::read(&declaration_path)?)?;
-    declaration["operations"]
-        .get_mut(BASE_RECORD_RECEIPT_REFERENCE)
-        .context("the base declaration must name the registered operation")?["fresh-only"] =
-        Value::Bool(true);
-    std::fs::write(declaration_path, serde_json::to_vec(&declaration)?)?;
-    Ok(())
-}
-
-#[test]
-fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyhow::Result<()> {
-    let source_manifest = package_root().join("wamn.k");
-    let source_declaration = package_root().join("publication/components/receiving.json.in");
-    let manifest_before = std::fs::read(&source_manifest)?;
-    let declaration_before = std::fs::read(&source_declaration)?;
-    let scratch = ScratchRoot::create()?;
-    let copies = scratch.path().join("packages");
-    prepare_fresh_only_packages(&copies)?;
-    let base = super::package_copies::package(&copies, "wamn_receiving");
-    let manifest = std::fs::read_to_string(base.join("wamn.k"))?;
-    let declaration: Value = serde_json::from_slice(&std::fs::read(
-        base.join("publication/components/receiving.json.in"),
-    )?)?;
-    assert!(manifest.contains(&format!(
-        "{RECORD_RECEIPT_COMMAND}            fresh_only = True\n"
-    )));
-    assert_eq!(
-        declaration["operations"][BASE_RECORD_RECEIPT_REFERENCE]["fresh-only"],
-        true
-    );
-    assert_eq!(std::fs::read(source_manifest)?, manifest_before);
-    assert_eq!(std::fs::read(source_declaration)?, declaration_before);
-    assert!(
-        prepare_fresh_only_packages(&copies).is_err(),
-        "an existing fixture is never overwritten"
-    );
     Ok(())
 }
 
@@ -268,8 +200,7 @@ pub(super) async fn publish_receiving_release(
     )
     .await?;
     reconcile_journey_data_access(&packages, &route.database_url).await?;
-    let declarations =
-        render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
+    let declarations = render_component_declarations(root, &inputs.component_directory)?;
     let admitted_components = admit_journey_components(inputs, &declarations)?;
     verify_journey_components_are_effectful(&admitted_components)?;
 
@@ -287,7 +218,6 @@ pub(super) async fn publish_receiving_release(
     )
     .await?;
     let gate_reports = gate_journey_wirings(
-        inputs,
         management_server.bind(),
         route
             .management_token

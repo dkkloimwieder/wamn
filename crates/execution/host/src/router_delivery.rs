@@ -12,10 +12,9 @@ use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{
     DeliveryClass, DeliveryError, DeliveryOutcome, DeliveryReport, DeliveryRequest,
-    EXECUTION_FAILED, FRESH_CREDENTIAL_REQUIRED, OperationRefusal, OperationRefusalType,
-    PERMISSION_DENIED, ROUTER_DELIVERY_ID, RouteDelivery, RouteSettlement, Source, SourceRef,
-    StreamedDelivery, derived_causation, lower_operation_refusal, resolve_authorized_target,
-    settle_route,
+    EXECUTION_FAILED, OperationRefusal, OperationRefusalType, PERMISSION_DENIED,
+    ROUTER_DELIVERY_ID, RouteDelivery, RouteSettlement, Source, SourceRef, StreamedDelivery,
+    derived_causation, lower_operation_refusal, resolve_authorized_target, settle_route,
 };
 use wamn_event_wire::Causation;
 use wamn_runtime::plugins::wamn_jetstream::{RouterTapPhase, RouterTapPreview, WamnJetstream};
@@ -395,10 +394,6 @@ impl RouterDeliveryBridge {
                     OperationRefusalType::PermissionDenied => {
                         (DeliveryClass::PermissionDenied, PERMISSION_DENIED)
                     }
-                    OperationRefusalType::FreshCredentialRequired => (
-                        DeliveryClass::FreshCredentialRequired,
-                        FRESH_CREDENTIAL_REQUIRED,
-                    ),
                 };
                 self.record(attributes, class);
                 self.tap(
@@ -1117,7 +1112,6 @@ mod tests {
         );
 
         metrics.record(&attributes, DeliveryClass::PermissionDenied);
-        metrics.record(&attributes, DeliveryClass::FreshCredentialRequired);
         metrics.record(&attributes, DeliveryClass::ExecutionFailed);
 
         let base = [
@@ -1135,15 +1129,10 @@ mod tests {
         assert_eq!(
             harness.series(),
             vec![
-                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 3,),
+                ("wamn.router.delivery.attempts".to_owned(), labels(&base), 2,),
                 (
                     "wamn.router.delivery.errors".to_owned(),
                     with_error("execution-failed"),
-                    1,
-                ),
-                (
-                    "wamn.router.delivery.errors".to_owned(),
-                    with_error("fresh-credential-required"),
                     1,
                 ),
                 (

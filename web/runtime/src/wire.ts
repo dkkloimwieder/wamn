@@ -70,8 +70,6 @@ export interface WireRequest {
   readonly method: string;
   /** The path template the release publishes. */
   readonly template: string;
-  /** Whether the operation admits only a fresh credential. */
-  readonly freshOnly: boolean;
   /** What the response must satisfy. */
   readonly contract: ResponseContract;
   /** The submitted items, in wire spelling. */

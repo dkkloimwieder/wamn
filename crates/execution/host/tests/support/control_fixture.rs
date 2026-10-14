@@ -30,7 +30,9 @@ pub(super) async fn install(admin: &Client, admin_url: &str) -> anyhow::Result<S
         .query_one("SELECT current_database()::text", &[])
         .await?
         .get(0);
-    admin.batch_execute("CREATE ROLE wamn_system NOLOGIN").await?;
+    admin
+        .batch_execute("CREATE ROLE wamn_system NOLOGIN")
+        .await?;
     wamn_control::provision_system::install_control_store(admin).await?;
     admin.batch_execute("SET ROLE wamn_system").await?;
     admin

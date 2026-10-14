@@ -923,9 +923,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'user', 'caller@example.test');\n\
              INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'widget-reader');\n\
-             INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ('tenant-a', 'widget-reader', \
-                     'wamn-widgets:widget/get', 'wamn-widgets:widget/get');\n\
+             INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ('tenant-a', 'widget-reader', 'wamn-widgets:widget/get');\n\
              COMMIT;\n"
         ),
     );

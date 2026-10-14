@@ -32,7 +32,7 @@ use wash_runtime::wasmtime::component::{
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::engine::MAX_HOST_CALL_DURATION;
-use crate::flow_http_routing::{AuthenticatedCaller, CredentialType};
+use crate::flow_http_routing::AuthenticatedCaller;
 use crate::operation::node_types;
 use crate::route_bindings::wamn::router_delivery::delivery;
 /// The wire types of `wamn:router-delivery` that a host and the wiring layer
@@ -352,7 +352,7 @@ pub fn resolve_authorized_target(
     let target = resolve_target(manifest, source).ok_or(DeliveryError::SourceNotFound)?;
     validate_caller(source, &target, caller)?;
     // Attachments do not own freshness. The driver reads each released operation.
-    authorize_registered_operation(caller, target.registered_operation.as_deref(), false)
+    authorize_registered_operation(caller, target.registered_operation.as_deref())
         .map_err(|denial| lower_operation_refusal(&denial))?;
     Ok(target)
 }
@@ -377,7 +377,7 @@ pub fn resolve_authorized_host_route(
         return Some(Err(DeliveryError::InvalidRequest));
     }
     Some(
-        authorize_registered_operation(caller, attachment.registered_operation(), false)
+        authorize_registered_operation(caller, attachment.registered_operation())
             .map(|()| attachment)
             .map_err(|denial| lower_operation_refusal(&denial)),
     )
@@ -429,9 +429,6 @@ pub fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
     };
     match denial.refusal_type() {
         OperationRefusalType::PermissionDenied => DeliveryError::PermissionDenied(detail),
-        OperationRefusalType::FreshCredentialRequired => {
-            DeliveryError::FreshCredentialRequired(detail)
-        }
     }
 }
 
@@ -441,7 +438,6 @@ pub fn lower_operation_refusal(denial: &OperationRefusal) -> DeliveryError {
 pub enum DeliveryClass {
     Delivered,
     PermissionDenied,
-    FreshCredentialRequired,
     ExecutionFailed,
 }
 
@@ -451,7 +447,6 @@ impl DeliveryClass {
         match self {
             DeliveryClass::Delivered => None,
             DeliveryClass::PermissionDenied => Some(PERMISSION_DENIED),
-            DeliveryClass::FreshCredentialRequired => Some(FRESH_CREDENTIAL_REQUIRED),
             DeliveryClass::ExecutionFailed => Some(EXECUTION_FAILED),
         }
     }
@@ -516,7 +511,6 @@ pub fn settle_route(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationRefusalType {
     PermissionDenied,
-    FreshCredentialRequired,
 }
 
 /// Exact operation authority missing from the originating caller.
@@ -547,7 +541,6 @@ impl fmt::Display for OperationRefusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let reason = match self.type_ {
             OperationRefusalType::PermissionDenied => "permission denied",
-            OperationRefusalType::FreshCredentialRequired => "fresh-credential-required",
         };
         write!(formatter, "{reason} for operation {}", self.operation)
     }
@@ -555,46 +548,27 @@ impl fmt::Display for OperationRefusal {
 
 impl std::error::Error for OperationRefusal {}
 
-/// Check the grant of a released operation before its entry runs.
-///
-/// The entry's own grant comes first, so a refusal names it. Then every other
-/// operation that its call graph reaches, which publish folded into
-/// `permissions`.
+/// Check the grant of a released operation before its entry runs: the caller
+/// must hold the entry's own registered operation.
 pub fn authorize_released_operation(
     caller: Option<&AuthenticatedCaller>,
     released: &ServingComponentOperation,
 ) -> Result<(), OperationRefusal> {
-    let own = released.registered_operation.as_deref();
-    authorize_registered_operation(caller, own, released.fresh_only)?;
-    for permission in &released.permissions {
-        if Some(permission.as_str()) != own {
-            authorize_registered_operation(caller, Some(permission), released.fresh_only)?;
-        }
-    }
-    Ok(())
+    authorize_registered_operation(caller, released.registered_operation.as_deref())
 }
 
 /// Check that the originating caller holds the registered operation grant.
 pub fn authorize_registered_operation(
     caller: Option<&AuthenticatedCaller>,
     operation: Option<&str>,
-    fresh_only: bool,
 ) -> Result<(), OperationRefusal> {
     let Some(operation) = operation else {
         return Ok(());
     };
-    let caller = caller
+    caller
         .filter(|caller| caller.permits(operation))
-        .ok_or_else(|| OperationRefusal::new(OperationRefusalType::PermissionDenied, operation))?;
-    // User sessions now receive a current authority check at request admission.
-    // This does not widen the separately admitted queued-service contract.
-    if fresh_only && caller.credential_type() == CredentialType::QueuedService {
-        return Err(OperationRefusal::new(
-            OperationRefusalType::FreshCredentialRequired,
-            operation,
-        ));
-    }
-    Ok(())
+        .map(|_| ())
+        .ok_or_else(|| OperationRefusal::new(OperationRefusalType::PermissionDenied, operation))
 }
 
 /// The host call ceiling in milliseconds. The constant is well under an hour,
@@ -630,6 +604,7 @@ pub fn route_component<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flow_http_routing::CredentialType;
 
     const MANIFEST: &[u8] = br#"{"attachments":{},"components":[{"descriptor":{"component":"http-request","component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"},{"descriptor":{"component":"transform","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[],"effects":[],"imports":[],"imports-fingerprint":"","interface-version":"0.1","operations":{}},"operations":{"wamn:node/handler@0.1.0":{}},"package-id":"manifest_mint"}],"format-version":9,"release":{"packages":[{"package-id":"manifest_mint","package-version":"1.0.0"}]},"routes":[],"workflow":{"attachments":{"orders-http":{"auth-policy":{"modes":["none"]},"definition":{"id":"orders-http","run-deadline-ms":30000,"type":"http"},"definition-hash":"sha256:5555555555555555555555555555555555555555555555555555555555555555","package-id":"manifest_mint","type":"http","wiring-id":"orders","wiring-version":1}},"registrations":{"manifest_mint::orders-changed":{"entity":"orders","ops":["insert","update"],"package-id":"manifest_mint","source-package-id":"manifest_mint","wiring-id":"shipping","wiring-version":2}},"wirings":[{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":1,"wiring-id":"orders"},"package-id":"manifest_mint"},{"graph":{"entry":"in","format-version":"0.1","nodes":{"in":{"component":"transform","interface-version":"0.1","operation":"map"}},"version":2,"wiring-id":"shipping"},"package-id":"manifest_mint"}]}}"#;
 
@@ -799,9 +774,8 @@ mod tests {
             .registered_operation = Some(operation.to_owned());
         let target = resolve_target(&registered, SourceRef::Attachment("orders-http"))
             .expect("the registered attachment resolves from the loaded release");
-        let denial =
-            authorize_registered_operation(None, target.registered_operation.as_deref(), false)
-                .expect_err("a callerless registered invocation is denied");
+        let denial = authorize_registered_operation(None, target.registered_operation.as_deref())
+            .expect_err("a callerless registered invocation is denied");
 
         assert_eq!(denial.operation(), operation);
         assert!(matches!(
@@ -832,33 +806,6 @@ mod tests {
     }
 
     #[test]
-    fn nested_fresh_only_refusal_retains_its_exact_wire_contract() {
-        let operation = "platform-fixture:widget/record-batch@1.0.0";
-        let error = anyhow::Error::new(OperationRefusal::new(
-            OperationRefusalType::FreshCredentialRequired,
-            operation,
-        ))
-        .context("invoke nested operation");
-        let refusal = error
-            .downcast_ref::<OperationRefusal>()
-            .expect("the nested host boundary must retain the operation refusal")
-            .clone();
-        assert_eq!(
-            refusal.refusal_type(),
-            OperationRefusalType::FreshCredentialRequired
-        );
-        assert!(matches!(
-            lower_operation_refusal(&refusal),
-            DeliveryError::FreshCredentialRequired(PermissionDenial { operation: refused })
-                if refused == operation
-        ));
-        assert_eq!(
-            DeliveryClass::FreshCredentialRequired.error(),
-            Some("fresh-credential-required")
-        );
-    }
-
-    #[test]
     fn node_deadline_is_nonzero_and_host_bounded() {
         let ceiling = max_host_call_ms();
 
@@ -872,8 +819,8 @@ mod tests {
     fn every_registered_invocation_requires_the_exact_operation_grant() {
         let operation = "orders:widget/get@7.0.0";
 
-        assert!(authorize_registered_operation(None, None, false).is_ok());
-        let denial = authorize_registered_operation(None, Some(operation), false)
+        assert!(authorize_registered_operation(None, None).is_ok());
+        let denial = authorize_registered_operation(None, Some(operation))
             .expect_err("a registered invocation without an originating caller is denied");
         assert_eq!(denial.operation(), operation);
     }

@@ -37,9 +37,6 @@ pub struct JourneyDocument {
     pub host_secret_directory: PathBuf,
     pub host_secret_namespace: String,
     pub operator_secret_output: PathBuf,
-    /// Copied package sources for the dedicated fresh-only test.
-    /// The initial phase creates this directory before any package admission.
-    pub fresh_only_packages: Option<PathBuf>,
     /// Released materializer replay and retry test.
     pub postcommit: Option<PostcommitPhase>,
     /// Known only after the route phase has provisioned the project
@@ -139,15 +136,6 @@ pub fn parse_journey_document(bytes: &[u8]) -> anyhow::Result<JourneyDocument> {
         .context("journey document disagrees with its generated schema")?;
     for (field, value) in document.scalars() {
         anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
-    }
-    if let Some(root) = &document.fresh_only_packages {
-        anyhow::ensure!(
-            root.is_absolute()
-                && root.file_name().is_some()
-                && root.parent() == document.host_secret_directory.parent()
-                && root != &document.host_secret_directory,
-            "fresh_only_packages must name a separate directory beside the private host secrets"
-        );
     }
     if let Some(materializer) = &document.materializer {
         for (field, value) in [

@@ -10,7 +10,6 @@
 //! It also holds the role, permission and user role writes of §4.6, which
 //! `wamn-ctl` and the application host routes share.
 
-use std::collections::BTreeSet;
 use std::fmt;
 
 use tokio_postgres::GenericClient;
@@ -190,14 +189,8 @@ pub enum AdministrationRefusal {
     /// `admin` stays while the user holds `project-admin` in the project,
     /// which `org-admin` also writes (§2.8).
     AdminCovered { user_id: String },
-    /// The role holds the operation neither directly nor through a root.
+    /// The role does not hold the operation.
     NotHeld { role: String, reference: String },
-    /// The role holds the operation only because these roots require it.
-    NotSelected {
-        role: String,
-        reference: String,
-        required_by: Vec<String>,
-    },
 }
 
 impl fmt::Display for AdministrationRefusal {
@@ -235,15 +228,6 @@ impl fmt::Display for AdministrationRefusal {
             Self::NotHeld { role, reference } => {
                 write!(formatter, "role {role} does not hold {reference}")
             }
-            Self::NotSelected {
-                role,
-                reference,
-                required_by,
-            } => write!(
-                formatter,
-                "{reference} is not directly granted to role {role}; it is required by {}",
-                required_by.join(", ")
-            ),
         }
     }
 }
@@ -281,35 +265,20 @@ impl From<AdministrationRefusal> for AdministrationError {
 /// What a permission grant changed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionGrantOutcome {
-    /// Rows written: the selected root, or none on a second grant.
+    /// Rows written: the permission, or none on a second grant.
     pub rows_added: u64,
-    /// The closure of the root in the release the caller loaded, the root
-    /// included, or empty when that release does not serve it. Nothing stores
-    /// it: each host expands the root through its own release.
-    pub closure: BTreeSet<String>,
-}
-
-/// What a permission revoke changed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PermissionRevokeOutcome {
-    /// The other selected roots of the role that still require the revoked
-    /// permission, so it stays effective through them.
-    pub still_required_by: Vec<String>,
 }
 
 const ROLE_EXISTS_SQL: &str = "SELECT 1 FROM app_system.roles WHERE tenant_id = $1 AND name = $2";
 
 const DROP_ROLE_SQL: &str = "DELETE FROM app_system.roles WHERE tenant_id = $1 AND name = $2";
 
-const ROOT_SQL: &str = "INSERT INTO app_system.permissions \
-    (tenant_id, role_name, permission, required_by) VALUES ($1, $2, $3, $3) \
+const PERMISSION_SQL: &str = "INSERT INTO app_system.permissions \
+    (tenant_id, role_name, permission) VALUES ($1, $2, $3) \
     ON CONFLICT DO NOTHING";
 
-const DROP_ROOT_SQL: &str = "DELETE FROM app_system.permissions \
-    WHERE tenant_id = $1 AND role_name = $2 AND permission = $3 AND required_by = $3";
-
-const ROLE_ROOTS_SQL: &str = "SELECT permission FROM app_system.permissions \
-    WHERE tenant_id = $1 AND role_name = $2 AND permission = required_by ORDER BY permission";
+const DROP_PERMISSION_SQL: &str = "DELETE FROM app_system.permissions \
+    WHERE tenant_id = $1 AND role_name = $2 AND permission = $3";
 
 // The writes below run in a transaction that the caller prepared: it holds
 // the tenant's operation grant lock and binds the actor of the writes.
@@ -376,74 +345,47 @@ pub async fn require_role(
     }
 }
 
-/// Select `reference` for the authored `role`: store it as a root
-/// (platform-deploy.md R18). The grant stores any reference that
-/// `permissions_reference_check` accepts, whether a release serves it or not.
-/// `closure` is its closure in the release the caller loaded, or `None` when
-/// that release does not serve it; the outcome reports it and nothing stores it.
+/// Grant `reference` to the authored `role`: store it as a row. The grant
+/// stores any reference that `permissions_reference_check` accepts, whether a
+/// release serves it or not.
 pub async fn grant_permission(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     role: &str,
     reference: &str,
-    closure: Option<&BTreeSet<String>>,
 ) -> Result<PermissionGrantOutcome, AdministrationError> {
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminTakesNoPermission.into());
     }
     require_role(client, tenant, role).await?;
     let rows_added = client
-        .execute(ROOT_SQL, &[&tenant, &role, &reference])
+        .execute(PERMISSION_SQL, &[&tenant, &role, &reference])
         .await
         .map_err(|error| database_error(&error))?;
-    Ok(PermissionGrantOutcome {
-        rows_added,
-        closure: closure.cloned().unwrap_or_default(),
-    })
+    Ok(PermissionGrantOutcome { rows_added })
 }
 
-/// Remove the root `reference` from `role`. The outcome names the other
-/// roots of the role that still require `reference`, and a reference that
-/// the role holds only because another root requires it refuses and names
-/// those roots. `requires(root)` answers whether the closure of `root`, in
-/// the release the caller loaded, holds `reference` (platform-deploy.md R18).
-/// A caller that loads no release answers `false` for every root.
+/// Remove the row `reference` from `role`. A revoke of a reference the role
+/// does not hold refuses.
 pub async fn revoke_permission(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     role: &str,
     reference: &str,
-    requires: impl Fn(&str) -> bool,
-) -> Result<PermissionRevokeOutcome, AdministrationError> {
+) -> Result<(), AdministrationError> {
     require_role(client, tenant, role).await?;
     let removed = client
-        .execute(DROP_ROOT_SQL, &[&tenant, &role, &reference])
+        .execute(DROP_PERMISSION_SQL, &[&tenant, &role, &reference])
         .await
         .map_err(|error| database_error(&error))?;
-    let still_required_by: Vec<String> = client
-        .query(ROLE_ROOTS_SQL, &[&tenant, &role])
-        .await
-        .map_err(|error| database_error(&error))?
-        .iter()
-        .map(|row| row.get::<_, String>(0))
-        .filter(|root| root != reference && requires(root))
-        .collect();
     if removed == 0 {
-        return Err(if still_required_by.is_empty() {
-            AdministrationRefusal::NotHeld {
-                role: role.to_owned(),
-                reference: reference.to_owned(),
-            }
-        } else {
-            AdministrationRefusal::NotSelected {
-                role: role.to_owned(),
-                reference: reference.to_owned(),
-                required_by: still_required_by,
-            }
+        return Err(AdministrationRefusal::NotHeld {
+            role: role.to_owned(),
+            reference: reference.to_owned(),
         }
         .into());
     }
-    Ok(PermissionRevokeOutcome { still_required_by })
+    Ok(())
 }
 
 /// Give the existing role `role` to the user `user_id`. A second grant
@@ -490,8 +432,8 @@ const USERS_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
 
 const ROLES_SQL: &str = "SELECT name FROM app_system.roles WHERE tenant_id = $1 ORDER BY name";
 
-const PERMISSIONS_SQL: &str = "SELECT permission, required_by FROM app_system.permissions \
-    WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission, required_by";
+const PERMISSIONS_SQL: &str = "SELECT permission FROM app_system.permissions \
+    WHERE tenant_id = $1 AND role_name = $2 ORDER BY permission";
 
 /// One application user with the roles it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -556,19 +498,18 @@ pub async fn role_names(
         .collect())
 }
 
-/// The stored `(permission, required_by)` rows of `role`. A row whose two
-/// values are equal is a selected root.
+/// The stored permissions of `role`.
 pub async fn permission_rows(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     role: &str,
-) -> Result<Vec<(String, String)>, AdministrationError> {
+) -> Result<Vec<String>, AdministrationError> {
     require_role(client, tenant, role).await?;
     Ok(client
         .query(PERMISSIONS_SQL, &[&tenant, &role])
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| (row.get(0), row.get(1)))
+        .map(|row| row.get(0))
         .collect())
 }

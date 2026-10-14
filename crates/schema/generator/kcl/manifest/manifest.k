@@ -161,7 +161,6 @@ schema CustomOperation[name: str]:
     """A custom operation. Its permission defaults to its own name."""
     type: "projection" | "command" | "event_handler"
     visibility: Visibility = "public"
-    fresh_only?: bool
     permission?: str = name
     component?: str
     connection?: str = "postgres"
@@ -264,7 +263,6 @@ schema Operation:
     """A get, query, create, update or delete operation of a model. The model fills
     its permission with <model>.<operation>."""
     permission?: str
-    fresh_only?: bool
     component?: str
     authored_sql?: AuthoredSql
     writable_fields?: [str]

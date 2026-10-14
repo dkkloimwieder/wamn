@@ -176,10 +176,6 @@ fn authorized_component<'a>(
     let fact = component
         .operation(route.operation)
         .context("route-operation-fact-missing")?;
-    authorize_registered_operation(
-        route.caller.as_ref(),
-        fact.registered_operation.as_deref(),
-        fact.fresh_only,
-    )?;
+    authorize_registered_operation(route.caller.as_ref(), fact.registered_operation.as_deref())?;
     Ok(component)
 }

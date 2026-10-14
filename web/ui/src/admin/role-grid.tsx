@@ -38,9 +38,8 @@ interface PermissionRow {
   readonly interface: string;
   readonly selected: boolean;
   readonly effective: boolean;
-  readonly requiredBy: string;
   /** How the row changes: a toggle, or why it has none. */
-  readonly control: "toggle" | "admin" | "admin only" | "fixed" | "required";
+  readonly control: "toggle" | "admin" | "admin only" | "fixed";
 }
 
 /** The part of an operation reference between `:` and the last `/`. */
@@ -55,27 +54,22 @@ const COLUMNS: readonly TableColumn<PermissionRow>[] = [
   { field: "operation", label: "operation", type: "text", role: "key" },
   { field: "selected", label: "selected", type: "boolean" },
   { field: "effective", label: "effective", type: "boolean" },
-  { field: "requiredBy", label: "required by", type: "text" },
 ];
 
 function rows(listed: permission.PermissionListResult): PermissionRow[] {
   return listed.operations.map((operation) => {
-    const required = operation.requiredBy.length > 0;
     const control: PermissionRow["control"] = listed.admin
       ? "admin"
       : operation.adminOnly
         ? "admin only"
         : !operation.served || !operation.grantable
           ? "fixed"
-          : required && !operation.selected
-            ? "required"
-            : "toggle";
+          : "toggle";
     return {
       operation: operation.operation,
       interface: operationInterface(operation.operation),
       selected: operation.selected,
-      effective: listed.admin ? operation.served : operation.selected || required,
-      requiredBy: operation.requiredBy.join(", "),
+      effective: listed.admin ? operation.served : operation.selected,
       control,
     };
   });

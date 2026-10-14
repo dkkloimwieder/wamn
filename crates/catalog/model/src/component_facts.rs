@@ -139,9 +139,6 @@ pub struct ComponentOperationDeclaration {
     /// Explicit application permission identity. Palette operations carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
-    /// Require a fresh originating credential for this registered operation.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub fresh_only: bool,
     /// A matching successful payload shows that this registered command committed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<Value>,
@@ -285,9 +282,6 @@ pub struct AdmittedComponentOperation {
     /// Explicit application permission identity. Never inferred from the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
-    /// Released credential requirement, absent for unregistered exports.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub fresh_only: bool,
     /// The admitted success schema for this registered command's committed result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<ComponentSchema>,
@@ -518,7 +512,6 @@ pub fn normalize_component_fact(
             &declaration.scope,
             &export,
             operation.registered_operation.as_deref(),
-            operation.fresh_only,
         )?;
         let committed_result_schema = operation
             .committed_result_schema
@@ -553,7 +546,6 @@ pub fn normalize_component_fact(
                 pre_commit_required: operation.pre_commit_required,
                 committed_result_schema,
                 registered_operation: operation.registered_operation,
-                fresh_only: operation.fresh_only,
                 dependencies,
                 input_ports,
                 output_ports,
@@ -624,7 +616,6 @@ pub fn verify_stored_effect_projection(
             &component.scope,
             export,
             operation.registered_operation.as_deref(),
-            operation.fresh_only,
         )?;
         validate_committed_result_schema(
             operation.registered_operation.as_deref(),
@@ -790,15 +781,8 @@ fn validate_registered_operation_scope(
     scope: &ComponentPackageScope,
     export: &str,
     operation: Option<&str>,
-    fresh_only: bool,
 ) -> Result<(), ComponentFactError> {
     let Some(operation) = operation else {
-        if fresh_only {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::RegisteredOperationMismatch,
-                format!("unregistered export {export:?} must not require a fresh credential"),
-            ));
-        }
         return Ok(());
     };
     validate_canonical_operation_for_package(operation, &scope.package_id, &scope.package_version)
@@ -1286,7 +1270,6 @@ mod tests {
                     pre_commit: None,
                     pre_commit_required: false,
                     committed_result_schema: None,
-                    fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
                     input_ports: vec![ComponentPortDeclaration {
@@ -1608,73 +1591,6 @@ mod tests {
     }
 
     #[test]
-    fn fresh_only_is_preserved_only_for_registered_operations() {
-        let mut declared = declaration();
-        let registered = "orders:widget/get@1.2.0";
-        let mut operation = declared.operations.remove("map").unwrap();
-        assert!(
-            serde_json::to_value(&operation)
-                .unwrap()
-                .get("fresh-only")
-                .is_none()
-        );
-        operation.registered_operation = Some(registered.to_owned());
-        operation.fresh_only = true;
-        declared.operations.insert(registered.to_owned(), operation);
-        let facts = normalize_component_fact(
-            declared,
-            format!("sha256:{}", "a".repeat(64)),
-            ["wasi:clocks/monotonic-clock@0.2.3".to_owned()],
-            Vec::new(),
-        )
-        .expect("registered fresh-only operation is admitted");
-        assert!(facts.component.operations[registered].fresh_only);
-        assert_eq!(
-            serde_json::to_value(&facts.component.operations[registered]).unwrap()["fresh-only"],
-            true
-        );
-        verify_stored_effect_projection(&facts.component).expect("stored policy remains valid");
-
-        let mut palette = declaration();
-        operation_mut(&mut palette).fresh_only = true;
-        assert_eq!(
-            normalize_component_fact(
-                palette,
-                format!("sha256:{}", "a".repeat(64)),
-                ["wasi:clocks/monotonic-clock@0.2.3".to_owned()],
-                Vec::new(),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::RegisteredOperationMismatch
-        );
-        let mut stored = migration_defaulted_fact(&[]);
-        stored.operations.get_mut("map").unwrap().fresh_only = true;
-        assert_eq!(
-            verify_stored_effect_projection(&stored)
-                .unwrap_err()
-                .error_type(),
-            ComponentFactErrorType::RegisteredOperationMismatch
-        );
-    }
-
-    #[test]
-    fn fresh_only_component_metadata_requires_a_boolean() {
-        for value in [
-            serde_json::json!(null),
-            serde_json::json!("true"),
-            serde_json::json!(1),
-        ] {
-            let mut declared = serde_json::to_value(declaration()).unwrap();
-            declared["operations"]["map"]["fresh-only"] = value.clone();
-            assert!(serde_json::from_value::<ComponentDeclaration>(declared).is_err());
-            let mut stored = serde_json::to_value(migration_defaulted_fact(&[])).unwrap();
-            stored["operations"]["map"]["fresh-only"] = value;
-            assert!(serde_json::from_value::<AdmittedComponent>(stored).is_err());
-        }
-    }
-
-    #[test]
     fn registered_operation_is_explicit_and_equals_the_export_token() {
         let mut declared = declaration();
         let registered = "orders:widget/get@1.2.0";
@@ -1774,7 +1690,6 @@ mod tests {
                     pre_commit: None,
                     pre_commit_required: false,
                     committed_result_schema: None,
-                    fresh_only: false,
                     registered_operation: None,
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),

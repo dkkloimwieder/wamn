@@ -153,7 +153,6 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
                 pre_commit: None,
                 registered_operation: Some(name.clone()),
                 permissions: BTreeSet::from([name.clone()]),
-                fresh_only: false,
                 committed_result_schema: None,
                 participant: None,
                 statements,

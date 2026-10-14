@@ -39,7 +39,7 @@ async function effective(transport: Transport, held: readonly string[]): Promise
       continue;
     }
     for (const row of outcome.value.operations) {
-      const holds = outcome.value.admin ? row.served : row.selected || row.requiredBy.length > 0;
+      const holds = outcome.value.admin ? row.served : row.selected;
       if (holds) {
         operations.add(row.operation);
       }

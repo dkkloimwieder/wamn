@@ -80,7 +80,6 @@ const SPEC: ScreenSpec = ScreenSpec {
         replay: Replay::Claim,
     },
     route: Some(route),
-    fresh_only: false,
     record: None,
     revision: None,
     revision_inputs: &[],
@@ -881,11 +880,6 @@ fn recorded_client(
     (client, transport)
 }
 
-const FRESH: ScreenSpec = ScreenSpec {
-    fresh_only: true,
-    ..SPEC
-};
-
 fn ready_screen(spec: &'static ScreenSpec) -> GeneratedApplication {
     let mut app = GeneratedApplication::new("test", vec![Screen::new(spec, binding())]);
     app.views[0]
@@ -902,10 +896,7 @@ fn lost_response() -> ClientError {
 
 #[tokio::test(flavor = "current_thread")]
 async fn the_driver_selects_credentials_before_sending_the_declared_screen() {
-    for (spec, selection, bearer) in [
-        (&SPEC, "ordinary", "Bearer operator-session"),
-        (&FRESH, "ordinary", "Bearer operator-session"),
-    ] {
+    for (spec, selection, bearer) in [(&SPEC, "ordinary", "Bearer operator-session")] {
         let mut app = ready_screen(spec);
         app.active = Some(0);
         let request = prepare_application(&mut app, send(false)).unwrap();
@@ -933,7 +924,7 @@ async fn the_driver_selects_credentials_before_sending_the_declared_screen() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn captured_retry_keeps_the_session_route_and_exact_body() {
-    let mut app = ready_screen(&FRESH);
+    let mut app = ready_screen(&SPEC);
     let first = prepare_application(&mut app, send(false)).unwrap();
     let expected_body = first.body.body().to_vec();
     let success = HttpResponse {
@@ -976,70 +967,6 @@ async fn captured_retry_keeps_the_session_route_and_exact_body() {
         app.screens[0].submission().state(),
         State::Succeeded { .. }
     ));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn a_nested_fresh_only_refusal_never_replays_the_outer_request() {
-    const COMPOSED: ScreenSpec = ScreenSpec {
-        response: ResponseContract {
-            direct: false,
-            replay: Replay::Unknown,
-            ..SPEC.response
-        },
-        ..SPEC
-    };
-    let mut app = ready_screen(&COMPOSED);
-    let request = prepare_application(&mut app, send(false)).unwrap();
-    let credentials = Arc::new(SelectingCredentials::default());
-    let (client, transport) = recorded_client(
-        credentials.clone(),
-        [Ok(HttpResponse {
-            actor_labels: std::collections::BTreeMap::new(),
-            status: 403,
-            body: json!({"error": {
-                "code": "fresh-credential-required",
-                "message": "the nested operation requires a PAT",
-                "operation": "example:nested/commit@1.0.0"
-            }})
-            .to_string(),
-        })],
-    );
-
-    let (screen, attempt, response) = submit_request(&client, &request).await;
-    app.resolve(screen, attempt, response);
-
-    assert!(matches!(
-        app.screens[0].submission().state(),
-        State::Uncertain { .. }
-    ));
-    let message = state_text(&app.screens[0]);
-    assert!(message.contains("server refused this credential"));
-    assert!(message.contains("request was not retried"));
-    assert!(prepare_application(&mut app, send(true)).is_err());
-    assert!(prepare_application(&mut app, send(false)).is_err());
-    assert_eq!(transport.requests.lock().unwrap().len(), 1);
-    assert_eq!(*credentials.0.lock().unwrap(), ["ordinary"]);
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn a_legacy_fresh_screen_accepts_session_only_credentials() {
-    #[derive(Debug)]
-    struct SessionOnly;
-    #[async_trait::async_trait]
-    impl CredentialProvider for SessionOnly {
-        async fn bearer(&self) -> Result<String, CredentialError> {
-            Ok("session-only".into())
-        }
-    }
-    let mut app = ready_screen(&FRESH);
-    let request = prepare_application(&mut app, send(false)).unwrap();
-    let (client, transport) = recorded_client(Arc::new(SessionOnly), [Err(lost_response())]);
-    let (screen, attempt, response) = submit_request(&client, &request).await;
-    app.resolve(screen, attempt, response);
-    let requests = transport.requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].headers["authorization"], "Bearer session-only");
-    assert!(app.unresolved());
 }
 
 #[tokio::test(flavor = "current_thread")]

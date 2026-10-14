@@ -4,7 +4,6 @@
 mod cluster;
 #[path = "receiving_command_histories_live.rs"]
 mod command_histories;
-mod fresh_only;
 use command_histories::database::bind_fixture_principal;
 
 mod delivery;
@@ -50,7 +49,7 @@ use environment::{
     verify_journey_components_are_effectful, verify_journey_operation_grants,
     verify_zero_case_gate_reports,
 };
-use routes::copy_fresh_only_package;
+use routes::copy_package;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
 use wamn_control::dev::environment::{
     DevEnvironmentInputs, ENVIRONMENT, JourneyScope, ORG, PROJECT, TENANT, connect,
@@ -188,7 +187,7 @@ fn released_journey_packages() -> impl Iterator<Item = JourneyPackage> {
 /// The root of each released journey package, by component.
 fn released_package_roots() -> BTreeMap<&'static str, PathBuf> {
     released_journey_packages()
-        .map(|package| (package.component, journey_package_root(package, None)))
+        .map(|package| (package.component, journey_package_root(package)))
         .collect()
 }
 

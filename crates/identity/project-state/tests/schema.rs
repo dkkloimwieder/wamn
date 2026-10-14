@@ -172,7 +172,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
            ('t1','{U1}','user','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','user','u3@t2');\n\
          INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1','admin'),('t1','clerk');\n\
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
-         INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES ('t1','clerk','platform-fixture:widget/get','platform-fixture:widget/get');\n\
+         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('t1','clerk','platform-fixture:widget/get');\n\
          INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
          INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);"
     )
@@ -285,7 +285,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         ),
         (
             "permissions",
-            "(tenant_id, role_name, permission, required_by) VALUES ('', 'clerk', 'platform-fixture:widget/get', 'platform-fixture:widget/get')"
+            "(tenant_id, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
                 .to_owned(),
         ),
         (
@@ -715,8 +715,8 @@ fn app_system_relations_log_every_row_change_on_postgres() {
          INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES \
            ('t1', '{U1}', 'admin'), ('t1', '{U3}', 'admin');\n\
-         INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES \
-           ('t1', 'auditor', 'platform-fixture:widget/get', 'platform-fixture:widget/get');\n\
+         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
+           ('t1', 'auditor', 'platform-fixture:widget/get');\n\
          INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES \
            ('t1', 'theme', '\"dark\"');\n\
          INSERT INTO app_system.api_keys (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
@@ -728,7 +728,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
          UPDATE app_system.users SET status = 'disabled' WHERE id = '{U2}';\n\
          UPDATE app_system.roles SET description = 'administrators' WHERE name = 'admin';\n\
          UPDATE app_system.user_roles SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
-         UPDATE app_system.permissions SET permission = 'platform-fixture:widget/list', required_by = 'platform-fixture:widget/list';\n\
+         UPDATE app_system.permissions SET permission = 'platform-fixture:widget/list';\n\
          UPDATE app_system.configurations SET config_value = '\"light\"';\n\
          UPDATE app_system.api_keys SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
          COMMIT;\n\
@@ -793,10 +793,10 @@ entry|api_keys|t1|delete|admin:remove-history-fixture|U3|{"id": "K1", "tenant_id
 entry|configurations|t1|insert|admin:seed-history-fixture|U1|{"tenant_id": "t1", "config_key": "theme"}|{}|{"tenant_id": "t1", "config_key": "theme", "config_value": "dark"}
 entry|configurations|t1|update|admin:change-history-fixture|U2|{"tenant_id": "t1", "config_key": "theme"}|{"config_value": "dark"}|{"config_value": "light"}
 entry|configurations|t1|delete|admin:remove-history-fixture|U3|{"tenant_id": "t1", "config_key": "theme"}|{"tenant_id": "t1", "config_key": "theme", "config_value": "light"}|{}
-entry|permissions|t1|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get", "required_by": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get", "required_by": "platform-fixture:widget/get"}
-entry|permissions|t1|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get", "required_by": "platform-fixture:widget/get"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get", "required_by": "platform-fixture:widget/get"}|{}
-entry|permissions|t1|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list", "required_by": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list", "required_by": "platform-fixture:widget/list"}
-entry|permissions|t1|delete|admin:remove-history-fixture|U3|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list", "required_by": "platform-fixture:widget/list"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list", "required_by": "platform-fixture:widget/list"}|{}
+entry|permissions|t1|insert|admin:seed-history-fixture|U1|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}
+entry|permissions|t1|delete|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/get"}|{}
+entry|permissions|t1|insert|admin:change-history-fixture|U2|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}
+entry|permissions|t1|delete|admin:remove-history-fixture|U3|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{"role_name": "auditor", "tenant_id": "t1", "permission": "platform-fixture:widget/list"}|{}
 entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id": "t1"}|{}|{"name": "admin", "tenant_id": "t1", "description": null}
 entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "tenant_id": "t1", "description": null}
 entry|roles|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}

@@ -57,7 +57,6 @@ export const EVENT_QUERY_ROUTE: OperationRoute = {
   operation: "gallery:widget-event/query@1.0.0",
   method: "GET",
   template: "/widget_event/query",
-  freshOnly: false,
   contract: {
     resultClass: "page",
     partialSchema: null,

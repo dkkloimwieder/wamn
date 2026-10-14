@@ -89,7 +89,7 @@ fn refusal(url: &str, statement: &str) -> Option<String> {
 }
 
 #[test]
-fn admin_role_has_no_rows_and_authored_rows_follow_their_root_live() {
+fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
@@ -130,17 +130,16 @@ fn admin_role_has_no_rows_and_authored_rows_follow_their_root_live() {
     );
     run(
         &url,
-        "seed an authored role with one root and its closure",
+        "seed an authored role with two permissions",
         &format!(
             "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
          set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
            ('t1', '{FIXTURE_PRINCIPAL}', 'user', 'fixture@example.invalid'); \
          INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'clerk'); \
-         INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) VALUES \
-           ('t1', 'clerk', 'platform-fixture:widget/create', 'platform-fixture:widget/create'), \
-           ('t1', 'clerk', 'platform-fixture:widget/get', 'platform-fixture:widget/create'), \
-           ('t1', 'clerk', 'platform-fixture:widget/get', 'platform-fixture:widget/get'); COMMIT;"
+         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
+           ('t1', 'clerk', 'platform-fixture:widget/create'), \
+           ('t1', 'clerk', 'platform-fixture:widget/get'); COMMIT;"
         ),
     );
 
@@ -156,32 +155,24 @@ fn admin_role_has_no_rows_and_authored_rows_follow_their_root_live() {
     );
     assert_eq!(
         query(&url, "SELECT count(*) FROM app_system.permissions"),
-        "3",
+        "2",
         "the admin write changed an authored permission row"
     );
 
     let admin_row = refusal(
         &url,
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ('t1', 'admin', 'platform-fixture:widget/get', 'platform-fixture:widget/get')",
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+         VALUES ('t1', 'admin', 'platform-fixture:widget/get')",
     )
     .expect("admin took a permission row");
     assert!(admin_row.contains("permissions_admin_check"), "{admin_row}");
     let sealed = refusal(
         &url,
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ('t1', 'clerk', 'platform-fixture:widget/list@2.1.0', \
-                 'platform-fixture:widget/list@2.1.0')",
+        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+         VALUES ('t1', 'clerk', 'platform-fixture:widget/list@2.1.0')",
     )
     .expect("a sealed operation id was stored as a reference");
     assert!(sealed.contains("permissions_reference_check"), "{sealed}");
-    let orphan = refusal(
-        &url,
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ('t1', 'clerk', 'platform-fixture:widget/list', 'platform-fixture:widget/query')",
-    )
-    .expect("a closure row without its selected root was stored");
-    assert!(orphan.contains("permissions_required_by_fkey"), "{orphan}");
     for name in ["Clerk", "-clerk", "clerk role", &"a".repeat(65)] {
         let refused = refusal(
             &url,
@@ -194,18 +185,17 @@ fn admin_role_has_no_rows_and_authored_rows_follow_their_root_live() {
     if let Some(error) = refusal(
         &url,
         "DELETE FROM app_system.permissions WHERE tenant_id = 't1' AND role_name = 'clerk' \
-         AND permission = 'platform-fixture:widget/create' \
-         AND required_by = 'platform-fixture:widget/create'",
+         AND permission = 'platform-fixture:widget/create'",
     ) {
-        panic!("revoke the root widget/create: {error}");
+        panic!("revoke widget/create: {error}");
     }
     assert_eq!(
         query(
             &url,
-            "SELECT string_agg(permission || ' by ' || required_by, ',') FROM app_system.permissions"
+            "SELECT string_agg(permission, ',') FROM app_system.permissions"
         ),
-        "platform-fixture:widget/get by platform-fixture:widget/get",
-        "the revoke of a root kept its closure row or removed another root"
+        "platform-fixture:widget/get",
+        "the revoke kept its row or removed another row"
     );
 
     run(

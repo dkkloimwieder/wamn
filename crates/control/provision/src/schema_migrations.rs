@@ -312,6 +312,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0018_package_artifact_digest.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0019_drop_permission_required_by.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0019_drop_permission_required_by.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

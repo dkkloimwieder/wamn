@@ -18,7 +18,6 @@ use wamn_catalog::{
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
-use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -486,7 +485,6 @@ fn fact(
             operation.into(),
             AdmittedComponentOperation {
                 registered_operation: registered.then(|| operation.into()),
-                fresh_only: false,
                 committed_result_schema: None,
                 pre_commit: None,
                 pre_commit_required: false,
@@ -516,29 +514,27 @@ struct Fixture {
 
 impl Fixture {
     async fn new(case: Case) -> Self {
-        let callee = matches!(case, Case::CalleeGrant).then_some(false);
-        Self::build(case, callee, false).await
+        Self::build(case, matches!(case, Case::CalleeGrant), false).await
     }
 
-    async fn build(case: Case, callee: Option<bool>, registered_root: bool) -> Self {
+    async fn build(case: Case, callee: bool, registered_root: bool) -> Self {
         Self::build_with_pause(case, callee, registered_root, None).await
     }
 
     async fn build_with_pause(
         case: Case,
-        callee: Option<bool>,
+        callee: bool,
         registered_root: bool,
         resolution_pause: Option<Arc<ResolutionPause>>,
     ) -> Self {
         Self::build_with_reuse(case, callee, registered_root, resolution_pause, None, None).await
     }
 
-    /// `callee` declares a call to [`CHILD`] with its `fresh_only`. Publish
-    /// folds that call into the root's grant. Composition embeds the callee,
+    /// `callee` declares a call to [`CHILD`]. Composition embeds the callee,
     /// so the release lists only the root and the host loads only the root.
     async fn build_with_reuse(
         case: Case,
-        callee: Option<bool>,
+        callee: bool,
         registered_root: bool,
         resolution_pause: Option<Arc<ResolutionPause>>,
         reclaim_seconds: Option<i32>,
@@ -546,18 +542,13 @@ impl Fixture {
     ) -> Self {
         let root_bytes = component_bytes(ROOT, case);
         let mut callees = Vec::new();
-        let dependencies = if let Some(fresh_only) = callee {
-            let mut child = fact(
+        let dependencies = if callee {
+            let child = fact(
                 CHILD,
                 &component_bytes(CHILD, Case::Success),
                 true,
                 Vec::new(),
             );
-            child
-                .operations
-                .get_mut(CHILD)
-                .expect("child operation")
-                .fresh_only = fresh_only;
             let dependency = ComponentOperationDependency {
                 package: "child".into(),
                 version: "1.0.0".into(),
@@ -618,7 +609,6 @@ impl Fixture {
             // The composed owner embeds a base whose pre-commit slot the
             // participant fills. Publish folds that graph as below.
             let entry = served.operations.get_mut(ROOT).expect("root operation");
-            entry.permissions.insert(PARTICIPANT.into());
             entry.participant = Some(PARTICIPANT.into());
             entry
                 .statements
@@ -904,8 +894,15 @@ async fn run_case(case: Case) {
         let postgres = authenticated::platform_postgres(database.url())
             .await
             .expect("scoped database with provisioned platform principals");
-        let callee = matches!(case, Case::CalleeGrant).then_some(false);
-        Fixture::build_with_reuse(case, callee, false, None, None, Some(postgres)).await
+        Fixture::build_with_reuse(
+            case,
+            matches!(case, Case::CalleeGrant),
+            false,
+            None,
+            None,
+            Some(postgres),
+        )
+        .await
     } else {
         Fixture::new(case).await
     };
@@ -968,25 +965,12 @@ async fn run_case(case: Case) {
             budget *= 2;
         };
         match case {
-            Case::Success => {
+            Case::Success | Case::CalleeGrant => {
                 let emission = result
                     .expect("native dispatch succeeds")
                     .expect("typed node emission");
                 assert_eq!(emission.payload, r#"[{"value":37}]"#);
                 assert_eq!(emission.port, None);
-            }
-            Case::CalleeGrant => {
-                // The folded grant is checked once, before the guest runs.
-                let error =
-                    result.expect_err("a callerless entry cannot use a callee's registered grant");
-                let refusal = error.downcast_ref::<OperationRefusal>().unwrap_or_else(|| {
-                    panic!("native boundary retains typed operation refusal: {error:#}")
-                });
-                assert_eq!(
-                    refusal.refusal_type(),
-                    OperationRefusalType::PermissionDenied
-                );
-                assert_eq!(refusal.operation(), CHILD);
             }
             Case::StartDeadline | Case::RunDeadline => {
                 let error = result.expect_err("guest cannot extend the enclosing deadline");
@@ -1123,13 +1107,6 @@ fn native_node_success_revokes_invocation_authority() {
     isolated(
         "native_node_success_revokes_invocation_authority",
         Case::Success,
-    );
-}
-#[test]
-fn native_callee_grant_refusal_revokes_invocation_authority() {
-    isolated(
-        "native_callee_grant_refusal_revokes_invocation_authority",
-        Case::CalleeGrant,
     );
 }
 #[test]
@@ -1284,7 +1261,7 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
     let pause = Arc::new(ResolutionPause::default());
     let loading = tokio::spawn(Fixture::build_with_pause(
         Case::Success,
-        None,
+        false,
         false,
         Some(Arc::clone(&pause)),
     ));

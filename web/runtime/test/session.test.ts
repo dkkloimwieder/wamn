@@ -53,7 +53,6 @@ describe("the transport carrier", () => {
     operation: "platform-fixture:widget/get@1.0.0",
     method: "POST",
     template: "/widget/get",
-    freshOnly: false,
     contract,
     items: [{ request_id: "r1" }],
   };

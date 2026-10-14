@@ -37,34 +37,8 @@ fn parsed(value: &Value) -> PackageManifest {
 }
 
 #[test]
-fn public_freshness_and_business_error_details_are_closed() {
+fn business_error_details_are_closed() {
     let baseline = fixture::manifest();
-    let baseline_package = fixture::generate_with(&fixture::catalog(), &baseline);
-    let paths = [
-        "generated/contracts/widget/get.operation.json",
-        "generated/contracts/widget/archive.operation.json",
-    ];
-
-    for enabled in [false, true] {
-        let mut manifest = baseline.clone();
-        manifest["models"]["widget"]["operations"]["get"]["fresh_only"] = json!(enabled);
-        manifest["custom_operations"]["widget.archive"]["fresh_only"] = json!(enabled);
-        let package = fixture::generate_with(&fixture::catalog(), &manifest);
-        for path in paths {
-            let contract = artifact(&package, path);
-            if enabled {
-                assert_eq!(contract["fresh_only"], true, "{path}");
-            } else {
-                assert!(contract.get("fresh_only").is_none(), "{path}");
-                assert_eq!(
-                    package.file(path).unwrap().bytes(),
-                    baseline_package.file(path).unwrap().bytes(),
-                    "{path}"
-                );
-            }
-        }
-    }
-
     let mut platform_detail = baseline.clone();
     platform_detail["custom_operations"]["widget.archive"]["error_details"]["invalid_input"] =
         json!({"required": ["field"]});
@@ -83,30 +57,6 @@ fn public_freshness_and_business_error_details_are_closed() {
             .error_type(),
         GenerateErrorType::InvalidOperation
     );
-
-    let mut private = fixture::manifest();
-    let archive = private["custom_operations"]["widget.archive"]
-        .as_object_mut()
-        .unwrap();
-    archive.insert("visibility".to_owned(), json!("private"));
-    archive.remove("permission");
-    archive["errors"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|error| error != "permission_denied");
-    archive.insert("fresh_only".to_owned(), json!(true));
-    assert_eq!(
-        validate_operation_vocabulary(&parsed(&private))
-            .expect_err("private operation required a fresh caller")
-            .error_type(),
-        GenerateErrorType::InvalidOperation
-    );
-
-    for value in [json!(null), json!("true"), json!(1)] {
-        let mut malformed = fixture::manifest();
-        malformed["models"]["widget"]["operations"]["get"]["fresh_only"] = value;
-        assert!(PackageManifest::from_slice(&serde_json::to_vec(&malformed).unwrap()).is_err());
-    }
 }
 
 #[test]
@@ -489,7 +439,6 @@ fn event_registration_and_line_profiles_are_closed() {
     operation.remove("transaction");
     operation.remove("automatic_retry");
     operation.remove("idempotent_by");
-    operation.remove("fresh_only");
     operation["errors"]
         .as_array_mut()
         .unwrap()

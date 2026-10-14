@@ -6,12 +6,6 @@
       "type": "int32",
       "nullable": false,
       "values": []
-    },
-    {
-      "path": "closure[]",
-      "type": "text",
-      "nullable": false,
-      "values": []
     }
   ]
 }

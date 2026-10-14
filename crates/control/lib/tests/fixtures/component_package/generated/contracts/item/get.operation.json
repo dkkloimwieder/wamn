@@ -1,1 +1,1 @@
-{"fresh_only":false,"operation":"source-fixture:item/get@1.0.0","statements":[{"binds":[{"name":"id","nullable":false,"type":"uuid"}],"columns":[{"name":"id","nullable":false,"type":"uuid"}],"name":"get","path":"generated/sql/item/get.sql","transactional":false}]}
+{"operation":"source-fixture:item/get@1.0.0","statements":[{"binds":[{"name":"id","nullable":false,"type":"uuid"}],"columns":[{"name":"id","nullable":false,"type":"uuid"}],"name":"get","path":"generated/sql/item/get.sql","transactional":false}]}

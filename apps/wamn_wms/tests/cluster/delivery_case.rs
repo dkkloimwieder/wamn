@@ -44,9 +44,7 @@ const DATABASE_NAMESPACE: &str = "wms-pg";
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, openssl, WAMN_DELIVERY_CLUSTER"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "openssl",
-    ]);
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
     ensure!(
         std::env::var_os(wamn_control::delivery::CANDIDATE_ENV).is_none(),
         "the owned setup mints its own candidate"
@@ -182,7 +180,6 @@ async fn run(
         host_secret_directory: work.join("host-secrets"),
         host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: work.join("operator-pat.json"),
-        fresh_only_packages: None,
         postcommit: None,
         materializer: None,
         runtime: None,

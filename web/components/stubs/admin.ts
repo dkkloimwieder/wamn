@@ -4,19 +4,15 @@
  *
  * It answers `role.list`, `permission.list`, `permission.grant`,
  * `permission.revoke`, `user.list`, `user_role.grant` and `user_role.revoke`
- * as the host does, over a release of three grantable roots and two host
+ * as the host does, over a release of three grantable operations and two host
  * routes. A refusal goes through the runtime's classifier, so it carries the
  * text of its contract.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
 
-/** The closure of each grantable root of the release. */
-export const CLOSURES: Readonly<Record<string, readonly string[]>> = {
-  "acme:receiving/record": ["acme:receiving/record", "acme:purchase/get"],
-  "acme:purchase/get": ["acme:purchase/get"],
-  "acme:inventory/query": ["acme:inventory/query"],
-};
+/** The grantable operations of the release. */
+const GRANTABLE: readonly string[] = ["acme:receiving/record", "acme:purchase/get", "acme:inventory/query"];
 
 /** The host routes the release serves: one fixed to admin, one fixed to every member. */
 const HOST: Readonly<Record<string, "admin" | "member">> = {
@@ -28,7 +24,7 @@ export const ANN = "00000000-0000-4000-8000-00000000000a";
 export const BOSS = "00000000-0000-4000-8000-00000000000b";
 
 export interface AdminState {
-  /** The roots each role selected. */
+  /** The operations each role holds. */
   readonly roots: Map<string, Set<string>>;
   /** The roles each user holds. */
   readonly held: Map<string, Set<string>>;
@@ -38,7 +34,7 @@ export interface AdminState {
   refuseNext: string | null;
 }
 
-/** The starting state: `clerk` selected `receiving/record`, and boss holds a covered admin. */
+/** The starting state: `clerk` holds `receiving/record`, and boss holds a covered admin. */
 export function adminState(): AdminState {
   return {
     roots: new Map([
@@ -62,24 +58,18 @@ function refused(request: WireRequest, code: string, detail: JsonValue): Outcome
 
 const completed = (value: JsonValue): Outcome<JsonValue> => ({ status: "completed", value });
 
-/** The roots of `role` whose closure holds `operation`, other than itself. */
-function requiredBy(roots: ReadonlySet<string>, operation: string): string[] {
-  return [...roots].filter((root) => root !== operation && (CLOSURES[root] ?? []).includes(operation)).sort();
-}
-
 function permissionList(state: AdminState, role: string): JsonValue {
   const roots = state.roots.get(role) ?? new Set<string>();
-  const operations = [...Object.keys(CLOSURES), ...Object.keys(HOST)].sort();
+  const operations = [...GRANTABLE, ...Object.keys(HOST)].sort();
   return {
     role,
     admin: role === "admin",
     operations: operations.map((operation) => ({
       operation,
       served: true,
-      grantable: operation in CLOSURES,
+      grantable: GRANTABLE.includes(operation),
       admin_only: HOST[operation] === "admin",
       selected: roots.has(operation),
-      required_by: requiredBy(roots, operation),
     })),
   };
 }
@@ -109,23 +99,20 @@ export function adminStub(state: AdminState = adminState()): { transport: Transp
         if (role === "admin") {
           return refused(request, "admin_fixed", { field: "role" });
         }
-        if (!(operation in CLOSURES)) {
+        if (!GRANTABLE.includes(operation)) {
           return refused(request, "operation_not_grantable", { field: "operation" });
         }
         state.roots.get(role)?.add(operation);
-        return completed({ closure: [...(CLOSURES[operation] ?? [])], rows_added: 1 });
+        return completed({ rows_added: 1 });
       }
       case "wamn-control:permission/revoke": {
         const roots = state.roots.get(value["role"] ?? "") ?? new Set<string>();
         const operation = value["operation"] ?? "";
         if (!roots.has(operation)) {
-          return refused(request, "permission_not_selected", {
-            field: "operation",
-            required_by: requiredBy(roots, operation),
-          });
+          return refused(request, "permission_not_held", { field: "operation" });
         }
         roots.delete(operation);
-        return completed({ still_required_by: requiredBy(roots, operation) });
+        return completed({});
       }
       case "wamn-control:user/list":
         return completed({

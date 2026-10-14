@@ -44,27 +44,21 @@ const DRAIN_BOUND_SECONDS: u32 = 70;
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, openssl"]
 async fn released_wms_routes() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "openssl",
-    ]);
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
     run_case(Case::Routes).await
 }
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, openssl"]
 async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "openssl",
-    ]);
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
     run_case(Case::PartialCompletion).await
 }
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm, openssl"]
 async fn restarted_wms_host_retains_compiled_code_and_serves_requests() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "docker", "kind", "kubectl", "helm", "openssl",
-    ]);
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
     run_case(Case::Startup).await
 }
 
@@ -392,7 +386,6 @@ async fn run_created(
         host_secret_directory: host_secrets,
         host_secret_namespace: NAMESPACE.to_owned(),
         operator_secret_output: work.join("operator-pat.json"),
-        fresh_only_packages: None,
         postcommit: None,
         materializer: None,
         runtime: None,
@@ -534,10 +527,7 @@ async fn run_created(
         // The environment release installs the host group and the roles the
         // release implies, as `env apply` does (§9.2).
         let (name, label) = case_release::install(
-            &case_release::Install {
-                cluster,
-                work,
-            },
+            &case_release::Install { cluster, work },
             &ImageSet {
                 host: host_image.clone(),
                 http,

@@ -345,9 +345,6 @@ pub struct OperationIr {
     pub grant: String,
     /// Permission token this operation is authorized by.
     pub permission_token: String,
-    /// Whether the registered operation requires a fresh originating credential.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub fresh_only: bool,
     /// Authored name of the screen. A component exports it, and the page that
     /// places the component decides where the text goes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1116,23 +1113,7 @@ fn build_operation(
     // Excluded by DECLARATION, never by a missing member: a public operation
     // whose grant is absent is a malformed contract and must still refuse
     // below, not vanish from the client because a member failed to parse.
-    let fresh_only = match operation.get("fresh_only") {
-        None => false,
-        Some(Value::Bool(value)) => *value,
-        Some(_) => {
-            return Err(ClientIrError::new(
-                ClientIrErrorType::MalformedContract,
-                format!("{module}/{name} fresh_only must be a boolean"),
-            ));
-        }
-    };
     if operation.get("visibility").and_then(Value::as_str) == Some("private") {
-        if fresh_only {
-            return Err(ClientIrError::new(
-                ClientIrErrorType::MalformedContract,
-                format!("private operation {module}/{name} must not require a fresh credential"),
-            ));
-        }
         return Ok(None);
     }
     // A participant is a public, authorized component export, but it can run
@@ -1222,7 +1203,6 @@ fn build_operation(
         operation: identity,
         grant: member("grant")?,
         permission_token: member("permission_token")?,
-        fresh_only,
         label: text("label"),
         description: text("description"),
         lists: operation
@@ -1542,63 +1522,4 @@ fn string_list(value: Option<&Value>) -> Vec<String> {
     list.sort();
     list.dedup();
     list
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fresh_only_contract_policy_is_preserved_in_the_client_ir() {
-        for policy in [None, Some(false), Some(true)] {
-            let mut contract = serde_json::json!({
-                "operation": "orders:widget/get@1.0.0",
-                "type": "get",
-                "grant": "orders:widget/get@1.0.0",
-                "permission_token": "widget.get"
-            });
-            if let Some(value) = policy {
-                contract["fresh_only"] = serde_json::json!(value);
-            }
-            let operation = build_operation(
-                "widget",
-                "get",
-                OperationParts {
-                    operation: Some(contract),
-                    ..Default::default()
-                },
-                &BTreeMap::new(),
-            )
-            .expect("public operation contract projects")
-            .expect("public operation remains visible");
-            assert_eq!(operation.fresh_only, policy.unwrap_or(false));
-            let serialized = serde_json::to_value(&operation).unwrap();
-            assert_eq!(
-                serialized.get("fresh-only").cloned(),
-                policy.filter(|value| *value).map(Value::Bool)
-            );
-        }
-    }
-
-    #[test]
-    fn fresh_only_client_ir_refuses_private_and_malformed_contracts() {
-        for contract in [
-            serde_json::json!({"fresh_only": true, "visibility": "private"}),
-            serde_json::json!({"fresh_only": null}),
-            serde_json::json!({"fresh_only": "true"}),
-            serde_json::json!({"fresh_only": 1}),
-        ] {
-            let error = build_operation(
-                "widget",
-                "get",
-                OperationParts {
-                    operation: Some(contract),
-                    ..Default::default()
-                },
-                &BTreeMap::new(),
-            )
-            .expect_err("private or malformed freshness policy is refused");
-            assert_eq!(error.error_type(), ClientIrErrorType::MalformedContract);
-        }
-    }
 }

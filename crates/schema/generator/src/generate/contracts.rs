@@ -237,9 +237,6 @@ fn emit_custom_operation_contracts(
         ("grant".to_owned(), json!(grant)),
         ("statements".to_owned(), json!(statements)),
     ]);
-    if operation.fresh_only {
-        operation_contract.insert("fresh_only".to_owned(), json!(true));
-    }
     insert_operation_text(
         &mut operation_contract,
         operation.label.as_deref(),
@@ -783,9 +780,6 @@ fn emit_operation_contracts(
         ),
         ("automatic_retry".to_owned(), json!(false)),
     ]);
-    if operation.fresh_only {
-        operation_contract.insert("fresh_only".to_owned(), json!(true));
-    }
     insert_operation_text(
         &mut operation_contract,
         operation.label.as_deref(),

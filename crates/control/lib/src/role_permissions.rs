@@ -1,18 +1,15 @@
 //! Authored application roles and their permission rows
 //! (docs/plan/platform-ui.md §2.2 to §2.4 and §4.1).
 //!
-//! A permission row is a root: a stable operation reference that an
-//! administrator selected for a role (`permission = required_by`). A grant
-//! stores the root, served by a release or not, and a revoke removes it. No
-//! deployment verb touches the rows: each host expands a caller's roots through
-//! the closures of the release it loaded (platform-deploy.md R18). `admin` has
-//! no rows.
+//! A permission row is a stable operation reference that an administrator
+//! granted to a role. A grant stores the row, served by a release or not, and
+//! a revoke removes it. No deployment verb touches the rows. `admin` has no
+//! rows.
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, Transaction};
-pub use wamn_catalog::ReleaseClosures;
 use wamn_platform_identity::application;
-pub use wamn_platform_identity::application::{PermissionGrantOutcome, PermissionRevokeOutcome};
+pub use wamn_platform_identity::application::PermissionGrantOutcome;
 
 use crate::user_roles::{EnvironmentTarget, connect_target};
 use wamn_control_provision::operation_grants::{
@@ -40,34 +37,27 @@ async fn prepare(tx: &Transaction<'_>, tenant: &str) -> anyhow::Result<()> {
     .context("bind wamn:provisioning for the permission write")
 }
 
-/// Select `reference` for the authored `role` as a root. `current` holds the
-/// closures the outcome reports; nothing stores them.
+/// Grant `reference` to the authored `role`.
 pub async fn grant_permission(
     tx: &Transaction<'_>,
     tenant: &str,
     role: &str,
     reference: &str,
-    current: &ReleaseClosures,
 ) -> anyhow::Result<PermissionGrantOutcome> {
     prepare(tx, tenant).await?;
-    Ok(
-        application::grant_permission(tx, tenant, role, reference, current.closure(reference))
-            .await?,
-    )
+    Ok(application::grant_permission(tx, tenant, role, reference).await?)
 }
 
-/// Remove the selection of `reference` from `role` and every permission that
-/// the selection required. A permission another selected root still requires
-/// stays, and the outcome names those roots. A reference that the role holds
-/// only because another root requires it refuses and names those roots.
+/// Remove the permission `reference` from `role`. A reference the role does
+/// not hold refuses.
 pub async fn revoke_permission(
     tx: &Transaction<'_>,
     tenant: &str,
     role: &str,
     reference: &str,
-) -> anyhow::Result<PermissionRevokeOutcome> {
+) -> anyhow::Result<()> {
     prepare(tx, tenant).await?;
-    Ok(application::revoke_permission(tx, tenant, role, reference, |_| false).await?)
+    Ok(application::revoke_permission(tx, tenant, role, reference).await?)
 }
 
 /// Create the empty authored role `role`. A second create changes nothing.
@@ -122,33 +112,24 @@ pub async fn delete_role_in(target: &EnvironmentTarget, role: &str) -> anyhow::R
     .await
 }
 
-/// `wamn-ctl grant-permission`: select `reference` for `role`. The verb loads
-/// no release, so the outcome reports no closure.
+/// `wamn-ctl grant-permission`: grant `reference` to `role`.
 pub async fn grant_permission_in(
     target: &EnvironmentTarget,
     role: &str,
     reference: &str,
 ) -> anyhow::Result<PermissionGrantOutcome> {
     in_environment(target, async |tx| {
-        grant_permission(
-            tx,
-            &target.tenant,
-            role,
-            reference,
-            &ReleaseClosures::default(),
-        )
-        .await
+        grant_permission(tx, &target.tenant, role, reference).await
     })
     .await
 }
 
-/// `wamn-ctl revoke-permission`: remove the selection of `reference` from
-/// `role`.
+/// `wamn-ctl revoke-permission`: remove `reference` from `role`.
 pub async fn revoke_permission_in(
     target: &EnvironmentTarget,
     role: &str,
     reference: &str,
-) -> anyhow::Result<PermissionRevokeOutcome> {
+) -> anyhow::Result<()> {
     in_environment(target, async |tx| {
         revoke_permission(tx, &target.tenant, role, reference).await
     })

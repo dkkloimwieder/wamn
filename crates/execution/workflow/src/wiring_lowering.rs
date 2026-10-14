@@ -508,7 +508,6 @@ mod tests {
                         pre_commit: None,
                         pre_commit_required: false,
                         committed_result_schema: None,
-                        fresh_only: false,
                         registered_operation: None,
                         dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
@@ -580,7 +579,6 @@ mod tests {
                         pre_commit: None,
                         pre_commit_required: false,
                         committed_result_schema: None,
-                        fresh_only: false,
                         registered_operation: Some(operation.to_owned()),
                         dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {

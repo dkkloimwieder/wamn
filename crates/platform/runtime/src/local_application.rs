@@ -645,7 +645,6 @@ mod tests {
                         pre_commit: None,
                         committed_result_schema: None,
                         registered_operation: None,
-                        fresh_only: false,
                         permissions: BTreeSet::new(),
                         participant: None,
                         statements: BTreeMap::new(),

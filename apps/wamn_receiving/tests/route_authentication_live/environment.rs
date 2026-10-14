@@ -10,24 +10,12 @@ pub(super) fn overlay_package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/client_acme_receiving")
 }
 
-pub(super) fn journey_package_root(
-    package: JourneyPackage,
-    inputs: Option<&JourneyDocument>,
-) -> PathBuf {
-    let source = if package.id == BASE_PACKAGE_ID {
+pub(super) fn journey_package_root(package: JourneyPackage) -> PathBuf {
+    if package.id == BASE_PACKAGE_ID {
         package_root()
     } else {
         overlay_package_root()
-    };
-    if let Some(root) = inputs.and_then(|inputs| inputs.fresh_only_packages.as_ref()) {
-        return super::package_copies::package(
-            root,
-            source
-                .file_name()
-                .expect("the test package has a directory name"),
-        );
     }
-    source
 }
 
 pub(super) fn required_journey(key: &str) -> anyhow::Result<String> {
@@ -41,11 +29,8 @@ pub(super) fn required_journey_path(key: &str) -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(required_journey(key)?))
 }
 
-pub(super) fn journey_publication_root(
-    package: JourneyPackage,
-    inputs: Option<&JourneyDocument>,
-) -> PathBuf {
-    journey_package_root(package, inputs).join("publication")
+pub(super) fn journey_publication_root(package: JourneyPackage) -> PathBuf {
+    journey_package_root(package).join("publication")
 }
 
 pub(super) fn overlay_route_path(wiring_id: &str) -> &'static str {
@@ -141,7 +126,6 @@ pub(super) struct JourneyComponentDeclaration {
 }
 
 pub(super) fn render_component_declarations(
-    inputs: Option<&JourneyDocument>,
     root: &Path,
     component_directory: &Path,
 ) -> anyhow::Result<Vec<JourneyComponentDeclaration>> {
@@ -149,12 +133,12 @@ pub(super) fn render_component_declarations(
     std::fs::create_dir_all(&output).context("create rendered declaration directory")?;
     released_journey_packages()
         .map(|package| {
-            let source = journey_publication_root(package, inputs)
+            let source = journey_publication_root(package)
                 .join("components")
                 .join(format!("{}.json.in", package.component));
             // Like the disposable dev coordinator, layer this run's exact
             // virtualized bytes over authored pins without editing the package.
-            let package_root = journey_package_root(package, inputs);
+            let package_root = journey_package_root(package);
             let mut base_digests =
                 wamn_control::component_declaration::authored_base_digests(&package_root)
                     .with_context(|| format!("read {} base pins", package_root.display()))?;
@@ -199,7 +183,7 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
         .join(format!("{OVERLAY_COMPONENT}.json.in"));
     let authored_manifest = std::fs::read(&manifest)?;
     let authored_template = std::fs::read(&template)?;
-    assert!(render_component_declarations(None, root.path(), &artifacts).is_err());
+    assert!(render_component_declarations(root.path(), &artifacts).is_err());
 
     // Two distinct component binaries; the second adds an empty custom section.
     for bytes in [
@@ -207,7 +191,7 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
         b"\0asm\x0d\0\x01\0\0\x02\x01x".as_slice(),
     ] {
         std::fs::write(artifacts.join(format!("{BASE_COMPONENT}.wasm")), bytes)?;
-        let declarations = render_component_declarations(None, root.path(), &artifacts)?;
+        let declarations = render_component_declarations(root.path(), &artifacts)?;
         let overlay = declarations
             .iter()
             .find(|declaration| declaration.package.id == OVERLAY_PACKAGE_ID)
@@ -240,7 +224,7 @@ pub(super) fn admit_journey_components(
         .map(|declaration| {
             let package = declaration.package;
             let admission = admit_component(AdmitComponentRequest {
-                package: journey_package_root(package, Some(inputs)),
+                package: journey_package_root(package),
                 component_bytes: inputs
                     .component_directory
                     .join(format!("{}.wasm", package.component)),
@@ -354,11 +338,7 @@ pub(super) fn gate_document(
     )
 }
 
-pub(super) async fn gate_journey_wirings(
-    inputs: &JourneyDocument,
-    bind: &str,
-    bearer: &str,
-) -> anyhow::Result<Vec<String>> {
+pub(super) async fn gate_journey_wirings(bind: &str, bearer: &str) -> anyhow::Result<Vec<String>> {
     let client = reqwest::Client::new();
     let mut reports = Vec::with_capacity(
         released_journey_packages()
@@ -367,7 +347,7 @@ pub(super) async fn gate_journey_wirings(
     );
     for package in released_journey_packages() {
         for wiring in package.wirings {
-            let path = journey_publication_root(package, Some(inputs))
+            let path = journey_publication_root(package)
                 .join("wirings")
                 .join(format!("{wiring}.json"));
             // The gate judges sealed ids, so the authored references resolve first.
@@ -456,7 +436,7 @@ pub(super) async fn author_journey_wirings(
     for package in released_journey_packages() {
         for wiring in package.wirings {
             let document = author_wiring::read_wiring_document(
-                &journey_publication_root(package, Some(inputs))
+                &journey_publication_root(package)
                     .join("wirings")
                     .join(format!("{wiring}.json")),
             )
@@ -510,7 +490,7 @@ pub(super) async fn push_journey_packages(
     let registry = journey_package_registry(inputs)?;
     let mut packages = Vec::new();
     for package in released_journey_packages() {
-        let path = journey_package_root(package, Some(inputs));
+        let path = journey_package_root(package);
         let pushed = wamn_control::package_artifact::push_package(
             &wamn_control::package_artifact::PushPackageRequest {
                 package: path.clone(),

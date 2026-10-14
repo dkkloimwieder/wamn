@@ -189,8 +189,8 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .context("seed the authored role")?;
     project
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ($1, $2, $3, $3), ($1, $2, $4, $4)",
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ($1, $2, $3), ($1, $2, $4)",
             &[&TENANT, &ITEM_READER, &OPERATION_REFERENCE, &UNSERVED],
         )
         .await
@@ -292,13 +292,8 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     )?))
 }
 
-/// A project plugin that expands permission roots through the closures of
-/// `release`, the release its host loaded.
-fn project_postgres(
-    class: AuthorityClass,
-    url: &str,
-    release: &LoadedRelease,
-) -> anyhow::Result<Arc<WamnPostgres>> {
+/// A project plugin over the login at `url` for `class`.
+fn project_postgres(class: AuthorityClass, url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     let base = WamnPostgresConfig {
         credentials: None,
         guest_pool_max_size: 1,
@@ -313,9 +308,7 @@ fn project_postgres(
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
     let provider: Arc<dyn CredentialProvider> =
         Arc::new(StaticCredentialProvider::new(projects, None));
-    Ok(Arc::new(
-        WamnPostgres::with_provider(provider).with_release_closures(release),
-    ))
+    Ok(Arc::new(WamnPostgres::with_provider(provider)))
 }
 
 async fn routing(
@@ -482,11 +475,10 @@ async fn assert_user_environment_membership(
         .await?;
     project
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-         VALUES ($1, 'user-reader', $2, $2), \
-                ($1, 'user-extra', 'route-auth-fixture:item/extra', 'route-auth-fixture:item/extra'), \
-                ('other-tenant', 'user-reader', 'route-auth-fixture:item/other-tenant', \
-                 'route-auth-fixture:item/other-tenant')",
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+         VALUES ($1, 'user-reader', $2), \
+                ($1, 'user-extra', 'route-auth-fixture:item/extra'), \
+                ('other-tenant', 'user-reader', 'route-auth-fixture:item/other-tenant')",
             &[&TENANT, &OPERATION_REFERENCE],
         )
         .await?;
@@ -818,7 +810,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     let loaded_release = load_serving_release().expect("load the canonical serving release");
     let route_auth = routing(
         Arc::clone(&identity_reader),
-        project_postgres(AuthorityClass::CallableHttp, &http_url, &loaded_release)
+        project_postgres(AuthorityClass::CallableHttp, &http_url)
             .expect("build project-specific callable-HTTP provider"),
         Arc::clone(&loaded_release),
     )
@@ -1066,7 +1058,6 @@ async fn production_operator_authentication_and_operation_authorization() {
         project_postgres(
             AuthorityClass::ExecutorPlatform,
             "postgresql://unused.invalid/unused",
-            &loaded_release,
         )
         .expect("build provider missing the callable-HTTP credential"),
         Arc::clone(&loaded_release),
@@ -1335,13 +1326,8 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
         assert!(properties.contains_key(field), "schema lacks {field}");
         assert!(required.contains(&field), "schema does not require {field}");
     }
-    assert_eq!(properties.len(), example.scalars().len() + 4);
-    for phase in [
-        "materializer",
-        "runtime",
-        "fresh_only_packages",
-        "postcommit",
-    ] {
+    assert_eq!(properties.len(), example.scalars().len() + 3);
+    for phase in ["materializer", "runtime", "postcommit"] {
         assert!(properties.contains_key(phase));
         assert!(!required.contains(&phase));
     }

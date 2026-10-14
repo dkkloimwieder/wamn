@@ -795,7 +795,6 @@ mod tests {
         let operation = ServingComponentOperation {
             pre_commit: None,
             committed_result_schema: None,
-            fresh_only: false,
             registered_operation: Some("platform_fixture@1.0.0::widget/get".to_owned()),
             permissions: BTreeSet::from(["platform_fixture@1.0.0::widget/get".to_owned()]),
             participant: None,

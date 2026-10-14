@@ -253,7 +253,7 @@ pub const USER_ROLES: Table = Table {
 /// Role → permission grants (read by 4.3 AuthZ).
 pub const PERMISSIONS: Table = Table {
     name: "permissions",
-    columns: &["tenant_id", "role_name", "permission", "required_by"],
+    columns: &["tenant_id", "role_name", "permission"],
 };
 
 /// Per-project application settings (opaque jsonb value).

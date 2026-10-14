@@ -1272,7 +1272,6 @@ mod tests {
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {
                         pre_commit: None,
-                        fresh_only: false,
                         committed_result_schema: None,
                         permissions: snapshot.registered_operation.iter().cloned().collect(),
                         registered_operation: snapshot.registered_operation,

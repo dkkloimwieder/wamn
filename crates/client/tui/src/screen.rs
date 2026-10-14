@@ -57,8 +57,6 @@ pub struct ScreenSpec {
     pub input_schema: Option<&'static str>,
     pub response: ResponseContract,
     pub route: Option<fn() -> RouteMetadata>,
-    /// Legacy operation metadata; admission checks current authority for all sessions.
-    pub fresh_only: bool,
     pub record: Option<RecordLink>,
     pub revision: Option<RevisionBinding>,
     pub revision_inputs: &'static [&'static str],

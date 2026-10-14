@@ -2124,7 +2124,6 @@ mod tests {
                     pre_commit: None,
                     pre_commit_required: false,
                     committed_result_schema: None,
-                    fresh_only: false,
                     registered_operation: registered_operation.map(str::to_owned),
                     dependencies: Vec::new(),
                     input_ports: Vec::new(),
@@ -2138,39 +2137,6 @@ mod tests {
             imports_fingerprint: DIGEST.to_owned(),
             effects: Vec::new(),
         }
-    }
-
-    #[test]
-    fn fresh_only_component_policy_survives_release_projection() {
-        let operation = "base:widget/get@1.0.0";
-        let mut component = closure_component("registered-component", Some(operation));
-        let baseline = project_serving_component(
-            &component,
-            Vec::new(),
-            &BTreeMap::new(),
-            DependencyDigestRule::Declared,
-        )
-        .unwrap();
-        assert!(!baseline.operations[operation].fresh_only);
-        component.operations.get_mut(operation).unwrap().fresh_only = true;
-        let projected = project_serving_component(
-            &component,
-            Vec::new(),
-            &BTreeMap::new(),
-            DependencyDigestRule::Declared,
-        )
-        .unwrap();
-        assert!(projected.operations[operation].fresh_only);
-        assert_eq!(
-            serde_json::to_value(&projected).unwrap()["operations"][operation]["fresh-only"],
-            true
-        );
-        assert_eq!(
-            projected.operations[operation]
-                .registered_operation
-                .as_deref(),
-            Some(operation)
-        );
     }
 
     /// A package directory whose `descriptors/` holds the canonical descriptor
@@ -2397,7 +2363,6 @@ mod tests {
                     pre_commit: None,
                     pre_commit_required: false,
                     committed_result_schema: None,
-                    fresh_only: declared.fresh_only,
                     registered_operation: declared.registered_operation,
                     dependencies: declared.dependencies,
                     input_ports: Vec::new(),
@@ -2753,8 +2718,8 @@ mod tests {
                 .expect("the composed overlay folds its base");
         assert_eq!(
             folded.operations[overlay_operation].permissions,
-            BTreeSet::from([base_operation.to_owned(), overlay_operation.to_owned()]),
-            "the release lists the overlay alone, with its base's authority folded in"
+            BTreeSet::from([overlay_operation.to_owned()]),
+            "the overlay entry requires its own permission alone"
         );
 
         base.operations

@@ -26,10 +26,7 @@ use wamn_session::verifier::SessionVerifier;
 
 use super::invoke_native;
 use super::trace::TraceCapture;
-use super::{
-    CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, OperationRefusal, OperationRefusalType,
-    PARTICIPANT, ROOT,
-};
+use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, PARTICIPANT, ROOT};
 
 #[path = "../../../../../../platform/runtime/tests/support/session_fixture.rs"]
 #[expect(
@@ -51,33 +48,6 @@ const TEST_NAME: &str = "native_authenticated_call_graph_grant";
 /// Keeps a warm root through the slow fixture work between calls. The warm
 /// test counts instance starts, and a reclaim during that work adds a start.
 const REUSE_WINDOW_SECONDS: i32 = 600;
-
-/// The release a fixture plugin expands permission roots through (R18). It
-/// serves ROOT, PARTICIPANT and CHILD each as its own root, so a role holds
-/// exactly the operations it stores.
-fn grant_release() -> anyhow::Result<LoadedRelease> {
-    let operation =
-        |reference: &str| json!({"registered-operation": reference, "permissions": [reference]});
-    let manifest = json!({
-        "format-version": super::SERVING_MANIFEST_FORMAT_VERSION,
-        "release": {"packages": [{"package-id": "child", "package-version": "1.0.0"},
-                         {"package-id": "root", "package-version": "1.0.0"}]},
-        "components": [
-            {"package-id": "child",
-             "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "c".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
-             "operations": {CHILD: operation(CHILD)}},
-            {"package-id": "root",
-             "descriptor": {"component": "node", "interface-version": "0.1.0", "component-digest": format!("sha256:{}", "a".repeat(64)), "operations": {}, "imports": [], "imports-fingerprint": "", "effects": [], "connections": []},
-             "operations": {ROOT: operation(ROOT), PARTICIPANT: operation(PARTICIPANT)}}],
-        "routes": [],
-        "attachments": {}
-    });
-    Ok(LoadedRelease::load_canonical_bytes(
-        &wamn_execution_contract::canonical_json_bytes(&manifest),
-        "native grant closures",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
-    )?)
-}
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
@@ -166,18 +136,22 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
                 &[&TENANT, &role],
             )
             .await?;
-        admin.execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''), regexp_replace($3, '@[^@]*$', ''))",
-            &[&TENANT, &role, &ROOT],
-        ).await?;
+        admin
+            .execute(
+                "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ($1, $2, regexp_replace($3, '@[^@]*$', ''))",
+                &[&TENANT, &role, &ROOT],
+            )
+            .await?;
     }
     for permission in [CHILD, PARTICIPANT] {
-        admin.execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ($1, 'native-child', regexp_replace($2, '@[^@]*$', ''), regexp_replace($2, '@[^@]*$', ''))",
-            &[&TENANT, &permission],
-        ).await?;
+        admin
+            .execute(
+                "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ($1, 'native-child', regexp_replace($2, '@[^@]*$', ''))",
+                &[&TENANT, &permission],
+            )
+            .await?;
     }
     let mut scoped_url = url::Url::parse(admin_url)?;
     scoped_url
@@ -216,10 +190,9 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
         (AuthorityClass::CallableHttp.as_str()): scoped_url.as_str()
     }}});
     let projects = StaticCredentialProvider::projects_from_json(&configuration.to_string(), &base)?;
-    let postgres = Arc::new(
-        WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(projects, None)))
-            .with_release_closures(&grant_release()?),
-    );
+    let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
+        StaticCredentialProvider::new(projects, None),
+    )));
     Ok(postgres)
 }
 
@@ -353,37 +326,12 @@ async fn authenticated_as(
     caller
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Scenario {
-    PermissionDenied,
-    FreshOnly,
-    Success,
-}
-
-const SCENARIOS: [Scenario; 3] = [
-    Scenario::PermissionDenied,
-    Scenario::FreshOnly,
-    Scenario::Success,
-];
-
-/// The entry carries the grant of every operation its call graph reaches.
-/// Activation checks that grant once, before the guest runs.
-async fn assert_case(
-    scenario: Scenario,
-    caller: &AuthenticatedCaller,
-    postgres: Arc<WamnPostgres>,
-) {
-    let fixture = Fixture::build_with_reuse(
-        Case::CalleeGrant,
-        Some(scenario == Scenario::FreshOnly),
-        true,
-        None,
-        None,
-        Some(postgres),
-    )
-    .await;
+/// Activation checks the entry's grant once, before the guest runs.
+async fn assert_case(caller: &AuthenticatedCaller, postgres: Arc<WamnPostgres>) {
+    let fixture =
+        Fixture::build_with_reuse(Case::CalleeGrant, true, true, None, None, Some(postgres)).await;
     let target = fixture.target().await;
-    let trace = (scenario == Scenario::Success).then(|| TraceCapture::new(&fixture, caller));
+    let trace = Some(TraceCapture::new(&fixture, caller));
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut request = fixture.request(deadline);
     request.facts.caller = Some(caller.clone());
@@ -399,24 +347,11 @@ async fn assert_case(
         }
         None => invocation.await,
     };
-    let ran = scenario != Scenario::PermissionDenied;
-    if ran {
-        let emission = result
-            .expect("the permitted call graph dispatches")
-            .expect("typed emission");
-        assert_eq!(emission.payload, r#"[{"value":37}]"#);
-        assert_eq!(emission.port, None);
-    } else {
-        let error = result.expect_err("a caller without the callee grant is refused");
-        let refusal = error
-            .downcast_ref::<OperationRefusal>()
-            .unwrap_or_else(|| panic!("native dispatch retains typed refusal: {error:#}"));
-        assert_eq!(refusal.operation(), CHILD);
-        assert_eq!(
-            refusal.refusal_type(),
-            OperationRefusalType::PermissionDenied
-        );
-    }
+    let emission = result
+        .expect("the permitted call graph dispatches")
+        .expect("typed emission");
+    assert_eq!(emission.payload, r#"[{"value":37}]"#);
+    assert_eq!(emission.port, None);
     fixture.assert_clean().await;
     let observations = fixture.events.lock().expect("observations lock").clone();
     let native_ids: BTreeSet<_> = fixture
@@ -431,7 +366,7 @@ async fn assert_case(
     );
     assert_eq!(
         observations.iter().filter(|event| event.phase == 1).count(),
-        usize::from(ran)
+        1
     );
     for event in observations {
         if event.phase == 0 {
@@ -497,26 +432,14 @@ async fn assert_case(
     if let Some(trace) = trace {
         trace.assert_parentage(&fixture, caller);
     }
-    println!("authenticated-native-case={scenario:?} result=pass");
+    println!("authenticated-native-case=Success result=pass");
 }
 
 async fn assert_authenticated(admin_url: &str) -> anyhow::Result<()> {
     let (mut server, route) = authentication_fixture(admin_url).await?;
-    let parent_only = authenticated(&route, false).await;
     let permitted = authenticated(&route, true).await;
     let (postgres, _) = warm_postgres(admin_url, &[]).await?;
-    for scenario in SCENARIOS {
-        assert_case(
-            scenario,
-            if scenario == Scenario::PermissionDenied {
-                &parent_only
-            } else {
-                &permitted
-            },
-            Arc::clone(&postgres),
-        )
-        .await;
-    }
+    assert_case(&permitted, postgres).await;
     server.stop().await;
     Ok(())
 }
@@ -542,18 +465,11 @@ fn native_authenticated_call_graph_grant() {
             stdout.contains("1 passed"),
             "subprocess executed the named test"
         );
-        assert_eq!(
-            stdout.matches("authenticated-native-case=").count(),
-            SCENARIOS.len()
+        assert_eq!(stdout.matches("authenticated-native-case=").count(), 1);
+        assert!(
+            stdout.contains("authenticated-native-case=Success result=pass"),
+            "subprocess executed the case"
         );
-        for scenario in SCENARIOS {
-            assert!(
-                stdout.contains(&format!(
-                    "authenticated-native-case={scenario:?} result=pass"
-                )),
-                "subprocess executed {scenario:?}"
-            );
-        }
         assert_eq!(
             stdout
                 .matches("authenticated-native-trace result=pass")
@@ -601,7 +517,6 @@ fn native_authenticated_transaction_participant() {
                 .await
                 .expect("authenticated transaction fixture");
             let caller = authenticated(&route, true).await;
-            let parent_only = authenticated(&route, false).await;
             let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
                 .await
                 .expect("participant SQL credentials");
@@ -617,7 +532,7 @@ fn native_authenticated_transaction_participant() {
 
             let fixture = Fixture::build_with_reuse(
                 Case::TransactionOwner,
-                None,
+                false,
                 true,
                 None,
                 None,
@@ -642,24 +557,9 @@ fn native_authenticated_transaction_participant() {
             );
             fixture.assert_clean().await;
 
-            let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
-            request.facts.caller = Some(parent_only);
-            let error = invoke_native(&fixture.target().await, request)
-                .await
-                .expect_err("caller without participant permission is refused");
-            let refusal = error
-                .downcast_ref::<OperationRefusal>()
-                .expect("participant refusal remains typed");
-            assert_eq!(
-                refusal.refusal_type(),
-                OperationRefusalType::PermissionDenied
-            );
-            assert_eq!(refusal.operation(), PARTICIPANT);
-            fixture.assert_clean().await;
-
             let denied = Fixture::build_with_reuse(
                 Case::TransactionParticipant,
-                None,
+                false,
                 true,
                 None,
                 None,
@@ -683,9 +583,9 @@ fn native_authenticated_transaction_participant() {
 }
 
 #[test]
-fn native_warm_alternating_callers_and_fresh_only_grant() {
+fn native_warm_alternating_callers_and_credentials() {
     super::run_isolated_test(
-        "authenticated::native_warm_alternating_callers_and_fresh_only_grant",
+        "authenticated::native_warm_alternating_callers_and_credentials",
         async {
             let _lock = wamn_test_postgres::lock();
             let database = wamn_test_postgres::database();
@@ -701,7 +601,7 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
                 .expect("guest-generation fixture");
             let fixture = Fixture::build_with_reuse(
                 Case::CalleeGrant,
-                Some(false),
+                true,
                 true,
                 None,
                 Some(REUSE_WINDOW_SECONDS),
@@ -783,61 +683,37 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
                     alice.principal_id().to_owned(),
                 ]
             );
-            let denied = authenticated_as(&route, false, Some(bob.principal_id())).await;
             let mut request = fixture.request(Instant::now() + CLEANUP);
-            request.facts.caller = Some(denied);
-            let error = invoke_native(&target, request)
-                .await
-                .expect_err("new caller cannot inherit the prior callee grant");
-            assert_eq!(
-                error
-                    .downcast_ref::<OperationRefusal>()
-                    .expect("typed permission refusal")
-                    .refusal_type(),
-                OperationRefusalType::PermissionDenied
-            );
-            super::warm::close(&fixture).await;
-
-            let fresh_only = Fixture::build_with_reuse(
-                Case::CalleeGrant,
-                Some(true),
-                true,
-                None,
-                Some(REUSE_WINDOW_SECONDS),
-                Some(Arc::clone(&postgres)),
-            )
-            .await;
-            let mut request = fresh_only.request(Instant::now() + CLEANUP);
             request.facts.caller = Some(alice.clone());
-            invoke_native(&fresh_only.target().await, request)
+            invoke_native(&fixture.target().await, request)
                 .await
-                .expect("session admits the fresh-only callee")
+                .expect("session admits the callee")
                 .expect("emission");
             let pat = pat_caller(
                 database.url(),
                 Arc::clone(&postgres),
-                &fresh_only.policy.resources.release,
+                &fixture.policy.resources.release,
             )
             .await
             .expect("real PAT caller");
             assert_eq!(pat.credential_type(), CredentialType::Pat);
             for caller in [&pat, &pat] {
-                let mut request = fresh_only.request(Instant::now() + CLEANUP);
+                let mut request = fixture.request(Instant::now() + CLEANUP);
                 request.facts.caller = Some(caller.clone());
-                invoke_native(&fresh_only.target().await, request)
+                invoke_native(&fixture.target().await, request)
                     .await
-                    .expect("PAT admits the fresh-only callee")
+                    .expect("PAT admits the callee")
                     .expect("emission");
             }
-            let root_id = fresh_only
+            let root_id = fixture
                 .workload
                 .facts_by_component_id
                 .iter()
-                .find(|(_, fact)| *fact == &fresh_only.root)
+                .find(|(_, fact)| *fact == &fixture.root)
                 .expect("root native identity")
                 .0;
             assert_eq!(
-                fresh_only
+                fixture
                     .events
                     .lock()
                     .expect("events")
@@ -847,16 +723,16 @@ fn native_warm_alternating_callers_and_fresh_only_grant() {
                 1,
                 "session and PAT calls reuse the same root instance"
             );
-            let mut request = fresh_only.request(Instant::now() + CLEANUP);
+            let mut request = fixture.request(Instant::now() + CLEANUP);
             request.facts.caller = Some(alice);
-            invoke_native(&fresh_only.target().await, request)
+            invoke_native(&fixture.target().await, request)
                 .await
                 .expect("session remains authorized after PAT calls")
                 .expect("emission");
-            super::warm::close(&fresh_only).await;
+            super::warm::close(&fixture).await;
             let retired = Fixture::build_with_reuse(
                 Case::Success,
-                None,
+                false,
                 true,
                 None,
                 Some(REUSE_WINDOW_SECONDS),
@@ -995,10 +871,7 @@ async fn warm_postgres_with_pool(
         enabled: std::sync::atomic::AtomicBool::new(true),
     });
     Ok((
-        Arc::new(
-            WamnPostgres::with_provider(credentials.clone())
-                .with_release_closures(&grant_release()?),
-        ),
+        Arc::new(WamnPostgres::with_provider(credentials.clone())),
         credentials,
     ))
 }

@@ -178,7 +178,6 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
         &login(admin_url, &administration)?,
-        &release,
     )?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
@@ -343,8 +342,8 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     // the route.
     admin
         .execute(
-            "INSERT INTO app_system.permissions (tenant_id, role_name, permission, required_by) \
-             VALUES ($1, 'purchase-reader', 'wamn-control:role/list', 'wamn-control:role/list')",
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+             VALUES ($1, 'purchase-reader', 'wamn-control:role/list')",
             &[&TENANT],
         )
         .await?;
@@ -404,8 +403,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
         json!({"code": "invalid_input", "detail": {"field": "role"}})
     );
 
-    // Permissions: a grant stores the root, and answers its closure in the
-    // loaded release (platform-deploy.md R18).
+    // Permissions: a grant stores one row.
     let read = "session-test:purchase/read";
     let write = "session-test:purchase/write";
     assert_eq!(
@@ -414,7 +412,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": write})
         )
         .await,
-        json!({"rows_added": 1, "closure": [read, write]})
+        json!({"rows_added": 1})
     );
     assert_eq!(
         answer(
@@ -422,7 +420,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": read})
         )
         .await,
-        json!({"rows_added": 1, "closure": [read]})
+        json!({"rows_added": 1})
     );
     assert_eq!(
         answer(
@@ -430,8 +428,8 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": "session-test:purchase/archive"})
         )
         .await,
-        json!({"rows_added": 1, "closure": []}),
-        "a root the loaded release does not serve is stored and expands to nothing"
+        json!({"rows_added": 1}),
+        "a reference the loaded release does not serve is stored"
     );
     assert_eq!(
         refusal(
@@ -454,25 +452,23 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     assert_eq!(
         entry(read),
         json!({"operation": read, "served": true, "grantable": true, "admin_only": false,
-               "selected": true, "required_by": [write]})
+               "selected": true})
     );
-    assert_eq!(entry(write)["required_by"], json!([]));
     assert_eq!(
         entry("wamn-control:role/list"),
         json!({"operation": "wamn-control:role/list", "served": true, "grantable": false,
-               "admin_only": true, "selected": false, "required_by": []})
+               "admin_only": true, "selected": false})
     );
     assert_eq!(entry("wamn-control:permission/mine")["admin_only"], false);
 
-    // A revoke keeps a row another root requires, and refuses a row that is
-    // not a root.
+    // A revoke removes the row, and refuses a row the role does not hold.
     assert_eq!(
         answer(
             "wamn-control:permission/revoke",
             json!({"role": "clerk", "operation": read})
         )
         .await,
-        json!({"still_required_by": [write]})
+        json!({})
     );
     assert_eq!(
         refusal(
@@ -480,8 +476,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             json!({"role": "clerk", "operation": read})
         )
         .await,
-        json!({"code": "permission_not_selected",
-               "detail": {"field": "operation", "required_by": [write]}})
+        json!({"code": "permission_not_held", "detail": {"field": "operation"}})
     );
 
     // User roles: a known user only, and admin stays under project-admin.
@@ -503,7 +498,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     assert_eq!(
         (stamp.get::<_, String>(0), stamp.get::<_, String>(1)),
         (
-            "wamn-control:user-role/grant@0.6.0".to_owned(),
+            "wamn-control:user-role/grant@0.7.0".to_owned(),
             first.clone()
         )
     );
@@ -559,7 +554,7 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     Ok(())
 }
 
-/// `wamn-control:control/mine@0.6.0` on a control host: the control
+/// `wamn-control:control/mine@0.7.0` on a control host: the control
 /// serving root, the control route authenticator and the org's real
 /// `control` login. Only a browser session of a current `project-admin` or
 /// `org-admin` is admitted, and a revoked role refuses the next request.

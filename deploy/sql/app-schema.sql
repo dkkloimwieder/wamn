@@ -315,35 +315,27 @@ CREATE INDEX user_roles_tkey
 GRANT SELECT ON app_system.user_roles TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- Permissions — the permission roots of an authored role
--- (docs/plan/platform-ui.md §2.3, platform-deploy.md R18). `permission` is a
--- stable operation reference `<package>:<interface>/<operation>`, with no
--- package version. Every row is a direct selection, `permission =
--- required_by`; no row holds a closure derived from a release. Each host
--- expands the roots through the closures of the release it loaded, on every
--- request, so a root that release does not serve grants nothing. `admin` has
--- no rows. FK to roles ON DELETE CASCADE within the tenant.
+-- Permissions — the operations an authored role holds
+-- (docs/plan/trx-pkg-plan.md, Authorization). `permission` is a stable
+-- operation reference `<package>:<interface>/<operation>`, with no package
+-- version. A caller holds exactly the rows of its roles; nothing derives
+-- into them. A row that the serving release does not serve grants nothing.
+-- `admin` has no rows. FK to roles ON DELETE CASCADE within the tenant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_system.permissions (
     tenant_id   text NOT NULL CHECK (tenant_id <> ''),
     role_name   text NOT NULL,
     permission  text NOT NULL,
-    required_by text NOT NULL,
     created_at  timestamptz NOT NULL,
     created_by  uuid NOT NULL,
     updated_at  timestamptz NOT NULL,
     updated_by  uuid NOT NULL,
-    PRIMARY KEY (tenant_id, role_name, permission, required_by),
+    PRIMARY KEY (tenant_id, role_name, permission),
     FOREIGN KEY (tenant_id, role_name)
         REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE,
-    CONSTRAINT permissions_required_by_fkey
-        FOREIGN KEY (tenant_id, role_name, required_by, required_by)
-        REFERENCES app_system.permissions (tenant_id, role_name, permission, required_by)
-        ON DELETE CASCADE,
     CONSTRAINT permissions_admin_check CHECK (role_name <> 'admin'),
     CONSTRAINT permissions_reference_check
-        CHECK (permission ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$'
-           AND required_by ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$')
+        CHECK (permission ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*:[a-z][a-z0-9]*(-[a-z0-9]+)*/[a-z][a-z0-9]*(-[a-z0-9]+)*$')
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.permissions

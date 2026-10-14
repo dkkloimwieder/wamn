@@ -32,19 +32,6 @@
       "text": "The role does not hold this operation."
     },
     {
-      "literal": "permission_not_selected",
-      "from": "transaction_invariant",
-      "detail": {
-        "required": [
-          "field"
-        ],
-        "optional": [
-          "required_by"
-        ]
-      },
-      "text": "The role holds this operation only because another selected operation requires it. Revoke that operation instead."
-    },
-    {
       "literal": "permission_denied",
       "from": "permission_denied",
       "detail": {

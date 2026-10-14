@@ -105,7 +105,6 @@ function get(id: string): WireRequest {
     operation: "fixture:widget/get@1.0.0",
     method: "GET",
     template: "/widget/get",
-    freshOnly: false,
     contract: contract("get", "one"),
     items: [{ id }],
   };
@@ -116,7 +115,6 @@ function list(status: string): WireRequest {
     operation: "fixture:widget/query@1.0.0",
     method: "GET",
     template: "/widget/query",
-    freshOnly: false,
     contract: contract("query", "bounded_list"),
     items: [{ status }],
   };
@@ -126,7 +124,6 @@ const WRITE: WireRequest = {
   operation: "fixture:widget/update@1.0.0",
   method: "POST",
   template: "/widget/update",
-  freshOnly: false,
   contract: contract("update", "one"),
   items: [{ request_id: "r1", id: "a" }],
 };

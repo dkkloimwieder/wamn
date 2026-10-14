@@ -8,9 +8,8 @@
 //! role or permission write first takes the tenant lock that `wamn-ctl` and
 //! release reconciliation take. The writes are the functions of
 //! `wamn_platform_identity::application`, which `wamn-ctl` also calls, so no
-//! second writer exists. A grant stores the root only; each host expands it
-//! through the release it loaded (platform-deploy.md R18), so a grant works
-//! while two releases serve during a rollout.
+//! second writer exists. A grant stores one row, and a caller holds exactly
+//! its rows, so a grant works while two releases serve during a rollout.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,7 +17,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{
-    HostAttachment, HostHandler, HostRouteAuthority, ReleaseClosures, is_host_route_operation,
+    HostAttachment, HostHandler, HostRouteAuthority, is_host_route_operation,
+    sealed_operation_reference,
 };
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -71,7 +71,7 @@ struct UserRoleRequest {
 impl From<AdministrationError> for Refusal {
     fn from(error: AdministrationError) -> Self {
         match error {
-            AdministrationError::Refused(refusal) => declared(refusal),
+            AdministrationError::Refused(refusal) => declared(&refusal),
             AdministrationError::Failed(error) => Self::Failed(error.into()),
         }
     }
@@ -79,8 +79,8 @@ impl From<AdministrationError> for Refusal {
 
 /// The code and detail that the contract of the route declares for one
 /// refusal. `field` names the input member the refusal is about.
-fn declared(refusal: AdministrationRefusal) -> Refusal {
-    let (code, field) = match &refusal {
+fn declared(refusal: &AdministrationRefusal) -> Refusal {
+    let (code, field) = match refusal {
         AdministrationRefusal::AdminTakesNoPermission
         | AdministrationRefusal::AdminCreated
         | AdministrationRefusal::AdminDeleted => ("admin_fixed", "role"),
@@ -88,15 +88,13 @@ fn declared(refusal: AdministrationRefusal) -> Refusal {
         AdministrationRefusal::RoleNotFound { .. } => ("role_not_found", "role"),
         AdministrationRefusal::NotGrantable { .. } => ("operation_not_grantable", "operation"),
         AdministrationRefusal::NotHeld { .. } => ("permission_not_held", "operation"),
-        AdministrationRefusal::NotSelected { .. } => ("permission_not_selected", "operation"),
         AdministrationRefusal::UserNotFound { .. } => ("user_not_found", "user_id"),
         AdministrationRefusal::AdminCovered { .. } => ("admin_covered", "user_id"),
     };
-    let mut detail = json!({ "field": field });
-    if let AdministrationRefusal::NotSelected { required_by, .. } = refusal {
-        detail["required_by"] = json!(required_by);
+    Refusal::Declared {
+        code,
+        detail: json!({ "field": field }),
     }
-    Refusal::Declared { code, detail }
 }
 
 impl ApplicationRoutes<'_> {
@@ -173,40 +171,18 @@ impl ApplicationRoutes<'_> {
                         .into(),
                     );
                 }
-                let closures = ReleaseClosures::from_manifest(self.release.manifest());
                 self.run(attachment, principal, true, async |client| {
-                    let outcome = grant_permission(
-                        client,
-                        tenant,
-                        &request.role,
-                        &request.operation,
-                        closures.closure(&request.operation),
-                    )
-                    .await?;
-                    Ok(json!({
-                        "rows_added": outcome.rows_added,
-                        "closure": outcome.closure,
-                    }))
+                    let outcome =
+                        grant_permission(client, tenant, &request.role, &request.operation).await?;
+                    Ok(json!({ "rows_added": outcome.rows_added }))
                 })
                 .await
             }
             HostHandler::PermissionRevoke => {
                 let request: PermissionRequest = parse(payload)?;
-                let closures = ReleaseClosures::from_manifest(self.release.manifest());
                 self.run(attachment, principal, true, async |client| {
-                    let outcome = revoke_permission(
-                        client,
-                        tenant,
-                        &request.role,
-                        &request.operation,
-                        |root| {
-                            closures
-                                .closure(root)
-                                .is_some_and(|closure| closure.contains(&request.operation))
-                        },
-                    )
-                    .await?;
-                    Ok(json!({ "still_required_by": outcome.still_required_by }))
+                    revoke_permission(client, tenant, &request.role, &request.operation).await?;
+                    Ok(json!({}))
                 })
                 .await
             }
@@ -287,27 +263,18 @@ impl ApplicationRoutes<'_> {
             .await?
     }
 
-    /// Each operation the release serves and each stored root of the role:
-    /// whether the role selected it, the roots that require it under the
-    /// loaded release, and whether a role can take it (§4.6).
-    fn permission_list(&self, role: &str, rows: &[(String, String)]) -> Value {
-        let closures = ReleaseClosures::from_manifest(self.release.manifest());
-        let selected: BTreeSet<&str> = rows
+    /// Each operation the release serves and each stored permission of the
+    /// role: whether the role holds it and whether a role can take it (§4.6).
+    fn permission_list(&self, role: &str, rows: &[String]) -> Value {
+        let served: BTreeSet<&str> = self
+            .release
+            .manifest()
+            .components
             .iter()
-            .filter(|(permission, root)| permission == root)
-            .map(|(permission, _)| permission.as_str())
+            .flat_map(|component| component.operations.values())
+            .filter_map(|operation| operation.registered_operation.as_deref())
+            .map(sealed_operation_reference)
             .collect();
-        let mut required: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-        for &root in &selected {
-            for permission in closures.closure(root).into_iter().flatten() {
-                if permission != root {
-                    required
-                        .entry(permission.as_str())
-                        .or_default()
-                        .insert(root);
-                }
-            }
-        }
         let host: BTreeMap<String, HostRouteAuthority> = self
             .release
             .manifest()
@@ -316,20 +283,19 @@ impl ApplicationRoutes<'_> {
             .flat_map(|set| set.attachments())
             .map(|(_, attachment)| (attachment.reference.clone(), attachment.route.authority))
             .collect();
-        let mut operations: BTreeSet<&str> = closures.roots().collect();
+        let mut operations = served.clone();
         operations.extend(host.keys().map(String::as_str));
-        operations.extend(rows.iter().map(|(permission, _)| permission.as_str()));
+        operations.extend(rows.iter().map(String::as_str));
         let operations: Vec<Value> = operations
             .into_iter()
             .map(|operation| {
                 let authority = host.get(operation);
                 json!({
                     "operation": operation,
-                    "served": closures.closure(operation).is_some() || authority.is_some(),
-                    "grantable": closures.closure(operation).is_some() && authority.is_none(),
+                    "served": served.contains(operation) || authority.is_some(),
+                    "grantable": served.contains(operation) && authority.is_none(),
                     "admin_only": authority == Some(&HostRouteAuthority::Admin),
-                    "selected": selected.contains(operation),
-                    "required_by": required.get(operation).cloned().unwrap_or_default(),
+                    "selected": rows.iter().any(|row| row == operation),
                 })
             })
             .collect();

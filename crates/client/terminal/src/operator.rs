@@ -294,15 +294,9 @@ async fn submit_request(
     client: &WamnClient,
     request: &PreparedRequest,
 ) -> (usize, Attempt, Result<HttpResponse, ClientError>) {
-    let response = if request.fresh_only {
-        client
-            .submit_fresh(&request.route, &request.parameters, &request.body)
-            .await
-    } else {
-        client
-            .submit(&request.route, &request.parameters, &request.body)
-            .await
-    };
+    let response = client
+        .submit(&request.route, &request.parameters, &request.body)
+        .await;
     (request.screen, request.attempt, response)
 }
 
@@ -401,8 +395,6 @@ pub struct PreparedRequest {
     pub screen: usize,
     pub attempt: Attempt,
     pub route: RouteMetadata,
-    /// Preserve legacy metadata without requiring a different credential.
-    pub fresh_only: bool,
     pub parameters: BTreeMap<String, String>,
     pub body: BuiltRequest,
 }
@@ -1221,7 +1213,6 @@ impl GeneratedApplication {
             screen: index,
             attempt,
             route,
-            fresh_only: self.screens[index].spec().fresh_only,
             parameters,
             body,
         })
@@ -1473,12 +1464,7 @@ fn state_text(screen: &Screen) -> String {
             reason,
             retry_refusal,
         } => format!(
-            "Outcome unknown: {reason}. {}{}{}",
-            if reason.ends_with("; the server reported fresh-credential-required") {
-                "The server refused this credential. The request was not retried. "
-            } else {
-                ""
-            },
+            "Outcome unknown: {reason}. {}{}",
             recovery_message(&screen.spec().response),
             retry_refusal
                 .as_ref()

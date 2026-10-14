@@ -178,14 +178,10 @@ pub(super) fn verify_dev_command_output(output: &std::process::Output) -> anyhow
 
 pub(super) fn declared_dev_data_access_grants()
 -> anyhow::Result<BTreeSet<(String, String, String, String)>> {
-    let inputs = std::env::var_os(JOURNEY_DOCUMENT_ENV)
-        .map(|_| JourneyDocument::required())
-        .transpose()?;
     let mut expected = BTreeSet::new();
     for package in JOURNEY_PACKAGES {
-        let path =
-            wamn_schema_generator::output_root(&journey_package_root(package, inputs.as_ref()))
-                .join("platform-policy/data-access.json");
+        let path = wamn_schema_generator::output_root(&journey_package_root(package))
+            .join("platform-policy/data-access.json");
         let policy = read_json(&path)?;
         anyhow::ensure!(
             policy["role"] == "wamn_app",

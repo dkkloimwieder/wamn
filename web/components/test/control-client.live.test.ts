@@ -72,10 +72,10 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
     const granted = await permission.grant(transport, [
       { requestId: requestId(), value: { role: "clerk", operation: WRITE } },
     ]);
-    expect(granted).toMatchObject({ status: "completed", value: { closure: [READ, WRITE] } });
+    expect(granted).toMatchObject({ status: "completed", value: { rowsAdded: 1 } });
     expect(
       await permission.grant(transport, [{ requestId: requestId(), value: { role: "clerk", operation: READ } }]),
-    ).toMatchObject({ status: "completed", value: { closure: [READ] } });
+    ).toMatchObject({ status: "completed", value: { rowsAdded: 1 } });
     expect(
       await permission.grant(transport, [
         { requestId: requestId(), value: { role: "clerk", operation: "wamn-control:role/list" } },
@@ -91,7 +91,6 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
       grantable: true,
       adminOnly: false,
       selected: true,
-      requiredBy: [WRITE],
     });
     expect(operations.find((entry) => entry.operation === "wamn-control:role/list")).toMatchObject({
       grantable: false,
@@ -100,13 +99,13 @@ describe.skipIf(baseUrl === undefined)("the generated control client", () => {
 
     expect(
       await permission.revoke(transport, [{ requestId: requestId(), value: { role: "clerk", operation: READ } }]),
-    ).toEqual({ status: "completed", value: { stillRequiredBy: [WRITE] } });
+    ).toEqual({ status: "completed", value: {} });
     expect(
       await permission.revoke(transport, [{ requestId: requestId(), value: { role: "clerk", operation: READ } }]),
     ).toMatchObject({
       status: "refused",
-      code: "permission_not_selected",
-      detail: { detail: { field: "operation", required_by: [WRITE] } },
+      code: "permission_not_held",
+      detail: { detail: { field: "operation" } },
     });
 
     expect(
