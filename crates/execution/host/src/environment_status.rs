@@ -209,10 +209,11 @@ mod tests {
     }
 
     /// The role grants get, list and watch on pods, deployments and
-    /// workloaddeployments in `hosts`, and nothing else, to the control
-    /// host's ServiceAccount.
+    /// workloaddeployments in the namespace it is applied to, and nothing
+    /// else, to the control host's ServiceAccount. No object states a
+    /// namespace: the install applies it with `-n <release namespace>`.
     #[test]
-    fn the_status_role_reads_only_the_three_resources_in_hosts() {
+    fn the_status_role_reads_only_the_three_resources_in_the_release_namespace() {
         let manifest = include_str!("../../../../deploy/platform/control-status-rbac.yaml");
         let documents: Vec<Value> = serde_yaml::Deserializer::from_str(manifest)
             .map(|document| {
@@ -223,7 +224,7 @@ mod tests {
             .iter()
             .find(|document| document["kind"] == "Role")
             .expect("a Role");
-        assert_eq!(role["metadata"]["namespace"], "hosts");
+        assert_eq!(role["metadata"].get("namespace"), None);
         let verbs = json!(["get", "list", "watch"]);
         assert_eq!(
             role["rules"],
@@ -237,7 +238,7 @@ mod tests {
             .iter()
             .find(|document| document["kind"] == "RoleBinding")
             .expect("a RoleBinding");
-        assert_eq!(binding["metadata"]["namespace"], "hosts");
+        assert_eq!(binding["metadata"].get("namespace"), None);
         assert_eq!(binding["roleRef"]["kind"], "Role");
         assert_eq!(binding["roleRef"]["name"], role["metadata"]["name"]);
         assert_eq!(
@@ -245,7 +246,6 @@ mod tests {
             json!([{
                 "kind": "ServiceAccount",
                 "name": "wamn-host",
-                "namespace": "hosts",
             }])
         );
         assert!(

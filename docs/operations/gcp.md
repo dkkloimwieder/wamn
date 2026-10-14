@@ -2208,7 +2208,7 @@ Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.i
 
 Make the service account `wamn-host`, its annotation and its binding, and the Secret `identity-resend`, as section 3.23 says. On 2026-10-13 the account and the binding were made before section 3.23 existed, from a copy of the same manifest.
 
-Apply the read-only access of the control operation `environment.status` (section 11.4 of docs/plan/platform-deploy.md, `wamn-esnu9`):
+Apply the read-only access of the control operation `environment.status` (section 11.4 of docs/plan/platform-deploy.md, `wamn-esnu9`) into the release namespace `hosts`. The manifest states no namespace:
 
 ```bash
 kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml

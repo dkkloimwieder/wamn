@@ -1,23 +1,24 @@
 # The read-only access of the control host's `environment.status`
 # (docs/plan/platform-deploy.md section 11.4, owner ruling 2026-10-13,
-# wamn-esnu9). Applied once per cluster by the platform install:
+# wamn-esnu9). Applied once per cluster by the platform install, into the
+# release namespace (`hosts` on GKE, `wamn-system` on kind):
 #
-#   kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
+#   kubectl -n <release namespace> apply -f deploy/platform/control-status-rbac.yaml
 #
-# The control host group runs as the one platform service account `wamn-host`
-# in `hosts` (docs/operations/gcp.md section 3.23, wamn-okr8y). The host
-# groups set automountServiceAccountToken false, so only the control group,
-# which mounts a projected token (deploy/gcp/values-host.yaml), can use this
-# grant.
+# No object states a namespace. The subject's namespace defaults to the
+# RoleBinding's namespace. The control host group runs as the one platform
+# service account `wamn-host` in the release namespace (docs/operations/gcp.md
+# section 3.23, wamn-okr8y). The host groups set automountServiceAccountToken
+# false, so only the control group, which mounts a projected token
+# (deploy/gcp/values-host.yaml), can use this grant.
 #
-# get, list and watch on pods, deployments and workloaddeployments in `hosts`,
-# and nothing else: no Secret, no write, no other namespace.
+# get, list and watch on pods, deployments and workloaddeployments in the
+# release namespace, and nothing else: no Secret, no write, no other namespace.
 # `crates/execution/host/src/environment_status.rs` tests these rules.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: wamn-control-status
-  namespace: hosts
 rules:
 - apiGroups: [""]
   resources: [pods]
@@ -33,7 +34,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: wamn-control-status
-  namespace: hosts
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -41,4 +41,3 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: wamn-host
-  namespace: hosts
