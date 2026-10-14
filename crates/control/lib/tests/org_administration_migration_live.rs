@@ -1,8 +1,9 @@
 //! Live test of `system/0007_org_administration.sql` (wamn-a40n.3): on a
 //! control database installed before it, the migration changes the principal
 //! type `human` to `user`, creates the org tables as a fresh install has them,
-//! and, with 0008, 0012 to 0016 and the removal of the environment sagas after
-//! it as an upgrade runs them, gives the control family
+//! and, with 0008, 0010, 0012 to 0016, the removal of the environment sagas
+//! and the removal of the package copies after it as an upgrade runs them,
+//! gives the control family
 //! and the identity issuer the surfaces that provisioning grants. The test holds the process lock of its server, because
 //! the installers create cluster-wide roles.
 
@@ -17,6 +18,8 @@ const MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0007_org_administration.sql");
 const NEXT_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0008_environment_status.sql");
+const ARTIFACTS_MIGRATION: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0010_package_artifacts.sql");
 const SAGA_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0012_saga_steps.sql");
 const PROJECT_MIGRATION: &str =
@@ -29,6 +32,20 @@ const COPY_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0016_copy_environment.sql");
 const REMOVE_SAGAS_MIGRATION: &str =
     include_str!("../../../../deploy/sql/migrations/system/0020_remove_environment_sagas.sql");
+const REMOVE_PACKAGE_COPIES_MIGRATION: &str =
+    include_str!("../../../../deploy/sql/migrations/system/0024_remove_package_copies.sql");
+/// The package copies that 0024 drops besides `catalog.package_artifacts`,
+/// which 0010 creates. A fresh install has none of them, and 0024 reads only
+/// their names, so empty stand-ins are enough.
+const PACKAGE_COPIES: &str = r"
+CREATE TABLE catalog.effective_release_packages ();
+CREATE TABLE catalog.package_migrations ();
+CREATE TABLE catalog.packages ();
+CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership() RETURNS trigger
+  LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;
+CREATE FUNCTION catalog.reject_package_migration_after_release_membership() RETURNS trigger
+  LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;
+";
 const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 
 /// The relations whose principal type 0007 changes.
@@ -319,15 +336,17 @@ async fn the_migration_creates_the_org_tables_and_grants_the_provisioned_surface
     client
         .batch_execute(&format!(
             "BEGIN; SET LOCAL ROLE wamn_system; {NEXT_MIGRATION} COMMIT; \
+             BEGIN; SET LOCAL ROLE wamn_system; {ARTIFACTS_MIGRATION} {PACKAGE_COPIES} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {SAGA_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {PROJECT_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {SAGA_ROUTES_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {PACKAGE_LIST_MIGRATION} COMMIT; \
              BEGIN; SET LOCAL ROLE wamn_system; {COPY_MIGRATION} COMMIT; \
-             BEGIN; SET LOCAL ROLE wamn_system; {REMOVE_SAGAS_MIGRATION} COMMIT;"
+             BEGIN; SET LOCAL ROLE wamn_system; {REMOVE_SAGAS_MIGRATION} COMMIT; \
+             BEGIN; SET LOCAL ROLE wamn_system; {REMOVE_PACKAGE_COPIES_MIGRATION} COMMIT;"
         ))
         .await
-        .expect("apply system/0008, 0012 to 0016 and the saga removal as wamn_system");
+        .expect("apply system/0008, 0010, 0012 to 0016 and the two removals as wamn_system");
     let control = surface(&client, "wamn_control").await;
     let issuer = surface(&client, "wamn_identity_issuer").await;
     client
