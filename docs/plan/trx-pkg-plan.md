@@ -12,6 +12,13 @@ Security follows the component model: authority arrives only through WIT imports
 
 Status: direction, cut to a core on 2026-10-11 after ten review rounds, and split into three independent items (A composition, B profile screen, C authorization) that ship alone. Core (spike A, then stop reviewing until there is a result): per-member instances of `wamn:postgres/statements`, with member→instance wiring verified in the composed artifact; transaction selection unchanged; `run`/`run-stream` refused inside a host transaction; `client` denied to application components. No version bump on anything: `wamn:postgres` stays 0.3. B is a review screen with no enforcement on it. C is the ACL ruling, pure deletion; grantable administration is a follow-up after C, rescoped then. Cleanup after migration (section below): every deletion is kept and lands after Acme moves off the participant; nothing is lost. Deferred (section below): everything else the reviews added. The design supersedes the participant and pre-commit path in data-access.md; the permission folds of data-access.md:313 and execution.md:20, `ReleaseClosures::expand`, and platform-ui.md §2.3–2.4; `fresh_only`; and the mechanism half of the 2026-09-24 "composition at build" line, not the ruling that nested calls are in-process component calls.
 
+## How this plan is worked
+
+- This plan is the single authority for the next work, as `platform-deploy.md` was for deploy (owner ruling 2026-10-14).
+- The top list of `docs/plan/platform-deploy.md` ("How this plan is worked") applies unchanged: decide, do not ask; findings first; at most three issues per epic; the testing budget; one worktree per lane; the version-bump rule; reports of ten lines or fewer at merge.
+- Rule 5 reads: `git status --short` on the main checkout is empty, untracked excluded paths aside. The owner's skill installs (`.agents/skills/zaidan/`, `.claude/skills/`, `skills-lock.json`) are in `.git/info/exclude` and are never committed (owner ruling 2026-10-14).
+- Code commits never edit this plan. A plan edit is a docs commit that cites its ruling.
+
 ## Mechanism
 
 An application is one composed component (`wac`), one store, one invocation, one host-owned transaction per command item. Every member runs in that store.
@@ -373,6 +380,15 @@ Open questions:
 - Does `wac` rename a member's imports in place, or does it need an adapter per member? The link test answers it.
 - Does a step-shaped operation (`receive-lines` returning a typed record) fit the handler signature as declared today? The graph-and-admission test answers it.
 - Does a second connection for a member (analytics) take the `bind-connection` shape? Confirm before the Analytics row in Scenarios is treated as settled.
+
+## Epics
+
+Order (owner ruling 2026-10-14). C goes first because it is pure deletion and A also changes `serving_manifest.rs`. Nothing from Deferred rides along with any epic.
+
+1. C, authorization, pure deletion (Spike and acceptance C): `wamn-14bx8`.
+2. A, composition spike (Spike and acceptance A). Scoped at C's close.
+3. Cleanup after migration (section above). Lands after Acme moves off the participant.
+4. B, profile screen (Spike and acceptance B).
 
 ## Evidence
 
