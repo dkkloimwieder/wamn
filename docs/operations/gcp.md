@@ -73,6 +73,13 @@ gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central
 
 The network endpoint group `wamn-edge` stays, because the backend service `wamn-edge-platform` names it. Section 4.20 replaces it.
 
+The work directory of section 4.1 holds the files of the deleted cluster. These are the event NATS users, the gate logins, the release digests, the stamped chart and the platform file. Section 4 makes them again, and it refuses a directory that exists. Stop the port-forwards of the old cluster and remove the work directory:
+
+```bash
+pkill -f '^kubectl -n platform port-forward'
+rm -rf $HOME/.cache/wamn-install
+```
+
 ## 4. Install
 
 ### 4.1 Work directory and binaries
