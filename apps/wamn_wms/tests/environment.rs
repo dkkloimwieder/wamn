@@ -176,7 +176,7 @@ pub async fn provision_project(
         project: identity().project.clone(),
         env: identity().environment.clone(),
         policy: None,
-        disposable: false,
+        disposable: None,
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
         connection_limit: None,

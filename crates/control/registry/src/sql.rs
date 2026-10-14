@@ -151,12 +151,11 @@ pub fn select_retired_project_envs_sql() -> &'static str {
 /// names of the resources that already exist (wamn-0h0g.13.57). A recreated
 /// environment is a new INSERT (its old row cascaded away) and gets a new one.
 ///
-/// `disposable` is the OPPOSITE: it IS refreshed on conflict (wamn-10yt.38),
-/// because unlike the instance identity it is a declared property of THIS
-/// provisioning request, and a marker that could only ever be set once would
-/// strand an environment on whichever side it was first provisioned. Both
-/// columns come back so the caller projects the STORED row rather than the one
-/// it hoped it wrote.
+/// `disposable` has one owner, `wamn dev up` (wamn-10yt.38). A request that
+/// names it (`$7` not null) writes it, and a request that does not (`env
+/// apply`) keeps the stored value (wamn-p9xix). A new row without it is
+/// durable. Both columns come back so the caller projects the STORED row
+/// rather than the one it hoped it wrote.
 ///
 /// A new row's `policy_name` is its env name, and a conflict keeps the stored
 /// one: the environment document owns it (docs/plan/platform-deploy.md R2).
@@ -164,11 +163,11 @@ pub fn upsert_project_env_sql() -> &'static str {
     "INSERT INTO registry.project_envs \
        (org, project, env, secret_name, secret_namespace, instance_suffix, disposable, \
         policy_name) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $3) \
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, false), $3) \
      ON CONFLICT (org, project, env) DO UPDATE SET \
        secret_name = EXCLUDED.secret_name, \
        secret_namespace = EXCLUDED.secret_namespace, \
-       disposable = EXCLUDED.disposable \
+       disposable = COALESCE($7, registry.project_envs.disposable) \
      RETURNING instance_suffix, disposable"
 }
 
@@ -178,11 +177,11 @@ pub fn upsert_project_env_with_policy_sql() -> &'static str {
     "INSERT INTO registry.project_envs \
        (org, project, env, secret_name, secret_namespace, instance_suffix, disposable, \
         policy_name) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, false), $8) \
      ON CONFLICT (org, project, env) DO UPDATE SET \
        secret_name = EXCLUDED.secret_name, \
        secret_namespace = EXCLUDED.secret_namespace, \
-       disposable = EXCLUDED.disposable \
+       disposable = COALESCE($7, registry.project_envs.disposable) \
      RETURNING instance_suffix, disposable"
 }
 

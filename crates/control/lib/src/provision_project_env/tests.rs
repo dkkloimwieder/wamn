@@ -1081,7 +1081,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         "db-first",
         Some("system"),
         "abcd1234",
-        false,
+        Some(false),
     )
     .await
     .unwrap();
@@ -1108,7 +1108,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         "db-second",
         Some("system"),
         "efgh5678",
-        true,
+        Some(true),
     )
     .await
     .unwrap();
@@ -1131,7 +1131,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         "db-other",
         Some("system"),
         "efgh5678",
-        true,
+        Some(true),
     )
     .await
     .unwrap_err();
@@ -1227,11 +1227,64 @@ fn workload_url_names_the_cluster_host_not_the_admin_url_host() {
     );
 }
 
+/// `env apply` passes no marker, so a row `wamn dev up` marked disposable
+/// stays disposable in the registry and in its projection (wamn-p9xix).
+#[tokio::test]
+async fn a_record_without_a_marker_keeps_the_disposable_row() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(async move {
+        connection.await.unwrap();
+    });
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    client.batch_execute("INSERT INTO registry.orgs (id,placement_type) VALUES ('demo','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('demo','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
+    let triple = Triple::new("demo", "inventory", "dev");
+    for disposable in [Some(true), None] {
+        do_record_project_env(
+            &mut client,
+            &triple,
+            Some("tenant-a"),
+            None,
+            "db-first",
+            Some("system"),
+            "abcd1234",
+            disposable,
+        )
+        .await
+        .unwrap();
+    }
+    let registry: bool = client
+        .query_one(
+            "SELECT disposable FROM registry.project_envs WHERE org='demo' AND project='inventory' AND env='dev'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(registry, "a record without a marker keeps the registry row");
+    client
+        .batch_execute("SET app.tenant='tenant-a'")
+        .await
+        .unwrap();
+    let projected: bool = client
+        .query_one(
+            "SELECT disposable FROM catalog.tenant_environments WHERE tenant_id='tenant-a'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(projected, "the projection follows the stored row");
+}
+
 /// A run with only PAT outputs mints for a recorded environment and writes
 /// nothing to the registry, so it refuses the two registry values (wamn-rjtf).
 #[tokio::test(flavor = "current_thread")]
 async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
-    for (secret_namespace, disposable) in [(Some("hosts".to_owned()), false), (None, true)] {
+    for (secret_namespace, disposable) in [(Some("hosts".to_owned()), None), (None, Some(true))] {
         let error = provision_project_env(&ProvisionProjectEnvRequest {
             org: "acme".into(),
             project: "billing".into(),

@@ -191,7 +191,7 @@ pub(super) async fn record_project_env(
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
-    disposable: bool,
+    disposable: Option<bool>,
 ) -> anyhow::Result<String> {
     let (mut client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -227,7 +227,7 @@ pub(super) async fn do_record_project_env(
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
-    disposable: bool,
+    disposable: Option<bool>,
 ) -> anyhow::Result<String> {
     client
         .batch_execute("SET ROLE wamn_system")

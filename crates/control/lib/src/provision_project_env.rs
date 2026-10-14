@@ -150,7 +150,9 @@ pub struct ProvisionProjectEnvRequest {
     /// Mark this environment DISPOSABLE: its admitted component facts may be
     /// REPLACED rather than frozen (wamn-10yt.38). The marker is recorded on the
     /// environment's registry row and projected into the control store.
-    pub disposable: bool,
+    /// `None` keeps the recorded marker, and a new row is durable: only
+    /// `wamn dev up` sets it, and `env apply` passes `None` (wamn-p9xix).
+    pub disposable: Option<bool>,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
     /// placement, read-or-mint the stored instance suffix, and record the project
@@ -474,7 +476,7 @@ pub async fn provision_project_env(
         || args.emit_privilege_sql.is_some()
         || db_secret_path.is_some();
     let mints_only = issues_pat && !provisions;
-    if mints_only && (args.secret_namespace.is_some() || args.disposable) {
+    if mints_only && (args.secret_namespace.is_some() || args.disposable.is_some()) {
         anyhow::bail!(
             "--secret-namespace and --disposable belong to a provisioning run, which passes an --emit-* output"
         );

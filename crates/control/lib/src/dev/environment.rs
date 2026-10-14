@@ -324,7 +324,7 @@ fn provisioning_args(
         // that is written down (wamn-10yt.38). Admit reads the projection of
         // THIS row, so an author's re-run replaces its own component fact
         // instead of being locked out of a package version by a reformat.
-        disposable: true,
+        disposable: Some(true),
         system_database_url: Some(system_url.to_owned()),
         cluster: Some("route-auth-pg18".to_owned()),
         connection_limit: None,

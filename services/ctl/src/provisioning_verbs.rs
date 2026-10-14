@@ -798,7 +798,7 @@ fn provisioning_request(args: ProvisionProjectEnvArgs) -> ProvisionProjectEnvReq
             "clap parser invariant: --env is required unless --revoke-pat-prefix is present",
         ),
         policy: None,
-        disposable: args.disposable,
+        disposable: args.disposable.then_some(true),
         system_database_url: args.system_database_url,
         cluster: args.cluster,
         connection_limit: args.connection_limit,
