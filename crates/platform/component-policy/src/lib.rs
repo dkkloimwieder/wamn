@@ -44,6 +44,27 @@ impl ComponentImports {
 
 use std::collections::BTreeSet;
 
+/// The interface that each member of a composed component imports as an
+/// instance of its own (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
+pub const STATEMENTS_INTERFACE: &str = "wamn:postgres/statements@0.3.0";
+
+/// The custom section of a composed component that maps each named
+/// statements import to the digest of the member it was composed for.
+///
+/// Its payload is a JSON object from import name to member digest
+/// (`sha256:<hex>`). The composer writes it; admission and the host read it.
+pub const STATEMENT_INSTANCES_SECTION: &str = "wamn:statement-instances";
+
+/// The interface instance type of one component import, which policy admits.
+///
+/// An import named for its interface (`wamn:postgres/statements@0.3.0`) is an
+/// instance of that interface. A labelled import (`sql-0`) names its interface
+/// in its `(implements ..)` annotation, so two instances of one interface are
+/// one capability, admitted by the same row.
+pub fn instance_type<'a>(name: &'a str, implements: Option<&'a str>) -> &'a str {
+    implements.unwrap_or(name)
+}
+
 /// The retained policy population: first-party platform components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyProfile {
@@ -653,5 +674,24 @@ mod tests {
                 TenantImportErrorType::InvalidPlatformCapability
             );
         }
+    }
+
+    #[test]
+    fn a_labelled_import_is_admitted_by_its_interface_instance_type() {
+        const STATEMENTS: &str = STATEMENTS_INTERFACE;
+        let granted = BTreeSet::from(["wamn:postgres".to_string()]);
+        let labelled = ComponentImports::new(
+            [("sql-0", Some(STATEMENTS)), ("sql-1", Some(STATEMENTS))]
+                .map(|(name, implements)| instance_type(name, implements).to_string()),
+        );
+        assert!(analyze_tenant(&labelled, &granted, "tenant-node").is_ok());
+        let error = analyze_tenant(&labelled, &BTreeSet::new(), "tenant-node")
+            .expect_err("a labelled effect still needs its package grant");
+        assert_eq!(error.imports(), [STATEMENTS, STATEMENTS]);
+
+        let unlabelled = ComponentImports::new([instance_type("sql-0", None).to_string()]);
+        let error = analyze_tenant(&unlabelled, &granted, "tenant-node")
+            .expect_err("a label with no interface names no capability");
+        assert_eq!(error.imports(), ["sql-0"]);
     }
 }

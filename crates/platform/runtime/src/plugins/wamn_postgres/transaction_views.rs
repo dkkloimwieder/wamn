@@ -351,7 +351,7 @@ impl WamnPostgres {
             access.in_flight = true;
             ViewUse(Arc::clone(&view))
         };
-        let active = self.active_statement_set(scope);
+        let active = self.active_statement_set(scope, None);
         let statement =
             admit_transaction_statement(self, scope, active.as_deref(), statement_path, binds)?;
         let connection = StatementConnectionGuard::new(

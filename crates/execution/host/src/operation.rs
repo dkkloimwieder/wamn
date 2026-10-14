@@ -17,7 +17,8 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ComponentSqlField, ComponentSqlValueType, ServingComponentOperation,
+    AdmittedComponent, ComponentSqlField, ComponentSqlValueType, ServingComponent,
+    ServingComponentOperation,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
@@ -36,8 +37,8 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField, StatementValueType,
-    VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
+    PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField,
+    StatementValueType, VerifiedStatement, VerifiedStatementSet, WamnPostgres, WriteLogStore,
 };
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -490,12 +491,8 @@ impl OperationHost {
         &self,
         components: Vec<NativeComponent>,
     ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
-        let facts: Vec<_> = components
-            .iter()
-            .map(|component| component.fact.clone())
-            .collect();
         let policy = new_native_policy(
-            &facts,
+            &components,
             NativePolicyResources {
                 postgres: Arc::clone(&self.postgres),
                 logging: Arc::clone(&self.logging),
@@ -670,6 +667,40 @@ fn prepare_statement_sets(
             )
         })
         .collect()
+}
+
+/// Lower and seal the statement set of each named `statements` import.
+///
+/// `instances` is the record verified in the component's bytes. Publish
+/// wrote each member's own set into the served component, keyed by import
+/// name, so the host binds from that field only.
+///
+/// # Errors
+///
+/// Refuses a composition whose served component does not carry a set for
+/// exactly its named imports.
+fn prepare_statement_members(
+    instances: &BTreeMap<String, String>,
+    served: &ServingComponent,
+) -> anyhow::Result<PreparedStatementMembers> {
+    anyhow::ensure!(
+        instances.keys().eq(served.statement_instances.keys())
+            && instances == &served.descriptor.statement_instances,
+        "statement-instances-unreleased: the component imports {:?}, the release binds {:?}",
+        instances.keys().collect::<Vec<_>>(),
+        served.statement_instances.keys().collect::<Vec<_>>()
+    );
+    Ok(WamnPostgres::prepare_statement_members(
+        served
+            .statement_instances
+            .iter()
+            .map(|(instance, statements)| {
+                (
+                    instance.clone(),
+                    WamnPostgres::prepare_statement_set(lower_statement_set(statements)),
+                )
+            }),
+    ))
 }
 
 fn lower_statement_set(

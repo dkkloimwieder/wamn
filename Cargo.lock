@@ -5782,6 +5782,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "wac-graph 0.12.0",
+ "wamn-component-policy",
  "wamn-schema-generator",
  "wasmparser 0.261.0",
  "wat",
@@ -6100,6 +6101,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wamn-catalog",
+ "wamn-component-composer",
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -6117,6 +6119,7 @@ dependencies = [
  "wamn-test-infrastructure",
  "wamn-test-postgres",
  "wash-runtime",
+ "wasmparser 0.261.0",
  "wat",
 ]
 

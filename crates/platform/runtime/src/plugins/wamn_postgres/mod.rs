@@ -103,8 +103,8 @@ pub use production_claim::{
 pub use resources::retained_transaction_for_test;
 pub use resources::{PgCursor, PgStatementTransaction, PgTransaction};
 pub use statements::{
-    PreparedStatementSet, StatementField, StatementValueType, VerifiedStatement,
-    VerifiedStatementSet,
+    PreparedStatementMembers, PreparedStatementSet, StatementField, StatementValueType,
+    VerifiedStatement, VerifiedStatementSet,
 };
 pub use transaction_views::PgTransactionView;
 pub use types::canonical_timestamptz;
@@ -138,6 +138,7 @@ mod bindings {
         imports: { default: async | trappable | tracing },
         named_imports: {
             "wamn:postgres/client": super::NamedProject,
+            "wamn:postgres/statements": super::NamedStatements,
         },
         with: {
             "wamn:postgres/client.transaction": super::PgTransaction,
@@ -185,6 +186,22 @@ impl NamedProject {
 
 #[cfg(feature = "wasm_component_model_implements")]
 const NAMED_PROJECT_CONFIG_KEY: &str = "project";
+
+/// The name of one member's `statements` import in a composed component.
+///
+/// The host binds each name to that member's own statement set, so the name
+/// is the member's identity, fixed at link (`docs/plan/trx-pkg-plan.md`,
+/// Per-member import instances).
+#[cfg(feature = "wasm_component_model_implements")]
+#[derive(Clone, Debug)]
+pub struct NamedStatements(Arc<str>);
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl NamedStatements {
+    fn instance(&self) -> &str {
+        &self.0
+    }
+}
 
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::statements as statement_wit;
@@ -396,6 +413,21 @@ impl WamnPostgres {
             }
             if has_statements {
                 statement_wit::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
+            }
+            let has_named_statements = interfaces.iter().any(|interface| {
+                interface.namespace == "wamn"
+                    && interface.package == "postgres"
+                    && interface.interfaces.contains("statements")
+                    && interface.name.is_some()
+            });
+            if has_named_statements {
+                // One instance per import name, each closure holding its name.
+                bindings::named_imports::wamn::postgres::statements::add_to_linker::<_, SharedCtx>(
+                    linker,
+                    component,
+                    |name| Ok(NamedStatements(Arc::from(name))),
+                    extract_active_ctx,
+                )?;
             }
             if !named.is_empty() {
                 bindings::named_imports::wamn::postgres::client::add_to_linker::<_, SharedCtx>(

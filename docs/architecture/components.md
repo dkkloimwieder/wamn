@@ -46,6 +46,13 @@ Admission refuses resource handles in this operation boundary because those hand
 An application operation dependency names an exact base by digest.
 The overlay build composes that base into the overlay component, and admission requires the base to be embedded unchanged under that digest.
 A composed component also exports the interfaces of its members. The host routes only to declared operations.
+When no participant is plugged, each member that imports `wamn:postgres/statements` gets its own outer import, named by its position: `sql-0`, `sql-1`.
+Each import is labelled as an instance of the one statements interface, so policy admits it by that interface.
+A custom section of the composed component, `wamn:statement-instances`, records the digest of the member that each import was made for.
+Admission reads the instantiation graph and refuses the component unless each import reaches exactly that member ([per-member import instances](../plan/trx-pkg-plan.md#per-member-import-instances)).
+Admission copies that record into the admitted descriptor as `statement-instances`, and the imports fingerprint covers it.
+Publish writes each member's own statement set into the served component, keyed by import name: the overlay's from the component's own operations, and each base's from its admitted descriptor.
+The host binds each import from that served set only, and it refuses to load a composition whose release has no set for it.
 Dependency membership alone does not authorize an operation. Publish folds each dependency into the entry's grant, and the [execution rules](execution.md) check that grant.
 
 Release membership names package versions and component digests.

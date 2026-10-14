@@ -738,6 +738,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         })
         .with_context(|| format!("admit component {}", source.name))?;
         let facts = admission.facts().clone();
+        let statement_instances = admission.statement_instances().clone();
         let mut required = admission
             .requirements()
             .iter()
@@ -769,7 +770,8 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
             facts.component_digest,
             source.sha256
         );
-        let descriptor = ComponentDescriptor::new(facts.clone(), connections);
+        let descriptor = ComponentDescriptor::new(facts.clone(), connections)
+            .with_statement_instances(statement_instances);
         descriptors.push(DescriptorFile {
             name: source.name.clone(),
             digest: digest.clone(),

@@ -40,6 +40,7 @@ const STREAM_CURSOR: &str = "wamn_stream";
 /// and a future that resolves after the last row.
 pub(super) async fn run_stream<T: 'static + Send>(
     accessor: &Accessor<T, SharedCtx>,
+    instance: Option<&str>,
     statement_path: String,
     binds: Vec<SqlValue>,
 ) -> WasmResult<
@@ -63,7 +64,7 @@ pub(super) async fn run_stream<T: 'static + Send>(
     let opened = trace
         .run(async move {
             let project = plugin.project_for(&component_id);
-            let active = plugin.active_statement_set(&component_id);
+            let active = plugin.active_statement_set(&component_id, instance);
             let statement = admit_transaction_statement(
                 &plugin,
                 &component_id,

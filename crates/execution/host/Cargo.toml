@@ -42,6 +42,8 @@ wamn-runtime = { workspace = true, features = ["test-util"] }
 wamn-session = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
+wamn-component-composer = { workspace = true }
+wasmparser = { workspace = true }
 url = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }

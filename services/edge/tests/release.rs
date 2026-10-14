@@ -32,6 +32,7 @@ fn manifest() -> ServingManifest {
             packages: BTreeSet::from([PackageCoordinate::new(PACKAGE, VERSION).expect("package")]),
         },
         BTreeSet::from([ServingComponent {
+            statement_instances: std::collections::BTreeMap::new(),
             package_id: PACKAGE.into(),
             operations: BTreeMap::from([(
                 OPERATION.into(),

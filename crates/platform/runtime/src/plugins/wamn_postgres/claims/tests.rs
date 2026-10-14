@@ -2295,7 +2295,7 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
     .expect("the statement set binds");
     pg.activate_statement_operation(scope, "principal")
         .expect("the operation activates");
-    let statements = pg.active_statement_set(scope);
+    let statements = pg.active_statement_set(scope, None);
 
     let refused = admit_transaction_statement(&pg, scope, statements.as_deref(), &digest, &[])
         .expect_err("no executing principal");

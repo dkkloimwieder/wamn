@@ -1240,82 +1240,14 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         statement_path: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
-            Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
-                ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
-            ))
-        })?;
-        trace
-            .run(async move {
-                let active = plugin.active_statement_set(&component_id);
-                let statement = match resolve_statement(active.as_deref(), &statement_path, &binds)
-                {
-                    Ok(statement) => statement,
-                    Err(error) => return Ok(Err(error)),
-                };
-                let project = plugin.project_for(&component_id);
-                let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
-                let started = std::time::Instant::now();
-                let result = plugin
-                    .one_shot_statement(&component_id, &statement_path, &statement, &binds)
-                    .instrument(span)
-                    .await;
-                record_query_ms("statement.run", &project, started.elapsed());
-                Ok(result)
-            })
-            .await
+        statement_run(accessor, None, statement_path, binds).await
     }
 
     async fn begin(
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
     {
-        let (plugin, component_id, trace) = accessor.with(|mut access| {
-            let ctx = access.get();
-            Ok::<_, wash_runtime::wasmtime::Error>((
-                plugin_of(&ctx)?,
-                ctx.component_id.to_string(),
-                wamn_engine::invocation_trace::invocation_trace(&ctx),
-            ))
-        })?;
-        trace
-            .run(async move {
-                // The work of an operation with a host transaction runs in it.
-                if plugin.operation_transaction_for(&component_id).is_some() {
-                    return Ok(Err(StatementError::Postgres(PgError::QueryError((
-                        super::operation_transaction::BEGIN_REFUSED.to_owned(),
-                        "the operation runs in its host transaction, so begin is refused"
-                            .to_owned(),
-                    )))));
-                }
-                let project = plugin.project_for(&component_id);
-                let statements = plugin.active_statement_set(&component_id);
-                let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
-                let started = std::time::Instant::now();
-                let opened = begin_statement_transaction(&plugin, &component_id, &project)
-                    .instrument(span)
-                    .await;
-                record_query_ms("statement.begin", &project, started.elapsed());
-                match opened {
-                    Ok(transaction) => accessor.with(|mut access| {
-                        access
-                            .get()
-                            .table
-                            .push(PgStatementTransaction {
-                                transaction,
-                                owner_scope: component_id.clone(),
-                                statements,
-                            })
-                            .map(Ok)
-                            .map_err(Into::into)
-                    }),
-                    Err(error) => Ok(Err(StatementError::Postgres(error))),
-                }
-            })
-            .await
+        statement_begin(accessor, None).await
     }
 
     async fn run_stream(
@@ -1332,7 +1264,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
             StatementError,
         >,
     > {
-        super::run_stream::run_stream(accessor, statement_path, binds).await
+        super::run_stream::run_stream(accessor, None, statement_path, binds).await
     }
 
     #[expect(
@@ -1343,23 +1275,7 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
     {
-        accessor.with(|mut access| {
-            let ctx = access.get();
-            let plugin = plugin_of(&ctx)?;
-            let component_id = ctx.component_id.to_string();
-            let Some(transaction) = plugin.operation_transaction_for(&component_id) else {
-                return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
-            };
-            let statements = plugin.active_statement_set(&component_id);
-            ctx.table
-                .push(PgStatementTransaction {
-                    transaction: transaction.lend(),
-                    owner_scope: component_id,
-                    statements,
-                })
-                .map(Ok)
-                .map_err(Into::into)
-        })
+        lend_operation_transaction(accessor, None)
     }
 }
 
@@ -1382,68 +1298,7 @@ impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx
         statement_path: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        let (plugin, component_id, trace, state, destroyed, row_limit, statements) = accessor
-            .with(|mut access| {
-                let ctx = access.get();
-                let transaction = ctx.table.get(&rep)?;
-                wash_runtime::wasmtime::ensure!(
-                    transaction.owner_scope == ctx.component_id.as_ref(),
-                    "statement transaction belongs to a different invocation"
-                );
-                Ok::<_, wash_runtime::wasmtime::Error>((
-                    plugin_of(&ctx)?,
-                    ctx.component_id.to_string(),
-                    wamn_engine::invocation_trace::invocation_trace(&ctx),
-                    Arc::clone(&transaction.transaction.state),
-                    Arc::clone(&transaction.transaction.destroyed),
-                    transaction.transaction.row_limit,
-                    transaction.statements.clone(),
-                ))
-            })?;
-        trace
-            .run(async move {
-                let project = plugin.project_for(&component_id);
-                let statement = match admit_transaction_statement(
-                    &plugin,
-                    &component_id,
-                    statements.as_deref(),
-                    &statement_path,
-                    &binds,
-                ) {
-                    Ok(statement) => statement,
-                    Err(error) => return Ok(Err(error)),
-                };
-                let connection = match take_conn(&state) {
-                    Ok(connection) => {
-                        StatementConnectionGuard::new(connection, Arc::clone(&destroyed))
-                    }
-                    Err(error) => return Ok(Err(StatementError::Postgres(error))),
-                };
-                let span =
-                    db_span_for_project(&plugin, &component_id, &project, "statement.txn.run");
-                let started = std::time::Instant::now();
-                let result = run_verified_query(
-                    connection.connection(),
-                    &statement_path,
-                    &statement,
-                    &binds,
-                    row_limit,
-                )
-                .instrument(span)
-                .await;
-                record_query_ms("statement.txn.run", &project, started.elapsed());
-
-                if statement_run_disposition(&result) == StatementRunDisposition::Destroy {
-                    if let Ok(mut transaction) = state.lock() {
-                        transaction.finished = true;
-                    }
-                    drop(connection);
-                } else {
-                    connection.restore(&state);
-                }
-                Ok(result)
-            })
-            .await
+        statement_txn_run(accessor, rep, statement_path, binds).await
     }
 
     async fn commit(
@@ -1474,6 +1329,185 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
         drop(self.table.delete(rep)?);
         Ok(())
     }
+}
+
+/// Run one admitted statement on its own connection, resolved in the set of
+/// the `statements` import named `instance`.
+async fn statement_run<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
+    instance: Option<&str>,
+    statement_path: String,
+    binds: Vec<SqlValue>,
+) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+    let (plugin, component_id, trace) = accessor.with(|mut access| {
+        let ctx = access.get();
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin_of(&ctx)?,
+            ctx.component_id.to_string(),
+            wamn_engine::invocation_trace::invocation_trace(&ctx),
+        ))
+    })?;
+    trace
+        .run(async move {
+            let active = plugin.active_statement_set(&component_id, instance);
+            let statement = match resolve_statement(active.as_deref(), &statement_path, &binds) {
+                Ok(statement) => statement,
+                Err(error) => return Ok(Err(error)),
+            };
+            let project = plugin.project_for(&component_id);
+            let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
+            let started = std::time::Instant::now();
+            let result = plugin
+                .one_shot_statement(&component_id, &statement_path, &statement, &binds)
+                .instrument(span)
+                .await;
+            record_query_ms("statement.run", &project, started.elapsed());
+            Ok(result)
+        })
+        .await
+}
+
+/// Begin a guest transaction that runs the set of the `statements` import named `instance`.
+async fn statement_begin<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
+    instance: Option<&str>,
+) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>> {
+    let (plugin, component_id, trace) = accessor.with(|mut access| {
+        let ctx = access.get();
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin_of(&ctx)?,
+            ctx.component_id.to_string(),
+            wamn_engine::invocation_trace::invocation_trace(&ctx),
+        ))
+    })?;
+    trace
+        .run(async move {
+            // The work of an operation with a host transaction runs in it.
+            if plugin.operation_transaction_for(&component_id).is_some() {
+                return Ok(Err(StatementError::Postgres(PgError::QueryError((
+                    super::operation_transaction::BEGIN_REFUSED.to_owned(),
+                    "the operation runs in its host transaction, so begin is refused".to_owned(),
+                )))));
+            }
+            let project = plugin.project_for(&component_id);
+            let statements = plugin.active_statement_set(&component_id, instance);
+            let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
+            let started = std::time::Instant::now();
+            let opened = begin_statement_transaction(&plugin, &component_id, &project)
+                .instrument(span)
+                .await;
+            record_query_ms("statement.begin", &project, started.elapsed());
+            match opened {
+                Ok(transaction) => accessor.with(|mut access| {
+                    access
+                        .get()
+                        .table
+                        .push(PgStatementTransaction {
+                            transaction,
+                            owner_scope: component_id.clone(),
+                            statements,
+                        })
+                        .map(Ok)
+                        .map_err(Into::into)
+                }),
+                Err(error) => Ok(Err(StatementError::Postgres(error))),
+            }
+        })
+        .await
+}
+
+/// Lend the operation's host transaction to the `statements` import named
+/// `instance`, with that import's statement set.
+fn lend_operation_transaction<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
+    instance: Option<&str>,
+) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>> {
+    accessor.with(|mut access| {
+        let ctx = access.get();
+        let plugin = plugin_of(&ctx)?;
+        let component_id = ctx.component_id.to_string();
+        let Some(transaction) = plugin.operation_transaction_for(&component_id) else {
+            return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
+        };
+        let statements = plugin.active_statement_set(&component_id, instance);
+        ctx.table
+            .push(PgStatementTransaction {
+                transaction: transaction.lend(),
+                owner_scope: component_id,
+                statements,
+            })
+            .map(Ok)
+            .map_err(Into::into)
+    })
+}
+
+/// Run one admitted statement on a statement transaction, resolved in the
+/// set the transaction holds.
+async fn statement_txn_run<T: 'static>(
+    accessor: &Accessor<T, SharedCtx>,
+    rep: Resource<PgStatementTransaction>,
+    statement_path: String,
+    binds: Vec<SqlValue>,
+) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+    let (plugin, component_id, trace, state, destroyed, row_limit, statements) =
+        accessor.with(|mut access| {
+            let ctx = access.get();
+            let transaction = ctx.table.get(&rep)?;
+            wash_runtime::wasmtime::ensure!(
+                transaction.owner_scope == ctx.component_id.as_ref(),
+                "statement transaction belongs to a different invocation"
+            );
+            Ok::<_, wash_runtime::wasmtime::Error>((
+                plugin_of(&ctx)?,
+                ctx.component_id.to_string(),
+                wamn_engine::invocation_trace::invocation_trace(&ctx),
+                Arc::clone(&transaction.transaction.state),
+                Arc::clone(&transaction.transaction.destroyed),
+                transaction.transaction.row_limit,
+                transaction.statements.clone(),
+            ))
+        })?;
+    trace
+        .run(async move {
+            let project = plugin.project_for(&component_id);
+            let statement = match admit_transaction_statement(
+                &plugin,
+                &component_id,
+                statements.as_deref(),
+                &statement_path,
+                &binds,
+            ) {
+                Ok(statement) => statement,
+                Err(error) => return Ok(Err(error)),
+            };
+            let connection = match take_conn(&state) {
+                Ok(connection) => StatementConnectionGuard::new(connection, Arc::clone(&destroyed)),
+                Err(error) => return Ok(Err(StatementError::Postgres(error))),
+            };
+            let span = db_span_for_project(&plugin, &component_id, &project, "statement.txn.run");
+            let started = std::time::Instant::now();
+            let result = run_verified_query(
+                connection.connection(),
+                &statement_path,
+                &statement,
+                &binds,
+                row_limit,
+            )
+            .instrument(span)
+            .await;
+            record_query_ms("statement.txn.run", &project, started.elapsed());
+
+            if statement_run_disposition(&result) == StatementRunDisposition::Destroy {
+                if let Ok(mut transaction) = state.lock() {
+                    transaction.finished = true;
+                }
+                drop(connection);
+            } else {
+                connection.restore(&state);
+            }
+            Ok(result)
+        })
+        .await
 }
 
 /// Resolve a statement for an explicit statement transaction.
@@ -1626,6 +1660,186 @@ impl<T: 'static + Send> statement_wit::HostTransactionViewWithStore<T> for Share
 impl statement_wit::HostTransactionView for ActiveCtx<'_> {
     async fn drop(
         &mut self,
+        rep: Resource<super::PgTransactionView>,
+    ) -> wash_runtime::wasmtime::Result<()> {
+        self.table.delete(rep)?;
+        Ok(())
+    }
+}
+
+/// A named `statements` import refuses the participant path: a participant
+/// runs under the entry's set, which a member's instance must not reach.
+#[cfg(feature = "wasm_component_model_implements")]
+fn named_participation_refused() -> StatementError {
+    StatementError::Postgres(PgError::PermissionDenied)
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl bindings::named_imports::wamn::postgres::statements::Host for ActiveCtx<'_> {}
+
+/// Each named import resolves statements in its own member's set. Methods on
+/// a transaction need no name: the transaction holds the set it was lent with.
+#[cfg(feature = "wasm_component_model_implements")]
+impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::HostWithStore<T>
+    for SharedCtx
+{
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async WIT method refuses without host work"
+    )]
+    async fn selected_participation(
+        _accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+    ) -> wash_runtime::wasmtime::Result<Result<Option<statement_wit::Participation>, StatementError>>
+    {
+        Ok(Err(named_participation_refused()))
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async WIT method refuses without host work"
+    )]
+    async fn participant_view(
+        _accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<super::PgTransactionView>, StatementError>>
+    {
+        Ok(Err(named_participation_refused()))
+    }
+
+    async fn run(
+        accessor: &Accessor<T, Self>,
+        id: super::NamedStatements,
+        statement_path: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+        statement_run(accessor, Some(id.instance()), statement_path, binds).await
+    }
+
+    async fn run_stream(
+        accessor: &Accessor<T, Self>,
+        id: super::NamedStatements,
+        statement_path: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<
+        Result<
+            (
+                Vec<super::Column>,
+                wash_runtime::wasmtime::component::StreamReader<Vec<SqlValue>>,
+                wash_runtime::wasmtime::component::FutureReader<Result<(), StatementError>>,
+            ),
+            StatementError,
+        >,
+    > {
+        super::run_stream::run_stream(accessor, Some(id.instance()), statement_path, binds).await
+    }
+
+    async fn begin(
+        accessor: &Accessor<T, Self>,
+        id: super::NamedStatements,
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
+    {
+        statement_begin(accessor, Some(id.instance())).await
+    }
+
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async WIT method lends only a local resource"
+    )]
+    async fn operation_transaction(
+        accessor: &Accessor<T, Self>,
+        id: super::NamedStatements,
+    ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
+    {
+        lend_operation_transaction(accessor, Some(id.instance()))
+    }
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl<T: 'static + Send>
+    bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore<T> for SharedCtx
+{
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the async WIT method refuses without host work"
+    )]
+    async fn select_participant(
+        _accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+        _rep: Resource<PgStatementTransaction>,
+        _participant_operation: String,
+    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
+        Ok(Err(named_participation_refused()))
+    }
+
+    async fn run(
+        accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+        rep: Resource<PgStatementTransaction>,
+        statement_path: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+        statement_txn_run(accessor, rep, statement_path, binds).await
+    }
+
+    async fn commit(
+        accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+        rep: Resource<PgStatementTransaction>,
+    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
+        statement_txn_finish(accessor, rep, "COMMIT").await
+    }
+
+    async fn rollback(
+        accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+        rep: Resource<PgStatementTransaction>,
+    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
+        statement_txn_finish(accessor, rep, "ROLLBACK").await
+    }
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+impl<T: 'static + Send>
+    bindings::named_imports::wamn::postgres::statements::HostTransactionViewWithStore<T>
+    for SharedCtx
+{
+    async fn run(
+        accessor: &Accessor<T, Self>,
+        _id: super::NamedStatements,
+        rep: Resource<super::PgTransactionView>,
+        statement_path: String,
+        binds: Vec<SqlValue>,
+    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
+        super::transaction_views::run(accessor, rep, statement_path, binds).await
+    }
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the generated transaction destructor is async but only releases local state"
+)]
+impl bindings::named_imports::wamn::postgres::statements::HostTransaction for ActiveCtx<'_> {
+    async fn drop(
+        &mut self,
+        _id: super::NamedStatements,
+        rep: Resource<PgStatementTransaction>,
+    ) -> wash_runtime::wasmtime::Result<()> {
+        drop(self.table.delete(rep)?);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "wasm_component_model_implements")]
+#[expect(
+    clippy::unused_async_trait_impl,
+    reason = "the resource destructor only removes local view state"
+)]
+impl bindings::named_imports::wamn::postgres::statements::HostTransactionView for ActiveCtx<'_> {
+    async fn drop(
+        &mut self,
+        _id: super::NamedStatements,
         rep: Resource<super::PgTransactionView>,
     ) -> wash_runtime::wasmtime::Result<()> {
         self.table.delete(rep)?;

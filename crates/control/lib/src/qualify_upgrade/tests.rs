@@ -169,6 +169,7 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
             .unwrap()]),
         },
         BTreeSet::from([ServingComponent {
+            statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture".to_owned(),
             operations,
             descriptor: wamn_catalog::ComponentDescriptor::named(

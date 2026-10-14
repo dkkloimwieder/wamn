@@ -461,7 +461,11 @@ pub fn assemble_local_release(
                         && package.package_version() == fact.scope.package_version),
             "local admission is outside package membership"
         );
-        release_components.insert(fact.clone(), admission.descriptor().connections)?;
+        release_components.insert(
+            fact.clone(),
+            admission.descriptor().connections,
+            admission.statement_instances().clone(),
+        )?;
     }
     let mut components = BTreeSet::new();
     let mut wirings = BTreeSet::new();
@@ -1185,6 +1189,9 @@ async fn validate_release_package_manifests(
 struct ReleaseComponents {
     facts: BTreeMap<(String, String), Vec<AdmittedComponent>>,
     connections: BTreeMap<(String, String), Vec<ComponentConnection>>,
+    /// The verified statement instance record of each composed component, by
+    /// component digest.
+    statement_instances: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl ReleaseComponents {
@@ -1194,7 +1201,12 @@ impl ReleaseComponents {
         &mut self,
         fact: AdmittedComponent,
         connections: Vec<ComponentConnection>,
+        statement_instances: BTreeMap<String, String>,
     ) -> anyhow::Result<()> {
+        if !statement_instances.is_empty() {
+            self.statement_instances
+                .insert(fact.component_digest.clone(), statement_instances);
+        }
         ensure!(
             self.connections
                 .insert(
@@ -1215,6 +1227,37 @@ impl ReleaseComponents {
             .or_default()
             .push(fact);
         Ok(())
+    }
+
+    /// `serving` with the statement set of each named `statements` import of
+    /// its component: the overlay's from the component's own descriptor, and
+    /// each base member's from that base's admitted descriptor in the release,
+    /// found by the digest that the base dependency pins.
+    fn with_statement_instances(
+        &self,
+        serving: ServingComponent,
+    ) -> Result<ServingComponent, PublishManifestError> {
+        let Some(instances) = self
+            .statement_instances
+            .get(&serving.descriptor.component_digest)
+        else {
+            return Ok(serving);
+        };
+        let component = serving.descriptor.component.clone();
+        serving
+            .with_statement_instances(instances, &|digest| {
+                self.facts
+                    .values()
+                    .flatten()
+                    .find(|fact| fact.component_digest == digest)
+            })
+            .map_err(|error| {
+                PublishManifestError::with_source(
+                    PublishManifestErrorType::Component,
+                    format!("component {component:?} does not bind its statement instances"),
+                    error,
+                )
+            })
     }
 
     /// The declared connections of `fact`.
@@ -1259,7 +1302,11 @@ fn descriptor_components(
                     package.package_version()
                 )
             })?;
-            components.insert(facts.component, facts.connections)?;
+            components.insert(
+                facts.component,
+                facts.connections,
+                facts.statement_instances,
+            )?;
         }
     }
     Ok(components)
@@ -1557,12 +1604,14 @@ fn project_wiring_document(
         document.clone(),
     ));
     for fact in resolved.values() {
-        components.insert(project_serving_component(
-            fact,
-            component_facts.connections(fact)?,
-            &component_facts.facts,
-            rule,
-        )?);
+        components.insert(
+            component_facts.with_statement_instances(project_serving_component(
+                fact,
+                component_facts.connections(fact)?,
+                &component_facts.facts,
+                rule,
+            )?)?,
+        );
     }
     Ok(entry_operation)
 }
@@ -1621,12 +1670,14 @@ fn project_routes(
             })?;
         let roots = BTreeMap::from([(operation.clone(), fact.clone())]);
         resolve_component_dependency_closure(&roots, &component_facts.facts, rule)?;
-        components.insert(project_serving_component(
-            fact,
-            component_facts.connections(fact)?,
-            &component_facts.facts,
-            rule,
-        )?);
+        components.insert(
+            component_facts.with_statement_instances(project_serving_component(
+                fact,
+                component_facts.connections(fact)?,
+                &component_facts.facts,
+                rule,
+            )?)?,
+        );
         routes.insert(ServingRoute {
             package_id: attachment.package_id.clone(),
             component: component.clone(),

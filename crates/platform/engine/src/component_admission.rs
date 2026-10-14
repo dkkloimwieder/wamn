@@ -54,6 +54,7 @@ pub enum ComponentAdmissionErrorType {
     OperationDependencyMismatch,
     OperationSignatureMismatch,
     InvalidComponentFacts,
+    StatementInstanceMismatch,
 }
 
 /// Contextual refusal from the byte-to-catalog-fact boundary.
@@ -284,9 +285,11 @@ pub fn validate_component_admission(
             return Err(operation_signature_mismatch(&component_name, export, error));
         }
     }
+    // Policy and facts key each import by its interface instance type, so two
+    // named instances of one interface are one capability.
     let imports = component_type
         .imports(raw)
-        .map(|(name, _)| name.to_string())
+        .map(|(name, item)| wamn_component_policy::instance_type(name, item.implements).to_owned())
         .collect::<Vec<_>>();
     // An application's components compose at build into one component, so a
     // declared dependency is not an import. Its base must be embedded in these
@@ -384,8 +387,17 @@ pub fn validate_component_admission(
         )
     })?;
 
+    let statement_instances = crate::statement_instances::statement_instances(component_bytes)
+        .map_err(|source| {
+            ComponentAdmissionError::new(
+                ComponentAdmissionErrorType::StatementInstanceMismatch,
+                &component_name,
+                source,
+            )
+        })?;
+
     let component_digest = component_digest(component_bytes);
-    normalize_component_fact(
+    let mut facts = normalize_component_fact(
         request.declaration,
         component_digest,
         imports,
@@ -397,7 +409,9 @@ pub fn validate_component_admission(
             &component_name,
             source,
         )
-    })
+    })?;
+    facts.bind_statement_instances(statement_instances);
+    Ok(facts)
 }
 
 // Nested calls use separate stores. Only owned values can cross that boundary.

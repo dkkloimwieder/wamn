@@ -59,6 +59,7 @@ pub mod operation;
 pub mod release_manifest;
 mod route_bindings;
 pub mod router_delivery;
+pub mod statement_instances;
 pub mod warm_reuse;
 
 pub use engine::{
@@ -70,7 +71,7 @@ pub use wash_runtime::plugin::HostPlugin;
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
 
-/// Compile a component and return its ordered top-level world imports.
+/// Compile a component and return the interface instance type of each top-level import, in order.
 pub fn component_imports(
     engine: &Engine,
     wasm: &[u8],
@@ -82,6 +83,6 @@ pub fn component_imports(
     let component_type = component.component_type();
     let imports = component_type
         .imports(raw)
-        .map(|(name, _)| name.to_string());
+        .map(|(name, item)| wamn_component_policy::instance_type(name, item.implements).to_owned());
     Ok(wamn_component_policy::ComponentImports::new(imports))
 }

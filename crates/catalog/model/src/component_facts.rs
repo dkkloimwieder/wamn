@@ -338,6 +338,37 @@ impl AdmittedComponent {
 pub struct AdmittedComponentFacts {
     pub component: AdmittedComponent,
     pub connections: Vec<ComponentConnection>,
+    /// Each named `statements` import of a composed component and the digest
+    /// of the member it was composed for, as admission verified them in the
+    /// bytes. Empty for every other component.
+    pub statement_instances: BTreeMap<String, String>,
+}
+
+impl AdmittedComponentFacts {
+    /// Record the verified statement instances and fold them into the
+    /// imports fingerprint, so a changed wiring changes the fingerprint and
+    /// the descriptor digest.
+    pub fn bind_statement_instances(&mut self, instances: BTreeMap<String, String>) {
+        self.component.imports_fingerprint =
+            imports_fingerprint(&self.component.imports, &instances);
+        self.statement_instances = instances;
+    }
+}
+
+/// The fingerprint of a component's imports and its statement instances.
+///
+/// With no statement instance it is the digest of the import list alone, as
+/// it was before instances existed.
+fn imports_fingerprint(
+    imports: &[String],
+    statement_instances: &BTreeMap<String, String>,
+) -> String {
+    let value = if statement_instances.is_empty() {
+        serde_json::to_value(imports).expect("a string list serializes")
+    } else {
+        serde_json::json!({"imports": imports, "statement-instances": statement_instances})
+    };
+    wamn_execution_contract::canonical_json_sha256(&value)
 }
 
 /// The admitted facts of one component as a package artifact carries them
@@ -352,6 +383,12 @@ pub struct ComponentDescriptor {
     pub component_digest: String,
     pub operations: BTreeMap<String, AdmittedComponentOperation>,
     pub imports: Vec<String>,
+    /// Each named `statements` import and the digest of its member, as
+    /// admission verified them (`docs/plan/trx-pkg-plan.md`, Per-member import
+    /// instances). `imports-fingerprint` covers it. Absent when empty, so
+    /// other descriptors keep their bytes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub statement_instances: BTreeMap<String, String>,
     pub imports_fingerprint: String,
     pub effects: Vec<AdmittedComponentEffect>,
     pub connections: Vec<ComponentConnection>,
@@ -369,7 +406,17 @@ impl ComponentDescriptor {
             imports_fingerprint: component.imports_fingerprint,
             effects: component.effects,
             connections,
+            statement_instances: BTreeMap::new(),
         }
+    }
+
+    /// This descriptor with the verified statement instance record of its
+    /// component. `component` must carry the fingerprint that covers it, as
+    /// [`AdmittedComponentFacts::bind_statement_instances`] leaves it.
+    #[must_use]
+    pub fn with_statement_instances(mut self, instances: BTreeMap<String, String>) -> Self {
+        self.statement_instances = instances;
+        self
     }
 
     /// A descriptor of `component` with no operation, import, effect or
@@ -389,6 +436,7 @@ impl ComponentDescriptor {
             imports_fingerprint: String::new(),
             effects: Vec::new(),
             connections: Vec::new(),
+            statement_instances: BTreeMap::new(),
         }
     }
 
@@ -406,6 +454,7 @@ impl ComponentDescriptor {
                 effects: self.effects,
             },
             connections: self.connections,
+            statement_instances: self.statement_instances,
         }
     }
 }
@@ -558,9 +607,7 @@ pub fn normalize_component_fact(
     let mut imports: Vec<_> = imports.into_iter().collect();
     imports.sort();
     imports.dedup();
-    let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(
-        &serde_json::to_value(&imports).expect("a string list serializes"),
-    );
+    let imports_fingerprint = imports_fingerprint(&imports, &BTreeMap::new());
     let dependency_imports = operation_dependency_imports(&operations)?;
     validate_operation_dependency_imports(&imports, &dependency_imports)?;
     let effects = normalize_effects(effects, &imports, &dependency_imports)?;
@@ -578,6 +625,7 @@ pub fn normalize_component_fact(
             effects,
         },
         connections,
+        statement_instances: BTreeMap::new(),
     })
 }
 
@@ -1390,6 +1438,64 @@ mod tests {
         let admitted = decoded.into_admitted(facts.component.scope.clone());
         assert_eq!(admitted.component, facts.component);
         assert_eq!(admitted.connections, connections);
+    }
+
+    /// A descriptor with no named statements instance keeps the bytes it had
+    /// before the field existed; the digest was taken from that code.
+    #[test]
+    fn a_descriptor_without_statement_instances_keeps_its_bytes() {
+        let facts = normalize_component_fact(
+            declaration(),
+            format!("sha256:{}", "a".repeat(64)),
+            ["wamn:postgres/client@0.1.0".to_string()],
+            vec![postgres_effect()],
+        )
+        .expect("component fact normalizes");
+        let descriptor = ComponentDescriptor::new(facts.component, Vec::new());
+        let bytes = wamn_execution_contract::canonical_json_bytes(
+            &serde_json::to_value(&descriptor).expect("descriptor serializes"),
+        );
+        assert_eq!(
+            wamn_execution_contract::canonical_json_sha256(
+                &serde_json::from_slice::<Value>(&bytes).expect("canonical JSON parses")
+            ),
+            "sha256:9816d7da4202dcca1363da02b3d40c716a55a5d611b397812c0288a0d92fe8e0"
+        );
+    }
+
+    #[test]
+    fn the_imports_fingerprint_covers_the_statement_instances() {
+        let facts = normalize_component_fact(
+            declaration(),
+            format!("sha256:{}", "a".repeat(64)),
+            ["wamn:postgres/client@0.1.0".to_string()],
+            vec![postgres_effect()],
+        )
+        .expect("component fact normalizes");
+        let unbound = facts.component.imports_fingerprint.clone();
+        let first = format!("sha256:{}", "1".repeat(64));
+        let second = format!("sha256:{}", "2".repeat(64));
+        let mut wired = facts.clone();
+        wired.bind_statement_instances(BTreeMap::from([
+            ("sql-0".to_owned(), first.clone()),
+            ("sql-1".to_owned(), second.clone()),
+        ]));
+        let mut swapped = facts.clone();
+        swapped.bind_statement_instances(BTreeMap::from([
+            ("sql-0".to_owned(), second),
+            ("sql-1".to_owned(), first),
+        ]));
+        let mut empty = facts;
+        empty.bind_statement_instances(BTreeMap::new());
+        assert_ne!(wired.component.imports_fingerprint, unbound);
+        assert_ne!(
+            wired.component.imports_fingerprint, swapped.component.imports_fingerprint,
+            "a swapped wiring changes the fingerprint"
+        );
+        assert_eq!(
+            empty.component.imports_fingerprint, unbound,
+            "no instance leaves the fingerprint as it was"
+        );
     }
 
     #[test]

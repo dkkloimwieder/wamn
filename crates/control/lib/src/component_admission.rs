@@ -163,6 +163,7 @@ pub struct ComponentAdmission {
     component: AdmittedComponent,
     connections: Box<[ComponentConnection]>,
     requirements: Box<[ComponentConnectionRequirement]>,
+    statement_instances: BTreeMap<String, String>,
 }
 
 impl fmt::Debug for ComponentAdmission {
@@ -188,11 +189,18 @@ impl ComponentAdmission {
         &self.requirements
     }
 
+    /// Each named `statements` import and its member's digest, as admission
+    /// verified them in the bytes.
+    pub fn statement_instances(&self) -> &BTreeMap<String, String> {
+        &self.statement_instances
+    }
+
     /// The admitted descriptor (docs/plan/platform-deploy.md §7.2, contract
     /// A): the facts without their scope, and the declared connections sorted
     /// by store alias, as `push-package` writes it.
     pub fn descriptor(&self) -> ComponentDescriptor {
         ComponentDescriptor::new(self.component.clone(), self.connections.to_vec())
+            .with_statement_instances(self.statement_instances.clone())
     }
 
     /// Exact package identity carried by the admitted component facts.
@@ -281,6 +289,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         component: admitted,
         connections: connections.into_boxed_slice(),
         requirements: requirements.into_boxed_slice(),
+        statement_instances: facts.statement_instances,
     })
 }
 
@@ -1030,6 +1039,7 @@ mod tests {
             component,
             connections: Vec::new().into_boxed_slice(),
             requirements: Vec::new().into_boxed_slice(),
+            statement_instances: BTreeMap::new(),
         };
 
         let debug = format!("{admission:?}");

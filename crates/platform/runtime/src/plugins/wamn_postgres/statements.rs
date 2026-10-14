@@ -74,10 +74,29 @@ pub(super) struct BoundStatementSet(BTreeMap<String, Arc<VerifiedStatement>>);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreparedStatementSet(Arc<BoundStatementSet>);
 
+/// The statement set of each named `statements` import of one component,
+/// keyed by import name -- the per-member half of the statement bind.
+///
+/// Each member of a composed component imports the interface under a name of
+/// its own, and its set is its own operations' statements. Prepared once per
+/// component, like [`PreparedStatementSet`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PreparedStatementMembers(Arc<BTreeMap<Box<str>, Arc<BoundStatementSet>>>);
+
+/// The statements a scope may run while its operation is active.
+#[derive(Debug)]
+struct ActiveStatements {
+    /// The set of the unnamed import: the active operation's own set.
+    operation: Arc<BoundStatementSet>,
+    /// The set of each named import.
+    members: PreparedStatementMembers,
+}
+
 #[derive(Debug, Default)]
 pub(super) struct StatementScopes {
     bindings: HashMap<String, HashMap<String, Arc<BoundStatementSet>>>,
-    active: HashMap<String, Arc<BoundStatementSet>>,
+    members: HashMap<String, PreparedStatementMembers>,
+    active: HashMap<String, ActiveStatements>,
 }
 
 impl WamnPostgres {
@@ -91,6 +110,44 @@ impl WamnPostgres {
                 .map(|(path, statement)| (path, Arc::new(statement)))
                 .collect(),
         )))
+    }
+
+    /// Seal the statement set of each named import of one component.
+    #[must_use]
+    pub fn prepare_statement_members(
+        members: impl IntoIterator<Item = (String, PreparedStatementSet)>,
+    ) -> PreparedStatementMembers {
+        PreparedStatementMembers(Arc::new(
+            members
+                .into_iter()
+                .map(|(name, statements)| (name.into_boxed_str(), statements.0))
+                .collect(),
+        ))
+    }
+
+    /// Bind the named-import sets of a component under a scope. Once per
+    /// request, before [`Self::activate_statement_operation`].
+    pub fn bind_prepared_statement_members(
+        &self,
+        component_id: &str,
+        members: &PreparedStatementMembers,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!component_id.is_empty(), "statement-component-id-empty");
+        let mut scopes = self
+            .statement_scopes
+            .write()
+            .expect("statement scopes lock poisoned");
+        if let Some(existing) = scopes.members.get(component_id) {
+            anyhow::ensure!(
+                existing == members,
+                "statement-members-rebind-conflict: {component_id}"
+            );
+            return Ok(());
+        }
+        scopes
+            .members
+            .insert(component_id.to_owned(), members.clone());
+        Ok(())
     }
 
     /// Bind a prepared set under a scope. Once per request.
@@ -150,7 +207,18 @@ impl WamnPostgres {
         let statements = statements.ok_or_else(|| {
             anyhow::anyhow!("statement-operation-unbound: {component_id}::{operation}")
         })?;
-        scopes.active.insert(component_id.to_owned(), statements);
+        let members = scopes
+            .members
+            .get(component_id)
+            .cloned()
+            .unwrap_or_default();
+        scopes.active.insert(
+            component_id.to_owned(),
+            ActiveStatements {
+                operation: statements,
+                members,
+            },
+        );
         Ok(())
     }
 
@@ -175,19 +243,27 @@ impl WamnPostgres {
             .write()
             .expect("statement scopes lock poisoned");
         scopes.bindings.remove(component_id);
+        scopes.members.remove(component_id);
         scopes.active.remove(component_id);
     }
 
+    /// The statements that the `statements` import named `instance` may run
+    /// in `component_id` now. `None` names the unnamed import, which runs the
+    /// active operation's set; a named import runs its member's set only.
     pub(super) fn active_statement_set(
         &self,
         component_id: &str,
+        instance: Option<&str>,
     ) -> Option<Arc<BoundStatementSet>> {
-        self.statement_scopes
+        let scopes = self
+            .statement_scopes
             .read()
-            .expect("statement scopes lock poisoned")
-            .active
-            .get(component_id)
-            .cloned()
+            .expect("statement scopes lock poisoned");
+        let active = scopes.active.get(component_id)?;
+        match instance {
+            None => Some(Arc::clone(&active.operation)),
+            Some(instance) => active.members.0.get(instance).cloned(),
+        }
     }
 
     pub(super) fn clear_statement_bindings(&self, workload_id: &str) {
@@ -197,6 +273,9 @@ impl WamnPostgres {
             .expect("statement scopes lock poisoned");
         scopes
             .bindings
+            .retain(|component_id, _| !component_id.starts_with(workload_id));
+        scopes
+            .members
             .retain(|component_id, _| !component_id.starts_with(workload_id));
         scopes
             .active
@@ -499,7 +578,7 @@ mod tests {
             .activate_statement_operation("component", "first/get")
             .expect("activate first operation");
         let active = plugin
-            .active_statement_set("component")
+            .active_statement_set("component", None)
             .expect("first operation is active");
         assert!(
             resolve_statement(Some(&active), &first_path, &[SqlValue::Uuid("id".into())]).is_ok()
@@ -513,7 +592,7 @@ mod tests {
             .activate_statement_operation("component", "second/get")
             .expect("activate second operation");
         let active = plugin
-            .active_statement_set("component")
+            .active_statement_set("component", None)
             .expect("second operation is active");
         assert!(matches!(
             resolve_statement(Some(&active), &first_path, &[SqlValue::Uuid("id".into())]),
@@ -524,7 +603,71 @@ mod tests {
         );
 
         plugin.revoke_statement_operation("component");
-        assert!(plugin.active_statement_set("component").is_none());
+        assert!(plugin.active_statement_set("component", None).is_none());
+    }
+
+    #[test]
+    fn each_named_import_runs_only_its_member_set_while_the_operation_is_active() {
+        let plugin = plugin();
+        let id = [SqlValue::Uuid("id".into())];
+        let entry = "sql/entry.sql";
+        let base = "sql/base.sql";
+        let prepared = |path: &str| {
+            WamnPostgres::prepare_statement_set(BTreeMap::from([(
+                path.to_owned(),
+                verified("SELECT $1::uuid, 'x'::text"),
+            )]))
+        };
+        let members = WamnPostgres::prepare_statement_members([
+            ("sql-0".to_owned(), prepared(base)),
+            ("sql-1".to_owned(), prepared(entry)),
+        ]);
+        plugin
+            .bind_prepared_statement_members("component", &members)
+            .expect("bind the member sets");
+        plugin
+            .bind_statement_operation(
+                "component",
+                "entry/run",
+                BTreeMap::from([
+                    (entry.to_owned(), verified("SELECT $1::uuid, 'x'::text")),
+                    (base.to_owned(), verified("SELECT $1::uuid, 'x'::text")),
+                ]),
+            )
+            .expect("bind the folded operation set");
+        assert!(
+            plugin
+                .active_statement_set("component", Some("sql-0"))
+                .is_none(),
+            "a member set is not active before its operation"
+        );
+        plugin
+            .activate_statement_operation("component", "entry/run")
+            .expect("activate the operation");
+
+        for (instance, own, other) in [("sql-0", base, entry), ("sql-1", entry, base)] {
+            let active = plugin
+                .active_statement_set("component", Some(instance))
+                .expect("the member set is active");
+            assert!(resolve_statement(Some(&active), own, &id).is_ok());
+            assert!(matches!(
+                resolve_statement(Some(&active), other, &id),
+                Err(StatementError::UnknownStatement(path)) if path == other
+            ));
+        }
+        assert!(
+            plugin
+                .active_statement_set("component", Some("sql-2"))
+                .is_none(),
+            "an import with no member runs nothing"
+        );
+
+        plugin.revoke_statement_operation("component");
+        assert!(
+            plugin
+                .active_statement_set("component", Some("sql-0"))
+                .is_none()
+        );
     }
 
     #[test]
@@ -557,7 +700,7 @@ mod tests {
 
         plugin.clear_statement_scope("workload");
 
-        assert!(plugin.active_statement_set("workload").is_none());
+        assert!(plugin.active_statement_set("workload", None).is_none());
         assert!(
             plugin
                 .activate_statement_operation("workload", "orders/get")
@@ -565,7 +708,7 @@ mod tests {
             "the exact scope's immutable binding must also be gone"
         );
         let active = plugin
-            .active_statement_set("workload-child")
+            .active_statement_set("workload-child", None)
             .expect("prefix-sharing scope remains active");
         assert!(
             resolve_statement(Some(&active), &second_path, &[SqlValue::Uuid("id".into())]).is_ok()

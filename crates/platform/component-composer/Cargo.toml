@@ -9,11 +9,12 @@ license.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 wac-graph.workspace = true
+wamn-component-policy.workspace = true
 wamn-schema-generator.workspace = true
 
 [dev-dependencies]
-sha2.workspace = true
 wasmparser.workspace = true
 wat = "=1.254.2"
 

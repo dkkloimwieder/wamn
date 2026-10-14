@@ -133,6 +133,7 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
             })
             .collect();
     components.insert(ServingComponent {
+        statement_instances: std::collections::BTreeMap::new(),
         package_id: OVERLAY.to_owned(),
         operations,
         descriptor: wamn_catalog::ComponentDescriptor::named(
@@ -847,6 +848,7 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
             .collect();
     let mut components = fixture.base.manifest.components.clone();
     components.insert(ServingComponent {
+        statement_instances: std::collections::BTreeMap::new(),
         package_id: SECOND.to_owned(),
         operations,
         descriptor: wamn_catalog::ComponentDescriptor::named(

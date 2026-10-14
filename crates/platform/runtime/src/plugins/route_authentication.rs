@@ -482,6 +482,7 @@ mod tests {
                 packages: BTreeSet::from([PackageCoordinate::new("cat", "1.0.0").unwrap()]),
             },
             BTreeSet::from([ServingComponent {
+                statement_instances: std::collections::BTreeMap::new(),
                 package_id: "cat".into(),
                 operations: BTreeMap::from([(
                     "request".into(),

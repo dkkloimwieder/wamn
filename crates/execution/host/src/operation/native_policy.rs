@@ -18,8 +18,8 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::{
 };
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
-    OperationTransaction, PreparedStatementSet, UnprovisionedPrincipal, WAMN_POSTGRES_ID,
-    WamnPostgres,
+    OperationTransaction, PreparedStatementMembers, PreparedStatementSet, UnprovisionedPrincipal,
+    WAMN_POSTGRES_ID, WamnPostgres,
 };
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -27,8 +27,8 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use super::invocation_policy::{InvocationPolicy, InvocationScope};
 use super::native_call::{NativeCallFailure, NativeInvocation};
-use super::native_workload::native_component_name;
-use super::{NodeAcquisition, prepare_statement_sets};
+use super::native_workload::{NativeComponent, native_component_name};
+use super::{NodeAcquisition, prepare_statement_members, prepare_statement_sets};
 
 pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 
@@ -61,6 +61,8 @@ struct ComponentPolicy {
     fact: AdmittedComponent,
     operations: BTreeMap<String, ServingComponentOperation>,
     statements: BTreeMap<String, PreparedStatementSet>,
+    /// The set of each named `statements` import, one per member.
+    members: PreparedStatementMembers,
 }
 
 /// The facts of one native call that only this policy reads.
@@ -104,11 +106,11 @@ pub struct NativePolicy {
 }
 
 pub(super) fn new_native_policy(
-    components: &[AdmittedComponent],
+    components: &[NativeComponent],
     resources: NativePolicyResources,
 ) -> anyhow::Result<Arc<NativePolicy>> {
     let mut facts = BTreeMap::new();
-    for fact in components {
+    for NativeComponent { fact, bytes } in components {
         let name = native_component_name(fact)?;
         if facts.contains_key(&name) {
             continue;
@@ -124,10 +126,13 @@ pub(super) fn new_native_policy(
                     && served.descriptor.component_digest.as_str() == fact.component_digest
             })
             .context("component-not-in-carried-release")?;
+        let instances = wamn_engine::statement_instances::statement_instances(bytes)
+            .context("statement-instance-wiring")?;
         let policy = ComponentPolicy {
             fact: fact.clone(),
             operations: served.operations.clone(),
             statements: prepare_statement_sets(&served.operations),
+            members: prepare_statement_members(&instances, served)?,
         };
         facts.insert(name, Arc::new(policy));
     }
@@ -321,6 +326,9 @@ impl InvocationPolicy for NativePolicy {
         resources
             .postgres
             .bind_invocation(scope, acquisition.invocation.clone())?;
+        resources
+            .postgres
+            .bind_prepared_statement_members(scope, &component.members)?;
         resources
             .postgres
             .bind_prepared_statement_operation(scope, operation, statement_set)?;

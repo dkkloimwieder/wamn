@@ -220,6 +220,50 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         "statement_wit::HostTransactionViewWithStore",
         &[("run", TRANSACTION_VIEW_RUN)],
     ),
+    // Each member's named `statements` import: the same surfaces, resolved
+    // in that member's set. The participant trio refuses without host work.
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::statements::Host",
+        &[],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::statements::HostWithStore",
+        &[
+            ("selected_participation", LOCAL_STATE),
+            ("participant_view", LOCAL_STATE),
+            ("run", Surface::Effect),
+            ("run_stream", STATEMENT_RUN_STREAM),
+            ("begin", Surface::Effect),
+            ("operation_transaction", LOCAL_STATE),
+        ],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::statements::HostTransaction",
+        &[("drop", DESTRUCTOR)],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore",
+        &[
+            ("select_participant", LOCAL_STATE),
+            ("run", Surface::Effect),
+            ("commit", Surface::Effect),
+            ("rollback", Surface::Effect),
+        ],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::statements::HostTransactionView",
+        &[("drop", DESTRUCTOR)],
+    ),
+    (
+        POSTGRES,
+        "bindings::named_imports::wamn::postgres::statements::HostTransactionViewWithStore",
+        &[("run", TRANSACTION_VIEW_RUN)],
+    ),
     (HTTP, "http::Host", &[]),
     (HTTP, "http::HostWithStore", &[("send", Surface::Effect)]),
     (JETSTREAM, "registration::Host", &[]),

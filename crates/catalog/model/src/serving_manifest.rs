@@ -208,6 +208,12 @@ pub struct ServingComponent {
     /// interface version and the digest are read from here.
     pub descriptor: ComponentDescriptor,
     pub operations: BTreeMap<String, ServingComponentOperation>,
+    /// The statement set of each named `statements` import of a composed
+    /// component, keyed by import name: each member's own package's declared
+    /// statements (Law 1 of `docs/plan/trx-pkg-plan.md`). Absent when empty, so
+    /// a release without named instances keeps its bytes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub statement_instances: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
 }
 
 /// Components order by package, name, interface version, digest and
@@ -222,6 +228,7 @@ impl Ord for ServingComponent {
             &self.descriptor.interface_version,
             &self.descriptor.component_digest,
             &self.operations,
+            &self.statement_instances,
         )
             .cmp(&(
                 &other.package_id,
@@ -229,6 +236,7 @@ impl Ord for ServingComponent {
                 &other.descriptor.interface_version,
                 &other.descriptor.component_digest,
                 &other.operations,
+                &other.statement_instances,
             ))
             .then_with(|| {
                 let bytes = |descriptor: &ComponentDescriptor| {
@@ -286,8 +294,68 @@ impl ServingComponent {
             package_id: fact.scope.package_id.clone(),
             descriptor: ComponentDescriptor::new(fact.clone(), connections),
             operations,
+            statement_instances: BTreeMap::new(),
         })
     }
+
+    /// Carry the verified statement instance record of a composed component
+    /// and the statement set of each named import.
+    ///
+    /// `instances` maps each import name to its member's digest. A member
+    /// whose digest `base` resolves is a base, and its set is the union of
+    /// that base's own operations' statements. The one member that no base
+    /// matches is the overlay, whose bytes are composed into this component,
+    /// and its set is the union of this component's own operations'
+    /// statements.
+    ///
+    /// # Errors
+    ///
+    /// Refuses two members that match no base, and one statement path with
+    /// two different facts inside one package.
+    pub fn with_statement_instances<'a>(
+        mut self,
+        instances: &BTreeMap<String, String>,
+        base: &dyn Fn(&str) -> Option<&'a AdmittedComponent>,
+    ) -> Result<Self, CatalogIdentityError> {
+        let mut overlay = None;
+        let mut sets = BTreeMap::new();
+        for (name, digest) in instances {
+            let operations = if let Some(base) = base(digest) {
+                &base.operations
+            } else {
+                if let Some(previous) = overlay.replace(name) {
+                    return invalid(format!(
+                        "statement instances {previous:?} and {name:?} match no base"
+                    ));
+                }
+                &self.descriptor.operations
+            };
+            sets.insert(name.clone(), own_statements(operations)?);
+        }
+        self.descriptor.statement_instances = instances.clone();
+        self.statement_instances = sets;
+        Ok(self)
+    }
+}
+
+/// The union of the statements that `operations` declare.
+fn own_statements(
+    operations: &BTreeMap<String, AdmittedComponentOperation>,
+) -> Result<BTreeMap<String, ComponentSqlStatement>, CatalogIdentityError> {
+    let mut statements = BTreeMap::new();
+    for (path, statement) in operations
+        .values()
+        .flat_map(|operation| &operation.statements)
+    {
+        if let Some(previous) = statements.insert(path.clone(), statement.clone())
+            && &previous != statement
+        {
+            return invalid(format!(
+                "statement {path:?} has two different facts in one package"
+            ));
+        }
+    }
+    Ok(statements)
 }
 
 /// Merge one operation and everything it calls into `folded`.
@@ -1656,6 +1724,7 @@ mod tests {
     fn components() -> BTreeSet<ServingComponent> {
         BTreeSet::from([
             ServingComponent {
+                statement_instances: std::collections::BTreeMap::new(),
                 package_id: "overlay".into(),
                 operations: BTreeMap::from([(
                     "overlay:transform/map@3.0.0".into(),
@@ -1674,6 +1743,7 @@ mod tests {
                 descriptor: ComponentDescriptor::named("transform", "0.1", COMPONENT_B),
             },
             ServingComponent {
+                statement_instances: std::collections::BTreeMap::new(),
                 package_id: "base".into(),
                 operations: BTreeMap::from([(
                     "base:widget/get@1.0.0".into(),
@@ -1856,6 +1926,93 @@ mod tests {
             imports_fingerprint: digest.into(),
             effects: Vec::new(),
         }
+    }
+
+    /// One overlay operation calls two members. Each member's import binds
+    /// only that member's own statements, and the overlay's binds its own.
+    #[test]
+    fn each_member_of_one_operation_binds_only_its_own_statements() {
+        const COMPONENT_C: &str =
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        const OVERLAY_MEMBER: &str =
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+        let dependency =
+            |package: &str, digest: &str, operation: &str| ComponentOperationDependency {
+                participant: None,
+                package: package.into(),
+                version: "1.0.0".into(),
+                digest: digest.into(),
+                operation: operation.into(),
+            };
+        let first = admitted(
+            "first",
+            "1.0.0",
+            COMPONENT_A,
+            vec![(
+                "first:op/run@1.0.0",
+                admitted_operation("first:op/run@1.0.0", Some("SELECT 'first'"), Vec::new()),
+            )],
+        );
+        let second = admitted(
+            "second",
+            "1.0.0",
+            COMPONENT_C,
+            vec![(
+                "second:op/run@1.0.0",
+                admitted_operation("second:op/run@1.0.0", Some("SELECT 'second'"), Vec::new()),
+            )],
+        );
+        let overlay = admitted(
+            "overlay",
+            "3.0.0",
+            COMPONENT_B,
+            vec![(
+                "overlay:op/run@3.0.0",
+                admitted_operation(
+                    "overlay:op/run@3.0.0",
+                    Some("SELECT 'overlay'"),
+                    vec![
+                        dependency("first", COMPONENT_A, "first:op/run@1.0.0"),
+                        dependency("second", COMPONENT_C, "second:op/run@1.0.0"),
+                    ],
+                ),
+            )],
+        );
+        let bases = [&first, &second];
+        let base = |digest: &str| {
+            bases
+                .iter()
+                .copied()
+                .find(|base| base.component_digest == digest)
+        };
+        let instances = BTreeMap::from([
+            ("sql-0".to_owned(), COMPONENT_A.to_owned()),
+            ("sql-1".to_owned(), COMPONENT_C.to_owned()),
+            ("sql-2".to_owned(), OVERLAY_MEMBER.to_owned()),
+        ]);
+        let served =
+            ServingComponent::project(&overlay, Vec::new(), &|dependency| base(&dependency.digest))
+                .expect("the graph folds")
+                .with_statement_instances(&instances, &base)
+                .expect("each member binds its own statements");
+
+        let sql = |instance: &str| {
+            served.statement_instances[instance]
+                .values()
+                .map(|statement| statement.sql.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(sql("sql-0"), ["SELECT 'first'"]);
+        assert_eq!(sql("sql-1"), ["SELECT 'second'"]);
+        assert_eq!(sql("sql-2"), ["SELECT 'overlay'"]);
+        assert_eq!(served.descriptor.statement_instances, instances);
+
+        let mut unmatched = instances;
+        unmatched.insert("sql-3".to_owned(), COMPONENT_B.to_owned());
+        ServingComponent::project(&overlay, Vec::new(), &|dependency| base(&dependency.digest))
+            .expect("the graph folds")
+            .with_statement_instances(&unmatched, &base)
+            .expect_err("two members that match no base are refused");
     }
 
     fn admitted_operation(

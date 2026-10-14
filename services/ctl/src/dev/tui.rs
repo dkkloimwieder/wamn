@@ -921,6 +921,7 @@ mod tests {
             statements: BTreeMap::new(),
         };
         let component = ServingComponent {
+            statement_instances: std::collections::BTreeMap::new(),
             package_id: "platform_fixture".to_owned(),
             operations: BTreeMap::from([("widget/get".to_owned(), operation)]),
             descriptor: wamn_catalog::ComponentDescriptor::named("fixture", "0.1.0", DIGEST),

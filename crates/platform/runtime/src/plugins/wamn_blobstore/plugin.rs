@@ -720,6 +720,7 @@ mod tests {
         let invocation = released();
         let (mut manifest, _scope) = manifest("tenant-a", "package_a");
         manifest.components = BTreeSet::from([ServingComponent {
+            statement_instances: std::collections::BTreeMap::new(),
             descriptor: wamn_catalog::ComponentDescriptor::named(
                 snapshot
                     .component

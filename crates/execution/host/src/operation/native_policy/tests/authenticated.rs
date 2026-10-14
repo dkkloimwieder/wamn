@@ -1,6 +1,6 @@
 //! Real signed sessions and scoped PostgreSQL permissions drive native nested dispatch.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -9,12 +9,20 @@ use serde_json::json;
 use tokio::time::{Instant, timeout};
 use tokio_postgres::{Client, NoTls};
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
+use wamn_catalog::{
+    ComponentDeclaration, ComponentOperationDeclaration, ComponentOperationDependency,
+    ComponentPackageScope,
+};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+};
+use wamn_engine::component_admission::{
+    ComponentAdmissionErrorType, ComponentAdmissionRequest, validate_component_admission,
 };
 use wamn_engine::flow_http_routing::{
     AuthenticatedCaller, CredentialType, FlowHttpRouting, RouteInFlightLimit,
 };
+use wamn_engine::operation::invocation_policy::InvocationPolicy as _;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, SessionRouteAuthentication,
@@ -580,6 +588,214 @@ fn native_authenticated_transaction_participant() {
             server.stop().await;
         },
     );
+}
+
+/// The admission request of the composed member fixture: the root's one
+/// operation calls the child embedded in it.
+fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
+    ComponentAdmissionRequest {
+        declaration: ComponentDeclaration {
+            scope: ComponentPackageScope {
+                tenant_id: TENANT.into(),
+                package_id: "root".into(),
+                package_version: "1.0.0".into(),
+            },
+            component: "node".into(),
+            interface_version: "0.1.0".into(),
+            operations: BTreeMap::from([(
+                ROOT.into(),
+                ComponentOperationDeclaration {
+                    pre_commit: None,
+                    pre_commit_required: false,
+                    registered_operation: Some(ROOT.into()),
+                    committed_result_schema: None,
+                    dependencies: vec![ComponentOperationDependency {
+                        participant: None,
+                        package: "child".into(),
+                        version: "1.0.0".into(),
+                        digest: child_digest.into(),
+                        operation: CHILD.into(),
+                    }],
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                },
+            )]),
+            connections: Vec::new(),
+        },
+        admitted_platform_packages: BTreeSet::from(["wamn:postgres".to_owned()]),
+        effect_free_operation_dependencies: BTreeSet::new(),
+    }
+}
+
+/// The composed bytes with the names of the two outer statements imports
+/// exchanged: each member's bytes and the record stay, the graph changes.
+fn swap_statement_bindings(composed: &[u8]) -> Vec<u8> {
+    let mut depth = 0_usize;
+    let mut imports = None;
+    for payload in wasmparser::Parser::new(0).parse_all(composed) {
+        match payload.expect("the composed bytes parse") {
+            wasmparser::Payload::ModuleSection { .. }
+            | wasmparser::Payload::ComponentSection { .. } => depth += 1,
+            wasmparser::Payload::End(_) => depth = depth.saturating_sub(1),
+            wasmparser::Payload::ComponentImportSection(reader) if depth == 0 => {
+                imports = Some(reader.range());
+            }
+            _ => {}
+        }
+    }
+    let range = imports.expect("the composed component has imports");
+    let mut swapped = composed.to_vec();
+    let start = usize::try_from(range.start).expect("offset fits memory");
+    let end = usize::try_from(range.end).expect("offset fits memory");
+    let section = &mut swapped[start..end];
+    let mut exchanged = 0;
+    for start in 0..section.len().saturating_sub(4) {
+        let name = &mut section[start..start + 5];
+        if name == b"sql-0" {
+            name.copy_from_slice(b"sql-1");
+            exchanged += 1;
+        } else if name == b"sql-1" {
+            name.copy_from_slice(b"sql-0");
+            exchanged += 1;
+        }
+    }
+    assert_eq!(exchanged, 2, "both outer import names are exchanged");
+    swapped
+}
+
+#[test]
+fn native_member_statement_instances() {
+    super::run_isolated_test("authenticated::native_member_statement_instances", async {
+        let (composed, child) = super::member_instances_component();
+        let child_digest = wamn_engine::component_admission::component_digest(&child);
+        let engine = wamn_engine::build_engine(&[]).expect("validation engine");
+        let admitted = validate_component_admission(
+            &engine,
+            &composed,
+            member_admission_request(&child_digest),
+        )
+        .expect("publish admits each member's statements import by its instance type");
+        assert_eq!(
+            admitted
+                .component
+                .imports
+                .iter()
+                .filter(|import| import.as_str() == super::STATEMENTS)
+                .count(),
+            1,
+            "the two named instances are one capability: {:?}",
+            admitted.component.imports
+        );
+        assert_eq!(
+            admitted.statement_instances,
+            BTreeMap::from([
+                ("sql-0".to_owned(), child_digest.clone()),
+                (
+                    "sql-1".to_owned(),
+                    wamn_engine::component_admission::component_digest(
+                        &super::member_root_component()
+                    )
+                ),
+            ]),
+            "admission carries the record it verified into the admitted facts"
+        );
+        let refused = validate_component_admission(
+            &engine,
+            &swap_statement_bindings(&composed),
+            member_admission_request(&child_digest),
+        )
+        .expect_err("publish refuses a member wired to another member's instance");
+        assert_eq!(
+            refused.error_type(),
+            ComponentAdmissionErrorType::StatementInstanceMismatch,
+            "{refused}"
+        );
+
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let (mut server, route) = authentication_fixture(database.url())
+            .await
+            .expect("authenticated member fixture");
+        let caller = authenticated(&route, true).await;
+        let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
+            .await
+            .expect("member SQL credentials");
+        let admin = connect(database.url()).await.expect("admin connection");
+        admin
+            .batch_execute(
+                "CREATE TABLE public.native_policy_members(value text NOT NULL); \
+                     GRANT SELECT, INSERT ON public.native_policy_members TO wamn_app",
+            )
+            .await
+            .expect("member table");
+        let fixture = Fixture::build_with_reuse(
+            Case::MemberInstances,
+            false,
+            true,
+            None,
+            None,
+            Some(postgres),
+        )
+        .await;
+        let rows = async || {
+            admin
+                .query(
+                    "SELECT value FROM public.native_policy_members ORDER BY value",
+                    &[],
+                )
+                .await
+                .expect("read member rows")
+                .iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>()
+        };
+        let component_id = fixture
+            .workload
+            .facts_by_component_id
+            .iter()
+            .find_map(|(id, fact)| (fact == &fixture.root).then_some(id.clone()))
+            .expect("root native identity");
+
+        for (input, commits) in [(r#"[{"value":37}]"#, true), ("[]", false)] {
+            let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
+            request.input = input.into();
+            request.facts.caller = Some(caller.clone());
+            let transaction = fixture
+                .policy
+                .begin_item(&component_id, ROOT, &request.facts)
+                .await
+                .expect("begin the item transaction")
+                .expect("the root's folded statements open a host transaction");
+            request.facts = fixture.policy.item_facts(&request.facts, &transaction);
+            let result = invoke_native(&fixture.target().await, request)
+                .await
+                .expect("the composed root dispatches");
+            if commits {
+                let emission = result.expect("the root answers its codes");
+                assert_eq!(
+                    emission.payload, "ukuk",
+                    "root and child each refuse the other's statement and run their own"
+                );
+                transaction.commit().await.expect("commit the item");
+                assert_eq!(
+                    rows().await,
+                    ["a", "b1"],
+                    "the child's statement saw the root's row in the one host transaction"
+                );
+            } else {
+                result.expect_err("the root fails after both members wrote");
+                transaction.rollback().await.expect("roll back the item");
+                assert_eq!(
+                    rows().await,
+                    ["a", "b1"],
+                    "a rolled-back item leaves no write of either member"
+                );
+            }
+        }
+        fixture.assert_clean().await;
+        server.stop().await;
+    });
 }
 
 #[test]
