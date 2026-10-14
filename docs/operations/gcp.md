@@ -16,10 +16,10 @@ Do not run `gcloud config configurations activate`. Do not read or write `~/.con
 The owner supplies these inputs. The install stops at the first step that reads a missing one.
 
 1. The agent identity. `CLOUDSDK_CONFIG` holds the login of `wamn-agent@wamn-dev.iam.gserviceaccount.com` and application default credentials, which `wamn web upload` reads. `KUBECONFIG` names a file of the agent's own. The cluster create of section 4.2 writes the cluster into it.
-2. The Resend key, as the Secret `identity-resend` in namespace `identity`, key `api-key`. The owner makes it after section 4.4 makes the namespace and before section 4.12. Write the key to a mode 0600 file with no line end, because identity refuses whitespace in the key (`Resend configuration refused`). Then run:
+2. The Resend key, as the Secret `identity-resend` in namespace `identity`, key `api-key`. The owner makes it after section 4.4 makes the namespace and before section 4.12. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`). Most editors end a file with a line end, so the command removes all whitespace:
 
    ```bash
-   kubectl -n identity create secret generic identity-resend --from-file=api-key=<file>
+   kubectl -n identity create secret generic identity-resend --from-literal=api-key="$(tr -d '[:space:]' < <file>)"
    ```
 
 3. The Workload Identity binding of the host service account. The Kubernetes service account `hosts/wamn-host` acts as the Google service account `wamn-blob`. A teardown keeps this binding, because it is IAM. If the binding is missing, the owner runs:
@@ -760,10 +760,10 @@ target/debug/wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" 
 
 ### 5.4 Rotate the Resend key
 
-The owner makes the new key in Resend and writes it to a new mode 0600 file with no line end. Replace the Secret and restart identity:
+The owner makes the new key in Resend and writes it to a new mode 0600 file. The command removes the line end of the file. Replace the Secret and restart identity:
 
 ```bash
-kubectl -n identity create secret generic identity-resend --from-file=api-key=<file> --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n identity create secret generic identity-resend --from-literal=api-key="$(tr -d '[:space:]' < <file>)" --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n identity rollout restart deploy/identity
 kubectl -n identity rollout status deploy/identity --timeout=300s
 ```
