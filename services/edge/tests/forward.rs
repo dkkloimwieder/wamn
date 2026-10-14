@@ -322,7 +322,8 @@ impl Edge {
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            // A fatal error reaches the test output (wamn-vbail).
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("start wamn-edge");
         let log = child.stdout.take().expect("the child's log");
@@ -351,7 +352,8 @@ impl Edge {
             match self.lines.recv_timeout(left) {
                 Ok(line) => self.seen.push(line),
                 Err(error) => panic!(
-                    "wamn-edge logged {text:?} fewer than {count} times ({error}):\n{}",
+                    "wamn-edge logged {text:?} fewer than {count} times ({error}, exit {:?}):\n{}",
+                    self.child.try_wait(),
                     self.seen.join("\n")
                 ),
             }
