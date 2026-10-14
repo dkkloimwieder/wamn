@@ -197,22 +197,22 @@ DATABASE_URL=postgres://postgres@127.0.0.1:$PORT/postgres target/debug/wamn buil
 docker rm -f wamn-install-build-pg
 ```
 
-`wamn-ctl build-platform` builds the host, runner, gates and identity images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The repository `wamn` has immutable tags. If the chart version is already in the registry, a build with other bytes cannot push. Read the version and look for its host image:
+`wamn-ctl build-platform` builds the host, runner, gates and identity images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The repository `wamn` has immutable tags, so a version that is already in the registry cannot be built again. A reinstall at an unchanged version uses the registry (`docs/plan/platform-deploy.md` R15). With `--stamp-only`, the command builds nothing. It reads the registry digests of the six images of the version and stamps them into the release chart. It refuses if one of them is missing.
 
-```bash
-V=$(sed -n 's/^pub const CHART_VERSION: &str = "\(.*\)";/\1/p' crates/control/lib/src/release_chart.rs)
-gcloud artifacts docker images describe us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:$V --format="value(image_summary.digest)"
-```
-
-If the describe prints a digest, stop. A new platform version is an owner ruling (`docs/plan/platform-deploy.md` R15).
-
-The build pushes for longer than one hour, and a `docker login` token expires after one hour. Give Docker a configuration of its own with the gcloud credential helper, which gets a new token for each push. The file holds no credential:
+The build pushes for longer than one hour, and a `docker login` token expires after one hour. Give Docker a configuration of its own with the gcloud credential helper, which gets a new token for each push. The file holds no credential. Then build if the host image of the version is absent, and stamp only if it is present:
 
 ```bash
 W=$HOME/.cache/wamn-install
 mkdir -m 700 $W/docker
 echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > $W/docker/config.json
-DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform \
+V=$(sed -n 's/^pub const CHART_VERSION: &str = "\(.*\)";/\1/p' crates/control/lib/src/release_chart.rs)
+if gcloud artifacts docker images describe us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:$V >/dev/null 2>&1; then
+  STAMP=--stamp-only
+else
+  STAMP=
+fi
+echo "platform $V ${STAMP:-build}"
+DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform $STAMP \
   --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out $W/release-chart
 ```
 
