@@ -143,7 +143,7 @@ No row is derived from another, so no revoke keeps or refuses a derived row.
 
 ### 2.5 Non-grantable operations
 
-Ruling ([the ACL ruling](trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)): everything is grantable. Which roles administer which other roles is a tenant's business decision like any other grant. The one platform rule is no escalation beyond yourself: an ACL-editing operation can confer only what its caller already holds, with `admin` treated as the full set. The code is a follow-up after Epic C of [trx-pkg-plan.md](trx-pkg-plan.md#amendments-to-platform-uimd). Until it lands, the behavior below is unchanged.
+Current behavior: the ACL-editing operations (`role.*`, `permission.*`, `user_role.*`, `user.*`) are reserved to `admin`, and Epic C of [trx-pkg-plan.md](trx-pkg-plan.md#spike-and-acceptance) does not change that. Direction, not shipped (owner ruling 2026-10-11): grantable administration, where an ACL-editing operation can confer only what its caller already holds, with `admin` treated as the full set. It is a follow-up after Epic C, rescoped then ([trx-pkg-plan.md](trx-pkg-plan.md#amendments-to-platform-uimd)). Until it lands, the rules below apply.
 
 The fixed application-administration operations are **not grantable** to authored roles.
 
