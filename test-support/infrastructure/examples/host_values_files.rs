@@ -12,11 +12,11 @@
 //! Receiving group in `values-host.yaml`, and names the WMS Secrets. Its label
 //! store signs with the pod's service account, so it mounts no credentials.
 //!
-//! Each group pulls components with a token from the GKE metadata server
-//! (`WAMN_REGISTRY_TOKEN_METADATA`, finding wamn-i87m). The pull volume keeps
-//! its mount path and `DOCKER_CONFIG`, and reads ConfigMap
+//! Each group, and the base group, pulls components with a token from the GKE
+//! metadata server (`WAMN_REGISTRY_TOKEN_METADATA`, finding wamn-i87m). The
+//! pull volume keeps its mount path and `DOCKER_CONFIG`, and reads ConfigMap
 //! `wamn-registry-helper` of `deploy/gcp/registry-helper.yaml` in place of
-//! Secret `wamn-registry-pull`.
+//! Secret `wamn-registry-pull`. No file names that Secret.
 //!
 //! The control host group of the org (docs/plan/platform-ui.md §4.2) joins
 //! them as `hostgroup-control`. It serves the control serving root, so it has
@@ -256,10 +256,12 @@ fn overlay_for_org(overlay: &str, project: &str) -> anyhow::Result<String> {
     Ok(serde_yaml::to_string(&document)?)
 }
 
-/// The control NATS runs in namespace `platform`, and the host service
-/// account acts as the label store account through Workload Identity.
+/// The control NATS runs in namespace `platform`, the host service account
+/// acts as the label store account through Workload Identity, and the base
+/// group pulls with the metadata token.
 fn google_cloud_base(base: &str) -> anyhow::Result<String> {
     let mut document: Value = serde_yaml::from_str(base)?;
+    pull_with_metadata_token(group_mut(&mut document)?)?;
     document["runtime"]["serviceAccount"]["annotations"]["iam.gke.io/gcp-service-account"] =
         BLOB_ACCOUNT.into();
     let nats = &mut document["global"]["nats"];
@@ -493,48 +495,50 @@ mod tests {
     #[test]
     fn each_group_pulls_with_the_metadata_token() -> anyhow::Result<()> {
         for application in [&RECEIVING, &WMS] {
-            let (_, overlay) = render(application, "registry.example/releases", "sha256:00")?;
-            let mut document: Value = serde_yaml::from_str(&overlay)?;
-            let group = group_mut(&mut document)?;
-            let env = |name: &str| {
-                group["env"]
-                    .as_sequence()
-                    .into_iter()
-                    .flatten()
-                    .filter(|entry| entry["name"] == name)
-                    .map(|entry| entry["value"].clone())
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(env("WAMN_REGISTRY_AUTH_FILE"), Vec::<Value>::new());
-            assert_eq!(
-                env("WAMN_REGISTRY_TOKEN_METADATA"),
-                vec![Value::from("true")]
-            );
-            assert_eq!(
-                env("DOCKER_CONFIG"),
-                vec![Value::from("/etc/wamn/registry")]
-            );
-            let named = |list: &str| {
-                group[list]
-                    .as_sequence()
-                    .into_iter()
-                    .flatten()
-                    .filter(|entry| entry["name"] == "registry-pull")
-                    .cloned()
-                    .collect::<Vec<_>>()
-            };
-            assert_eq!(
-                named("volumes"),
-                vec![serde_yaml::from_str::<Value>(
-                    "{name: registry-pull, configMap: {name: wamn-registry-helper}}"
-                )?]
-            );
-            assert_eq!(
-                named("volumeMounts"),
-                vec![serde_yaml::from_str::<Value>(
-                    "{name: registry-pull, mountPath: /etc/wamn/registry, readOnly: true}"
-                )?]
-            );
+            let (base, overlay) = render(application, "registry.example/releases", "sha256:00")?;
+            for values in [google_cloud_base(&base)?, overlay] {
+                let mut document: Value = serde_yaml::from_str(&values)?;
+                let group = group_mut(&mut document)?;
+                let env = |name: &str| {
+                    group["env"]
+                        .as_sequence()
+                        .into_iter()
+                        .flatten()
+                        .filter(|entry| entry["name"] == name)
+                        .map(|entry| entry["value"].clone())
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(env("WAMN_REGISTRY_AUTH_FILE"), Vec::<Value>::new());
+                assert_eq!(
+                    env("WAMN_REGISTRY_TOKEN_METADATA"),
+                    vec![Value::from("true")]
+                );
+                assert_eq!(
+                    env("DOCKER_CONFIG"),
+                    vec![Value::from("/etc/wamn/registry")]
+                );
+                let named = |list: &str| {
+                    group[list]
+                        .as_sequence()
+                        .into_iter()
+                        .flatten()
+                        .filter(|entry| entry["name"] == "registry-pull")
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    named("volumes"),
+                    vec![serde_yaml::from_str::<Value>(
+                        "{name: registry-pull, configMap: {name: wamn-registry-helper}}"
+                    )?]
+                );
+                assert_eq!(
+                    named("volumeMounts"),
+                    vec![serde_yaml::from_str::<Value>(
+                        "{name: registry-pull, mountPath: /etc/wamn/registry, readOnly: true}"
+                    )?]
+                );
+            }
         }
         Ok(())
     }

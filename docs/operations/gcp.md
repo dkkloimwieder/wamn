@@ -673,7 +673,7 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
 
 On 2026-09-26 the install took 8 seconds, and the check returned `{"keys":[]}` with `HTTP 200`. The key set is empty until a session key is published.
 
-### 3.11 Host Secrets and registry token account
+### 3.11 Host Secrets
 
 Prepare generation `a` of the five host credentials, one family for each run. `identity-reader` addresses the system database, so it takes no `--target-admin-database-url`:
 
@@ -719,43 +719,33 @@ Since `wamn-a40n.6`, an administration prepare also needs `--emit-control-admini
 kubectl -n hosts patch secret wamn-control-administration-dkk --type merge --patch-file $P/administration.patch.json
 ```
 
-Create the Google service account of the registry token CronJob. Give it read access to repository `wamn` only, and bind it to the Kubernetes service account `hosts/registry-token`:
+### 3.12 Registry pull
+
+The hosts pull the release manifest and the components with a token from the GKE metadata server (`--registry-token-metadata`). The token belongs to the Google service account `wamn-blob` of section 5.1, through Workload Identity. No Secret holds a registry credential.
+
+Give `wamn-blob` read access to repository `wamn` only:
 
 ```bash
-gcloud iam service-accounts create wamn-registry-reader --project wamn-dev --display-name "wamn registry token CronJob"
 gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
-  --member serviceAccount:wamn-registry-reader@wamn-dev.iam.gserviceaccount.com --role roles/artifactregistry.reader
-gcloud iam service-accounts add-iam-policy-binding wamn-registry-reader@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
-  --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/registry-token]"
+  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/artifactregistry.reader
 ```
 
-If the repository binding fails with "Service account ... does not exist", the new account is not visible yet. Make sure that `gcloud iam service-accounts describe` shows it, wait a short time, and run the binding again. On 2026-09-26 the first binding failed this way, and the second one succeeded.
-
-### 3.12 Registry token CronJob
-
-The CronJob stopped at the cutover on 2026-10-02 (B10), and B12 deleted `deploy/gcp/registry-token.yaml`. The hosts now pull with the metadata token of section 3.13. This section records the earlier setup.
-
-`registry-token.yaml` held the service account, the empty Secret `wamn-registry-pull`, the Role that allows only `get` and `patch` on that Secret, and the CronJob. Apply it, run the job once by hand, and make sure that the Secret holds a token:
+`deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`. It names the `wamn` credential helper for the registry, and it holds no credential. The host values mount it at `/etc/wamn/registry`, which `DOCKER_CONFIG` names. Apply it before the host rollout:
 
 ```bash
-kubectl apply -f deploy/gcp/registry-token.yaml
-kubectl -n hosts create job registry-token-first --from=cronjob/registry-token
-kubectl -n hosts wait job/registry-token-first --for=condition=complete --timeout=180s
-kubectl -n hosts logs job/registry-token-first
-kubectl -n hosts get secret wamn-registry-pull -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d \
-  | jq -c '.auths|to_entries[]|{host:.key,user:.value.username,password_length:(.value.password|length)}'
+kubectl apply -f deploy/gcp/registry-helper.yaml
 ```
 
-The log shows only `patch status 200`. Make sure that the token comes from `wamn-registry-reader` and not from the node account:
+To make sure that a service account gets the Google identity you expect from the metadata server, run a pod as that service account:
 
 ```bash
 kubectl -n hosts run wi-check --restart=Never --rm -i --quiet \
   --image=curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 \
-  --overrides='{"spec":{"serviceAccountName":"registry-token"}}' -- \
+  --overrides='{"spec":{"serviceAccountName":"<service account>"}}' -- \
   curl -sS -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
 ```
 
-On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-reader@wamn-dev.iam.gserviceaccount.com`.
+B10 of `docs/plan/kind-to-type.md` section 3.2 applied the grant and the ConfigMap on 2026-10-02. Before B10, a CronJob wrote a token into the Secret `wamn-registry-pull` as the Google service account `wamn-registry-reader`. The cutover deleted the CronJob, the Secret and the account.
 
 ### 3.13 Pinned images
 
@@ -769,8 +759,6 @@ On 2026-09-26 the first run took 10 seconds, and the email was `wamn-registry-re
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | identity TLS check |
 
 The four `wamn` images come from the cutover commit `351f71337` of branch `cutover` (`docs/plan/kind-to-type.md` section 3.2, 2026-10-02). They carry the label `wamn.dev/source-head`, because `qualify-release` compares each pin with the labeled build of `tools/journey-image-cache`.
-
-`deploy/gcp/registry-helper.yaml` holds the ConfigMap `wamn-registry-helper`, which names the `wamn` credential helper for the registry. B10 of `docs/plan/kind-to-type.md` section 3.2 applied it on 2026-10-02, before the `helm upgrade` of the hosts. The hosts pull components with a token from the GKE metadata server, as `wamn-blob`. The token CronJob, its Secret `wamn-registry-pull` and the Google service account `wamn-registry-reader` were removed after the serve check of B10.
 
 The kind cases of `qualify-release` do not pull these images from the private registry. The case (`case_release::node_image_archives` of `wamn-gate-harness`) fetches each pinned manifest and its blobs by digest with the pull credential of the release registry, the file of `--registry-auth-file`, and each kind node imports that archive with `ctr`, so the node holds the pinned digest. No credential reaches a node. The owned registry of a kind delivery case is plain HTTP with no login, and its candidate sets `native_registry_insecure`. The kind nodes pull from that registry through the containerd hosts directory instead.
 
@@ -2172,7 +2160,7 @@ List the disks of the cluster first. After `gcloud container clusters delete wam
 4. Section 3.5, for both environments at once (11.3).
 5. Section 3.6, then section 3.7 up to `provision-org --admin`. `provision-project-env` does not run by hand: `env apply` does it.
 6. `provision-identity-issuer` of section 3.8, and the certificates and the `identity-ca` ConfigMaps of section 3.10.
-7. The platform inputs of 11.4, the registry helper ConfigMap of section 3.13 and the platform install inputs of section 3.23 (11.5).
+7. The platform inputs of 11.4, the registry pull of section 3.12 and the platform install inputs of section 3.23 (11.5).
 8. `env apply` of each document with `release = "none"` (11.6).
 9. The session targets and identity (11.7).
 10. The packages, the WMS wiring and the releases (11.8), then qualification (11.9).

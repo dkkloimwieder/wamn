@@ -23,8 +23,6 @@ runtime:
       value: /tmp/wamn-wasmtime-cache
     - name: DOCKER_CONFIG
       value: /etc/wamn/registry
-    - name: WAMN_REGISTRY_AUTH_FILE
-      value: /etc/wamn/registry/config.json
     - name: WAMN_COMPONENT_ARTIFACT_BASE
       value: registry.wamn-system.svc.cluster.local:5000/wamn/components
     - name: WAMN_EVT_NATS_URL
@@ -69,6 +67,8 @@ runtime:
           name: wamn-event-nats
           key: dup_window_secs
           optional: false
+    - name: WAMN_REGISTRY_TOKEN_METADATA
+      value: 'true'
     volumes:
     - name: event-nats
       secret:
@@ -85,12 +85,8 @@ runtime:
         - key: binding.json
           path: binding.json
     - name: registry-pull
-      secret:
-        secretName: wamn-registry-pull
-        optional: false
-        items:
-        - key: .dockerconfigjson
-          path: config.json
+      configMap:
+        name: wamn-registry-helper
     http:
       enabled: true
       port: 80
