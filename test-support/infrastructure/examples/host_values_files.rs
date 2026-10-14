@@ -391,7 +391,9 @@ fn control_group(application: &Value) -> anyhow::Result<Value> {
                {{secretName: wamn-control-administration-{ORG}, optional: false}}}}, \
              {{name: kube-api-access, projected: {{sources: [\
                {{serviceAccountToken: {{path: token, expirationSeconds: 3607}}}}, \
-               {{configMap: {{name: kube-root-ca.crt, items: [{{key: ca.crt, path: ca.crt}}]}}}}]}}}}]"
+               {{configMap: {{name: kube-root-ca.crt, items: [{{key: ca.crt, path: ca.crt}}]}}}}, \
+               {{downwardAPI: {{items: [{{path: namespace, \
+                 fieldRef: {{fieldPath: metadata.namespace}}}}]}}}}]}}}}]"
         ))?,
     );
     group.insert(

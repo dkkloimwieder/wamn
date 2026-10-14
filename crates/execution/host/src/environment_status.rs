@@ -20,15 +20,13 @@ use wamn_control_provision::environment_state::{
 
 /// The mounted token, CA and namespace of the pod's ServiceAccount.
 const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
-/// The release namespace of every environment.
-const RELEASE_NAMESPACE: &str = "hosts";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Read the state of one environment of `org` and answer the route's result.
 pub(crate) async fn read(org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
     let release_name = release_name(org, project, env).context("derive the release name")?;
     let api = KubernetesApi::in_cluster()?;
-    let observed = observe(RELEASE_NAMESPACE, &release_name, |path| api.get(path)).await?;
+    let observed = observe(&api.namespace, &release_name, |path| api.get(path)).await?;
     Ok(status_value(&environment_state(&observed, &release_name)))
 }
 
@@ -72,6 +70,8 @@ struct KubernetesApi {
     http: reqwest::Client,
     base: String,
     token: String,
+    /// The pod's own namespace, the release namespace of every environment.
+    namespace: String,
 }
 
 impl KubernetesApi {
@@ -89,6 +89,8 @@ impl KubernetesApi {
         };
         let token = std::fs::read_to_string(format!("{SERVICE_ACCOUNT}/token"))
             .context("read the ServiceAccount token")?;
+        let namespace = std::fs::read_to_string(format!("{SERVICE_ACCOUNT}/namespace"))
+            .context("read the ServiceAccount namespace")?;
         let ca = std::fs::read(format!("{SERVICE_ACCOUNT}/ca.crt"))
             .context("read the ServiceAccount CA")?;
         let roots =
@@ -107,6 +109,7 @@ impl KubernetesApi {
             http,
             base: format!("https://{host}:{port}"),
             token: token.trim().to_owned(),
+            namespace: namespace.trim().to_owned(),
         })
     }
 
@@ -220,7 +223,7 @@ mod tests {
             .iter()
             .find(|document| document["kind"] == "Role")
             .expect("a Role");
-        assert_eq!(role["metadata"]["namespace"], RELEASE_NAMESPACE);
+        assert_eq!(role["metadata"]["namespace"], "hosts");
         let verbs = json!(["get", "list", "watch"]);
         assert_eq!(
             role["rules"],
@@ -234,7 +237,7 @@ mod tests {
             .iter()
             .find(|document| document["kind"] == "RoleBinding")
             .expect("a RoleBinding");
-        assert_eq!(binding["metadata"]["namespace"], RELEASE_NAMESPACE);
+        assert_eq!(binding["metadata"]["namespace"], "hosts");
         assert_eq!(binding["roleRef"]["kind"], "Role");
         assert_eq!(binding["roleRef"]["name"], role["metadata"]["name"]);
         assert_eq!(
@@ -242,7 +245,7 @@ mod tests {
             json!([{
                 "kind": "ServiceAccount",
                 "name": "wamn-host",
-                "namespace": RELEASE_NAMESPACE,
+                "namespace": "hosts",
             }])
         );
         assert!(
