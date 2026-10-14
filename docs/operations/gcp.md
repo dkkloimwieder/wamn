@@ -50,7 +50,6 @@ gcloud artifacts repositories list --project wamn-dev --location us-central1
 gcloud storage buckets list --project wamn-dev --format="value(name)"
 gcloud compute networks subnets list --project wamn-dev --network wamn
 gcloud compute backend-services list --project wamn-dev
-gcloud iam service-accounts get-iam-policy wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev
 ```
 
 ## 3. Teardown
@@ -334,11 +333,9 @@ kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
 kubectl -n hosts annotate serviceaccount wamn-host --overwrite \
   iam.gke.io/gcp-service-account=wamn-blob@wamn-dev.iam.gserviceaccount.com
 kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
-gcloud iam service-accounts get-iam-policy wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
-  --format=json | grep -c 'hosts/wamn-host'
 ```
 
-The count must be 1. If it is 0, the binding of section 1 is missing.
+The owner made the `wamn-blob` binding (section 1). IAM is owner-only, so the install identity does not read it. The first apply with a release (4.17) is the proof. If the binding is missing, the host pull fails and names the account.
 
 ### 4.10 Platform file
 
