@@ -41,3 +41,4 @@ web/components/.vitest/
 
 # Local agent logs and scratch files.
 scratchpad/
+.beads/interactions.jsonl
