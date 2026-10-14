@@ -97,14 +97,13 @@ Every other role:
 - is identified by a role slug;
 - contains stable operation references, not package-version-sealed operation ids;
 - may contain several directly selected permissions;
-- may hold additional permissions required by those selected operations;
 - may be held alongside other roles.
 
 A user may hold no application role.
 
 `operator` is removed.
 
-### 2.3 Permission identity and closure
+### 2.3 Permission identity
 
 A stored permission reference is:
 
@@ -116,62 +115,12 @@ It is the versionless reference returned by `sealed_operation_reference`.
 
 Package versions remain in the serving release and sealed runtime operation ids. They do not live in authored grant identity.
 
-The existing router security invariant remains unchanged:
-
-> **The caller must hold every operation the released call graph reaches.**
-
-`authorize_released_operation` continues to check:
-
-```text
-entry operation
-+
-every permission folded into that released operation
-```
-
-The Platform UI permission model therefore materializes the required permission closure **in storage**, rather than synthesizing missing grants at request admission.
-
-Conceptually one stored effective grant has:
-
-```text
-role
-permission
-required_by
-```
-
-where:
-
-- `permission` is the effective stable operation reference the role holds;
-- `required_by` is the directly selected root operation that requires it;
-- `permission == required_by` means that permission was selected directly.
-
-Example:
-
-```text
-grant X
-→ X required_by X
-→ Y required_by X
-→ Z required_by X
-```
-
-If another selected operation `Q` also requires `Y`:
-
-```text
-Y required_by X
-Y required_by Q
-```
-
-If `Y` itself is explicitly selected:
-
-```text
-Y required_by Y
-```
-
-Authorization reads the **distinct effective `permission` references** and resolves each one to its exact sealed operation id in the current serving release:
+The request check is: the caller holds the entry operation. Nothing derives into the ACL, on either side ([the ACL ruling](trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)). What the entry's code calls runs under the entry's authority.
 
 ```text
 current user roles
     ↓
-distinct stored effective references
+stored references (the role's rows)
     ↓
 current serving release
     ↓
@@ -179,67 +128,22 @@ current sealed operation ids
     ↓
 AuthenticatedCaller
     ↓
-authorize_released_operation
+caller holds entry
 ```
-
-Admission does not add another permission closure.
-
-The table therefore states what the caller is allowed to execute, while the router independently verifies the released call graph.
 
 A stored reference that the current release does not serve grants nothing.
 
 ### 2.4 Permission grant and revoke
 
-`permission.grant X`:
+`permission.grant X` requires an existing authored role and an operation `X` that the current serving release serves. It inserts one row. The operation is idempotent.
 
-1. requires an existing authored role;
-2. requires `X` to be a grantable operation in the current serving release;
-3. reads `X`'s released permission closure;
-4. writes `X required_by X`;
-5. writes each required operation reference with `required_by X`.
+`permission.revoke X` deletes that row.
 
-The operation is idempotent.
-
-`permission.revoke X` removes the direct selection `X required_by X` and every closure row owned by that selection (`required_by X`).
-
-If another selected root still requires an affected permission, that permission remains effective through the other root and the reply says so.
-
-Example:
-
-```text
-X selected
-X requires Y
-Y selected
-
-revoke Y
-→ remove Y required_by Y
-→ preserve Y required_by X
-→ reply: Y remains effective because X requires it
-
-revoke X
-→ remove X required_by X
-→ remove Y required_by X
-→ Y disappears unless another selected root still requires it
-```
-
-A revoke refuses only when the named permission is **not directly selected at all** and therefore has no `permission = required_by` row to remove.
-
-Example:
-
-```text
-X selected
-X requires Y
-Y is not directly selected
-
-revoke Y
-→ refuse: Y is not directly granted; it is required by X
-```
-
-If several selected roots require it, the refusal names those roots.
-
-This makes direct selection, effective authority, the administration grid and runtime authorization agree.
+No row is derived from another, so no revoke keeps or refuses a derived row.
 
 ### 2.5 Non-grantable operations
+
+Ruling ([the ACL ruling](trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)): everything is grantable. Which roles administer which other roles is a tenant's business decision like any other grant. The one platform rule is no escalation beyond yourself: an ACL-editing operation can confer only what its caller already holds, with `admin` treated as the full set. The code is a follow-up after Epic C of [trx-pkg-plan.md](trx-pkg-plan.md#amendments-to-platform-uimd). Until it lands, the behavior below is unchanged.
 
 The fixed application-administration operations are **not grantable** to authored roles.
 
@@ -478,7 +382,7 @@ Issue 1 starts from `main` `4495e0d20`, 163 commits after `3a81dcfec`. The kind 
 
 ## 4.1 Authored application roles
 
-The existing application authority tables remain the storage model, with the permission relation extended to preserve direct-selection provenance.
+The existing application authority tables remain the storage model.
 
 Changes:
 
@@ -486,22 +390,18 @@ Changes:
 2. `operator` disappears.
 3. `admin` has no permission rows.
 4. Authored permission rows contain stable operation references.
-5. Effective permission rows retain the directly selected root in `required_by`.
-6. Any existing role name may be assigned by `grant-role`.
-7. Administration writes are host-owned.
+5. Any existing role name can be assigned by `grant-role`.
+6. Administration writes are host-owned.
 
-Conceptual permission key:
+Permission key:
 
 ```text
 tenant_id
 role_name
 permission
-required_by
 ```
 
-The exact DDL is owned by Issue 1, but the invariant is fixed:
-
-> More than one selected root may require the same permission, and removing one root must not remove authority still required by another.
+There is no `required_by` column, self-referencing key or regex CHECK ([the ACL ruling](trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)).
 
 CLI operations:
 
@@ -529,60 +429,15 @@ The application schema gains the corresponding CHECK so storage cannot contain a
 
 ### Release reconciliation
 
-`apply-package` no longer owns complete permission reconciliation.
-
-It may create the built-in `admin` row if absent, but it cannot know the complete serving set when a package has been removed.
-
-A candidate effective serving release is reconciled **before activation**.
-
-For every authored role:
-
-1. read its directly selected roots (`permission = required_by`);
-2. remove a selected root the candidate release no longer serves;
-3. recompute each surviving root's permission closure from the candidate serving release;
-4. insert newly required closure rows;
-5. remove closure rows no longer required by that root.
-
-If reconciliation fails, activation fails with that error.
-
-Only after reconciliation succeeds may the candidate release activate.
-
-Therefore:
-
-```text
-package version changes
-→ direct selected reference unchanged
-→ closure reconciled against candidate
-
-operation dependency changes
-→ required rows updated before activation
-
-operation disappears
-→ selected root and its required rows removed
-
-whole package disappears
-→ its selected roots and required rows removed
-
-admin
-→ no permission rows to migrate
-```
-
-There is no window where a newly activated operation calls another operation the role was not granted.
+There is no closure to reconcile ([the ACL ruling](trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)). One rule stays: a stored reference that the serving release does not serve grants nothing. The row is kept. History already records who granted it and when (`wamn_record_history_stamp`). `permission.list` marks it deprecated. The admin removes it when they choose.
 
 Acceptance:
 
 - authored role survives package application;
-- version bump preserves its selected roots;
-- newly added call-graph dependency adds its required permission before activation;
-- removed dependency removes its no-longer-required row;
-- a shared dependency remains while another selected root requires it;
-- removing a direct grant preserves authority still required through another root;
-- attempting to revoke a dependency that was never directly selected refuses and names its requiring roots;
-- removed operation loses its root and closure rows;
-- removed package loses its root and closure rows;
-- stale unknown references grant nothing;
+- version bump preserves its rows;
+- stale unknown references grant nothing and show as deprecated;
 - `admin` reaches every current application operation without permission rows;
-- `authorize_released_operation` remains unchanged and continues to verify every exact sealed operation in the released call graph.
+- a role holding only an entry operation can call it, and cannot call an operation that the entry calls.
 
 ---
 
@@ -1052,35 +907,9 @@ Membership remains authoritative; application administration cannot manufacture 
 
 ### Permissions
 
-`permission.list` reports for a role:
+`permission.list` reports for a role one row per served operation, with one toggle, and `deprecated` for a stored row that the release does not serve. Once the profile screen (trx-pkg-plan.md item B) exists, the derived profile (reaches, reads, writes) shows beside it as information.
 
-- every directly selected root;
-- every effective permission row;
-- the root or roots requiring each effective permission;
-- whether each current operation is grantable;
-- whether an operation is fixed admin-only.
-
-Example:
-
-```text
-receiving.record_receipt
-    selected
-
-purchase_order.get
-    required by receiving.record_receipt
-
-inventory.query
-    selected
-    required by another_operation
-```
-
-`permission.grant` selects a root and materializes its current release closure.
-
-`permission.revoke` removes that root's direct selection and the closure rows owned by it.
-
-If an affected permission is also required by another root, it remains effective and the operation reports that fact.
-
-A dependency that was never directly selected has no direct grant to revoke; attempting to revoke it refuses and names the roots requiring it.
+`permission.grant` inserts the row. `permission.revoke` deletes it.
 
 Fixed administration operations are shown but disabled for authored roles.
 
@@ -1096,7 +925,7 @@ An `admin` revoke refuses while a covering `project-admin` or `org-admin` remain
 
 Returns the caller's effective current permission set for this application.
 
-For an authored role, this is the distinct effective permission set already stored after release reconciliation.
+For an authored role, this is the distinct set of the role's rows that the current release serves.
 
 For `admin`, it is every operation the current release serves.
 
@@ -1117,24 +946,14 @@ The web UI additionally has two composite screens in `web/ui`, built only from t
 For one role:
 
 ```text
-all current grantable operations
+all current served operations
 grouped by interface
 search
-directly selected state
-effective state
-required-by roots
-one toggle per directly selectable operation
+one toggle per operation
+deprecated rows that the release does not serve
 ```
 
-A dependency row that is effective only through another root is visible but has no direct selection to remove.
-
-If a directly selected operation is also required through another root, its direct toggle can be turned off; the row remains effective and explains which root still requires it.
-
-This makes:
-
-> Why does this role have this permission?
-
-answerable directly from the screen.
+Nothing is derived, so each row is the role's own grant ([the ACL ruling](trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)).
 
 ### User grid
 
@@ -1287,10 +1106,10 @@ The request names package/release inputs, not arbitrary executable provisioning 
 - component/artifact selections;
 - reusable bindings;
 - authored role definitions;
-- directly selected stable permission roots;
+- stable permission rows;
 - selected UI artifact/input.
 
-It does **not** copy derived `required_by` rows. Those are recomputed against the target's candidate serving release.
+Permission rows copy as-is. Nothing is derived.
 
 It also does **not** copy:
 
@@ -1386,6 +1205,8 @@ It:
 The migration cost is accepted.
 
 ### Administration epic
+
+The permission closure, `required_by` and release reconciliation text in the issues below is history. It is superseded by §2.3, §2.4 and §4.1 (owner ruling 2026-10-11, [trx-pkg-plan.md](trx-pkg-plan.md#amendments-to-platform-uimd)).
 
 **1. Application authority model.**
 
@@ -1561,14 +1382,14 @@ Measured on main `a3283c7b7` on 2026-10-02:
 - No screen or component calls `@wamn/control-client`. Only `web/components/test/control-client.live.test.ts` calls it.
 - `web/ui` has no test script. Its components are tested in `web/components` with vitest and jsdom, and shown in the gallery there.
 - The web packages reach each other by path alias, not by package dependency (`pnpm-workspace.yaml`). The client modules import only `@wamn/web-runtime`, so a `web/ui` alias to the client makes no cycle.
-- `permission.list` answers, for one role, each served operation and each stored row with `served`, `grantable`, `admin_only`, `selected` and `required_by`. That is every column of the role grid.
+- `permission.list` answers, for one role, each served operation and each stored row with `served`, `grantable`, `admin_only`, `selected` and `required_by`. That is every column of the role grid. Superseded 2026-10-11: one row per served operation with `deprecated` where unserved (§4.6).
 - `user.list` answers each application user with the roles it holds. No application route answers whether `project-admin` or `org-admin` covers a user's `admin`. `user_role.revoke` answers `admin_covered` only when an `admin` revoke is tried.
 - No application route answers the effective permissions of another user. `permission.mine` answers the caller's own.
 
 Commits, each one green:
 
 1. The covering fact. Application `user.list` answers `admin_covered` for each user, read through the identity reader as `user_role.revoke` reads it ([§9](#9-questions-for-the-owner) question 5). The contract bytes change, so the version of the control contract moves with them, and the generated clients are written again.
-2. The role grid. `RoleGrid` in `web/ui/src/admin/role-grid.tsx` takes a `Transport`. It reads `role.list` for its role choice and `permission.list` for the chosen role, and shows one row per operation on `SetTable`. The rows group by interface, the part of the reference between `:` and the last `/`, and a search filters them by reference. Each row shows the direct selection, the effective state and the roots that require it. A served, grantable row has one toggle, which calls `permission.grant` or `permission.revoke`. A row that is effective only through other roots shows those roots and has no toggle. A selected row that another root also requires keeps its toggle, and after a revoke it stays effective and names the roots in `still_required_by`. The role `admin` shows that it holds every operation, with no toggle.
+2. The role grid. `RoleGrid` in `web/ui/src/admin/role-grid.tsx` takes a `Transport`. It reads `role.list` for its role choice and `permission.list` for the chosen role, and shows one row per operation on `SetTable`. The rows group by interface, the part of the reference between `:` and the last `/`, and a search filters them by reference. A served, grantable row has one toggle, which calls `permission.grant` or `permission.revoke`. (Superseded 2026-10-11: the root, required-by and `still_required_by` columns are gone, §4.7.) The role `admin` shows that it holds every operation, with no toggle.
 3. The user grid. `UserGrid` in `web/ui/src/admin/user-grid.tsx` takes a `Transport`. It reads `user.list` for its user choice and `role.list` for the rows, with one toggle per role that calls `user_role.grant` or `user_role.revoke`. The effective permission set is the union of `permission.list` of each held role, or every served operation when the user holds `admin`. A user with `admin_covered` shows its `admin` row as hierarchy-controlled, with no toggle.
 4. Tests and gallery. `web/components` tests each grid with a fake transport, in the pattern of `delete.test.tsx`: the rows, the toggles, a refusal with its contract text, and the state after each write. The gallery shows both grids. `control-client.live.test.ts` stays the test of the routes.
 5. Documentation: the `web/ui` README export table, and execution for the screens and the `user.list` result.
@@ -1744,7 +1565,6 @@ The epic closes on one kind run after B13 of the cutover.
 - `project-author` access to the Platform UI.
 - Package/release management as a general standalone UI.
 - Copying application data between environments.
-- Copying derived permission-closure rows between environments.
 - Service principals and PAT management in the UI.
 - A control audience for a PAT. Control sessions are browser sessions only; `wamn-ctl` is the machine path.
 - Performance/metrics screens.
@@ -1756,7 +1576,7 @@ The epic closes on one kind run after B13 of the cutover.
 
 ## 8. Accepted decisions
 
-1. **Permission model — accepted.** Stable operation references are stored for application roles, with directly selected roots and their released permission closure materialized as provenance-bearing rows. Candidate-release reconciliation updates that closure before activation. Request admission resolves the resulting stored effective references to exact sealed ids. `authorize_released_operation` remains unchanged. Removing a direct selection does not remove authority still required by another selected root.
+1. **Permission model — superseded 2026-10-11** by [trx-pkg-plan.md](trx-pkg-plan.md#mechanism): required = {entry}, held = the role's rows, nothing derived. Original text: **Permission model — accepted.** Stable operation references are stored for application roles, with directly selected roots and their released permission closure materialized as provenance-bearing rows. Candidate-release reconciliation updates that closure before activation. Request admission resolves the resulting stored effective references to exact sealed ids. `authorize_released_operation` remains unchanged. Removing a direct selection does not remove authority still required by another selected root.
 
 2. **Hierarchy — accepted.** `org-admin → project-admin → admin` is materialized as real grants. Higher-level role revocation removes subordinate administrative grants; org-user deactivation removes all lower access; lower-level changes never revoke higher authority.
 
