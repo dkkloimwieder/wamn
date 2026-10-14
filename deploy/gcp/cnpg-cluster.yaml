@@ -1,7 +1,9 @@
 # The one PostgreSQL of the GKE test deployment (docs/plan/gcp-deployment.md
 # step 3). It is deploy/infra/cnpg-cluster.yaml in namespace platform on
 # pd-standard: one instance holds the system database and every tenant
-# database. Backups are not configured.
+# database. Backups are not configured. enablePDB is false: with one instance
+# the primary PodDisruptionBudget can never allow an eviction, so a scale of
+# pool main to 0 waited up to one hour for GKE (wamn-7huhc).
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -11,6 +13,7 @@ metadata:
     app.kubernetes.io/managed-by: wamn
 spec:
   instances: 1
+  enablePDB: false
   imageName: ghcr.io/cloudnative-pg/postgresql:18
   enableSuperuserAccess: true
   primaryUpdateStrategy: unsupervised

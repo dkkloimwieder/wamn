@@ -362,7 +362,7 @@ On 2026-09-26 the operator install took 35 seconds, and the CA and certificates 
 
 ### 3.3 PostgreSQL
 
-[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is `deploy/infra/cnpg-cluster.yaml` in namespace `platform`, with storage class `standard` (`pd-standard`). Its one instance holds the system database and every tenant database. Its `initdb` bootstrap creates the database `wamn_system` with the owner `wamn_system`, as `deploy/platform/wamn-sysdb.yaml` does. CloudNativePG keeps the owner login in the Secret `wamn-pg-app` and the superuser login in `wamn-pg-superuser`.
+[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is `deploy/infra/cnpg-cluster.yaml` in namespace `platform`, with storage class `standard` (`pd-standard`). Its one instance holds the system database and every tenant database. Its `initdb` bootstrap creates the database `wamn_system` with the owner `wamn_system`, as `deploy/platform/wamn-sysdb.yaml` does. CloudNativePG keeps the owner login in the Secret `wamn-pg-app` and the superuser login in `wamn-pg-superuser`. The Cluster sets `enablePDB: false`. With one instance, the PodDisruptionBudget of the primary blocks every drain, and a resize of pool `main` to 0 then waits up to one hour (`wamn-7huhc`).
 
 ```bash
 kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
