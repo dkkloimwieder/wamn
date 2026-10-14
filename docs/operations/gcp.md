@@ -426,11 +426,12 @@ done
 
 The verb prints two PostgreSQL warnings that the `postgres` role did not grant a role membership. The generation still authenticates.
 
-Make sure that the owner's Resend Secret exists and that its key holds no whitespace. The second command prints a count, never the key, and the count must be 0:
+Make sure that the owner's Resend Secret exists, that it has the key `api-key`, and that the key holds no whitespace. The second and third commands print counts, never the key. The second count is the length of `api-key` and must be more than 0, because a missing or empty key also gives a whitespace count of 0. The third count must be 0. If the second count is 0, the owner makes the Secret again as section 1 says:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 kubectl -n identity get secret identity-resend -o name
+kubectl -n identity get secret identity-resend -o jsonpath='{.data.api-key}' | base64 -d | wc -c
 kubectl -n identity get secret identity-resend -o jsonpath='{.data.api-key}' | base64 -d | tr -dc '[:space:]' | wc -c
 ```
 
