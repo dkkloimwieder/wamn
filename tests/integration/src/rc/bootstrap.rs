@@ -99,7 +99,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         project: "app".into(),
         env: "dev".into(),
         policy: None,
-        disposable: false,
+        disposable: None,
         system_database_url: Some(system_url),
         cluster: Some("rc-pg".into()),
         connection_limit: None,

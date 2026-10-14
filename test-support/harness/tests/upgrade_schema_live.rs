@@ -147,7 +147,7 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> String {
         project: PROJECT.into(),
         env: ENV.into(),
         policy: None,
-        disposable: false,
+        disposable: None,
         system_database_url: Some(system_url.into()),
         cluster: Some(CLUSTER.into()),
         connection_limit: None,
