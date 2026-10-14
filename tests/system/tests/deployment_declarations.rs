@@ -834,9 +834,10 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
 /// The exceptions are per-environment templates whose namespace is a
 /// substitution placeholder — an object applied as-is would otherwise land in
 /// the wrong environment.
-/// The release namespace `hosts` (docs/plan/platform-deploy.md R6) holds the
-/// platform objects every release shares: the `wamn-host` ServiceAccount and
-/// the read-only Role of `environment.status`.
+/// The GKE release namespace `hosts` (docs/plan/platform-deploy.md R6) holds
+/// the read-only Role of `environment.status`. The `wamn-host` ServiceAccount
+/// states no namespace: the install applies it with `-n <release namespace>`,
+/// `wamn-system` on kind and `hosts` on GKE.
 #[test]
 fn every_platform_object_is_namespaced_to_wamn_system_or_templated() {
     let root = repository_root();
@@ -847,6 +848,9 @@ fn every_platform_object_is_namespaced_to_wamn_system_or_templated() {
             let Some(object) = object(&document, file) else {
                 continue;
             };
+            if file == "wamn-host-serviceaccount.yaml" && object.namespace.is_none() {
+                continue;
+            }
             let namespace = object.namespace.as_deref().unwrap_or_else(|| {
                 panic!(
                     "{file}: {}/{} states no namespace",
