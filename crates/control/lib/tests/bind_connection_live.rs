@@ -47,9 +47,10 @@ const HTTP_SIDECAR: &str =
     "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
-/// The fixture release: its packages, nested ones included, and the
+/// The fixture release: its packages, nested ones included, the
 /// components it serves, each with its admitted descriptor, which is where the
-/// runtime reads component facts (wamn-vavs4.3).
+/// runtime reads component facts (wamn-vavs4.3), and the graph of each wiring,
+/// which is where the runtime reads wirings (wamn-ps2tj.4).
 const RELEASE_BYTES: &str = concat!(
     r#"{"components":["#,
     r#"{"descriptor":{"component":"blob-put","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[{"requirement-type":"blobstore","store-alias":"labels"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"bind_connection_fixture"},"#,
@@ -57,7 +58,10 @@ const RELEASE_BYTES: &str = concat!(
     r#"{"descriptor":{"component":"nested-origin","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[{"requirement-type":"http","store-alias":"origin-http"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"origin-call":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"nested_origin"}],"#,
     r#""release":{"packages":[{"package-id":"bind_connection_fixture","package-version":"1.0.0"},"#,
     r#"{"package-id":"nested_origin","package-version":"1.0.0"},"#,
-    r#"{"package-id":"nested_wiring","package-version":"1.0.0"}]}}"#
+    r#"{"package-id":"nested_wiring","package-version":"1.0.0"}]},"#,
+    r#""workflow":{"wirings":["#,
+    r#"{"graph":{"entry":"store","format-version":"0.1","nodes":{"store":{"component":"blob-put","interface-version":"0.1.0","operation":"wamn:node/handler@0.1.0","terminal":"respond"}},"version":1,"wiring-id":"store_label"},"package-id":"bind_connection_fixture"},"#,
+    r#"{"graph":{"entry":"store","format-version":"0.1","nodes":{"store":{"component":"nested-origin","interface-version":"0.1.0","operation":"origin-call","terminal":"respond"}},"version":1,"wiring-id":"store_label"},"package-id":"nested_wiring"}]}}"#
 );
 /// A release that serves none of the bound components.
 const OTHER_RELEASE_BYTES: &str = r#"{"components":[]}"#;
@@ -366,30 +370,6 @@ async fn assert_nested_effect_snapshot(
         ConnectionTypeDescriptor::http_v1(),
     )
     .await;
-    let mut document = wiring();
-    let node = document
-        .nodes
-        .get_mut("store")
-        .expect("fixture origin node");
-    "nested-origin".clone_into(&mut node.component);
-    "origin-call".clone_into(&mut node.operation);
-    let graph = serde_json::to_value(&document).expect("serialize the origin wiring");
-    project
-        .execute(
-            "INSERT INTO catalog.wirings \
-               (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash) \
-             VALUES ($1, $2, $3, $4, 1, $5, $6)",
-            &[
-                &TENANT,
-                &WIRING_PACKAGE,
-                &PACKAGE_VERSION,
-                &document.wiring_id,
-                &graph,
-                &document.wiring_hash().as_str(),
-            ],
-        )
-        .await
-        .expect("seed the immutable origin wiring for the SQL snapshot test");
 
     // This shows the SQL snapshot only. The mounted-release helper owns the
     // separate test that the origin declares a dependency on this executor.
