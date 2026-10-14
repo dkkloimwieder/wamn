@@ -29,8 +29,10 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio-postgres = { workspace = true }
+reqwest = { workspace = true, features = ["rustls"] }
 
 [dev-dependencies]
+serde_yaml = { workspace = true }
 # `wamn_catalog::fixture_graph` is gated behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control = { workspace = true }

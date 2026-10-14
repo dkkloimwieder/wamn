@@ -669,22 +669,7 @@ pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow
     serde_json::from_slice(&output.stdout).context("decode the pod list")
 }
 
-pub(crate) fn live_set(pods: &Value) -> BTreeMap<String, usize> {
-    let mut live = BTreeMap::new();
-    for pod in pods["items"].as_array().into_iter().flatten() {
-        if matches!(
-            pod["status"]["phase"].as_str(),
-            Some("Succeeded" | "Failed")
-        ) {
-            continue;
-        }
-        let digest = pod["metadata"]["annotations"]["wamn.release-digest"]
-            .as_str()
-            .unwrap_or("unlabelled");
-        *live.entry(digest.to_owned()).or_insert(0) += 1;
-    }
-    live
-}
+pub(crate) use wamn_control_provision::environment_state::live_set;
 
 /// Whether `version` is `ancestor` or descends from it through
 /// `predecessor_version` (R16). No ordering of versions is used.

@@ -342,8 +342,9 @@ fn google_cloud_overlay(overlay: &str, application: &Application) -> anyhow::Res
 
 /// The control host group, from the Receiving group's listener, resources
 /// and identity CA: control mode, the org, the session issuer, the `control`
-/// login and the mounted administration logins, and nothing of the
-/// application.
+/// login, the mounted administration logins and a projected ServiceAccount
+/// token for `environment.status` (deploy/platform/control-status-rbac.yaml),
+/// and nothing of the application.
 fn control_group(application: &Value) -> anyhow::Result<Value> {
     let mut group = Mapping::new();
     for key in [
@@ -387,7 +388,10 @@ fn control_group(application: &Value) -> anyhow::Result<Value> {
         serde_yaml::from_str(&format!(
             "[{{name: identity-ca, configMap: {{name: identity-ca}}}}, \
              {{name: control-administration, secret: \
-               {{secretName: wamn-control-administration-{ORG}, optional: false}}}}]"
+               {{secretName: wamn-control-administration-{ORG}, optional: false}}}}, \
+             {{name: kube-api-access, projected: {{sources: [\
+               {{serviceAccountToken: {{path: token, expirationSeconds: 3607}}}}, \
+               {{configMap: {{name: kube-root-ca.crt, items: [{{key: ca.crt, path: ca.crt}}]}}}}]}}}}]"
         ))?,
     );
     group.insert(
@@ -395,6 +399,8 @@ fn control_group(application: &Value) -> anyhow::Result<Value> {
         serde_yaml::from_str(
             "[{name: identity-ca, mountPath: /etc/identity-ca, readOnly: true}, \
              {name: control-administration, mountPath: /etc/wamn-control-administration, \
+              readOnly: true}, \
+             {name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, \
               readOnly: true}]",
         )?,
     );

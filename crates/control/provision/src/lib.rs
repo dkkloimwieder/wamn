@@ -53,6 +53,7 @@ pub mod audit_retention;
 pub mod backup;
 pub mod control_author;
 pub mod database;
+pub mod environment_state;
 mod error;
 pub mod events;
 pub mod identity_issuer;

@@ -75,6 +75,18 @@ describe("the project screen", () => {
     expect(written(sent, "member/grant")).toEqual({ project: "shop", env: "dev", principal_id: CAT });
   });
 
+  it("shows each environment's digest, rollout, workload conditions and live set", async () => {
+    const { sent } = await open("billing");
+    await waitFor(() => expect(document.querySelector('[data-environment="dev"]')).not.toBeNull());
+    const status = document.querySelector('[data-environment="dev"]')?.textContent ?? "";
+    expect(status).toContain("sha256:a");
+    expect(status).toContain("1/1 ready, 1 updated");
+    expect(status).toContain("r-dev-http: Ready True");
+    expect(status).toContain("sha256:a: 1");
+    const read = sent.find((each) => each.operation.startsWith("wamn-control:environment/status@"));
+    expect(read?.items[0]).toEqual({ project: "billing", env: "dev" });
+  });
+
   it("shows a refusal with its contract text", async () => {
     const state = controlState();
     await open("billing", state);

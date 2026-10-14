@@ -8,6 +8,7 @@
 
 mod application_route;
 mod control_route;
+mod environment_status;
 mod host_route;
 mod operation;
 mod query_read;

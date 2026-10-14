@@ -1552,6 +1552,7 @@ mod tests {
             [
                 "wamn-control-control-mine-http",
                 "wamn-control-environment-list-http",
+                "wamn-control-environment-status-http",
                 "wamn-control-member-list-http",
                 "wamn-control-project-list-http",
                 "wamn-control-user-list-http",

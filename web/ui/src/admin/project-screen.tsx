@@ -12,6 +12,10 @@
  * Each write announces its outcome, a refusal shows the text of its contract
  * and the environments a partial write completed, and the screen reads the
  * members again after each write. It writes no database directly.
+ *
+ * For each environment it reads `environment.status`
+ * (docs/plan/platform-deploy.md §11.4): the digest of the host Deployment,
+ * its rollout, the workload conditions and the live set. Current state only.
  */
 
 import { environment, member, projectAdmin, user } from "@wamn/control-org-client";
@@ -64,6 +68,14 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
     },
   );
   const environments = () => listed()?.environments;
+  const [statuses] = createResource(environments, (names) =>
+    Promise.all(
+      names.map(async (env) => {
+        const outcome = await environment.status(props.transport, [{ project: props.project, env }]);
+        return { env, status: outcome.status === "completed" ? outcome.value : null };
+      }),
+    ),
+  );
   const [users] = createResource(async () => {
     const outcome = await user.list(props.transport, [{}]);
     return outcome.status === "completed" ? outcome.value.users : [];
@@ -154,6 +166,60 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
                       />
                     </Show>
                   </td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </section>
+      <section class="flex flex-col gap-2">
+        <p class="text-sm font-semibold uppercase">status of {props.project}</p>
+        <table class="w-full text-sm" data-slot="project-status">
+          <thead>
+            <tr class="text-left">
+              <th>environment</th>
+              <th>digest</th>
+              <th>rollout</th>
+              <th>workloads</th>
+              <th>live</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={statuses() ?? []}>
+              {(each) => (
+                <tr data-environment={each.env}>
+                  <td>{each.env}</td>
+                  <Show
+                    when={each.status}
+                    fallback={
+                      <td colSpan={4} class="text-muted-foreground">
+                        unavailable
+                      </td>
+                    }
+                  >
+                    {(status) => (
+                      <>
+                        <td class="font-mono break-all">{status().digest ?? "not deployed"}</td>
+                        <td>
+                          {`${status().rollout.readyReplicas}/${status().rollout.replicas} ready, ${status().rollout.updatedReplicas} updated`}
+                        </td>
+                        <td>
+                          <For each={status().workloads}>
+                            {(workload) => (
+                              <div>
+                                {`${workload.name}: ${workload.conditions.map((each) => `${each.type} ${each.status}`).join(", ")}`}
+                              </div>
+                            )}
+                          </For>
+                        </td>
+                        <td>
+                          <For each={status().live}>
+                            {(live) => <div class="font-mono break-all">{`${live.digest}: ${live.pods}`}</div>}
+                          </For>
+                        </td>
+                      </>
+                    )}
+                  </Show>
                 </tr>
               )}
             </For>

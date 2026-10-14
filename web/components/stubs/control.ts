@@ -6,7 +6,8 @@
  * `project.list`, `org_admin.grant`, `org_admin.revoke`, `environment.list`,
  * `member.list`, `member.grant`, `member.revoke`, `project_admin.grant` and
  * `project_admin.revoke` as the control host does, over the projects
- * `billing` and `shop` with the environment `dev` each. A refusal goes through
+ * `billing` and `shop` with the environment `dev` each. `environment.status`
+ * answers one host pod of `sha256:a` with its workload ready. A refusal goes through
  * the runtime's classifier, so it carries the text of its contract.
  * `control.mine` answers whether the caller holds org-admin.
  */
@@ -102,6 +103,16 @@ export function controlStub(state: ControlState = controlState()): { transport: 
         return completed({ projects: Object.keys(PROJECTS) });
       case "wamn-control:environment/list":
         return completed({ environments: [...(PROJECTS[project] ?? [])] });
+      case "wamn-control:environment/status":
+        if (!(PROJECTS[project] ?? []).includes(String(item["env"]))) {
+          return refused(request, "environment_not_found", { field: "env" });
+        }
+        return completed({
+          digest: "sha256:a",
+          rollout: { replicas: 1, updated_replicas: 1, ready_replicas: 1, available_replicas: 1 },
+          workloads: [{ name: "r-dev-http", conditions: [{ type: "Ready", status: "True" }] }],
+          live: [{ digest: "sha256:a", pods: 1 }],
+        });
       case "wamn-control:control/mine":
         return completed({
           org_admin: state.callerOrgAdmin,

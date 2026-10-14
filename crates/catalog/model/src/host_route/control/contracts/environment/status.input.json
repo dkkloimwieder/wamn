@@ -1,0 +1,18 @@
+{
+  "fields": [
+    {
+      "path": "project",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Project"
+    },
+    {
+      "path": "env",
+      "type": "text",
+      "nullable": false,
+      "values": [],
+      "label": "Environment"
+    }
+  ]
+}

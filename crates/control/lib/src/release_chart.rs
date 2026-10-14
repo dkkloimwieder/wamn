@@ -24,26 +24,14 @@ use wamn_engine::release_manifest::release_label;
 /// `deploy/platform/release/Chart.yaml`.
 pub const CHART_VERSION: &str = "0.1.1";
 
-/// The longest slug in a release name: the env name cut to this length.
-const SLUG_LEN: usize = 24;
-/// The hex characters of the coordinate hash in a release name (80 bits).
-const HASH_LEN: usize = 20;
-
 /// The Helm release name of an environment: `r-<slug>-<hash>`.
 ///
 /// The slug is the env name cut to 24 characters. The hash is the first 20 hex
 /// characters of SHA-256 over `org/project/env`. The name is at most 47
 /// characters, inside Helm's bound of 53. It is also the environment's host group.
 pub fn release_name(org: &str, project: &str, env: &str) -> anyhow::Result<String> {
-    wamn_control_provision::validate_project_env(org, project, env)
-        .context("the environment coordinate is not valid")?;
-    let coordinate = format!("{org}/{project}/{env}");
-    let hash = hex::encode(ring::digest::digest(
-        &ring::digest::SHA256,
-        coordinate.as_bytes(),
-    ));
-    let slug: String = env.chars().take(SLUG_LEN).collect();
-    Ok(format!("r-{slug}-{}", &hash[..HASH_LEN]))
+    wamn_control_provision::environment_state::release_name(org, project, env)
+        .context("the environment coordinate is not valid")
 }
 
 /// The platform image set: the host image and the role component images.
@@ -554,6 +542,7 @@ mod tests {
 
     #[test]
     fn release_name_is_bounded_stable_and_cut() {
+        use wamn_control_provision::environment_state::{HASH_LEN, SLUG_LEN};
         let name = release_name("acme", "wms", "prod").expect("valid coordinate");
         assert_eq!(
             name,

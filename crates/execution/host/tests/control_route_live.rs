@@ -557,6 +557,10 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     // in the named project.
     for (operation, payload) in [
         ("environment/list", json!({"project": "billing"})),
+        (
+            "environment/status",
+            json!({"project": "billing", "env": "dev"}),
+        ),
         ("member/list", json!({"project": "billing"})),
         ("member/grant", member(ann, "dev")),
         ("member/revoke", member(ann, "dev")),
@@ -600,6 +604,18 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
         )
         .await,
         Ok(json!({"environments": ["dev"]}))
+    );
+    // A status read names an environment of the project before it reads
+    // Kubernetes.
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/status",
+            cat,
+            json!({"project": "billing", "env": "prod"})
+        )
+        .await,
+        Err(refused("environment_not_found", &json!({"field": "env"})))
     );
 
     // A membership goes to an active org member in an environment of the

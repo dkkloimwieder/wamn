@@ -26,6 +26,10 @@
 //!
 //! `project.create` writes a project of the org with no environment, and
 //! `project-admin` in it for each `org-admin` of the org (§5.1).
+//!
+//! `environment.status` reads one environment of the project from Kubernetes
+//! with the host's read-only ServiceAccount, and writes nothing
+//! (docs/plan/platform-deploy.md §11.4).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -274,6 +278,22 @@ impl ControlRoutes<'_> {
                 let request: ProjectRequest = parse(payload)?;
                 let environments = project_envs(self.control, self.org, &request.project).await?;
                 Ok(json!({ "environments": environments }))
+            }
+            HostHandler::EnvironmentStatus => {
+                let request: EnvironmentRequest = parse(payload)?;
+                if !project_envs(self.control, self.org, &request.project)
+                    .await?
+                    .contains(&request.env)
+                {
+                    return Err(Refusal::Declared {
+                        code: "environment_not_found",
+                        detail: json!({ "field": "env" }),
+                    });
+                }
+                Ok(
+                    crate::environment_status::read(self.org, &request.project, &request.env)
+                        .await?,
+                )
             }
             HostHandler::MemberList => {
                 let request: ProjectRequest = parse(payload)?;

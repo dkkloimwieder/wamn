@@ -338,10 +338,24 @@ runtime:
       secret:
         secretName: wamn-control-administration-dkk
         optional: false
+    - name: kube-api-access
+      projected:
+        sources:
+        - serviceAccountToken:
+            path: token
+            expirationSeconds: 3607
+        - configMap:
+            name: kube-root-ca.crt
+            items:
+            - key: ca.crt
+              path: ca.crt
     volumeMounts:
     - name: identity-ca
       mountPath: /etc/identity-ca
       readOnly: true
     - name: control-administration
       mountPath: /etc/wamn-control-administration
+      readOnly: true
+    - name: kube-api-access
+      mountPath: /var/run/secrets/kubernetes.io/serviceaccount
       readOnly: true

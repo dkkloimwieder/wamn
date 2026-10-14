@@ -1,0 +1,65 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "digest",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "rollout.replicas",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "rollout.updated_replicas",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "rollout.ready_replicas",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "rollout.available_replicas",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "workloads[].name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "workloads[].conditions[].type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "workloads[].conditions[].status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "live[].digest",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "live[].pods",
+      "type": "int32",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

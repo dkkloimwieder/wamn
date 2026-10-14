@@ -8,19 +8,27 @@
 //! terminating and the runs pinned to a release with no live pod. No history
 //! of checks, no Secret, no verb. Who applied is in the Helm revision, read
 //! with `helm history`.
+//!
+//! The Deployment, the WorkloadDeployments and the pods are read by
+//! [`wamn_control_provision::environment_state`], the reader the control
+//! host's `environment.status` also uses; this verb adds the Helm revision,
+//! the terminating pods and the stranded runs.
 
 use std::collections::BTreeMap;
 
 use anyhow::Context as _;
 use serde::Serialize;
 use serde_json::Value;
+use wamn_control_provision::environment_state::{environment_state, observe, release_digest};
 use wamn_control_registry::Triple;
 
 use super::Platform;
-use super::analyse::{connect, live_set, read_pods, read_revision};
+use super::analyse::{connect, read_revision};
 use super::drain::{Stranded, stranded};
 use super::ensure::{kubectl, project_url};
 use crate::release_chart;
+
+pub use wamn_control_provision::environment_state::DeploymentStatus;
 
 /// The status of one environment.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -47,16 +55,6 @@ pub struct RevisionStatus {
     pub manifest_digest: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DeploymentStatus {
-    /// The digest of the pod template's `wamn.release-digest` annotation.
-    pub manifest_digest: Option<String>,
-    pub replicas: u64,
-    pub updated_replicas: u64,
-    pub ready_replicas: u64,
-    pub available_replicas: u64,
-}
-
 /// Read the status of one environment.
 ///
 /// # Errors
@@ -77,47 +75,20 @@ pub async fn status(platform: &Platform, triple: &Triple) -> anyhow::Result<Stat
             manifest_digest: revision.manifest_digest().map(str::to_owned),
         });
     let namespace = platform.target.namespace.as_str();
-    let deployment = kubectl(
-        platform,
-        namespace,
-        &[
-            "get",
-            "deployment",
-            &format!("hostgroup-{release_name}"),
-            "--ignore-not-found",
-            "-o",
-            "json",
-        ],
-        None,
-    )
+    let observed = observe(namespace, &release_name, |path| async move {
+        let body = kubectl(platform, namespace, &["get", "--raw", &path], None).await?;
+        serde_json::from_str::<Value>(&body).with_context(|| format!("decode {path}"))
+    })
     .await?;
-    let deployment = if deployment.is_empty() {
-        None
-    } else {
-        Some(deployment_status(
-            &serde_json::from_str(&deployment).context("decode the host Deployment")?,
-        ))
-    };
-    let workloads: Value = serde_json::from_str(
-        &kubectl(
-            platform,
-            namespace,
-            &["get", "workloaddeployments", "-o", "json"],
-            None,
-        )
-        .await?,
-    )
-    .context("decode the WorkloadDeployments")?;
-    let pods = read_pods(platform, &release_name).await?;
-    let live = live_set(&pods);
-    let stranded = stranded_runs(platform, triple, &live).await?;
+    let state = environment_state(&observed, &release_name);
+    let stranded = stranded_runs(platform, triple, &state.live).await?;
     Ok(Status {
-        workloads: workload_conditions(&workloads, &release_name),
-        terminating: terminating(&pods),
+        terminating: terminating(&observed.pods),
         release_name,
         revision,
-        deployment,
-        live,
+        deployment: state.deployment,
+        workloads: state.workloads,
+        live: state.live,
         stranded,
     })
 }
@@ -157,50 +128,6 @@ async fn stranded_runs(
     stranded(&url, &tenant, triple.env.as_str(), live).await
 }
 
-fn deployment_status(deployment: &Value) -> DeploymentStatus {
-    let count = |field: &str| deployment["status"][field].as_u64().unwrap_or(0);
-    DeploymentStatus {
-        manifest_digest:
-            deployment["spec"]["template"]["metadata"]["annotations"]["wamn.release-digest"]
-                .as_str()
-                .map(str::to_owned),
-        replicas: count("replicas"),
-        updated_replicas: count("updatedReplicas"),
-        ready_replicas: count("readyReplicas"),
-        available_replicas: count("availableReplicas"),
-    }
-}
-
-/// The conditions of each WorkloadDeployment named `<release name>-<role>`.
-fn workload_conditions(
-    workloads: &Value,
-    release_name: &str,
-) -> BTreeMap<String, BTreeMap<String, String>> {
-    let prefix = format!("{release_name}-");
-    workloads["items"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|workload| {
-            let name = workload["metadata"]["name"].as_str()?;
-            name.starts_with(&prefix).then(|| {
-                let conditions = workload["status"]["conditions"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|condition| {
-                        Some((
-                            condition["type"].as_str()?.to_owned(),
-                            condition["status"].as_str()?.to_owned(),
-                        ))
-                    })
-                    .collect();
-                (name.to_owned(), conditions)
-            })
-        })
-        .collect()
-}
-
 /// Release digest to the count of host pods with a deletion timestamp that
 /// are not terminated: the pods that are draining.
 fn terminating(pods: &Value) -> BTreeMap<String, usize> {
@@ -214,10 +141,9 @@ fn terminating(pods: &Value) -> BTreeMap<String, usize> {
         {
             continue;
         }
-        let digest = pod["metadata"]["annotations"]["wamn.release-digest"]
-            .as_str()
-            .unwrap_or("unlabelled");
-        *terminating.entry(digest.to_owned()).or_insert(0) += 1;
+        *terminating
+            .entry(release_digest(pod).to_owned())
+            .or_insert(0) += 1;
     }
     terminating
 }
@@ -228,32 +154,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_deployment_reports_its_template_digest_and_rollout() {
-        let deployment = json!({
-            "spec": {"template": {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}}}},
-            "status": {"replicas": 3, "updatedReplicas": 2, "readyReplicas": 2, "availableReplicas": 2}
-        });
-        assert_eq!(
-            deployment_status(&deployment),
-            DeploymentStatus {
-                manifest_digest: Some("sha256:a".to_owned()),
-                replicas: 3,
-                updated_replicas: 2,
-                ready_replicas: 2,
-                available_replicas: 2,
-            }
-        );
-    }
-
-    #[test]
-    fn only_the_releases_workloads_and_draining_pods_are_reported() {
-        let workloads = json!({"items": [
-            {"metadata": {"name": "r-prod-x-http"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}},
-            {"metadata": {"name": "r-qa-y-http"}, "status": {"conditions": [{"type": "Ready", "status": "False"}]}}
-        ]});
-        let conditions = workload_conditions(&workloads, "r-prod-x");
-        assert_eq!(conditions.len(), 1);
-        assert_eq!(conditions["r-prod-x-http"]["Ready"], "True");
+    fn only_draining_pods_are_terminating() {
         let pods = json!({"items": [
             {"metadata": {"annotations": {"wamn.release-digest": "sha256:a"}, "deletionTimestamp": "t"}, "status": {"phase": "Running"}},
             {"metadata": {"annotations": {"wamn.release-digest": "sha256:b"}}, "status": {"phase": "Running"}}

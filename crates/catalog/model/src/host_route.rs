@@ -139,6 +139,10 @@ pub enum HostHandler {
     OrgAdminRevoke,
     /// The environments of one project (docs/plan/platform-ui.md §4.5).
     EnvironmentList,
+    /// The current state of one environment in its release namespace: the
+    /// digest, the rollout, the workload conditions and the live set
+    /// (docs/plan/platform-deploy.md §11.4).
+    EnvironmentStatus,
     /// The users with a membership or `project-admin` in one project.
     MemberList,
     /// Grant a membership of one environment to an active org member.
@@ -325,6 +329,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Get,
         authority: HostRouteAuthority::ProjectAdmin,
         handler: HostHandler::EnvironmentList,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "environment.status",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::EnvironmentStatus,
     },
     HostRoute {
         set: HostRouteSet::Control,
