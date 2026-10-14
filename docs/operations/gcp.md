@@ -668,7 +668,7 @@ done
 
 ### 4.20 Edge and load balancer
 
-The edge chart annotates its Service with `neg: true`, so GKE makes the network endpoint group `wamn-edge`. The group of the deleted cluster carries the old cluster UID, and the new cluster's controller refuses it (`found conflicting description in neg wamn-edge`). Install the edge, take the old group off the backend service, delete it, wait for the new group, and add it back:
+The edge chart annotates its Service with `neg: true`, so GKE makes the network endpoint group `wamn-edge`. The group of the deleted cluster carries the old cluster UID, and the new cluster's controller refuses it (`found conflicting description in neg wamn-edge`). Install the edge, take the old group off the backend service, delete it, wait for the new group, and add it back. The new group exists some seconds before it is ready, and `add-backend` refuses it until then (`is not ready`), so the add repeats:
 
 ```bash
 helm install wamn-edge deploy/platform/edge -n edge -f deploy/gcp/values-edge.yaml
@@ -676,9 +676,9 @@ gcloud compute backend-services remove-backend wamn-edge-platform --project wamn
   --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a
 gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
 until gcloud compute network-endpoint-groups describe wamn-edge --zone us-central1-a --project wamn-dev >/dev/null 2>&1; do sleep 10; done
-gcloud compute backend-services add-backend wamn-edge-platform --project wamn-dev --global \
+until gcloud compute backend-services add-backend wamn-edge-platform --project wamn-dev --global \
   --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a \
-  --balancing-mode RATE --max-rate-per-endpoint 100
+  --balancing-mode RATE --max-rate-per-endpoint 100; do sleep 10; done
 kubectl -n edge rollout status deploy/wamn-edge --timeout=600s
 gcloud compute url-maps import wamn-edge --global --project wamn-dev --source deploy/gcp/url-map.yaml --quiet
 ```
