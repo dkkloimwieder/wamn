@@ -20,6 +20,169 @@ async fn command_histories() -> anyhow::Result<()> {
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
     let scratch = ScratchRoot::create()?;
+    let application = start(system.url(), project.url(), scratch.path()).await?;
+    let result = async {
+        histories(&application, project.url(), scratch.path()).await?;
+        transactional_participation(&application, project.url()).await
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
+/// The ACL is the entry, on both sides (docs/plan/trx-pkg-plan.md,
+/// Authorization). A role that holds only Acme's record_receipt runs it,
+/// although the entry calls Receiving's record_receipt. The same role calling
+/// Receiving's record_receipt directly is refused, because nothing derives
+/// that grant from the entry it holds.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let application = start(system.url(), project.url(), scratch.path()).await?;
+    let result = async {
+        let (client, connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        let tenant = super::identity().tenant.as_str();
+        super::bind_fixture_principal(&client, tenant).await?;
+        client
+            .batch_execute(
+                "INSERT INTO receiving.item (id, item_number) VALUES \
+                   ('00000000-0000-0000-0000-000000000910', 'ITEM-ENTRY-GRANT'); \
+                 INSERT INTO receiving.location (id, location_code) VALUES \
+                   ('00000000-0000-0000-0000-000000000911', 'ENTRY-GRANT'); \
+                 INSERT INTO receiving.supplier (id, name) VALUES \
+                   ('00000000-0000-0000-0000-000000000930', 'SUPPLIER-930'), \
+                   ('00000000-0000-0000-0000-000000000931', 'SUPPLIER-931'); \
+                 INSERT INTO receiving.purchase_order \
+                   (id, purchase_order_number, supplier_id, status, row_version, \
+                    acme_inspection_required, acme_quality_status) VALUES \
+                   ('00000000-0000-0000-0000-000000000920', 'PO-ENTRY-A', \
+                    '00000000-0000-0000-0000-000000000930', 'open', 1, false, 'not_required'), \
+                   ('00000000-0000-0000-0000-000000000921', 'PO-ENTRY-R', \
+                    '00000000-0000-0000-0000-000000000931', 'open', 1, false, 'not_required'); \
+                 INSERT INTO receiving.purchase_order_line \
+                   (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) VALUES \
+                   ('00000000-0000-0000-0000-000000000940', '00000000-0000-0000-0000-000000000920', 1, '00000000-0000-0000-0000-000000000910', 1, 0), \
+                   ('00000000-0000-0000-0000-000000000941', '00000000-0000-0000-0000-000000000921', 1, '00000000-0000-0000-0000-000000000910', 1, 0);",
+            )
+            .await?;
+        // The caller keeps its project membership and loses the application
+        // role admin for an authored role with one row: Acme's entry.
+        client
+            .execute(
+                "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, 'receipt-clerk')",
+                &[&tenant],
+            )
+            .await?;
+        client
+            .execute(
+                "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+                 VALUES ($1, 'receipt-clerk', 'client-acme-receiving:receiving/record-receipt')",
+                &[&tenant],
+            )
+            .await?;
+        ensure!(
+            client
+                .execute(
+                    "UPDATE app_system.user_roles SET role_name = 'receipt-clerk' \
+                     WHERE tenant_id = $1 AND role_name = 'admin'",
+                    &[&tenant],
+                )
+                .await?
+                == 1,
+            "the caller did not hold admin alone"
+        );
+        let http = reqwest::Client::new();
+        let record = async |path: &str, key: &str, order: &str, line: &str| {
+            http.post(format!("{}{path}", application.endpoint))
+                .header(reqwest::header::HOST, &application.route_host)
+                .bearer_auth(&application.bearer)
+                .json(&json!([{"request_id":key,"value":{
+                    "idempotency_key":key,
+                    "purchase_order_id":order,
+                    "receipt_reference":key,
+                    "occurred_at":"2026-10-14T12:00:00.000000Z",
+                    "line":[{"purchase_order_line_id":line,"quantity":"1","location_id":"00000000-0000-0000-0000-000000000911"}]
+                }}]))
+                .send()
+                .await
+        };
+
+        let entry = record(
+            "/acme/receiving/record_receipt",
+            "entry-grant",
+            "00000000-0000-0000-0000-000000000920",
+            "00000000-0000-0000-0000-000000000940",
+        )
+        .await?;
+        ensure!(
+            entry.status().is_success(),
+            "the entry grant was refused: {}",
+            entry.status()
+        );
+        let entry: Value = entry.json().await?;
+        ensure!(
+            entry[0]["value"]["receipt_id"].is_string(),
+            "the entry did not record its receipt: {entry}"
+        );
+
+        let direct = record(
+            "/receiving/record_receipt",
+            "direct-call",
+            "00000000-0000-0000-0000-000000000921",
+            "00000000-0000-0000-0000-000000000941",
+        )
+        .await?;
+        ensure!(
+            direct.status() == reqwest::StatusCode::FORBIDDEN,
+            "the operation the entry calls was admitted directly: {}",
+            direct.status()
+        );
+        let direct: Value = direct.json().await?;
+        ensure!(
+            direct["error"]["code"] == "permission-denied"
+                && direct["error"]["operation"]
+                    .as_str()
+                    .is_some_and(|operation| operation
+                        .starts_with("wamn-receiving:receiving/record-receipt@")),
+            "the refusal does not name the base operation: {direct}"
+        );
+        ensure!(
+            client
+                .query_one(
+                    "SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt \
+                     WHERE purchase_order_id = '00000000-0000-0000-0000-000000000921')",
+                    &[],
+                )
+                .await?
+                .get::<_, bool>(0),
+            "the refused call wrote a receipt"
+        );
+        drop(client);
+        connection.await??;
+        Ok(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
+/// Serve Receiving and Acme on the local runtime with the record, read and
+/// Acme routes, under a PAT caller that holds `admin`.
+async fn start(
+    system: &str,
+    project: &str,
+    scratch: &std::path::Path,
+) -> anyhow::Result<LocalApplication> {
     let repository = super::repository_root()?;
     let components = std::path::PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
     let flow_http = std::path::PathBuf::from(std::env::var("WAMN_FLOW_HTTP_COMPONENT")?);
@@ -50,10 +213,10 @@ async fn command_histories() -> anyhow::Result<()> {
             attachments.insert(name, attachment);
         }
     }
-    let application = LocalApplication::start(LocalApplicationConfig {
-        system_database_url: system.url(),
-        database_url: project.url(),
-        scratch: scratch.path(),
+    LocalApplication::start(LocalApplicationConfig {
+        system_database_url: system,
+        database_url: project,
+        scratch,
         component_directory: &components,
         flow_http_wasm: &flow_http,
         tenant: super::identity().tenant.as_str(),
@@ -77,14 +240,7 @@ async fn command_histories() -> anyhow::Result<()> {
             },
         ],
     })
-    .await?;
-    let result = async {
-        histories(&application, project.url(), scratch.path()).await?;
-        transactional_participation(&application, project.url()).await
-    }
-    .await;
-    application.shutdown().await?;
-    result
+    .await
 }
 
 async fn transactional_participation(

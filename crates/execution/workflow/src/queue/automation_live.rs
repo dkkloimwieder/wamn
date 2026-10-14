@@ -13,9 +13,12 @@ use wamn_control_provision::{
 use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 use wamn_engine::engine::build_engine;
+use wamn_engine::flow_http_routing::CredentialType;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_engine::router_delivery::{OperationRefusalType, authorize_released_operation};
 use wamn_run_state::RunStore as _;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
+use wamn_runtime::plugins::route_authentication::queued_service_caller;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -107,6 +110,67 @@ fn component_bytes() -> Vec<u8> {
 #[tokio::test(flavor = "multi_thread")]
 async fn automation_admission_delivers_with_current_service_permissions() -> anyhow::Result<()> {
     run_automation(Mode::Admission).await
+}
+
+/// A queued service holds exactly the operations its role rows grant
+/// (docs/plan/trx-pkg-plan.md, Authorization). Receiving's record_receipt is
+/// the operation the retired fresh-only fixture marked, which refused a
+/// queued service even with the grant. Now the grant admits the service, and
+/// without it the ACL alone refuses.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_grant()
+-> anyhow::Result<()> {
+    const RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let (admin, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
+    tokio::spawn(connection);
+    let schema = BareSchemaName::new("wamn_run")?;
+    wamn_control::reconcile_run_plane::reconcile(&admin, &schema, true).await?;
+    admin
+        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
+        .await?;
+    admin
+        .batch_execute(&wamn_control_provision::platform_principals_sql(
+            TENANT,
+            "automation.invalid",
+        )?)
+        .await?;
+    admin.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:automation-fixture',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
+    admin.batch_execute(&format!("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('{TENANT}','{SERVICE}','service','automation@example.invalid');
+      INSERT INTO app_system.roles (tenant_id,name) VALUES ('{TENANT}','automation');
+      INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');")).await?;
+    let released = wamn_catalog::ServingComponentOperation {
+        pre_commit: None,
+        registered_operation: Some(RECORD_RECEIPT.to_owned()),
+        permissions: BTreeSet::from([RECORD_RECEIPT.to_owned()]),
+        committed_result_schema: None,
+        participant: None,
+        statements: std::collections::BTreeMap::new(),
+    };
+
+    let caller = queued_service_caller(&admin, TENANT, SERVICE).await?;
+    assert_eq!(caller.credential_type(), CredentialType::QueuedService);
+    let refusal = authorize_released_operation(Some(&caller), &released)
+        .expect_err("a service without the grant was admitted");
+    assert_eq!(
+        refusal.refusal_type(),
+        OperationRefusalType::PermissionDenied
+    );
+    assert_eq!(refusal.operation(), RECORD_RECEIPT);
+
+    admin
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id,role_name,permission) \
+             VALUES ($1,'automation','wamn-receiving:receiving/record-receipt')",
+            &[&TENANT],
+        )
+        .await?;
+    let caller = queued_service_caller(&admin, TENANT, SERVICE).await?;
+    assert_eq!(caller.credential_type(), CredentialType::QueuedService);
+    authorize_released_operation(Some(&caller), &released)
+        .expect("a service granted the operation is admitted");
+    Ok(())
 }
 
 /// Which case the fixture runs. The wiring `echo` has one node, and the mode
