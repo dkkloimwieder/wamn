@@ -23,6 +23,8 @@ Measured on `main` at `1896f3c99` on 2026-09-30.
 
 ### 3.1 Our pull path
 
+This table is the state measured on 2026-09-30. Since `wamn-i87m` (06b3b771a, 2026-10-14), the GKE host groups pull with the metadata token through `wamn-host`, and the CronJob, the Secret `wamn-registry-pull` and `wamn-registry-reader` do not exist on GKE.
+
 | Place | Today |
 | --- | --- |
 | Pull consumers in the host | Two readers in `wamn-runtime`, both on `oci-client` 0.17: the release manifest at startup (`crates/platform/runtime/src/release_manifest_source.rs:193-211`, called from `services/host/src/host.rs:404-423`) and the digest-verified node components (`crates/platform/runtime/src/component_artifact_source.rs:108-115`, set up at `services/host/src/host.rs:936-954`). Neither goes through wash-runtime's pull code. |
@@ -74,6 +76,8 @@ A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docke
 - The GKE host values drop the `wamn-registry-pull` volume, its mount and `WAMN_REGISTRY_AUTH_FILE`, and set the metadata source and the ConfigMap.
 - `deploy/gcp/registry-token.yaml` is deleted, with its service account, Secret, Role and RoleBinding. `wamn-registry-reader` and its two IAM bindings are deleted.
 - `docs/operations/gcp.md` and `docs/plan/gcp-deployment.md` lose the CronJob steps.
+
+Done in `wamn-i87m` (06b3b771a). On 2026-10-14, the two hosts on fresh `wamn-dev` nodes loaded their releases (1 and 4 component digests) with `WAMN_REGISTRY_TOKEN_METADATA=true` and no pull Secret.
 
 ### 4.5 Owner rulings
 

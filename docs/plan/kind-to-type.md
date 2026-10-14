@@ -1008,7 +1008,7 @@ The switch comes before the hosts start. So no old client ever calls a new host,
 
 **B10. Hosts and workloads (the router switch).** The hosts change their registry credential here (`wamn-i87m.1`). They pull components with a token from the GKE metadata server, as `wamn-blob`, in place of the token Secret of the CronJob.
 
-1. Give `wamn-blob` read access to repository `wamn`, and apply the helper ConfigMap. Both come before the `helm upgrade` (`gcp.md` §3.11 "gcloud artifacts", §3.13):
+1. Give `wamn-blob` read access to repository `wamn`, and apply the helper ConfigMap. Both come before the `helm upgrade` (`gcp.md` §3.12):
 
    ```bash
    gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
@@ -1063,7 +1063,7 @@ curl -s -i -H 'Host: wms.wamn.dev' http://127.0.0.1:18081/nope
 
 WMS 2.0.0 renamed `pallet` to `packaging` (`cacde6a8e`), so the released read route is `/packaging/query`. Cutover record (2026-10-02): both hosts answered 401 on the released routes and 404 on `/nope`.
 
-After the serve check passes, delete the token CronJob with its Secret and its service account. Then delete the Google service account `wamn-registry-reader` and its two bindings (`gcp.md` §3.11, §3.12):
+History: the greenfield recreate of 2026-10-13 made neither of these, and `wamn-i87m` (06b3b771a) removed them from `gcp.md`. After the serve check passes, delete the token CronJob with its Secret and its service account. Then delete the Google service account `wamn-registry-reader` and its two bindings (`gcp.md` §3.11, §3.12):
 
 ```bash
 kubectl delete -f deploy/gcp/registry-token.yaml
