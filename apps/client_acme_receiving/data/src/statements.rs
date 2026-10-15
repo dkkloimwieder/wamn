@@ -23,9 +23,9 @@ pub(crate) mod quality_load_purchase_order_detail {
     ));
 }
 
-pub(crate) mod receiving_record_receipt_participant {
+pub(crate) mod receiving_record_receipt {
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../target/wamn/client_acme_receiving/wamn/receiving_record_receipt_participant.rs"
+        "/../../target/wamn/client_acme_receiving/wamn/receiving_record_receipt.rs"
     ));
 }

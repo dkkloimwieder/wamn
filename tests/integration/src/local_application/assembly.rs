@@ -202,6 +202,7 @@ pub(super) async fn assemble(
     let engine = Arc::new(build_engine(&[])?);
     let mut component_digests = HashMap::new();
     let mut admitted = Vec::new();
+    let mut statement_instances = BTreeMap::new();
     let mut wirings = Vec::new();
     let mut roots = BTreeMap::new();
     for package in input.packages {
@@ -236,6 +237,10 @@ pub(super) async fn assemble(
             admitted_platform_packages: vec!["wamn:node".into(), "wamn:postgres".into()],
         })?;
         let facts = admission.facts().clone();
+        statement_instances.insert(
+            facts.component_digest.clone(),
+            admission.statement_instances().clone(),
+        );
         std::fs::write(
             local_component_path(input.scratch, &facts.component_digest)?,
             std::fs::read(component_path)?,
@@ -279,7 +284,13 @@ pub(super) async fn assemble(
 
     let attachments = selected_attachments(&input, &roots)?;
     let routes = attachment_routes(&attachments, &roots)?;
-    let manifest = serving_manifest(&admitted, &wirings, &routes, &attachments)?;
+    let manifest = serving_manifest(
+        &admitted,
+        &statement_instances,
+        &wirings,
+        &routes,
+        &attachments,
+    )?;
     let canonical = manifest.canonical_bytes();
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
@@ -484,6 +495,7 @@ async fn insert_wiring(
 
 fn serving_manifest(
     components: &[(String, wamn_catalog::AdmittedComponent)],
+    statement_instances: &BTreeMap<String, BTreeMap<String, String>>,
     wirings: &[(String, WiringDocument)],
     routes: &BTreeSet<ServingRoute>,
     attachments: &BTreeMap<String, ServingAttachment>,
@@ -503,9 +515,22 @@ fn serving_manifest(
     let components = components
         .iter()
         .map(|(_, component)| {
-            Ok(serde_json::to_value(
-                wamn_catalog::ServingComponent::project(component, Vec::new(), &resolve)?,
-            )?)
+            // A composed component binds each member's named statements
+            // import to that member's own set, as publish does.
+            let base = |digest: &str| {
+                components
+                    .iter()
+                    .map(|(_, fact)| fact)
+                    .find(|fact| fact.component_digest == digest)
+            };
+            let served = wamn_catalog::ServingComponent::project(component, Vec::new(), &resolve)?
+                .with_statement_instances(
+                    statement_instances
+                        .get(&component.component_digest)
+                        .unwrap_or(&BTreeMap::new()),
+                    &base,
+                )?;
+            Ok(serde_json::to_value(served)?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let wirings = wirings

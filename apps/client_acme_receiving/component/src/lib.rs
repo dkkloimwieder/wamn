@@ -137,18 +137,37 @@ mod receipt_codec {
     include!("../../../target/wamn/client_acme_receiving/wit/receiving_record_receipt_codec.rs");
 }
 
+/// The request id of the one item that Acme passes to Receiving's operation.
+const BASE_REQUEST_ID: &str = "client_acme_receiving";
+
+/// Acme's entry: each item runs in the host transaction begun for it.
+/// Receiving's record_receipt joins that transaction and records the receipt,
+/// then Acme records the inspection. A refusal by either rolls back the item.
 impl RecordReceipt for Component {
     async fn run(
         context: NodeContext,
         input: Vec<contract::RecordReceiptItem>,
     ) -> Result<Vec<contract::RecordReceiptOutcome>, NodeError> {
+        let mut transaction = wamn_postgres_statements::operation_transaction()
+            .await
+            .map_err(|error| {
+                NodeError::Terminal(ErrorDetail {
+                    message: error.to_string(),
+                    code: Some("internal_error".to_owned()),
+                })
+            })?;
         receipt_codec::validate(&input).map_err(|error| {
             NodeError::InvalidInput(ErrorDetail {
                 message: error.context().to_owned(),
                 code: Some("invalid_input".to_owned()),
             })
         })?;
-        contract::run(context, input).await
+        Ok(
+            receipt_codec::run(input, &mut transaction, async |transaction, request| {
+                record_receipt(context.clone(), transaction, request).await
+            })
+            .await,
+        )
     }
 
     async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
@@ -160,6 +179,49 @@ impl RecordReceipt for Component {
         })?;
         let output = <Self as RecordReceipt>::run(context, input).await?;
         Ok(emission(receipt_codec::encode(&output)))
+    }
+}
+
+async fn record_receipt(
+    context: NodeContext,
+    transaction: &mut wamn_postgres_statements::Transaction,
+    request: contract::RecordReceiptRequest,
+) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
+    let purchase_order_id = request.purchase_order_id.clone();
+    let outcomes = contract::run(
+        context,
+        vec![contract::RecordReceiptItem {
+            request_id: BASE_REQUEST_ID.to_owned(),
+            input: Ok(request),
+        }],
+    )
+    .await
+    .map_err(|error| base_call_error(&error))?;
+    let [outcome] = <[contract::RecordReceiptOutcome; 1]>::try_from(outcomes)
+        .map_err(|_| contract::RecordReceiptError::InternalError)?;
+    let result = outcome.outcome?;
+    wamn_client_acme_receiving_data_access::operation::record_inspection(
+        transaction,
+        &result.receipt_id,
+        &purchase_order_id,
+    )
+    .await
+    .map_err(|error| {
+        receipt_codec::map_error(error.error_type().literal(), |key| {
+            access_detail(&error, key, "receiving.record_receipt", None, None)
+        })
+    })?;
+    Ok(result)
+}
+
+/// Classify a failure of the whole call to Receiving's operation.
+fn base_call_error(error: &NodeError) -> contract::RecordReceiptError {
+    match error {
+        NodeError::Retryable(_) | NodeError::RateLimited(_) => contract::RecordReceiptError::Retry,
+        NodeError::Cancelled => contract::RecordReceiptError::Timeout,
+        NodeError::InvalidInput(_) | NodeError::Terminal(_) => {
+            contract::RecordReceiptError::InternalError
+        }
     }
 }
 

@@ -17,7 +17,6 @@ const INTERFACE_VERSION: &str = "0.1.0";
 // Each operation is named by reference, as the authored files name it, and
 // `sealed` reads its version from the package wamn.json.
 const PRIVATE_OPERATION: &str = "client-acme-receiving:quality/create-inspection";
-const PARTICIPANT_OPERATION: &str = "client-acme-receiving:receiving/record-receipt-participant";
 const RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt";
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
@@ -140,13 +139,9 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
         DIRECT_OPERATIONS
             .iter()
             .map(|operation| operation.token)
-            .chain([PRIVATE_OPERATION, PARTICIPANT_OPERATION])
+            .chain([PRIVATE_OPERATION])
             .map(sealed)
             .collect::<BTreeSet<_>>()
-    );
-    assert_eq!(
-        declaration.operations[&sealed(PARTICIPANT_OPERATION)].registered_operation,
-        Some(sealed(PARTICIPANT_OPERATION))
     );
 
     let base_version = package_version("wamn_receiving");
@@ -161,7 +156,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
                 digest: base_digests()[format!("wamn_receiving@{base_version}").as_str()]
                     .to_string(),
                 operation: sealed(BASE_RECORD_RECEIPT),
-                participant: Some(sealed(PARTICIPANT_OPERATION)),
+                participant: None,
             })
             .into_iter()
             .collect::<Vec<_>>();

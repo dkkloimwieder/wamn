@@ -23,7 +23,7 @@ async fn command_histories() -> anyhow::Result<()> {
     let application = start(system.url(), project.url(), scratch.path()).await?;
     let result = async {
         histories(&application, project.url(), scratch.path()).await?;
-        transactional_participation(&application, project.url()).await?;
+        acme_inspection(&application, project.url()).await?;
         reads(&application).await
     }
     .await;
@@ -177,12 +177,140 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
     result
 }
 
+/// A write-log entry is keyed by the versionless operation, so a key stored
+/// through Acme under one release answers the stored result under the next
+/// (docs/plan/trx-pkg-plan.md, Idempotency ruling 2026-10-12). The local
+/// runtime installs one release per database, so the second release serves
+/// a second database that carries the first one's write-log row and none of
+/// its business rows: a replay that ran again would find no purchase order.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let scratch = ScratchRoot::create()?;
+    for name in ["first", "second"] {
+        fs::create_dir(scratch.path().join(name))?;
+    }
+    let connect = async |url: &str| -> anyhow::Result<tokio_postgres::Client> {
+        let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
+        tokio::spawn(connection);
+        Ok(client)
+    };
+    let release = async |client: &tokio_postgres::Client| -> anyhow::Result<String> {
+        Ok(client
+            .query_one("SELECT manifest_digest FROM catalog.releases", &[])
+            .await?
+            .get(0))
+    };
+    let key = "release-key";
+    let item = async |application: &LocalApplication| {
+        record(
+            application,
+            "/acme/receiving/record_receipt",
+            key,
+            key,
+            "00000000-0000-0000-0000-000000000721",
+            "00000000-0000-0000-0000-000000000821",
+        )
+        .await
+    };
+
+    let (first_system, first_project) = (
+        wamn_test_postgres::database(),
+        wamn_test_postgres::database(),
+    );
+    let first = start(
+        first_system.url(),
+        first_project.url(),
+        &scratch.path().join("first"),
+    )
+    .await?;
+    let first_client = connect(first_project.url()).await?;
+    let stored = async {
+        super::bind_fixture_principal(&first_client, super::identity().tenant.as_str()).await?;
+        seed_acme_orders(&first_client).await?;
+        item(&first).await
+    }
+    .await;
+    first.shutdown().await?;
+    let stored = stored?;
+    ensure!(
+        stored[0]["value"]["receipt_id"].is_string(),
+        "the first release did not record the receipt: {stored}"
+    );
+    let claim = first_client
+        .query_one(
+            "SELECT request, result FROM app_system.write_log \
+             WHERE operation = $1 AND idempotency_key = $2",
+            &[&ACME_OPERATION, &key],
+        )
+        .await?;
+    let (request, result): (Vec<u8>, Option<String>) = (claim.get(0), claim.get(1));
+
+    let (second_system, second_project) = (
+        wamn_test_postgres::database(),
+        wamn_test_postgres::database(),
+    );
+    let second = start_with(
+        second_system.url(),
+        second_project.url(),
+        &scratch.path().join("second"),
+        &["client-acme-receiving:quality/approve-inspection"],
+    )
+    .await?;
+    let second_client = connect(second_project.url()).await?;
+    let replayed = async {
+        ensure!(
+            release(&second_client).await? != release(&first_client).await?,
+            "the second start serves the first release"
+        );
+        second_client
+            .execute(
+                "INSERT INTO app_system.write_log (operation, idempotency_key, request, result) \
+                 VALUES ($1, $2, $3, $4)",
+                &[&ACME_OPERATION, &key, &request, &result],
+            )
+            .await?;
+        item(&second).await
+    }
+    .await;
+    second.shutdown().await?;
+    let replayed = replayed?;
+    ensure!(
+        replayed[0]["value"] == stored[0]["value"],
+        "the replay under the next release did not answer the stored result: {replayed}"
+    );
+    ensure!(
+        second_client
+            .query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt)", &[])
+            .await?
+            .get::<_, bool>(0),
+        "the replay under the next release ran again"
+    );
+    Ok(())
+}
+
 /// Serve Receiving and Acme on the local runtime with the record, read and
 /// Acme routes, under a PAT caller that holds `admin`.
 async fn start(
     system: &str,
     project: &str,
     scratch: &std::path::Path,
+) -> anyhow::Result<LocalApplication> {
+    start_with(system, project, scratch, &[]).await
+}
+
+/// [`start`], with the Acme routes of `more_overlay` served too, so the
+/// release differs.
+async fn start_with(
+    system: &str,
+    project: &str,
+    scratch: &std::path::Path,
+    more_overlay: &[&str],
 ) -> anyhow::Result<LocalApplication> {
     let repository = super::repository_root()?;
     let components = std::path::PathBuf::from(std::env::var("WAMN_APPLICATION_COMPONENTS")?);
@@ -206,11 +334,14 @@ async fn start(
     let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
         wamn_schema_generator::route_schema::read_package_attachments(&acme)?;
     for (name, attachment) in overlay_attachments {
+        let operation =
+            wamn_schema_generator::sealed_operation_reference(route_operation(&attachment));
         if matches!(
-            wamn_schema_generator::sealed_operation_reference(route_operation(&attachment)),
+            operation,
             "client-acme-receiving:receiving/record-receipt"
                 | "client-acme-receiving:quality/load-purchase-order-detail"
-        ) {
+        ) || more_overlay.contains(&operation)
+        {
             attachments.insert(name, attachment);
         }
     }
@@ -244,102 +375,120 @@ async fn start(
     .await
 }
 
-async fn transactional_participation(
+/// Acme's inspection statement and one of Receiving's, by path.
+const INSPECTION: &str = "command/record_receipt/record_inspection.sql";
+const LOCK: &str = "command/record_receipt/lock_purchase_order.sql";
+
+/// The versionless write-log operations of the two entries.
+const ACME_OPERATION: &str = "client-acme-receiving:receiving/record-receipt";
+const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
+
+/// One record_receipt item on `path`, answered as JSON.
+async fn record(
     application: &LocalApplication,
-    database_url: &str,
-) -> anyhow::Result<()> {
+    path: &str,
+    key: &str,
+    reference: &str,
+    order: &str,
+    line: &str,
+) -> anyhow::Result<Value> {
+    let response = reqwest::Client::new()
+        .post(format!("{}{path}", application.endpoint))
+        .header(reqwest::header::HOST, &application.route_host)
+        .bearer_auth(&application.bearer)
+        .json(&json!([{"request_id":key,"value":{
+            "idempotency_key":key,
+            "purchase_order_id":order,
+            "receipt_reference":reference,
+            "occurred_at":"2026-09-20T12:00:00.000000Z",
+            "line":[{"purchase_order_line_id":line,"quantity":"1","location_id":"00000000-0000-0000-0000-000000000711"}]
+        }}]))
+        .send()
+        .await?;
+    ensure!(
+        response.status().is_success(),
+        "{path} returned {}",
+        response.status()
+    );
+    response.json::<Value>().await.map_err(Into::into)
+}
+
+/// The write-log rows of `key`, as (operation, result).
+async fn claims(
+    project: &tokio_postgres::Client,
+    key: &str,
+) -> anyhow::Result<Vec<(String, Option<String>)>> {
+    Ok(project
+        .query(
+            "SELECT operation, result FROM app_system.write_log \
+             WHERE idempotency_key = $1 ORDER BY operation",
+            &[&key],
+        )
+        .await?
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect())
+}
+
+/// Acme's record_receipt calls Receiving's operation and records the
+/// inspection in the same host transaction, under its own claim
+/// (docs/plan/trx-pkg-plan.md, Spike and acceptance A: Real Acme behavior,
+/// Idempotency, Authority).
+async fn acme_inspection(application: &LocalApplication, database_url: &str) -> anyhow::Result<()> {
     let (project, connection) =
         tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
     let connection = tokio::spawn(connection);
     super::bind_fixture_principal(&project, super::identity().tenant.as_str()).await?;
-    project
-        .batch_execute(
-            "INSERT INTO receiving.item (id, item_number) VALUES \
-               ('00000000-0000-0000-0000-000000000710', 'ITEM-PARTICIPATION'); \
-             INSERT INTO receiving.location (id, location_code) VALUES \
-               ('00000000-0000-0000-0000-000000000711', 'PARTICIPATION'); \
-             INSERT INTO receiving.supplier (id, name) VALUES \
-               ('00000000-0000-0000-0000-000000000730', 'SUPPLIER-730'), \
-               ('00000000-0000-0000-0000-000000000731', 'SUPPLIER-731'), \
-               ('00000000-0000-0000-0000-000000000732', 'SUPPLIER-732'), \
-               ('00000000-0000-0000-0000-000000000733', 'SUPPLIER-733'), \
-               ('00000000-0000-0000-0000-000000000734', 'SUPPLIER-734'); \
-             INSERT INTO receiving.purchase_order \
-               (id, purchase_order_number, supplier_id, status, row_version, \
-                acme_inspection_required, acme_quality_status) VALUES \
-               ('00000000-0000-0000-0000-000000000720', 'PO-PART-0', \
-                '00000000-0000-0000-0000-000000000730', 'open', 1, false, 'not_required'), \
-               ('00000000-0000-0000-0000-000000000721', 'PO-PART-A', \
-                '00000000-0000-0000-0000-000000000731', 'open', 1, true, 'approved'), \
-               ('00000000-0000-0000-0000-000000000722', 'PO-PART-R', \
-                '00000000-0000-0000-0000-000000000732', 'open', 1, true, 'pending'), \
-               ('00000000-0000-0000-0000-000000000723', 'PO-PART-I', \
-                '00000000-0000-0000-0000-000000000733', 'open', 1, false, 'not_required'), \
-               ('00000000-0000-0000-0000-000000000724', 'PO-PART-O', \
-                '00000000-0000-0000-0000-000000000734', 'open', 1, false, 'not_required'); \
-             INSERT INTO receiving.purchase_order_line \
-               (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) VALUES \
-               ('00000000-0000-0000-0000-000000000820', '00000000-0000-0000-0000-000000000720', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
-               ('00000000-0000-0000-0000-000000000821', '00000000-0000-0000-0000-000000000721', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
-               ('00000000-0000-0000-0000-000000000822', '00000000-0000-0000-0000-000000000722', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
-               ('00000000-0000-0000-0000-000000000823', '00000000-0000-0000-0000-000000000723', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
-               ('00000000-0000-0000-0000-000000000824', '00000000-0000-0000-0000-000000000724', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
-               ('00000000-0000-0000-0000-000000000825', '00000000-0000-0000-0000-000000000724', 2, '00000000-0000-0000-0000-000000000710', 1, 0);",
-        )
-        .await?;
+    seed_acme_orders(&project).await?;
+    member_instances(
+        &project,
+        application
+            .component_digests
+            .get("receiving")
+            .context("Receiving was not admitted")?,
+    )
+    .await?;
 
-    let http = reqwest::Client::new();
-    let invoke = |path: &'static str,
-                  key: &'static str,
-                  order: &'static str,
-                  line: &'static str| {
-        let http = http.clone();
-        async move {
-            let response = http
-                .post(format!("{}{path}", application.endpoint))
-                .header(reqwest::header::HOST, &application.route_host)
-                .bearer_auth(&application.bearer)
-                .json(&json!([{"request_id":key,"value":{
-                    "idempotency_key":key,
-                    "purchase_order_id":order,
-                    "receipt_reference":key,
-                    "occurred_at":"2026-09-20T12:00:00.000000Z",
-                    "line":[{"purchase_order_line_id":line,"quantity":"1","location_id":"00000000-0000-0000-0000-000000000711"}]
-                }}]))
-                .send()
-                .await?;
-            ensure!(
-                response.status().is_success(),
-                "record_receipt returned {}",
-                response.status()
-            );
-            response.json::<Value>().await.map_err(Into::into)
-        }
-    };
-
-    let none = invoke(
+    // Not required: Receiving runs on its own named instance with only its
+    // no-op participant plugged, the receipt commits, and no row is written.
+    let none = record(
+        application,
         "/acme/receiving/record_receipt",
+        "part-none",
         "part-none",
         "00000000-0000-0000-0000-000000000720",
         "00000000-0000-0000-0000-000000000820",
     )
     .await?;
+    let none_receipt = none[0]["value"]["receipt_id"]
+        .as_str()
+        .with_context(|| format!("the receipt without inspection failed: {none}"))?;
     ensure!(
-        none[0].get("value").is_some(),
-        "the receipt without inspection failed"
+        project
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM receiving.receipt WHERE id = $1::text::uuid) \
+                 AND NOT EXISTS (SELECT 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)",
+                &[&none_receipt],
+            )
+            .await?
+            .get::<_, bool>(0),
+        "inspection-not-required did not commit its receipt alone"
     );
-    let no_qc_receipt = project
-        .query_one(
-            "SELECT id::text FROM receiving.receipt WHERE id = \
-             (SELECT (result::jsonb -> 'value' ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-none')",
-            &[],
-        )
-        .await?
-        .get::<_, String>(0);
-    ensure!(project.query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)", &[&no_qc_receipt]).await?.get::<_, bool>(0), "inspection-not-required wrote quality control state");
+    let none_claims = claims(&project, "part-none").await?;
+    ensure!(
+        matches!(
+            none_claims.as_slice(),
+            [(operation, Some(result))] if operation == ACME_OPERATION
+                && serde_json::from_str::<Value>(result)?["value"]["receipt_id"] == none_receipt
+        ),
+        "the committed item did not leave one write-log entry under Acme's operation: {none_claims:?}"
+    );
 
-    let approved = invoke(
+    // Approved: the inspection row is written. An unchanged key replays.
+    let approved = record(
+        application,
         "/acme/receiving/record_receipt",
+        "part-approved",
         "part-approved",
         "00000000-0000-0000-0000-000000000721",
         "00000000-0000-0000-0000-000000000821",
@@ -347,10 +496,12 @@ async fn transactional_participation(
     .await?;
     let approved_receipt = approved[0]["value"]["receipt_id"]
         .as_str()
-        .context("approved receipt failed")?;
-    ensure!(project.query_one("SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid", &[&approved_receipt]).await?.get::<_, bool>(0), "approved participant did not write approved inspection");
-    let replay = invoke(
+        .with_context(|| format!("the approved receipt failed: {approved}"))?;
+    ensure!(project.query_one("SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid", &[&approved_receipt]).await?.get::<_, bool>(0), "the approved receipt did not write an approved inspection");
+    let replay = record(
+        application,
         "/acme/receiving/record_receipt",
+        "part-approved",
         "part-approved",
         "00000000-0000-0000-0000-000000000721",
         "00000000-0000-0000-0000-000000000821",
@@ -358,63 +509,129 @@ async fn transactional_participation(
     .await?;
     ensure!(
         replay[0]["value"] == approved[0]["value"],
-        "extended replay changed its stored result"
+        "a replay through Acme did not answer the stored result: {replay}"
     );
     ensure!(
         project
             .query_one(
-                "SELECT (SELECT count(*) = 1 FROM receiving.receipt WHERE id = \
-                         (SELECT (result::jsonb -> 'value' ->> 'receipt_id')::uuid FROM app_system.write_log WHERE operation = 'wamn-receiving:receiving/record-receipt' AND idempotency_key = 'part-approved')) \
+                "SELECT (SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000721') \
                         AND (SELECT count(*) = 1 FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid)",
                 &[&approved_receipt],
             )
             .await?
             .get::<_, bool>(0),
-        "extended replay duplicated receipt or quality-control state"
+        "a replay duplicated receipt or inspection state"
     );
 
-    let refused = invoke(
+    // Not approved: refused, and nothing commits, the receipt included.
+    let refused = record(
+        application,
         "/acme/receiving/record_receipt",
+        "part-refused",
         "part-refused",
         "00000000-0000-0000-0000-000000000722",
         "00000000-0000-0000-0000-000000000822",
     )
     .await?;
-    ensure!(refused[0]["error"]["code"] == "invalid_input" && project.query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000722') AND (SELECT received_quantity = 0 FROM receiving.purchase_order_line WHERE id = '00000000-0000-0000-0000-000000000822')", &[]).await?.get::<_, bool>(0), "participant refusal did not roll back the joint transaction");
-
-    let extended = invoke(
-        "/acme/receiving/record_receipt",
-        "part-intent",
-        "00000000-0000-0000-0000-000000000723",
-        "00000000-0000-0000-0000-000000000823",
-    )
-    .await?;
     ensure!(
-        extended[0].get("value").is_some(),
-        "extended intent command failed"
+        refused[0]["error"]["code"] == "invalid_input"
+            && refused[0]["error"]["detail"]["field"] == "purchase_order_id",
+        "an unapproved inspection was not refused: {refused}"
     );
-    let changed = invoke(
+    ensure!(project.query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000722') AND (SELECT received_quantity = 0 FROM receiving.purchase_order_line WHERE id = '00000000-0000-0000-0000-000000000822')", &[]).await?.get::<_, bool>(0), "the refused inspection left Receiving's receipt behind");
+    ensure!(
+        claims(&project, "part-refused").await?.is_empty(),
+        "the refused item left a claim"
+    );
+
+    // Cross-entry: one key through Receiving, then through Acme, is two
+    // claims, and the second runs Acme's inspection.
+    let direct = record(
+        application,
         "/receiving/record_receipt",
-        "part-intent",
+        "part-cross",
+        "part-cross-receiving",
         "00000000-0000-0000-0000-000000000723",
         "00000000-0000-0000-0000-000000000823",
     )
     .await?;
     ensure!(
-        changed[0]["error"]["code"] == "idempotency_conflict",
-        "direct command reused an extended intent identity"
+        direct[0]["value"]["receipt_id"].is_string(),
+        "the direct receipt failed: {direct}"
+    );
+    let cross = record(
+        application,
+        "/acme/receiving/record_receipt",
+        "part-cross",
+        "part-cross-acme",
+        "00000000-0000-0000-0000-000000000723",
+        "00000000-0000-0000-0000-000000000823",
+    )
+    .await?;
+    let cross_receipt = cross[0]["value"]["receipt_id"]
+        .as_str()
+        .with_context(|| format!("the key reused through Acme did not run: {cross}"))?;
+    ensure!(
+        project
+            .query_one(
+                "SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid",
+                &[&cross_receipt],
+            )
+            .await?
+            .get::<_, bool>(0),
+        "the key reused through Acme did not run Acme's inspection"
+    );
+    let cross_claims = claims(&project, "part-cross").await?;
+    ensure!(
+        cross_claims
+            .iter()
+            .map(|(operation, _)| operation.as_str())
+            .collect::<Vec<_>>()
+            == [ACME_OPERATION, RECEIVING_OPERATION],
+        "one key through two entries is not two claims: {cross_claims:?}"
+    );
+    let receipts = project
+        .query_one(
+            "SELECT count(*) FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000723'",
+            &[],
+        )
+        .await?
+        .get::<_, i64>(0);
+    eprintln!("cross-entry key part-cross: {receipts} receipt rows on its purchase order");
+
+    // A key the participant path stored under Receiving's operation is not
+    // Acme's claim, so a retry through Acme runs again.
+    project
+        .execute(
+            "INSERT INTO app_system.write_log (operation, idempotency_key, request, result) \
+             VALUES ($1, 'part-era', '\\x01'::bytea, '{\"request_id\":\"part-era\",\"value\":{}}')",
+            &[&RECEIVING_OPERATION],
+        )
+        .await?;
+    let era = record(
+        application,
+        "/acme/receiving/record_receipt",
+        "part-era",
+        "part-era",
+        "00000000-0000-0000-0000-000000000724",
+        "00000000-0000-0000-0000-000000000824",
+    )
+    .await?;
+    ensure!(
+        era[0]["value"]["receipt_id"].is_string(),
+        "a participant-era key did not run again through Acme: {era}"
     );
 
     // A retry through Acme with its lines in another order and its time
-    // spelled another way is the same request under the base canonical form.
+    // spelled another way is the same request under Acme's canonical form.
     let reordered = async |lines: [&str; 2], occurred_at: &str| -> anyhow::Result<Value> {
-        let response = http
+        let response = reqwest::Client::new()
             .post(format!("{}/acme/receiving/record_receipt", application.endpoint))
             .header(reqwest::header::HOST, &application.route_host)
             .bearer_auth(&application.bearer)
             .json(&json!([{"request_id":"part-reordered","value":{
                 "idempotency_key":"part-reordered",
-                "purchase_order_id":"00000000-0000-0000-0000-000000000724",
+                "purchase_order_id":"00000000-0000-0000-0000-000000000725",
                 "receipt_reference":"part-reordered",
                 "occurred_at":occurred_at,
                 "line":lines.map(|line| json!({"purchase_order_line_id":line,"quantity":"1","location_id":"00000000-0000-0000-0000-000000000711"}))
@@ -430,20 +647,20 @@ async fn transactional_participation(
     };
     let first = reordered(
         [
-            "00000000-0000-0000-0000-000000000824",
             "00000000-0000-0000-0000-000000000825",
+            "00000000-0000-0000-0000-000000000826",
         ],
         "2026-09-20T12:00:00.000000Z",
     )
     .await?;
     ensure!(
         first[0].get("value").is_some(),
-        "the two-line receipt failed"
+        "the two-line receipt failed: {first}"
     );
     let retry = reordered(
         [
+            "00000000-0000-0000-0000-000000000826",
             "00000000-0000-0000-0000-000000000825",
-            "00000000-0000-0000-0000-000000000824",
         ],
         "2026-09-20T12:00:00Z",
     )
@@ -455,7 +672,7 @@ async fn transactional_participation(
     ensure!(
         project
             .query_one(
-                "SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000724'",
+                "SELECT count(*) = 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000725'",
                 &[],
             )
             .await?
@@ -466,7 +683,114 @@ async fn transactional_participation(
     drop(project);
     connection
         .await
-        .context("join participation database connection")??;
+        .context("join the Acme database connection")??;
+    Ok(())
+}
+
+/// The purchase orders of [`acme_inspection`]: 720 needs no inspection, 721
+/// and 723 are approved, 722 is pending, 724 and 725 need none. 723 can take
+/// two receipts.
+async fn seed_acme_orders(project: &tokio_postgres::Client) -> anyhow::Result<()> {
+    project
+        .batch_execute(
+            "INSERT INTO receiving.item (id, item_number) VALUES \
+               ('00000000-0000-0000-0000-000000000710', 'ITEM-ACME'); \
+             INSERT INTO receiving.location (id, location_code) VALUES \
+               ('00000000-0000-0000-0000-000000000711', 'ACME'); \
+             INSERT INTO receiving.supplier (id, name) VALUES \
+               ('00000000-0000-0000-0000-000000000730', 'SUPPLIER-730'), \
+               ('00000000-0000-0000-0000-000000000731', 'SUPPLIER-731'), \
+               ('00000000-0000-0000-0000-000000000732', 'SUPPLIER-732'), \
+               ('00000000-0000-0000-0000-000000000733', 'SUPPLIER-733'), \
+               ('00000000-0000-0000-0000-000000000734', 'SUPPLIER-734'), \
+               ('00000000-0000-0000-0000-000000000735', 'SUPPLIER-735'); \
+             INSERT INTO receiving.purchase_order \
+               (id, purchase_order_number, supplier_id, status, row_version, \
+                acme_inspection_required, acme_quality_status) VALUES \
+               ('00000000-0000-0000-0000-000000000720', 'PO-ACME-0', \
+                '00000000-0000-0000-0000-000000000730', 'open', 1, false, 'not_required'), \
+               ('00000000-0000-0000-0000-000000000721', 'PO-ACME-A', \
+                '00000000-0000-0000-0000-000000000731', 'open', 1, true, 'approved'), \
+               ('00000000-0000-0000-0000-000000000722', 'PO-ACME-R', \
+                '00000000-0000-0000-0000-000000000732', 'open', 1, true, 'pending'), \
+               ('00000000-0000-0000-0000-000000000723', 'PO-ACME-X', \
+                '00000000-0000-0000-0000-000000000733', 'open', 1, true, 'approved'), \
+               ('00000000-0000-0000-0000-000000000724', 'PO-ACME-E', \
+                '00000000-0000-0000-0000-000000000734', 'open', 1, false, 'not_required'), \
+               ('00000000-0000-0000-0000-000000000725', 'PO-ACME-O', \
+                '00000000-0000-0000-0000-000000000735', 'open', 1, false, 'not_required'); \
+             INSERT INTO receiving.purchase_order_line \
+               (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) VALUES \
+               ('00000000-0000-0000-0000-000000000820', '00000000-0000-0000-0000-000000000720', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
+               ('00000000-0000-0000-0000-000000000821', '00000000-0000-0000-0000-000000000721', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
+               ('00000000-0000-0000-0000-000000000822', '00000000-0000-0000-0000-000000000722', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
+               ('00000000-0000-0000-0000-000000000823', '00000000-0000-0000-0000-000000000723', 1, '00000000-0000-0000-0000-000000000710', 2, 0), \
+               ('00000000-0000-0000-0000-000000000824', '00000000-0000-0000-0000-000000000724', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
+               ('00000000-0000-0000-0000-000000000825', '00000000-0000-0000-0000-000000000725', 1, '00000000-0000-0000-0000-000000000710', 1, 0), \
+               ('00000000-0000-0000-0000-000000000826', '00000000-0000-0000-0000-000000000725', 2, '00000000-0000-0000-0000-000000000710', 1, 0);",
+        )
+        .await?;
+    Ok(())
+}
+
+/// The served release binds Acme's composed component through one named
+/// `statements` instance per member: Receiving's holds Receiving's
+/// statements and not Acme's, and Acme's holds Acme's and no Receiving
+/// statement, so a Receiving statement named through Acme's instance is
+/// unknown to it (docs/plan/trx-pkg-plan.md, Per-member import instances).
+async fn member_instances(
+    project: &tokio_postgres::Client,
+    receiving_digest: &str,
+) -> anyhow::Result<()> {
+    let bytes: Vec<u8> = project
+        .query_one("SELECT canonical_bytes FROM catalog.releases", &[])
+        .await?
+        .get(0);
+    let manifest: Value = serde_json::from_slice(&bytes)?;
+    let acme = manifest["components"]
+        .as_array()
+        .and_then(|components| {
+            components
+                .iter()
+                .find(|component| component["package-id"] == "client_acme_receiving")
+        })
+        .context("the release serves no Acme component")?;
+    let instances = acme["descriptor"]["statement-instances"]
+        .as_object()
+        .context("Acme's component has no named statements instances")?;
+    let sets = acme["statement-instances"]
+        .as_object()
+        .context("the release binds no statement set to Acme's instances")?;
+    let paths = |instance: &str| -> anyhow::Result<Vec<String>> {
+        Ok(sets
+            .get(instance)
+            .and_then(Value::as_object)
+            .with_context(|| format!("no statement set for {instance}"))?
+            .keys()
+            .cloned()
+            .collect())
+    };
+    let mut receiving = None;
+    let mut overlay = None;
+    for (instance, digest) in instances {
+        if digest.as_str() == Some(receiving_digest) {
+            receiving = Some(paths(instance)?);
+        } else {
+            overlay = Some(paths(instance)?);
+        }
+    }
+    let (Some(receiving), Some(overlay)) = (receiving, overlay) else {
+        anyhow::bail!("Acme's component does not name one instance per member: {instances:?}");
+    };
+    ensure!(
+        overlay.iter().any(|path| path == INSPECTION) && !overlay.iter().any(|path| path == LOCK),
+        "Acme's instance does not hold exactly its own statements: {overlay:?}"
+    );
+    ensure!(
+        receiving.iter().any(|path| path == LOCK)
+            && !receiving.iter().any(|path| path == INSPECTION),
+        "Receiving's instance does not hold exactly its own statements: {receiving:?}"
+    );
     Ok(())
 }
 

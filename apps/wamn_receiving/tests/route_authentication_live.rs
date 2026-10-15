@@ -135,8 +135,6 @@ static BASE_RECORD_RECEIPT: LazyLock<&'static str> =
     LazyLock::new(|| sealed(BASE_RECORD_RECEIPT_REFERENCE).leak());
 static OVERLAY_RECORD_RECEIPT: LazyLock<&'static str> =
     LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt").leak());
-static OVERLAY_RECEIPT_PARTICIPANT: LazyLock<&'static str> =
-    LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt-participant").leak());
 
 /// The release this fixture provisions and publishes: the default Receiving
 /// journey release, with the packages of a supplied candidate's manifest.

@@ -37,15 +37,16 @@ The [attachments](publication/attachments.json) expose five authenticated POST r
 | `/acme/quality/approve_inspection` | `quality.approve_inspection` |
 
 The Acme receipt operation awaits the declared base operation through a generated typed WIT interface.
-It returns the base receipt result unchanged and performs no additional SQL.
+Both run in the one host transaction of the item, each through its own `statements` instance.
+Acme then runs its [inspection statement](command/record_receipt/record_inspection.sql) and returns the base receipt result unchanged.
+A purchase order that requires no inspection gets no row, an approved one gets its `quality_inspection` row, and one that is not approved is refused with `invalid_input` on `purchase_order_id`, so the item rolls back with its receipt.
+Acme claims the idempotency key under its own operation, not under the base operation.
 The build composes the overlay with its base, so the call reaches the base inside one component. The release folds the base permission into the overlay entry's grant.
 The effective release resolves `base_receiving` to one exact implementation.
 The overlay's compiled requirement remains separate from that selected implementation.
 
 Clients read inspection details separately through the existing purchase-order query.
 A failed detail read does not change a successful receipt result or authorize reposting.
-This composition does not enforce an inspection condition at the base transaction's commit point.
-Atomic client extensions need an explicit transaction contract that the base does not currently provide.
 
 The detail projection combines declared base and client fields for the screen.
 Approval identifies the inspection by `receipt_id` and advances the purchase-order revision.

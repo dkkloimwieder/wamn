@@ -2,7 +2,6 @@
   "output_subdirectory": "virtualized/std-empty-environment",
   "packages": [
     "blob-put",
-    "jsonata-expression",
-    "client-acme-receiving-participant"
+    "jsonata-expression"
   ]
 }

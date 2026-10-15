@@ -1,7 +1,3 @@
 {
-  "participants": {
-    "client_acme_receiving": [
-      "client-acme-receiving-participant"
-    ]
-  }
+  "participants": {}
 }

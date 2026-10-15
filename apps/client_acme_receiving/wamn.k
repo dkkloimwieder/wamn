@@ -48,12 +48,12 @@ manifest.Package {
         }
     }
     custom_operations = {
+        # Acme's entry calls Receiving's record_receipt, then records the
+        # inspection in the same host transaction. It claims its key under its
+        # own operation.
         "receiving.record_receipt" = manifest.Command("receiving.record_receipt") {
-            connection = None
-            transaction = None
-            automatic_retry = None
-            idempotent_by = {inherited = {base = "base_receiving", operation = "receiving.record_receipt"}}
-            participant = "receiving.record_receipt_participant"
+            transaction = "explicit_per_input"
+            idempotent_by = "claim"
             input: {
                 line = {minimum = 1, maximum = 100}
                 fields = [
@@ -96,16 +96,11 @@ manifest.Package {
                 quantity_exceeds_remaining = {required = ["field", "id"]}
                 receipt_reference_conflict = {required = ["constraint"]}
             }
-            statements = {}
-        }
-        "receiving.record_receipt_participant" = manifest.Command("receiving.record_receipt_participant") {
-            automatic_retry = None
-            transaction = "participant"
-            idempotent_by = {inherited = {base = "base_receiving", operation = "receiving.record_receipt"}}
-            input: {fields = [{path = "receipt_id", type = "uuid"}, {path = "purchase_order_id", type = "uuid"}]}
-            errors = ["invalid_input", *_errors_after_input]
+            canonicalization = {
+                line_order = {ascending_by = "purchase_order_line_id", positive_member = "quantity"}
+            }
             statements = {
-                record_receipt_participant = manifest.Statement("command/record_receipt_participant", "record_receipt_participant") {
+                record_inspection = manifest.Statement("command/record_receipt", "record_inspection") {
                     fetch = "one"
                     parameters = [manifest.uuid("receipt_id"), manifest.uuid("purchase_order_id")]
                     row = [manifest.nullable(manifest.text("outcome")), manifest.nullable(manifest.uuid("receipt_id"))]

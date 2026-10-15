@@ -204,7 +204,6 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
                 "version": *BASE_PACKAGE_VERSION,
                 "digest": wamn_engine::component_admission::component_digest(bytes),
                 "operation": *BASE_RECORD_RECEIPT,
-                "participant": *OVERLAY_RECEIPT_PARTICIPANT,
             }]),
         );
     }
@@ -272,14 +271,11 @@ pub(super) fn verify_journey_components_are_effectful(
             admitted.component,
             package.component
         );
-        let mut expected = package
+        let expected = package
             .operations
             .iter()
             .map(|(_, token)| sealed(token))
             .collect::<BTreeSet<_>>();
-        if package.id == OVERLAY_PACKAGE_ID {
-            expected.insert((*OVERLAY_RECEIPT_PARTICIPANT).to_owned());
-        }
         let observed = admitted.operations.keys().cloned().collect::<BTreeSet<_>>();
         anyhow::ensure!(
             observed == expected,

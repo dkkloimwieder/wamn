@@ -1,18 +1,12 @@
 //! Wire adapters for Acme Receiving operations backed by generated SQL.
 
-use wamn_postgres_statements::{Connection, Transaction, TransactionView, Uuid as WamnUuid};
+use wamn_postgres_statements::{Connection, Transaction, Uuid as WamnUuid};
 
 use crate::error::AccessError;
 use crate::statements::{
     quality_approve_inspection as approve_sql, quality_create_inspection as create_sql,
-    quality_load_purchase_order_detail as detail_sql,
-    receiving_record_receipt_participant as receipt_participant_sql,
+    quality_load_purchase_order_detail as detail_sql, receiving_record_receipt as receipt_sql,
 };
-
-/// Classify failure to acquire the host-issued participant transaction view.
-pub fn participant_view_error(source: &wamn_postgres_statements::StatementError) -> AccessError {
-    AccessError::from_statement("acquire participant transaction view", source)
-}
 
 /// Result of one successful purchase-order detail load.
 #[derive(Debug)]
@@ -186,21 +180,20 @@ pub async fn quality_create_inspection(event: &str, receipt_id: &str) -> Result<
     Ok(())
 }
 
-/// Apply Acme quality control inside the selected base receipt transaction.
-pub async fn record_receipt_participant(
-    transaction: &mut TransactionView,
+/// Record Acme's inspection of a receipt that Receiving recorded earlier in
+/// the same host transaction. A purchase order that requires no inspection
+/// writes nothing, an approved one writes the inspection row, and one that is
+/// not approved refuses, so the item rolls back with its receipt.
+pub async fn record_inspection(
+    transaction: &mut Transaction,
     receipt_id: &str,
     purchase_order_id: &str,
 ) -> Result<(), AccessError> {
     let receipt_id = parse_uuid(receipt_id, "receipt_id")?;
     let purchase_order_id = parse_uuid(purchase_order_id, "purchase_order_id")?;
-    let row = receipt_participant_sql::record_receipt_participant(
-        transaction,
-        receipt_id.clone(),
-        purchase_order_id,
-    )
-    .await
-    .map_err(|source| AccessError::from_statement("apply receipt quality control", &source))?;
+    let row = receipt_sql::record_inspection(transaction, receipt_id.clone(), purchase_order_id)
+        .await
+        .map_err(|source| AccessError::from_statement("record receipt inspection", &source))?;
     match row.outcome.as_deref() {
         Some("not_required") => Ok(()),
         Some("approved") if row.receipt_id.as_ref() == Some(&receipt_id) => Ok(()),
@@ -209,7 +202,7 @@ pub async fn record_receipt_participant(
             "purchase_order_id",
         )),
         _ => Err(AccessError::internal(
-            "receipt participant returned an incomplete or unknown outcome",
+            "receipt inspection returned an incomplete or unknown outcome",
         )),
     }
 }
