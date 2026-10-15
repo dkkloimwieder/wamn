@@ -17,6 +17,7 @@ reqwest = { workspace = true, features = ["rustls", "json"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "fs"] }
+tokio-postgres = { workspace = true }
 wamn-execution-contract = { workspace = true }
 
 [lints]

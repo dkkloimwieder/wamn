@@ -14,8 +14,24 @@
 //! conflict included. After a failed write, the worker reads the row again,
 //! outside the timing, and goes on.
 //!
+//! `acme_record_receipt` posts Acme's `acme.record_receipt` in the approved
+//! case: a purchase order that needs inspection and has an approved quality
+//! status, so the call writes a receipt and an inspection row. A purchase
+//! order line takes a receipt once, so each request uses its own purchase
+//! order. Before the timed part, the tool seeds a fresh set of approved
+//! orders with one line each through `--db-url`, which the call requires, and
+//! gives each worker its own slice. Each request has its own request id,
+//! idempotency key and receipt reference. A worker that used its whole slice
+//! stops early.
+//!
+//! With `--db-url`, the URL of the project database, the tool samples
+//! `pg_stat_database` and the ten statements with the most total time in
+//! `pg_stat_statements` before and after the timed part, into the result. If
+//! `pg_stat_statements` cannot be read, the sample says why and the run goes on.
+//!
 //! wamn-bench --host receiving.wamn.dev --pat-file <Secret JSON> --call update \
-//!   --concurrency 16 --duration-secs 60 --tier tier-1 --output tests/bench/<file>.json
+//!   --concurrency 16 --duration-secs 60 --tier tier-1 --output tests/bench/<file>.json \
+//!   [--db-url postgres://...]
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,6 +45,16 @@ use wamn_execution_contract::encode_read_query;
 
 /// The most rows one query returns (`limit.maximum` in the Receiving manifest).
 const PAGE: i64 = 100;
+
+/// The most receipts one worker can make per second, which sizes the seed.
+const RECEIPTS_PER_WORKER_SECOND: u64 = 50;
+
+/// The item, location and supplier of the seeded orders.
+const SEED_ITEM: &str = "00000000-0000-0000-0000-00000000b710";
+const SEED_LOCATION: &str = "00000000-0000-0000-0000-00000000b711";
+const SEED_SUPPLIER: &str = "00000000-0000-0000-0000-00000000b730";
+/// The audit principal of the seeded rows.
+const SEED_PRINCIPAL: &str = "00000000-0000-0000-0000-000000000000";
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -51,6 +77,10 @@ struct Args {
     /// The result file.
     #[arg(long)]
     output: PathBuf,
+    /// The URL of the project database: Postgres samples before and after
+    /// the run, and the seed of `acme_record_receipt`.
+    #[arg(long)]
+    db_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize)]
@@ -59,6 +89,16 @@ enum Call {
     Get,
     Update,
     Query,
+    #[value(name = "acme_record_receipt")]
+    #[serde(rename = "acme_record_receipt")]
+    AcmeRecordReceipt,
+}
+
+/// One seeded purchase order and its one line, for one receipt.
+#[derive(Debug, Clone)]
+struct Receipt {
+    purchase_order_id: String,
+    line_id: String,
 }
 
 /// One purchase order as a worker tracks it.
@@ -100,6 +140,45 @@ struct Summary {
     p50_ms: f64,
     p95_ms: f64,
     p99_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    postgres: Option<Samples>,
+}
+
+/// The Postgres samples of one run.
+#[derive(Debug, Serialize)]
+struct Samples {
+    before: Sample,
+    after: Sample,
+}
+
+/// One sample of the project database.
+#[derive(Debug, Serialize)]
+struct Sample {
+    database: DatabaseStats,
+    /// The ten statements with the most total time, or `None` when
+    /// `pg_stat_statements` cannot be read.
+    statements: Option<Vec<StatementStats>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    statements_error: Option<String>,
+}
+
+/// The row of `pg_stat_database` of the connected database.
+#[derive(Debug, Serialize)]
+struct DatabaseStats {
+    xact_commit: i64,
+    blks_hit: i64,
+    blks_read: i64,
+    numbackends: i32,
+}
+
+/// One row of `pg_stat_statements`.
+#[derive(Debug, Serialize)]
+struct StatementStats {
+    query: String,
+    calls: i64,
+    total_exec_time_ms: f64,
+    mean_exec_time_ms: f64,
+    rows: i64,
 }
 
 #[tokio::main]
@@ -125,27 +204,54 @@ async fn main() -> anyhow::Result<()> {
         authorization: format!("Bearer {token}"),
     });
 
-    let (orders, suppliers) = list_orders(&target).await?;
+    let database = match &args.db_url {
+        Some(url) => Some(connect(url).await?),
+        None => None,
+    };
+    let started_at_unix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let (orders, suppliers, receipts) = if matches!(args.call, Call::AcmeRecordReceipt) {
+        let database = database
+            .as_ref()
+            .context("--call acme_record_receipt needs --db-url to seed its orders")?;
+        let count =
+            u64::try_from(args.concurrency)? * args.duration_secs * RECEIPTS_PER_WORKER_SECOND;
+        let receipts = seed_receipts(database, &format!("BENCH-{started_at_unix}-"), count).await?;
+        (Vec::new(), Vec::new(), receipts)
+    } else {
+        let (orders, suppliers) = list_orders(&target).await?;
+        (orders, suppliers, Vec::new())
+    };
+    let units = orders.len().max(receipts.len());
     ensure!(
-        orders.len() >= args.concurrency,
-        "{} orders cannot give {} workers one each",
-        orders.len(),
+        units >= args.concurrency,
+        "{units} orders cannot give {} workers one each",
         args.concurrency
     );
+    let before = match &database {
+        Some(database) => Some(sample(database).await?),
+        None => None,
+    };
     let suppliers = Arc::new(suppliers);
-    let slice = orders.len() / args.concurrency;
-    let started_at_unix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let slice = units / args.concurrency;
     let started = Instant::now();
     let deadline = started + Duration::from_secs(args.duration_secs);
     let mut workers = Vec::with_capacity(args.concurrency);
     for worker in 0..args.concurrency {
-        let own = orders[worker * slice..(worker + 1) * slice].to_vec();
         let target = Arc::clone(&target);
-        let suppliers = Arc::clone(&suppliers);
         let call = args.call;
-        workers.push(tokio::spawn(async move {
-            run_worker(&target, call, worker, own, &suppliers, deadline).await
-        }));
+        if matches!(call, Call::AcmeRecordReceipt) {
+            let own = receipts[worker * slice..(worker + 1) * slice].to_vec();
+            let run = started_at_unix;
+            workers.push(tokio::spawn(async move {
+                run_receipts(&target, run, worker, own, deadline).await
+            }));
+        } else {
+            let own = orders[worker * slice..(worker + 1) * slice].to_vec();
+            let suppliers = Arc::clone(&suppliers);
+            workers.push(tokio::spawn(async move {
+                run_worker(&target, call, worker, own, &suppliers, deadline).await
+            }));
+        }
     }
     let mut latencies = Vec::new();
     let mut errors = 0;
@@ -155,6 +261,13 @@ async fn main() -> anyhow::Result<()> {
         errors += measured.errors;
     }
     let elapsed = started.elapsed().as_secs_f64();
+    let postgres = match (&database, before) {
+        (Some(database), Some(before)) => Some(Samples {
+            before,
+            after: sample(database).await?,
+        }),
+        _ => None,
+    };
     latencies.sort_unstable();
     let calls = latencies.len();
     let result = Summary {
@@ -164,7 +277,7 @@ async fn main() -> anyhow::Result<()> {
         concurrency: args.concurrency,
         duration_secs: elapsed,
         started_at_unix,
-        orders: orders.len(),
+        orders: units,
         calls,
         errors,
         error_rate: ratio(errors, calls),
@@ -172,6 +285,7 @@ async fn main() -> anyhow::Result<()> {
         p50_ms: millis(percentile(&latencies, 50)),
         p95_ms: millis(percentile(&latencies, 95)),
         p99_ms: millis(percentile(&latencies, 99)),
+        postgres,
     };
     let text = serde_json::to_string_pretty(&result)?;
     tokio::fs::write(&args.output, format!("{text}\n"))
@@ -198,7 +312,7 @@ async fn run_worker(
         let begun = Instant::now();
         let outcome = match call {
             Call::Get => read(target, "get", &json!({ "id": own[index].id })).await,
-            Call::Query => read(target, "query", &json!({})).await,
+            Call::Query | Call::AcmeRecordReceipt => read(target, "query", &json!({})).await,
             Call::Update => {
                 sequence += 1;
                 let order = &own[index];
@@ -236,6 +350,46 @@ async fn run_worker(
     measured
 }
 
+/// One worker of `acme_record_receipt`: one receipt per seeded order of its
+/// slice, until the deadline or the end of the slice.
+async fn run_receipts(
+    target: &Target,
+    run: u64,
+    worker: usize,
+    own: Vec<Receipt>,
+    deadline: Instant,
+) -> Measured {
+    let mut measured = Measured::default();
+    for (sequence, receipt) in own.iter().enumerate() {
+        if Instant::now() >= deadline {
+            break;
+        }
+        let key = format!("bench-{run}-{worker}-{sequence}");
+        let item = json!([{
+            "request_id": key,
+            "value": {
+                "idempotency_key": key,
+                "purchase_order_id": receipt.purchase_order_id,
+                "receipt_reference": key,
+                "occurred_at": "2026-10-15T00:00:00Z",
+                "line": [{
+                    "purchase_order_line_id": receipt.line_id,
+                    "quantity": "1",
+                    "location_id": SEED_LOCATION,
+                }],
+            },
+        }]);
+        let begun = Instant::now();
+        let outcome = post(target, "acme/acme/record_receipt", &item).await;
+        let micros = u64::try_from(begun.elapsed().as_micros()).unwrap_or(u64::MAX);
+        measured.latencies_micros.push(micros);
+        if outcome.is_err() {
+            measured.errors += 1;
+        }
+    }
+    measured
+}
+
 /// One read route, `/purchase_order/<name>`, with its item in the query string.
 async fn read(target: &Target, name: &str, item: &Value) -> anyhow::Result<Value> {
     let item: &Map<String, Value> = item.as_object().context("a read item is an object")?;
@@ -256,9 +410,14 @@ async fn read(target: &Target, name: &str, item: &Value) -> anyhow::Result<Value
 
 /// The write route `/purchase_order/update`.
 async fn write(target: &Target, items: &Value) -> anyhow::Result<Value> {
+    post(target, "purchase_order/update", items).await
+}
+
+/// One write route, `/<path>`.
+async fn post(target: &Target, path: &str, items: &Value) -> anyhow::Result<Value> {
     let response = target
         .client
-        .post(format!("{}/purchase_order/update", target.base))
+        .post(format!("{}/{path}", target.base))
         .header("authorization", &target.authorization)
         .json(items)
         .send()
@@ -342,6 +501,110 @@ async fn list_orders(target: &Target) -> anyhow::Result<(Vec<Order>, Vec<String>
     Ok((orders, suppliers))
 }
 
+/// Connect to the project database.
+async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
+    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
+        .await
+        .context("connect to --db-url")?;
+    tokio::spawn(connection);
+    Ok(client)
+}
+
+/// Seed `count` open purchase orders that need inspection and are approved,
+/// with one line of quantity 1 each, numbered `<prefix><n>`.
+async fn seed_receipts(
+    database: &tokio_postgres::Client,
+    prefix: &str,
+    count: u64,
+) -> anyhow::Result<Vec<Receipt>> {
+    database
+        .batch_execute(&format!(
+            "INSERT INTO receiving.item (id, item_number) VALUES ('{SEED_ITEM}', 'ITEM-BENCH') \
+               ON CONFLICT DO NOTHING; \
+             INSERT INTO receiving.location (id, location_code) VALUES ('{SEED_LOCATION}', 'BENCH') \
+               ON CONFLICT DO NOTHING; \
+             INSERT INTO receiving.supplier (id, name) VALUES ('{SEED_SUPPLIER}', 'SUPPLIER-BENCH') \
+               ON CONFLICT DO NOTHING;"
+        ))
+        .await
+        .context("seed the item, location and supplier")?;
+    let count = i32::try_from(count).context("the seed count fits an int4")?;
+    let rows = database
+        .query(
+            &format!(
+                "WITH orders AS ( \
+                   INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, \
+                     status, row_version, created_at, created_by, updated_at, updated_by, \
+                     acme_inspection_required, acme_quality_status) \
+                   SELECT gen_random_uuid(), $1::text || n::text, '{SEED_SUPPLIER}', 'open', 1, \
+                     now(), '{SEED_PRINCIPAL}', now(), '{SEED_PRINCIPAL}', true, 'approved' \
+                   FROM generate_series(1, $2::int4) AS n \
+                   RETURNING id) \
+                 INSERT INTO receiving.purchase_order_line (id, purchase_order_id, line_number, \
+                   item_id, ordered_quantity, received_quantity) \
+                 SELECT gen_random_uuid(), id, 1, '{SEED_ITEM}', 1, 0 FROM orders \
+                 RETURNING purchase_order_id::text, id::text"
+            ),
+            &[&prefix, &count],
+        )
+        .await
+        .context("seed the approved purchase orders")?;
+    Ok(rows
+        .iter()
+        .map(|row| Receipt {
+            purchase_order_id: row.get(0),
+            line_id: row.get(1),
+        })
+        .collect())
+}
+
+/// One sample of `pg_stat_database` and `pg_stat_statements`.
+async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
+    let row = database
+        .query_one(
+            "SELECT xact_commit, blks_hit, blks_read, numbackends FROM pg_stat_database \
+             WHERE datname = current_database()",
+            &[],
+        )
+        .await
+        .context("read pg_stat_database")?;
+    let statements = database
+        .query(
+            "SELECT query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements \
+             WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
+             ORDER BY total_exec_time DESC LIMIT 10",
+            &[],
+        )
+        .await;
+    let (statements, statements_error) = match statements {
+        Ok(rows) => (
+            Some(
+                rows.iter()
+                    .map(|row| StatementStats {
+                        query: row.get(0),
+                        calls: row.get(1),
+                        total_exec_time_ms: row.get(2),
+                        mean_exec_time_ms: row.get(3),
+                        rows: row.get(4),
+                    })
+                    .collect(),
+            ),
+            None,
+        ),
+        Err(error) => (None, Some(error.to_string())),
+    };
+    Ok(Sample {
+        database: DatabaseStats {
+            xact_commit: row.get(0),
+            blks_hit: row.get(1),
+            blks_read: row.get(2),
+            numbackends: row.get(3),
+        },
+        statements,
+        statements_error,
+    })
+}
+
 /// The nearest-rank percentile of sorted values: the smallest value with at
 /// least `percent` of the values at or below it. Empty input gives 0.
 fn percentile(sorted: &[u64], percent: u64) -> u64 {
@@ -385,7 +648,54 @@ fn ratio(errors: u64, calls: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::percentile;
+    use serde_json::json;
+
+    use super::{DatabaseStats, Sample, Samples, StatementStats, percentile};
+
+    /// The Postgres samples keep their field names in the result file, and a
+    /// sample without `pg_stat_statements` says why.
+    #[test]
+    fn postgres_samples_serialize_before_and_after() {
+        let database = || DatabaseStats {
+            xact_commit: 10,
+            blks_hit: 20,
+            blks_read: 3,
+            numbackends: 4,
+        };
+        let samples = Samples {
+            before: Sample {
+                database: database(),
+                statements: Some(vec![StatementStats {
+                    query: "SELECT 1".to_owned(),
+                    calls: 2,
+                    total_exec_time_ms: 1.5,
+                    mean_exec_time_ms: 0.75,
+                    rows: 2,
+                }]),
+                statements_error: None,
+            },
+            after: Sample {
+                database: database(),
+                statements: None,
+                statements_error: Some("relation does not exist".to_owned()),
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&samples).unwrap(),
+            json!({
+                "before": {
+                    "database": {"xact_commit": 10, "blks_hit": 20, "blks_read": 3, "numbackends": 4},
+                    "statements": [{"query": "SELECT 1", "calls": 2, "total_exec_time_ms": 1.5,
+                                    "mean_exec_time_ms": 0.75, "rows": 2}],
+                },
+                "after": {
+                    "database": {"xact_commit": 10, "blks_hit": 20, "blks_read": 3, "numbackends": 4},
+                    "statements": null,
+                    "statements_error": "relation does not exist",
+                },
+            })
+        );
+    }
 
     #[test]
     fn percentiles_take_the_nearest_rank() {
