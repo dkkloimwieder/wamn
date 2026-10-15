@@ -302,13 +302,17 @@ impl WamnPostgres {
     }
 }
 
+/// Resolve one admitted statement. A read operation (`read`) has no write
+/// authority, so a statement that writes or locks rows is unknown to it.
 pub(super) fn resolve_statement(
     statements: Option<&BoundStatementSet>,
+    read: bool,
     statement_path: &str,
     binds: &[SqlValue],
 ) -> Result<Arc<VerifiedStatement>, StatementError> {
     let statement = statements
         .and_then(|statements| statements.statements.get(statement_path))
+        .filter(|statement| !(read && statement.transactional))
         .cloned()
         .ok_or_else(|| StatementError::UnknownStatement(statement_path.to_owned()))?;
     if !binds_match(&statement.binds, binds) {
@@ -600,10 +604,16 @@ mod tests {
             .active_statement_set("component", None)
             .expect("first operation is active");
         assert!(
-            resolve_statement(Some(&active), &first_path, &[SqlValue::Uuid("id".into())]).is_ok()
+            resolve_statement(
+                Some(&active),
+                false,
+                &first_path,
+                &[SqlValue::Uuid("id".into())]
+            )
+            .is_ok()
         );
         assert!(matches!(
-            resolve_statement(Some(&active), &second_path, &[SqlValue::Uuid("id".into())]),
+            resolve_statement(Some(&active), false, &second_path, &[SqlValue::Uuid("id".into())]),
             Err(StatementError::UnknownStatement(path)) if path == second_path
         ));
 
@@ -614,11 +624,17 @@ mod tests {
             .active_statement_set("component", None)
             .expect("second operation is active");
         assert!(matches!(
-            resolve_statement(Some(&active), &first_path, &[SqlValue::Uuid("id".into())]),
+            resolve_statement(Some(&active), false, &first_path, &[SqlValue::Uuid("id".into())]),
             Err(StatementError::UnknownStatement(path)) if path == first_path
         ));
         assert!(
-            resolve_statement(Some(&active), &second_path, &[SqlValue::Uuid("id".into())]).is_ok()
+            resolve_statement(
+                Some(&active),
+                false,
+                &second_path,
+                &[SqlValue::Uuid("id".into())]
+            )
+            .is_ok()
         );
 
         plugin.revoke_statement_operation("component");
@@ -668,9 +684,9 @@ mod tests {
             let active = plugin
                 .active_statement_set("component", Some(instance))
                 .expect("the member set is active");
-            assert!(resolve_statement(Some(&active), own, &id).is_ok());
+            assert!(resolve_statement(Some(&active), false, own, &id).is_ok());
             assert!(matches!(
-                resolve_statement(Some(&active), other, &id),
+                resolve_statement(Some(&active), false, other, &id),
                 Err(StatementError::UnknownStatement(path)) if path == other
             ));
         }
@@ -730,8 +746,70 @@ mod tests {
             .active_statement_set("workload-child", None)
             .expect("prefix-sharing scope remains active");
         assert!(
-            resolve_statement(Some(&active), &second_path, &[SqlValue::Uuid("id".into())]).is_ok()
+            resolve_statement(
+                Some(&active),
+                false,
+                &second_path,
+                &[SqlValue::Uuid("id".into())]
+            )
+            .is_ok()
         );
+    }
+
+    /// A read operation refuses an admitted statement that writes, and runs a
+    /// read-only one; a command still resolves the writing statement
+    /// (`wamn-zckip`).
+    #[test]
+    fn a_read_operation_refuses_a_writing_statement_and_a_command_runs_it() {
+        let plugin = plugin();
+        let id = [SqlValue::Uuid("id".into())];
+        let select = "sql/select.sql";
+        let update = "sql/update.sql";
+        let statements = || {
+            BTreeMap::from([
+                (select.to_owned(), verified("SELECT $1::uuid, 'x'::text")),
+                (
+                    update.to_owned(),
+                    VerifiedStatement {
+                        transactional: true,
+                        ..verified("UPDATE t SET v = 'x' WHERE id = $1 RETURNING v")
+                    },
+                ),
+            ])
+        };
+        for (operation, read) in [("orders/get", true), ("orders/record", false)] {
+            plugin
+                .bind_prepared_statement_operation(
+                    "component",
+                    operation,
+                    &WamnPostgres::prepare_statement_set(statements(), read),
+                )
+                .expect("bind the operation");
+        }
+
+        plugin
+            .activate_statement_operation("component", "orders/get")
+            .expect("activate the read");
+        let read = plugin.active_read("component");
+        assert!(read);
+        let active = plugin
+            .active_statement_set("component", None)
+            .expect("the read is active");
+        assert!(resolve_statement(Some(&active), read, select, &id).is_ok());
+        assert!(matches!(
+            resolve_statement(Some(&active), read, update, &id),
+            Err(StatementError::UnknownStatement(path)) if path == update
+        ));
+
+        plugin
+            .activate_statement_operation("component", "orders/record")
+            .expect("activate the command");
+        let read = plugin.active_read("component");
+        assert!(!read);
+        let active = plugin
+            .active_statement_set("component", None)
+            .expect("the command is active");
+        assert!(resolve_statement(Some(&active), read, update, &id).is_ok());
     }
 
     #[test]
@@ -742,7 +820,7 @@ mod tests {
             statements: BTreeMap::from([(path.clone(), Arc::new(statement))]),
             read: false,
         };
-        let error = resolve_statement(Some(&set), &path, &[SqlValue::Text("id".into())])
+        let error = resolve_statement(Some(&set), false, &path, &[SqlValue::Text("id".into())])
             .expect_err("wrong carrier type must fail closed");
         let StatementError::StatementContractMismatch(mismatch) = error else {
             panic!("expected statement-contract-mismatch");

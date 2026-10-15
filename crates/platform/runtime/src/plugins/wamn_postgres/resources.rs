@@ -1313,10 +1313,12 @@ async fn statement_run<T: 'static>(
                 return Ok(Err(refused));
             }
             let active = plugin.active_statement_set(&component_id, instance);
-            let statement = match resolve_statement(active.as_deref(), &statement_path, &binds) {
-                Ok(statement) => statement,
-                Err(error) => return Ok(Err(error)),
-            };
+            let read = plugin.active_read(&component_id);
+            let statement =
+                match resolve_statement(active.as_deref(), read, &statement_path, &binds) {
+                    Ok(statement) => statement,
+                    Err(error) => return Ok(Err(error)),
+                };
             let project = plugin.project_for(&component_id);
             let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
             let started = std::time::Instant::now();
@@ -1480,7 +1482,12 @@ pub(super) fn admit_transaction_statement(
     statement_path: &str,
     binds: &[SqlValue],
 ) -> Result<Arc<VerifiedStatement>, StatementError> {
-    let statement = resolve_statement(statements, statement_path, binds)?;
+    let statement = resolve_statement(
+        statements,
+        plugin.active_read(component_id),
+        statement_path,
+        binds,
+    )?;
     refuse_unattributed_statement(&statement, plugin.user_id_for(component_id).as_deref())
         .map_err(StatementError::Postgres)?;
     Ok(statement)
