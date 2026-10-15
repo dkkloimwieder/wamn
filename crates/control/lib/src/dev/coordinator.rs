@@ -596,11 +596,8 @@ impl ProductionDevStageRunner {
             let mut base_digests =
                 authored_base_digests(&package.root).map_err(base_digests_stage_error)?;
             base_digests.extend(self.built_base_digests());
-            let declaration = render_component_declaration(
-                &template,
-                &self.config.activation_identity().tenant,
-                &base_digests,
-            )?;
+            let declaration =
+                render_component_declaration(&template, &self.config.activation_identity().tenant)?;
             let admission = admit_component(AdmitComponentRequest {
                 package: package.root,
                 component_bytes: artifact.path.clone(),
@@ -609,6 +606,7 @@ impl ProductionDevStageRunner {
                     NODE_CAPABILITY.to_owned(),
                     POSTGRES_CAPABILITY.to_owned(),
                 ],
+                base_digests: base_digests.values().map(ToString::to_string).collect(),
             })
             .map_err(|source| {
                 ProductionDevStageError::owner("admit exact component bytes", source)
@@ -648,6 +646,7 @@ impl ProductionDevStageRunner {
                 component_bytes: artifact.path.clone(),
                 declaration: declaration.path().to_owned(),
                 admitted_platform_packages,
+                base_digests: BTreeSet::new(),
             })
             .map_err(|source| {
                 ProductionDevStageError::owner("admit exact palette component bytes", source)
@@ -1791,10 +1790,9 @@ fn declaration_stage_error(source: ComponentDeclarationError) -> ProductionDevSt
 fn render_component_declaration(
     template: &Path,
     tenant: &str,
-    base_digests: &BTreeMap<Box<str>, Box<str>>,
 ) -> Result<TemporaryFile, ProductionDevStageError> {
-    let document = render_declaration_document(template, tenant, base_digests)
-        .map_err(declaration_stage_error)?;
+    let document =
+        render_declaration_document(template, tenant).map_err(declaration_stage_error)?;
     let rendered = serde_json::to_vec(&document).map_err(|source| {
         ProductionDevStageError::owner("serialize component declaration", source.into())
     })?;

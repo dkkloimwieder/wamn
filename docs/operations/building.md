@@ -51,11 +51,11 @@ The build virtualizes each component that the package owns and each crate that [
 It writes the virtualized guest to `virtualized/std-empty-environment` in the Cargo target directory.
 The list is an allowlist, not discovery: a std guest that it does not name stays raw and fails its own admission.
 
-The build then composes an overlay whose component declaration names a base operation dependency.
-`wamn-component-composer` joins the overlay component and each base component into one component.
+The build then composes each component of a package that pins bases in `base_dependencies`.
+`wamn-component-composer` joins the overlay component and each base whose operations it imports into one component.
 It reads each base component from the base's `build.json`, so build the base first.
-The declarations give each link.
-The overlay imports each base operation that it depends on, and the base supplies that operation.
+The overlay imports each base operation that it calls under the base's export name, and the base supplies that operation.
+An overlay that imports no base operation stays as it is.
 Each member that imports `wamn:postgres/statements` gets its own outer import, `sql-0`, `sql-1`, in member order ([components](../architecture/components.md)).
 The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.

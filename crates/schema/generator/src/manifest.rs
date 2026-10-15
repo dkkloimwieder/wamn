@@ -141,10 +141,19 @@ impl CustomOperationDeclaration {
         self.registration.as_ref()
     }
 
-    /// Whether the host begins the transaction this operation works in: a
-    /// command with SQL of its own (`docs/plan/host-transaction.md` 4.1).
+    /// Whether this operation's export works in the host transaction itself:
+    /// a command with SQL of its own (`docs/plan/host-transaction.md` 4.1).
     pub fn has_host_transaction(&self) -> bool {
         self.type_ == CustomOperationType::Command && !self.statements.is_empty()
+    }
+
+    /// Whether the host begins the item transaction of this operation: a
+    /// command that declares `transaction = explicit_per_input`, with or
+    /// without SQL of its own. A command without SQL works in it through the
+    /// members it calls.
+    pub fn begins_host_transaction(&self) -> bool {
+        self.type_ == CustomOperationType::Command
+            && self.transaction == Some(CommandTransaction::ExplicitPerInput)
     }
 
     /// Whether this command claims its key in the write log.
@@ -576,6 +585,28 @@ pub enum StaticSqlFetch {
 }
 
 impl PackageManifest {
+    /// The local names of the operations whose item transaction the host
+    /// begins: every generated action that changes records, and every command
+    /// that [begins one](CustomOperationDeclaration::begins_host_transaction).
+    pub fn host_transaction_operations(&self) -> BTreeSet<String> {
+        self.models
+            .iter()
+            .flat_map(|(model, declaration)| {
+                declaration
+                    .operations
+                    .keys()
+                    .filter(|action| action.changes_records())
+                    .map(move |action| format!("{model}.{}", action.as_str()))
+            })
+            .chain(
+                self.custom_operations
+                    .iter()
+                    .filter(|(_, operation)| operation.begins_host_transaction())
+                    .map(|(name, _)| name.clone()),
+            )
+            .collect()
+    }
+
     /// Whether any operation of this package claims its key in the write log:
     /// a generated create, or a command idempotent by claim.
     pub fn has_claim_operation(&self) -> bool {
@@ -1157,7 +1188,7 @@ fn validate_custom_operation_kind(
                 operation.transaction,
                 operation.automatic_retry,
             ) {
-                (true, Some(CommandTransaction::ExplicitPerInput), Some(false))
+                (_, Some(CommandTransaction::ExplicitPerInput), Some(false))
                 | (false, None, None) => {}
                 (true, Some(_), Some(true)) => {
                     return Err(GenerateError::new(

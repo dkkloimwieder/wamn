@@ -33,6 +33,9 @@ const HANDLER_SIGNATURE: &str =
 pub struct ComponentAdmissionRequest {
     pub declaration: ComponentDeclaration,
     pub admitted_platform_packages: BTreeSet<String>,
+    /// The component digest of each base the package manifest pins in
+    /// `base_dependencies`. A composed component embeds only these bases.
+    pub base_digests: BTreeSet<String>,
 }
 
 /// Stable classification for a refused component admission.
@@ -245,23 +248,28 @@ pub fn validate_component_admission(
         .map(|(name, item)| wamn_component_policy::instance_type(name, item.implements).to_owned())
         .collect::<Vec<_>>();
     // An application's components compose at build into one component, so a
-    // declared dependency is not an import. Its base must be embedded in these
-    // bytes, unchanged, under the digest the declaration names. Publish then
-    // folds the call graph from the admitted facts of that exact base.
-    let missing_bases = request
-        .declaration
-        .operations
-        .values()
-        .flat_map(|operation| &operation.dependencies)
-        .filter(|dependency| !embedded.digests.contains(&dependency.digest))
-        .map(|dependency| format!("{}@{}", dependency.operation, dependency.digest))
+    // call to a base is not an import. A direct member that exports an
+    // application operation interface this component does not declare is a composed
+    // base, and it must be a base the package manifest pins, unchanged.
+    let unpinned_bases = embedded
+        .members
+        .iter()
+        .filter(|(digest, exports)| {
+            !request.base_digests.contains(digest)
+                && exports.iter().any(|export| {
+                    export.contains(':')
+                        && is_application_operation_import(export)
+                        && !declared_exports.contains(export)
+                })
+        })
+        .map(|(digest, _)| digest.clone())
         .collect::<BTreeSet<_>>();
-    if !missing_bases.is_empty() {
+    if !unpinned_bases.is_empty() {
         return Err(ComponentAdmissionError::new(
             ComponentAdmissionErrorType::OperationDependencyMismatch,
             &component_name,
             anyhow::anyhow!(
-                "declared operation dependencies are not composed into the component bytes: {missing_bases:?}"
+                "composed bases are not pinned in the package manifest's base_dependencies: {unpinned_bases:?}"
             ),
         ));
     }
@@ -471,33 +479,42 @@ fn derive_effects(
         .collect()
 }
 
-/// The digest of each component that these bytes embed unchanged.
+/// The components nested in a composed component.
 ///
 /// A composed component defines each member as a nested component section. The
 /// section holds the member's exact bytes, so its digest is the member's
 /// admitted digest.
-/// The components nested in a composed component: the digest of each one and
-/// the names that each one exports.
 #[derive(Debug, Default)]
 struct EmbeddedComponents {
-    digests: BTreeSet<String>,
+    /// The names that any nested component exports.
     exports: BTreeSet<String>,
+    /// The digest and export names of each direct member.
+    members: Vec<(String, Vec<String>)>,
 }
 
 fn embedded_components(component_bytes: &[u8]) -> anyhow::Result<EmbeddedComponents> {
     let mut embedded = EmbeddedComponents::default();
+    let mut depth = 0_usize;
     for payload in wasmparser::Parser::new(0).parse_all(component_bytes) {
-        if let wasmparser::Payload::ComponentSection {
-            unchecked_range, ..
-        } = payload?
-        {
-            let start = usize::try_from(unchecked_range.start)?;
-            let end = usize::try_from(unchecked_range.end)?;
-            let member = component_bytes
-                .get(start..end)
-                .ok_or_else(|| anyhow::anyhow!("a nested component section is out of range"))?;
-            embedded.digests.insert(component_digest(member));
-            embedded.exports.extend(top_level_exports(member)?);
+        match payload? {
+            wasmparser::Payload::ComponentSection {
+                unchecked_range, ..
+            } => {
+                let start = usize::try_from(unchecked_range.start)?;
+                let end = usize::try_from(unchecked_range.end)?;
+                let member = component_bytes
+                    .get(start..end)
+                    .ok_or_else(|| anyhow::anyhow!("a nested component section is out of range"))?;
+                let exports = top_level_exports(member)?;
+                embedded.exports.extend(exports.iter().cloned());
+                if depth == 0 {
+                    embedded.members.push((component_digest(member), exports));
+                }
+                depth += 1;
+            }
+            wasmparser::Payload::ModuleSection { .. } => depth += 1,
+            wasmparser::Payload::End(_) => depth = depth.saturating_sub(1),
+            _ => {}
         }
     }
     Ok(embedded)
@@ -568,8 +585,8 @@ mod tests {
 
     use serde_json::json;
     use wamn_catalog::{
-        ComponentOperationDeclaration, ComponentOperationDependency, ComponentPackageScope,
-        ComponentParameterDeclaration, ComponentPortDeclaration,
+        ComponentOperationDeclaration, ComponentPackageScope, ComponentParameterDeclaration,
+        ComponentPortDeclaration,
     };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{LiftLowerAbi, ManglingAndAbi, Resolve};
@@ -689,17 +706,6 @@ mod tests {
             .encode()
     }
 
-    fn request_with(dependencies: Vec<ComponentOperationDependency>) -> ComponentAdmissionRequest {
-        let mut request = request();
-        request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .dependencies = dependencies;
-        request
-    }
-
     fn request() -> ComponentAdmissionRequest {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
@@ -715,7 +721,6 @@ mod tests {
                     ComponentOperationDeclaration {
                         committed_result_schema: None,
                         registered_operation: None,
-                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_string(),
                             schema: json!({"type": "object"}),
@@ -734,15 +739,15 @@ mod tests {
                 connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
+            base_digests: BTreeSet::new(),
         }
     }
 
-    fn dependency(operation: &str) -> ComponentOperationDependency {
-        ComponentOperationDependency {
-            package: "platform_fixture".to_string(),
-            version: "1.0.0".to_string(),
-            digest: format!("sha256:{}", "c".repeat(64)),
-            operation: operation.to_string(),
+    /// The request with `base` pinned as a base of the package.
+    fn request_pinning(base: &[u8]) -> ComponentAdmissionRequest {
+        ComponentAdmissionRequest {
+            base_digests: BTreeSet::from([component_digest(base)]),
+            ..request()
         }
     }
 
@@ -769,14 +774,6 @@ mod tests {
         }
         bytes.extend_from_slice(member);
         bytes
-    }
-
-    /// A declaration whose base is embedded under its exact digest.
-    fn embedded_dependency(base: &[u8]) -> ComponentOperationDependency {
-        ComponentOperationDependency {
-            digest: component_digest(base),
-            ..dependency(DEPENDENCY_OPERATION)
-        }
     }
 
     #[test]
@@ -1060,42 +1057,38 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_dependency_is_admitted_when_its_base_is_embedded() {
+    fn a_pinned_base_is_admitted_when_it_is_embedded() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let base = base_bytes();
         let bytes = composed(&component_bytes(""), &base);
-        let mut request = request();
-        request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .dependencies = vec![embedded_dependency(&base)];
 
-        let component = validate_component_admission(&engine, &bytes, request)
-            .expect("a composed operation dependency admits")
+        let component = validate_component_admission(&engine, &bytes, request_pinning(&base))
+            .expect("a composed pinned base admits")
             .component;
 
         assert_eq!(component.imports, [NODE_TYPES_IMPORT.to_string()]);
-        assert_eq!(
-            component.operations[OPERATION].dependencies,
-            [embedded_dependency(&base)]
-        );
         assert!(component.effects.is_empty());
 
         // A composed component re-exports its base. That export is admitted
         // only while the base that exports it is embedded.
         let reexporting =
             component_bytes_with_exports("", &format!("export {DEPENDENCY_OPERATION};"));
-        let request = request_with(vec![embedded_dependency(&base)]);
-        validate_component_admission(&engine, &composed(&reexporting, &base), request.clone())
-            .expect("an export of an embedded base admits");
-        let error = validate_component_admission(&engine, &reexporting, request)
+        validate_component_admission(
+            &engine,
+            &composed(&reexporting, &base),
+            request_pinning(&base),
+        )
+        .expect("an export of an embedded base admits");
+        let error = validate_component_admission(&engine, &reexporting, request_pinning(&base))
             .expect_err("an export of no embedded member refuses");
         assert_eq!(
             error.error_type(),
             ComponentAdmissionErrorType::OperationExportMismatch
         );
+
+        // A package can pin a base that its wirings name without composing it.
+        validate_component_admission(&engine, &component_bytes(""), request_pinning(&base))
+            .expect("a pinned base that is not composed admits");
     }
 
     // The engine parses a second handler export only with this feature enabled.
@@ -1110,84 +1103,62 @@ mod tests {
             &component_bytes_with_exports("", "export second: wamn:node/handler@0.1.0;"),
             &base,
         );
-        let mut request = request();
-        let mut second = request
+        let mut request = request_pinning(&base);
+        let second = request
             .declaration
             .operations
             .get(OPERATION)
             .expect("fixture operation exists")
             .clone();
-        second.dependencies = vec![embedded_dependency(&base)];
         request
             .declaration
             .operations
             .insert("second".to_string(), second);
 
         let component = validate_component_admission(&engine, &bytes, request)
-            .expect("a dependency of one export admits")
+            .expect("both exports of a composition admit")
             .component;
 
-        assert!(component.operations[OPERATION].dependencies.is_empty());
-        assert_eq!(
-            component.operations["second"].dependencies,
-            [embedded_dependency(&base)]
-        );
+        assert!(component.operations.contains_key(OPERATION));
+        assert!(component.operations.contains_key("second"));
     }
 
     #[test]
-    fn operation_dependencies_refuse_an_unembedded_base_and_an_application_import() {
+    fn an_unpinned_base_and_an_application_import_refuse() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let base = base_bytes();
 
-        let mut missing_request = request();
-        missing_request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .dependencies = vec![embedded_dependency(&base)];
-        let missing = validate_component_admission(&engine, &component_bytes(""), missing_request)
-            .expect_err("a declared dependency whose base is not embedded refuses");
-        assert_eq!(
-            missing.error_type(),
-            ComponentAdmissionErrorType::OperationDependencyMismatch
-        );
-        assert!(missing.to_string().contains("not composed"));
-
-        let mut other_request = request();
-        other_request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .dependencies = vec![dependency(DEPENDENCY_OPERATION)];
-        let other = validate_component_admission(
+        let unpinned = validate_component_admission(
             &engine,
             &composed(&component_bytes(""), &base),
-            other_request,
+            request(),
         )
-        .expect_err("a base embedded under another digest refuses");
+        .expect_err("a composed base that the manifest does not pin refuses");
+        assert_eq!(
+            unpinned.error_type(),
+            ComponentAdmissionErrorType::OperationDependencyMismatch
+        );
+        assert!(unpinned.to_string().contains("not pinned"));
+
+        let mut other = request();
+        other.base_digests = BTreeSet::from([format!("sha256:{}", "c".repeat(64))]);
+        let other =
+            validate_component_admission(&engine, &composed(&component_bytes(""), &base), other)
+                .expect_err("a base embedded under another digest than the pin refuses");
         assert_eq!(
             other.error_type(),
             ComponentAdmissionErrorType::OperationDependencyMismatch
         );
 
-        let mut imported_request = request();
-        imported_request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .dependencies = vec![embedded_dependency(&base)];
         let imported = validate_component_admission(
             &engine,
             &composed(
                 &component_bytes(&format!("import {DEPENDENCY_OPERATION};")),
                 &base,
             ),
-            imported_request,
+            request_pinning(&base),
         )
-        .expect_err("a dependency left as an import refuses");
+        .expect_err("a base operation left as an import refuses");
         assert_eq!(
             imported.error_type(),
             ComponentAdmissionErrorType::OperationDependencyMismatch
@@ -1252,15 +1223,7 @@ mod tests {
             &component_bytes("import wasi:clocks/monotonic-clock@0.2.12;"),
             &base,
         );
-        let mut request = request();
-        request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .dependencies = vec![embedded_dependency(&base)];
-
-        let component = validate_component_admission(&engine, &bytes, request)
+        let component = validate_component_admission(&engine, &bytes, request_pinning(&base))
             .expect("a composition over an effect-free base admits")
             .component;
 

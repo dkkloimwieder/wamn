@@ -1778,11 +1778,8 @@ fn release(
                 package_version: version.to_owned(),
             })
             .component;
-        value["components"][0] = serde_json::to_value(wamn_catalog::ServingComponent::project(
-            &fact,
-            Vec::new(),
-            &|_| None,
-        )?)?;
+        value["components"][0] =
+            serde_json::to_value(wamn_catalog::ServingComponent::project(&fact, Vec::new())?)?;
     }
     let bytes = wamn_execution_contract::canonical_json_bytes(&value);
     wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)

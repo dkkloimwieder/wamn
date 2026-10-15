@@ -1,9 +1,9 @@
 //! Package component declarations.
 //!
-//! A package authors each base component digest once, in `wamn.json`, and
-//! leaves placeholders in `publication/components/*.json.in`. This module reads
-//! the authored digests and renders a template into the declaration document
-//! that admission reads.
+//! A package authors each base component digest once, in `wamn.json`. This
+//! module reads the authored digests, which admission checks a composed base
+//! against, and renders a `publication/components/*.json.in` template into the
+//! declaration document that admission reads.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -14,8 +14,6 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__TENANT_ID__";
-/// Slot a declaration template leaves for the base digest `wamn.json` authors.
-pub const COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER: &str = "__BASE_DIGEST__";
 /// File name of the package manifest at a package root.
 pub const PACKAGE_MANIFEST: &str = "wamn.json";
 
@@ -111,14 +109,10 @@ impl Error for ComponentDeclarationError {
 
 /// The ONE authored site for a package's base component digests.
 ///
-/// # wamn-10yt.50
-///
-/// `publication/components/*.json.in` used to carry a second HAND-WRITTEN copy
-/// of the pin `wamn.json` already carries, and nothing in the tree said the two
-/// had to agree. This reads the only value an author now writes,
-/// `base_dependencies[*].digest`, keyed by the `package@version` coordinate a
-/// declaration names its dependency by. A package that declares no base
-/// dependency yields an empty map, and its template must then declare none.
+/// This reads `base_dependencies[*].digest`, keyed by the base's
+/// `package@version` coordinate. A disposable target layers the digest of a
+/// base it built over the pin (wamn-10yt.48) before it hands the digests to
+/// admission. A package that declares no base dependency yields an empty map.
 pub fn authored_base_digests(
     package_root: &Path,
 ) -> Result<BTreeMap<Box<str>, Box<str>>, ComponentDeclarationError> {
@@ -153,24 +147,11 @@ pub fn authored_base_digests(
 
 /// Renders one authored component declaration into the document admission reads.
 ///
-/// Two placeholders, both REQUIRED: `scope.tenant-id`, which the deployment
-/// fills, and every operation dependency's `digest`, which `base_digests`
-/// fills. An unfilled or hand-written value is a refusal naming the file, so a
-/// second authored copy of a digest cannot re-enter the template unnoticed
-/// (wamn-10yt.50).
-///
-/// `base_digests` carries the authored pin, with the digest of a base component
-/// THIS RUN built layered over it for a disposable target (wamn-10yt.48).
-/// Generate never rewrites the template, so once an author edits the base
-/// package the pin names bytes that no longer exist; every consumer of the
-/// admitted fact then resolves the dependency to zero components, including the
-/// serving manifest's own validation, which guards a persisted contract and
-/// must stay strict. So the DOCUMENT is made true rather than the validator
-/// made tolerant.
+/// One placeholder, REQUIRED: `scope.tenant-id`, which the deployment fills.
+/// An unfilled or hand-written value is a refusal naming the file.
 pub fn render_declaration_document(
     template: &Path,
     tenant: &str,
-    base_digests: &BTreeMap<Box<str>, Box<str>>,
 ) -> Result<Value, ComponentDeclarationError> {
     let bytes =
         fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
@@ -201,48 +182,6 @@ pub fn render_declaration_document(
         ));
     }
     *slot = Value::String(tenant.to_owned());
-    if let Some(operations) = document
-        .get_mut("operations")
-        .and_then(Value::as_object_mut)
-    {
-        for operation in operations.values_mut() {
-            let Some(dependencies) = operation
-                .get_mut("dependencies")
-                .and_then(Value::as_array_mut)
-            else {
-                continue;
-            };
-            for dependency in dependencies {
-                let coordinate = dependency
-                    .get("package")
-                    .and_then(Value::as_str)
-                    .zip(dependency.get("version").and_then(Value::as_str))
-                    .map(|(package, version)| format!("{package}@{version}"))
-                    .ok_or_else(|| {
-                        invalid(
-                            "declares an operation dependency without a package and version"
-                                .to_owned(),
-                        )
-                    })?;
-                if dependency.get("digest").and_then(Value::as_str)
-                    != Some(COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER)
-                {
-                    return Err(invalid(format!(
-                        "must leave the {coordinate} dependency digest as \
-                         {COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER}; the digest is \
-                         authored once, in {PACKAGE_MANIFEST}"
-                    )));
-                }
-                let digest = base_digests.get(coordinate.as_str()).ok_or_else(|| {
-                    invalid(format!(
-                        "depends on {coordinate}, which no {PACKAGE_MANIFEST} \
-                         base_dependencies entry pins"
-                    ))
-                })?;
-                dependency["digest"] = Value::String(digest.to_string());
-            }
-        }
-    }
     // An input port can name its package's generated route schema instead of
     // copying it (wamn-4omo). The template sits at
     // `publication/components/<component>.json.in` under its package root,
@@ -375,180 +314,6 @@ pub fn declared_platform_packages(
 mod tests {
     use super::*;
 
-    fn overlay_package_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform_fixture_overlay")
-    }
-
-    fn overlay_declaration_template() -> PathBuf {
-        overlay_package_root()
-            .join("publication/components")
-            .join("fixture_overlay.json.in")
-    }
-
-    /// A declaration template with one dependency on the fixture base.
-    ///
-    /// The shipped overlay guest imports no base operation, so its template
-    /// declares no dependency. The rendering rule is stated on this template,
-    /// which leaves one `platform_fixture@2.1.0` digest as the placeholder.
-    fn base_dependency_template(name: &str) -> PathBuf {
-        let template = serde_json::json!({
-            "scope": {
-                "tenant-id": COMPONENT_DECLARATION_PLACEHOLDER,
-                "package-id": "platform_fixture_overlay"
-            },
-            "component": "fixture_overlay",
-            "interface-version": "0.1.0",
-            "operations": {
-                "platform-fixture-overlay:widget/get": {
-                    "registered-operation": "platform-fixture-overlay:widget/get",
-                    "dependencies": [{
-                        "package": "platform_fixture",
-                        "version": "2.1.0",
-                        "digest": COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
-                        "operation": "platform-fixture:widget/archive"
-                    }],
-                    "input-ports": [],
-                    "output-ports": [],
-                    "parameters": []
-                }
-            },
-            "connections": []
-        });
-        // The template sits in a package, whose wamn.json owns the versions of
-        // its operation references.
-        let package = std::env::temp_dir().join(format!(
-            "wamn-control-declaration-{name}-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(package.join("publication/components"))
-            .expect("create the template package");
-        fs::write(
-            package.join(PACKAGE_MANIFEST),
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "package": {"id": "platform_fixture_overlay", "version": "2.1.0"},
-                "base_dependencies": {"base": {
-                    "package": "platform_fixture",
-                    "version": "2.1.0",
-                    "digest": format!("sha256:{}", "0".repeat(64)),
-                    "operations": ["widget.archive"]
-                }}
-            }))
-            .expect("serialize the template package manifest"),
-        )
-        .expect("write the template package manifest");
-        let path = package.join("publication/components/fixture_overlay.json.in");
-        fs::write(
-            &path,
-            serde_json::to_vec_pretty(&template).expect("serialize the template"),
-        )
-        .expect("write the base dependency template");
-        path
-    }
-
-    /// The rendered declaration names the bytes this run built.
-    ///
-    /// A declaration template leaves its base dependency digest as a
-    /// placeholder, and Generate never rewrites that file. Once an author edits
-    /// the base package, the authored pin names bytes that no longer exist, and
-    /// every consumer of the admitted fact resolves the dependency to zero
-    /// components. The serving manifest's own validation is one of them, and it
-    /// guards a persisted contract, so the document is made true rather than
-    /// the validator made tolerant.
-    #[test]
-    fn a_disposable_target_renders_the_base_digest_it_built_into_the_declaration() {
-        let template = base_dependency_template("disposable");
-        let authored = authored_base_digests(&overlay_package_root())
-            .expect("read the shipped overlay manifest pin");
-        assert_eq!(
-            authored.len(),
-            1,
-            "the shipped overlay authors exactly one base dependency digest"
-        );
-        let pin = authored["platform_fixture@2.1.0"].to_string();
-        let built = format!("sha256:{}", "7".repeat(64));
-        assert_ne!(pin, built);
-
-        let durable = render_declaration_document(&template, "tenant-a", &authored)
-            .expect("render for a durable target");
-        assert_eq!(
-            dependency_digests(&durable),
-            vec![pin],
-            "a durable target admits the pin exactly as the manifest authors it"
-        );
-
-        let mut base_digests = authored.clone();
-        base_digests.insert(
-            Box::<str>::from("platform_fixture@2.1.0"),
-            Box::<str>::from(built.as_str()),
-        );
-        let disposable = render_declaration_document(&template, "tenant-a", &base_digests)
-            .expect("render for a disposable target");
-        assert_eq!(
-            dependency_digests(&disposable),
-            vec![built.clone()],
-            "a disposable target names the base it just built"
-        );
-        assert_eq!(
-            disposable
-                .pointer("/scope/tenant-id")
-                .and_then(Value::as_str),
-            Some("tenant-a"),
-            "the tenant placeholder is still filled"
-        );
-        let _ = fs::remove_dir_all(template.ancestors().nth(3).expect("the template package"));
-    }
-
-    /// The digest is authored ONCE, and no second copy can hide in the tree.
-    ///
-    /// wamn-10yt.50: the template used to carry its own hand-written copy of
-    /// the manifest pin. A rendered declaration is now unsatisfiable unless the
-    /// template leaves the slot empty, so a reintroduced literal is refused at
-    /// the render rather than drifting silently.
-    #[test]
-    fn the_shipped_template_carries_no_second_copy_of_the_base_digest() {
-        let template = overlay_declaration_template();
-        let bytes = fs::read(&template).expect("read the shipped declaration template");
-        let authored = authored_base_digests(&overlay_package_root())
-            .expect("read the shipped overlay manifest pin");
-        for digest in authored.values() {
-            assert!(
-                !String::from_utf8_lossy(&bytes).contains(digest.as_ref()),
-                "{} must not restate the authored digest {digest}",
-                template.display()
-            );
-        }
-
-        let document: Value =
-            serde_json::from_slice(&bytes).expect("parse the shipped declaration template");
-        assert!(
-            dependency_digests(&document)
-                .iter()
-                .all(|digest| digest == COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER),
-            "the template leaves every dependency digest as the placeholder"
-        );
-
-        let hand_written = base_dependency_template("restated");
-        let restated = fs::read_to_string(&hand_written)
-            .expect("read the base dependency template")
-            .replace(
-                COMPONENT_DECLARATION_BASE_DIGEST_PLACEHOLDER,
-                &authored["platform_fixture@2.1.0"],
-            );
-        fs::write(&hand_written, restated.as_bytes()).expect("write the control template");
-        let refusal = render_declaration_document(&hand_written, "tenant-a", &authored)
-            .expect_err("a restated digest is refused");
-        let _ = fs::remove_dir_all(
-            hand_written
-                .ancestors()
-                .nth(3)
-                .expect("the template package"),
-        );
-        assert!(
-            refusal.to_string().contains("authored once"),
-            "the refusal names the single authored site: {refusal}"
-        );
-    }
-
     /// A palette template renders into the package scope with the store alias
     /// of its binding selection, and states the packages it imports. An
     /// unnamed alias is refused (wamn-hw3n).
@@ -575,20 +340,5 @@ mod tests {
             refusal.to_string().contains("no binding selection"),
             "the refusal names the missing selection: {refusal}"
         );
-    }
-
-    fn dependency_digests(document: &Value) -> Vec<String> {
-        document
-            .get("operations")
-            .and_then(Value::as_object)
-            .into_iter()
-            .flat_map(|operations| operations.values())
-            .filter_map(|operation| operation.get("dependencies"))
-            .filter_map(Value::as_array)
-            .flatten()
-            .filter_map(|dependency| dependency.get("digest"))
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect()
     }
 }

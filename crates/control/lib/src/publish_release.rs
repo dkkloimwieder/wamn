@@ -514,6 +514,7 @@ pub fn assemble_local_release(
         &request,
         &route_contracts,
         &release_components,
+        &package_manifests,
         &mut components,
     )?;
     let registrations = derive_serving_registrations(&package_manifests, &entry_targets)?;
@@ -997,7 +998,13 @@ async fn publish_release_from_sources(
             .push(target.clone());
     }
 
-    let routes = project_routes(request, route_contracts, component_facts, &mut components)?;
+    let routes = project_routes(
+        request,
+        route_contracts,
+        component_facts,
+        package_manifests,
+        &mut components,
+    )?;
     let registrations = derive_serving_registrations(package_manifests, &entry_targets)?;
     refuse_unregistered_one_node_wirings(&one_node, &registrations)?;
     let (route_attachments, wiring_attachments) =
@@ -1591,7 +1598,12 @@ fn project_wiring_document(
             error,
         )
     })?;
-    resolve_component_dependency_closure(&resolved, &component_facts.facts, rule)?;
+    resolve_component_dependency_closure(
+        &resolved,
+        &component_facts.facts,
+        package_manifests,
+        rule,
+    )?;
     validate_anonymous_wiring_closure(request.attachments, target, document, &resolved)?;
     let entry_operation = resolved_wiring_entry_operation(document, &resolved)?;
     wirings.insert(ServingWiring::new(
@@ -1603,8 +1615,6 @@ fn project_wiring_document(
             component_facts.with_statement_instances(project_serving_component(
                 fact,
                 component_facts.connections(fact)?,
-                &component_facts.facts,
-                rule,
             )?)?,
         );
     }
@@ -1619,6 +1629,7 @@ fn project_routes(
     request: &PublishReleaseManifest<'_>,
     route_contracts: &RouteContracts,
     component_facts: &ReleaseComponents,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
@@ -1664,13 +1675,16 @@ fn project_routes(
                 )
             })?;
         let roots = BTreeMap::from([(operation.clone(), fact.clone())]);
-        resolve_component_dependency_closure(&roots, &component_facts.facts, rule)?;
+        resolve_component_dependency_closure(
+            &roots,
+            &component_facts.facts,
+            package_manifests,
+            rule,
+        )?;
         components.insert(
             component_facts.with_statement_instances(project_serving_component(
                 fact,
                 component_facts.connections(fact)?,
-                &component_facts.facts,
-                rule,
             )?)?,
         );
         routes.insert(ServingRoute {
@@ -2168,7 +2182,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: registered_operation.map(str::to_owned),
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -2227,13 +2241,7 @@ mod tests {
                 descriptor_components(tenant, &packages, std::slice::from_ref(&opened)).unwrap();
             let fact = &components.facts[&("base".to_owned(), "1.0.0".to_owned())][0];
             assert_eq!(fact.scope.tenant_id, tenant);
-            project_serving_component(
-                fact,
-                components.connections(fact).unwrap(),
-                &components.facts,
-                DependencyDigestRule::Declared,
-            )
-            .unwrap()
+            project_serving_component(fact, components.connections(fact).unwrap()).unwrap()
         };
         let first = project("acme--plant--dev");
         let second = project("acme--plant--prod");
@@ -2364,16 +2372,13 @@ mod tests {
         serde_json::from_value(document).expect("the mutated handler manifest parses")
     }
 
-    /// Render the fixture dependency from its authored digest.
+    /// Render the fixture overlay declaration.
     fn fixture_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/observer_package");
-        let base_digests = crate::component_declaration::authored_base_digests(&root)
-            .expect("the fixture overlay manifest authors its base digest");
         let document = crate::component_declaration::render_declaration_document(
             &root.join("component.json.in"),
             "tenant-a",
-            &base_digests,
         )
         .expect("the repository component declaration renders");
         serde_json::from_value(document)
@@ -2405,7 +2410,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: declared.registered_operation,
-                    dependencies: declared.dependencies,
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -2718,8 +2723,24 @@ mod tests {
         assert!(!DependencyDigestRule::Built.matches_declared_digest());
     }
 
+    /// The manifest of package `id`@`version` with one base pinned at
+    /// `digest`.
+    fn pinning_manifest(
+        id: &str,
+        version: &str,
+        base: (&str, &str),
+        digest: &str,
+    ) -> wamn_schema_generator::PackageManifest {
+        let mut document = serde_json::to_value(dependency_manifest(digest))
+            .expect("the dependency fixture manifest serializes");
+        document["package"] = serde_json::json!({"id": id, "version": version});
+        document["base_dependencies"]["base"]["package"] = serde_json::json!(base.0);
+        document["base_dependencies"]["base"]["version"] = serde_json::json!(base.1);
+        serde_json::from_value(document).expect("the pinning manifest parses")
+    }
+
     #[test]
-    fn component_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {
+    fn base_dependencies_expand_the_exact_release_closure_and_refuse_cycles() {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
@@ -2728,16 +2749,6 @@ mod tests {
         overlay.scope.package_id = "overlay".to_owned();
         overlay.scope.package_version = "3.0.0".to_owned();
         overlay.component_digest = format!("sha256:{}", "b".repeat(64));
-        overlay
-            .operations
-            .get_mut(overlay_operation)
-            .expect("the overlay operation exists")
-            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            package: "base".to_owned(),
-            version: "1.0.0".to_owned(),
-            digest: base.component_digest.clone(),
-            operation: base_operation.to_owned(),
-        }];
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
         let facts = BTreeMap::from([
             (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
@@ -2746,38 +2757,51 @@ mod tests {
                 vec![overlay.clone()],
             ),
         ]);
+        let manifests = BTreeMap::from([(
+            "overlay".to_owned(),
+            pinning_manifest(
+                "overlay",
+                "3.0.0",
+                ("base", "1.0.0"),
+                &base.component_digest,
+            ),
+        )]);
 
-        let closure =
-            resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Declared)
-                .expect("the exact dependency expands the release component closure");
+        let closure = resolve_component_dependency_closure(
+            &roots,
+            &facts,
+            &manifests,
+            DependencyDigestRule::Declared,
+        )
+        .expect("the pinned base expands the release component closure");
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
-        let folded =
-            project_serving_component(&overlay, Vec::new(), &facts, DependencyDigestRule::Declared)
-                .expect("the composed overlay folds its base");
+        let projected =
+            project_serving_component(&overlay, Vec::new()).expect("the composed overlay projects");
         assert_eq!(
-            folded.operations[overlay_operation].permissions,
+            projected.operations[overlay_operation].permissions,
             BTreeSet::from([overlay_operation.to_owned()]),
             "the overlay entry requires its own permission alone"
         );
 
-        base.operations
-            .get_mut(base_operation)
-            .expect("the base operation exists")
-            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            package: "overlay".to_owned(),
-            version: "3.0.0".to_owned(),
-            digest: overlay.component_digest.clone(),
-            operation: overlay_operation.to_owned(),
-        }];
-        let cyclic = BTreeMap::from([
-            (("base".to_owned(), "1.0.0".to_owned()), vec![base]),
-            (("overlay".to_owned(), "3.0.0".to_owned()), vec![overlay]),
-        ]);
-        let error =
-            resolve_component_dependency_closure(&roots, &cyclic, DependencyDigestRule::Declared)
-                .expect_err("an exact component dependency cycle was accepted");
+        let mut cyclic = manifests;
+        cyclic.insert(
+            "base".to_owned(),
+            pinning_manifest(
+                "base",
+                "1.0.0",
+                ("overlay", "3.0.0"),
+                &overlay.component_digest,
+            ),
+        );
+        let error = resolve_component_dependency_closure(
+            &roots,
+            &facts,
+            &cyclic,
+            DependencyDigestRule::Declared,
+        )
+        .expect_err("a base dependency cycle was accepted");
         assert_eq!(
             error.error_type(),
             PublishManifestErrorType::OperationDependency
@@ -2785,12 +2809,12 @@ mod tests {
         assert!(error.detail().contains("cycle"));
     }
 
-    /// The SECOND authored pin wamn-10yt.48 found. The overlay's component
-    /// declaration under `publication/components/` names its base dependency by
-    /// digest, and Generate never rewrites that file, so the closure walker
-    /// hits the same wall the wiring resolver does. One rule governs both.
+    /// wamn-10yt.48 at the closure: an author edits a base package, the built
+    /// digest moves, and the overlay's authored pin still names the old bytes.
+    /// A durable release refuses that; a disposable target built both halves
+    /// from this same tree, so it resolves the base by coordinate.
     #[test]
-    fn a_disposable_target_expands_a_closure_whose_declared_dependency_digest_moved() {
+    fn a_disposable_target_expands_a_closure_whose_pinned_base_digest_moved() {
         let base_operation = "base:stock/record-widget@1.0.0";
         let overlay_operation = "overlay:stock/record-widget@3.0.0";
         let mut base = closure_component("base-component", Some(base_operation));
@@ -2801,16 +2825,6 @@ mod tests {
         overlay.component_digest = format!("sha256:{}", "b".repeat(64));
         let stale_pin = format!("sha256:{}", "d".repeat(64));
         assert_ne!(stale_pin, base.component_digest);
-        overlay
-            .operations
-            .get_mut(overlay_operation)
-            .expect("the overlay operation exists")
-            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            package: "base".to_owned(),
-            version: "1.0.0".to_owned(),
-            digest: stale_pin,
-            operation: base_operation.to_owned(),
-        }];
         let roots = BTreeMap::from([("entry".to_owned(), overlay.clone())]);
         let facts = BTreeMap::from([
             (("base".to_owned(), "1.0.0".to_owned()), vec![base.clone()]),
@@ -2819,18 +2833,30 @@ mod tests {
                 vec![overlay.clone()],
             ),
         ]);
+        let manifests = BTreeMap::from([(
+            "overlay".to_owned(),
+            pinning_manifest("overlay", "3.0.0", ("base", "1.0.0"), &stale_pin),
+        )]);
 
-        let refusal =
-            resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Declared)
-                .expect_err("a durable release still demands the declared bytes");
+        let refusal = resolve_component_dependency_closure(
+            &roots,
+            &facts,
+            &manifests,
+            DependencyDigestRule::Declared,
+        )
+        .expect_err("a durable release still demands the pinned bytes");
         assert_eq!(
             refusal.error_type(),
             PublishManifestErrorType::OperationDependency
         );
 
-        let closure =
-            resolve_component_dependency_closure(&roots, &facts, DependencyDigestRule::Built)
-                .expect("a disposable target expands the closure it just built");
+        let closure = resolve_component_dependency_closure(
+            &roots,
+            &facts,
+            &manifests,
+            DependencyDigestRule::Built,
+        )
+        .expect("a disposable target expands the closure it just built");
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
@@ -2859,13 +2885,8 @@ mod tests {
                 },
             );
 
-        let serving = project_serving_component(
-            &admitted,
-            Vec::new(),
-            &BTreeMap::new(),
-            DependencyDigestRule::Declared,
-        )
-        .expect("an admitted component projects to serving facts");
+        let serving = project_serving_component(&admitted, Vec::new())
+            .expect("an admitted component projects to serving facts");
 
         assert_eq!(
             serving.operations[operation].statement(&path),
@@ -2909,31 +2930,26 @@ mod tests {
              auth-policy modes = [\"pat\"]"
         );
 
-        let mut dependency_facts = facts.clone();
-        dependency_facts
+        let mut transacted_facts = facts.clone();
+        transacted_facts
             .get_mut("entry")
             .unwrap()
             .operations
             .get_mut("run")
             .unwrap()
-            .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            package: "base".to_owned(),
-            version: "1.0.0".to_owned(),
-            digest: DIGEST.to_owned(),
-            operation: "base:widget/get@1.0.0".to_owned(),
-        }];
+            .host_transaction = true;
         let error = validate_anonymous_wiring_closure(
             &anonymous,
             &target,
             &closure_document(false),
-            &dependency_facts,
+            &transacted_facts,
         )
-        .expect_err("anonymous dependency reachability must fail at release publish");
+        .expect_err("an anonymous path to a host transaction must fail at release publish");
         assert_eq!(
             error.error_type(),
-            PublishManifestErrorType::UnauthenticatedRegisteredOperation
+            PublishManifestErrorType::UnauthenticatedWrite
         );
-        assert!(error.detail().contains("through component dependency"));
+        assert!(error.detail().contains("begins a host transaction"));
 
         assert!(
             validate_anonymous_wiring_closure(

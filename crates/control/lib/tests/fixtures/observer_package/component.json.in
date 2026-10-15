@@ -12,14 +12,6 @@
       "parameters": []
     },
     "observer-fixture:item/get": {
-      "dependencies": [
-        {
-          "package": "source_fixture",
-          "version": "1.0.0",
-          "digest": "__BASE_DIGEST__",
-          "operation": "source-fixture:item/get"
-        }
-      ],
       "input-ports": [],
       "output-ports": [],
       "parameters": []

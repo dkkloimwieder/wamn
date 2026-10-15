@@ -707,7 +707,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     for source in source_components(root, &manifest)? {
         let (document, platform_packages) = match &source.template {
             ComponentTemplate::Owned(template) => (
-                render_declaration_document(template, ADMISSION_TENANT, &base_digests)?,
+                render_declaration_document(template, ADMISSION_TENANT)?,
                 OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec(),
             ),
             ComponentTemplate::Palette {
@@ -735,6 +735,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
             component_bytes: source.file.clone(),
             declaration: declaration.0.clone(),
             admitted_platform_packages: platform_packages,
+            base_digests: base_digests.values().map(ToString::to_string).collect(),
         })
         .with_context(|| format!("admit component {}", source.name))?;
         let facts = admission.facts().clone();

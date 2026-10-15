@@ -1,9 +1,12 @@
 //! Composes an overlay component with its bases into one component.
 //!
-//! The overlay imports each base operation it depends on. The declarations
-//! name each link, so this tool plugs them by declaration and never by
-//! matching names. Each member is embedded with its bytes unchanged, so
-//! publish can hash each embedded component.
+//! The bases are those the overlay package pins in its manifest's
+//! `base_dependencies`. The overlay imports each base operation it calls under
+//! the base's own export name, so this tool plugs each overlay import that
+//! exactly one base exports. A base the overlay calls nothing of is not a
+//! member, and an overlay that calls no base is returned unchanged. Each
+//! member is embedded with its bytes unchanged, so publish can hash each
+//! embedded component.
 //!
 //! Each member that imports `wamn:postgres/statements` gets an outer import
 //! of its own, named by the member's position in the composition (`sql-0`,
@@ -13,21 +16,13 @@
 //! in the composed bytes and the host can bind each import to the statements
 //! of that member (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, bail};
-use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use wac_graph::types::Package;
+use wac_graph::types::{Package, Types};
 use wac_graph::{CompositionGraph, EncodeOptions, NodeId, PackageId};
 use wamn_component_policy::{STATEMENT_INSTANCES_SECTION, STATEMENTS_INTERFACE};
-
-/// One base member: its component declaration and its component bytes.
-#[derive(Debug)]
-pub struct Base {
-    pub declaration: Value,
-    pub bytes: Vec<u8>,
-}
 
 /// One registered and instantiated member of the composition.
 #[derive(Debug, Clone, Copy)]
@@ -38,73 +33,54 @@ struct Member {
     digest: [u8; 32],
 }
 
-/// Composes the overlay and its bases into one component.
-pub fn compose(
-    overlay_declaration: &Value,
-    overlay: Vec<u8>,
-    bases: Vec<Base>,
-) -> anyhow::Result<Vec<u8>> {
+/// Composes the overlay and the bases it calls into one component.
+pub fn compose(overlay: Vec<u8>, bases: Vec<Vec<u8>>) -> anyhow::Result<Vec<u8>> {
+    let overlay_imports = names(&overlay, "overlay", false)?;
+    // Each base export the overlay imports, and the base that exports it.
+    let mut plugs = BTreeMap::<String, usize>::new();
+    let mut called = BTreeSet::new();
+    for (index, base) in bases.iter().enumerate() {
+        for export in names(base, &format!("base-{index}"), true)? {
+            if !overlay_imports.contains(&export) {
+                continue;
+            }
+            if plugs.insert(export.clone(), index).is_some() {
+                bail!("two bases export {export}, which the overlay imports");
+            }
+            called.insert(index);
+        }
+    }
+    if called.is_empty() {
+        return Ok(overlay);
+    }
+
     let mut graph = CompositionGraph::new();
-    let mut members = Vec::with_capacity(1 + bases.len());
+    let mut members = Vec::with_capacity(1 + called.len());
 
     let overlay = instantiate(&mut graph, "wamn-member:overlay", overlay)?;
 
-    let mut base_members = Vec::with_capacity(bases.len());
-    for (index, base) in bases.into_iter().enumerate() {
-        let package = text(&base.declaration, "/scope/package-id", "base declaration")?;
-        let version = text(
-            &base.declaration,
-            "/scope/package-version",
-            "base declaration",
-        )?;
-        let member = instantiate(&mut graph, &format!("wamn-member:base-{index}"), base.bytes)?;
+    let mut base_members = BTreeMap::new();
+    for (index, bytes) in bases.into_iter().enumerate() {
+        if !called.contains(&index) {
+            continue;
+        }
+        let member = instantiate(&mut graph, &format!("wamn-member:base-{index}"), bytes)?;
         members.push(member);
-        base_members.push((package, version, base.declaration, member));
+        base_members.insert(index, member);
     }
 
     // Overlay interfaces use base types. An exported interface may only use
     // types that an earlier import or export names, so the overlay exports last.
     members.push(overlay);
 
-    let operations = overlay_declaration
-        .get("operations")
-        .and_then(Value::as_object)
-        .context("the overlay declaration has no operations object")?;
-    for (operation, entry) in operations {
-        let dependencies = entry
-            .get("dependencies")
-            .and_then(Value::as_array)
-            .map_or(&[][..], Vec::as_slice);
-        for dependency in dependencies {
-            let context = format!("dependency of overlay operation {operation}");
-            let package = text(dependency, "/package", &context)?;
-            let version = text(dependency, "/version", &context)?;
-            let base_operation = text(dependency, "/operation", &context)?;
-            let Some((_, _, base_declaration, base)) = base_members
-                .iter()
-                .find(|(id, release, _, _)| *id == package && *release == version)
-            else {
-                bail!(
-                    "{operation} depends on {package}@{version}, but no base declaration names it"
-                );
-            };
-            if base_declaration
-                .get("operations")
-                .and_then(|operations| operations.get(&base_operation))
-                .is_none()
-            {
-                bail!(
-                    "{operation} depends on {base_operation}, which {package}@{version} does not declare"
-                );
-            }
-
-            let export = graph
-                .alias_instance_export(base.instance, &base_operation)
-                .with_context(|| format!("{package}@{version} does not export {base_operation}"))?;
-            graph
-                .set_instantiation_argument(overlay.instance, &base_operation, export)
-                .with_context(|| format!("plug {base_operation} into the overlay"))?;
-        }
+    for (export, index) in &plugs {
+        let base = base_members[index];
+        let argument = graph
+            .alias_instance_export(base.instance, export)
+            .with_context(|| format!("base-{index} does not export {export}"))?;
+        graph
+            .set_instantiation_argument(overlay.instance, export, argument)
+            .with_context(|| format!("plug {export} into the overlay"))?;
     }
 
     let statement_instances = name_statement_instances(&mut graph, &members)?;
@@ -140,6 +116,20 @@ pub fn compose(
         );
     }
     Ok(composed)
+}
+
+/// The import names, or with `exports` the export names, of one component.
+fn names(bytes: &[u8], name: &str, exports: bool) -> anyhow::Result<BTreeSet<String>> {
+    let mut types = Types::default();
+    let package = Package::from_bytes(name, None, bytes.to_vec(), &mut types)
+        .with_context(|| format!("read member component {name}"))?;
+    let world = &types[package.ty()];
+    let names = if exports {
+        world.exports.keys()
+    } else {
+        world.imports.keys()
+    };
+    Ok(names.cloned().collect())
 }
 
 /// Give each member that imports the statements interface an outer import of
@@ -217,24 +207,15 @@ fn instantiate(graph: &mut CompositionGraph, name: &str, bytes: Vec<u8>) -> anyh
     })
 }
 
-fn text(value: &Value, pointer: &str, context: &str) -> anyhow::Result<String> {
-    value
-        .pointer(pointer)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .with_context(|| format!("{context} has no text at {pointer}"))
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use serde_json::json;
     use sha2::{Digest, Sha256};
     use wac_graph::types::{Package, Types};
     use wasmparser::{Parser, Payload};
 
-    use super::{Base, compose};
+    use super::compose;
 
     const HOST_LOG: &str =
         r#"(import "test:host/log@1.0.0" (instance (export "log" (func (param "x" u32)))))"#;
@@ -270,22 +251,6 @@ mod tests {
         component(HOST_LOG, "test:base/op@1.0.0")
     }
 
-    fn overlay_declaration() -> serde_json::Value {
-        json!({"operations": {"test:overlay/main@1.0.0": {"dependencies": [{
-            "package": "test_base",
-            "version": "1.0.0",
-            "digest": "__BASE_DIGEST__",
-            "operation": "test:base/op@1.0.0"
-        }]}}})
-    }
-
-    fn base_declaration() -> serde_json::Value {
-        json!({
-            "scope": {"package-id": "test_base", "package-version": "1.0.0"},
-            "operations": {"test:base/op@1.0.0": {}}
-        })
-    }
-
     fn nested_component_digests(bytes: &[u8]) -> BTreeSet<Vec<u8>> {
         Parser::new(0)
             .parse_all(bytes)
@@ -303,20 +268,12 @@ mod tests {
     }
 
     #[test]
-    fn composition_embeds_each_member_unchanged_and_plugs_by_declaration() {
+    fn composition_embeds_each_member_unchanged_and_plugs_by_export_name() {
         let overlay = overlay();
         let base = base();
         let members = [&overlay, &base];
 
-        let composed = compose(
-            &overlay_declaration(),
-            overlay.clone(),
-            vec![Base {
-                declaration: base_declaration(),
-                bytes: base.clone(),
-            }],
-        )
-        .expect("the members compose");
+        let composed = compose(overlay.clone(), vec![base.clone()]).expect("the members compose");
 
         let embedded = nested_component_digests(&composed);
         for member in members {
@@ -359,23 +316,8 @@ mod tests {
             "test:overlay/main@1.0.0",
         );
         let base = component(STATEMENTS_IMPORT, "test:base/op@1.0.0");
-        let declaration = json!({"operations": {"test:overlay/main@1.0.0": {"dependencies": [{
-            "package": "test_base",
-            "version": "1.0.0",
-            "operation": "test:base/op@1.0.0"
-        }]}}});
-        let composed = compose(
-            &declaration,
-            overlay.clone(),
-            vec![Base {
-                declaration: json!({
-                    "scope": {"package-id": "test_base", "package-version": "1.0.0"},
-                    "operations": {"test:base/op@1.0.0": {}}
-                }),
-                bytes: base.clone(),
-            }],
-        )
-        .expect("two statements importers compose");
+        let composed =
+            compose(overlay.clone(), vec![base.clone()]).expect("two statements importers compose");
 
         let mut imports = Vec::new();
         let mut section = None;
@@ -430,5 +372,25 @@ mod tests {
                 ("sql-1".to_owned(), format!("sha256:{}", hex(&overlay))),
             ])
         );
+    }
+
+    /// A pinned base that the overlay calls nothing of is no member, and an
+    /// overlay that calls no base is returned unchanged.
+    #[test]
+    fn an_overlay_that_calls_no_base_is_returned_unchanged() {
+        let overlay = component(HOST_LOG, "test:overlay/main@1.0.0");
+        assert_eq!(
+            compose(overlay.clone(), vec![base()]).expect("the overlay composes"),
+            overlay
+        );
+    }
+
+    /// Two bases that both export an operation the overlay imports leave the
+    /// link ambiguous, so the composition refuses.
+    #[test]
+    fn two_bases_exporting_one_imported_operation_refuse() {
+        let error =
+            compose(overlay(), vec![base(), base()]).expect_err("an ambiguous link was composed");
+        assert!(error.to_string().contains("two bases export"), "{error}");
     }
 }

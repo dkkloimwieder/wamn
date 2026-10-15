@@ -1,14 +1,13 @@
 //! The immutable release-serving manifest mounted by every serving process.
 //!
 //! Format 9 closes over exact package membership, component digests, routes,
-//! the permissions and SQL statements of each export's call graph, and route
-//! attachments. Each component is its package, its admitted descriptor (the
-//! bytes of the descriptor layer of its package artifact,
-//! docs/plan/platform-deploy.md §7.2, contract A) and its folded operations.
-//! The descriptor is the one owner of the component name, interface version
-//! and digest. Publish folds each call graph, because an application's
-//! components compose at build into one component. A route calls one component
-//! export. The workflow section holds the wiring definitions, the attachments
+//! the permission and SQL statements of each export, and route attachments.
+//! Each component is its package, its admitted descriptor (the bytes of the
+//! descriptor layer of its package artifact, docs/plan/platform-deploy.md
+//! §7.2, contract A) and its released operations. The descriptor is the one
+//! owner of the component name, interface version and digest. An
+//! application's components compose at build into one component. A route
+//! calls one component export. The workflow section holds the wiring definitions, the attachments
 //! that start a wiring, and the registrations. A wiring is a graph the router
 //! walks. It contains no flow or
 //! execution-plan identity. Producers must source every member from current
@@ -33,10 +32,10 @@ use serde_json::Value;
 
 use crate::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, AttachmentType,
-    CatalogIdentityError, ComponentConnection, ComponentDescriptor, ComponentOperationDependency,
-    ComponentSqlStatement, DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet,
-    ManifestDigest, PackageCoordinate, WiringDocument,
-    package::validate_canonical_operation_for_package, validate_digest, validate_text,
+    CatalogIdentityError, ComponentConnection, ComponentDescriptor, ComponentSqlStatement,
+    DefinitionHash, HASH_PREFIX, HostAttachment, HostRouteSet, ManifestDigest, PackageCoordinate,
+    WiringDocument, package::validate_canonical_operation_for_package, validate_digest,
+    validate_text,
 };
 
 /// The only serving-manifest format admitted by this revision.
@@ -155,7 +154,7 @@ pub struct ServingComponentOperation {
     /// Canonical JSON for this registered operation's admitted committed result schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<String>,
-    /// Exact SQL available while this export is active: the union over its call graph.
+    /// Exact SQL this export declares.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub statements: BTreeMap<String, ComponentSqlStatement>,
 }
@@ -166,10 +165,7 @@ impl ServingComponentOperation {
         self.statements.get(path)
     }
 
-    /// Whether this folded operation carries the admitted operation's own facts.
-    ///
-    /// Publish only adds to an operation when it folds the call graph, so the
-    /// loaded admitted fact must be contained in the released operation.
+    /// Whether this released operation carries the admitted operation's own facts.
     pub fn carries(&self, admitted: &AdmittedComponentOperation) -> bool {
         let schema = admitted.committed_result_schema.as_ref().map(|schema| {
             String::from_utf8(wamn_execution_contract::canonical_json_bytes(
@@ -249,24 +245,22 @@ impl PartialOrd for ServingComponent {
 }
 
 impl ServingComponent {
-    /// Project one admitted component and fold each export's call graph.
+    /// Project one admitted component.
     ///
     /// An application's components compose at build into one component, so a
-    /// dependency is a component-model call inside these bytes, with no host
-    /// between. Publish decides the authority of that call here, once:
-    /// `resolve` returns the admitted fact of each dependency's base. Every
-    /// export then carries its own permission and the union of the SQL
-    /// statements of its call graph. The descriptor is `fact` with its
-    /// `connections`.
-    pub fn project<'a>(
-        fact: &'a AdmittedComponent,
+    /// call to a base is a component-model call inside these bytes, with no
+    /// host between. Every export carries its own permission and its own SQL
+    /// statements; each member reaches its own statements through its named
+    /// import ([`Self::with_statement_instances`]). The descriptor is `fact`
+    /// with its `connections`.
+    pub fn project(
+        fact: &AdmittedComponent,
         connections: Vec<ComponentConnection>,
-        resolve: &dyn Fn(&ComponentOperationDependency) -> Option<&'a AdmittedComponent>,
     ) -> Result<Self, CatalogIdentityError> {
         ArtifactHash::parse(fact.component_digest.clone())?;
         let mut operations = BTreeMap::new();
         for (name, operation) in &fact.operations {
-            let mut folded = ServingComponentOperation {
+            let released = ServingComponentOperation {
                 registered_operation: operation.registered_operation.clone(),
                 permissions: operation.registered_operation.iter().cloned().collect(),
                 committed_result_schema: operation.committed_result_schema.as_ref().map(|schema| {
@@ -275,10 +269,9 @@ impl ServingComponent {
                     ))
                     .expect("canonical JSON uses UTF-8")
                 }),
-                statements: BTreeMap::new(),
+                statements: operation.statements.clone(),
             };
-            fold_call_graph(fact, name, resolve, &mut Vec::new(), &mut folded)?;
-            operations.insert(name.clone(), folded);
+            operations.insert(name.clone(), released);
         }
         Ok(Self {
             package_id: fact.scope.package_id.clone(),
@@ -346,51 +339,6 @@ fn own_statements(
         }
     }
     Ok(statements)
-}
-
-/// Merge one operation and everything it calls into `folded`.
-fn fold_call_graph<'a>(
-    fact: &'a AdmittedComponent,
-    operation_name: &str,
-    resolve: &dyn Fn(&ComponentOperationDependency) -> Option<&'a AdmittedComponent>,
-    path: &mut Vec<(String, String)>,
-    folded: &mut ServingComponentOperation,
-) -> Result<(), CatalogIdentityError> {
-    let key = (fact.component_digest.clone(), operation_name.to_owned());
-    if path.contains(&key) {
-        return invalid(format!(
-            "operation {operation_name:?} calls itself through its dependencies"
-        ));
-    }
-    let operation =
-        fact.operation(operation_name)
-            .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
-                message: format!(
-                    "component {:?} does not export operation {operation_name:?}",
-                    fact.component
-                ),
-            })?;
-    path.push(key);
-    for (path, statement) in &operation.statements {
-        if let Some(previous) = folded.statements.insert(path.clone(), statement.clone())
-            && &previous != statement
-        {
-            return invalid(format!(
-                "statement {path:?} has two different facts in the call graph of one export"
-            ));
-        }
-    }
-    for dependency in &operation.dependencies {
-        let base = resolve(dependency).ok_or_else(|| CatalogIdentityError::InvalidDefinition {
-            message: format!(
-                "component dependency {}@{} operation {:?} has no admitted fact",
-                dependency.package, dependency.version, dependency.operation
-            ),
-        })?;
-        fold_call_graph(base, &dependency.operation, resolve, path, folded)?;
-    }
-    path.pop();
-    Ok(())
 }
 
 /// One immutable wiring definition in the release closure: its package and
@@ -1861,20 +1809,13 @@ mod tests {
             "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
         const OVERLAY_MEMBER: &str =
             "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
-        let dependency =
-            |package: &str, digest: &str, operation: &str| ComponentOperationDependency {
-                package: package.into(),
-                version: "1.0.0".into(),
-                digest: digest.into(),
-                operation: operation.into(),
-            };
         let first = admitted(
             "first",
             "1.0.0",
             COMPONENT_A,
             vec![(
                 "first:op/run@1.0.0",
-                admitted_operation("first:op/run@1.0.0", Some("SELECT 'first'"), Vec::new()),
+                admitted_operation("first:op/run@1.0.0", Some("SELECT 'first'")),
             )],
         );
         let second = admitted(
@@ -1883,7 +1824,7 @@ mod tests {
             COMPONENT_C,
             vec![(
                 "second:op/run@1.0.0",
-                admitted_operation("second:op/run@1.0.0", Some("SELECT 'second'"), Vec::new()),
+                admitted_operation("second:op/run@1.0.0", Some("SELECT 'second'")),
             )],
         );
         let overlay = admitted(
@@ -1892,14 +1833,7 @@ mod tests {
             COMPONENT_B,
             vec![(
                 "overlay:op/run@3.0.0",
-                admitted_operation(
-                    "overlay:op/run@3.0.0",
-                    Some("SELECT 'overlay'"),
-                    vec![
-                        dependency("first", COMPONENT_A, "first:op/run@1.0.0"),
-                        dependency("second", COMPONENT_C, "second:op/run@1.0.0"),
-                    ],
-                ),
+                admitted_operation("overlay:op/run@3.0.0", Some("SELECT 'overlay'")),
             )],
         );
         let bases = [&first, &second];
@@ -1914,11 +1848,10 @@ mod tests {
             ("sql-1".to_owned(), COMPONENT_C.to_owned()),
             ("sql-2".to_owned(), OVERLAY_MEMBER.to_owned()),
         ]);
-        let served =
-            ServingComponent::project(&overlay, Vec::new(), &|dependency| base(&dependency.digest))
-                .expect("the graph folds")
-                .with_statement_instances(&instances, &base)
-                .expect("each member binds its own statements");
+        let served = ServingComponent::project(&overlay, Vec::new())
+            .expect("the overlay projects")
+            .with_statement_instances(&instances, &base)
+            .expect("each member binds its own statements");
 
         let sql = |instance: &str| {
             served.statement_instances[instance]
@@ -1933,8 +1866,8 @@ mod tests {
 
         let mut unmatched = instances;
         unmatched.insert("sql-3".to_owned(), COMPONENT_B.to_owned());
-        ServingComponent::project(&overlay, Vec::new(), &|dependency| base(&dependency.digest))
-            .expect("the graph folds")
+        ServingComponent::project(&overlay, Vec::new())
+            .expect("the overlay projects")
             .with_statement_instances(&unmatched, &base)
             .expect_err("two members that match no base are refused");
     }
@@ -1942,12 +1875,11 @@ mod tests {
     fn admitted_operation(
         registered: &str,
         statement: Option<&str>,
-        dependencies: Vec<ComponentOperationDependency>,
     ) -> crate::AdmittedComponentOperation {
         crate::AdmittedComponentOperation {
             registered_operation: Some(registered.into()),
             committed_result_schema: None,
-            dependencies,
+            host_transaction: false,
             input_ports: Vec::new(),
             output_ports: Vec::new(),
             parameters: Vec::new(),
@@ -1971,34 +1903,19 @@ mod tests {
     }
 
     #[test]
-    fn projection_folds_each_call_graph_once_at_publish() {
+    fn projection_carries_each_exports_own_statements_only() {
         const OVERLAY: &str = "overlay:receiving/record@3.0.0";
-        const BASE: &str = "base:receiving/record@1.0.0";
-        let base_operation =
-            admitted_operation(BASE, Some("INSERT INTO receipt DEFAULT VALUES"), Vec::new());
-        let base = admitted("base", "1.0.0", COMPONENT_A, vec![(BASE, base_operation)]);
-        let dependency = ComponentOperationDependency {
-            package: "base".into(),
-            version: "1.0.0".into(),
-            digest: COMPONENT_A.into(),
-            operation: BASE.into(),
-        };
         let overlay = admitted(
             "overlay",
             "3.0.0",
             COMPONENT_B,
             vec![(
                 OVERLAY,
-                admitted_operation(
-                    OVERLAY,
-                    Some("INSERT INTO inspection DEFAULT VALUES"),
-                    vec![dependency.clone()],
-                ),
+                admitted_operation(OVERLAY, Some("INSERT INTO inspection DEFAULT VALUES")),
             )],
         );
-        let resolve = |_: &ComponentOperationDependency| Some(&base);
         let projected =
-            ServingComponent::project(&overlay, Vec::new(), &resolve).expect("the graph folds");
+            ServingComponent::project(&overlay, Vec::new()).expect("the overlay projects");
         let entry = &projected.operations[OVERLAY];
         assert_eq!(
             entry.permissions,
@@ -2006,34 +1923,9 @@ mod tests {
             "the entry requires its own permission only"
         );
         assert_eq!(
-            entry.statements.len(),
-            2,
-            "the entry holds the SQL of its whole graph"
+            entry.statements, overlay.operations[OVERLAY].statements,
+            "the entry holds its own SQL; a base's SQL is the base member's"
         );
-
-        let unresolved = |_: &ComponentOperationDependency| None;
-        let error = ServingComponent::project(&overlay, Vec::new(), &unresolved)
-            .expect_err("an unresolved dependency was folded");
-        assert!(error.to_string().contains("has no admitted fact"));
-
-        let mut cyclic_base = base.clone();
-        cyclic_base.operations.get_mut(BASE).unwrap().dependencies =
-            vec![ComponentOperationDependency {
-                package: "overlay".into(),
-                version: "3.0.0".into(),
-                digest: COMPONENT_B.into(),
-                operation: OVERLAY.into(),
-            }];
-        let cyclic = |dependency: &ComponentOperationDependency| {
-            Some(if dependency.package == "base" {
-                &cyclic_base
-            } else {
-                &overlay
-            })
-        };
-        let error = ServingComponent::project(&overlay, Vec::new(), &cyclic)
-            .expect_err("a call graph cycle was folded");
-        assert!(error.to_string().contains("calls itself"));
     }
 
     #[test]

@@ -145,6 +145,10 @@ pub struct AdmitComponentRequest {
     pub declaration: PathBuf,
     /// Closed platform-capability set granted to these exact bytes.
     pub admitted_platform_packages: Vec<String>,
+    /// The component digest of each base the package pins: the authored
+    /// `base_dependencies` digests, with a base this run built layered over
+    /// its pin for a disposable target.
+    pub base_digests: BTreeSet<String>,
 }
 
 /// Exact saved-byte admission reused by later publication.
@@ -256,6 +260,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
                 .admitted_platform_packages
                 .into_iter()
                 .collect::<BTreeSet<_>>(),
+            base_digests: args.base_digests,
         },
     )
     .context("validate exact component bytes")?;
@@ -263,7 +268,8 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     ensure_component_package_matches(&admitted, &package.coordinate)?;
     let statement_facts =
         load_component_statement_facts(&args.package, &package_manifest, &admitted)?;
-    bind_component_statement_facts(&mut admitted, statement_facts)
+    let host_transactions = host_transaction_exports(&package_manifest, &statement_facts)?;
+    bind_component_statement_facts(&mut admitted, statement_facts, &host_transactions)
         .context("bind generated SQL facts to exact component operations")?;
     let requirements = facts
         .connections
@@ -311,6 +317,31 @@ fn load_component_statement_facts(
     component: &AdmittedComponent,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     load_package_statements(package_root, manifest, Some(component))
+}
+
+/// The exports among `selected` whose item transaction the host begins, as
+/// the package manifest declares them.
+fn host_transaction_exports<T>(
+    manifest: &wamn_schema_generator::PackageManifest,
+    selected: &BTreeMap<String, T>,
+) -> Result<BTreeSet<String>, ComponentProjectionError> {
+    let mut exports = BTreeSet::new();
+    for local_operation in manifest.host_transaction_operations() {
+        let operation = wamn_schema_generator::canonical_operation_identity(
+            &manifest.package,
+            &local_operation,
+        )
+        .map_err(|error| {
+            ComponentProjectionError::new(
+                ComponentProjectionErrorType::StatementOperationMismatch,
+                format!("operation {local_operation:?} is not canonical: {error}"),
+            )
+        })?;
+        if selected.contains_key(&operation) {
+            exports.insert(operation);
+        }
+    }
+    Ok(exports)
 }
 
 /// Load every manifest operation's exact statement facts without component publication.
@@ -938,7 +969,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: Some("source-fixture:item/get@1.0.0".to_owned()),
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -975,7 +1006,7 @@ mod tests {
                                 .committed_result_schema
                                 .map(|schema| wamn_catalog::ComponentSchema { schema }),
                             registered_operation: operation.registered_operation,
-                            dependencies: operation.dependencies,
+                            host_transaction: false,
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),
                             parameters: Vec::new(),
@@ -1027,7 +1058,9 @@ mod tests {
         );
         assert_eq!(statements.len(), component.operations.len());
         assert!(statements.values().all(|operation| !operation.is_empty()));
-        bind_component_statement_facts(&mut component, statements)
+        let host_transactions = host_transaction_exports(&manifest, &statements)
+            .expect("the manifest names canonical operations");
+        bind_component_statement_facts(&mut component, statements, &host_transactions)
             .expect("manifest-backed facts bind to the exact exports");
 
         let operation = "source-fixture:item/get@1.0.0";
@@ -1123,7 +1156,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: None,
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -1172,7 +1205,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: registered.map(str::to_owned),
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -1373,7 +1406,6 @@ mod tests {
                         ComponentOperationDeclaration {
                             committed_result_schema: None,
                             registered_operation: None,
-                            dependencies: Vec::new(),
                             input_ports: Vec::new(),
                             output_ports: Vec::new(),
                             parameters: Vec::new(),
@@ -1382,6 +1414,7 @@ mod tests {
                     connections: Vec::new(),
                 },
                 admitted_platform_packages: std::collections::BTreeSet::new(),
+                base_digests: std::collections::BTreeSet::new(),
             },
         )
         .expect("fixture bytes admit")

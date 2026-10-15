@@ -9,10 +9,7 @@ use serde_json::json;
 use tokio::time::{Instant, timeout};
 use tokio_postgres::{Client, NoTls};
 use tracing::{Instrument as _, instrument::WithSubscriber as _};
-use wamn_catalog::{
-    ComponentDeclaration, ComponentOperationDeclaration, ComponentOperationDependency,
-    ComponentPackageScope,
-};
+use wamn_catalog::{ComponentDeclaration, ComponentOperationDeclaration, ComponentPackageScope};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
@@ -513,7 +510,7 @@ fn native_authenticated_call_graph_grant() {
 }
 
 /// The admission request of the composed member fixture: the root's one
-/// operation calls the child embedded in it.
+/// operation calls the child embedded in it, a base the package pins.
 fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
     ComponentAdmissionRequest {
         declaration: ComponentDeclaration {
@@ -529,12 +526,6 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
                 ComponentOperationDeclaration {
                     registered_operation: Some(ROOT.into()),
                     committed_result_schema: None,
-                    dependencies: vec![ComponentOperationDependency {
-                        package: "child".into(),
-                        version: "1.0.0".into(),
-                        digest: child_digest.into(),
-                        operation: CHILD.into(),
-                    }],
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -543,6 +534,7 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
             connections: Vec::new(),
         },
         admitted_platform_packages: BTreeSet::from(["wamn:postgres".to_owned()]),
+        base_digests: BTreeSet::from([child_digest.to_owned()]),
     }
 }
 
@@ -684,7 +676,7 @@ fn native_member_statement_instances() {
                 .begin_item(&component_id, ROOT, &request.facts)
                 .await
                 .expect("begin the item transaction")
-                .expect("the root's folded statements open a host transaction");
+                .expect("the root's declared host transaction begins");
             request.facts = fixture.policy.item_facts(&request.facts, &transaction);
             let result = invoke_native(&fixture.target().await, request)
                 .await
@@ -715,6 +707,131 @@ fn native_member_statement_instances() {
         fixture.assert_clean().await;
         server.stop().await;
     });
+}
+
+/// `wamn-azko6`: a command without SQL whose manifest declares `transaction =
+/// explicit_per_input` calls a member with SQL. Its released operation holds
+/// no statement, and the host still begins the item transaction from the
+/// declared field; the member works in it through its own instance, and the
+/// item commits or rolls back whole.
+#[test]
+fn native_sql_free_command_begins_from_its_transaction_field() {
+    super::run_isolated_test(
+        "authenticated::native_sql_free_command_begins_from_its_transaction_field",
+        async {
+            let (composed, child) = super::sql_free_instances_component();
+            let child_digest = wamn_engine::component_admission::component_digest(&child);
+            let engine = wamn_engine::build_engine(&[]).expect("validation engine");
+            let admitted = validate_component_admission(
+                &engine,
+                &composed,
+                member_admission_request(&child_digest),
+            )
+            .expect("publish admits the SQL-free root over its pinned child");
+            assert_eq!(
+                admitted.statement_instances,
+                BTreeMap::from([("sql-0".to_owned(), child_digest.clone())]),
+                "only the child imports statements"
+            );
+
+            let _lock = wamn_test_postgres::lock();
+            let database = wamn_test_postgres::database();
+            let (mut server, route) = authentication_fixture(database.url())
+                .await
+                .expect("authenticated member fixture");
+            let caller = authenticated(&route, true).await;
+            let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
+                .await
+                .expect("member SQL credentials");
+            let admin = connect(database.url()).await.expect("admin connection");
+            admin
+                .batch_execute(
+                    "CREATE TABLE public.native_policy_members(value text NOT NULL); \
+                     GRANT SELECT, INSERT ON public.native_policy_members TO wamn_app",
+                )
+                .await
+                .expect("member table");
+            let fixture = Fixture::build_with_reuse(
+                Case::SqlFreeRoot,
+                false,
+                true,
+                None,
+                None,
+                Some(postgres),
+            )
+            .await;
+            let released = fixture
+                .policy
+                .resources
+                .release
+                .manifest()
+                .components
+                .iter()
+                .find(|component| {
+                    component.descriptor.component_digest == fixture.root.component_digest
+                })
+                .expect("the release serves the root");
+            assert!(
+                released.operations[ROOT].statements.is_empty(),
+                "the released root operation holds no statement: nothing is folded"
+            );
+            assert!(fixture.root.operations[ROOT].host_transaction);
+            let rows = async || {
+                admin
+                    .query(
+                        "SELECT value FROM public.native_policy_members ORDER BY value",
+                        &[],
+                    )
+                    .await
+                    .expect("read member rows")
+                    .iter()
+                    .map(|row| row.get::<_, String>(0))
+                    .collect::<Vec<_>>()
+            };
+            let component_id = fixture
+                .workload
+                .facts_by_component_id
+                .iter()
+                .find_map(|(id, fact)| (fact == &fixture.root).then_some(id.clone()))
+                .expect("root native identity");
+
+            for (input, commits) in [(r#"[{"value":37}]"#, true), ("[]", false)] {
+                let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
+                request.input = input.into();
+                request.facts.caller = Some(caller.clone());
+                let transaction = fixture
+                    .policy
+                    .begin_item(&component_id, ROOT, &request.facts)
+                    .await
+                    .expect("begin the item transaction")
+                    .expect("the declared transaction field begins the item transaction");
+                request.facts = fixture.policy.item_facts(&request.facts, &transaction);
+                let result = invoke_native(&fixture.target().await, request)
+                    .await
+                    .expect("the composed root dispatches");
+                if commits {
+                    let emission = result.expect("the root answers the child's codes");
+                    assert_eq!(
+                        emission.payload, "kurr",
+                        "the child runs its own statement in the host transaction, is \
+                         refused the root path, and is refused begin and plain run"
+                    );
+                    transaction.commit().await.expect("commit the item");
+                    assert_eq!(rows().await, ["b0"], "the child's write commits");
+                } else {
+                    result.expect_err("the root fails after the child wrote");
+                    transaction.rollback().await.expect("roll back the item");
+                    assert_eq!(
+                        rows().await,
+                        ["b0"],
+                        "a rolled-back item leaves no write of the child"
+                    );
+                }
+            }
+            fixture.assert_clean().await;
+            server.stop().await;
+        },
+    );
 }
 
 #[test]

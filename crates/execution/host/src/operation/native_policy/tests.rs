@@ -11,10 +11,9 @@ use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
 use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentOperationDependency,
-    ComponentPackageScope, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
-    PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest,
-    ServingRelease,
+    AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ComponentSqlField,
+    ComponentSqlStatement, ComponentSqlValueType, PackageCoordinate,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
@@ -58,8 +57,8 @@ mod trace;
 mod warm;
 
 const ROOT: &str = "root:entry/run@1.0.0";
-/// An operation that the root's call graph reaches. Publish folds its grant
-/// into the root. No host runs it: composition embeds it in the root.
+/// An operation that the root calls. No host runs it: composition embeds it
+/// in the root, which runs under its own grant.
 const CHILD: &str = "child:entry/run@1.0.0";
 const OBSERVE: &str = "test:authority/observe@1.0.0";
 const STATEMENTS: &str = "wamn:postgres/statements@0.4.0";
@@ -106,11 +105,17 @@ enum Case {
     PostgresImport,
     /// A composed root and child, each with its own statements instance.
     MemberInstances,
+    /// A composed root without SQL whose operation declares a host
+    /// transaction, over a child with SQL.
+    SqlFreeRoot,
 }
 
 fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     if matches!(case, Case::MemberInstances) {
         return member_instances_component().0;
+    }
+    if matches!(case, Case::SqlFreeRoot) {
+        return sql_free_instances_component().0;
     }
     let postgres = if matches!(case, Case::PostgresImport) {
         format!(r#"(import "{STATEMENTS}" (instance))"#)
@@ -126,7 +131,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
         Case::RunDeadline | Case::Cancellation => "(loop br 0)",
         Case::Trap => "unreachable",
         Case::Success | Case::CalleeGrant | Case::StartDeadline | Case::PostgresImport => "",
-        Case::MemberInstances => {
+        Case::MemberInstances | Case::SqlFreeRoot => {
             unreachable!()
         }
     };
@@ -386,20 +391,67 @@ fn member_root_component() -> Vec<u8> {
 /// child's own bytes.
 fn member_instances_component() -> (Vec<u8>, Vec<u8>) {
     let child = member_child_component();
-    let composed = wamn_component_composer::compose(
-        &serde_json::json!({"operations": {ROOT: {"dependencies": [{
-            "package": "child", "version": "1.0.0", "operation": CHILD
-        }]}}}),
-        member_root_component(),
-        vec![wamn_component_composer::Base {
-            declaration: serde_json::json!({
-                "scope": {"package-id": "child", "package-version": "1.0.0"},
-                "operations": {CHILD: {}}
-            }),
-            bytes: child.clone(),
-        }],
-    )
-    .expect("compose the root over the child");
+    let composed = wamn_component_composer::compose(member_root_component(), vec![child.clone()])
+        .expect("compose the root over the child");
+    (composed, child)
+}
+
+/// A root without SQL and without a `statements` import: `run` calls the
+/// child and answers the child's four codes, own run first, then the root
+/// path's run, `begin` and plain `run`. An input of `[]` makes it fail after
+/// the child wrote, so the host rolls back.
+fn sql_free_root_component() -> Vec<u8> {
+    wat::parse_str(format!(
+        r#"(component
+      {NODE_TYPES}
+      (import "{CHILD}" (instance $child (export "run" (func async (result u32)))))
+      (core module $memory
+        (memory (export "memory") 16)
+        (global $next (mut i32) (i32.const 1024))
+        (func (export "realloc") (param i32 i32) (param $align i32) (param $size i32) (result i32)
+          (local $ptr i32) global.get $next local.get $align i32.const 1 i32.sub i32.add
+          i32.const 0 local.get $align i32.sub i32.and local.tee $ptr
+          local.get $size i32.add global.set $next local.get $ptr))
+      (core instance $memory (instantiate $memory))
+      (core func $child (canon lower (func $child "run")))
+      (core func $return (canon task.return (result (result $emission (error $error)))
+        (memory $memory "memory")))
+      (core module $main
+        (import "memory" "memory" (memory 16))
+        (import "host" "child" (func $child (result i32)))
+        (import "host" "return" (func $return
+          (param i32 i32 i32 i32 i32 i32 i32 i32 i64)))
+        (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
+        (func (export "run") (param $input i32) (result i32) (local $child i32)
+          call $child local.set $child
+          i32.const 700 local.get $child i32.store8
+          i32.const 701 local.get $child i32.const 8 i32.shr_u i32.store8
+          i32.const 702 local.get $child i32.const 16 i32.shr_u i32.store8
+          i32.const 703 local.get $child i32.const 24 i32.shr_u i32.store8
+          local.get $input i32.load offset=100 i32.const 2 i32.eq if
+            i32.const 1 i32.const 2 i32.const 0 i32.const 0 i32.const 0 i32.const 0
+            i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0 return end
+          i32.const 0 i32.const 700 i32.const 4 i32.const 0 i32.const 0 i32.const 0
+          i32.const 0 i32.const 0 i64.const 0 call $return i32.const 0))
+      (core instance $main (instantiate $main (with "memory" (instance $memory))
+        (with "host" (instance (export "child" (func $child)) (export "return" (func $return))))))
+      (func $run async (param "ctx" $context) (param "input" $json)
+        (result (result $emission (error $error)))
+        (canon lift (core func $main "run") (memory $memory "memory")
+          (realloc (func $memory "realloc")) async (callback (func $main "callback"))))
+      (instance $handler (export "json" (type $json)) (export "node-context" (type $context))
+        (export "node-error" (type $error)) (export "emission" (type $emission))
+        (export "run" (func $run)))
+      (export "{ROOT}" (instance $handler)))"#
+    ))
+    .expect("encode the SQL-free root")
+}
+
+/// The SQL-free root composed over the child, and the child's own bytes.
+fn sql_free_instances_component() -> (Vec<u8>, Vec<u8>) {
+    let child = member_child_component();
+    let composed = wamn_component_composer::compose(sql_free_root_component(), vec![child.clone()])
+        .expect("compose the SQL-free root over the child");
     (composed, child)
 }
 
@@ -543,12 +595,7 @@ impl HostPlugin for Observe {
     }
 }
 
-fn fact(
-    operation: &str,
-    bytes: &[u8],
-    registered: bool,
-    dependencies: Vec<ComponentOperationDependency>,
-) -> AdmittedComponent {
+fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
     AdmittedComponent {
         scope: ComponentPackageScope {
             tenant_id: "tenant-a".into(),
@@ -566,7 +613,7 @@ fn fact(
             AdmittedComponentOperation {
                 registered_operation: registered.then(|| operation.into()),
                 committed_result_schema: None,
-                dependencies,
+                host_transaction: false,
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),
@@ -620,10 +667,10 @@ impl Fixture {
     ) -> Self {
         let root_bytes = component_bytes(ROOT, case);
         let mut callees = Vec::new();
-        let members = matches!(case, Case::MemberInstances);
-        let dependencies = if callee || members {
+        let members = matches!(case, Case::MemberInstances | Case::SqlFreeRoot);
+        if callee || members {
             let child = if members {
-                let mut child = fact(CHILD, &member_instances_component().1, true, Vec::new());
+                let mut child = fact(CHILD, &member_child_component(), true);
                 child
                     .operations
                     .get_mut(CHILD)
@@ -631,32 +678,18 @@ impl Fixture {
                     .statements = member_statement(MEMBER_CHILD_SQL_PATH, MEMBER_CHILD_SQL);
                 child
             } else {
-                fact(
-                    CHILD,
-                    &component_bytes(CHILD, Case::Success),
-                    true,
-                    Vec::new(),
-                )
-            };
-            let dependency = ComponentOperationDependency {
-                package: "child".into(),
-                version: "1.0.0".into(),
-                digest: child.component_digest.clone(),
-                operation: CHILD.into(),
+                fact(CHILD, &component_bytes(CHILD, Case::Success), true)
             };
             callees.push(child);
-            vec![dependency]
-        } else {
-            Vec::new()
-        };
-        let mut root = fact(ROOT, &root_bytes, registered_root, dependencies);
-        if members {
-            root.operations
-                .get_mut(ROOT)
-                .expect("root operation")
-                .statements = member_statement(MEMBER_ROOT_SQL_PATH, MEMBER_ROOT_SQL);
         }
-        if matches!(case, Case::MemberInstances) {
+        let mut root = fact(ROOT, &root_bytes, registered_root);
+        if members {
+            let operation = root.operations.get_mut(ROOT).expect("root operation");
+            // The manifest declares `transaction = explicit_per_input`.
+            operation.host_transaction = true;
+            if matches!(case, Case::MemberInstances) {
+                operation.statements = member_statement(MEMBER_ROOT_SQL_PATH, MEMBER_ROOT_SQL);
+            }
             root.imports = vec![
                 "wamn:node/types@0.1.0".into(),
                 "wamn:postgres/types@0.4.0".into(),
@@ -666,12 +699,8 @@ impl Fixture {
         if matches!(case, Case::PostgresImport) {
             root.imports.push(STATEMENTS.into());
         }
-        let mut served = ServingComponent::project(&root, Vec::new(), &|dependency| {
-            callees
-                .iter()
-                .find(|callee| callee.component_digest == dependency.digest)
-        })
-        .expect("publish folds the root's call graph");
+        let mut served =
+            ServingComponent::project(&root, Vec::new()).expect("publish projects the root");
         if members {
             // Publish binds each member's own set by import name, as the
             // admitted descriptor's record names the members.
@@ -1060,8 +1089,8 @@ async fn run_case(case: Case) {
             }
             Case::Cancellation => unreachable!("cancellation has its own caller task"),
             Case::PostgresImport => unreachable!("the postgres bind case has its own test"),
-            Case::MemberInstances => {
-                unreachable!("member instances have their own authenticated test")
+            Case::MemberInstances | Case::SqlFreeRoot => {
+                unreachable!("member instances have their own authenticated tests")
             }
         }
     }
@@ -1478,9 +1507,8 @@ fn named_instances_without_released_sets_are_refused() {
     let (composed, _) = member_instances_component();
     let instances = wamn_engine::statement_instances::statement_instances(&composed)
         .expect("the composed root's record matches its graph");
-    let root = fact(ROOT, &composed, true, Vec::new());
-    let served = ServingComponent::project(&root, Vec::new(), &|_| None)
-        .expect("a root without dependencies projects");
+    let root = fact(ROOT, &composed, true);
+    let served = ServingComponent::project(&root, Vec::new()).expect("the root projects");
     let error = super::super::prepare_statement_members(&instances, &served)
         .expect_err("a release without the member sets cannot bind the imports");
     assert!(

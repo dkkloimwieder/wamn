@@ -5783,7 +5783,6 @@ dependencies = [
  "sha2 0.11.0",
  "wac-graph 0.12.0",
  "wamn-component-policy",
- "wamn-schema-generator",
  "wasmparser 0.261.0",
  "wat",
 ]

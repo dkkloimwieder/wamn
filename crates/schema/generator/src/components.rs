@@ -143,7 +143,7 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     }
     for (name, built) in owned {
         let built = virtualize(&repository, &virtualization, &allowlist, built).await?;
-        let file = compose(request, &repository, &manifest, &name, &built.file).await?;
+        let file = compose(request, &repository, &manifest, &built.file).await?;
         records.push((name, file));
     }
 
@@ -423,41 +423,20 @@ async fn run_tool(mut command: Command, partial: &Path, output: &Path, what: &st
     fs::rename(partial, output).with_context(|| format!("write {}", output.display()))
 }
 
-/// Compose an overlay whose component declaration names a base operation
-/// dependency with its bases. Any other component is returned as it is.
+/// Compose an overlay with the bases its manifest pins in
+/// `base_dependencies`. The composer returns an overlay that calls no base
+/// unchanged. A package without bases is returned as it is.
 async fn compose(
     request: &BuildRequest,
     repository: &Path,
     manifest: &PackageManifest,
-    component: &str,
     file: &Path,
 ) -> Result<PathBuf> {
     if manifest.base_dependencies.is_empty() {
         return Ok(file.to_owned());
     }
-    let declaration = request
-        .package_root
-        .join("publication/components")
-        .join(format!("{component}.json.in"));
-    let document: Value = read_json(&declaration)?;
-    let dependencies = document["operations"]
-        .as_object()
-        .into_iter()
-        .flat_map(serde_json::Map::values)
-        .any(|operation| {
-            operation["dependencies"]
-                .as_array()
-                .is_some_and(|dependencies| !dependencies.is_empty())
-        });
-    if !dependencies {
-        return Ok(file.to_owned());
-    }
     let mut command = tool(repository, COMPOSER);
-    command
-        .arg("--overlay-declaration")
-        .arg(&declaration)
-        .arg("--overlay")
-        .arg(file);
+    command.arg("--overlay").arg(file);
     for dependency in manifest.base_dependencies.values() {
         let base_output = package_output(&request.output_root, &dependency.package);
         let base_receipt = receipt::read(&base_output).with_context(|| {
@@ -483,15 +462,7 @@ async fn compose(
                 dependency.package
             );
         };
-        let base_declaration = request
-            .package_root
-            .join("..")
-            .join(&dependency.package)
-            .join("publication/components")
-            .join(format!("{base_component}.json.in"));
         command
-            .arg("--base-declaration")
-            .arg(&base_declaration)
             .arg("--base")
             .arg(component_file(&base_output, &base_receipt, base_component)?);
     }

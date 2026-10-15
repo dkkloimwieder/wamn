@@ -8,12 +8,6 @@
   "operations": {
     "client-acme-receiving:acme/record-receipt": {
       "registered-operation": "client-acme-receiving:acme/record-receipt",
-      "dependencies": [{
-        "package": "wamn_receiving",
-        "version": "2.2.0",
-        "digest": "__BASE_DIGEST__",
-        "operation": "wamn-receiving:receiving/record-receipt"
-      }],
       "input-ports": [{
         "name": "input",
         "schema": {

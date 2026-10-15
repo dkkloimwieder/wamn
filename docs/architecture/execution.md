@@ -17,7 +17,7 @@ A host plugs in through two traits.
 The cloud implements them as [`PlatformRouteAuthenticator`](../../crates/platform/runtime/src/plugins/route_authentication.rs) and [`RouterDeliveryBridge`](../../crates/execution/host/src/router_delivery.rs).
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
-Publish folds each export's call graph into the union of the statements of its released operation, and the host begins a transaction for an operation whose union is not empty. The required permission is the entry's own operation; nothing derives into it.
+The host begins a transaction for an operation whose admitted operation declares one, whatever SQL it holds. The required permission is the entry's own operation; nothing derives into it.
 The host checks that the original caller holds the entry, once, before the entry runs. A caller holds exactly the permission rows of its roles.
 Component membership alone grants no permission to call an operation.
 

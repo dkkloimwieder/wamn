@@ -67,7 +67,7 @@ fn fact() -> AdmittedComponent {
             AdmittedComponentOperation {
                 registered_operation: Some(PERMISSION.into()),
                 committed_result_schema: None,
-                dependencies: Vec::new(),
+                host_transaction: false,
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),

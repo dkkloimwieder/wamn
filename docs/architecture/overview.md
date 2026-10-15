@@ -79,7 +79,7 @@ Effectful application tests remain separate from this authoring contract.
 
 ## Release identity
 
-A release fixes package versions, component digests, operation dependencies, SQL, connections, routes, and wiring versions.
+A release fixes package versions, component digests, base pins, SQL, connections, routes, and wiring versions.
 Sealing prevents later changes to its content.
 Promotion compares target manifests and ordered migrations, copies admitted facts, and admits target wirings.
 Conflicting content refuses, and exact retries retain their original facts.

@@ -309,15 +309,15 @@ For `per_input` commands, each item owns one transaction on one PostgreSQL conne
 The transaction resource never crosses a wiring edge, and separate outer items have no shared atomicity.
 A composed write followed by a projection is not one transaction.
 An overlay command can call a base command within its transaction.
-The overlay operation imports the base operation, and its component declaration names that operation as a dependency, with the base's digest from `base_dependencies`.
+The overlay operation imports the base operation, and the overlay package pins the base by digest in `base_dependencies`.
 The overlay build composes the overlay and its pinned base into one component, so the call is a component-model call with no host between.
 The host requires the original caller to hold the overlay entry only. The base operation runs under the entry's authority.
 The generated contracts carry ordinary typed values. Application code owns the transaction sequence and conditional business rules.
 
-Publish folds each export's call graph: the released operation carries the union of its own statements and those of every base operation it reaches.
-The host begins the item's transaction when that union is not empty, so an overlay command without SQL of its own that calls a base command still runs in one host transaction.
-The base reaches that transaction through `operation-transaction`. Each member binds its own statements through its own `statements` import, so the fold decides only whether the host begins a transaction.
-Generation admits a command without SQL of its own only without a `transaction`, so the authored field cannot yet replace the fold.
+The released operation carries its own statements only.
+The host begins the item's transaction when the admitted operation declares one: a command with `transaction = explicit_per_input`, or a generated create, update or delete.
+A command without SQL of its own may declare `transaction = explicit_per_input`, so an overlay command that only calls a base command still runs in one host transaction.
+The base reaches that transaction through `operation-transaction`. Each member binds its own statements through its own `statements` import.
 
 Acme's `acme.record_receipt` calls Receiving's `record_receipt` and then records its inspection in the same host transaction, under the existing purchase-order lock.
 Acme claims the key under its own operation.

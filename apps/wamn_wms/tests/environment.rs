@@ -503,7 +503,6 @@ fn wms_component_declaration(root: &Path, tenant: &str, output: &Path) -> anyhow
     let declaration = wamn_control::component_declaration::render_declaration_document(
         &root.join("publication/components/wms.json.in"),
         tenant,
-        &wamn_control::component_declaration::authored_base_digests(root)?,
     )?;
     fs::write(output, serde_json::to_vec_pretty(&declaration)?)?;
     Ok(())
@@ -620,6 +619,7 @@ pub async fn publish(
         component_bytes,
         declaration,
         admitted_platform_packages: admitted,
+        base_digests: std::collections::BTreeSet::new(),
     };
     let wms_digest = shared::admit_component_digest(admit_request(
         inputs.component_directory.join("wms.wasm"),

@@ -187,9 +187,6 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
     let mut digests = BTreeMap::new();
     let mut release_components = ReleaseComponents::default();
     for input in inputs {
-        // The template leaves its base dependency digest as a placeholder, so
-        // the render -- not a tenant substitution -- is what makes it a
-        // declaration (wamn-10yt.50).
         let base_digests = crate::component_declaration::authored_base_digests(&input.root)
             .unwrap_or_else(|error| {
                 panic!("read {}@{} base pins: {error}", input.id, input.version)
@@ -197,7 +194,6 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
         let declaration = crate::component_declaration::render_declaration_document(
             &input.component_declaration,
             TENANT,
-            &base_digests,
         )
         .unwrap_or_else(|error| {
             panic!("render {}: {error}", input.component_declaration.display())
@@ -224,6 +220,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                     "wamn:node".to_owned(),
                     "wamn:postgres".to_owned(),
                 ]),
+                base_digests: base_digests.values().map(ToString::to_string).collect(),
             },
         )
         .unwrap_or_else(|error| panic!("admit {}@{} component: {error}", input.id, input.version));

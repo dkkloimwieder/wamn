@@ -113,16 +113,6 @@ pub struct ComponentConnection {
     pub requirement_type: ComponentConnectionType,
 }
 
-/// One exact cross-package operation imported by component bytes.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ComponentOperationDependency {
-    pub package: String,
-    pub version: String,
-    pub digest: String,
-    pub operation: String,
-}
-
 /// One operation exported by component bytes before admission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -133,9 +123,6 @@ pub struct ComponentOperationDeclaration {
     /// A matching successful payload shows that this registered command committed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<Value>,
-    /// Closed exact operation imports assigned to this exported operation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<ComponentOperationDependency>,
     pub input_ports: Vec<ComponentPortDeclaration>,
     pub output_ports: Vec<ComponentPortDeclaration>,
     pub parameters: Vec<ComponentParameterDeclaration>,
@@ -263,9 +250,12 @@ pub struct AdmittedComponentOperation {
     /// The admitted success schema for this registered command's committed result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<ComponentSchema>,
-    /// Imports assigned to this export and byte-verified in the component import list.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub dependencies: Vec<ComponentOperationDependency>,
+    /// Whether the host begins the item transaction this export works in: the
+    /// package manifest's `transaction = explicit_per_input` on a command, or a
+    /// generated create, update or delete. Bound from the manifest at
+    /// admission, never authored in a declaration.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_transaction: bool,
     pub input_ports: Vec<AdmittedComponentPort>,
     pub output_ports: Vec<AdmittedComponentPort>,
     pub parameters: Vec<AdmittedComponentParameter>,
@@ -445,8 +435,6 @@ pub enum ComponentFactErrorType {
     NonCanonicalIdentity,
     RegisteredOperationMismatch,
     InvalidComponentDigest,
-    InvalidOperationDependency,
-    DuplicateOperationDependency,
     OperationDependencyMismatch,
     DuplicateInputPort,
     DuplicateOutputPort,
@@ -546,7 +534,6 @@ pub fn normalize_component_fact(
             operation.registered_operation.as_deref(),
             committed_result_schema.as_ref(),
         )?;
-        let dependencies = normalize_operation_dependencies(operation.dependencies)?;
         let input_ports = normalize_ports(
             operation.input_ports,
             ComponentFactErrorType::DuplicateInputPort,
@@ -563,7 +550,7 @@ pub fn normalize_component_fact(
             AdmittedComponentOperation {
                 committed_result_schema,
                 registered_operation: operation.registered_operation,
-                dependencies,
+                host_transaction: false,
                 input_ports,
                 output_ports,
                 parameters,
@@ -636,13 +623,6 @@ pub fn verify_stored_effect_projection(
             operation.registered_operation.as_deref(),
             operation.committed_result_schema.as_ref(),
         )?;
-        let dependencies = normalize_operation_dependencies(operation.dependencies.clone())?;
-        if dependencies != operation.dependencies {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::InvalidOperationDependency,
-                format!("operation {export:?} dependencies are not normalized"),
-            ));
-        }
         validate_operation_statement_facts(export, &operation.statements)?;
     }
     refuse_application_operation_imports(&component.imports)?;
@@ -656,9 +636,13 @@ pub fn verify_stored_effect_projection(
 /// package operations are admitted by their manifest match at the publisher
 /// and deliberately carry no authorization token. Unmentioned exports remain
 /// palette operations with no package SQL.
+///
+/// `host_transactions` names the manifest-backed exports whose item
+/// transaction the host begins; each must be one of the supplied exports.
 pub fn bind_component_statement_facts(
     component: &mut AdmittedComponent,
     statements: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
+    host_transactions: &BTreeSet<String>,
 ) -> Result<(), ComponentFactError> {
     let registered = component
         .operations
@@ -676,9 +660,15 @@ pub fn bind_component_statement_facts(
         .cloned()
         .collect::<BTreeSet<_>>();
     let supplied = statements.keys().cloned().collect::<BTreeSet<_>>();
-    if !registered.is_subset(&supplied) || !supplied.is_subset(&exported) {
+    if !registered.is_subset(&supplied)
+        || !supplied.is_subset(&exported)
+        || !host_transactions.is_subset(&supplied)
+    {
         let missing = registered.difference(&supplied).collect::<Vec<_>>();
-        let extra = supplied.difference(&exported).collect::<Vec<_>>();
+        let extra = supplied
+            .union(host_transactions)
+            .filter(|export| !exported.contains(*export) || !supplied.contains(*export))
+            .collect::<Vec<_>>();
         return Err(ComponentFactError::new(
             ComponentFactErrorType::UnexpectedOperationStatements,
             format!(
@@ -690,11 +680,12 @@ pub fn bind_component_statement_facts(
         validate_operation_statement_facts(export, operation_statements)?;
     }
     for (export, operation_statements) in statements {
-        component
+        let operation = component
             .operations
             .get_mut(&export)
-            .expect("the exact operation-set comparison confirmed this export exists")
-            .statements = operation_statements;
+            .expect("the exact operation-set comparison confirmed this export exists");
+        operation.host_transaction = host_transactions.contains(&export);
+        operation.statements = operation_statements;
     }
     Ok(())
 }
@@ -802,51 +793,6 @@ fn validate_registered_operation_scope(
         ));
     }
     Ok(())
-}
-
-fn normalize_operation_dependencies(
-    declarations: Vec<ComponentOperationDependency>,
-) -> Result<Vec<ComponentOperationDependency>, ComponentFactError> {
-    let mut seen = BTreeSet::new();
-    let mut dependencies = Vec::with_capacity(declarations.len());
-    for declaration in declarations {
-        let coordinate = PackageCoordinate::new(&declaration.package, &declaration.version)
-            .map_err(|error| {
-                ComponentFactError::new(
-                    ComponentFactErrorType::InvalidOperationDependency,
-                    error.to_string(),
-                )
-            })?;
-        if !valid_digest(&declaration.digest) {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::InvalidOperationDependency,
-                "operation dependency digest must be sha256:<64 lowercase hex digits>",
-            ));
-        }
-        validate_canonical_operation_for_package(
-            &declaration.operation,
-            coordinate.package_id(),
-            coordinate.package_version(),
-        )
-        .map_err(|error| {
-            ComponentFactError::new(
-                ComponentFactErrorType::InvalidOperationDependency,
-                error.to_string(),
-            )
-        })?;
-        if !seen.insert(declaration.operation.clone()) {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::DuplicateOperationDependency,
-                format!(
-                    "operation dependency {:?} is duplicated",
-                    declaration.operation
-                ),
-            ));
-        }
-        dependencies.push(declaration);
-    }
-    dependencies.sort_by(|left, right| left.operation.cmp(&right.operation));
-    Ok(dependencies)
 }
 
 /// Refuse an application operation import. A declared dependency composes
@@ -1159,7 +1105,6 @@ mod tests {
                 ComponentOperationDeclaration {
                     committed_result_schema: None,
                     registered_operation: None,
-                    dependencies: Vec::new(),
                     input_ports: vec![ComponentPortDeclaration {
                         name: "input".to_string(),
                         schema: json!({
@@ -1196,15 +1141,6 @@ mod tests {
             package: "wamn:postgres".to_string(),
             provenance: ComponentEffectProvenance::Imported,
             interfaces: vec!["wamn:postgres/client@0.1.0".to_string()],
-        }
-    }
-
-    fn operation_dependency() -> ComponentOperationDependency {
-        ComponentOperationDependency {
-            package: "platform_fixture".to_string(),
-            version: "1.0.0".to_string(),
-            digest: format!("sha256:{}", "c".repeat(64)),
-            operation: "platform-fixture:widget/record-batch@1.0.0".to_string(),
         }
     }
 
@@ -1357,88 +1293,19 @@ mod tests {
     }
 
     #[test]
-    fn exact_operation_dependency_is_preserved_without_becoming_an_effect() {
-        let dependency = operation_dependency();
-        let mut declared = declaration();
-        operation_mut(&mut declared).dependencies = vec![dependency.clone()];
-
-        let facts = normalize_component_fact(
-            declared,
-            format!("sha256:{}", "a".repeat(64)),
-            Vec::<String>::new(),
-            Vec::new(),
-        )
-        .expect("an exact audited operation dependency admits");
-
-        assert_eq!(facts.component.operations["map"].dependencies, [dependency]);
-        assert!(facts.component.effects.is_empty());
-        verify_stored_effect_projection(&facts.component)
-            .expect("the stored dependency projection remains verifiable");
-    }
-
-    #[test]
-    fn operation_dependency_must_be_exact_and_composed() {
-        let dependency = operation_dependency();
-        // A dependency composes into the bytes at build. One left as an
+    fn an_application_operation_import_is_refused() {
+        // A base operation composes into the bytes at build. One left as an
         // import is an undeclared application call.
-        let mut imported = declaration();
-        operation_mut(&mut imported).dependencies = vec![dependency.clone()];
         assert_eq!(
             normalize_component_fact(
-                imported,
+                declaration(),
                 format!("sha256:{}", "a".repeat(64)),
-                [dependency.operation.clone()],
+                ["platform-fixture:widget/record-batch@1.0.0".to_string()],
                 Vec::new(),
             )
             .unwrap_err()
             .error_type(),
             ComponentFactErrorType::OperationDependencyMismatch
-        );
-
-        let mut invalid_digest = declaration();
-        let mut malformed = dependency.clone();
-        malformed.digest = "latest".to_string();
-        operation_mut(&mut invalid_digest).dependencies = vec![malformed];
-        assert_eq!(
-            normalize_component_fact(
-                invalid_digest,
-                format!("sha256:{}", "a".repeat(64)),
-                Vec::<String>::new(),
-                Vec::new(),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::InvalidOperationDependency
-        );
-
-        let mut mismatched_coordinate = declaration();
-        let mut mismatched = dependency.clone();
-        mismatched.version = "2.0.0".to_string();
-        operation_mut(&mut mismatched_coordinate).dependencies = vec![mismatched];
-        assert_eq!(
-            normalize_component_fact(
-                mismatched_coordinate,
-                format!("sha256:{}", "a".repeat(64)),
-                Vec::<String>::new(),
-                Vec::new(),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::InvalidOperationDependency
-        );
-
-        let mut duplicate = declaration();
-        operation_mut(&mut duplicate).dependencies = vec![dependency.clone(), dependency.clone()];
-        assert_eq!(
-            normalize_component_fact(
-                duplicate,
-                format!("sha256:{}", "a".repeat(64)),
-                Vec::<String>::new(),
-                Vec::new(),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::DuplicateOperationDependency
         );
     }
 
@@ -1606,7 +1473,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: None,
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -1918,6 +1785,7 @@ mod tests {
         bind_component_statement_facts(
             &mut component,
             BTreeMap::from([(registered.to_owned(), BTreeMap::from([statement.clone()]))]),
+            &BTreeSet::from([registered.to_owned()]),
         )
         .expect("exact generated statement facts bind");
 
@@ -1925,6 +1793,7 @@ mod tests {
             component.operations[registered].statement(&statement.0),
             Some(&statement.1)
         );
+        assert!(component.operations[registered].host_transaction);
         verify_stored_effect_projection(&component)
             .expect("a stored component re-verifies its exact SQL bytes");
     }
@@ -1937,6 +1806,7 @@ mod tests {
         bind_component_statement_facts(
             &mut component,
             BTreeMap::from([("map".to_owned(), BTreeMap::from([statement.clone()]))]),
+            &BTreeSet::new(),
         )
         .expect("the publisher may bind a manifest-matched private operation");
 
@@ -1944,6 +1814,7 @@ mod tests {
             component.operations["map"].statement(&statement.0),
             Some(&statement.1)
         );
+        assert!(!component.operations["map"].host_transaction);
     }
 
     #[test]
@@ -1954,10 +1825,22 @@ mod tests {
             bind_component_statement_facts(
                 &mut component,
                 BTreeMap::from([("unknown".to_owned(), BTreeMap::new())]),
+                &BTreeSet::new(),
             )
             .unwrap_err()
             .error_type(),
             ComponentFactErrorType::UnexpectedOperationStatements
+        );
+        assert_eq!(
+            bind_component_statement_facts(
+                &mut component,
+                BTreeMap::from([("map".to_owned(), BTreeMap::new())]),
+                &BTreeSet::from(["unknown".to_owned()]),
+            )
+            .unwrap_err()
+            .error_type(),
+            ComponentFactErrorType::UnexpectedOperationStatements,
+            "a host transaction names only an export the manifest backs"
         );
 
         let operation = component.operations.get_mut("map").expect("map operation");

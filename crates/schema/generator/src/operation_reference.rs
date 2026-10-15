@@ -171,8 +171,7 @@ pub fn resolve_attachment_entry(
 }
 
 /// Resolve every reference of an authored component declaration: each
-/// operation key, its `registered-operation` and its
-/// `dependencies[].operation`. The declaration takes
+/// operation key and its `registered-operation`. The declaration takes
 /// `scope.package-version` from the manifest.
 ///
 /// # Errors
@@ -203,14 +202,6 @@ pub fn resolve_declaration_document(
     for (reference, mut operation) in authored {
         let context = format!("declaration operation {reference:?}");
         resolve_member(&mut operation, "registered-operation", owners, &context)?;
-        if let Some(dependencies) = operation
-            .get_mut("dependencies")
-            .and_then(Value::as_array_mut)
-        {
-            for dependency in dependencies {
-                resolve_member(dependency, "operation", owners, &context)?;
-            }
-        }
         operations.insert(resolve_reference(owners, &reference)?, operation);
     }
     Ok(())
@@ -308,18 +299,13 @@ mod tests {
         let mut declaration = json!({
             "scope": {"tenant-id": "t", "package-id": "acme"},
             "operations": {"acme:order/record": {
-                "registered-operation": "acme:order/record",
-                "dependencies": [{
-                    "operation": "base-app:order/record"
-                }]
+                "registered-operation": "acme:order/record"
             }}
         });
         resolve_declaration_document(&mut declaration, &owners()).unwrap();
         assert_eq!(declaration["scope"]["package-version"], "3.0.0");
         let operation = &declaration["operations"]["acme:order/record@3.0.0"];
         assert_eq!(operation["registered-operation"], "acme:order/record@3.0.0");
-        let dependency = &operation["dependencies"][0];
-        assert_eq!(dependency["operation"], "base-app:order/record@1.0.0");
 
         let mut wiring = json!({"nodes": {
             "a": {"operation": "acme:order/get"},

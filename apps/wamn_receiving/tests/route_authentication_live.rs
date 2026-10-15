@@ -133,8 +133,6 @@ const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
 const BASE_RECORD_RECEIPT_REFERENCE: &str = "wamn-receiving:receiving/record-receipt";
 static BASE_RECORD_RECEIPT: LazyLock<&'static str> =
     LazyLock::new(|| sealed(BASE_RECORD_RECEIPT_REFERENCE).leak());
-static OVERLAY_RECORD_RECEIPT: LazyLock<&'static str> =
-    LazyLock::new(|| sealed("client-acme-receiving:acme/record-receipt").leak());
 
 /// The release this fixture provisions and publishes: the default Receiving
 /// journey release, with the packages of a supplied candidate's manifest.

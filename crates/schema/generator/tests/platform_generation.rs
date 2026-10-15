@@ -211,6 +211,49 @@ fn stateless_idempotence_is_only_for_a_command_without_sql() {
     );
 }
 
+/// A command without SQL of its own may declare `transaction =
+/// explicit_per_input`: it calls members that work in the item transaction,
+/// and the host begins that transaction from this field (`wamn-azko6`).
+#[test]
+fn a_command_without_sql_may_declare_its_host_transaction() {
+    let mut manifest = fixture::manifest();
+    manifest["custom_operations"]["widget.inspect"] = json!({
+        "type": "command",
+        "visibility": "public",
+        "permission": "widget.inspect",
+        "idempotent_by": "stateless",
+        "transaction": "explicit_per_input",
+        "automatic_retry": false,
+        "input": {"fields": [
+            {"path": "request_id", "type": "text", "nullable": false},
+            {"path": "value.note", "type": "text", "nullable": false}
+        ]},
+        "result": {"class": "one", "fields": [
+            {"path": "note", "type": "text", "nullable": false}
+        ]},
+        "errors": ["invalid_input", "permission_denied", "internal_error"],
+        "error_details": {}
+    });
+    let declared = parsed(&manifest);
+    validate_operation_vocabulary(&declared)
+        .expect("a command without SQL that declares its transaction is accepted");
+    let begun = declared.host_transaction_operations();
+    assert!(begun.contains("widget.inspect"), "{begun:?}");
+    assert!(begun.contains("widget.archive"), "{begun:?}");
+
+    let inspect = manifest["custom_operations"]["widget.inspect"]
+        .as_object_mut()
+        .unwrap();
+    inspect.remove("transaction");
+    inspect.remove("automatic_retry");
+    assert!(
+        !parsed(&manifest)
+            .host_transaction_operations()
+            .contains("widget.inspect"),
+        "a command that declares no transaction begins none"
+    );
+}
+
 /// A package with no model, relation or connection and only stateless commands
 /// declares no SQL, and it generates with an empty data-access contribution
 /// (`wamn-10nk`). A package that declares a connection still needs a model.

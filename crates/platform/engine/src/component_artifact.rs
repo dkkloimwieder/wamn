@@ -129,7 +129,6 @@ mod tests {
                     ComponentOperationDeclaration {
                         committed_result_schema: None,
                         registered_operation: None,
-                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_owned(),
                             schema: json!({"type": "object"}),

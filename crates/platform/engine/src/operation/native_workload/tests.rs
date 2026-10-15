@@ -3,10 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use wamn_catalog::{
-    AdmittedComponent, AdmittedComponentOperation, ComponentOperationDependency,
-    ComponentPackageScope,
-};
+use wamn_catalog::{AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::PluginBindings;
 use wash_runtime::types::LocalResources;
@@ -51,7 +48,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
                 AdmittedComponentOperation {
                     registered_operation: None,
                     committed_result_schema: None,
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),
@@ -130,24 +127,12 @@ async fn native_loader_refuses_ambiguous_imported_operation() {
     for second_value in [37, 91] {
         let first = component("selected", OPERATION, None, 37);
         let second = component("other", OPERATION, None, second_value);
-        let mut caller = component("caller", PARENT, Some(OPERATION), 0);
-        caller
-            .fact
-            .operations
-            .get_mut(PARENT)
-            .expect("caller operation")
-            .dependencies
-            .push(ComponentOperationDependency {
-                package: first.fact.scope.package_id.clone(),
-                version: first.fact.scope.package_version.clone(),
-                digest: first.fact.component_digest.clone(),
-                operation: OPERATION.into(),
-            });
+        let caller = component("caller", PARENT, Some(OPERATION), 0);
         let first_digest = first.fact.component_digest.clone();
         let second_digest = second.fact.component_digest.clone();
         let error = load(vec![first, second, caller])
             .await
-            .expect_err("exact dependency selection cannot hide ambiguous imported providers");
+            .expect_err("ambiguous imported providers refuse");
         let detail = format!("{error:#}");
         assert!(detail.contains("ambiguous component providers"), "{detail}");
         for identity in [

@@ -123,6 +123,8 @@ pub(super) fn repository_root() -> anyhow::Result<PathBuf> {
 pub(super) struct JourneyComponentDeclaration {
     pub(super) package: JourneyPackage,
     pub(super) path: PathBuf,
+    /// The base digests admission checks a composed base against.
+    pub(super) base_digests: std::collections::BTreeSet<String>,
 }
 
 pub(super) fn render_component_declarations(
@@ -155,7 +157,6 @@ pub(super) fn render_component_declarations(
             let declaration = wamn_control::component_declaration::render_declaration_document(
                 &source,
                 identity().tenant.as_str(),
-                &base_digests,
             )
             .with_context(|| format!("render {}", source.display()))?;
             let destination = output.join(format!("{}.json", package.component));
@@ -164,6 +165,7 @@ pub(super) fn render_component_declarations(
             Ok(JourneyComponentDeclaration {
                 package,
                 path: destination,
+                base_digests: base_digests.into_values().map(String::from).collect(),
             })
         })
         .collect()
@@ -196,15 +198,11 @@ fn disposable_component_declarations_follow_built_base_bytes() -> anyhow::Result
             .iter()
             .find(|declaration| declaration.package.id == OVERLAY_PACKAGE_ID)
             .expect("the journey renders its overlay");
-        let declaration: Value = serde_json::from_slice(&std::fs::read(&overlay.path)?)?;
         assert_eq!(
-            declaration["operations"][*OVERLAY_RECORD_RECEIPT]["dependencies"],
-            serde_json::json!([{
-                "package": BASE_PACKAGE_ID,
-                "version": *BASE_PACKAGE_VERSION,
-                "digest": wamn_engine::component_admission::component_digest(bytes),
-                "operation": *BASE_RECORD_RECEIPT,
-            }]),
+            overlay.base_digests,
+            std::collections::BTreeSet::from([wamn_engine::component_admission::component_digest(
+                bytes
+            )]),
         );
     }
     assert_eq!(std::fs::read(manifest)?, authored_manifest);
@@ -232,6 +230,7 @@ pub(super) fn admit_journey_components(
                     "wamn:node".to_owned(),
                     "wamn:postgres".to_owned(),
                 ],
+                base_digests: declaration.base_digests.clone(),
             })
             .with_context(|| {
                 format!(

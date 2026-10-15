@@ -1000,7 +1000,6 @@ mod tests {
                     ComponentOperationDeclaration {
                         committed_result_schema: None,
                         registered_operation: None,
-                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_owned(),
                             schema: json!({}),
@@ -1231,7 +1230,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: None,
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),

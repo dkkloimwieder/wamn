@@ -103,8 +103,7 @@ pub fn write_package(
         .join(PACKAGE_COMPONENTS)
         .join(format!("{component}.json.in"));
     let tenant = release.scope.tenant();
-    let document =
-        render_declaration_document(&template, &tenant, &authored_base_digests(package)?)?;
+    let document = render_declaration_document(&template, &tenant)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
     let admission = admit_component(AdmitComponentRequest {
         package: package.to_owned(),
@@ -114,6 +113,10 @@ pub fn write_package(
             NODE_CAPABILITY.to_owned(),
             POSTGRES_CAPABILITY.to_owned(),
         ],
+        base_digests: authored_base_digests(package)?
+            .into_values()
+            .map(String::from)
+            .collect(),
     })?;
     let request = PublishReleaseRequest {
         database_url: String::new(),

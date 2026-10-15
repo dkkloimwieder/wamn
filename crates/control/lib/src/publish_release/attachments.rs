@@ -484,8 +484,6 @@ mod tests {
         let declaration = crate::component_declaration::render_declaration_document(
             &root.join("publication/components/fixture.json.in"),
             "tenant-a",
-            &crate::component_declaration::authored_base_digests(&root)
-                .expect("read the fixture base digests"),
         )
         .expect("render the fixture declaration");
         let declaration = wamn_execution_contract::canonical_json_sha256(&declaration);

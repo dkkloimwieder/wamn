@@ -123,9 +123,8 @@ mod tests {
     const WIRING: &str =
         include_str!("../../apps/wamn_wms/publication/wirings/inventory_move_and_label.json");
 
-    /// The overlay template with its operation references resolved and its
-    /// base digest filled, which the control plane renders before this
-    /// renderer sees it.
+    /// The overlay template with its operation references resolved, which
+    /// the control plane renders before this renderer sees it.
     fn overlay() -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
             "../../apps/platform_fixture_overlay/publication/components/fixture_overlay.json.in",
@@ -135,9 +134,7 @@ mod tests {
             wamn_schema_generator::operation_reference::AuthoredDocument::Declaration,
         )
         .unwrap();
-        serde_json::to_string(&document)
-            .unwrap()
-            .replace("__BASE_DIGEST__", &format!("sha256:{}", "7".repeat(64)))
+        serde_json::to_string(&document).unwrap()
     }
 
     fn scope() -> ComponentPackageScope {

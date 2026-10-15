@@ -138,7 +138,7 @@ fn fixture_component() -> AdmittedComponent {
             AdmittedComponentOperation {
                 committed_result_schema: None,
                 registered_operation: Some("wamn-inventory:panel/get@1.0.0".to_owned()),
-                dependencies: Vec::new(),
+                host_transaction: false,
                 input_ports: Vec::new(),
                 output_ports: Vec::new(),
                 parameters: Vec::new(),

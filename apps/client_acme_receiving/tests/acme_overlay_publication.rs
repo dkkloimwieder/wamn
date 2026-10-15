@@ -4,10 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use wamn_catalog::{
-    AttachmentTarget, AttachmentType, ComponentDeclaration, ComponentOperationDependency,
-    WiringDocument,
-};
+use wamn_catalog::{AttachmentTarget, AttachmentType, ComponentDeclaration, WiringDocument};
 use wamn_test_infrastructure::operations::{package_version, sealed};
 
 const TENANT: &str = "acme-overlay-publication-test";
@@ -17,8 +14,6 @@ const INTERFACE_VERSION: &str = "0.1.0";
 // Each operation is named by reference, as the authored files name it, and
 // `sealed` reads its version from the package wamn.json.
 const PRIVATE_OPERATION: &str = "client-acme-receiving:quality/create-inspection";
-const RECORD_RECEIPT: &str = "client-acme-receiving:acme/record-receipt";
-const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
 struct DirectOperation {
     token: &'static str,
@@ -73,26 +68,12 @@ fn read_json(path: &Path) -> Value {
         .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
 }
 
-/// The base component digest, read from the ONE file that authors it.
-///
-/// wamn-10yt.50: this test used to restate the same `sha256:` literal the
-/// overlay manifest pins, and the template carried a third copy. The template
-/// now leaves a placeholder, so the render is what makes it a declaration.
-fn base_digests() -> BTreeMap<Box<str>, Box<str>> {
-    wamn_control::component_declaration::authored_base_digests(&package_root())
-        .expect("the overlay manifest authors its base digest")
-}
-
 fn declaration() -> ComponentDeclaration {
     let path = publication_root()
         .join("components")
         .join("client_acme_receiving.json.in");
-    let document = wamn_control::component_declaration::render_declaration_document(
-        &path,
-        TENANT,
-        &base_digests(),
-    )
-    .unwrap_or_else(|error| panic!("render {}: {error}", path.display()));
+    let document = wamn_control::component_declaration::render_declaration_document(&path, TENANT)
+        .unwrap_or_else(|error| panic!("render {}: {error}", path.display()));
     serde_json::from_value(document)
         .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
 }
@@ -144,22 +125,10 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
             .collect::<BTreeSet<_>>()
     );
 
-    let base_version = package_version("wamn_receiving");
     for operation in &DIRECT_OPERATIONS {
         let token = sealed(operation.token);
         let fact = &declaration.operations[&token];
         assert_eq!(fact.registered_operation.as_deref(), Some(token.as_str()));
-        let expected_dependencies = (operation.token == RECORD_RECEIPT)
-            .then(|| ComponentOperationDependency {
-                package: "wamn_receiving".to_owned(),
-                version: base_version.clone(),
-                digest: base_digests()[format!("wamn_receiving@{base_version}").as_str()]
-                    .to_string(),
-                operation: sealed(BASE_RECORD_RECEIPT),
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
-        assert_eq!(fact.dependencies, expected_dependencies);
         let attachment = attachments
             .get(operation.attachment)
             .expect("the exact operation attachment exists");
@@ -208,7 +177,6 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
         private_fact.registered_operation.is_none(),
         "the private handler must not fabricate an originating caller permission"
     );
-    assert!(private_fact.dependencies.is_empty());
     let handler = wiring("quality_create_inspection");
     assert_eq!(handler.wiring_id, "quality_create_inspection");
     assert_eq!(handler.version, 1);

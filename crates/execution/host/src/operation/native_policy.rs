@@ -53,9 +53,9 @@ impl std::fmt::Debug for NativePolicyResources {
 
 /// One admitted component and the operations its release publishes for it.
 ///
-/// Publish folds each export's call graph into its released operation's
-/// statement union. An application composes at build, so a call inside it
-/// reaches no host, and the entry runs under its own grant.
+/// An application composes at build, so a call inside it reaches no host, and
+/// the entry runs under its own grant. Each member reaches its own statements
+/// through its named import.
 #[derive(Debug)]
 struct ComponentPolicy {
     fact: AdmittedComponent,
@@ -232,7 +232,8 @@ impl InvocationPolicy for NativePolicy {
     type ItemTransaction = OperationTransaction;
 
     /// Begin the item's transaction under the claims of the call, on a scope
-    /// of its own that ends when the `BEGIN` batch has run.
+    /// of its own that ends when the `BEGIN` batch has run, when the admitted
+    /// operation declares a host transaction.
     async fn begin_item(
         &self,
         component_id: &str,
@@ -240,10 +241,12 @@ impl InvocationPolicy for NativePolicy {
         facts: &NativeFacts,
     ) -> anyhow::Result<Option<OperationTransaction>> {
         let component = self.admit(component_id, operation, facts)?;
-        if component
-            .operations
-            .get(operation)
-            .is_none_or(|released| released.statements.is_empty())
+        // The admitted operation's own declaration decides, so a command
+        // without SQL that calls members with SQL still begins one.
+        if !component
+            .fact
+            .operation(operation)
+            .is_some_and(|admitted| admitted.host_transaction)
         {
             return Ok(None);
         }

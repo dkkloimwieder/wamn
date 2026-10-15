@@ -226,7 +226,8 @@ pub(super) async fn assemble(
         let declaration_path = input
             .scratch
             .join(format!("{}-{}.json", applied.package_id, package.component));
-        render_declaration(&input, package, &declaration_source, &declaration_path)?;
+        let base_digests =
+            render_declaration(&input, package, &declaration_source, &declaration_path)?;
         let component_path = input
             .component_directory
             .join(format!("{}.wasm", package.component));
@@ -235,6 +236,7 @@ pub(super) async fn assemble(
             component_bytes: component_path.clone(),
             declaration: declaration_path,
             admitted_platform_packages: vec!["wamn:node".into(), "wamn:postgres".into()],
+            base_digests,
         })?;
         let facts = admission.facts().clone();
         statement_instances.insert(
@@ -429,12 +431,15 @@ pub(super) async fn assemble(
     })
 }
 
+/// Render the declaration of `package` to `target`, and return the base
+/// digests admission checks its composed base against: the authored pins,
+/// with each base this run built layered over its pin.
 fn render_declaration(
     input: &LocalApplicationConfig<'_>,
     package: &LocalPackage<'_>,
     source: &Path,
     target: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<BTreeSet<String>> {
     let mut base_digests =
         wamn_control::component_declaration::authored_base_digests(package.root)?;
     for base in input.packages {
@@ -457,13 +462,10 @@ fn render_declaration(
             *digest = wamn_engine::component_admission::component_digest(&bytes).into_boxed_str();
         }
     }
-    let value = wamn_control::component_declaration::render_declaration_document(
-        source,
-        input.tenant,
-        &base_digests,
-    )?;
+    let value =
+        wamn_control::component_declaration::render_declaration_document(source, input.tenant)?;
     std::fs::write(target, serde_json::to_vec(&value)?)?;
-    Ok(())
+    Ok(base_digests.into_values().map(String::from).collect())
 }
 fn generation_url(base: &str, role: &str) -> anyhow::Result<String> {
     let mut url = url::Url::parse(base)?;
@@ -504,14 +506,6 @@ fn serving_manifest(
         .iter()
         .map(|(id, c)| json!({"package-id":id,"package-version":c.scope.package_version}))
         .collect::<Vec<_>>();
-    // Publish folds each export's call graph, so each fact projects with the
-    // facts it depends on.
-    let resolve = |dependency: &wamn_catalog::ComponentOperationDependency| {
-        components.iter().map(|(_, fact)| fact).find(|fact| {
-            fact.scope.package_id == dependency.package
-                && fact.component_digest == dependency.digest
-        })
-    };
     let components = components
         .iter()
         .map(|(_, component)| {
@@ -523,7 +517,7 @@ fn serving_manifest(
                     .map(|(_, fact)| fact)
                     .find(|fact| fact.component_digest == digest)
             };
-            let served = wamn_catalog::ServingComponent::project(component, Vec::new(), &resolve)?
+            let served = wamn_catalog::ServingComponent::project(component, Vec::new())?
                 .with_statement_instances(
                     statement_instances
                         .get(&component.component_digest)

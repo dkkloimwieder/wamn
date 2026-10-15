@@ -35,10 +35,9 @@ pub use component_facts::{
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,
     ComponentConnectionType, ComponentDeclaration, ComponentDescriptor, ComponentEffectProvenance,
     ComponentFactError, ComponentFactErrorType, ComponentOperationDeclaration,
-    ComponentOperationDependency, ComponentPackageScope, ComponentParameterDeclaration,
-    ComponentPortDeclaration, ComponentSchema, ComponentSqlField, ComponentSqlStatement,
-    ComponentSqlValueType, bind_component_statement_facts, normalize_component_fact,
-    verify_stored_effect_projection,
+    ComponentPackageScope, ComponentParameterDeclaration, ComponentPortDeclaration,
+    ComponentSchema, ComponentSqlField, ComponentSqlStatement, ComponentSqlValueType,
+    bind_component_statement_facts, normalize_component_fact, verify_stored_effect_projection,
 };
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,

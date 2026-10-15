@@ -552,7 +552,7 @@ mod tests {
                 wamn_catalog::AdmittedComponentOperation {
                     registered_operation: None,
                     committed_result_schema: None,
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: Vec::new(),
                     output_ports: Vec::new(),
                     parameters: Vec::new(),

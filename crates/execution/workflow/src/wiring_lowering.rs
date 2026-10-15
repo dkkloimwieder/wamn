@@ -507,7 +507,6 @@ mod tests {
                     ComponentOperationDeclaration {
                         committed_result_schema: None,
                         registered_operation: None,
-                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_string(),
                             schema: json!({"type": "object"}),
@@ -526,6 +525,7 @@ mod tests {
                 connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
+            base_digests: BTreeSet::new(),
         }
     }
 
@@ -575,7 +575,6 @@ mod tests {
                     ComponentOperationDeclaration {
                         committed_result_schema: None,
                         registered_operation: Some(operation.to_owned()),
-                        dependencies: Vec::new(),
                         input_ports: vec![ComponentPortDeclaration {
                             name: "input".to_owned(),
                             schema: json!({}),

@@ -1,4 +1,4 @@
-//! Exact component facts and their operation dependencies.
+//! Exact component facts and the bases their packages pin.
 
 use wamn_catalog::AdmittedComponentOperation;
 
@@ -163,182 +163,159 @@ pub(super) fn resolved_wiring_entry_operation(
     Ok(entry.operation.clone())
 }
 
-type ComponentOperationKey = (String, String, String);
-
+/// The components of `roots` and of every base their packages pin in
+/// `base_dependencies`, transitively.
+///
+/// A base composes into its overlay's bytes at build, so the release lists
+/// only the overlay; this proves that each pinned base is an admitted fact of
+/// the effective release, under `rule`, and that no package pins itself
+/// through its bases.
 pub(super) fn resolve_component_dependency_closure(
     roots: &BTreeMap<String, AdmittedComponent>,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
-    let mut pending = roots.values().cloned().collect::<Vec<_>>();
     let mut closure = BTreeMap::<(String, String, String), AdmittedComponent>::new();
-    while let Some(component) = pending.pop() {
-        let key = (
-            component.scope.package_id.clone(),
-            component.scope.package_version.clone(),
-            component.component_digest.clone(),
-        );
-        if let Some(existing) = closure.get(&key) {
-            if existing != &component {
-                return Err(PublishManifestError::new(
-                    PublishManifestErrorType::OperationDependency,
-                    format!("component dependency tuple {key:?} resolves more than one fact"),
-                ));
-            }
-            continue;
-        }
-        for operation in component.operations.values() {
-            for dependency in &operation.dependencies {
-                pending
-                    .push(resolve_component_dependency(dependency, component_facts, rule)?.clone());
-            }
-        }
-        closure.insert(key, component);
+    let mut visited = BTreeSet::new();
+    for component in roots.values() {
+        insert_closure_component(&mut closure, component)?;
+        visit_base_dependencies(
+            (
+                &component.scope.package_id,
+                &component.scope.package_version,
+            ),
+            component_facts,
+            package_manifests,
+            rule,
+            &mut Vec::new(),
+            &mut visited,
+            &mut closure,
+        )?;
     }
-    validate_component_dependency_cycles(closure.values(), component_facts, rule)?;
     Ok(closure.into_values().collect())
 }
 
-fn resolve_component_dependency<'a>(
-    dependency: &wamn_catalog::ComponentOperationDependency,
+fn insert_closure_component(
+    closure: &mut BTreeMap<(String, String, String), AdmittedComponent>,
+    component: &AdmittedComponent,
+) -> Result<(), PublishManifestError> {
+    let key = (
+        component.scope.package_id.clone(),
+        component.scope.package_version.clone(),
+        component.component_digest.clone(),
+    );
+    match closure.get(&key) {
+        Some(existing) if existing != component => Err(PublishManifestError::new(
+            PublishManifestErrorType::OperationDependency,
+            format!("component dependency tuple {key:?} resolves more than one fact"),
+        )),
+        Some(_) => Ok(()),
+        None => {
+            closure.insert(key, component.clone());
+            Ok(())
+        }
+    }
+}
+
+/// Resolve each base the package `(package, version)` pins, then its bases.
+fn visit_base_dependencies(
+    (package, version): (&str, &str),
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    rule: DependencyDigestRule,
+    path: &mut Vec<(String, String)>,
+    visited: &mut BTreeSet<(String, String)>,
+    closure: &mut BTreeMap<(String, String, String), AdmittedComponent>,
+) -> Result<(), PublishManifestError> {
+    let coordinate = (package.to_owned(), version.to_owned());
+    if path.contains(&coordinate) {
+        return Err(PublishManifestError::new(
+            PublishManifestErrorType::OperationDependency,
+            "component dependency closure contains a cycle",
+        ));
+    }
+    if !visited.insert(coordinate.clone()) {
+        return Ok(());
+    }
+    let Some(manifest) = package_manifests
+        .get(package)
+        .filter(|manifest| manifest.package.version == version)
+    else {
+        return Ok(());
+    };
+    path.push(coordinate);
+    for requirement in manifest.base_dependencies.values() {
+        for base in resolve_base_dependency(requirement, component_facts, rule)? {
+            insert_closure_component(closure, base)?;
+        }
+        visit_base_dependencies(
+            (&requirement.package, &requirement.version),
+            component_facts,
+            package_manifests,
+            rule,
+            path,
+            visited,
+            closure,
+        )?;
+    }
+    path.pop();
+    Ok(())
+}
+
+/// The admitted facts of one pinned base: the one component under the pinned
+/// digest, or under the development rule every component of the coordinate.
+fn resolve_base_dependency<'a>(
+    requirement: &wamn_schema_generator::BaseDependencyRequirement,
     component_facts: &'a BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
-) -> Result<&'a AdmittedComponent, PublishManifestError> {
+) -> Result<Vec<&'a AdmittedComponent>, PublishManifestError> {
     let Some(facts) =
-        component_facts.get(&(dependency.package.clone(), dependency.version.clone()))
+        component_facts.get(&(requirement.package.clone(), requirement.version.clone()))
     else {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::OperationDependency,
             format!(
                 "component dependency {}@{} is absent from the effective release",
-                dependency.package, dependency.version
+                requirement.package, requirement.version
             ),
         ));
     };
-    let mut matches = facts.iter().filter(|component| {
-        (!rule.matches_declared_digest() || component.component_digest == dependency.digest)
-            && component
-                .operation(&dependency.operation)
-                .is_some_and(|operation| {
-                    operation.registered_operation.as_deref() == Some(dependency.operation.as_str())
-                })
-    });
-    let Some(component) = matches.next() else {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::OperationDependency,
-            format!(
-                "component dependency {}@{} digest {} operation {:?} has no exact admitted fact",
-                dependency.package, dependency.version, dependency.digest, dependency.operation
-            ),
-        ));
-    };
-    if matches.next().is_some() {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::OperationDependency,
-            format!(
-                "component dependency {}@{} digest {} operation {:?} resolves more than one admitted fact",
-                dependency.package, dependency.version, dependency.digest, dependency.operation
-            ),
-        ));
-    }
-    Ok(component)
-}
-
-/// Every edge is keyed by the fact it RESOLVES TO, never by the digest the
-/// declaration named. Under the durable rule the two are the same value,
-/// because resolution demanded equality. Under the development rule they differ
-/// exactly when a base package was edited, which is the case wamn-10yt.48 is
-/// about, and keying on the declaration there names a node that is not in the
-/// graph.
-fn validate_component_dependency_cycles<'a>(
-    components: impl Iterator<Item = &'a AdmittedComponent>,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    rule: DependencyDigestRule,
-) -> Result<(), PublishManifestError> {
-    let mut graph = BTreeMap::<ComponentOperationKey, Vec<ComponentOperationKey>>::new();
-    for component in components {
-        for (operation_name, operation) in &component.operations {
-            let key = (
-                component.scope.package_id.clone(),
-                component.component_digest.clone(),
-                operation_name.clone(),
-            );
-            let dependencies = operation
-                .dependencies
-                .iter()
-                .map(|dependency| {
-                    let resolved = resolve_component_dependency(dependency, component_facts, rule)?;
-                    Ok((
-                        resolved.scope.package_id.clone(),
-                        resolved.component_digest.clone(),
-                        dependency.operation.clone(),
-                    ))
-                })
-                .collect::<Result<Vec<_>, PublishManifestError>>()?;
-            if graph.insert(key.clone(), dependencies).is_some() {
-                return Err(PublishManifestError::new(
-                    PublishManifestErrorType::OperationDependency,
-                    format!("component operation tuple {key:?} occurs more than once"),
-                ));
-            }
-        }
-    }
-    let mut incoming = BTreeMap::new();
-    for dependencies in graph.values() {
-        for dependency in dependencies {
-            *incoming.entry(dependency.clone()).or_insert(0_usize) += 1;
-        }
-    }
-    for operation in graph.keys() {
-        incoming.entry(operation.clone()).or_insert(0);
-    }
-    let mut pending = incoming
+    let matches = facts
         .iter()
-        .filter(|(_, count)| **count == 0)
-        .map(|(operation, _)| operation.clone())
-        .collect::<VecDeque<_>>();
-    let mut visited = 0_usize;
-    while let Some(operation) = pending.pop_front() {
-        visited += 1;
-        for dependency in &graph[&operation] {
-            let count = incoming
-                .get_mut(dependency)
-                .expect("exact dependency resolution populated every target");
-            *count -= 1;
-            if *count == 0 {
-                pending.push_back(dependency.clone());
-            }
-        }
-    }
-    if visited != graph.len() {
+        .filter(|component| {
+            !rule.matches_declared_digest() || component.component_digest == requirement.digest
+        })
+        .collect::<Vec<_>>();
+    if matches.is_empty() || (rule.matches_declared_digest() && matches.len() > 1) {
         return Err(PublishManifestError::new(
             PublishManifestErrorType::OperationDependency,
-            "component operation dependency closure contains a cycle",
+            format!(
+                "component dependency {}@{} digest {} resolves {} admitted facts, not one",
+                requirement.package,
+                requirement.version,
+                requirement.digest,
+                matches.len()
+            ),
         ));
     }
-    Ok(())
+    Ok(matches)
 }
 
-/// Project one release component with each export's call graph folded in.
+/// Project one release component.
 ///
-/// The dependencies of a composed component run inside its own bytes, so the
-/// manifest lists only the component itself. Admission found the declared
-/// base embedded in the bytes, and the fold reads that base's admitted fact.
-/// The component carries its descriptor: `fact` with its `connections`.
+/// The bases of a composed component run inside its own bytes, so the
+/// manifest lists only the component itself. The component carries its
+/// descriptor: `fact` with its `connections`.
 pub(super) fn project_serving_component(
     fact: &AdmittedComponent,
     connections: Vec<wamn_catalog::ComponentConnection>,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    rule: DependencyDigestRule,
 ) -> Result<ServingComponent, PublishManifestError> {
-    let resolve = |dependency: &wamn_catalog::ComponentOperationDependency| {
-        resolve_component_dependency(dependency, component_facts, rule).ok()
-    };
-    ServingComponent::project(fact, connections, &resolve).map_err(|error| {
+    ServingComponent::project(fact, connections).map_err(|error| {
         PublishManifestError::with_source(
-            PublishManifestErrorType::OperationDependency,
+            PublishManifestErrorType::Component,
             format!(
-                "component {:?} does not fold into one release component",
+                "component {:?} does not project into one release component",
                 fact.component
             ),
             error,
@@ -435,8 +412,9 @@ pub(super) fn resolve_route_component<'a>(
     Ok(fact)
 }
 
-/// Refuse an anonymous attachment that reaches a registered operation, a
-/// component dependency or a transactional statement at `site`.
+/// Refuse an anonymous attachment that reaches a registered operation, an
+/// operation that begins a host transaction, or a transactional statement at
+/// `site`.
 fn refuse_anonymous_reach(
     attachment_id: &str,
     operation: &AdmittedComponentOperation,
@@ -453,14 +431,12 @@ fn refuse_anonymous_reach(
             ),
         ));
     }
-    if let Some(dependency) = operation.dependencies.first() {
+    if operation.host_transaction {
         return Err(PublishManifestError::new(
-            PublishManifestErrorType::UnauthenticatedRegisteredOperation,
+            PublishManifestErrorType::UnauthenticatedWrite,
             format!(
-                "attachment {attachment_id:?} reaches registered operation \
-                 {:?} through component dependency at {site}; set \
-                 auth-policy modes = [{mode:?}]",
-                dependency.operation,
+                "attachment {attachment_id:?} reaches an operation that begins a host \
+                 transaction at {site}; set auth-policy modes = [{mode:?}]",
                 mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
             ),
         ));

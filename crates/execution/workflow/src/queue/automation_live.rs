@@ -255,6 +255,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         ComponentAdmissionRequest {
             declaration,
             admitted_platform_packages: BTreeSet::from(["wamn:node".to_owned()]),
+            base_digests: BTreeSet::new(),
         },
     )?
     .component;

@@ -430,7 +430,7 @@ mod tests {
                 AdmittedComponentOperation {
                     committed_result_schema: None,
                     registered_operation: None,
-                    dependencies: Vec::new(),
+                    host_transaction: false,
                     input_ports: vec![AdmittedComponentPort {
                         name: input_name.to_string(),
                         schema: schema(input_schema),
