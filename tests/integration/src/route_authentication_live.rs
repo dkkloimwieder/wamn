@@ -1208,7 +1208,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     for (user, role, refusal) in [
         ("person@example.invalid", "reader", "does not exist"),
         ("person@example.invalid", "operator", "does not exist"),
-        ("nobody@example.invalid", ITEM_READER, "reconcile-run-plane"),
+        ("nobody@example.invalid", ITEM_READER, "env apply"),
         ("twin@example.invalid", ITEM_READER, "names 2 users"),
     ] {
         let error = user_roles::grant_role(&request(user, role))

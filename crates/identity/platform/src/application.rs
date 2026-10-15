@@ -19,7 +19,7 @@ use wamn_project_state::ADMIN_ROLE;
 use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
 
 /// One project database serves one tenant. Its platform rows, which
-/// `reconcile-run-plane` writes first, name it.
+/// `env apply` writes first, name it.
 const TENANT_SQL: &str =
     "SELECT DISTINCT tenant_id FROM app_system.users WHERE type = 'platform' ORDER BY 1";
 
@@ -69,7 +69,7 @@ pub async fn environment_tenant(
         Ok([tenant]) => Ok(tenant),
         Err(tenants) if tenants.is_empty() => Err(IdentityError::new(
             IdentityErrorType::NotFound,
-            "the project database has no platform rows. Run reconcile-run-plane first",
+            "the project database has no platform rows. Run `wamn-ctl env apply` first",
         )),
         Err(tenants) => Err(IdentityError::new(
             IdentityErrorType::Conflict,

@@ -1,5 +1,5 @@
-//! Arguments and output of the `author-wiring`, `publish-release`,
-//! `reconcile-run-plane`, and `terminalize-effect-uncertain` verbs.
+//! Arguments and output of the `author-wiring`, `publish-release`, and
+//! `terminalize-effect-uncertain` verbs.
 
 use std::path::PathBuf;
 
@@ -10,7 +10,6 @@ use wamn_control::package_artifact::PackageRegistry;
 use wamn_control::publish_release::{
     self, PublishReleaseRequest, ReleaseWiringTarget, parse_package,
 };
-use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneOutcome, ReconcileRunPlaneRequest};
 use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
 use wamn_run_state::operator_action::OperatorActionBasis;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
@@ -110,46 +109,6 @@ pub struct PublishReleaseArgs {
     pub oci_ca_paths: Vec<PathBuf>,
 }
 
-#[derive(Debug, Args)]
-pub struct ReconcileRunPlaneArgs {
-    /// Administrative Postgres URL to the system registry. The reconciler reads
-    /// the project-env's stored instance suffix here before resolving policy;
-    /// admission never connects to this database. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
-    pub system_database_url: String,
-
-    /// Administrative Postgres URL to the exact registry-derived project
-    /// database. Observation and apply require SUPERUSER or BYPASSRLS so
-    /// forced-RLS legacy rows cannot be skipped. Env `WAMN_PG_ADMIN_URL`.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: String,
-
-    /// Registry organization owning the environment policy.
-    #[arg(long)]
-    pub org: String,
-
-    /// Registry project owning the exact provisioned database target.
-    #[arg(long)]
-    pub project: String,
-
-    /// Tenant whose project-local policy row is converged.
-    #[arg(long)]
-    pub tenant: String,
-
-    /// Environment policy name in the owning organization's registry set.
-    #[arg(long)]
-    pub env: String,
-
-    /// The project-env schema the run-plane tables live in (e.g.
-    /// `wamn_runner_demo`, `poc_f1`).
-    #[arg(long)]
-    pub schema: String,
-
-    /// Print the reconcile plan without applying it (strictly read-only).
-    #[arg(long)]
-    pub dry_run: bool,
-}
-
 /// Exact operator input; effect identity and asserted outcome are absent by construction.
 #[derive(Debug, Args)]
 pub struct TerminalizeEffectUncertainArgs {
@@ -233,87 +192,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     .await?;
     println!("{digest}");
     Ok(())
-}
-
-/// Reconcile one run plane and print its plan and policy lines.
-pub async fn reconcile(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
-    let request = ReconcileRunPlaneRequest {
-        system_database_url: args.system_database_url,
-        admin_database_url: args.admin_database_url,
-        org: args.org,
-        project: args.project,
-        tenant: args.tenant.clone(),
-        env: args.env.clone(),
-        schema: args.schema,
-        dry_run: args.dry_run,
-    };
-    let outcome = reconcile_run_plane::reconcile_run_plane(request).await?;
-    print_reconciled(&outcome, args.dry_run, &args.tenant, &args.env);
-    Ok(())
-}
-
-/// Print the lines that report one run-plane reconciliation.
-pub fn print_reconciled(
-    outcome: &ReconcileRunPlaneOutcome,
-    dry_run: bool,
-    tenant: &str,
-    env: &str,
-) {
-    let plan = &outcome.plan;
-    let verb = if dry_run { "would apply" } else { "applied" };
-    if plan.is_noop() {
-        println!(
-            "run plane already at the schema of record — no actions ({} tables at target)",
-            plan.at_target.len()
-        );
-    } else {
-        for a in &plan.actions {
-            println!("{verb} {:?}: {}", a.kind, a.target);
-        }
-    }
-    for (table, col) in &plan.extra_columns {
-        println!("  [extra] {table}.{col} is not in the schema of record — left untouched");
-    }
-    if outcome.policy_changed {
-        let mode = if dry_run {
-            "would converge"
-        } else {
-            "converged"
-        };
-        println!(
-            "  {mode} environment policy tenant={tenant:?} environment={env:?} durability_class={}",
-            outcome.durability_class.as_sql(),
-        );
-    }
-    let identity = &outcome.tenant_identity;
-    if identity.app_schema_installed {
-        println!("  {verb} app_system schema tenant={tenant:?}");
-    }
-    if identity.platform_rows_written > 0
-        || identity.service_rows_written > 0
-        || identity.user_rows_written > 0
-    {
-        println!(
-            "  {verb} identity rows tenant={tenant:?} platform={} service={} user={}",
-            identity.platform_rows_written,
-            identity.service_rows_written,
-            identity.user_rows_written,
-        );
-    }
-    if identity.admin_rows_written > 0 {
-        let written = if dry_run { "would write" } else { "wrote" };
-        println!(
-            "  {written} admin rows tenant={tenant:?} user={}",
-            identity.admin_rows_written
-        );
-    }
-    if identity.user_rows_removed > 0 {
-        let removed = if dry_run { "would remove" } else { "removed" };
-        println!(
-            "  {removed} user rows tenant={tenant:?} user={}",
-            identity.user_rows_removed
-        );
-    }
 }
 
 /// Terminalize one effect-uncertain run and print its result.

@@ -90,15 +90,13 @@ enum Command {
     /// Publish one immutable release from exact package-owned facts and push
     /// its manifest to the release repository.
     ///
-    /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
+    /// PRECONDITION: run `env apply` for this environment FIRST; it reconciles the run plane `wamn_run`. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(release_verbs::PublishReleaseArgs),
 
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
     /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
     ReconcileReplicaIdentity(package_verbs::ReconcileReplicaIdentityArgs),
-    /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
-    ReconcileRunPlane(release_verbs::ReconcileRunPlaneArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
     /// Start, park, release, and list workflow runs.
@@ -160,7 +158,6 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcileReplicaIdentity(args) => {
             package_verbs::reconcile_replica_identity(args).await
         }
-        Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
         Command::Env(command) => Box::pin(env_verbs::run(command)).await,

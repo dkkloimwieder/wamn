@@ -3,9 +3,9 @@
 //!
 //! `apply-package` writes the built-in role `admin`, and every other role is
 //! authored. This module writes only `app_system.user_roles`. The target is resolved in the
-//! registry the way `reconcile-run-plane` resolves it, because a role grant
+//! registry the way `env apply` resolves it, because a role grant
 //! names an environment, not a database. The user is named by email and must
-//! already have its tenant `users` row, which `reconcile-run-plane` writes.
+//! already have its tenant `users` row, which `env apply` writes.
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
@@ -150,7 +150,7 @@ async fn resolve_user(
     match rows.as_slice() {
         [] => anyhow::bail!(
             "no user with email {user} in tenant {tenant}: the users row comes from \
-             reconcile-run-plane, so run it after the principal exists"
+             `wamn-ctl env apply`, so run it after the principal exists"
         ),
         [row] => Ok(row.get(0)),
         _ => anyhow::bail!(

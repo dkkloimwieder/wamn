@@ -225,7 +225,7 @@ Every other role is authored in the tenant, and it holds the stable operation re
 A user or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
-Both verbs name the environment in the registry, as `reconcile-run-plane` does, and the user by email:
+Both verbs name the environment in the registry, as `env apply` does, and the user by email:
 
 ```bash
 wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
@@ -234,7 +234,7 @@ wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-datab
 
 The admin URL must be SUPERUSER or BYPASSRLS.
 The verbs refuse a role that does not exist in the tenant, an unknown email, and an email that names more than one user.
-The user needs its tenant `users` row, which `wamn-ctl env apply` writes, so apply the environment again after a new principal.
+The user needs its tenant `users` row, which `wamn-ctl env apply` writes, so apply the environment after a new principal and before `grant-role`.
 The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
 `env apply` writes its PAT Secret when it can reach identity. When it cannot, mint the PAT with the Job of [Google Cloud releases](gcp.md#414-releases).
 
@@ -343,7 +343,7 @@ A failure leaves the database as it was.
 The verb refuses a recorded file that differs from the file of the binary, with `schema-migration-drift`.
 It runs system files as `wamn_system` and project files as the admin connection.
 
-`provision-system` and `reconcile-run-plane` record every file in a fresh install, so a new target needs no upgrade run.
+`provision-system` and `env apply` record every file in a fresh install, so a new target needs no upgrade run.
 A database installed before its record table existed takes `--baseline <ordinal>` on its first run only.
 The verb then records the files up to that ordinal without running them, and applies the rest in the same run.
 If a change breaks a running binary, stop that binary before the run.

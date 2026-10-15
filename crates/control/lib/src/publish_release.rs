@@ -832,7 +832,7 @@ fn environment_policy_absent(
     PublishManifestError::new(
         PublishManifestErrorType::EnvironmentPolicyAbsent,
         format!(
-            "tenant {:?} has no row in {}.environment_policies; run reconcile-run-plane",
+            "tenant {:?} has no row in {}.environment_policies; run `wamn-ctl env apply`",
             scope.tenant_id,
             run_schema.as_str()
         ),

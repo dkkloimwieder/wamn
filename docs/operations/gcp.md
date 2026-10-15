@@ -634,17 +634,9 @@ target/debug/wamn-ctl env show dkk/wms/dev
 
 ### 4.18 CDC readers
 
-The CDC readers run in `hosts`. `env apply` wrote their replication Secrets there and recorded `hosts` on each reader row. Each reader reads its registration with the registry-reader login:
+The CDC readers run in `hosts`. `env apply` wrote their replication Secrets and their registry-reader Secrets there, and recorded `hosts` on each reader row. Each reader reads its registration with the registry-reader login:
 
 ```bash
-. $HOME/.cache/wamn-install/platform.sh
-for project in receiving wms; do
-  (umask 077; target/debug/wamn-ctl provision-project-env --org dkk --project $project --env dev --tenant dkk--$project--dev \
-    --namespace hosts --db-host wamn-pg-rw.platform.svc.cluster.local \
-    --prepare-registry-reader-generation a --emit-registry-reader-secret $W/registry-reader-$project.json)
-  kubectl apply -f $W/registry-reader-$project.json
-  rm $W/registry-reader-$project.json
-done
 kubectl apply -f deploy/gcp/cdc-reader.yaml -f deploy/gcp/cdc-reader-wms.yaml
 kubectl -n hosts rollout status deploy/cdc-reader deploy/cdc-reader-wms --timeout=180s
 kubectl -n hosts logs deploy/cdc-reader --tail=20
@@ -757,12 +749,13 @@ kubectl -n identity logs job/invite
 kubectl -n identity delete job invite
 ```
 
-Identity answers `201 {"status":"accepted_for_delivery"}`. Then give the user a role in the environment ([deployment](deployment.md#user-roles)):
+Identity answers `201 {"status":"accepted_for_delivery"}`. Then apply the environment, which writes the user's tenant `users` row, and give the user a role in it ([deployment](deployment.md#user-roles)):
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
-target/debug/wamn-ctl reconcile-run-plane --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$(db_url receiving)" \
-  --org dkk --project receiving --tenant dkk--receiving--dev --env dev --schema wamn_run
+use_env receiving
+export WAMN_RELEASE_HOST_GROUP=deploy/gcp/host-group-receiving.yaml
+target/debug/wamn-ctl env apply deploy/gcp/environments/dkk--receiving--dev.k
 target/debug/wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$(db_url receiving)" \
   --org dkk --project receiving --env dev --tenant dkk--receiving--dev --user <email> --role admin
 ```

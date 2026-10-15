@@ -42,16 +42,19 @@ pub(super) const RUN_SCHEMA: &str = "wamn_run";
 /// How long one CR may take to report `status.applied`.
 const APPLIED_TIMEOUT: &str = "--timeout=120s";
 
-/// The credential families the host of the release chart reads, and whether
-/// each credential reaches the project database. Every Secret is named from
-/// the coordinate (`workload_secret_name`, §9.1).
-pub(super) const HOST_FAMILIES: [(WorkloadRoleFamily, bool); 6] = [
+/// The credential families whose Secrets the verb writes, and whether each
+/// credential reaches the project database: the families the host of the
+/// release chart reads, and the registry reader of the environment's CDC
+/// reader. Every Secret is named from the coordinate (`workload_secret_name`,
+/// §9.1).
+pub(super) const CREDENTIAL_FAMILIES: [(WorkloadRoleFamily, bool); 7] = [
     (WorkloadRoleFamily::App, true),
     (WorkloadRoleFamily::ExecutorPlatform, true),
     (WorkloadRoleFamily::HttpAdmitter, true),
     (WorkloadRoleFamily::EventMaterializer, true),
     (WorkloadRoleFamily::IdentityReader, false),
     (WorkloadRoleFamily::Administration, true),
+    (WorkloadRoleFamily::RegistryReader, false),
 ];
 
 /// Ensure the substrate of the document's environment.
@@ -145,8 +148,8 @@ pub async fn ensure(
     .await
     .context("reconcile the run plane")?;
 
-    // Generation a of each host credential, only where its Secret is absent.
-    for (family, project_database) in HOST_FAMILIES {
+    // Generation a of each credential, only where its Secret is absent.
+    for (family, project_database) in CREDENTIAL_FAMILIES {
         let name = wamn_control_provision::workload_secret_name(
             family,
             &document.org,
@@ -611,4 +614,17 @@ fn shred(file: &Path) -> anyhow::Result<()> {
     handle.sync_all()?;
     drop(handle);
     std::fs::remove_file(file).with_context(|| format!("remove {}", file.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_writes_the_registry_reader_secret_of_the_cdc_reader() {
+        assert!(
+            CREDENTIAL_FAMILIES.contains(&(WorkloadRoleFamily::RegistryReader, false)),
+            "the registry reader addresses the control database, not the project database"
+        );
+    }
 }

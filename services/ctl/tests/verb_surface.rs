@@ -6,7 +6,6 @@ const MVP_VERBS: &[&str] = &[
     "enable-cdc-project-env",
     "apply-package",
     "reconcile-replica-identity",
-    "reconcile-run-plane",
     "grant-role",
     "revoke-role",
     "create-role",
@@ -107,41 +106,6 @@ fn replica_identity_repair_is_an_explicit_one_shot_operator_surface() {
             "one-shot operator repair exposed recurring control {recurring}"
         );
     }
-}
-
-#[test]
-fn run_plane_reconcile_requires_the_project_target_key() {
-    let binary = env!("CARGO_BIN_EXE_wamn-ctl");
-    let output = Command::new(binary)
-        .args([
-            "reconcile-run-plane",
-            "--system-database-url",
-            "postgres://registry.invalid/system",
-            "--admin-database-url",
-            "postgres://target.invalid/project",
-            "--org",
-            "acme",
-            "--tenant",
-            "t1",
-            "--env",
-            "dev",
-            "--schema",
-            "run_plane",
-        ])
-        .output()
-        .expect("parse reconcile-run-plane without a project");
-    assert!(!output.status.success(), "missing --project was accepted");
-    let stderr = String::from_utf8(output.stderr).expect("parse error is UTF-8");
-    assert!(
-        stderr.contains("--project <PROJECT>"),
-        "missing-target refusal did not name --project: {stderr}"
-    );
-
-    let help = command_help(binary, "reconcile-run-plane");
-    assert!(
-        help.contains("--project <PROJECT>"),
-        "run-plane help omitted the project target key"
-    );
 }
 
 #[test]
