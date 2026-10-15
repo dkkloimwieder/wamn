@@ -92,6 +92,8 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: every environment of the project. |
+| `wamn-control:environment/status@0.9.0` | The current state of one environment in its release namespace: the digest, the rollout, the workload conditions and the live set. |
+| `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the tables it reads, writes, deletes and locks, derived from the release's SQL over the environment's table columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
 | `wamn-control:member/grant@0.9.0` | Takes `project`, `env` and `principal_id` of an active member, and writes the membership of that environment. |
@@ -639,7 +641,7 @@ The rule it follows is `classify()` in `crates/client/tui/src/submission.rs`, wh
 Both clients read one case table at `crates/client/tui/tests/data/classification-cases.json`.
 The browser transport also sends one write that carries many items, each with its own request identity, and reads one outcome for each item.
 A 200 reply with one outcome for each item classifies each item by the rule of one item, so a refusal marks only its own item.
-Any other reply gives every item the same outcome. The table's `many_cases` state this rule, and the terminal reads them once `wamn-zsrk` lands.
+Any other reply gives every item the same outcome. The table's `many_cases` state this rule, and both clients read them.
 The browser trusts the platform for the values inside a reply, so it holds no schema validator and no copy of the wire spelling rules.
 A reply whose value violates its own field contract therefore reads as completed in the browser and as uncertain in the terminal.
 The runtime also holds what a generated component calls: the state of one read, the members of a draft, and the display text of a declared value.
@@ -830,7 +832,7 @@ The [runtime tests](../operations/running-tests.md#host-and-package-runtime) cov
 OpenTelemetry records invocation and effect spans, request timing, and delivery outcomes.
 Operational logs use INFO, and detailed request traces go to Tempo.
 The bounded router tap supplies the live view without durable node histories.
-Each tap record names a route or a wiring. The host writes only version 2 of the record, and readers still read version 1.
+Each tap record names a route or a wiring. The host writes only version 3 of the record, and readers refuse versions 1 and 2.
 
 The [deployment guide](../operations/deployment.md) owns probe ports, grace periods, and rollout commands.
 The [native alignment page](native-alignment.md#current-limits) retains the unresolved operator retry and liveness limits.

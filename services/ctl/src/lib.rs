@@ -3,11 +3,10 @@
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
 //!
 //! `wamn-control` does the work. This crate holds the clap argument
-//! definitions, the printed output, the exit codes, and the interrupt,
-//! termination, and hangup arms of the deploy verb. Each verb parses its
-//! arguments, makes one library call, and prints the result. Environment
-//! lifecycle and reporting verbs require the `ops` feature and ship in the
-//! separate `wamn-ctl-ops` binary. The clients in `dev/` retain argument parsing,
+//! definitions, the printed output, and the exit codes. Each verb parses its
+//! arguments, makes one library call, and prints the result. The user-creation,
+//! broker-advisory reporting, and history-pruning verbs require the `ops`
+//! feature and ship in the separate `wamn-ctl-ops` binary. The clients in `dev/` retain argument parsing,
 //! terminal rendering, and process signals for `wamn-control::dev` sessions.
 
 pub mod artifact_verbs;

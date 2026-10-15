@@ -15,7 +15,6 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Package upgrade](package-upgrade.md): live, `wamn-eycl` (Epic 4); Epic 3 `wamn-5ihq` is deferred.
 - [Platform deploy](platform-deploy.md): done, `wamn-jqdja`.
 - [Platform UI](platform-ui.md): done, `wamn-a40n`.
-- [Release qualification](release-qualification.md): done, `wamn-ld93.33`.
 - [Routes, workflows, and the router](routes-router.md): done, `wamn-upl3`.
 - [Table data loading](table-adv-data.md): done, `wamn-3nsf`.
 - [Table presentation](table-adv-ui.md): done, `wamn-8iul`.
@@ -38,3 +37,4 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Operation ids](../history/operation-ids.md): done, `wamn-cuqc`.
 - [User identity and login](../history/identity-plan.md): done, `wamn-a045` and `wamn-k3mu`; open work is [identity](identity.md).
 - [Platform UI history](../history/platform-ui-history.md): sections 0, 1 and 3 to 9 of platform UI; section 5 is replaced by [platform deploy](platform-deploy.md) §12.
+- [Release qualification](../history/release-qualification.md): done, `wamn-ld93.33`; it names deleted verbs, and [platform deploy](platform-deploy.md) §15 holds the current behavior.

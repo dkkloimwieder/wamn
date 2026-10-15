@@ -1,5 +1,7 @@
 # Package upgrade
 
+Status (owner, 2026-10-15): before Epic 4 (`wamn-eycl`) starts, its lifecycle is rescoped onto `env apply`. The verbs `select-release` and `push-component` and the saga that this page names are deleted.
+
 Beads tracks this specification through four epics. Only one epic is scoped for implementation at a time. The owner reviewed completed Epic 1 and opened Epic 2 on 2026-10-02. Epics 3 and 4 remain goal-only placeholders without child issues. Each later epic requires a separate owner instruction after review of its predecessor.
 
 Updated through the owner decisions of 2026-10-02. Completed Epic 1 is `wamn-xvu5`. Epic 2 implementation and acceptance are tracked on `wamn-orb5`. Epics 3 and 4 are placeholders `wamn-5ihq` and `wamn-eycl`.
@@ -30,7 +32,7 @@ The 2.0.0 `kind-to-type.md` package step changed versions without adding package
 - Each SQL-bearing package in the proof uses one unchanged application schema, read from its actual serving workload's `wamn.schema`. Predecessor and candidate statements use that same exact `search_path`. Operator-supplied predecessor or candidate schema flags are not evidence. Packages with no SQL are exempt from this schema requirement.
 - Upgrade qualification runs against a copy of the installed predecessor database with its data. A fresh schema alone is not upgrade proof.
 - Ordinary release qualification still runs against the exact final release candidate after production package application and release publication.
-- One deployment writer per environment. Existing lifecycle verbs keep their ownership. `qualify-upgrade` is a new read-only database-transition proof verb; it does not qualify a release, cannot satisfy `publish-qualified-release`, and does not replace a mutation or deployment verb. This does not create the second **release-qualification** path forbidden by `docs/plan/release-qualification.md`.
+- One deployment writer per environment. Existing lifecycle verbs keep their ownership. `qualify-upgrade` is a new read-only database-transition proof verb; it does not qualify a release, cannot satisfy `publish-qualified-release`, and does not replace a mutation or deployment verb. This does not create the second **release-qualification** path forbidden by `docs/history/release-qualification.md`.
 - An upgrade starts only from a **converged environment**: the selected release head is the release actually serving the environment. A prior failed deployment that left head and workload divergent is resolved before any production package migration starts. The environment-specific check compares the selected manifest digest with the release digest carried by the serving workload; Epic 1's wamn-dev proof reads the running host Deployment's release arguments rather than assuming a successful prior rollout.
 - The project database must already carry the platform schema needed by the upgrade implementation, including the durable upgrade-qualification carrier. That carrier lands through the normal platform `upgrade-schema` path before application-package upgrade is attempted.
 - A sealed coordinate never changes. A fix is the next package version.
@@ -81,7 +83,7 @@ Measured on `main` at `c2eadc85a`.
 | Release publication | `publish-release` requires the package coordinate to have already reached `apply-package`. |
 | Release preparation | `prepare-release` captures an already-published effective release. It cannot be used to prove a schema change before production `apply-package`. |
 | Release qualification | `qualify-release` takes `--repository --revision --candidate`; it reconstructs fresh application schemas, verifies generated output and SQLx metadata, rebuilds artifacts and runs application cases against the exact candidate. It does not apply a suffix to a copy of an installed predecessor. |
-| General release-qualification work | `docs/plan/release-qualification.md` / `wamn-ld93.33` now specifies candidate-driven qualification for arbitrary wamn-dev release identities, but that implementation has not landed at this snapshot. Epic 1's final WMS environment run depends on it; package-upgrade does not absorb that work. |
+| General release-qualification work | `docs/history/release-qualification.md` / `wamn-ld93.33` now specifies candidate-driven qualification for arbitrary wamn-dev release identities, but that implementation has not landed at this snapshot. Epic 1's final WMS environment run depends on it; package-upgrade does not absorb that work. |
 | Platform schema migration | Installed project databases now advance through numbered `deploy/sql/migrations/project/*` files via `upgrade-schema`. A new `catalog.package_upgrade_qualifications` carrier therefore needs both fresh-install DDL and the next project migration before `apply-package` can persist evidence on an existing environment. |
 | Replica identity | Deployment documentation now requires `reconcile-replica-identity` after package/data-access work when registrations need old-row fields; the dev loop runs it after data-access reconciliation on activation. The upgrade ordering must retain this existing lifecycle step. |
 | Selection | `select-release` changes the environment head after verifying qualified publication. It has no installed-superset compatibility rule. |
@@ -715,7 +717,7 @@ Existing kind delivery cluster cases remain unchanged in this issue.
 Update `docs/operations/deployment.md` with:
 
 - the patch/minor/major package-version convention of §2.2;
-- the distinction between `qualify-upgrade` and the single `qualify-release` release-qualification path, explicitly reconciling the wording with `docs/plan/release-qualification.md`;
+- the distinction between `qualify-upgrade` and the single `qualify-release` release-qualification path, explicitly reconciling the wording with `docs/history/release-qualification.md`;
 - the shared predecessor-compatible migration policy;
 - the complete production order and its converged-environment precondition, including how the selected digest is compared with the serving workload's release carrier:
 

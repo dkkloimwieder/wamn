@@ -46,13 +46,11 @@ A `wamn-control` operation takes ordinary inputs, keeps its own validation, and 
 It also owns the delivery code, which prepares, qualifies, publishes, selects, and deploys a release.
 That code runs the `git`, `docker`, `kubectl`, and `cargo` processes its work needs.
 It owns the child process group those processes run in.
-The `ops` feature adds the environment lifecycle and reporting verbs.
+The `ops` feature adds the user-creation, broker-advisory reporting, and history-pruning verbs.
 `wamn-ctl` turns that feature on for its separate `wamn-ctl-ops` binary.
 
 `wamn-ctl` lives at `services/ctl` and owns the command line.
 It holds the clap argument definitions, the printed output, and the exit codes.
-It also holds the interrupt, termination, and hangup arms of the deploy verb.
-That signal answers the operator, and it does not clean up after the library.
 Each verb parses its arguments, makes one library call, and prints the result.
 The `<area>_verbs.rs` modules hold that surface.
 The development clients in `services/ctl/src/dev/` own argument parsing, terminal rendering, output, and process-wide signals.
@@ -94,8 +92,6 @@ Publication, component admission and the client generator resolve the name again
 An authored operation keeps the input schema that its author writes.
 Publication refuses a wiring with no edges, because a graph with no edges is a route.
 The one exception is a wiring that a registration names, because a registration still delivers to a wiring.
-Each release component member binds a component to one wiring node or to one route, and a CHECK constraint refuses a member that binds both.
-`reconcile-run-plane` converts the membership table of an older catalog to this shape.
 
 Publication produces an immutable release manifest addressed by its digest.
 Deployment supplies that digest and artifact location to the host.
@@ -126,7 +122,7 @@ Changed operation contracts, migration exceptions, and broader rollback remain i
 
 Five layers run a component, and each layer depends only on the layers below it:
 
-1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record, declared with no implementation.
+1. [`wamn-run-state`](../../crates/execution/run-state/src/lib.rs) holds pure run decisions and two storage traits. `RunStore` is the queued-run lifecycle. `IntentStore` is the per-call intent record. `wamn-runtime`, `wamn-run-state-sqlite` and the edge implement it.
 2. [`wamn-engine`](../../crates/platform/engine/src/lib.rs) holds the Wasmtime and wash-runtime host, component admission and artifacts, lifecycle, and `invoke_operation`. It links no Postgres, OCI, or `object_store` crate. A test pins what it links through wash-runtime.
 3. [`wamn-runtime`](../../crates/platform/runtime/src/lib.rs) holds the plugin set: Postgres, JetStream, blobstore, HTTP connections, credentials, logging, route authentication, and the OCI registry source. `WamnPostgres` is the Postgres adapter of `RunStore`.
 4. [`wamn-execution-host`](../../crates/execution/host/src/lib.rs) holds the route path, `OperationHost`, and the delivery bridge.

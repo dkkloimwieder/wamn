@@ -30,7 +30,7 @@ Its exact supported forms live in [introspection](../../crates/schema/introspect
 An installed successor with new migrations also requires `qualify-upgrade` evidence before production application.
 Its narrower policy permits new ordinary tables and the admitted column additions, but refuses added constraints on existing relations.
 Qualification copies the installed database with its data and object ownership.
-It reads the actual serving workloads and requires each SQL-bearing package to retain one unchanged runtime schema.
+It takes the one runtime schema of each SQL-bearing package from its manifest, reads no serving workload, and requires that schema to stay unchanged.
 Predecessor SQL must plan against the candidate schema before grants change and again after the complete candidate root set reconciles.
 Candidate SQL must plan under those same final grants. Planning preserves the grants it examines.
 
@@ -81,8 +81,7 @@ KCL authors use a non-null cursor because the manifest compiler omits `None` val
 The explicit `whole_row_grants` exception belongs only to an expand stage.
 Stage declarations require a predecessor and a package that declares SQL.
 
-Qualification format 3 carries the stage declaration alongside the existing package, root, workload, and privilege identities.
-Formats 1 and 2 retain their existing serialized form and remain readable.
+Qualification format 12 carries the stage declaration beside the package, root, and privilege identities. Formats 10 (plain) and 11 (overlay) carry none, and formats 1 to 9 no longer decode.
 Expand stages currently support the admitted column additions on package-owned relations.
 They run named conditions before and after their migration suffix in the same transaction.
 Application repeats the conditions against current data and records qualification evidence only after success.
@@ -654,9 +653,9 @@ A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id
 `wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `users`, `roles`, `user_roles`, `permissions` and `environment`.
 It holds `INSERT` on the entry columns of their five history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image` and the tenant key derivation.
-It holds `USAGE` on `catalog`.
+It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 Project migration `0007` creates `environment` in an installed database, and `0008` gives the family its write.
-The migration that removes `catalog.effective_release_heads` renders the current surface, and `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
+Project migration `0020` renders the current surface, and `0016`, `0008`, `0006` and `0003` keep the surfaces that installed databases recorded.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.
 One login of the family serves each environment, and two hosts hold it: the application host of the environment and the control host of its org.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
@@ -748,7 +747,7 @@ The guarantee is bounded historical state:
 
 Stamps and log entries are correct for writes through the supported platform paths.
 On those paths, the triggers exist and every writer binds its executing principal and its operation.
-`reconcile-run-plane` applies `app-schema.sql` to the project database and writes its platform rows.
+`env apply` applies `app-schema.sql` to the project database and writes its platform rows.
 It writes a service row for each service principal of the project.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
 It writes a user row for each user with a membership in that project environment, and removes a user row whose membership is gone.
@@ -760,7 +759,7 @@ A user who works in two organizations holds one principal and two memberships.
 A user row carries the email of that user from `identity.principals`.
 The control host writes the user row and the `admin` row when its route grants them, and removes them when its route revokes them, with the administration login, bound to the caller and the route's sealed operation id.
 The application host writes roles, permissions and user roles through its [host routes](execution.md#host-run-routes) with the same login and the same binding.
-A member that `wamn-ctl grant-project-env-membership` or `wamn-ctl invite` adds gains the row at the next reconcile, because those verbs hold no tenant connection.
+A member that `wamn-ctl grant-project-env-membership` or `wamn-ctl invite` adds gains the row at the next `wamn-ctl env apply`, because those verbs hold no tenant connection.
 A principal with no users row cannot write in the tenant.
 The invocation bind refuses it.
 `WamnPostgres::bind_session_claims` reads `app_system.users` in the tenant and refuses a principal that owns no row.

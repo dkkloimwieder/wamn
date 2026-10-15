@@ -39,14 +39,14 @@ Measured on `main` at `b32865103` on 2026-09-26.
 | The flow | The hand-written data access runs it inside one transaction: replay read, claim insert, work, commit; on a lost claim race a second replay read (`apps/wamn_wms/data/src/packaging.rs`). A stored request that differs answers `IdempotencyConflict`. |
 | Result on retry | Not stored. The replay re-reads the model row through the join. A custom command whose result is not one row (`record_receipt`) rebuilds it from the claim columns. |
 | Statement authority | The host builds one statement set per operation from the served contract's `statements[]` (`crates/execution/host/src/operation.rs:585-596`) and activates that set alone for the invocation (`crates/execution/host/src/operation/native_policy.rs:257-260`). A digest outside the set is `UnknownStatement` (`crates/platform/runtime/src/plugins/wamn_postgres/statements.rs:234-237`). |
-| `app_system` | Installed in every project database by `reconcile-run-plane` from `deploy/sql/app-schema.sql`. One project database serves one tenant (`docs/architecture/data-access.md:630`). |
+| `app_system` | Installed in every project database by `env apply` from `deploy/sql/app-schema.sql`. One project database serves one tenant (`docs/architecture/data-access.md:630`). |
 | Edge | The engine's intent rules give an operation with no SQL its record in SQLite. `edge_samples` still has a claim table for `sample.record` on the platform side. |
 
 ## 4. Design
 
 ### 4.1 The table
 
-`app_system.write_log`, installed by `deploy/sql/app-schema.sql`, so `reconcile-run-plane` puts it in every project database and no application migration names it.
+`app_system.write_log`, installed by `deploy/sql/app-schema.sql`, so `env apply` puts it in every project database and no application migration names it.
 
 | Column | Type | Rule |
 | --- | --- | --- |
