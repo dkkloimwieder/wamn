@@ -329,13 +329,15 @@ A platform schema change is a numbered file under `deploy/sql/migrations/system/
 The design is in [schema upgrade](../history/schema-upgrade.md).
 Package migrations of an application are not platform migrations.
 
-Upgrade the system database first, then each project-environment database:
+Upgrade the system database before you apply an environment on a new platform version:
 
 ```bash
 wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL"
 wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL" --confirm
-wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL" --admin-database-url "$TARGET_ADMIN_URL" --confirm
 ```
+
+You do not upgrade a project-environment database by hand.
+The package stage of `wamn-ctl env apply` applies the pending project files of its binary first, and a refusal stops the apply before any Kubernetes write.
 
 Without `--confirm`, the verb prints the pending files and changes nothing.
 One run applies the pending files in one transaction and records them in `registry.schema_migrations` or `app_system.schema_migrations`.

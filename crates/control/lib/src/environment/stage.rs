@@ -1,7 +1,9 @@
 //! The package stage of `apply` (docs/plan/platform-deploy.md §10.1 step 5,
 //! §10.2), run in the project database before any Kubernetes write.
 //!
-//! Under the lifecycle lock, idempotently: install each package the
+//! Under the lifecycle lock, idempotently: apply the pending platform
+//! migrations of the project database (`upgrade-schema`), or refuse and name
+//! the file; install each package the
 //! environment never had from its verified artifact; verify the predecessor
 //! (the installed versions are the ones analysis read); apply the stage of
 //! each staged successor the release names; write the release cache row;
@@ -39,6 +41,13 @@ pub async fn stage(
 ) -> anyhow::Result<Vec<PackageManifest>> {
     let tenant =
         wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
+
+    // 0. The platform schema the packages run on: the pending project
+    // migrations of this binary, in one transaction. A drifted or failing file
+    // refuses here and names itself.
+    crate::upgrade_schema::upgrade_schema(&schema_request(&platform.system_database_url, project_url))
+        .await
+        .context("apply the pending project migrations")?;
 
     // 1. The predecessor: the installed versions are those analysis judged.
     let observed = installed(platform, document).await?;
@@ -147,6 +156,20 @@ pub async fn stage(
         .into_iter()
         .map(|(_, _, _, package_manifest)| package_manifest)
         .collect())
+}
+
+/// The `upgrade-schema` run of the stage on the project database at
+/// `project_url`: applied, never a first run with a baseline.
+fn schema_request(
+    system_database_url: &str,
+    project_url: &str,
+) -> crate::upgrade_schema::UpgradeSchemaRequest {
+    crate::upgrade_schema::UpgradeSchemaRequest {
+        system_database_url: system_database_url.to_owned(),
+        admin_database_url: Some(project_url.to_owned()),
+        baseline: None,
+        confirm: true,
+    }
 }
 
 /// The order in which the stage applies the release's `packages`, each an id
@@ -356,7 +379,25 @@ mod tests {
         ServingComponent, ServingManifest, ServingRelease, WorkflowSection,
     };
 
-    use super::{apply_order, release_requirements};
+    use super::{apply_order, release_requirements, schema_request};
+
+    /// The stage applies the pending project migrations of the binary to
+    /// the project database, never as a plan and never with a baseline
+    /// (wamn-flygs).
+    #[test]
+    fn the_stage_applies_the_pending_project_migrations() {
+        let request = schema_request(
+            "postgres://postgres@db/wamn_system",
+            "postgres://postgres@db/wamn_dkk_receiving_dev_x",
+        );
+        assert_eq!(request.system_database_url, "postgres://postgres@db/wamn_system");
+        assert_eq!(
+            request.admin_database_url.as_deref(),
+            Some("postgres://postgres@db/wamn_dkk_receiving_dev_x")
+        );
+        assert!(request.confirm);
+        assert_eq!(request.baseline, None);
+    }
 
     /// An overlay applies after the base it extends, whatever the manifest
     /// order (wamn-k8127.5).
