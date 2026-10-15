@@ -385,6 +385,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 tenant_id,
                 None,
                 None,
@@ -488,6 +489,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 tenant_id,
                 None,
                 None,
@@ -581,6 +583,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 tenant_id,
                 None,
                 None,
@@ -694,6 +697,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 tenant_id,
                 None,
                 None,

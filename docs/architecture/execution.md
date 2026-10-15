@@ -288,7 +288,7 @@ The queue owner binds these transactions to `wamn_run`, independently of the app
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases; replicas need no wake service or process-local handoff.
 
-The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
+The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on; the guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
 The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 

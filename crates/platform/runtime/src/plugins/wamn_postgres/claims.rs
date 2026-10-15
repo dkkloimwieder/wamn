@@ -1680,6 +1680,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &conn,
                 AuthorityClass::CallableHttp,
+                false,
                 tenant,
                 schema.as_deref(),
                 None,
@@ -2000,6 +2001,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::Administration,
+                false,
                 tenant,
                 None,
                 None,

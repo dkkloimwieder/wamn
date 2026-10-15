@@ -460,6 +460,7 @@ async fn begin_transaction(
         .begin_with_claims(
             connection.connection(),
             authority,
+            plugin.active_read(component_id),
             &tenant,
             schema.as_deref(),
             runner.as_deref(),
@@ -502,6 +503,7 @@ pub(super) async fn begin_statement_transaction(
         .begin_with_claims(
             connection.connection(),
             authority,
+            plugin.active_read(component_id),
             &tenant,
             schema.as_deref(),
             runner.as_deref(),

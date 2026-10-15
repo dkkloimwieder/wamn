@@ -63,7 +63,11 @@ pub struct VerifiedStatement {
 pub type VerifiedStatementSet = BTreeMap<String, VerifiedStatement>;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct BoundStatementSet(BTreeMap<String, Arc<VerifiedStatement>>);
+pub(super) struct BoundStatementSet {
+    statements: BTreeMap<String, Arc<VerifiedStatement>>,
+    /// The operation is a read (get, query or projection).
+    read: bool,
+}
 
 /// One operation's statement set, keyed by each statement's package-relative
 /// path and sealed -- the per-component half of the statement bind.
@@ -101,15 +105,20 @@ pub(super) struct StatementScopes {
 
 impl WamnPostgres {
     /// Seal one admitted operation's immutable statement set, once per
-    /// component, so a scope can bind it.
+    /// component, so a scope can bind it. `read` is true for a get, query or
+    /// projection operation.
     #[must_use]
-    pub fn prepare_statement_set(statements: VerifiedStatementSet) -> PreparedStatementSet {
-        PreparedStatementSet(Arc::new(BoundStatementSet(
-            statements
+    pub fn prepare_statement_set(
+        statements: VerifiedStatementSet,
+        read: bool,
+    ) -> PreparedStatementSet {
+        PreparedStatementSet(Arc::new(BoundStatementSet {
+            statements: statements
                 .into_iter()
                 .map(|(path, statement)| (path, Arc::new(statement)))
                 .collect(),
-        )))
+            read,
+        }))
     }
 
     /// Seal the statement set of each named import of one component.
@@ -185,7 +194,7 @@ impl WamnPostgres {
         operation: &str,
         statements: VerifiedStatementSet,
     ) -> anyhow::Result<()> {
-        let prepared = Self::prepare_statement_set(statements);
+        let prepared = Self::prepare_statement_set(statements, false);
         self.bind_prepared_statement_operation(component_id, operation, &prepared)
     }
 
@@ -266,6 +275,16 @@ impl WamnPostgres {
         }
     }
 
+    /// Whether the operation active in `component_id` is a read.
+    pub(super) fn active_read(&self, component_id: &str) -> bool {
+        self.statement_scopes
+            .read()
+            .expect("statement scopes lock poisoned")
+            .active
+            .get(component_id)
+            .is_some_and(|active| active.operation.read)
+    }
+
     pub(super) fn clear_statement_bindings(&self, workload_id: &str) {
         let mut scopes = self
             .statement_scopes
@@ -289,7 +308,7 @@ pub(super) fn resolve_statement(
     binds: &[SqlValue],
 ) -> Result<Arc<VerifiedStatement>, StatementError> {
     let statement = statements
-        .and_then(|statements| statements.0.get(statement_path))
+        .and_then(|statements| statements.statements.get(statement_path))
         .cloned()
         .ok_or_else(|| StatementError::UnknownStatement(statement_path.to_owned()))?;
     if !binds_match(&statement.binds, binds) {
@@ -613,10 +632,10 @@ mod tests {
         let entry = "sql/entry.sql";
         let base = "sql/base.sql";
         let prepared = |path: &str| {
-            WamnPostgres::prepare_statement_set(BTreeMap::from([(
-                path.to_owned(),
-                verified("SELECT $1::uuid, 'x'::text"),
-            )]))
+            WamnPostgres::prepare_statement_set(
+                BTreeMap::from([(path.to_owned(), verified("SELECT $1::uuid, 'x'::text"))]),
+                false,
+            )
         };
         let members = WamnPostgres::prepare_statement_members([
             ("sql-0".to_owned(), prepared(base)),
@@ -719,7 +738,10 @@ mod tests {
     fn bind_mismatch_reports_expected_and_observed_shapes() {
         let statement = verified("SELECT $1::uuid");
         let path = "sql/statement.sql".to_owned();
-        let set = BoundStatementSet(BTreeMap::from([(path.clone(), Arc::new(statement))]));
+        let set = BoundStatementSet {
+            statements: BTreeMap::from([(path.clone(), Arc::new(statement))]),
+            read: false,
+        };
         let error = resolve_statement(Some(&set), &path, &[SqlValue::Text("id".into())])
             .expect_err("wrong carrier type must fail closed");
         let StatementError::StatementContractMismatch(mismatch) = error else {

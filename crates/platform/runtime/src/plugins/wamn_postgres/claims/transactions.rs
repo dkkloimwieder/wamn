@@ -128,8 +128,13 @@ const fn claim_sql(class: AuthorityClass) -> &'static str {
     }
 }
 
-/// The statement that opens every claimed transaction of this plugin.
+/// The statement that opens every claimed transaction of this plugin, except
+/// a guest transaction of a read invocation.
 const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
+
+/// The statement that opens a guest transaction of a read invocation, so every
+/// statement in it reads one snapshot and none writes.
+const BEGIN_READ_SNAPSHOT: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 
 impl WamnPostgres {
     /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
@@ -155,6 +160,7 @@ impl WamnPostgres {
         &self,
         conn: &Object,
         class: AuthorityClass,
+        read: bool,
         tenant: &str,
         schema: Option<&str>,
         runner: Option<&str>,
@@ -214,10 +220,16 @@ impl WamnPostgres {
         // The isolation level is stated, not inherited from a session default:
         // the write log's retry reads the claim that its insert waited on, and
         // only a fresh READ COMMITTED snapshot sees it (`docs/plan/write-log.md`
-        // 4.2). A guest has no way to name the level through `begin`.
+        // 4.2). A guest has no way to name the level through `begin`; the
+        // guest transaction of a read invocation (`read`) reads one snapshot.
+        let begin = if read {
+            BEGIN_READ_SNAPSHOT
+        } else {
+            BEGIN_READ_COMMITTED
+        };
         let begin_sql = match run {
-            Some(run) => format!("{BEGIN_READ_COMMITTED};{}", causation_emit_sql(run)),
-            None => BEGIN_READ_COMMITTED.to_string(),
+            Some(run) => format!("{begin};{}", causation_emit_sql(run)),
+            None => begin.to_string(),
         };
         // ONE FLIGHT. `batch_execute` and `execute` each enqueue their whole
         // message batch synchronously on their FIRST poll, and `biased;` pins
@@ -306,6 +318,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &conn,
                 authority,
+                false,
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),
@@ -471,6 +484,7 @@ impl WamnPostgres {
             self.begin_with_claims(
                 connection.connection(),
                 authority,
+                false,
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),

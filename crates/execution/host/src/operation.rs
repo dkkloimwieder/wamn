@@ -5,7 +5,7 @@
 //! [`wamn_engine::operation::invoke_operation`], which the router driver and
 //! the route path both call.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,8 +17,7 @@ use opentelemetry::trace::TraceContextExt as _;
 use tracing::Instrument as _;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_catalog::{
-    AdmittedComponent, ComponentSqlField, ComponentSqlValueType, ServingComponent,
-    ServingComponentOperation,
+    AdmittedComponent, ComponentSqlField, ComponentSqlValueType, ServingComponent, ServingRoute,
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_engine::artifact_source::ArtifactSource;
@@ -633,16 +632,25 @@ fn lower_statement_field(field: &ComponentSqlField) -> StatementField {
 }
 
 /// Lower and seal every operation's statement set out of the admitted facts.
-/// The complete admitted fact owns these immutable statements.
+/// The complete admitted fact owns these immutable statements. An operation
+/// is a read when the release routes it as a get, query or projection.
 fn prepare_statement_sets(
-    operations: &BTreeMap<String, ServingComponentOperation>,
+    served: &ServingComponent,
+    routes: &BTreeSet<ServingRoute>,
 ) -> BTreeMap<String, PreparedStatementSet> {
-    operations
+    served
+        .operations
         .iter()
         .map(|(operation, fact)| {
+            let read = routes.iter().any(|route| {
+                route.package_id == served.package_id
+                    && route.component == served.descriptor.component
+                    && &route.operation == operation
+                    && route.type_.is_read()
+            });
             (
                 operation.clone(),
-                WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements)),
+                WamnPostgres::prepare_statement_set(lower_statement_set(&fact.statements), read),
             )
         })
         .collect()
@@ -676,7 +684,7 @@ fn prepare_statement_members(
             .map(|(instance, statements)| {
                 (
                     instance.clone(),
-                    WamnPostgres::prepare_statement_set(lower_statement_set(statements)),
+                    WamnPostgres::prepare_statement_set(lower_statement_set(statements), false),
                 )
             }),
     ))

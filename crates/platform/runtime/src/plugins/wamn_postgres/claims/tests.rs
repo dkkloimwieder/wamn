@@ -1034,6 +1034,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     pg.begin_with_claims(
         &conn,
         AuthorityClass::GuestSql,
+        false,
         "fixture",
         Some("public"),
         Some("owner-1"),
@@ -1311,6 +1312,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     pg.begin_with_claims(
         &conn,
         AuthorityClass::GuestSql,
+        false,
         TENANT,
         Some(&schema),
         None,
@@ -2679,6 +2681,129 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
+        .await
+        .expect("drop the fixture");
+}
+
+/// A guest transaction of a read invocation reads one snapshot: a write that
+/// commits between its two selects, as `receipt_screen` makes them, is not
+/// visible to the second (`wamn-ruakx`). The same transaction of a command
+/// sees the write, which proves the read case is not vacuous.
+#[tokio::test]
+async fn live_a_read_invocation_transaction_reads_one_snapshot() {
+    use super::super::resources::{begin_statement_transaction, run_verified_query, take_conn};
+
+    const TENANT: &str = "read-snapshot";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
+    );
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    let admin = connect_raw(admin_url).await;
+    admin
+        .batch_execute(
+            "CREATE TABLE IF NOT EXISTS public.read_snapshot_fixture \
+               (id integer PRIMARY KEY, value integer NOT NULL); \
+             GRANT SELECT ON public.read_snapshot_fixture TO wamn_app;",
+        )
+        .await
+        .expect("install the snapshot fixture");
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let scope = "read-snapshot-instance-0";
+    pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            tenant: TENANT.to_string(),
+            ..SessionClaims::default()
+        },
+    )
+    .await
+    .expect("the scope binds");
+    // A route read carries its run, so the BEGIN batch emits its causation.
+    pg.set_current_run(
+        scope,
+        Some(Causation {
+            run: "read-snapshot-run".into(),
+            root: "read-snapshot-run".into(),
+            depth: 0,
+        }),
+    );
+    let path = "sql/read_snapshot.sql";
+    let statement = VerifiedStatement {
+        exact_sql: "SELECT value FROM public.read_snapshot_fixture WHERE id = 1".into(),
+        binds: Box::new([]),
+        columns: Box::new([StatementField {
+            value_type: StatementValueType::Int32,
+            nullable: false,
+        }]),
+        transactional: false,
+    };
+
+    for (read, operation, second_value, isolation) in [
+        (true, "fixture/get", 1, "repeatable read"),
+        (false, "fixture/record", 2, "read committed"),
+    ] {
+        admin
+            .batch_execute(
+                "INSERT INTO public.read_snapshot_fixture VALUES (1, 1) \
+                 ON CONFLICT (id) DO UPDATE SET value = 1",
+            )
+            .await
+            .expect("reset the fixture row");
+        let prepared = WamnPostgres::prepare_statement_set(
+            std::collections::BTreeMap::from([(path.to_owned(), statement.clone())]),
+            read,
+        );
+        pg.bind_prepared_statement_operation(scope, operation, &prepared)
+            .expect("the statement set binds");
+        pg.activate_statement_operation(scope, operation)
+            .expect("the operation activates");
+        let project = pg.project_for(scope);
+        let transaction = begin_statement_transaction(&pg, scope, &project)
+            .await
+            .expect("the guest transaction begins");
+        let connection = take_conn(&transaction.state).expect("the transaction connection");
+        let level: String = connection
+            .query_one("SHOW transaction_isolation", &[])
+            .await
+            .expect("read the isolation level")
+            .get(0);
+        assert_eq!(level, isolation, "read={read}");
+        let select = || run_verified_query(&connection, path, &statement, &[], 1_000);
+        let first = select().await.expect("the first select runs");
+        assert!(matches!(first.rows[0][0], SqlValue::Int32(1)), "{first:?}");
+        admin
+            .batch_execute("UPDATE public.read_snapshot_fixture SET value = 2 WHERE id = 1")
+            .await
+            .expect("commit a concurrent write");
+        let second = select().await.expect("the second select runs");
+        assert!(
+            matches!(second.rows[0][0], SqlValue::Int32(value) if value == second_value),
+            "read={read}: {second:?}"
+        );
+        connection
+            .batch_execute("ROLLBACK")
+            .await
+            .expect("end the guest transaction");
+    }
+
+    drop(pg);
+    admin
+        .batch_execute(&format!(
+            "DROP TABLE public.read_snapshot_fixture; \
+             DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"
+        ))
         .await
         .expect("drop the fixture");
 }

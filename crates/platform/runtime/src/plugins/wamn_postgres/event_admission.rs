@@ -83,6 +83,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 &tenant,
                 schema.as_deref(),
                 runner.as_deref(),

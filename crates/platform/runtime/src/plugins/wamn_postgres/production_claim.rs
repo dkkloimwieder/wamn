@@ -179,6 +179,7 @@ impl RunStore for WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -289,6 +290,7 @@ impl RunStore for WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -382,6 +384,7 @@ impl RunStore for WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -457,6 +460,7 @@ impl RunStore for WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -529,6 +533,7 @@ impl RunStore for WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
@@ -661,6 +666,7 @@ impl WamnPostgres {
             .begin_with_claims(
                 &connection,
                 AuthorityClass::ExecutorPlatform,
+                false,
                 &tenant,
                 schema.as_deref(),
                 Some(&runner),
