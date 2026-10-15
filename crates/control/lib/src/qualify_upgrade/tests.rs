@@ -150,11 +150,9 @@ fn predecessor_manifest(root: &Path) -> ServingManifest {
         .into_iter()
         .map(|(name, statements)| {
             let operation = ServingComponentOperation {
-                pre_commit: None,
                 registered_operation: Some(name.clone()),
                 permissions: BTreeSet::from([name.clone()]),
                 committed_result_schema: None,
-                participant: None,
                 statements,
             };
             (name, operation)

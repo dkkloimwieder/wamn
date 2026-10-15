@@ -68,16 +68,6 @@ pub struct CustomOperationDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
     pub input: CustomOperationInputDeclaration,
-    /// Base-owned typed input passed through before the command runs.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pre_commit: Option<CustomOperationInputDeclaration>,
-    /// Whether an overlay that calls this command must name a participant.
-    /// Publish refuses an overlay that names none.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pre_commit_required: bool,
-    /// Package-local execution-only operation selected while composing this command.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub participant: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result: Option<CustomOperationResultDeclaration>,
     pub errors: Vec<String>,
@@ -152,12 +142,9 @@ impl CustomOperationDeclaration {
     }
 
     /// Whether the host begins the transaction this operation works in: a
-    /// command with SQL of its own (`docs/plan/host-transaction.md` 4.1). A
-    /// participant works in the transaction of its base.
+    /// command with SQL of its own (`docs/plan/host-transaction.md` 4.1).
     pub fn has_host_transaction(&self) -> bool {
-        self.type_ == CustomOperationType::Command
-            && !self.statements.is_empty()
-            && self.transaction != Some(CommandTransaction::Participant)
+        self.type_ == CustomOperationType::Command && !self.statements.is_empty()
     }
 
     /// Whether this command claims its key in the write log.
@@ -205,7 +192,6 @@ pub struct EventRegistrationDeclaration {
 #[serde(rename_all = "snake_case")]
 pub enum CommandTransaction {
     ExplicitPerInput,
-    Participant,
 }
 
 /// How one command survives a repeat, in exactly three declared shapes.
@@ -1079,27 +1065,6 @@ fn validate_custom_operation(
 
     validate_custom_operation_kind(manifest, operation_name, operation)?;
     validate_custom_operation_input(operation_name, &operation.input)?;
-    if let Some(pre_commit) = &operation.pre_commit {
-        if operation.type_ != CustomOperationType::Command
-            || !operation.claims()
-            || pre_commit.raw_body_maximum.is_some()
-            || pre_commit.envelope.is_some()
-            || pre_commit.line.is_some()
-        {
-            return Err(GenerateError::new(
-                GenerateErrorType::InvalidOperation,
-                format!(
-                    "command {operation_name} pre_commit requires a claim and typed fields without envelope or line bounds"
-                ),
-            ));
-        }
-        validate_custom_operation_input(operation_name, pre_commit)?;
-    } else if operation.pre_commit_required {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!("command {operation_name} pre_commit_required requires a pre_commit"),
-        ));
-    }
     if let Some(result) = &operation.result {
         // No paging contract exists for a custom operation. Page belongs to
         // the generated query, which checks its cursor, limit and envelope.
@@ -1165,26 +1130,11 @@ fn validate_custom_operation_kind(
             }
         }
         CustomOperationType::Command => {
-            let participant = operation.transaction == Some(CommandTransaction::Participant);
-            if (!participant && operation.result.is_none())
-                || (participant && operation.result.is_some())
-                || operation.registration.is_some()
-            {
+            if operation.result.is_none() || operation.registration.is_some() {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidOperation,
                     format!(
-                        "command {operation_name} must declare a result unless it is an execution-only participant, and must declare no registration"
-                    ),
-                ));
-            }
-            // A participant named its base by the claim it inherited, and
-            // inherited claims are gone (docs/plan/trx-pkg-plan.md, Cleanup
-            // after migration).
-            if participant {
-                return Err(GenerateError::new(
-                    GenerateErrorType::InvalidOperation,
-                    format!(
-                        "participant command {operation_name} is retired; an overlay command calls the base operation and claims under its own operation"
+                        "command {operation_name} must declare a result and must declare no registration"
                     ),
                 ));
             }
@@ -1208,7 +1158,6 @@ fn validate_custom_operation_kind(
                 operation.automatic_retry,
             ) {
                 (true, Some(CommandTransaction::ExplicitPerInput), Some(false))
-                | (true, Some(CommandTransaction::Participant), None)
                 | (false, None, None) => {}
                 (true, Some(_), Some(true)) => {
                     return Err(GenerateError::new(
@@ -1236,7 +1185,6 @@ fn validate_custom_operation_kind(
             if let Some(canonicalization) = &operation.canonicalization {
                 validate_command_canonicalization(operation_name, operation, canonicalization)?;
             }
-            validate_participant_reference(operation_name, operation)?;
         }
         CustomOperationType::EventHandler => {
             if operation.visibility != OperationVisibility::Private || operation.result.is_some() {
@@ -1262,24 +1210,6 @@ fn validate_custom_operation_kind(
         }
     }
     Ok(())
-}
-
-fn validate_participant_reference(
-    operation_name: &str,
-    operation: &CustomOperationDeclaration,
-) -> Result<(), GenerateError> {
-    if operation.participant.is_none() {
-        return Ok(());
-    }
-    // A composing command named a participant that inherited its claim, and
-    // inherited claims are gone (docs/plan/trx-pkg-plan.md, Cleanup after
-    // migration).
-    Err(GenerateError::new(
-        GenerateErrorType::InvalidOperation,
-        format!(
-            "command {operation_name} names a participant, and the participant path is retired; call the base operation and claim under this operation"
-        ),
-    ))
 }
 
 /// The optimistic-concurrency guard one state-idempotent command declares.
@@ -1429,8 +1359,6 @@ fn refuse_command_only_fields(
         || operation.automatic_retry.is_some()
         || operation.idempotent_by.is_some()
         || operation.canonicalization.is_some()
-        || operation.pre_commit.is_some()
-        || operation.participant.is_some()
     {
         Err(GenerateError::new(
             GenerateErrorType::InvalidOperation,

@@ -46,7 +46,7 @@ use std::collections::BTreeSet;
 
 /// The interface that each member of a composed component imports as an
 /// instance of its own (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
-pub const STATEMENTS_INTERFACE: &str = "wamn:postgres/statements@0.3.0";
+pub const STATEMENTS_INTERFACE: &str = "wamn:postgres/statements@0.4.0";
 
 /// The custom section of a composed component that maps each named
 /// statements import to the digest of the member it was composed for.
@@ -57,7 +57,7 @@ pub const STATEMENT_INSTANCES_SECTION: &str = "wamn:statement-instances";
 
 /// The interface instance type of one component import, which policy admits.
 ///
-/// An import named for its interface (`wamn:postgres/statements@0.3.0`) is an
+/// An import named for its interface (`wamn:postgres/statements@0.4.0`) is an
 /// instance of that interface. A labelled import (`sql-0`) names its interface
 /// in its `(implements ..)` annotation, so two instances of one interface are
 /// one capability, admitted by the same row.
@@ -166,11 +166,11 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
         version: "0.1.0",
         posture: Posture::Effect,
     },
-    // 0.3.0 adds `statements.run-stream` and `statements.operation-transaction`
-    // and keeps every 0.1.0 call.
+    // 0.4.0 is 0.3.0 without the participant calls of `statements`. 0.3.0
+    // added `statements.run-stream` and `statements.operation-transaction`.
     CapabilityRow {
         package: "wamn:postgres",
-        version: "0.3.0",
+        version: "0.4.0",
         posture: Posture::Effect,
     },
     CapabilityRow {
@@ -211,7 +211,7 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
 ///
 /// `wamn:postgres/client` runs raw SQL outside the admitted statements, so it
 /// would step around each member's own statements instance
-/// (`docs/plan/trx-pkg-plan.md`, `wamn:postgres` stays 0.3). Platform
+/// (`docs/plan/trx-pkg-plan.md`). Platform
 /// components keep it: they are admitted by [`analyze`], which this list does
 /// not reach.
 pub const APPLICATION_DENIED_INTERFACES: [&str; 1] = ["wamn:postgres/client"];
@@ -545,7 +545,7 @@ mod tests {
             "wasi:clocks/monotonic-clock@0.2.12".to_string(),
             "wasi:random/random@0.2.12".to_string(),
             "wasi:logging/logging@0.1.0-draft".to_string(),
-            "wamn:postgres/statements@0.3.0".to_string(),
+            "wamn:postgres/statements@0.4.0".to_string(),
             "wamn:node/types@0.1.0".to_string(),
         ]);
 
@@ -724,8 +724,8 @@ mod tests {
         let granted = BTreeSet::from(["wamn:postgres".to_string()]);
         for client in [
             instance_type("wamn:postgres/client@0.1.0", None),
-            instance_type("wamn:postgres/client@0.3.0", None),
-            instance_type("sql-0", Some("wamn:postgres/client@0.3.0")),
+            instance_type("wamn:postgres/client@0.4.0", None),
+            instance_type("sql-0", Some("wamn:postgres/client@0.4.0")),
         ] {
             let imports =
                 ComponentImports::new([STATEMENTS_INTERFACE.to_string(), client.to_string()]);
@@ -740,8 +740,8 @@ mod tests {
         // The imports of apps/platform/data/postgres-sqlx and
         // apps/platform/execution/materializer.
         let platform = ComponentImports::new([
-            "wamn:postgres/types@0.3.0".to_string(),
-            "wamn:postgres/client@0.3.0".to_string(),
+            "wamn:postgres/types@0.4.0".to_string(),
+            "wamn:postgres/client@0.4.0".to_string(),
         ]);
         assert!(analyze(&platform, PolicyProfile::FirstParty, "postgres-sqlx").is_ok());
     }

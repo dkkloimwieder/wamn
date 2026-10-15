@@ -34,7 +34,7 @@ use wamn_session::verifier::SessionVerifier;
 
 use super::invoke_native;
 use super::trace::TraceCapture;
-use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, PARTICIPANT, ROOT};
+use super::{CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
 
 #[path = "../../../../../../platform/runtime/tests/support/session_fixture.rs"]
 #[expect(
@@ -152,15 +152,13 @@ async fn tenant_postgres(admin_url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
             )
             .await?;
     }
-    for permission in [CHILD, PARTICIPANT] {
-        admin
-            .execute(
-                "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
+    admin
+        .execute(
+            "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
              VALUES ($1, 'native-child', regexp_replace($2, '@[^@]*$', ''))",
-                &[&TENANT, &permission],
-            )
-            .await?;
-    }
+            &[&TENANT, &CHILD],
+        )
+        .await?;
     let mut scoped_url = url::Url::parse(admin_url)?;
     scoped_url
         .set_username(&generation)
@@ -514,82 +512,6 @@ fn native_authenticated_call_graph_grant() {
     watchdog.join().expect("join watchdog");
 }
 
-#[test]
-fn native_authenticated_transaction_participant() {
-    super::run_isolated_test(
-        "authenticated::native_authenticated_transaction_participant",
-        async {
-            let _lock = wamn_test_postgres::lock();
-            let database = wamn_test_postgres::database();
-            let (mut server, route) = authentication_fixture(database.url())
-                .await
-                .expect("authenticated transaction fixture");
-            let caller = authenticated(&route, true).await;
-            let (postgres, _) = warm_postgres_with_pool(database.url(), &[], 2)
-                .await
-                .expect("participant SQL credentials");
-            let admin = connect(database.url()).await.expect("admin connection");
-            admin
-                .batch_execute(
-                    "CREATE TABLE public.native_policy_participant(value int NOT NULL); \
-                     INSERT INTO public.native_policy_participant VALUES (1); \
-                     GRANT SELECT, UPDATE ON public.native_policy_participant TO wamn_app",
-                )
-                .await
-                .expect("participant table");
-
-            let fixture = Fixture::build_with_reuse(
-                Case::TransactionOwner,
-                false,
-                true,
-                None,
-                None,
-                Some(Arc::clone(&postgres)),
-            )
-            .await;
-            let mut request = fixture.request(Instant::now() + Duration::from_secs(10));
-            request.facts.caller = Some(caller.clone());
-            let result = invoke_native(&fixture.target().await, request)
-                .await
-                .expect("authorized participant dispatch")
-                .expect("participant SQL succeeds");
-            assert_eq!(result.payload, "[]");
-            let value: i32 = admin
-                .query_one("SELECT value FROM public.native_policy_participant", &[])
-                .await
-                .expect("read rollback result")
-                .get(0);
-            assert_eq!(
-                value, 1,
-                "participant SQL used the owner's rolled-back transaction"
-            );
-            fixture.assert_clean().await;
-
-            let denied = Fixture::build_with_reuse(
-                Case::TransactionParticipant,
-                false,
-                true,
-                None,
-                None,
-                Some(postgres),
-            )
-            .await;
-            let mut request = denied.request(Instant::now() + Duration::from_secs(10));
-            request.facts.caller = Some(caller);
-            let result = invoke_native(&denied.target().await, request)
-                .await
-                .expect("nonparticipant probe dispatches")
-                .expect("probe reports the resource result");
-            assert_eq!(
-                result.payload, "view",
-                "participant-view refused the nonparticipating invocation"
-            );
-            denied.assert_clean().await;
-            server.stop().await;
-        },
-    );
-}
-
 /// The admission request of the composed member fixture: the root's one
 /// operation calls the child embedded in it.
 fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
@@ -605,12 +527,9 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
             operations: BTreeMap::from([(
                 ROOT.into(),
                 ComponentOperationDeclaration {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     registered_operation: Some(ROOT.into()),
                     committed_result_schema: None,
                     dependencies: vec![ComponentOperationDependency {
-                        participant: None,
                         package: "child".into(),
                         version: "1.0.0".into(),
                         digest: child_digest.into(),

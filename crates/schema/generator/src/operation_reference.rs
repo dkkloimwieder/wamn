@@ -171,8 +171,8 @@ pub fn resolve_attachment_entry(
 }
 
 /// Resolve every reference of an authored component declaration: each
-/// operation key, and its `registered-operation`, `pre-commit` and
-/// `dependencies[].operation` and `participant`. The declaration takes
+/// operation key, its `registered-operation` and its
+/// `dependencies[].operation`. The declaration takes
 /// `scope.package-version` from the manifest.
 ///
 /// # Errors
@@ -202,17 +202,13 @@ pub fn resolve_declaration_document(
     let authored = std::mem::take(operations);
     for (reference, mut operation) in authored {
         let context = format!("declaration operation {reference:?}");
-        for member in ["registered-operation", "pre-commit"] {
-            resolve_member(&mut operation, member, owners, &context)?;
-        }
+        resolve_member(&mut operation, "registered-operation", owners, &context)?;
         if let Some(dependencies) = operation
             .get_mut("dependencies")
             .and_then(Value::as_array_mut)
         {
             for dependency in dependencies {
-                for member in ["operation", "participant"] {
-                    resolve_member(dependency, member, owners, &context)?;
-                }
+                resolve_member(dependency, "operation", owners, &context)?;
             }
         }
         operations.insert(resolve_reference(owners, &reference)?, operation);
@@ -314,7 +310,7 @@ mod tests {
             "operations": {"acme:order/record": {
                 "registered-operation": "acme:order/record",
                 "dependencies": [{
-                    "operation": "base-app:order/record", "participant": "acme:order/check"
+                    "operation": "base-app:order/record"
                 }]
             }}
         });
@@ -324,7 +320,6 @@ mod tests {
         assert_eq!(operation["registered-operation"], "acme:order/record@3.0.0");
         let dependency = &operation["dependencies"][0];
         assert_eq!(dependency["operation"], "base-app:order/record@1.0.0");
-        assert_eq!(dependency["participant"], "acme:order/check@3.0.0");
 
         let mut wiring = json!({"nodes": {
             "a": {"operation": "acme:order/get"},

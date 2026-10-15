@@ -739,11 +739,9 @@ mod tests {
                     .clone()
                     .expect("the fixture snapshot names an operation"),
                 ServingComponentOperation {
-                    pre_commit: None,
                     committed_result_schema: None,
                     registered_operation: snapshot.registered_operation.clone(),
                     permissions: snapshot.registered_operation.iter().cloned().collect(),
-                    participant: None,
                     statements: BTreeMap::new(),
                 },
             )]),

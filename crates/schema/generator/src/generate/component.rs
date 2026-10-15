@@ -250,16 +250,15 @@ pub(super) fn emit_package_component(
 
 /// Emit `generated/wit/world.wit`: the world `generated`, which exports every
 /// operation of the package that the component runs and imports what those
-/// operations call, and the world `participant`, when the package has a
-/// participant. An authored world includes the one it builds, so no authored
-/// file names a sealed operation id.
+/// operations call. An authored world includes the one it builds, so no
+/// authored file names a sealed operation id.
 fn emit_package_world(
     files: &mut BTreeMap<String, Vec<u8>>,
     manifest: &PackageManifest,
     models: &[(&String, &ModelDeclaration)],
 ) -> Result<(), GenerateError> {
     const POSTGRES: &str =
-        "  import wamn:postgres/types@0.3.0;\n  import wamn:postgres/statements@0.3.0;\n";
+        "  import wamn:postgres/types@0.4.0;\n  import wamn:postgres/statements@0.4.0;\n";
     let package = &manifest.package;
     let sealed = |package: &PackageIdentity, local: &str| -> Result<String, GenerateError> {
         let (group, name) = local
@@ -288,14 +287,6 @@ fn emit_package_world(
     let mut postgres = !models.is_empty();
     for (local, operation) in &manifest.custom_operations {
         postgres |= operation.connection.is_some();
-        if operation.pre_commit.is_some() {
-            writeln!(
-                imports,
-                "  import {};",
-                sealed(package, &format!("{local}_pre_commit"))?
-            )
-            .expect("writing to a String cannot fail");
-        }
         // An operation that bears a base operation's name forwards to it, so
         // the component imports that operation to call it.
         if let Some((alias, _)) = manifest

@@ -136,8 +136,6 @@ fn fixture_component() -> AdmittedComponent {
         operations: BTreeMap::from([(
             "wamn-inventory:panel/get@1.0.0".to_owned(),
             AdmittedComponentOperation {
-                pre_commit: None,
-                pre_commit_required: false,
                 committed_result_schema: None,
                 registered_operation: Some("wamn-inventory:panel/get@1.0.0".to_owned()),
                 dependencies: Vec::new(),

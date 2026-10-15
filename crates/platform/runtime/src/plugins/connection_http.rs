@@ -1272,11 +1272,9 @@ mod tests {
                 operations: BTreeMap::from([(
                     snapshot.operation.expect("operation"),
                     ServingComponentOperation {
-                        pre_commit: None,
                         committed_result_schema: None,
                         permissions: snapshot.registered_operation.iter().cloned().collect(),
                         registered_operation: snapshot.registered_operation,
-                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),

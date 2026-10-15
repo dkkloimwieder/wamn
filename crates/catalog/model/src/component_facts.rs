@@ -117,9 +117,6 @@ pub struct ComponentConnection {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentOperationDependency {
-    /// Local participant selected for the dependency pre-commit call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub participant: Option<String>,
     pub package: String,
     pub version: String,
     pub digest: String,
@@ -130,12 +127,6 @@ pub struct ComponentOperationDependency {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ComponentOperationDeclaration {
-    /// Base-owned typed pre-commit interface imported by this operation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pre_commit: Option<String>,
-    /// Whether a caller of this operation must select a participant.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pre_commit_required: bool,
     /// Explicit application permission identity. Palette operations carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -273,12 +264,6 @@ pub struct ComponentSqlStatement {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponentOperation {
-    /// Base-owned typed pre-commit interface imported by this operation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pre_commit: Option<String>,
-    /// Whether a caller of this operation must select a participant.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pre_commit_required: bool,
     /// Explicit application permission identity. Never inferred from the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -570,12 +555,6 @@ pub fn normalize_component_fact(
             operation.registered_operation.as_deref(),
             committed_result_schema.as_ref(),
         )?;
-        validate_pre_commit(
-            &declaration.scope,
-            &export,
-            operation.pre_commit.as_deref(),
-            operation.pre_commit_required,
-        )?;
         let dependencies = normalize_operation_dependencies(operation.dependencies)?;
         let input_ports = normalize_ports(
             operation.input_ports,
@@ -591,8 +570,6 @@ pub fn normalize_component_fact(
         operations.insert(
             export,
             AdmittedComponentOperation {
-                pre_commit: operation.pre_commit,
-                pre_commit_required: operation.pre_commit_required,
                 committed_result_schema,
                 registered_operation: operation.registered_operation,
                 dependencies,
@@ -668,12 +645,6 @@ pub fn verify_stored_effect_projection(
         validate_committed_result_schema(
             operation.registered_operation.as_deref(),
             operation.committed_result_schema.as_ref(),
-        )?;
-        validate_pre_commit(
-            &component.scope,
-            export,
-            operation.pre_commit.as_deref(),
-            operation.pre_commit_required,
         )?;
         let dependencies = normalize_operation_dependencies(operation.dependencies.clone())?;
         if dependencies != operation.dependencies {
@@ -849,40 +820,6 @@ fn validate_registered_operation_scope(
     Ok(())
 }
 
-fn validate_pre_commit(
-    scope: &ComponentPackageScope,
-    export: &str,
-    pre_commit: Option<&str>,
-    pre_commit_required: bool,
-) -> Result<(), ComponentFactError> {
-    if pre_commit_required && pre_commit.is_none() {
-        return Err(ComponentFactError::new(
-            ComponentFactErrorType::InvalidOperationDependency,
-            "a required pre-commit needs a pre-commit interface",
-        ));
-    }
-    if let Some(pre_commit) = pre_commit {
-        validate_canonical_operation_for_package(
-            pre_commit,
-            &scope.package_id,
-            &scope.package_version,
-        )
-        .map_err(|error| {
-            ComponentFactError::new(
-                ComponentFactErrorType::InvalidOperationDependency,
-                error.to_string(),
-            )
-        })?;
-        if pre_commit == export {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::InvalidOperationDependency,
-                "pre-commit interface must differ from the operation export",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn normalize_operation_dependencies(
     declarations: Vec<ComponentOperationDependency>,
 ) -> Result<Vec<ComponentOperationDependency>, ComponentFactError> {
@@ -979,24 +916,8 @@ fn operation_dependency_imports(
         }
     }
     // A dependency composes into the component bytes at build, so it is not an
-    // import. Only a base's pre-commit slot remains one.
-    let mut imports = BTreeSet::new();
-    for operation in operations.values() {
-        if let Some(pre_commit) = &operation.pre_commit {
-            imports.insert(pre_commit.as_str());
-        }
-        for dependency in &operation.dependencies {
-            if let Some(participant) = &dependency.participant
-                && !operations.contains_key(participant)
-            {
-                return Err(ComponentFactError::new(
-                    ComponentFactErrorType::InvalidOperationDependency,
-                    format!("participant {participant:?} is not a local operation"),
-                ));
-            }
-        }
-    }
-    Ok(imports)
+    // import.
+    Ok(BTreeSet::new())
 }
 
 /// Whether an import is a cross-package APPLICATION call rather than a
@@ -1315,8 +1236,6 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_string(),
                 ComponentOperationDeclaration {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: None,
                     dependencies: Vec::new(),
@@ -1371,7 +1290,6 @@ mod tests {
 
     fn operation_dependency() -> ComponentOperationDependency {
         ComponentOperationDependency {
-            participant: None,
             package: "platform_fixture".to_string(),
             version: "1.0.0".to_string(),
             digest: format!("sha256:{}", "c".repeat(64)),
@@ -1793,8 +1711,6 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_string(),
                 AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: None,
                     dependencies: Vec::new(),

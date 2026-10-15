@@ -31,8 +31,6 @@ Cargo combines dependency features within each invocation, which can change arti
 A package build compiles these guests:
 
 - each component that the package owns;
-- each participant crate that [`tools/component-composition.json`](../../tools/component-composition.json) names for the package under `participants`;
-- each no-op participant crate that the build generated into the package's build output;
 - each palette component that a wiring of the package names. The build finds it by the `component` of its `declaration.json.in` under `apps/platform/*/*/`, and builds the crate in that directory.
 
 A package outside a Cargo workspace, with no `../Cargo.toml`, has no component to compile.

@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use anyhow::Context as _;
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::{
     AdmittedComponentEffect, AdmittedComponentFacts, ComponentDeclaration,
@@ -122,30 +121,7 @@ pub fn validate_component_admission(
     })?;
     let raw = component.engine();
     let component_type = component.component_type();
-    // Bindgen can omit an unused imported JSON adapter. An exported dynamic entry
-    // still supplies the checked context and node-error types for a typed import.
-    let dynamic_signature = component_type.exports(raw).find_map(|(_, item)| {
-        let ComponentItem::ComponentInstance(instance) = item.ty else {
-            return None;
-        };
-        let entry = instance
-            .get_export(raw, "run-json")
-            .or_else(|| instance.get_export(raw, "run"))?;
-        let ComponentItem::ComponentFunc(entry) = entry.ty else {
-            return None;
-        };
-        entry
-            .typecheck::<
-                (&node_types::NodeContext, &str),
-                (Result<node_types::Emission, node_types::NodeError>,),
-            >(&component_type.instance_type())
-            .ok()
-            .map(|()| entry)
-    });
-    let validate_handler_signature = |export: &str,
-                                      item: ComponentItem,
-                                      dependency: bool|
-     -> anyhow::Result<()> {
+    let validate_handler_signature = |export: &str, item: ComponentItem| -> anyhow::Result<()> {
         let ComponentItem::ComponentInstance(instance) = item else {
             anyhow::bail!("item is not an interface instance");
         };
@@ -166,25 +142,11 @@ pub fn validate_component_admission(
             {
                 return validate_streamed_query(adapter, &run);
             }
-        let typed_input = run.params().nth(1).is_some_and(|(_, ty)| {
-            matches!(
-                ty,
-                wash_runtime::wasmtime::component::Type::List(_)
-                    | wash_runtime::wasmtime::component::Type::Record(_)
-            )
-        });
-        if adapter.is_some() || (dependency && typed_input) {
-            let adapter = if let Some(adapter) = adapter {
-                let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
-                    anyhow::bail!("run-json is not a component function");
-                };
-                anyhow::ensure!(adapter.async_(), "typed JSON adapters must be async");
-                adapter
-            } else {
-                dynamic_signature
-                    .clone()
-                    .context("typed import requires a checked dynamic entry")?
+        if let Some(adapter) = adapter {
+            let ComponentItem::ComponentFunc(adapter) = adapter.ty else {
+                anyhow::bail!("run-json is not a component function");
             };
+            anyhow::ensure!(adapter.async_(), "typed JSON adapters must be async");
             adapter.typecheck::<
                 (&node_types::NodeContext, &str),
                 (Result<node_types::Emission, node_types::NodeError>,),
@@ -281,7 +243,7 @@ pub fn validate_component_admission(
         let item = component_type
             .get_export(raw, export)
             .expect("the byte exports contain every declared operation");
-        if let Err(error) = validate_handler_signature(export, item.ty, false) {
+        if let Err(error) = validate_handler_signature(export, item.ty) {
             return Err(operation_signature_mismatch(&component_name, export, error));
         }
     }
@@ -312,68 +274,23 @@ pub fn validate_component_admission(
             ),
         ));
     }
-    // The Component Model exposes one top-level import list, not a call
-    // graph from each export. Preserve the operation-owned declarations, while
-    // showing only the structural fact the bytes support: their exact union.
-    // Only a base's pre-commit slot remains an import, and only in the base's
-    // own bytes, because the overlay's build plugs it with its participant.
-    let declared_dependency_imports = request
-        .declaration
-        .operations
-        .values()
-        .flat_map(|operation| operation.pre_commit.iter().cloned())
-        .collect::<BTreeSet<_>>();
+    // A dependency composes into the bytes, so no application operation
+    // remains an import.
     let byte_dependency_imports = imports
         .iter()
         .filter(|name| is_application_operation_import(name))
         .cloned()
         .collect::<BTreeSet<_>>();
-    if declared_dependency_imports != byte_dependency_imports {
-        let missing = declared_dependency_imports
-            .difference(&byte_dependency_imports)
-            .cloned()
-            .collect::<Vec<_>>();
-        let extra = byte_dependency_imports
-            .difference(&declared_dependency_imports)
-            .cloned()
-            .collect::<Vec<_>>();
+    if !byte_dependency_imports.is_empty() {
         return Err(ComponentAdmissionError::new(
             ComponentAdmissionErrorType::OperationDependencyMismatch,
             &component_name,
             anyhow::anyhow!(
-                "declared operation dependencies differ from component imports: missing={missing:?}, extra={extra:?}"
+                "declared operation dependencies differ from component imports: missing=[], extra={byte_dependency_imports:?}"
             ),
         ));
     }
-    // The same walk that byte-verifies each dependency also decides its
-    // posture, so the union costs no second traversal of the closure.
-    let mut effectful_dependencies: BTreeSet<&str> = BTreeSet::new();
-    for dependency in &byte_dependency_imports {
-        let item = component_type
-            .get_import(raw, dependency)
-            .expect("the component import list contains the dependency");
-        if let Err(error) = validate_handler_signature(dependency, item.ty, true) {
-            return Err(ComponentAdmissionError::new(
-                ComponentAdmissionErrorType::OperationSignatureMismatch,
-                &component_name,
-                anyhow::anyhow!(
-                    "operation dependency import {dependency:?} does not match {HANDLER_SIGNATURE}: {error}"
-                ),
-            ));
-        }
-        if !request
-            .effect_free_operation_dependencies
-            .contains(dependency.as_str())
-        {
-            effectful_dependencies.insert(dependency.as_str());
-        }
-    }
-    let policy_imports = wamn_component_policy::ComponentImports::new(
-        imports
-            .iter()
-            .filter(|name| !byte_dependency_imports.contains(*name))
-            .cloned(),
-    );
+    let policy_imports = wamn_component_policy::ComponentImports::new(imports.iter().cloned());
     wamn_component_policy::analyze_tenant(
         &policy_imports,
         &request.admitted_platform_packages,
@@ -401,7 +318,7 @@ pub fn validate_component_admission(
         request.declaration,
         component_digest,
         imports,
-        derive_effects(&policy_imports, &effectful_dependencies),
+        derive_effects(&policy_imports),
     )
     .map_err(|source| {
         ComponentAdmissionError::new(
@@ -538,7 +455,6 @@ fn operation_signature_mismatch(
 /// unregistered package.
 fn derive_effects(
     imports: &wamn_component_policy::ComponentImports,
-    effectful_dependencies: &BTreeSet<&str>,
 ) -> Vec<AdmittedComponentEffect> {
     let mut grouped: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
     for name in imports.iter() {
@@ -561,16 +477,6 @@ fn derive_effects(
             provenance: ComponentEffectProvenance::Imported,
             interfaces: interfaces.into_iter().collect(),
         })
-        .chain(
-            effectful_dependencies
-                .iter()
-                .copied()
-                .map(|dependency| AdmittedComponentEffect {
-                    package: wamn_component_policy::import_pkg(dependency).to_owned(),
-                    provenance: ComponentEffectProvenance::Inherited,
-                    interfaces: Vec::new(),
-                }),
-        )
         .collect()
 }
 
@@ -650,7 +556,6 @@ mod tests {
             "wasmcloud:blobstore/container@0.1.0",
             "wasmcloud:blobstore/types@0.1.0",
             "wasi:clocks/wall-clock@0.2.0",
-            "wamn:postgres/client@0.1.0",
             // unregistered but platform-family: the import policy's to refuse, by name
             "wasi:sockets/tcp@0.2.3",
         ] {
@@ -708,7 +613,7 @@ mod tests {
         ),
         (
             "wamn-postgres.wit",
-            "package wamn:postgres@0.3.0; \
+            "package wamn:postgres@0.4.0; \
              interface statements { run: func(); } \
              interface client { query: func(); }",
         ),
@@ -718,13 +623,11 @@ mod tests {
              interface record-batch { \
                use wamn:node/types@0.1.0.{node-context, emission, node-error}; \
                run: func(ctx: node-context, input: string) -> result<emission, node-error>; \
-             } \
-             interface wrong-batch { run: func(); }",
+             }",
         ),
     ];
 
     const DEPENDENCY_OPERATION: &str = "platform-fixture:widget/record-batch@1.0.0";
-    const WRONG_DEPENDENCY_OPERATION: &str = "platform-fixture:widget/wrong-batch@1.0.0";
 
     fn component_bytes(imports: &str) -> Vec<u8> {
         component_bytes_with_exports(imports, "")
@@ -819,8 +722,6 @@ mod tests {
                 operations: BTreeMap::from([(
                     OPERATION.to_string(),
                     ComponentOperationDeclaration {
-                        pre_commit: None,
-                        pre_commit_required: false,
                         committed_result_schema: None,
                         registered_operation: None,
                         dependencies: Vec::new(),
@@ -848,7 +749,6 @@ mod tests {
 
     fn dependency(operation: &str) -> ComponentOperationDependency {
         ComponentOperationDependency {
-            participant: None,
             package: "platform_fixture".to_string(),
             version: "1.0.0".to_string(),
             digest: format!("sha256:{}", "c".repeat(64)),
@@ -887,13 +787,6 @@ mod tests {
             digest: component_digest(base),
             ..dependency(DEPENDENCY_OPERATION)
         }
-    }
-
-    /// The request of a base package, which owns its pre-commit slot.
-    fn base_request() -> ComponentAdmissionRequest {
-        let mut request = request();
-        request.declaration.scope.package_id = "platform_fixture".to_string();
-        request
     }
 
     #[test]
@@ -1006,25 +899,14 @@ mod tests {
     fn typed_async_operation_requires_owned_values() {
         const TYPED_OPERATION: &str = "platform-fixture:widget/record-batch@1.0.0";
         let engine = crate::build_engine(&[]).expect("engine builds");
-        for (input, output, expected, imported) in [
-            ("list<item>", "list<item>", true, false),
-            ("item", "item", true, false),
-            ("string", "list<item>", false, false),
-            ("list<own<handle>>", "list<item>", false, false),
-            ("list<item>", "list<item>", true, true),
-            ("string", "list<item>", false, true),
-            ("list<own<handle>>", "list<item>", false, true),
+        for (input, output, expected) in [
+            ("list<item>", "list<item>", true),
+            ("item", "item", true),
+            ("string", "list<item>", false),
+            ("list<own<handle>>", "list<item>", false),
         ] {
-            let adapter = if imported {
-                ""
-            } else {
-                "run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;"
-            };
-            let fixture = if imported {
-                "import record-batch; export wamn:node/handler@0.1.0;"
-            } else {
-                "export record-batch;"
-            };
+            let adapter = "run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;";
+            let fixture = "export record-batch;";
             let mut resolve = Resolve::new();
             resolve
                 .push_str(
@@ -1057,21 +939,11 @@ mod tests {
                 .encode()
                 .unwrap();
             let mut request = request();
-            if imported {
-                request = base_request();
-                request
-                    .declaration
-                    .operations
-                    .get_mut(OPERATION)
-                    .unwrap()
-                    .pre_commit = Some(TYPED_OPERATION.to_owned());
-            } else {
-                let declaration = request.declaration.operations.remove(OPERATION).unwrap();
-                request
-                    .declaration
-                    .operations
-                    .insert(TYPED_OPERATION.to_owned(), declaration);
-            }
+            let declaration = request.declaration.operations.remove(OPERATION).unwrap();
+            request
+                .declaration
+                .operations
+                .insert(TYPED_OPERATION.to_owned(), declaration);
             let result = validate_component_admission(&engine, &bytes, request);
             if expected {
                 result.expect("owned typed values are admitted");
@@ -1179,7 +1051,7 @@ mod tests {
     fn an_application_component_importing_client_refuses() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes(
-            "import wamn:postgres/statements@0.3.0; import wamn:postgres/client@0.3.0;",
+            "import wamn:postgres/statements@0.4.0; import wamn:postgres/client@0.4.0;",
         );
         let mut request = request();
         request.admitted_platform_packages = BTreeSet::from(["wamn:postgres".to_string()]);
@@ -1191,7 +1063,7 @@ mod tests {
             ComponentAdmissionErrorType::ImportPolicyRefused
         );
         assert!(
-            error.to_string().contains("wamn:postgres/client@0.3.0")
+            error.to_string().contains("wamn:postgres/client@0.4.0")
                 && !error.to_string().contains("statements"),
             "refusal must name client alone: {error}"
         );
@@ -1333,32 +1205,6 @@ mod tests {
         assert!(imported.to_string().contains("extra="));
     }
 
-    #[test]
-    fn pre_commit_import_must_have_the_handler_signature() {
-        let engine = crate::build_engine(&[]).expect("engine builds");
-        let mut request = base_request();
-        request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .pre_commit = Some(WRONG_DEPENDENCY_OPERATION.to_owned());
-
-        let error = validate_component_admission(
-            &engine,
-            &component_bytes(&format!("import {WRONG_DEPENDENCY_OPERATION};")),
-            request,
-        )
-        .expect_err("a pre-commit import with the wrong run type refuses");
-
-        assert_eq!(
-            error.error_type(),
-            ComponentAdmissionErrorType::OperationSignatureMismatch
-        );
-        assert!(error.to_string().contains(WRONG_DEPENDENCY_OPERATION));
-        assert!(error.to_string().contains(HANDLER_SIGNATURE));
-    }
-
     /// The three classes in one import list: an authority-free WASI package, the
     /// router's own invocation seam, and two real effect packages. Only the
     /// last two are recorded, grouped by package with their exact interfaces.
@@ -1368,7 +1214,7 @@ mod tests {
         let bytes = component_bytes(
             "import wasi:clocks/monotonic-clock@0.2.12; \
              import wamn:node/types@0.1.0; \
-             import wamn:postgres/statements@0.3.0; \
+             import wamn:postgres/statements@0.4.0; \
              import wamn:connection/http@0.1.0;",
         );
         let mut request = request();
@@ -1396,55 +1242,13 @@ mod tests {
                 AdmittedComponentEffect {
                     package: "wamn:postgres".to_string(),
                     provenance: ComponentEffectProvenance::Imported,
-                    interfaces: vec!["wamn:postgres/statements@0.3.0".to_string()],
+                    interfaces: vec!["wamn:postgres/statements@0.4.0".to_string()],
                 },
             ]
         );
         assert_eq!(facts.component.imports.len(), 4);
         assert_eq!(facts.connections.len(), 1);
         assert_eq!(facts.connections[0].store_alias, "erp");
-    }
-
-    /// A base carries an EMPTY capability list of its own and still reaches
-    /// whatever its participant does through its pre-commit slot. The gate's
-    /// effect-free-case clause keys on
-    /// `jsonb_array_length(library.effects) > 0`
-    /// (`scenario-worker/src/store/admission.rs:181`), so a non-empty
-    /// projection is what denies that path.
-    #[test]
-    fn a_base_reaching_an_effect_through_its_pre_commit_slot_is_not_effect_free() {
-        let engine = crate::build_engine(&[]).expect("engine builds");
-        let bytes = component_bytes(&format!("import {DEPENDENCY_OPERATION};"));
-        let mut request = base_request();
-        request
-            .declaration
-            .operations
-            .get_mut(OPERATION)
-            .expect("fixture operation exists")
-            .pre_commit = Some(DEPENDENCY_OPERATION.to_owned());
-
-        let component = validate_component_admission(&engine, &bytes, request)
-            .expect("a base with an unconfirmed pre-commit slot still admits")
-            .component;
-
-        // Guard the guard. The base's own capability list is empty: the node
-        // types import is the ABI's own and leaves the host not at all, so the
-        // posture below comes from the pre-commit slot alone.
-        assert_eq!(
-            component.imports,
-            [
-                DEPENDENCY_OPERATION.to_string(),
-                NODE_TYPES_IMPORT.to_string()
-            ]
-        );
-        assert_eq!(
-            component.effects,
-            [AdmittedComponentEffect {
-                package: "platform-fixture:widget".to_string(),
-                provenance: ComponentEffectProvenance::Inherited,
-                interfaces: Vec::new(),
-            }]
-        );
     }
 
     /// The negative control. A composed dependency adds no inherited effect:

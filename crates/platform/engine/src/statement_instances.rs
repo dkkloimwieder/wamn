@@ -2,7 +2,7 @@
 //!
 //! The composer gives each member that imports the statements interface an
 //! outer import of its own, `sql-<position>`, labelled `(implements
-//! "wamn:postgres/statements@0.3.0")`, and records the digest of that member
+//! "wamn:postgres/statements@0.4.0")`, and records the digest of that member
 //! beside the name in the custom section
 //! [`wamn_component_policy::STATEMENT_INSTANCES_SECTION`].
 //! Two outer imports share one interface type, so a valid composition could

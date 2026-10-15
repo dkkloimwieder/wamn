@@ -40,7 +40,6 @@ pub(super) struct TxnState {
     pub(super) conn: Option<Object>,
     /// True once COMMIT or ROLLBACK ran (connection repooled).
     pub(super) finished: bool,
-    pub(super) view: Option<std::sync::Weak<super::transaction_views::TransactionViewLease>>,
 }
 
 pub(super) type SharedTxnState = Arc<std::sync::Mutex<TxnState>>;
@@ -157,12 +156,8 @@ impl Drop for PgTransaction {
         };
         let finished = st.finished;
         st.finished = true;
-        let view = st.view.take().and_then(|view| view.upgrade());
         let connection = st.conn.take();
         drop(st);
-        if let Some(view) = view {
-            view.revoke();
-        }
         if let Some(obj) = connection {
             if finished {
                 drop(obj); // clean: back to the pool
@@ -479,7 +474,6 @@ async fn begin_transaction(
         state: Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection.into_connection()),
             finished: false,
-            view: None,
         })),
         destroyed: plugin.destroyed.clone(),
         cursor_seq: 0,
@@ -522,7 +516,6 @@ pub(super) async fn begin_statement_transaction(
         state: Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection.into_connection()),
             finished: false,
-            view: None,
         })),
         destroyed: Arc::clone(&plugin.destroyed),
         cursor_seq: 0,
@@ -1124,7 +1117,6 @@ async fn finish_txn(
     destroyed: &Arc<AtomicU64>,
     verb: &str,
 ) -> Result<(), PgError> {
-    super::transaction_views::finish_view(state).await;
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
     match connection.connection().batch_execute(verb).await {
         Ok(()) => {
@@ -1213,28 +1205,6 @@ impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'
 impl statement_wit::Host for ActiveCtx<'_> {}
 
 impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the async WIT method reads local invocation metadata"
-    )]
-    async fn selected_participation(
-        accessor: &Accessor<T, Self>,
-    ) -> wash_runtime::wasmtime::Result<Result<Option<statement_wit::Participation>, StatementError>>
-    {
-        super::transaction_views::selected(accessor)
-    }
-
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the async WIT method acquires only a local resource"
-    )]
-    async fn participant_view(
-        accessor: &Accessor<T, Self>,
-    ) -> wash_runtime::wasmtime::Result<Result<Resource<super::PgTransactionView>, StatementError>>
-    {
-        super::transaction_views::acquire(accessor)
-    }
-
     async fn run(
         accessor: &Accessor<T, Self>,
         statement_path: String,
@@ -1280,18 +1250,6 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
 }
 
 impl<T: 'static + Send> statement_wit::HostTransactionWithStore<T> for SharedCtx {
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the native async WIT method only issues local transaction state"
-    )]
-    async fn select_participant(
-        accessor: &Accessor<T, Self>,
-        rep: Resource<PgStatementTransaction>,
-        participant_operation: String,
-    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        super::transaction_views::select(accessor, &rep, participant_operation)
-    }
-
     async fn run(
         accessor: &Accessor<T, Self>,
         rep: Resource<PgStatementTransaction>,
@@ -1593,7 +1551,6 @@ pub(super) async fn finish_statement_txn(
     destroyed: &Arc<AtomicU64>,
     verb: &str,
 ) -> Result<(), PgError> {
-    super::transaction_views::finish_view(state).await;
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
     match connection.connection().batch_execute(verb).await {
         Ok(()) => {
@@ -1641,39 +1598,6 @@ pub async fn retained_transaction_for_test(
     Ok((transaction, pid))
 }
 
-impl<T: 'static + Send> statement_wit::HostTransactionViewWithStore<T> for SharedCtx {
-    async fn run(
-        accessor: &Accessor<T, Self>,
-        rep: Resource<super::PgTransactionView>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        super::transaction_views::run(accessor, rep, statement_path, binds).await
-    }
-}
-
-#[expect(
-    clippy::unused_async_trait_impl,
-    reason = "the resource destructor only removes local view state"
-)]
-impl statement_wit::HostTransactionView for ActiveCtx<'_> {
-    async fn drop(
-        &mut self,
-        rep: Resource<super::PgTransactionView>,
-    ) -> wash_runtime::wasmtime::Result<()> {
-        self.table.delete(rep)?;
-        Ok(())
-    }
-}
-
-/// A named `statements` import refuses a participant view and a selection: a
-/// participant runs under the entry's set, which a member's instance must not
-/// reach.
-#[cfg(feature = "wasm_component_model_implements")]
-fn named_participation_refused() -> StatementError {
-    StatementError::Postgres(PgError::PermissionDenied)
-}
-
 #[cfg(feature = "wasm_component_model_implements")]
 impl bindings::named_imports::wamn::postgres::statements::Host for ActiveCtx<'_> {}
 
@@ -1683,33 +1607,6 @@ impl bindings::named_imports::wamn::postgres::statements::Host for ActiveCtx<'_>
 impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::HostWithStore<T>
     for SharedCtx
 {
-    /// A composition with named instances plugs no participant, so a member
-    /// that asks is told none is selected, and a base that asks on every
-    /// call runs its plain path.
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the async WIT method answers without host work"
-    )]
-    async fn selected_participation(
-        _accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-    ) -> wash_runtime::wasmtime::Result<Result<Option<statement_wit::Participation>, StatementError>>
-    {
-        Ok(Ok(None))
-    }
-
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the async WIT method refuses without host work"
-    )]
-    async fn participant_view(
-        _accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-    ) -> wash_runtime::wasmtime::Result<Result<Resource<super::PgTransactionView>, StatementError>>
-    {
-        Ok(Err(named_participation_refused()))
-    }
-
     async fn run(
         accessor: &Accessor<T, Self>,
         id: super::NamedStatements,
@@ -1762,19 +1659,6 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
 impl<T: 'static + Send>
     bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore<T> for SharedCtx
 {
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the async WIT method refuses without host work"
-    )]
-    async fn select_participant(
-        _accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-        _rep: Resource<PgStatementTransaction>,
-        _participant_operation: String,
-    ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-        Ok(Err(named_participation_refused()))
-    }
-
     async fn run(
         accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
@@ -1803,22 +1687,6 @@ impl<T: 'static + Send>
 }
 
 #[cfg(feature = "wasm_component_model_implements")]
-impl<T: 'static + Send>
-    bindings::named_imports::wamn::postgres::statements::HostTransactionViewWithStore<T>
-    for SharedCtx
-{
-    async fn run(
-        accessor: &Accessor<T, Self>,
-        _id: super::NamedStatements,
-        rep: Resource<super::PgTransactionView>,
-        statement_path: String,
-        binds: Vec<SqlValue>,
-    ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        super::transaction_views::run(accessor, rep, statement_path, binds).await
-    }
-}
-
-#[cfg(feature = "wasm_component_model_implements")]
 #[expect(
     clippy::unused_async_trait_impl,
     reason = "the generated transaction destructor is async but only releases local state"
@@ -1830,22 +1698,6 @@ impl bindings::named_imports::wamn::postgres::statements::HostTransaction for Ac
         rep: Resource<PgStatementTransaction>,
     ) -> wash_runtime::wasmtime::Result<()> {
         drop(self.table.delete(rep)?);
-        Ok(())
-    }
-}
-
-#[cfg(feature = "wasm_component_model_implements")]
-#[expect(
-    clippy::unused_async_trait_impl,
-    reason = "the resource destructor only removes local view state"
-)]
-impl bindings::named_imports::wamn::postgres::statements::HostTransactionView for ActiveCtx<'_> {
-    async fn drop(
-        &mut self,
-        _id: super::NamedStatements,
-        rep: Resource<super::PgTransactionView>,
-    ) -> wash_runtime::wasmtime::Result<()> {
-        self.table.delete(rep)?;
         Ok(())
     }
 }
@@ -1909,7 +1761,6 @@ mod tests {
         let state = Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection),
             finished: false,
-            view: None,
         }));
         let destroyed = Arc::new(AtomicU64::new(0));
         let operation_started = Arc::new(tokio::sync::Notify::new());
@@ -1947,7 +1798,6 @@ mod tests {
         let state = Arc::new(std::sync::Mutex::new(TxnState {
             conn: Some(connection),
             finished: false,
-            view: None,
         }));
         let value = with_txn_conn(&state, &destroyed, |connection| async move {
             let result = connection

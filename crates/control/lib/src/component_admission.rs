@@ -102,12 +102,6 @@ impl std::error::Error for ComponentProjectionError {}
 
 #[derive(Debug, Deserialize)]
 struct GeneratedOperationContract {
-    #[serde(default)]
-    pre_commit: Option<String>,
-    #[serde(default)]
-    pre_commit_required: bool,
-    #[serde(default)]
-    dependency: Option<serde_json::Value>,
     operation: String,
     statements: Vec<GeneratedStatementContract>,
     #[serde(
@@ -386,30 +380,6 @@ fn load_package_statements(
                     contract.operation,
                 ),
             ));
-        }
-        if let Some(declared) = component.and_then(|component| component.operations.get(operation))
-        {
-            let expected_participant = contract
-                .dependency
-                .as_ref()
-                .and_then(|dependency| dependency.get("participant"))
-                .and_then(serde_json::Value::as_str);
-            let declared_participants = declared
-                .dependencies
-                .iter()
-                .filter_map(|dependency| dependency.participant.as_deref())
-                .collect::<Vec<_>>();
-            if declared.pre_commit != contract.pre_commit
-                || declared.pre_commit_required != contract.pre_commit_required
-                || declared_participants != expected_participant.into_iter().collect::<Vec<_>>()
-            {
-                return Err(ComponentProjectionError::new(
-                    ComponentProjectionErrorType::StatementOperationMismatch,
-                    format!(
-                        "operation {operation:?} participation differs from its generated contract"
-                    ),
-                ));
-            }
         }
         let operation_statements = load_operation_statements(
             package_root,
@@ -971,8 +941,6 @@ mod tests {
             operations: BTreeMap::from([(
                 "source-fixture:item/get@1.0.0".to_owned(),
                 AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: Some("source-fixture:item/get@1.0.0".to_owned()),
                     dependencies: Vec::new(),
@@ -1008,8 +976,6 @@ mod tests {
                     (
                         export,
                         AdmittedComponentOperation {
-                            pre_commit: operation.pre_commit,
-                            pre_commit_required: false,
                             committed_result_schema: operation
                                 .committed_result_schema
                                 .map(|schema| wamn_catalog::ComponentSchema { schema }),
@@ -1160,8 +1126,6 @@ mod tests {
             operations: BTreeMap::from([(
                 operation,
                 AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: None,
                     dependencies: Vec::new(),
@@ -1211,8 +1175,6 @@ mod tests {
             operations: BTreeMap::from([(
                 "wamn:node/handler@0.1.0".to_owned(),
                 AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: registered.map(str::to_owned),
                     dependencies: Vec::new(),
@@ -1414,8 +1376,6 @@ mod tests {
                     operations: BTreeMap::from([(
                         operation.to_owned(),
                         ComponentOperationDeclaration {
-                            pre_commit: None,
-                            pre_commit_required: false,
                             committed_result_schema: None,
                             registered_operation: None,
                             dependencies: Vec::new(),

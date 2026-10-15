@@ -343,11 +343,9 @@ mod tests {
                 operations: BTreeMap::from([(
                     "map".into(),
                     ServingComponentOperation {
-                        pre_commit: None,
                         committed_result_schema: None,
                         registered_operation: None,
                         permissions: BTreeSet::new(),
-                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),
@@ -552,8 +550,6 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".into(),
                 wamn_catalog::AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     registered_operation: None,
                     committed_result_schema: None,
                     dependencies: Vec::new(),

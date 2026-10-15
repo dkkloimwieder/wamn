@@ -135,8 +135,6 @@ async fn admit_component(
             operation.to_owned(),
             // These fixture operations register no package operation.
             AdmittedComponentOperation {
-                pre_commit: None,
-                pre_commit_required: false,
                 committed_result_schema: None,
                 registered_operation: None,
                 dependencies: Vec::new(),

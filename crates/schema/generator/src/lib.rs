@@ -13,7 +13,7 @@
 //! Migrations author PostgreSQL schema selection. Generated and authored query
 //! corpus files therefore use unqualified relations and inherit the host-owned
 //! search path frozen by
-//! `crates/platform/runtime/wit/deps/wamn-postgres-0.3/package.wit`.
+//! `crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit`.
 
 mod authoring;
 /// `wamn build`: the two-pass package build (docs/plan/platform-deploy.md §7.1).

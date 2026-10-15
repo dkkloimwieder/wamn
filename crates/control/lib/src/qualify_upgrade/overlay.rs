@@ -328,14 +328,6 @@ fn consumed_contract(
         }
         contract.insert(section.to_owned(), value);
     }
-    // The typed callback input belongs to the authored base declaration rather
-    // than the generated operation contract. It must remain unchanged too.
-    if let Some(custom) = manifest.custom_operations.get(operation) {
-        contract.insert(
-            "pre_commit_input".to_owned(),
-            serde_json::to_value(&custom.pre_commit)?,
-        );
-    }
     Ok(Value::Object(contract))
 }
 
@@ -345,7 +337,7 @@ fn normalize_operation_contract(
     operation: &str,
 ) -> anyhow::Result<()> {
     let sealed = wamn_schema_generator::canonical_operation_identity(package, operation)?;
-    let (unsealed, version) = wamn_catalog::split_sealed_operation(&sealed)
+    let (unsealed, _) = wamn_catalog::split_sealed_operation(&sealed)
         .context("canonical consumed operation has no version")?;
     let object = contract
         .as_object_mut()
@@ -366,13 +358,6 @@ fn normalize_operation_contract(
             );
             *value = json!(unsealed);
         }
-    }
-    if let Some(value) = object.get_mut("pre_commit") {
-        ensure!(
-            value.as_str() == Some(format!("{unsealed}-pre-commit@{version}").as_str()),
-            "consumed callback has another identity"
-        );
-        *value = json!(format!("{unsealed}-pre-commit"));
     }
     if let Some(statements) = object.get_mut("statements") {
         for statement in statements
@@ -403,7 +388,7 @@ mod tests {
     }
 
     fn contract(version: &str) -> Value {
-        json!({"operation": format!("wamn-receiving:receiving/record-receipt@{version}"), "grant": format!("wamn-receiving:receiving/record-receipt@{version}"), "pre_commit": format!("wamn-receiving:receiving/record-receipt-pre-commit@{version}"), "idempotency": {"log": {"operation": "wamn-receiving:receiving/record-receipt"}}, "statements": [{"name":"write", "path":"old.sql", "binds":[{"type":"uuid"}], "columns":[], "transactional":true}]})
+        json!({"operation": format!("wamn-receiving:receiving/record-receipt@{version}"), "grant": format!("wamn-receiving:receiving/record-receipt@{version}"), "idempotency": {"log": {"operation": "wamn-receiving:receiving/record-receipt"}}, "statements": [{"name":"write", "path":"old.sql", "binds":[{"type":"uuid"}], "columns":[], "transactional":true}]})
     }
 
     fn identity(id: &str, version: &str, predecessor: Option<&str>) -> PackageIdentity {

@@ -896,18 +896,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prior-commit"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "uuid",
- "wamn-execution-contract",
- "wamn-postgres-statements",
- "wit-bindgen",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"

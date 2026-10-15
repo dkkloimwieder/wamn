@@ -156,7 +156,6 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
                 digest: base_digests()[format!("wamn_receiving@{base_version}").as_str()]
                     .to_string(),
                 operation: sealed(BASE_RECORD_RECEIPT),
-                participant: None,
             })
             .into_iter()
             .collect::<Vec<_>>();

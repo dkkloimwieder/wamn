@@ -488,7 +488,7 @@ fn emit_update_codec(
             .map(|(literal, detail)| (access_error_literal(*literal), detail)),
         revision_width(table, operation),
     ));
-    source.push_str(&emit_export_adapter("Update", false, false, true));
+    source.push_str(&emit_export_adapter("Update", false, true));
     source
 }
 
@@ -538,7 +538,6 @@ fn emit_crud_codec(
     ));
     source.push_str(&emit_export_adapter(
         &type_name,
-        false,
         false,
         action.changes_records(),
     ));
@@ -1650,38 +1649,10 @@ fn emit_custom_group(
             .rfind(&marker)
             .expect("custom interface emitter includes its operation");
         source.push_str(&emitted[start..]);
-        if let Some(input) = &operation.pre_commit {
-            source.push('\n');
-            emit_pre_commit_interface(&mut source, local_name, input);
-        }
     }
     source.truncate(source.trim_end().len());
     source.push('\n');
     source
-}
-
-fn emit_pre_commit_interface(
-    source: &mut String,
-    local_name: &str,
-    input: &crate::manifest::CustomOperationInputDeclaration,
-) {
-    let interface = format!("{}-pre-commit", wit_name(local_name));
-    let input_tree = input_fields_of(
-        &serde_json::to_value(input).expect("validated pre-commit input serializes"),
-    );
-    writeln!(
-        source,
-        "interface {interface} {{\n  use wamn:node/types@0.1.0.{{node-context, node-error}};\n"
-    )
-    .expect("writing to a String cannot fail");
-    emit_nested_wit_records(source, &interface, &input_tree, "");
-    writeln!(source, "  record {interface}-request {{").expect("writing to a String cannot fail");
-    emit_wit_tree_fields(source, &interface, &input_tree, "");
-    writeln!(
-        source,
-        "  }}\n\n  run: async func(ctx: node-context, input: {interface}-request) -> result<{interface}-request, node-error>;\n}}\n"
-    )
-    .expect("writing to a String cannot fail");
 }
 
 fn emit_forwarding_interface(
@@ -2070,7 +2041,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     let Some(result) = operation.result.as_ref() else {
         let type_name = rust_type_identifier(local_name);
         let mut source = emit_direct_custom_codec(&type_name, operation);
-        source.push_str(&emit_export_adapter(&type_name, true, false, false));
+        source.push_str(&emit_export_adapter(&type_name, true, false));
         return source;
     };
     let (minimum, maximum) = operation
@@ -2183,7 +2154,6 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     source.push_str(&emit_export_adapter(
         &type_name,
         false,
-        operation.pre_commit.is_some(),
         operation.has_host_transaction(),
     ));
     source

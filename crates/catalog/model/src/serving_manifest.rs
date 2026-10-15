@@ -146,9 +146,6 @@ pub struct ServingRelease {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingComponentOperation {
-    /// Base-owned typed pre-commit import, bound only by an admitted caller.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pre_commit: Option<String>,
     /// Explicit application permission identity. Palette exports carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_operation: Option<String>,
@@ -158,9 +155,6 @@ pub struct ServingComponentOperation {
     /// Canonical JSON for this registered operation's admitted committed result schema.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<String>,
-    /// The local participant that the base selects inside this export's transaction.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub participant: Option<String>,
     /// Exact SQL available while this export is active: the union over its call graph.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub statements: BTreeMap<String, ComponentSqlStatement>,
@@ -183,8 +177,7 @@ impl ServingComponentOperation {
             ))
             .expect("canonical JSON uses UTF-8")
         });
-        self.pre_commit == admitted.pre_commit
-            && self.registered_operation == admitted.registered_operation
+        self.registered_operation == admitted.registered_operation
             && self.committed_result_schema == schema
             && admitted
                 .registered_operation
@@ -262,9 +255,8 @@ impl ServingComponent {
     /// dependency is a component-model call inside these bytes, with no host
     /// between. Publish decides the authority of that call here, once:
     /// `resolve` returns the admitted fact of each dependency's base. Every
-    /// export then carries its own permission, the union of the SQL
-    /// statements of its call graph, and the participant that the base
-    /// selects. The descriptor is `fact` with its
+    /// export then carries its own permission and the union of the SQL
+    /// statements of its call graph. The descriptor is `fact` with its
     /// `connections`.
     pub fn project<'a>(
         fact: &'a AdmittedComponent,
@@ -275,7 +267,6 @@ impl ServingComponent {
         let mut operations = BTreeMap::new();
         for (name, operation) in &fact.operations {
             let mut folded = ServingComponentOperation {
-                pre_commit: operation.pre_commit.clone(),
                 registered_operation: operation.registered_operation.clone(),
                 permissions: operation.registered_operation.iter().cloned().collect(),
                 committed_result_schema: operation.committed_result_schema.as_ref().map(|schema| {
@@ -284,7 +275,6 @@ impl ServingComponent {
                     ))
                     .expect("canonical JSON uses UTF-8")
                 }),
-                participant: None,
                 statements: BTreeMap::new(),
             };
             fold_call_graph(fact, name, resolve, &mut Vec::new(), &mut folded)?;
@@ -398,38 +388,6 @@ fn fold_call_graph<'a>(
             ),
         })?;
         fold_call_graph(base, &dependency.operation, resolve, path, folded)?;
-        if dependency.participant.is_none()
-            && base
-                .operation(&dependency.operation)
-                .is_some_and(|called| called.pre_commit_required)
-        {
-            return invalid(format!(
-                "operation {:?} needs a pre-commit participant; the overlay declares none",
-                dependency.operation
-            ));
-        }
-        if let Some(participant) = &dependency.participant {
-            if folded.participant.replace(participant.clone()).is_some() {
-                return invalid(format!(
-                    "the call graph of operation {operation_name:?} selects more than one participant"
-                ));
-            }
-            if base
-                .operation(&dependency.operation)
-                .is_none_or(|called| called.pre_commit.is_none())
-            {
-                return invalid("selected base operation declares no pre-commit interface");
-            }
-            if fact
-                .operation(participant)
-                .is_none_or(|local| !local.dependencies.is_empty())
-            {
-                return invalid(format!(
-                    "participant {participant:?} must be a local operation that calls nothing"
-                ));
-            }
-            fold_call_graph(fact, participant, resolve, path, folded)?;
-        }
     }
     path.pop();
     Ok(())
@@ -1310,18 +1268,6 @@ impl ServingManifest {
             }
             for (export, operation) in &component.operations {
                 validate_text(export, "component-operation")?;
-                if let Some(pre_commit) = &operation.pre_commit {
-                    validate_canonical_operation_for_package(
-                        pre_commit,
-                        &component.package_id,
-                        package_versions[component.package_id.as_str()],
-                    )?;
-                    if pre_commit == export {
-                        return invalid(
-                            "pre-commit interface must differ from the operation export",
-                        );
-                    }
-                }
                 validate_registered_operation(
                     &package_versions,
                     &component.package_id,
@@ -1336,15 +1282,6 @@ impl ServingManifest {
                 }
                 for permission in &operation.permissions {
                     validate_release_operation(&package_versions, permission)?;
-                }
-                if let Some(participant) = &operation.participant
-                    && !component.operations.get(participant).is_some_and(|local| {
-                        local.registered_operation.as_deref() == Some(participant.as_str())
-                    })
-                {
-                    return invalid(format!(
-                        "participant {participant:?} of export {export:?} is not a registered local operation"
-                    ));
                 }
                 if operation
                     .registered_operation
@@ -1722,14 +1659,12 @@ mod tests {
                 operations: BTreeMap::from([(
                     "overlay:transform/map@3.0.0".into(),
                     ServingComponentOperation {
-                        pre_commit: None,
                         committed_result_schema: None,
                         registered_operation: Some("overlay:transform/map@3.0.0".into()),
                         permissions: BTreeSet::from([
                             "base:widget/get@1.0.0".into(),
                             "overlay:transform/map@3.0.0".into(),
                         ]),
-                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),
@@ -1741,11 +1676,9 @@ mod tests {
                 operations: BTreeMap::from([(
                     "base:widget/get@1.0.0".into(),
                     ServingComponentOperation {
-                        pre_commit: None,
                         committed_result_schema: None,
                         registered_operation: Some("base:widget/get@1.0.0".into()),
                         permissions: BTreeSet::from(["base:widget/get@1.0.0".into()]),
-                        participant: None,
                         statements: BTreeMap::new(),
                     },
                 )]),
@@ -1930,7 +1863,6 @@ mod tests {
             "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
         let dependency =
             |package: &str, digest: &str, operation: &str| ComponentOperationDependency {
-                participant: None,
                 package: package.into(),
                 version: "1.0.0".into(),
                 digest: digest.into(),
@@ -2013,8 +1945,6 @@ mod tests {
         dependencies: Vec<ComponentOperationDependency>,
     ) -> crate::AdmittedComponentOperation {
         crate::AdmittedComponentOperation {
-            pre_commit: None,
-            pre_commit_required: false,
             registered_operation: Some(registered.into()),
             committed_result_schema: None,
             dependencies,
@@ -2043,14 +1973,11 @@ mod tests {
     #[test]
     fn projection_folds_each_call_graph_once_at_publish() {
         const OVERLAY: &str = "overlay:receiving/record@3.0.0";
-        const PARTICIPANT: &str = "overlay:receiving/record-participant@3.0.0";
         const BASE: &str = "base:receiving/record@1.0.0";
-        let mut base_operation =
+        let base_operation =
             admitted_operation(BASE, Some("INSERT INTO receipt DEFAULT VALUES"), Vec::new());
-        base_operation.pre_commit = Some("base:receiving/record-pre-commit@1.0.0".into());
         let base = admitted("base", "1.0.0", COMPONENT_A, vec![(BASE, base_operation)]);
         let dependency = ComponentOperationDependency {
-            participant: Some(PARTICIPANT.into()),
             package: "base".into(),
             version: "1.0.0".into(),
             digest: COMPONENT_A.into(),
@@ -2060,20 +1987,14 @@ mod tests {
             "overlay",
             "3.0.0",
             COMPONENT_B,
-            vec![
-                (
+            vec![(
+                OVERLAY,
+                admitted_operation(
                     OVERLAY,
-                    admitted_operation(OVERLAY, None, vec![dependency.clone()]),
+                    Some("INSERT INTO inspection DEFAULT VALUES"),
+                    vec![dependency.clone()],
                 ),
-                (
-                    PARTICIPANT,
-                    admitted_operation(
-                        PARTICIPANT,
-                        Some("INSERT INTO inspection DEFAULT VALUES"),
-                        Vec::new(),
-                    ),
-                ),
-            ],
+            )],
         );
         let resolve = |_: &ComponentOperationDependency| Some(&base);
         let projected =
@@ -2084,18 +2005,11 @@ mod tests {
             BTreeSet::from([OVERLAY.into()]),
             "the entry requires its own permission only"
         );
-        assert_eq!(entry.participant.as_deref(), Some(PARTICIPANT));
         assert_eq!(
             entry.statements.len(),
             2,
             "the entry holds the SQL of its whole graph"
         );
-        let participant = &projected.operations[PARTICIPANT];
-        assert_eq!(
-            participant.permissions,
-            BTreeSet::from([PARTICIPANT.into()])
-        );
-        assert!(participant.participant.is_none());
 
         let unresolved = |_: &ComponentOperationDependency| None;
         let error = ServingComponent::project(&overlay, Vec::new(), &unresolved)
@@ -2105,7 +2019,6 @@ mod tests {
         let mut cyclic_base = base.clone();
         cyclic_base.operations.get_mut(BASE).unwrap().dependencies =
             vec![ComponentOperationDependency {
-                participant: None,
                 package: "overlay".into(),
                 version: "3.0.0".into(),
                 digest: COMPONENT_B.into(),
@@ -2121,43 +2034,6 @@ mod tests {
         let error = ServingComponent::project(&overlay, Vec::new(), &cyclic)
             .expect_err("a call graph cycle was folded");
         assert!(error.to_string().contains("calls itself"));
-    }
-
-    #[test]
-    fn publish_refuses_a_required_pre_commit_without_a_participant() {
-        const OVERLAY: &str = "overlay:receiving/record@3.0.0";
-        const BASE: &str = "base:receiving/record@1.0.0";
-        let mut base_operation = admitted_operation(BASE, None, Vec::new());
-        base_operation.pre_commit = Some("base:receiving/record-pre-commit@1.0.0".into());
-        let mut base = admitted("base", "1.0.0", COMPONENT_A, vec![(BASE, base_operation)]);
-        let dependency = ComponentOperationDependency {
-            participant: None,
-            package: "base".into(),
-            version: "1.0.0".into(),
-            digest: COMPONENT_A.into(),
-            operation: BASE.into(),
-        };
-        let overlay = admitted(
-            "overlay",
-            "3.0.0",
-            COMPONENT_B,
-            vec![(OVERLAY, admitted_operation(OVERLAY, None, vec![dependency]))],
-        );
-
-        let optional = base.clone();
-        let resolve = |_: &ComponentOperationDependency| Some(&optional);
-        let projected = ServingComponent::project(&overlay, Vec::new(), &resolve)
-            .expect("an optional slot folds");
-        assert!(projected.operations[OVERLAY].participant.is_none());
-
-        base.operations.get_mut(BASE).unwrap().pre_commit_required = true;
-        let resolve = |_: &ComponentOperationDependency| Some(&base);
-        let error = ServingComponent::project(&overlay, Vec::new(), &resolve)
-            .expect_err("a required slot without a participant was published");
-        assert_eq!(
-            error.to_string(),
-            format!("operation {BASE:?} needs a pre-commit participant; the overlay declares none")
-        );
     }
 
     #[test]

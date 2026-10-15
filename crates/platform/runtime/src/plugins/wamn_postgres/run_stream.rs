@@ -1,4 +1,4 @@
-//! `statements.run-stream` of `wamn:postgres@0.3.0` (owner ruling on
+//! `statements.run-stream` of `wamn:postgres@0.4.0` (owner ruling on
 //! `wamn-utci`): the rows of one statement, as the server sends them.
 
 use std::pin::Pin;

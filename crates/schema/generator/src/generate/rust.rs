@@ -103,13 +103,7 @@ pub(super) fn emit_static_sql_projection(
 ) -> Result<(), GenerateError> {
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
     if matches!(projection, Projection::Wamn) {
-        source.push_str(
-            if operation.transaction == Some(crate::manifest::CommandTransaction::Participant) {
-                "use wamn_postgres_statements::TransactionView;\n\n"
-            } else {
-                "use wamn_postgres_statements::Transaction;\n\n"
-            },
-        );
+        source.push_str("use wamn_postgres_statements::Transaction;\n\n");
     }
     for row in rows {
         emit_rust_row(&mut source, row, projection);
@@ -149,12 +143,7 @@ pub(super) fn emit_static_sql_projection(
                 .iter()
                 .find(|row| row.name == accessor.row)
                 .expect("static accessor row was generated from the same statement");
-            emit_static_sql_wamn_accessor(
-                &mut source,
-                &accessor,
-                row,
-                operation.transaction == Some(crate::manifest::CommandTransaction::Participant),
-            );
+            emit_static_sql_wamn_accessor(&mut source, &accessor, row);
         }
     }
     while source.ends_with("\n\n") {
@@ -171,21 +160,12 @@ pub(super) fn emit_static_sql_projection(
     )
 }
 
-fn emit_static_sql_wamn_accessor(
-    source: &mut String,
-    accessor: &StaticSqlAccessor,
-    row: &RustRow,
-    participant: bool,
-) {
+fn emit_static_sql_wamn_accessor(source: &mut String, accessor: &StaticSqlAccessor, row: &RustRow) {
     let function = rust_identifier(&accessor.name)
         .expect("static SQL statement names were validated for Rust");
     emit_argument_count_expectation(source, accessor.binds.len());
     writeln!(source, "pub(crate) async fn {function}(").expect("writing to a String cannot fail");
-    if participant {
-        source.push_str("    transaction: &mut TransactionView,\n");
-    } else {
-        source.push_str("    transaction: &mut Transaction,\n");
-    }
+    source.push_str("    transaction: &mut Transaction,\n");
     for bind in &accessor.binds {
         let parameter = rust_identifier(&bind.parameter)
             .expect("static SQL parameter names were validated for Rust");

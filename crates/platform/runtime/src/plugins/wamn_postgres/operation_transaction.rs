@@ -76,7 +76,6 @@ impl OperationTransaction {
     /// its answer was not read. Every other failure is a certain rollback.
     pub async fn commit(&self) -> Result<(), CommitFailure> {
         let state = &self.transaction.state;
-        super::transaction_views::finish_view(state).await;
         let connection = take_conn(state).map_err(CommitFailure::RolledBack)?;
         let connection =
             StatementConnectionGuard::new(connection, Arc::clone(&self.transaction.destroyed));
@@ -248,3 +247,6 @@ impl WamnPostgres {
         ))))
     }
 }
+
+#[cfg(test)]
+mod tests;

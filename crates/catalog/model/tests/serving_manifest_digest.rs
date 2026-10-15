@@ -44,11 +44,9 @@ fn components() -> BTreeSet<ServingComponent> {
             operations: BTreeMap::from([(
                 "map".into(),
                 ServingComponentOperation {
-                    pre_commit: None,
                     committed_result_schema: None,
                     registered_operation: None,
                     permissions: BTreeSet::new(),
-                    participant: None,
                     statements: BTreeMap::new(),
                 },
             )]),
@@ -60,13 +58,11 @@ fn components() -> BTreeSet<ServingComponent> {
             operations: BTreeMap::from([(
                 "platform-fixture-overlay:widget/get@3.0.0".into(),
                 ServingComponentOperation {
-                    pre_commit: None,
                     committed_result_schema: None,
                     registered_operation: Some("platform-fixture-overlay:widget/get@3.0.0".into()),
                     permissions: BTreeSet::from([
                         "platform-fixture-overlay:widget/get@3.0.0".into()
                     ]),
-                    participant: None,
                     statements: BTreeMap::new(),
                 },
             )]),
@@ -315,11 +311,9 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
 /// publisher can publish.
 fn operation_provider_manifest(package: &str, export: &str, version: &str) -> ServingManifest {
     let operation = ServingComponentOperation {
-        pre_commit: None,
         registered_operation: None,
         committed_result_schema: None,
         permissions: BTreeSet::new(),
-        participant: None,
         statements: BTreeMap::new(),
     };
     ServingManifest::new(

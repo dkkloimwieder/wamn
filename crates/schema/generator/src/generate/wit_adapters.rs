@@ -151,12 +151,7 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
 /// A `transacted` operation works in the transaction that the host began for
 /// it (`docs/plan/host-transaction.md` 4.1), so its export takes no state: its
 /// handler gets the operation transaction.
-pub(super) fn emit_export_adapter(
-    type_name: &str,
-    direct: bool,
-    pass_context: bool,
-    transacted: bool,
-) -> String {
+pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: bool) -> String {
     let input_type = if direct {
         format!("__contract::{type_name}Request")
     } else {
@@ -172,10 +167,6 @@ pub(super) fn emit_export_adapter(
                     __codec::normalize(&mut input).map_err(invalid)?;
                     $handler(&mut state, input).await"
             .to_owned()
-    } else if pass_context {
-        "__codec::validate(&input).map_err(invalid)?;
-                    Ok(__codec::run(input, &mut state, async |state, request| $handler(context.clone(), state, request).await).await)"
-            .to_owned()
     } else {
         "__codec::validate(&input).map_err(invalid)?;
                     Ok(__codec::run(input, &mut state, $handler).await)"
@@ -188,7 +179,6 @@ pub(super) fn emit_export_adapter(
         "let input = __codec::decode(&input).map_err(invalid)?;\n                    let output = <Self as __contract::Guest>::run(context, input).await?;\n                    Ok(__node::Emission {\n                        payload: __codec::encode(&output),\n                        port: None,\n                    })"
             .to_owned()
     };
-    let context_parameter = if pass_context { "context" } else { "_context" };
     let (state_parameter, state) = if transacted {
         (
             "",
@@ -223,7 +213,7 @@ macro_rules! export_operation {{
 
             impl __contract::Guest for $component {{
                 async fn run(
-                    {context_parameter}: __node::NodeContext,
+                    _context: __node::NodeContext,
                     input: {input_type},
                 ) -> Result<{output_type}, __node::NodeError> {{
                     let mut state = {state};

@@ -1,14 +1,9 @@
-//! Composes an overlay component with its base and participants into one component.
+//! Composes an overlay component with its bases into one component.
 //!
-//! The overlay imports each base operation it depends on. The base imports a
-//! pre-commit interface, which a participant component exports under another
-//! name. The declarations name both sides of each link, so this tool plugs
-//! them by declaration and never by matching names. Each member is embedded
-//! with its bytes unchanged, so publish can hash each embedded component.
-//!
-//! When the overlay names no participant, a base's optional slot takes the
-//! base's generated no-op participant, the one candidate that exports the slot.
-//! A required slot has no default, so composition refuses it.
+//! The overlay imports each base operation it depends on. The declarations
+//! name each link, so this tool plugs them by declaration and never by
+//! matching names. Each member is embedded with its bytes unchanged, so
+//! publish can hash each embedded component.
 //!
 //! Each member that imports `wamn:postgres/statements` gets an outer import
 //! of its own, named by the member's position in the composition (`sql-0`,
@@ -17,9 +12,6 @@
 //! member each outer import was made for, so admission can check the wiring
 //! in the composed bytes and the host can bind each import to the statements
 //! of that member (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
-//! A composition that plugs a participant keeps one shared import: the
-//! participant path shares the entry's statements until it retires. A
-//! generated no-op participant that imports no statements does not count.
 
 use std::collections::BTreeMap;
 
@@ -46,19 +38,14 @@ struct Member {
     digest: [u8; 32],
 }
 
-/// Composes the overlay, its bases and its participants into one component.
-///
-/// `no_op_participants` are candidates: only the ones that plug a slot become
-/// members, so an unused candidate leaves the composed bytes unchanged.
+/// Composes the overlay and its bases into one component.
 pub fn compose(
     overlay_declaration: &Value,
     overlay: Vec<u8>,
     bases: Vec<Base>,
-    participants: Vec<Vec<u8>>,
-    no_op_participants: &[Vec<u8>],
 ) -> anyhow::Result<Vec<u8>> {
     let mut graph = CompositionGraph::new();
-    let mut members = Vec::with_capacity(1 + bases.len() + participants.len());
+    let mut members = Vec::with_capacity(1 + bases.len());
 
     let overlay = instantiate(&mut graph, "wamn-member:overlay", overlay)?;
 
@@ -75,20 +62,9 @@ pub fn compose(
         base_members.push((package, version, base.declaration, member));
     }
 
-    let mut participant_members = Vec::with_capacity(participants.len());
-    for (index, bytes) in participants.into_iter().enumerate() {
-        let member = instantiate(
-            &mut graph,
-            &format!("wamn-member:participant-{index}"),
-            bytes,
-        )?;
-        members.push(member);
-        participant_members.push(member);
-    }
     // Overlay interfaces use base types. An exported interface may only use
     // types that an earlier import or export names, so the overlay exports last.
     members.push(overlay);
-    let mut no_op_members = Vec::new();
 
     let operations = overlay_declaration
         .get("operations")
@@ -112,14 +88,15 @@ pub fn compose(
                     "{operation} depends on {package}@{version}, but no base declaration names it"
                 );
             };
-            let Some(base_entry) = base_declaration
+            if base_declaration
                 .get("operations")
                 .and_then(|operations| operations.get(&base_operation))
-            else {
+                .is_none()
+            {
                 bail!(
                     "{operation} depends on {base_operation}, which {package}@{version} does not declare"
                 );
-            };
+            }
 
             let export = graph
                 .alias_instance_export(base.instance, &base_operation)
@@ -127,93 +104,11 @@ pub fn compose(
             graph
                 .set_instantiation_argument(overlay.instance, &base_operation, export)
                 .with_context(|| format!("plug {base_operation} into the overlay"))?;
-
-            let Some(participant) = dependency.get("participant") else {
-                let Some(pre_commit) = base_entry.get("pre-commit").and_then(Value::as_str) else {
-                    continue;
-                };
-                if base_entry
-                    .get("pre-commit-required")
-                    .and_then(Value::as_bool)
-                    == Some(true)
-                {
-                    bail!(
-                        "operation {base_operation:?} needs a pre-commit participant; the overlay declares none"
-                    );
-                }
-                let providers = no_op_participants
-                    .iter()
-                    .filter(|bytes| exports_name(bytes, pre_commit))
-                    .collect::<Vec<_>>();
-                let [provider] = providers.as_slice() else {
-                    bail!(
-                        "exactly one no-op participant must export {pre_commit}; {} do",
-                        providers.len()
-                    );
-                };
-                let index = no_op_members.len();
-                let member = instantiate(
-                    &mut graph,
-                    &format!("wamn-member:no-op-{index}"),
-                    (*provider).clone(),
-                )?;
-                no_op_members.push(member);
-                let export = graph
-                    .alias_instance_export(member.instance, pre_commit)
-                    .with_context(|| format!("alias no-op export {pre_commit}"))?;
-                graph
-                    .set_instantiation_argument(base.instance, pre_commit, export)
-                    .with_context(|| format!("plug the no-op participant into {pre_commit}"))?;
-                continue;
-            };
-            let participant = participant
-                .as_str()
-                .with_context(|| format!("the participant of {context} is not text"))?;
-            let pre_commit = base_entry
-                .get("pre-commit")
-                .and_then(Value::as_str)
-                .with_context(|| {
-                    format!(
-                        "{operation} names participant {participant}, but {base_operation} declares no pre-commit"
-                    )
-                })?;
-            let providers = participant_members
-                .iter()
-                .filter(|member| {
-                    graph.types()[graph[member.package].ty()]
-                        .exports
-                        .contains_key(participant)
-                })
-                .collect::<Vec<_>>();
-            let [provider] = providers.as_slice() else {
-                bail!(
-                    "exactly one participant component must export {participant}; {} do",
-                    providers.len()
-                );
-            };
-            let export = graph
-                .alias_instance_export(provider.instance, participant)
-                .with_context(|| format!("alias participant export {participant}"))?;
-            graph
-                .set_instantiation_argument(base.instance, pre_commit, export)
-                .with_context(|| format!("plug {participant} into {pre_commit}"))?;
         }
     }
 
-    // A generated no-op participant runs no SQL, so plugging one leaves each
-    // member's statements its own.
-    let statement_instances = if participant_members.is_empty()
-        && !no_op_members
-            .iter()
-            .any(|member| imports_statements(&graph, member))
-    {
-        name_statement_instances(&mut graph, &members)?
-    } else {
-        BTreeMap::new()
-    };
+    let statement_instances = name_statement_instances(&mut graph, &members)?;
 
-    // The no-op members exist only to fill base slots. Their exports stay
-    // inside the composition.
     for member in members {
         let names = graph.types()[graph[member.package].ty()]
             .exports
@@ -245,13 +140,6 @@ pub fn compose(
         );
     }
     Ok(composed)
-}
-
-/// Whether a member imports the statements interface.
-fn imports_statements(graph: &CompositionGraph, member: &Member) -> bool {
-    graph.types()[graph[member.package].ty()]
-        .imports
-        .contains_key(STATEMENTS_INTERFACE)
 }
 
 /// Give each member that imports the statements interface an outer import of
@@ -312,13 +200,6 @@ fn leb128(bytes: &mut Vec<u8>, mut value: usize) {
         }
         bytes.push(byte | 0x80);
     }
-}
-
-/// Whether a component's top-level exports include `name`.
-fn exports_name(bytes: &[u8], name: &str) -> bool {
-    let mut types = wac_graph::types::Types::default();
-    Package::from_bytes("wamn-candidate", None, bytes.to_vec(), &mut types)
-        .is_ok_and(|package| types[package.ty()].exports.contains_key(name))
 }
 
 fn instantiate(graph: &mut CompositionGraph, name: &str, bytes: Vec<u8>) -> anyhow::Result<Member> {
@@ -386,17 +267,7 @@ mod tests {
     }
 
     fn base() -> Vec<u8> {
-        component(
-            &format!(
-                "{HOST_LOG}{}",
-                operation_import("test:base/pre-commit@1.0.0")
-            ),
-            "test:base/op@1.0.0",
-        )
-    }
-
-    fn participant(export: &str) -> Vec<u8> {
-        component(HOST_LOG, export)
+        component(HOST_LOG, "test:base/op@1.0.0")
     }
 
     fn overlay_declaration() -> serde_json::Value {
@@ -404,15 +275,14 @@ mod tests {
             "package": "test_base",
             "version": "1.0.0",
             "digest": "__BASE_DIGEST__",
-            "operation": "test:base/op@1.0.0",
-            "participant": "test:overlay/participant@1.0.0"
+            "operation": "test:base/op@1.0.0"
         }]}}})
     }
 
     fn base_declaration() -> serde_json::Value {
         json!({
             "scope": {"package-id": "test_base", "package-version": "1.0.0"},
-            "operations": {"test:base/op@1.0.0": {"pre-commit": "test:base/pre-commit@1.0.0"}}
+            "operations": {"test:base/op@1.0.0": {}}
         })
     }
 
@@ -436,9 +306,7 @@ mod tests {
     fn composition_embeds_each_member_unchanged_and_plugs_by_declaration() {
         let overlay = overlay();
         let base = base();
-        let no_op = participant("test:base/pre-commit@1.0.0");
-        let participant = participant("test:overlay/participant@1.0.0");
-        let members = [&overlay, &base, &participant];
+        let members = [&overlay, &base];
 
         let composed = compose(
             &overlay_declaration(),
@@ -447,8 +315,6 @@ mod tests {
                 declaration: base_declaration(),
                 bytes: base.clone(),
             }],
-            vec![participant.clone()],
-            std::slice::from_ref(&no_op),
         )
         .expect("the members compose");
 
@@ -459,10 +325,6 @@ mod tests {
                 "a nested component section holds each member's input bytes"
             );
         }
-        assert!(
-            !embedded.contains(&Sha256::digest(&no_op).to_vec()),
-            "a named participant leaves the no-op participant out"
-        );
 
         let mut types = Types::default();
         let package = Package::from_bytes("composed", None, composed, &mut types)
@@ -479,109 +341,12 @@ mod tests {
                 .keys()
                 .map(String::as_str)
                 .collect::<BTreeSet<_>>(),
-            BTreeSet::from([
-                "test:base/op@1.0.0",
-                "test:overlay/main@1.0.0",
-                "test:overlay/participant@1.0.0",
-            ]),
+            BTreeSet::from(["test:base/op@1.0.0", "test:overlay/main@1.0.0"]),
             "every member export is a composed export"
         );
     }
 
-    #[test]
-    fn a_participant_that_no_member_exports_is_refused() {
-        let error = compose(
-            &overlay_declaration(),
-            overlay(),
-            vec![Base {
-                declaration: base_declaration(),
-                bytes: base(),
-            }],
-            vec![participant("test:overlay/other@1.0.0")],
-            &[],
-        )
-        .expect_err("the named participant has no provider");
-        assert!(
-            error.to_string().contains(
-                "exactly one participant component must export test:overlay/participant@1.0.0"
-            ),
-            "{error:#}"
-        );
-    }
-
-    fn overlay_declaration_without_participant() -> serde_json::Value {
-        let mut declaration = overlay_declaration();
-        declaration["operations"]["test:overlay/main@1.0.0"]["dependencies"][0]
-            .as_object_mut()
-            .expect("the dependency is an object")
-            .remove("participant");
-        declaration
-    }
-
-    #[test]
-    fn an_optional_slot_without_a_participant_takes_the_no_op_participant() {
-        let no_op = participant("test:base/pre-commit@1.0.0");
-        let unused = participant("test:other/pre-commit@1.0.0");
-        let composed = compose(
-            &overlay_declaration_without_participant(),
-            overlay(),
-            vec![Base {
-                declaration: base_declaration(),
-                bytes: base(),
-            }],
-            Vec::new(),
-            &[unused.clone(), no_op.clone()],
-        )
-        .expect("the no-op participant fills the optional slot");
-
-        let embedded = nested_component_digests(&composed);
-        assert!(embedded.contains(&Sha256::digest(&no_op).to_vec()));
-        assert!(
-            !embedded.contains(&Sha256::digest(&unused).to_vec()),
-            "a candidate that fills no slot is not a member"
-        );
-        let mut types = Types::default();
-        let package = Package::from_bytes("composed", None, composed, &mut types)
-            .expect("the composed bytes are a component");
-        let world = &types[package.ty()];
-        assert_eq!(
-            world.imports.keys().map(String::as_str).collect::<Vec<_>>(),
-            ["test:host/log@1.0.0"],
-            "the slot is no longer an import"
-        );
-        assert_eq!(
-            world
-                .exports
-                .keys()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["test:base/op@1.0.0", "test:overlay/main@1.0.0"]),
-            "the no-op participant's export stays inside the composition"
-        );
-    }
-
-    #[test]
-    fn a_required_slot_without_a_participant_is_refused() {
-        let mut declaration = base_declaration();
-        declaration["operations"]["test:base/op@1.0.0"]["pre-commit-required"] = json!(true);
-        let error = compose(
-            &overlay_declaration_without_participant(),
-            overlay(),
-            vec![Base {
-                declaration,
-                bytes: base(),
-            }],
-            Vec::new(),
-            &[participant("test:base/pre-commit@1.0.0")],
-        )
-        .expect_err("a required slot took the no-op participant");
-        assert_eq!(
-            error.to_string(),
-            r#"operation "test:base/op@1.0.0" needs a pre-commit participant; the overlay declares none"#
-        );
-    }
-
-    const STATEMENTS_IMPORT: &str = r#"(import "wamn:postgres/statements@0.3.0" (instance
+    const STATEMENTS_IMPORT: &str = r#"(import "wamn:postgres/statements@0.4.0" (instance
         (export "run" (func (param "statement" string) (result u32)))))"#;
 
     #[test]
@@ -609,8 +374,6 @@ mod tests {
                 }),
                 bytes: base.clone(),
             }],
-            Vec::new(),
-            &[],
         )
         .expect("two statements importers compose");
 
@@ -666,59 +429,6 @@ mod tests {
                 ("sql-0".to_owned(), format!("sha256:{}", hex(&base))),
                 ("sql-1".to_owned(), format!("sha256:{}", hex(&overlay))),
             ])
-        );
-    }
-
-    /// The top-level import names of a composed component.
-    fn outer_imports(composed: &[u8]) -> Vec<String> {
-        let mut types = Types::default();
-        let package = Package::from_bytes("composed", None, composed.to_vec(), &mut types)
-            .expect("the composed bytes are a component");
-        types[package.ty()].imports.keys().cloned().collect()
-    }
-
-    #[test]
-    fn a_no_op_participant_without_statements_keeps_the_named_instances() {
-        let overlay = component(
-            &format!(
-                "{STATEMENTS_IMPORT}{}",
-                operation_import("test:base/op@1.0.0")
-            ),
-            "test:overlay/main@1.0.0",
-        );
-        let base = component(
-            &format!(
-                "{STATEMENTS_IMPORT}{}",
-                operation_import("test:base/pre-commit@1.0.0")
-            ),
-            "test:base/op@1.0.0",
-        );
-        let compose_with = |no_op: Vec<u8>| {
-            compose(
-                &overlay_declaration_without_participant(),
-                overlay.clone(),
-                vec![Base {
-                    declaration: base_declaration(),
-                    bytes: base.clone(),
-                }],
-                Vec::new(),
-                &[no_op],
-            )
-            .expect("the no-op participant fills the optional slot")
-        };
-
-        assert_eq!(
-            outer_imports(&compose_with(participant("test:base/pre-commit@1.0.0"))),
-            ["test:host/log@1.0.0", "sql-0", "sql-1"],
-            "a no-op participant that runs no SQL leaves each member its own instance"
-        );
-        assert_eq!(
-            outer_imports(&compose_with(component(
-                STATEMENTS_IMPORT,
-                "test:base/pre-commit@1.0.0"
-            ))),
-            [wamn_component_policy::STATEMENTS_INTERFACE],
-            "a plugged participant that imports statements keeps one shared import"
         );
     }
 }

@@ -998,8 +998,6 @@ mod tests {
                 operations: BTreeMap::from([(
                     operation.to_owned(),
                     ComponentOperationDeclaration {
-                        pre_commit: None,
-                        pre_commit_required: false,
                         committed_result_schema: None,
                         registered_operation: None,
                         dependencies: Vec::new(),
@@ -1231,8 +1229,6 @@ mod tests {
             operations: BTreeMap::from([(
                 "map".to_owned(),
                 AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: None,
                     dependencies: Vec::new(),

@@ -11,7 +11,7 @@ use wamn_component_composer::{Base, compose};
 #[command(
     name = "wamn-component-composer",
     version,
-    about = "Compose an overlay component with its base and participants"
+    about = "Compose an overlay component with its bases"
 )]
 struct Args {
     /// Component declaration of the overlay (`publication/components/*.json.in`).
@@ -29,15 +29,6 @@ struct Args {
     /// Base component. Pair each one with a `--base-declaration`, in order.
     #[arg(long = "base", value_name = "COMPONENT", required = true)]
     bases: Vec<PathBuf>,
-
-    /// Participant component that a base calls before commit.
-    #[arg(long = "participant", value_name = "COMPONENT")]
-    participants: Vec<PathBuf>,
-
-    /// Generated no-op participant of a base. Composition uses it only to
-    /// fill an optional slot for which the overlay names no participant.
-    #[arg(long = "no-op-participant", value_name = "COMPONENT")]
-    no_op_participants: Vec<PathBuf>,
 
     /// Destination for the composed component bytes.
     #[arg(long, value_name = "COMPONENT")]
@@ -65,25 +56,7 @@ fn main() -> anyhow::Result<()> {
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let participants = args
-        .participants
-        .iter()
-        .map(|path| read_component(path))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let no_op_participants = args
-        .no_op_participants
-        .iter()
-        .map(|path| read_component(path))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let composed = compose(
-        &overlay_declaration,
-        overlay,
-        bases,
-        participants,
-        &no_op_participants,
-    )?;
+    let composed = compose(&overlay_declaration, overlay, bases)?;
     std::fs::write(&args.output, composed)
         .with_context(|| format!("write composed component {}", args.output.display()))
 }

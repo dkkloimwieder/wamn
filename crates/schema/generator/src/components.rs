@@ -3,8 +3,7 @@
 //!
 //! The build compiles, each in its own Cargo invocation with the guest
 //! RUSTFLAGS of `tools/guest-rustflags`, release profile, for
-//! `wasm32-wasip2`: the components the package owns, the participants that
-//! `tools/component-composition.json` names for it, and the palette
+//! `wasm32-wasip2`: the components the package owns and the palette
 //! components its wirings name. Cargo combines dependency features within one
 //! invocation, which can change bytes, so no two guests share one.
 //!
@@ -13,7 +12,7 @@
 //! the crates that `tools/component-virtualization.json` lists are
 //! virtualized. An overlay whose component declaration names a base operation
 //! dependency is composed with each base component (read from the base's
-//! `build.json`) and its own participants. Each owned component and palette
+//! `build.json`). Each owned component and palette
 //! component is copied to `components/<name>.wasm` in the package's build
 //! output, and `outputs.components` of `build.json` names it with its digest.
 //!
@@ -21,7 +20,7 @@
 //! `../Cargo.toml`, has no component to compile, and its `outputs.components`
 //! stays empty.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -38,8 +37,6 @@ use crate::receipt::{self, BuildReceipt, RECEIPT_FILE, ReceiptComponent};
 
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";
-/// The participant crates of each overlay package, relative to the repository.
-const COMPOSITION: &str = "tools/component-composition.json";
 /// The virtualization allowlist, relative to the repository.
 const VIRTUALIZATION: &str = "tools/component-virtualization.json";
 /// The script that prints the guest RUSTFLAGS, relative to the repository.
@@ -49,13 +46,6 @@ const PLATFORM: &str = "platform";
 const GUEST_TARGET: &str = "wasm32-wasip2";
 const VIRTUALIZER: &str = "wamn-component-virtualizer";
 const COMPOSER: &str = "wamn-component-composer";
-
-/// `tools/component-composition.json`.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Composition {
-    participants: BTreeMap<String, Vec<String>>,
-}
 
 /// `tools/component-virtualization.json`.
 #[derive(Deserialize)]
@@ -107,7 +97,6 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     }
     let repository = workspace.join("..");
     let rustflags = guest_rustflags(&repository).await?;
-    let composition: Composition = read_json(&repository.join(COMPOSITION))?;
     let virtualization: Virtualization = read_json(&repository.join(VIRTUALIZATION))?;
 
     let mut allowlist = virtualization.packages.clone();
@@ -129,26 +118,6 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
         )
         .await?;
         owned.push((name.clone(), built));
-    }
-    // The participants of an overlay.
-    let mut participants = Vec::new();
-    for package in composition
-        .participants
-        .get(&manifest.package.id)
-        .into_iter()
-        .flatten()
-    {
-        let built = compile_guest(
-            &repository,
-            &rustflags,
-            &Guest {
-                manifest: workspace.join("Cargo.toml"),
-                package: Some(package.clone()),
-                target_directory: None,
-            },
-        )
-        .await?;
-        participants.push(virtualize(&repository, &virtualization, &allowlist, built).await?);
     }
     // The palette components that the wirings name.
     for name in wiring_components(package_root)? {
@@ -174,15 +143,7 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     }
     for (name, built) in owned {
         let built = virtualize(&repository, &virtualization, &allowlist, built).await?;
-        let file = compose(
-            request,
-            &repository,
-            &manifest,
-            &name,
-            &built.file,
-            &participants,
-        )
-        .await?;
+        let file = compose(request, &repository, &manifest, &name, &built.file).await?;
         records.push((name, file));
     }
 
@@ -463,14 +424,13 @@ async fn run_tool(mut command: Command, partial: &Path, output: &Path, what: &st
 }
 
 /// Compose an overlay whose component declaration names a base operation
-/// dependency with its bases and its own participants. Any other component is returned as it is.
+/// dependency with its bases. Any other component is returned as it is.
 async fn compose(
     request: &BuildRequest,
     repository: &Path,
     manifest: &PackageManifest,
     component: &str,
     file: &Path,
-    participants: &[Built],
 ) -> Result<PathBuf> {
     if manifest.base_dependencies.is_empty() {
         return Ok(file.to_owned());
@@ -534,9 +494,6 @@ async fn compose(
             .arg(&base_declaration)
             .arg("--base")
             .arg(component_file(&base_output, &base_receipt, base_component)?);
-    }
-    for participant in participants {
-        command.arg("--participant").arg(&participant.file);
     }
     // The composed component replaces the overlay's output.
     let partial = file.with_extension(format!("wasm.composed.{}", std::process::id()));

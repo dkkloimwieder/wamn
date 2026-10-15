@@ -1,12 +1,10 @@
-package wamn:postgres@0.3.0;
+package wamn:postgres@0.4.0;
 
-/// 0.3.0 is 0.1.0 with two added calls. `statements.run-stream` returns the
-/// rows of one statement as the server sends them (owner ruling on wamn-utci,
-/// 2026-09-26). `statements.operation-transaction` returns the transaction
-/// that the host owns for one operation, and `statements.begin` refuses while
-/// that transaction is open (`docs/plan/host-transaction.md`). A component
-/// built against 0.2.0 does not fit. 0.1.0 is retired (wamn-rvav): this is the
-/// one version in the tree, and the host serves only it.
+/// 0.4.0 is 0.3.0 without the participant path (owner ruling of 2026-10-14,
+/// wamn-ponya.2): `statements` drops `selected-participation`,
+/// `transaction.select-participant`, `participant-view` and the
+/// `transaction-view` resource. A component built against 0.3.0 does not fit.
+/// This is the one version in the tree, and the host serves only it.
 
 /// Host-plugin interface for tenant-scoped Postgres access.
 /// Security invariants (enforced by the HOST, invisible to the guest):
@@ -155,21 +153,7 @@ interface statements {
     postgres(pg-error),
   }
 
-  /// Exact participant selected by the admitted caller for this base invocation.
-  record participation {
-    operation: string,
-    intent: string,
-  }
-
-  selected-participation: async func() -> result<option<participation>, statement-error>;
-
-  /// Local execution-only resource. The host revokes access when participation ends.
-  resource transaction-view {
-    run: async func(statement: string, binds: list<sql-value>) -> result<row-set, statement-error>;
-  }
-
   resource transaction {
-    select-participant: async func(participant-operation: string) -> result<_, statement-error>;
     run: async func(statement: string, binds: list<sql-value>) -> result<row-set, statement-error>;
     commit: async func() -> result<_, statement-error>;
     rollback: async func() -> result<_, statement-error>;
@@ -205,8 +189,6 @@ interface statements {
   /// Dropping the handle leaves the transaction open. An operation without a
   /// host transaction gets `postgres(permission-denied)`.
   operation-transaction: async func() -> result<transaction, statement-error>;
-
-  participant-view: async func() -> result<transaction-view, statement-error>;
 }
 
 /// Prepared-statement plans are cached HOST-SIDE, keyed on (sql, connection).

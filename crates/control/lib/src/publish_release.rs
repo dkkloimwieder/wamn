@@ -2167,8 +2167,6 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.to_owned(),
                 AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: registered_operation.map(str::to_owned),
                     dependencies: Vec::new(),
@@ -2406,8 +2404,6 @@ mod tests {
             operations: BTreeMap::from([(
                 operation.clone(),
                 AdmittedComponentOperation {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: declared.registered_operation,
                     dependencies: declared.dependencies,
@@ -2738,7 +2734,6 @@ mod tests {
             .get_mut(overlay_operation)
             .expect("the overlay operation exists")
             .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            participant: None,
             package: "base".to_owned(),
             version: "1.0.0".to_owned(),
             digest: base.component_digest.clone(),
@@ -2772,7 +2767,6 @@ mod tests {
             .get_mut(base_operation)
             .expect("the base operation exists")
             .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            participant: None,
             package: "overlay".to_owned(),
             version: "3.0.0".to_owned(),
             digest: overlay.component_digest.clone(),
@@ -2813,7 +2807,6 @@ mod tests {
             .get_mut(overlay_operation)
             .expect("the overlay operation exists")
             .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            participant: None,
             package: "base".to_owned(),
             version: "1.0.0".to_owned(),
             digest: stale_pin,
@@ -3012,7 +3005,6 @@ mod tests {
             .get_mut("run")
             .unwrap()
             .dependencies = vec![wamn_catalog::ComponentOperationDependency {
-            participant: None,
             package: "base".to_owned(),
             version: "1.0.0".to_owned(),
             digest: DIGEST.to_owned(),

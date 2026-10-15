@@ -92,10 +92,6 @@ enum Surface {
 const DESTRUCTOR: Surface =
     Surface::Local("resource destructor: the host reclaims what the guest let go");
 const LOCAL_STATE: Surface = Surface::Local("reads or updates only host-local transaction state");
-const TRANSACTION_VIEW_RUN: Surface = Surface::DelegatedEffect {
-    file: "crates/platform/runtime/src/plugins/wamn_postgres/transaction_views.rs",
-    function: "run",
-};
 const STATEMENT_RUN_STREAM: Surface = Surface::DelegatedEffect {
     file: "crates/platform/runtime/src/plugins/wamn_postgres/run_stream.rs",
     function: "run_stream",
@@ -187,8 +183,6 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         POSTGRES,
         "statement_wit::HostWithStore",
         &[
-            ("selected_participation", LOCAL_STATE),
-            ("participant_view", LOCAL_STATE),
             ("run", Surface::Effect),
             ("run_stream", STATEMENT_RUN_STREAM),
             ("begin", Surface::Effect),
@@ -204,24 +198,13 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         POSTGRES,
         "statement_wit::HostTransactionWithStore",
         &[
-            ("select_participant", LOCAL_STATE),
             ("run", Surface::Effect),
             ("commit", Surface::Effect),
             ("rollback", Surface::Effect),
         ],
     ),
-    (
-        POSTGRES,
-        "statement_wit::HostTransactionView",
-        &[("drop", DESTRUCTOR)],
-    ),
-    (
-        POSTGRES,
-        "statement_wit::HostTransactionViewWithStore",
-        &[("run", TRANSACTION_VIEW_RUN)],
-    ),
     // Each member's named `statements` import: the same surfaces, resolved
-    // in that member's set. The participant trio refuses without host work.
+    // in that member's set.
     (
         POSTGRES,
         "bindings::named_imports::wamn::postgres::statements::Host",
@@ -231,8 +214,6 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         POSTGRES,
         "bindings::named_imports::wamn::postgres::statements::HostWithStore",
         &[
-            ("selected_participation", LOCAL_STATE),
-            ("participant_view", LOCAL_STATE),
             ("run", Surface::Effect),
             ("run_stream", STATEMENT_RUN_STREAM),
             ("begin", Surface::Effect),
@@ -248,21 +229,10 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
         POSTGRES,
         "bindings::named_imports::wamn::postgres::statements::HostTransactionWithStore",
         &[
-            ("select_participant", LOCAL_STATE),
             ("run", Surface::Effect),
             ("commit", Surface::Effect),
             ("rollback", Surface::Effect),
         ],
-    ),
-    (
-        POSTGRES,
-        "bindings::named_imports::wamn::postgres::statements::HostTransactionView",
-        &[("drop", DESTRUCTOR)],
-    ),
-    (
-        POSTGRES,
-        "bindings::named_imports::wamn::postgres::statements::HostTransactionViewWithStore",
-        &[("run", TRANSACTION_VIEW_RUN)],
     ),
     (HTTP, "http::Host", &[]),
     (HTTP, "http::HostWithStore", &[("send", Surface::Effect)]),

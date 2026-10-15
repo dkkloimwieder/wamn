@@ -8,7 +8,7 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:postgres-statements/postgres-statements@0.3.0",
         path: [
-            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
+            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
             "wit",
         ],
         generate_all,
@@ -348,17 +348,6 @@ impl fmt::Debug for Transaction {
 }
 
 impl Transaction {
-    /// Select the exact nested operation that can obtain a transaction view.
-    pub async fn select_participant(
-        &mut self,
-        participant_operation: &str,
-    ) -> Result<(), StatementError> {
-        self.inner
-            .select_participant(participant_operation.to_string())
-            .await
-            .map_err(StatementError::from_wire)
-    }
-
     /// Run one admitted statement in this transaction.
     pub async fn run(
         &mut self,
@@ -394,54 +383,6 @@ pub async fn operation_transaction() -> Result<Transaction, StatementError> {
         .await
         .map(|inner| Transaction { inner })
         .map_err(StatementError::from_wire)
-}
-
-/// Exact participant selected by the admitted caller for the current command.
-#[derive(Debug, Clone)]
-pub struct Participation {
-    pub operation: String,
-    pub intent: String,
-}
-
-/// Read trusted participation metadata for complete command identity.
-pub async fn participation() -> Result<Option<Participation>, StatementError> {
-    host::selected_participation()
-        .await
-        .map(|selected| {
-            selected.map(|selected| Participation {
-                operation: selected.operation,
-                intent: selected.intent,
-            })
-        })
-        .map_err(StatementError::from_wire)
-}
-
-/// Execution-only resource for the current participant invocation.
-#[derive(Debug)]
-pub struct TransactionView {
-    inner: host::TransactionView,
-}
-
-/// Obtain the transaction view selected for this authorized invocation.
-pub async fn participant_view() -> Result<TransactionView, StatementError> {
-    host::participant_view()
-        .await
-        .map(|inner| TransactionView { inner })
-        .map_err(StatementError::from_wire)
-}
-
-impl TransactionView {
-    /// Run one admitted statement through this transaction view.
-    pub async fn run(
-        &mut self,
-        statement: &str,
-        params: Vec<SqlValue>,
-    ) -> Result<RowSet, StatementError> {
-        self.inner
-            .run(statement.to_string(), params)
-            .await
-            .map_err(StatementError::from_wire)
-    }
 }
 
 /// Run one callback in exactly one transaction, with no automatic retry.

@@ -49,13 +49,6 @@ pub struct RecordReceiptResult {
     pub row_version: i32,
 }
 
-/// Values the base command exposes to its selected pre-commit participant.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecordReceiptPreCommit {
-    pub receipt_id: Box<str>,
-    pub purchase_order_id: Box<str>,
-}
-
 /// Closed status vocabulary returned by the command.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PurchaseOrderStatus {
@@ -142,28 +135,6 @@ struct InputRange {
 }
 
 impl RecordReceiptError {
-    /// Translate a selected participant refusal at the base operation boundary.
-    pub fn participation_refused(context: impl Into<Box<str>>) -> Self {
-        Self::invalid(context, "value.purchase_order_id")
-    }
-
-    /// Translate a participant execution failure without collapsing its retry semantics.
-    pub fn participation_failed(
-        type_: RecordReceiptErrorType,
-        context: impl Into<Box<str>>,
-    ) -> Self {
-        Self::new(type_, context)
-    }
-
-    /// Classify failure to read trusted participation metadata.
-    pub fn participation_statement_failed(source: StatementError) -> Self {
-        Self::from_statement(
-            "read record_receipt participation metadata",
-            source,
-            AllowedConstraints::NONE,
-        )
-    }
-
     /// Stable class; callers must not match display text.
     pub const fn error_type(&self) -> RecordReceiptErrorType {
         self.type_
@@ -358,27 +329,7 @@ pub async fn execute(
     transaction: &mut Transaction,
     command: &RecordReceiptValue,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
-    record_receipt_in(transaction, prepare(command)?, None, |_| async { Ok(()) }).await
-}
-
-/// Execute with one exact participant before the codec commits.
-pub async fn execute_with_pre_commit<F, Fut>(
-    transaction: &mut Transaction,
-    command: &RecordReceiptValue,
-    participant_operation: &str,
-    pre_commit: F,
-) -> Result<RecordReceiptResult, RecordReceiptError>
-where
-    F: FnOnce(RecordReceiptPreCommit) -> Fut,
-    Fut: Future<Output = Result<(), RecordReceiptError>>,
-{
-    record_receipt_in(
-        transaction,
-        prepare(command)?,
-        Some(participant_operation),
-        pre_commit,
-    )
-    .await
+    record_receipt_in(transaction, prepare(command)?).await
 }
 
 #[derive(Debug)]
@@ -453,16 +404,10 @@ fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceip
     })
 }
 
-async fn record_receipt_in<F, Fut>(
+async fn record_receipt_in(
     transaction: &mut Transaction,
     command: PreparedCommand,
-    participant_operation: Option<&str>,
-    pre_commit: F,
-) -> Result<RecordReceiptResult, RecordReceiptError>
-where
-    F: FnOnce(RecordReceiptPreCommit) -> Fut,
-    Fut: Future<Output = Result<(), RecordReceiptError>>,
-{
+) -> Result<RecordReceiptResult, RecordReceiptError> {
     let purchase_order =
         generated::lock_purchase_order(transaction, WamnUuid(command.purchase_order_id.clone()))
             .await
@@ -564,17 +509,6 @@ where
             .await
             .map_err(|source| sql_error("finish purchase_order", source))?;
     let status = PurchaseOrderStatus::parse(&finished.status)?;
-    if let Some(operation) = participant_operation {
-        transaction
-            .select_participant(operation)
-            .await
-            .map_err(|source| sql_error("select record_receipt participant", source))?;
-        pre_commit(RecordReceiptPreCommit {
-            receipt_id: receipt_id.clone().into_boxed_str(),
-            purchase_order_id: command.purchase_order_id.clone().into_boxed_str(),
-        })
-        .await?;
-    }
     Ok(RecordReceiptResult {
         receipt_id: receipt_id.into_boxed_str(),
         purchase_order_id: command.purchase_order_id.into_boxed_str(),

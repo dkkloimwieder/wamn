@@ -26,7 +26,7 @@ type Direction = "ascending" | "descending"
 type ResultClass = "one" | "optional_one" | "page" | "bounded_list"
 type Fetch = "one" | "optional_one" | "bounded_list"
 type Visibility = "public" | "private"
-type Transaction = "explicit_per_input" | "participant"
+type Transaction = "explicit_per_input"
 type Match = "exact" | "contains" | "prefix" | "range" | "is_null"
 type ErrorDetailKey = "field" | "id" | "expected_row_version" | "observed_row_version" | "minimum" | "maximum" | "observed" | "constraint" | "operation"
 type HistoryColumn = "created_at" | "created_by" | "updated_at" | "updated_by"
@@ -158,9 +158,6 @@ schema CustomOperation[name: str]:
     component?: str
     connection?: str = "postgres"
     input: Input
-    pre_commit?: Input
-    pre_commit_required?: bool
-    participant?: str
     result?: Result
     errors: [str]
     error_details?: {str:ErrorDetail}

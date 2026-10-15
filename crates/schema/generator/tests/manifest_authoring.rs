@@ -183,14 +183,7 @@ fn a_key_the_reader_defaults_stays_absent() {
         .expect("an operation object");
     // Optional keys the author did not write, and defaults the author set to
     // None, are absent from the compiled JSON.
-    for key in [
-        "connection",
-        "transaction",
-        "pre_commit",
-        "participant",
-        "label",
-        "lists",
-    ] {
+    for key in ["connection", "transaction", "label", "lists"] {
         assert!(!archive.contains_key(key), "{key} must stay absent");
     }
     let widget = manifest["models"]["widget"].as_object().expect("a model");

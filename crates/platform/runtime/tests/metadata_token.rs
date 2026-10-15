@@ -171,8 +171,6 @@ fn admitted(bytes: &[u8]) -> AdmittedComponent {
             operations: BTreeMap::from([(
                 "run".to_owned(),
                 ComponentOperationDeclaration {
-                    pre_commit: None,
-                    pre_commit_required: false,
                     committed_result_schema: None,
                     registered_operation: None,
                     dependencies: Vec::new(),

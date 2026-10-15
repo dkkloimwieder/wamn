@@ -141,11 +141,9 @@ async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_gra
       INSERT INTO app_system.roles (tenant_id,name) VALUES ('{TENANT}','automation');
       INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('{TENANT}','{SERVICE}','automation');")).await?;
     let released = wamn_catalog::ServingComponentOperation {
-        pre_commit: None,
         registered_operation: Some(RECORD_RECEIPT.to_owned()),
         permissions: BTreeSet::from([RECORD_RECEIPT.to_owned()]),
         committed_result_schema: None,
-        participant: None,
         statements: std::collections::BTreeMap::new(),
     };
 

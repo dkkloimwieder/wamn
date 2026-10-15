@@ -37,11 +37,9 @@ fn manifest() -> ServingManifest {
             operations: BTreeMap::from([(
                 OPERATION.into(),
                 ServingComponentOperation {
-                    pre_commit: None,
                     committed_result_schema: None,
                     registered_operation: Some(PERMISSION.into()),
                     permissions: BTreeSet::from([PERMISSION.into()]),
-                    participant: None,
                     statements: BTreeMap::new(),
                 },
             )]),
@@ -67,8 +65,6 @@ fn fact() -> AdmittedComponent {
         operations: BTreeMap::from([(
             OPERATION.into(),
             AdmittedComponentOperation {
-                pre_commit: None,
-                pre_commit_required: false,
                 registered_operation: Some(PERMISSION.into()),
                 committed_result_schema: None,
                 dependencies: Vec::new(),

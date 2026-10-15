@@ -1,6 +1,6 @@
 [package]
 name = "wamn-component-composer"
-description = "Build-time composition of an overlay component with its base and participants."
+description = "Build-time composition of an overlay component with its bases."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -122,11 +122,9 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
                 (
                     name.clone(),
                     ServingComponentOperation {
-                        pre_commit: None,
                         registered_operation: Some(name.clone()),
                         permissions: BTreeSet::from([name]),
                         committed_result_schema: None,
-                        participant: None,
                         statements,
                     },
                 )
@@ -836,11 +834,9 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
                 (
                     name.clone(),
                     ServingComponentOperation {
-                        pre_commit: None,
                         registered_operation: Some(name.clone()),
                         permissions: BTreeSet::from([name]),
                         committed_result_schema: None,
-                        participant: None,
                         statements,
                     },
                 )

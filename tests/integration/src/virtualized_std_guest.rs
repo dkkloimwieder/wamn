@@ -403,10 +403,7 @@ mod tests {
             "virtualized std probe run is not the pinned async handler"
         );
 
-        // The generated Receiving world also imports its own pre-commit hook
-        // interface, which a participant supplies.
         let expected_receiving = BTreeSet::from([
-            "wamn-receiving:receiving".to_owned(),
             "wamn:node".to_owned(),
             "wamn:postgres".to_owned(),
             "wasi:clocks".to_owned(),
@@ -418,7 +415,7 @@ mod tests {
         let packages = import_packages(&engine, &bytes, "receiving")?;
         ensure!(
             packages == expected_receiving,
-            "virtualized Receiving artifact imports {packages:?}, not its exact five-package profile"
+            "virtualized Receiving artifact imports {packages:?}, not its exact four-package profile"
         );
         let exports = operation_exports(&engine, &bytes, "virtualized receiving")?;
         let expected_exports = RECEIVING_EXPORTS

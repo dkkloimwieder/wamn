@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::Context as _;
 use tokio::time::Instant;
-use wamn_catalog::{AdmittedComponent, ComponentOperationDependency, ServingComponentOperation};
+use wamn_catalog::{AdmittedComponent, ServingComponentOperation};
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::invocation_trace::{INVOCATION_TRACES_ID, InvocationTrace, InvocationTraces};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -335,21 +335,10 @@ impl InvocationPolicy for NativePolicy {
         resources
             .postgres
             .activate_statement_operation(scope, operation)?;
-        resources.postgres.bind_transaction_scope(scope, deadline)?;
         if let Some(transaction) = &request.facts.item {
             resources
                 .postgres
                 .bind_operation_transaction(scope, transaction)?;
-        }
-        if let Some(participant) = component
-            .operations
-            .get(operation)
-            .and_then(|released| released.participant.as_ref())
-        {
-            let intent = participation_intent(&resources.release, &component.fact, participant)?;
-            resources
-                .postgres
-                .bind_selected_participant(scope, participant.clone(), intent)?;
         }
         resources
             .logging
@@ -390,7 +379,6 @@ impl InvocationPolicy for NativePolicy {
     }
 
     fn revoke(&self, scope: &str) {
-        self.resources.postgres.revoke_transaction_scope(scope);
         self.resources.postgres.revoke_operation_transaction(scope);
         self.traces.revoke(scope);
         self.invocations
@@ -404,27 +392,6 @@ impl InvocationPolicy for NativePolicy {
         self.resources.postgres.revoke_session_claims(scope);
         self.resources.postgres.clear_statement_scope(scope);
     }
-}
-
-/// The participation intent of an entry of `fact` that selects
-/// `participant`: the participant, the release and the manifest. The composed
-/// component embeds the participant, so the entry component names it.
-pub(crate) fn participation_intent(
-    release: &LoadedRelease,
-    fact: &AdmittedComponent,
-    participant: &str,
-) -> anyhow::Result<String> {
-    let participant = ComponentOperationDependency {
-        participant: None,
-        package: fact.scope.package_id.clone(),
-        version: fact.scope.package_version.clone(),
-        digest: fact.component_digest.clone(),
-        operation: participant.to_owned(),
-    };
-    Ok(serde_json::to_string(&serde_json::json!({
-        "participant": participant,
-        "manifest": release.release().manifest_digest.as_str(),
-    }))?)
 }
 
 /// Revoke host registries when a call returns, traps, fails to bind, or is cancelled.
@@ -456,11 +423,8 @@ impl HostPlugin for NativePolicy {
         imports.extend(self.resources.blobstore.world().imports);
         let mut exports = HashSet::new();
         for entry in self.components.values() {
-            for (name, operation) in &entry.fact.operations {
+            for name in entry.fact.operations.keys() {
                 exports.insert(WitInterface::from(name.as_str()));
-                if let Some(slot) = &operation.pre_commit {
-                    imports.insert(WitInterface::from(slot.as_str()));
-                }
             }
         }
         WitWorld { imports, exports }
@@ -502,25 +466,6 @@ impl HostPlugin for NativePolicy {
         let interfaces = WitInterfaces::new(&imports);
         let component = item.component().clone();
         let linker = item.linker();
-        let slots: BTreeSet<_> = policy
-            .fact
-            .operations
-            .values()
-            .filter_map(|operation| operation.pre_commit.as_ref())
-            .collect();
-        // A base released on its own leaves its pre-commit slot unplugged. An
-        // application plugs the slot with its participant at build, so a call
-        // that reaches this stub has no participant and traps.
-        for slot in slots {
-            linker.instance(slot)?.func_new_concurrent(
-                "run",
-                |_accessor, _ty, _params, _results| {
-                    Box::pin(async {
-                        wash_runtime::wasmtime::bail!("pre-commit slot has no participant")
-                    })
-                },
-            )?;
-        }
         self.resources
             .postgres
             .add_linker_entries(linker, &component, &interfaces)?;

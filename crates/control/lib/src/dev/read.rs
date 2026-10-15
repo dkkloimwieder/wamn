@@ -793,11 +793,9 @@ mod tests {
     fn manifest() -> ServingManifest {
         let package = PackageCoordinate::new("platform_fixture", "1.0.0").expect("valid package");
         let operation = ServingComponentOperation {
-            pre_commit: None,
             committed_result_schema: None,
             registered_operation: Some("platform_fixture@1.0.0::widget/get".to_owned()),
             permissions: BTreeSet::from(["platform_fixture@1.0.0::widget/get".to_owned()]),
-            participant: None,
             statements: BTreeMap::new(),
         };
         let component = ServingComponent {

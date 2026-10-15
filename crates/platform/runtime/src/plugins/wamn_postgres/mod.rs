@@ -1,11 +1,11 @@
 //! Real `wamn:postgres` host plugin (S2).
 //!
-//! Contract source of truth: `crates/platform/runtime/wit/deps/wamn-postgres-0.3/package.wit`.
+//! Contract source of truth: `crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit`.
 //! Guest bindgen paths reference that canonical package directly.
 //! Host-enforced invariants:
 //!
 //! - The guest never holds a socket. Connections live in a deadpool pool
-//!   owned by the plugin; guests get resource handles or call-scoped transaction views.
+//!   owned by the plugin; guests get resource handles.
 //! - Claims are derived from the executing component's identity
 //!   (`Ctx::component_id` → tenant, registered at workload bind time from
 //!   `localResources.config["wamn.tenant"]` or via [`WamnPostgres::set_tenant`])
@@ -67,7 +67,6 @@ mod production_claim;
 mod resources;
 mod run_stream;
 mod statements;
-mod transaction_views;
 mod types;
 mod wiring_resolution;
 pub mod write_log;
@@ -106,7 +105,6 @@ pub use statements::{
     PreparedStatementMembers, PreparedStatementSet, StatementField, StatementValueType,
     VerifiedStatement, VerifiedStatementSet,
 };
-pub use transaction_views::PgTransactionView;
 pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this
@@ -125,7 +123,6 @@ mod bindings {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:postgres/statements.transaction-view": super::PgTransactionView,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -144,7 +141,6 @@ mod bindings {
             "wamn:postgres/client.transaction": super::PgTransaction,
             "wamn:postgres/client.cursor": super::PgCursor,
             "wamn:postgres/statements.transaction": super::PgStatementTransaction,
-            "wamn:postgres/statements.transaction-view": super::PgTransactionView,
         },
         wasmtime_crate: wash_runtime::wasmtime,
     });
@@ -471,9 +467,9 @@ impl HostPlugin for WamnPostgres {
     fn world(&self) -> WitWorld {
         WitWorld {
             imports: HashSet::from([
-                WitInterface::from("wamn:postgres/types@0.3.0"),
-                WitInterface::from("wamn:postgres/client@0.3.0"),
-                WitInterface::from("wamn:postgres/statements@0.3.0"),
+                WitInterface::from("wamn:postgres/types@0.4.0"),
+                WitInterface::from("wamn:postgres/client@0.4.0"),
+                WitInterface::from("wamn:postgres/statements@0.4.0"),
             ]),
             exports: HashSet::new(),
         }

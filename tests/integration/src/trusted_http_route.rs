@@ -323,11 +323,9 @@ fn release_manifest(component: &AdmittedComponent, document: &WiringDocument) ->
             (
                 name.clone(),
                 ServingComponentOperation {
-                    pre_commit: operation.pre_commit.clone(),
                     committed_result_schema: None,
                     registered_operation: operation.registered_operation.clone(),
                     permissions: operation.registered_operation.iter().cloned().collect(),
-                    participant: None,
                     statements: operation.statements.clone(),
                 },
             )

@@ -194,11 +194,8 @@ fn custom_visibility_permissions_and_components_remain_closed() {
 }
 
 #[test]
-fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
-    let mut manifest = super::platform_claim::manifest();
-    manifest["custom_operations"]["widget.archive"]["pre_commit"] = json!({"fields": [
-        {"path": "widget_id", "type": "uuid", "nullable": false}
-    ]});
+fn claim_generation_and_canonical_authority_use_platform_declarations() {
+    let manifest = super::platform_claim::manifest();
     let package = fixture::generate_with(&fixture::catalog(), &manifest);
     let operation = artifact(
         &package,
@@ -206,27 +203,6 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
     );
     assert_eq!(operation["transaction"], "explicit_per_input");
     assert_eq!(operation["automatic_retry"], false);
-    assert_eq!(
-        operation["pre_commit"],
-        "platform-fixture:widget/archive-pre-commit@2.1.0"
-    );
-    for (path, expected) in [
-        (
-            "generated/wit/deps/platform-fixture-widget/package.wit",
-            "run: async func(ctx: node-context, input: archive-pre-commit-request) -> result<archive-pre-commit-request, node-error>",
-        ),
-        (
-            "generated/wit/widget_archive_codec.rs",
-            "$handler(context.clone(), state, request).await",
-        ),
-    ] {
-        assert!(
-            std::str::from_utf8(package.file(path).unwrap().bytes())
-                .unwrap()
-                .contains(expected),
-            "{path}"
-        );
-    }
     let bytes = package.file(DATA_ACCESS_OVERLAY_PATH).unwrap().bytes();
     DataAccessOverlay::from_slice(bytes).unwrap();
     let mut noncanonical = bytes.to_vec();
@@ -274,41 +250,16 @@ fn pre_commit_generation_and_canonical_authority_use_platform_declarations() {
 }
 
 #[test]
-fn a_pre_commit_slot_states_whether_it_is_required() {
-    let mut manifest = super::platform_claim::manifest();
-    manifest["custom_operations"]["widget.archive"]["pre_commit"] = json!({"fields": [
-        {"path": "widget_id", "type": "uuid", "nullable": false}
-    ]});
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    assert!(
-        artifact(
-            &package,
-            "generated/contracts/widget/archive.operation.json"
-        )
-        .get("pre_commit_required")
-        .is_none()
-    );
-
-    manifest["custom_operations"]["widget.archive"]["pre_commit_required"] = json!(true);
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    assert_eq!(
-        artifact(
-            &package,
-            "generated/contracts/widget/archive.operation.json"
-        )["pre_commit_required"],
-        true
-    );
-
-    manifest["custom_operations"]["widget.archive"]
-        .as_object_mut()
-        .unwrap()
-        .remove("pre_commit");
-    let error = wamn_schema_generator::validate_operation_vocabulary(
-        &wamn_schema_generator::PackageManifest::from_slice(
-            &serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap(),
-    )
-    .expect_err("a required slot without a pre_commit was accepted");
-    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+fn the_retired_participant_keys_are_refused() {
+    for (key, value) in [
+        ("pre_commit", json!({"fields": []})),
+        ("pre_commit_required", json!(true)),
+        ("participant", json!("widget.archive")),
+        ("transaction", json!("participant")),
+    ] {
+        let mut manifest = super::platform_claim::manifest();
+        manifest["custom_operations"]["widget.archive"][key] = value;
+        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
+            .expect_err(key);
+    }
 }
