@@ -45,7 +45,7 @@ Reconciliation requires evidence that matches the complete installed package set
 It selects evidence by those identities, never by timestamp. Earlier qualifications remain immutable history.
 Release rollback retains committed migrations and admits only the exact immediate predecessor whose accepted evidence still matches the live database.
 The [package upgrade procedure](../operations/deployment.md#package-upgrades) defines prerequisites, command order, and recovery.
-Changed or removed operation contracts and migration-specific exceptions remain [deferred work](../plan/upgrades.md).
+Changed or removed operation contracts and migration-specific exceptions remain [deferred work](../history/upgrades.md).
 
 Package migrations cannot create roles, grants, extensions, routines, triggers, rules, or row policies.
 Managed schemas refuse foreign tables, authored views, materialized views, unsupported types, and unsupported generated properties.
@@ -253,7 +253,7 @@ Native SQLx tests compile the exact files that guest execution names.
 Guests send statement identities and arguments through `wamn:postgres`.
 The `statements` interface uses native async calls for execution, transaction creation, commit, and rollback.
 Version 0.3.0 repeats every 0.1.0 declaration and adds `run-stream` and `operation-transaction`. It is the one version, and the host serves only it.
-The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000` ([host-owned transaction](../plan/host-transaction.md)).
+The host begins the transaction of one logged operation item, and `operation-transaction` gives it to the guest. Inside that operation, `begin` refuses with SQLSTATE `25001`, and `commit` or `rollback` of the host transaction refuses with `2D000` ([host-owned transaction](../history/host-transaction.md)).
 An unnamed `statements` import runs the statement set of the active operation.
 In a composed component each member has its own named import, and the host links one instance per name.
 The host keys the active statement set by the component scope and the import name, so a member that names another member's statement gets `unknown-statement`.
@@ -594,7 +594,7 @@ It promises nothing about removal time, backups, holds, or erasure, and Beads `w
 The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
 [`audit-retention.example.yaml`](../../deploy/platform/audit-retention.example.yaml) is an example daily CronJob.
 
-The [`prune-record-history`](../../services/ctl/src/prune_record_history.rs) verb of `wamn-ctl-ops` runs the task.
+The [`prune-record-history`](../../crates/control/lib/src/prune_record_history.rs) verb of `wamn-ctl-ops` runs the task.
 It connects as a scoped generation of the tenant-scoped audit retention family, whose stable role is `wamn_audit_retention`.
 It refuses any login that is not an audit retention generation for `--tenant` in the connected database.
 The family is not a `wamn_platform` member, because no reader needs the edge.

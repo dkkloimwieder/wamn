@@ -1,5 +1,5 @@
 //! The column cutover that renames `kind` columns to `type`
-//! (docs/plan/kind-to-type.md §4.3.2).
+//! (docs/history/kind-to-type.md §4.3.2).
 //!
 //! It renames P8 (`catalog.package_definition_owners`) and P10 to P12 (the
 //! run-plane tables) of an installed database. Each table is in one of three

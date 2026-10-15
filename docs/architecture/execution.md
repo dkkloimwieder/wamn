@@ -181,7 +181,7 @@ The router calls `deliver-stream` of [`wamn:router-delivery` 0.3.0](../../crates
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
 The cloud route, the router driver and the edge each pass one for every route, so every create, update, delete and command claims through the engine.
-In the cloud the store is the [write log](data-access.md#the-write-log). On the edge it is SQLite, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
+In the cloud the store is the [write log](data-access.md#the-write-log). On the edge it is SQLite, and the [edge plan](../history/edge.md#47-sqlite-schema) states the rules.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
 Publish writes two input facts into the serving manifest route from the generated contracts: the key field (`idempotency`) and the canonical item form (`canonicalization`).
 
@@ -452,7 +452,7 @@ Existing tokens lack the required authority claim, so hosts reject them after th
 
 The [identity library](../../crates/identity/platform/src/password.rs) supports password storage, invitation enrollment, and password authentication.
 The identity service exposes password HTTP endpoints. Receiving supports hidden terminal enrollment and password login.
-The [identity plan](../plan/identity-plan.md) owns the remaining delivery scope.
+The [identity plan](../history/identity-plan.md) owns the remaining delivery scope.
 
 The [login storage library](../../crates/identity/platform/src/password_login.rs) supplies database primitives for renewal and revocation.
 The HTTP service and terminal use these primitives for renewal and server-side logout.

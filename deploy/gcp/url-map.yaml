@@ -1,4 +1,4 @@
-# The URL map wamn-edge of docs/plan/gcp-deployment.md steps 4 and 5, one
+# The URL map wamn-edge of docs/history/gcp-deployment.md steps 4 and 5, one
 # host rule and path matcher for each application. It copies the
 # rules of the removed Config Connector template of deploy/platform/edge:
 # /api/ and /password/ go to the edge, /assets/ and /config.json to the

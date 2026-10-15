@@ -1,4 +1,4 @@
-# The CDC event reader of docs/plan/gcp-deployment.md step 3.
+# The CDC event reader of docs/history/gcp-deployment.md step 3.
 # It reads the replication slot of dkk/receiving/dev and publishes to
 # EVT_3_dkk_9_receiving_3_dev on the event NATS. The inputs are the ones that
 # the Receiving cluster tests give cdc::start

@@ -2,7 +2,7 @@
 
 @D Kloimwieder
 
-Status: single authority. Evidence cites the repo's `main` by file and symbol; fact unless marked inference. Rulings R1 to R22 (§9) record what was decided and why; §3 lists the assumptions they rest on and how each is checked.
+Status: done 2026-10-15. All nine epics of §17 closed; the last is `wamn-jqdja`. Earlier status: single authority. Evidence cites the repo's `main` by file and symbol; fact unless marked inference. Rulings R1 to R22 (§9) record what was decided and why; §3 lists the assumptions they rest on and how each is checked.
 
 ## How this plan is worked
 

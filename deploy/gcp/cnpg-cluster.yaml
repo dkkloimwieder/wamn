@@ -1,4 +1,4 @@
-# The one PostgreSQL of the GKE test deployment (docs/plan/gcp-deployment.md
+# The one PostgreSQL of the GKE test deployment (docs/history/gcp-deployment.md
 # step 3). It is deploy/infra/cnpg-cluster.yaml in namespace platform on
 # pd-standard: one instance holds the system database and every tenant
 # database. Backups are not configured. enablePDB is false: with one instance

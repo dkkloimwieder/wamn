@@ -2,7 +2,7 @@
 
 Status: Accepted by the owner 2026-09-30 (wamn-sfea.7). Measured on main at 3ad0ce5cd.
 
-Context: [platform-ui.md §0](platform-ui.md) makes `type` the platform word and `kind` a retired one. This file is the precursor specification that §0 requires. It changes no code, no database and no cluster.
+Context: [platform-ui.md §0](../plan/platform-ui.md) makes `type` the platform word and `kind` a retired one. This file is the precursor specification that §0 requires. It changes no code, no database and no cluster.
 
 ## 1. Surfaces
 
@@ -416,7 +416,7 @@ After A8, no later commit changes platform code that compiles into a guest. So t
     -- write apps/wamn_receiving
   ```
 
-  This is the command of `running-tests.md` "Capture a run" with `write` in place of `check`. The other packages take the arguments that the same section gives: WMS `--schema wms`, its migrations and its manifest. Platform fixture `--schema inventory`, its migrations and its manifest. `edge_samples` takes `--schema edge_samples` (`apps/edge_samples/wamn.json:12`), `--migration-dir apps/edge_samples/migrations` and `--history-manifest apps/edge_samples/wamn.json`. `edge_device` has no schema and no migration (`docs/plan/edge.md:76`), so it takes only `--database edge_device --url-env DATABASE_URL`. The runner makes `--schema` and `--migration-dir` optional (`test-support/infrastructure/postgres-run.rs:42` to `:64`).
+  This is the command of `running-tests.md` "Capture a run" with `write` in place of `check`. The other packages take the arguments that the same section gives: WMS `--schema wms`, its migrations and its manifest. Platform fixture `--schema inventory`, its migrations and its manifest. `edge_samples` takes `--schema edge_samples` (`apps/edge_samples/wamn.json:12`), `--migration-dir apps/edge_samples/migrations` and `--history-manifest apps/edge_samples/wamn.json`. `edge_device` has no schema and no migration (`docs/history/edge.md:76`), so it takes only `--database edge_device --url-env DATABASE_URL`. The runner makes `--schema` and `--migration-dir` optional (`test-support/infrastructure/postgres-run.rs:42` to `:64`).
 - Prepare SQLx metadata for each package with SQL, with the same runner arguments and `--example sqlx_metadata -- prepare apps/<package>` (`running-tests.md` "Capture a run"). Then run it with `check`.
 - Build the component: `tools/build-components app apps/<package>` (`docs/operations/building.md:28`). Record the sha256 of `apps/target/virtualized/std-empty-environment/<component>.wasm`. The overlay commits need the `receiving` and `platform_fixture` digests.
 - Sweep the tests. 78 Rust files hold the literal `"1.0.0"` and 7 files hold a `<package>@1.0.0` coordinate outside `generated/` (`git grep -l -E '"1\.0\.0"' -- 'crates/*.rs' 'services/*.rs' 'tests/*.rs' 'apps/*.rs'`). Each one that names one of these packages moves to 2.0.0. `docs/operations/gcp.md` stays as a dated record.
@@ -434,7 +434,7 @@ After A8, no later commit changes platform code that compiles into a guest. So t
 **A12. Final build and pins.** On the final commit, run `tools/build-components all` once. It must pass the router pin with no edit. Record the sha256 of every guest that wamn-dev takes: `receiving.wasm`, `wms.wasm`, `label_render.wasm`, `blob_put.wasm`, `jsonata_expression.wasm`, `http_route.wasm`, `materializer.wasm` (`docs/history/gcp-install-history.md` §3.9, §3.20, §5.3). Then check the tree:
 
 ```bash
-git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!tests/sweeps' ':!docs/plan/kind-to-type.md' ':!docs/plan/platform-ui.md' ':!crates/schema/control/src/run_plane/type_column.rs' ':!crates/schema/control/src/run_plane/tests.rs' ':!crates/schema/control/src/run_plane/observation.rs' ':!crates/control/lib/src/reconcile_run_plane.rs' ':!crates/control/lib/tests/run_plane_live/type_columns.rs' ':!deploy/sql/migrations/system/0003_kind_to_type.sql' ':!crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit'
+git grep -n -w -E 'failure-kind|definition_kind|principal_kind|fail_kind' -- ':!.beads' ':!docs/history' ':!tests/sweeps' ':!docs/history/kind-to-type.md' ':!docs/plan/platform-ui.md' ':!crates/schema/control/src/run_plane/type_column.rs' ':!crates/schema/control/src/run_plane/tests.rs' ':!crates/schema/control/src/run_plane/observation.rs' ':!crates/control/lib/src/reconcile_run_plane.rs' ':!crates/control/lib/tests/run_plane_live/type_columns.rs' ':!deploy/sql/migrations/system/0003_kind_to_type.sql' ':!crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit'
 git grep -h -o '"kind":"' -- 'apps/*/generated/*'
 ```
 
@@ -622,7 +622,7 @@ Then run the open-run query of the drain once more on each project-env database.
 
 **B2 to B5. Schema and annotations (§4.7 steps 2 to 5).** These are the runs of §4.8.
 
-B2. Run `upgrade-schema` once on wamn_system (§4.3.4, §4.8, `docs/plan/schema-upgrade.md` §3):
+B2. Run `upgrade-schema` once on wamn_system (§4.3.4, §4.8, `docs/history/schema-upgrade.md` §3):
 
 ```bash
 target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --baseline "$BASELINE" --confirm
@@ -1241,7 +1241,7 @@ Column grants name columns in Rust. They change with the DDL:
 
 ### 4.3 Installed databases
 
-Four paths change installed state. A verb carries every change that a verb already knows how to make. The migrations of `upgrade-schema` (`docs/plan/schema-upgrade.md`) carry the rest. §4.3.1 shows what `reconcile-run-plane` changes today. §4.3.2 moves P8 and P10 to P12 into it, and the operations page records that the verb applied them (§4.8). §4.3.3 says why the rest is a migration.
+Four paths change installed state. A verb carries every change that a verb already knows how to make. The migrations of `upgrade-schema` (`docs/history/schema-upgrade.md`) carry the rest. §4.3.1 shows what `reconcile-run-plane` changes today. §4.3.2 moves P8 and P10 to P12 into it, and the operations page records that the verb applied them (§4.8). §4.3.3 says why the rest is a migration.
 
 | Path | Rows | Where |
 |---|---|---|
@@ -1386,7 +1386,7 @@ The batch was run on a scratch PostgreSQL 18 database. That database held the `C
 
 #### 4.3.4 Migrations
 
-A7 places two migration files: `deploy/sql/migrations/system/0003_kind_to_type.sql` and `deploy/sql/migrations/project/0001_kind_to_type.sql`. It lists both in `crates/control/provision/src/schema_migrations.rs`. The files landed at `c83e28f5d`, after the A7 group commits, because `upgrade-schema` reached the branch with the merge of main at `9a813f4c1`. A file carries no `BEGIN` or `COMMIT`. `upgrade-schema` runs each file in one transaction and records it in the same transaction (`docs/plan/schema-upgrade.md` §2).
+A7 places two migration files: `deploy/sql/migrations/system/0003_kind_to_type.sql` and `deploy/sql/migrations/project/0001_kind_to_type.sql`. It lists both in `crates/control/provision/src/schema_migrations.rs`. The files landed at `c83e28f5d`, after the A7 group commits, because `upgrade-schema` reached the branch with the merge of main at `9a813f4c1`. A file carries no `BEGIN` or `COMMIT`. `upgrade-schema` runs each file in one transaction and records it in the same transaction (`docs/history/schema-upgrade.md` §2).
 
 The verb runs the system file as `wamn_system`. `wamn_system` owns every P1 to P7 table and `identity.lock_password_principal`, because `provision-system` installs them in that role. It also owns `provisioning.copy_sagas`, because `copy-project-env` installs the ops schema in that role (`crates/control/lib/src/ops_schema.rs:17`). The verb runs the project file as the superuser admin connection with no `SET ROLE`. `CREATE OR REPLACE FUNCTION` keeps the owner, the `SECURITY DEFINER` setting and the grants of the function. The renames create nothing new, so no owner changes. §4.3.6 creates one table and gives it the owner of `catalog.component_library`. Each database takes one transaction, and `ON_ERROR_STOP` rolls it back on the first wrong name. Foreign keys and unique keys follow the rename by column number, so the order inside the transaction does not affect correctness. The statements rename the referenced table first, so that a reader can check them against §4.1 row by row.
 
@@ -1757,7 +1757,7 @@ The Rust references of §1.4 (220 at `3ad0ce5cd`) and the bare `kind` columns fa
 | Snapshot table, runtime readers | §4.3.6 | `crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs`, `crates/execution/workflow/src/contract/postgres.rs` |
 | Snapshot table, tests | §4.3.6 | `crates/execution/run-state/tests/admission_live.rs`, `crates/execution/workflow/src/queue/automation_live.rs`, `crates/platform/runtime/tests/executor_platform_surface_live.rs`, `services/scenario-worker/tests/management_live.rs`, `tests/integration/src/local_application/assembly.rs`, `tests/integration/src/trusted_http_route.rs`, `apps/wamn_receiving/tests/route_authentication_live/dev/local_delivery.rs`, `apps/wamn_receiving/tests/route_authentication_live/environment.rs`, `apps/wamn_receiving/tests/route_authentication_live/fresh_only.rs`, `apps/wamn_receiving/tests/route_authentication_live/sessions.rs`, `apps/wamn_wms/tests/environment.rs` |
 
-The five snapshot groups are the 22 tracked files that name the table outside `.beads`, `docs/history` and this file (`git grep -l release_manifest_v3_snapshots -- ':!.beads' ':!docs/history' ':!docs/plan/kind-to-type.md'`). After A7 that command prints nothing.
+The five snapshot groups are the 22 tracked files that name the table outside `.beads`, `docs/history` and this file (`git grep -l release_manifest_v3_snapshots -- ':!.beads' ':!docs/history' ':!docs/history/kind-to-type.md'`). After A7 that command prints nothing.
 
 The `tests/sweeps/*.log` files that name `principal_kind` are records of past runs and stay.
 
@@ -1797,7 +1797,7 @@ Rollback swaps the names back. It is a new migration with the names swapped, bec
 `docs/history/gcp-install-history.md` §7 "Schema changes applied by hand" gets this entry as its last entry when the changes run. The entry records the two `upgrade-schema` runs, each with its baseline rows and its applied file. It also records the verb run that applied P8 and P10 to P12, and the annotations. Before B2, the deployment agent runs the ops-schema query of §4.3.4 on wamn_system and the Secret listing of §4.3.5, and the entry states both answers. The angle-bracket fields are filled in at apply time.
 
 ````markdown
-On <date> (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit <commit> ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/plan/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered <true|false>, so the migration <renamed|did not rename> P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
+On <date> (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit <commit> ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/history/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered <true|false>, so the migration <renamed|did not rename> P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
 
 ```bash
 target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --baseline <BASELINE of B0 step 8> --confirm
@@ -2001,132 +2001,132 @@ The `*ErrorKind` rename is part of this migration. §3.1 A8 is its commit.
 
 One issue per step, in order. A1 to A12 are the repository commits of §3.1. B0 to B13 are the wamn-dev steps of §3.2, which run in one session from the cutover commit. Each issue depends on the one before it. B0 depends on A12.
 
-**A1. kind → type A1: router delivery WIT 0.3.0 (docs/plan/kind-to-type.md §3.1)**
+**A1. kind → type A1: router delivery WIT 0.3.0 (docs/history/kind-to-type.md §3.1)**
 - Scope: rename `wamn:router-delivery` from 0.2.0 to 0.3.0, with `failure-kind` and `delivery-failure.kind` as `failure-type`. Follow every importer that §3.1 A1 lists, and rewrite the router pin `http_route.wasm.sha256`.
 - Acceptance: the general proof of §3.1. `tools/repo-lint run` shows one version of `wamn:router-delivery`. `git grep -n 'router-delivery@0.2\|router-delivery-0.2'` returns nothing outside `docs/history`.
 - Depends on: nothing.
 
-**A2. kind → type A2: serving manifest format 4 and the publish reader (docs/plan/kind-to-type.md §3.1)**
+**A2. kind → type A2: serving manifest format 4 and the publish reader (docs/history/kind-to-type.md §3.1)**
 - Scope: `SERVING_MANIFEST_FORMAT_VERSION` becomes 4, the five G8 fields serialize as `type`, and `Contract.kind` of G10 reads `type`. Regenerate the mint vector, the digest test, the manifest constants and the other format 3 byte fixtures in the same commit.
 - Acceptance: `cargo test --locked --offline -p wamn-catalog -p wamn-control -p wamn-engine -p wamn-execution-host` passes. `git grep -n -E '"format-version": ?3'` finds only the frozen format-3 fixture.
 - Depends on: A1.
 
-**A3. kind → type A3: catalog frame label (docs/plan/kind-to-type.md §3.1)**
+**A3. kind → type A3: catalog frame label (docs/history/kind-to-type.md §3.1)**
 - Scope: the three `("kind", ...)` frames of `crates/catalog/model/src/lib.rs` become `("type", ...)`, and the pinned baseline at `crates/catalog/model/tests/identity.rs:156` moves.
 - Acceptance: `cargo test --locked --offline -p wamn-catalog --test identity` and the `-p wamn-conformance-tests` catalog case pass.
 - Depends on: A2.
 
-**A4. kind → type A4: authoring wire and contract version 0.2 (docs/plan/kind-to-type.md §3.1)**
+**A4. kind → type A4: authoring wire and contract version 0.2 (docs/history/kind-to-type.md §3.1)**
 - Scope: the five `#[serde(tag = "kind")]` of W1 and the W2 refusal bodies become `type`. `SCHEMA_VERSION` moves to `0.2`, and `decode_document` reads the version before it decodes the body, so an old body gets the named refusal with a body.
 - Acceptance: `cargo test --locked --offline -p wamn-authoring-model -p wamn-scenario-worker -p wamn-ctl` passes, with the §5.3 tests `an_old_contract_version_is_refused_before_decode` and the extended `management_live.rs:1588` case.
 - Depends on: A3.
 
-**A5. kind → type A5: router tap, web upload and the other wire surfaces (docs/plan/kind-to-type.md §3.1)**
+**A5. kind → type A5: router tap, web upload and the other wire surfaces (docs/history/kind-to-type.md §3.1)**
 - Scope: one commit per surface. The router tap writes and reads format 3 only, with `source-type`. `wamn web upload` becomes create-only and refuses a `--release` that is not the head in `catalog.effective_release_heads` of the project-env database. W6, W8, W9, W11, W12 and G12 follow.
 - Acceptance: `cargo test --locked --offline -p wamn-runtime -p wamn-control -p wamn-ctl` and `cd web/runtime && pnpm test` pass, with the §5.3 tests `router_tap_reads_format_three_only`, `a_stale_release_is_refused_before_the_build` and `an_existing_object_is_never_replaced`.
 - Depends on: A4.
 
-**A6. kind → type A6: generator names, record-history column and authored inputs (docs/plan/kind-to-type.md §3.1)**
+**A6. kind → type A6: generator names, record-history column and authored inputs (docs/history/kind-to-type.md §3.1)**
 - Scope: the G1 to G7 generator names, the P9 history column and everything derived from `HISTORY_COLUMNS`, and the web runtime readers. The authored `wamn.json` keys and attachment files move, each `definition-hash` is recomputed, and every `apps/*/generated/` tree is regenerated. Package versions do not change yet.
 - Acceptance: `materialize_package check` passes for all seven packages. `cargo test --locked --offline -p wamn-schema-generator`, the `check_client_ts` and `check_client_components` examples, `cargo test -p wamn-client-tui` and `cd web/runtime && pnpm test` pass.
 - Depends on: A5.
 
-**A7. kind → type A7: SQL sources, the reconcile-run-plane cutover, component key and snapshot table (docs/plan/kind-to-type.md §3.1)**
+**A7. kind → type A7: SQL sources, the reconcile-run-plane cutover, component key and snapshot table (docs/history/kind-to-type.md §3.1)**
 - Scope: the fresh-install DDL of §4.2 with every Rust group of §4.5, including the identity service and the query aliases. The `TypeColumnCutover` action with per-table detection (§4.3.2), the PAT annotation (§4.3.5), the component key with its owner table and grants, and the snapshot table rename (§4.3.6).
 - Acceptance: the unit and live cases of §4.3.2 pass, including the per-table states and the missing P8 check. `cargo test --locked --offline -p wamn-control-provision --test deploy_sql_authority` and `deploy/mvp/tests/bootstrap.sh` pass. The check query of §4.3 on a fresh install returns no row. The §5.3 tests `a_digest_keeps_its_owner_across_versions`, `promote_copies_the_projection_hash_of_its_own_coordinate` and `reconcile_renames_without_touching_rows` pass. `git grep -l release_manifest_v3_snapshots` prints only the excluded paths of §4.5.
 - Depends on: A6.
 
-**A8. kind → type A8: `*ErrorKind` families and error struct fields (docs/plan/kind-to-type.md §3.1)**
+**A8. kind → type A8: `*ErrorKind` families and error struct fields (docs/history/kind-to-type.md §3.1)**
 - Scope: all 74 families, `NodeErrorKind`, the enum `ErrorKind` of `connection_http/transport.rs:315` and the `kind` fields of error structs, with the generator change and the regenerated trees. After this commit no platform code that compiles into a guest changes (§6).
 - Acceptance: the general proof of §3.1. `git grep -h -o -E '(enum|struct|type) [A-Za-z0-9_]*ErrorKind\b' -- '*.rs'` counts no WAMN declaration. No async-nats or `std::io` error kind is touched.
 - Depends on: A7.
 
-**A9. kind → type A9: base packages to 2.0.0 (docs/plan/kind-to-type.md §3.1)**
+**A9. kind → type A9: base packages to 2.0.0 (docs/history/kind-to-type.md §3.1)**
 - Scope: one commit each for `wamn_receiving`, `wamn_wms`, `platform_fixture`, `edge_samples` and `edge_device`, with `predecessor_version` 1.0.0. `wamn_receiving` 2.0.0 and `client_acme_receiving` 4.0.0 (A10) land as one commit, because the overlay's base pin names the base version and neither commit is green alone (owner ruling 1); `platform_fixture` and `platform_fixture_overlay` the same. Regenerate each package, prepare its SQLx metadata, build its component and record the digest, and move the tests that name the old coordinate.
 - Acceptance: `materialize_package check` and `sqlx_metadata check` pass for each package. `committed_sqlx_metadata_compiles_offline` and `cargo test --locked --offline -p wamn-schema-generator --test platform_generation` pass. The general proof of §3.1.
 - Depends on: A8.
 
-**A10. kind → type A10: overlays to 4.0.0 and 2.0.0 (docs/plan/kind-to-type.md §3.1)**
+**A10. kind → type A10: overlays to 4.0.0 and 2.0.0 (docs/history/kind-to-type.md §3.1)**
 - Scope: `client_acme_receiving` to 4.0.0 and `platform_fixture_overlay` to 2.0.0, one commit each after its base. Each base pin takes the A9 digest. The Acme pin is not checked against a deployed digest, because Acme is not deployed.
 - Acceptance: `cargo test --locked --offline -p wamn-client-acme-receiving-tests` passes against the authored base pin. `materialize_package check` and `sqlx_metadata check` pass for each overlay. The general proof of §3.1.
 - Depends on: A9.
 
-**A11. kind → type A11: remaining test fixtures and the gate command id (docs/plan/kind-to-type.md §3.1)**
+**A11. kind → type A11: remaining test fixtures and the gate command id (docs/history/kind-to-type.md §3.1)**
 - Scope: the A3 fixtures that no earlier commit owns, the W5 tap bodies, and the gate command id `gate-<package>-<version>-<wiring>` of `test-support/infrastructure/examples/gate_request.rs:39` to `:43`.
 - Acceptance: `tools/test-changes run --base HEAD~1` passes.
 - Depends on: A10.
 
-**A12. kind → type A12: final build and pins (docs/plan/kind-to-type.md §3.1)**
+**A12. kind → type A12: final build and pins (docs/history/kind-to-type.md §3.1)**
 - Scope: on the final commit, run `tools/build-components all` once and record the sha256 of the seven guests that wamn-dev takes. The cutover commit of §3.2 is the head of `main` on the day, recorded in B12.
 - Acceptance: the build passes the router pin with no edit. The two `git grep` checks of §3.1 A12 print nothing. The §1.7 counts of the renamed rows are 0.
 - Depends on: A11.
 
-**B0. kind → type B0: build and record before the stop (docs/plan/kind-to-type.md §3.2)**
+**B0. kind → type B0: build and record before the stop (docs/history/kind-to-type.md §3.2)**
 - Scope: from the cutover commit, build the programs and the guests, build and push the host, identity and gates images, and push the two workload guest files to `components/flow-http` and `components/materializer` under their file sha256. Answer the ops-schema query and the PAT Secret listing, and run the check query of §4.3 on the three databases. Nothing changes installed state.
 - Acceptance: each guest sha256 equals its A12 value. The three image digests, the two guest digests, both answers, the three check results and the baseline answer of step 8 are recorded.
 - Depends on: A12.
 
-**B1. kind → type B1: drain and stop (docs/plan/kind-to-type.md §3.2)**
+**B1. kind → type B1: drain and stop (docs/history/kind-to-type.md §3.2)**
 - Scope: turn ingress off, wait up to 15 minutes for open runs, settle each `effect-uncertain` run with `terminalize-effect-uncertain`, then stop the hosts and identity. If a `dispatched` or `running` run is still open at the bound, turn ingress back on, report the run with the bound, and reschedule the cutover. It is not retried the same day.
 - Acceptance: each minute's open-run answer and each settled run are recorded. The open-run query prints nothing on both project-env databases after the drain and again after the stop.
 - Depends on: B0.
 
-**B2. kind → type B2: wamn_system upgrade-schema run (docs/plan/kind-to-type.md §3.2)**
+**B2. kind → type B2: wamn_system upgrade-schema run (docs/history/kind-to-type.md §3.2)**
 - Scope: one run of `upgrade-schema --baseline "$BASELINE" --confirm` on wamn_system, with the baseline of B0 step 8. It records the files that the database holds and applies every later system migration of the cutover commit, with the control component key of §4.3.6 and the new record-history functions.
 - Acceptance: the run prints the baseline row and the three applied files (0002, 0003, 0004), and commits. The §4.3.6 check on wamn_system lists the owner keys and no `component_library_digest_key`.
 - Depends on: B1.
 
-**B3. kind → type B3: project-env upgrade-schema runs (docs/plan/kind-to-type.md §3.2)**
+**B3. kind → type B3: project-env upgrade-schema runs (docs/history/kind-to-type.md §3.2)**
 - Scope: one run on each of the two project-env databases, as in §3.2 B3: `target/debug/wamn-ctl upgrade-schema --system-database-url "$SYS" --admin-database-url "$TR" --baseline 0 --confirm` for Receiving, and the same with `"$TW"` for WMS. It applies every project migration of the cutover commit, starting with `0001_kind_to_type.sql`: P9, the component key with its `wamn_app` grant, and the snapshot table.
 - Acceptance: each run prints the applied file and commits. The history and snapshot notices are recorded. The §4.3.6 check lists no `component_library_digest_key` and no `release_manifest_v3` name.
 - Depends on: B2.
 
-**B4. kind → type B4: new reconcile-run-plane (docs/plan/kind-to-type.md §3.2)**
+**B4. kind → type B4: new reconcile-run-plane (docs/history/kind-to-type.md §3.2)**
 - Scope: run the new `reconcile-run-plane` twice for Receiving and twice for WMS. The `TypeColumnCutover` renames P8, P10, P11 and P12.
 - Acceptance: the second run of each reports no action. The check query of §4.3 returns no row in any of the three databases.
 - Depends on: B3.
 
-**B5. kind → type B5: PAT Secret re-annotation (docs/plan/kind-to-type.md §3.2)**
+**B5. kind → type B5: PAT Secret re-annotation (docs/history/kind-to-type.md §3.2)**
 - Scope: one `kubectl annotate` per listed PAT Secret, setting `wamn.io/principal-type` and removing `wamn.io/principal-kind`.
 - Acceptance: the listing count and each command are recorded. No listed Secret still carries `wamn.io/principal-kind`.
 - Depends on: B4.
 
-**B6. kind → type B6: new identity service (docs/plan/kind-to-type.md §3.2)**
+**B6. kind → type B6: new identity service (docs/history/kind-to-type.md §3.2)**
 - Scope: write the B0 identity digest into `deploy/gcp/values-identity.yaml` and upgrade the identity release. The hosts stay stopped.
 - Acceptance: the TLS check of `docs/history/gcp-install-history.md` §3.10 answers, and the key set still lists the active `kid`.
 - Depends on: B5.
 
-**B7. kind → type B7: Receiving republish (docs/plan/kind-to-type.md §3.2)**
+**B7. kind → type B7: Receiving republish (docs/history/kind-to-type.md §3.2)**
 - Scope: apply `wamn_receiving@2.0.0`, push `receiving.wasm` under the new key, publish, prepare, qualify and publish-qualified release 2, and record its manifest digest.
 - Acceptance: the snapshot query of §3.2 B7 prints release 1 with format 3 and release 2 with format 4.
 - Depends on: B6.
 
-**B8. kind → type B8: WMS republish (docs/plan/kind-to-type.md §3.2)**
+**B8. kind → type B8: WMS republish (docs/history/kind-to-type.md §3.2)**
 - Scope: apply `wamn_wms@2.0.0`, push `wms` and the three palette components under 2.0.0, gate the wiring under the new command id, author the wiring, and publish and qualify release 2.
 - Acceptance: `label-render` and `blob-put` are listed under 1.0.0 and 2.0.0, and `jsonata` under 2.0.0, with one owner row per digest. The gate reply is `completed`. The snapshot query prints release 1 with format 3 and release 2 with format 4. `consumers.jsonl` is unchanged.
 - Depends on: B7.
 
-**B9. kind → type B9: heads, web clients and edge (docs/plan/kind-to-type.md §3.2)**
+**B9. kind → type B9: heads, web clients and edge (docs/history/kind-to-type.md §3.2)**
 - Scope: set the head of each environment to release 2 with `select-release`, upload both release 2 clients, and switch the edge values and the URL map. The hosts are still stopped.
 - Acceptance: `catalog.effective_release_heads` names release 2 in both project-env databases. Both uploads pass, and both qualification files are kept for the record.
 - Depends on: B8.
 
-**B10. kind → type B10: new hosts and workloads (docs/plan/kind-to-type.md §3.2)**
+**B10. kind → type B10: new hosts and workloads (docs/history/kind-to-type.md §3.2)**
 - Scope: render the host values with both release 2 digests and the new host image, upgrade the host release, and apply the four workloads with the two B0 guest digests. This is the router switch.
 - Acceptance: the serve check of `docs/history/gcp-install-history.md` §3.21 answers 401 on a released route and 404 on an unknown path for both route hosts. Each host log says it loaded release 2.
 - Depends on: B9.
 
-**B11. kind → type B11: end-to-end check (docs/plan/kind-to-type.md §3.2)**
+**B11. kind → type B11: end-to-end check (docs/history/kind-to-type.md §3.2)**
 - Scope: the owner signs in at both hosts, reads the Receiving lists and moves one WMS pallet.
 - Acceptance: the lists answer 200, the label object appears, and one history row of the move is readable under the `type` column.
 - Depends on: B10.
 
-**B12. kind → type B12: record in gcp.md (docs/plan/kind-to-type.md §3.2)**
+**B12. kind → type B12: record in gcp.md (docs/history/kind-to-type.md §3.2)**
 - Scope: add the §4.8 entry to `docs/history/gcp-install-history.md` §7, naming the cutover commit, and add the images, component digests and release table. Commit the values files, the workload files, `host_values_files.rs` and `gcp.md` together.
 - Acceptance: the commit holds every file that §3.2 B12 lists. The §5.3 before and after listings show no removed line, and the drain records are in the entry.
 - Depends on: B11.
 
-**B13. kind → type B13: immutable tags on the wamn registry (docs/plan/kind-to-type.md §3.2)**
+**B13. kind → type B13: immutable tags on the wamn registry (docs/history/kind-to-type.md §3.2)**
 - Scope: delete the four fixed guest tags of the `components` repository, turn immutable tags on, and add the record to `docs/history/gcp-install-history.md` §7.
 - Acceptance: the repository shows immutable tags enabled, and no fixed tag remains in `components`.
 - Depends on: B12.

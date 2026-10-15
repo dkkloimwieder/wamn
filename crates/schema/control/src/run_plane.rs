@@ -146,7 +146,7 @@ pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunPlaneActionKind {
     /// Rename the `kind` columns of an installed database to `type`, before
-    /// every other action (docs/plan/kind-to-type.md §4.3.2).
+    /// every other action (docs/history/kind-to-type.md §4.3.2).
     TypeColumnCutover,
     /// Create or harden the host-only `wamn_scenario_author` NOLOGIN role.
     EnsureScenarioAuthorRole,

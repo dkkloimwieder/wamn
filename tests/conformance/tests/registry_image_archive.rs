@@ -1,6 +1,6 @@
 //! `case_release::image_archive` and `tools/journey-image-cache` in kind,
 //! against a private registry that requires a login
-//! (docs/plan/upgrade-environment.md §4.4).
+//! (docs/history/upgrade-environment.md §4.4).
 //!
 //! The cache tool builds and relabels an image, which the test pushes to the
 //! registry. The case harness fetches it and a guest by digest with the

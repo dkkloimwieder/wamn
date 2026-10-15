@@ -413,7 +413,7 @@ Citations are against `main` at `49e116e` read 2026-10-10, rechecked against mai
 | One `statements` interface carries reads, transaction, participation | `package.wit:131-200` |
 | Host owns begin/commit/rollback; transaction never crosses a wiring edge | `docs/architecture/data-access.md:306,336` |
 | Participant path: slots, views, no-op crates, attribution switch | `data-access.md:308-335` |
-| Cross-component borrowed resource failed with `mismatched resource types` | `data-access.md:330`; `docs/plan/application-simplification-plan.md:145` |
+| Cross-component borrowed resource failed with `mismatched resource types` | `data-access.md:330`; `docs/history/application-simplification-plan.md:145` |
 | Resource handles refused at the operation boundary | `docs/architecture/components.md:44` |
 | Members embedded unchanged by digest; grant fold | `components.md:47-50`; `data-access.md:313` |
 | Receiving's command is six ordered SQL calls | `apps/wamn_receiving/data/src/record_receipt.rs:456-585` |

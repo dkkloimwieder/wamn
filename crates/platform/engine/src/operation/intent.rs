@@ -1,9 +1,9 @@
-//! The intent rules of one route call (`docs/plan/edge.md` 4.7).
+//! The intent rules of one route call (`docs/history/edge.md` 4.7).
 //!
 //! A call of a kind that changes records logs one intent for each input item
 //! before its export runs. The key is the item field that the route names for
 //! its idempotency key, or else the item's `request_id`. Only new items run,
-//! each alone, as a one-item list (`docs/plan/host-transaction.md` section 2):
+//! each alone, as a one-item list (`docs/history/host-transaction.md` section 2):
 //! an item whose key finished answers its stored outcome, an item whose key
 //! began and never finished answers `intent-uncertain`, and an item whose key
 //! an operator resolved answers `intent-resolved` with the operator's basis.
@@ -219,7 +219,7 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
             .unwrap_or(u64::MAX)
             .max(1);
         // The item's host transaction begins before its claim, so an operation
-        // with SQL claims in it (`docs/plan/host-transaction.md` 4.2).
+        // with SQL claims in it (`docs/history/host-transaction.md` 4.2).
         let transaction = application
             .policy
             .begin_item(component_id, call.operation, &call.facts)

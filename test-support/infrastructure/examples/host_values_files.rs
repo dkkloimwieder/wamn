@@ -1,4 +1,4 @@
-//! Write the Google Cloud host values of docs/plan/gcp-deployment.md step 3.
+//! Write the Google Cloud host values of docs/history/gcp-deployment.md step 3.
 //!
 //! The values come from `rendering::render_host_values`, the derivation of the
 //! Receiving cluster tests, over `deploy/platform/values-host-default.yaml` and
@@ -31,7 +31,7 @@
 //!   <Receiving manifest digest> <WMS manifest digest>
 //!
 //! The host image is a registry reference with its digest
-//! (docs/plan/upgrade-environment.md §5 issue 4).
+//! (docs/history/upgrade-environment.md §5 issue 4).
 
 use std::fs;
 use std::path::PathBuf;

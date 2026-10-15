@@ -1,5 +1,5 @@
 //! The write log, `app_system.write_log`, as the engine's intent store
-//! (`docs/plan/host-transaction.md` 4.2 and 4.3).
+//! (`docs/history/host-transaction.md` 4.2 and 4.3).
 //!
 //! An operation with SQL claims its key in its item transaction, so the claim
 //! and the work commit together or not at all: [`OperationTransaction`] is

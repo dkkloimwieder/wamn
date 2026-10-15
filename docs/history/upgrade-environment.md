@@ -4,7 +4,7 @@ Updated through: 2026-10-02, `main` at `d3be6482e`. Accepted by the owner on 202
 
 ## 1. Goal
 
-One verb, `wamn-ctl upgrade-environment --org <org> --project <project> --env <env> --commit <40-hex commit> [--predecessor-release <digest>]`, takes one installed environment to the bytes of one commit. It does what B0 to B13 of `docs/plan/kind-to-type.md` §3.2 did by hand on 2026-10-01 and 2026-10-02. It builds and pushes from the pinned commit, upgrades the schemas, publishes, qualifies, selects, deploys and checks. It writes one run record that the operations page cites.
+One verb, `wamn-ctl upgrade-environment --org <org> --project <project> --env <env> --commit <40-hex commit> [--predecessor-release <digest>]`, takes one installed environment to the bytes of one commit. It does what B0 to B13 of `docs/history/kind-to-type.md` §3.2 did by hand on 2026-10-01 and 2026-10-02. It builds and pushes from the pinned commit, upgrades the schemas, publishes, qualifies, selects, deploys and checks. It writes one run record that the operations page cites.
 
 The cutover took most of two days of wall time for one environment pair (§3.1). Most of its stops had three causes. A person ran the steps by hand in a fixed order. Some tools had never run against a private registry. Some inputs followed the head of `main`. The verb removes those three causes. It adds no new delivery rule: every check it runs exists today in a verb or in the runbook.
 
@@ -66,7 +66,7 @@ Eleven stops came from code or tools on their first live run. They are rows 3, 6
 
 | Step of §3.2 B0 to B13 | Today |
 | --- | --- |
-| Checkout | B0 step 1 runs `git checkout --detach origin/main` (`docs/plan/kind-to-type.md:508`). The cutover commit was "the head of `main` on the day", so every fix moved it. Six cutover commits followed: `6c9241c9a`, `37d1fe4c8`, `ebc75d513`, `ebac92ef4`, `351f71337`, and the records `da18d7ea0`, `de06e7feb`. |
+| Checkout | B0 step 1 runs `git checkout --detach origin/main` (`docs/history/kind-to-type.md:508`). The cutover commit was "the head of `main` on the day", so every fix moved it. Six cutover commits followed: `6c9241c9a`, `37d1fe4c8`, `ebc75d513`, `ebac92ef4`, `351f71337`, and the records `da18d7ea0`, `de06e7feb`. |
 | Images | `tools/journey-image-cache ensure` builds by source identity, the hash of the tree entries that the Dockerfile copies at HEAD (`tools/journey-image-cache:9`). The push of the relabeled image was a by-hand rule (drift 9). |
 | Gates image | `compare_built_image` rebuilds the gates image from the qualified commit and requires byte equality (`crates/control/lib/src/delivery/qualification.rs:592`). The build took 1049 s at `71fc165f8` and 1373 s at `ebac92ef4` (`wamn-1s38`). |
 | Qualification | `qualify-release --revision` accepts any clean selected revision (`qualification.rs:229-248`). It rebuilds the delivery target and then compares artifact hashes with the candidate (`qualification.rs:291`). A candidate prepared before the target was built at the same commit fails (drift 12). It deletes its case results on exit (`qualification.rs:87-90`, `wamn-e6iw`). |
@@ -183,4 +183,4 @@ Epic 1, one branch, each issue with its tests. No issue runs against wamn-dev un
 - Non-Spot nodes for the broker and the database (`wamn-qjcd`).
 - A long-lived gate service. Until it exists, the verb runs the gate service for stages 7 and 11.
 - A CI provider that calls the verb (`docs/plan/delivery.md`).
-- Migrations outside the accepted additive [package upgrade path](package-upgrade.md).
+- Migrations outside the accepted additive [package upgrade path](../plan/package-upgrade.md).

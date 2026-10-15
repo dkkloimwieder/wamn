@@ -1,5 +1,5 @@
 //! The write log through the engine's intent rules and the platform fixture
-//! component (`docs/plan/host-transaction.md` 5, issue 5).
+//! component (`docs/history/host-transaction.md` 5, issue 5).
 //!
 //! One local application serves the fixture's routes over a disposable
 //! database. The host claims each item's key in the item's transaction. The
@@ -238,7 +238,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
 /// A retry of `widget.record_batch` with its lines in another order and its
 /// amounts spelled another way answers the stored result, because the host
 /// applies the route's canonical form before it hashes the item. A retry with
-/// another amount is another request (`docs/plan/host-transaction.md` 7,
+/// another amount is another request (`docs/history/host-transaction.md` 7,
 /// ruling (a)).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]

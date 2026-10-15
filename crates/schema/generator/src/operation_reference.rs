@@ -5,7 +5,7 @@
 //! authored once, as `package.version` in `wamn.json`. Every reader resolves
 //! the references of an authored document with this module before it uses the
 //! document, so no reader sees a reference and every reader sees the same
-//! sealed ids (docs/plan/operation-ids.md).
+//! sealed ids (docs/history/operation-ids.md).
 
 use std::path::{Path, PathBuf};
 

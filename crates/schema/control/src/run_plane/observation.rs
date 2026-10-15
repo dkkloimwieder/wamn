@@ -135,7 +135,7 @@ pub struct RunPlaneObservation {
     /// or `partition-key` key (0 when the table is absent).
     pub stale_registration_key_rows: i64,
     /// Whether `catalog.package_definition_owners` has the old column
-    /// `definition_kind` (docs/plan/kind-to-type.md §4.3.2).
+    /// `definition_kind` (docs/history/kind-to-type.md §4.3.2).
     pub definition_owners_kind_column: bool,
     /// Whether `catalog.package_definition_owners` has the new column
     /// `definition_type`.

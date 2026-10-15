@@ -1,4 +1,4 @@
-# The event NATS of docs/plan/gcp-deployment.md step 3: the Google Cloud copy
+# The event NATS of docs/history/gcp-deployment.md step 3: the Google Cloud copy
 # of deploy/infra/nats-jetstream.yaml. It runs one server in namespace
 # platform, so it has no cluster block, no cluster port and no anti-affinity
 # spread. The event streams use one replica. The volume is pd-standard.

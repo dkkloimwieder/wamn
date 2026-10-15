@@ -142,7 +142,7 @@ impl CustomOperationDeclaration {
     }
 
     /// Whether this operation's export works in the host transaction itself:
-    /// a command with SQL of its own (`docs/plan/host-transaction.md` 4.1).
+    /// a command with SQL of its own (`docs/history/host-transaction.md` 4.1).
     pub fn has_host_transaction(&self) -> bool {
         self.type_ == CustomOperationType::Command && !self.statements.is_empty()
     }
@@ -2669,7 +2669,7 @@ impl CrudAction {
     }
 
     /// Whether the action changes records, so the host begins the
-    /// transaction it works in (`docs/plan/host-transaction.md` 4.1).
+    /// transaction it works in (`docs/history/host-transaction.md` 4.1).
     pub const fn changes_records(self) -> bool {
         matches!(self, Self::Create | Self::Update | Self::Delete)
     }

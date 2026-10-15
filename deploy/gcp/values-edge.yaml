@@ -1,4 +1,4 @@
-# The edge of docs/plan/gcp-deployment.md steps 4 and 5, release wamn-edge in namespace
+# The edge of docs/history/gcp-deployment.md steps 4 and 5, release wamn-edge in namespace
 # edge. The wildcard certificate *.wamn.dev of step 2 is already in
 # wamn-edge-tls, so no issuer is set. The load balancer of
 # docs/history/gcp-install-history.md section 4 serves the bucket path.

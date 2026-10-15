@@ -862,7 +862,7 @@ fn composition_is_exact_and_carries_its_contract() {
 
 /// The fixture's claim command names its key and the canonical form of its
 /// item, and its codec claims nothing: the host claims the key in the
-/// operation transaction (`docs/plan/host-transaction.md` 4.4). Publish hands
+/// operation transaction (`docs/history/host-transaction.md` 4.4). Publish hands
 /// the key and the canonical form to the engine's intent rules.
 #[test]
 fn a_claim_command_names_its_key_and_its_codec_claims_nothing() {

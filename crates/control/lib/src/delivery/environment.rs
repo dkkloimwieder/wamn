@@ -1,5 +1,5 @@
 //! The environment file of an installed environment
-//! (docs/plan/upgrade-environment.md §4.1).
+//! (docs/history/upgrade-environment.md §4.1).
 //!
 //! `deploy/gcp/environments/<org>--<project>--<env>.json` holds only what
 //! `registry.project_envs` does not hold. The tenant and the database names

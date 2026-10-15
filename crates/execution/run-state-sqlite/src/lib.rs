@@ -1,4 +1,4 @@
-//! The SQLite [`IntentStore`] adapter: one file, one writer (docs/plan/edge.md).
+//! The SQLite [`IntentStore`] adapter: one file, one writer (docs/history/edge.md).
 //!
 //! This crate exports [`SqliteIntentStore`]. It depends on `wamn-run-state` for
 //! the trait, so `wamn-run-state` stays adapter-free and the cloud links no

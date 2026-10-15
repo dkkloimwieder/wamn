@@ -329,7 +329,7 @@ Use the environment's identity Deployment and require its readiness before issui
 
 `wamn-ctl upgrade-schema` applies a platform schema change to an installed database.
 A platform schema change is a numbered file under `deploy/sql/migrations/system/` or `deploy/sql/migrations/project/`, which lands in the commit of its full-file change.
-The design is in [schema upgrade](../plan/schema-upgrade.md).
+The design is in [schema upgrade](../history/schema-upgrade.md).
 Package migrations of an application are not platform migrations.
 
 Upgrade the system database first, then each project-environment database:

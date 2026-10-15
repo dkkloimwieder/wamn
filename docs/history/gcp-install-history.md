@@ -5,7 +5,7 @@ This page is `docs/operations/gcp.md` as it was at commit `a9bb5fdf6`, before `w
 Comments in `deploy/` and `crates/` that name a section of `docs/operations/gcp.md` by number name the section of the same number on this page.
 
 
-This page holds the commands of the Google Cloud deployment in project `wamn-dev`. The [plan](../plan/gcp-deployment.md) gives the reasons, the costs and the shutdown levels.
+This page holds the commands of the Google Cloud deployment in project `wamn-dev`. The [plan](../history/gcp-deployment.md) gives the reasons, the costs and the shutdown levels.
 Each section is one finished step of that plan.
 
 Run every command as the project owner, with `--project wamn-dev`. The default project of the gcloud configuration here is another project, so a command without `--project` acts on the wrong one.
@@ -437,7 +437,7 @@ TMPDIR=<directory on the main disk> tools/journey-image-cache ensure . gates gat
 docker tag wamn-gates:gcp $R/wamn-gates:src-<identity> && docker push $R/wamn-gates:src-<identity>
 ```
 
-Push the relabeled image `wamn-gates:gcp`, as for the host and identity images (`docs/plan/kind-to-type.md` §3.2 B0 step 3). Then write the new digest into `docs/plan/release-qualification.md` §4.4.
+Push the relabeled image `wamn-gates:gcp`, as for the host and identity images (`docs/history/kind-to-type.md` §3.2 B0 step 3). Then write the new digest into `docs/plan/release-qualification.md` §4.4.
 
 On 2026-09-26 the host image took 419 seconds to build and the identity image 59 seconds. The pushed images are:
 
@@ -752,7 +752,7 @@ kubectl -n hosts run wi-check --restart=Never --rm -i --quiet \
   curl -sS -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
 ```
 
-B10 of `docs/plan/kind-to-type.md` section 3.2 applied the grant and the ConfigMap on 2026-10-02. Before B10, a CronJob wrote a token into the Secret `wamn-registry-pull` as the Google service account `wamn-registry-reader`. The cutover deleted the CronJob, the Secret and the account.
+B10 of `docs/history/kind-to-type.md` section 3.2 applied the grant and the ConfigMap on 2026-10-02. Before B10, a CronJob wrote a token into the Secret `wamn-registry-pull` as the Google service account `wamn-registry-reader`. The cutover deleted the CronJob, the Secret and the account.
 
 ### 3.13 Pinned images
 
@@ -765,7 +765,7 @@ B10 of `docs/plan/kind-to-type.md` section 3.2 applied the grant and the ConfigM
 | `wamn-cdc-reader:src-596c8e6604d119a0` | `sha256:9b1ed15e87122ce208114582b27ce23af7cc06c80653c798fcac5b79172e1c52` | CDC reader |
 | `curlimages/curl:8.22.0` | `sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777` | identity TLS check |
 
-The four `wamn` images come from the cutover commit `351f71337` of branch `cutover` (`docs/plan/kind-to-type.md` section 3.2, 2026-10-02). They carry the label `wamn.dev/source-head`, because `qualify-release` compares each pin with the labeled build of `tools/journey-image-cache`.
+The four `wamn` images come from the cutover commit `351f71337` of branch `cutover` (`docs/history/kind-to-type.md` section 3.2, 2026-10-02). They carry the label `wamn.dev/source-head`, because `qualify-release` compares each pin with the labeled build of `tools/journey-image-cache`.
 
 The kind cases of `qualify-release` do not pull these images from the private registry. The case (`case_release::node_image_archives` of `wamn-gate-harness`) fetches each pinned manifest and its blobs by digest with the pull credential of the release registry, the file of `--registry-auth-file`, and each kind node imports that archive with `ctr`, so the node holds the pinned digest. No credential reaches a node. The owned registry of a kind delivery case is plain HTTP with no login, and its candidate sets `native_registry_insecure`. The kind nodes pull from that registry through the containerd hosts directory instead.
 
@@ -812,7 +812,7 @@ Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09
 
 The Job `deploy/gcp/operator/mint-pat.yaml` mints a PAT inside the cluster, in namespace `identity` (`docs/plan/operator-image.md`, `wamn-n5d1`). It runs the operator image `wamn-ctl`, which the manifest pins by digest. It reads the `operator-dkk` certificate as a mounted Secret, so the certificate never reaches this machine. It needs no `/etc/hosts` line and no identity port-forward.
 
-No mint and no invitation runs on wamn-dev until step B2 of the kind to type cutover (`docs/plan/kind-to-type.md` §3.2). The image pinned in `mint-pat.yaml` and `invite.yaml` comes from `main` after the cutover commit, and it reads `placement_type`, which wamn-dev does not have before B2. The two operator Jobs are part of the binaries of the cutover. No image from a commit that is not on `main` runs in them (`wamn-rjtf`).
+No mint and no invitation runs on wamn-dev until step B2 of the kind to type cutover (`docs/history/kind-to-type.md` §3.2). The image pinned in `mint-pat.yaml` and `invite.yaml` comes from `main` after the cutover commit, and it reads `placement_type`, which wamn-dev does not have before B2. The two operator Jobs are part of the binaries of the cutover. No image from a commit that is not on `main` runs in them (`wamn-rjtf`).
 
 Fill the run values in a private copy of the manifest, apply the copy and remove it. This run mints the management-author PAT of Receiving. A run with only a PAT flag reads the recorded environment and writes nothing to the registry. It refuses `--secret-namespace` and `--disposable`, and it refuses an environment that the registry does not hold (`wamn-rjtf`):
 
@@ -1913,7 +1913,7 @@ A move of `main` to 0 waits for up to an hour on the CloudNativePG budget `wamn-
 
 ### 6.6 Tier results
 
-The tier table is in section 6.1 of [the deployment plan](../plan/gcp-deployment.md#61-tier-results).
+The tier table is in section 6.1 of [the deployment plan](../history/gcp-deployment.md#61-tier-results).
 
 ### 6.7 Tear down an environment
 
@@ -1949,7 +1949,7 @@ The new provision needed generation `b` in one place. `provision-identity-issuer
 
 The service `wamn-operator-dkk--receiving--dev` holds the role `operator`, with a PAT of prefix `1a98d582140907ed` that expires on 2026-10-29. On 2026-09-30 the PAT of prefix `5b0649d6dc4dd3bf`, which expires on 2026-10-30, replaced it (section 3.16). The owner holds `admin` in both environments. The host upgrade with `--timeout 10m` took 15 seconds, and the Helm release reads `deployed` at revision 5. The web clients of both releases took 7 seconds each to upload.
 
-On 2026-10-02 the `kind` → `type` cutover (`docs/plan/kind-to-type.md` section 3.2) published and selected these releases at the cutover commit `351f71337`:
+On 2026-10-02 the `kind` → `type` cutover (`docs/history/kind-to-type.md` section 3.2) published and selected these releases at the cutover commit `351f71337`:
 
 | Application | Release | Manifest digest | Source commit of the attestation | Component digests |
 | --- | --- | --- | --- | --- |
@@ -1965,7 +1965,7 @@ The PAT of prefix `0403da0ed832b723`, which expires on 2026-11-01, replaced `5b0
 
 ## 7. Schema changes applied by hand
 
-`wamn-ctl upgrade-schema` applies a platform schema change to an installed database ([deployment](../operations/deployment.md#platform-schema-upgrades), `wamn-o8b9`). This section records the statements that ran by hand on wamn-dev before the verb existed, with their date and their finding. Its last entry is the first run of the verb on each database, with `--baseline`, at the `kind` → `type` cutover (`docs/plan/kind-to-type.md` §4.8). After that entry, no schema change runs by hand.
+`wamn-ctl upgrade-schema` applies a platform schema change to an installed database ([deployment](../operations/deployment.md#platform-schema-upgrades), `wamn-o8b9`). This section records the statements that ran by hand on wamn-dev before the verb existed, with their date and their finding. Its last entry is the first run of the verb on each database, with `--baseline`, at the `kind` → `type` cutover (`docs/history/kind-to-type.md` §4.8). After that entry, no schema change runs by hand.
 
 On 2026-09-29 (`wamn-59z6`, `wamn-o8b9`), the capture gap table of `deploy/sql/system-schema.sql` went into `wamn_system` as its owner, with the read grant of the CDC reader. Write the `CREATE TABLE registry.capture_gap` block of that file between the two lines below into `$P/capture-gap.sql`, and apply it:
 
@@ -1994,7 +1994,7 @@ rm $P/invite.yaml
 
 Then make the Secret `wamn-system-admin`, wait for the Job and save its log as in section 4.5.
 
-On 2026-10-02 (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit `71fc165f8` ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/plan/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered false, so the migration did not rename P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
+On 2026-10-02 (`wamn-ld93`, `wamn-o8b9`), `wamn-ctl upgrade-schema` of commit `71fc165f8` ran for the first time on `wamn_system`, `wamn-db-dkk--receiving--dev--4pqjfmli` and `wamn-db-dkk--wms--dev--0nk1lrpr`, with the workloads stopped. Each run took `--baseline` and `--confirm`, and it applied the `kind` → `type` migration of `docs/history/kind-to-type.md` §4.3.4 in the same run. On wamn_system, `SELECT to_regclass('provisioning.copy_sagas') IS NOT NULL` answered false, so the migration did not rename P6. Keep the port-forward, `WAMN_SYSTEM_ADMIN_URL` and `PW` of section 3.6, and run:
 
 ```bash
 target/debug/wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --baseline 1 --confirm
@@ -2019,7 +2019,7 @@ The listing of PAT Secrets with the label `app.kubernetes.io/component=project-e
 
 Later in the cutover, project migration `0005_wiring_definition_key.sql` of commit `ebac92ef4` (`wamn-ld93.21`) added `package_version` to `wirings_definition_key`. `upgrade-schema` ran on both project-env databases without `--baseline`, because the verb refuses `--baseline` after its first run. Each run took 1 second and printed `applied` for `0005_wiring_definition_key.sql`. `app_system.schema_migrations` holds rows 1 to 5 in each project-env database, and wamn_system had no pending file.
 
-On 2026-10-02 (`wamn-ld93`, B13 of `docs/plan/kind-to-type.md` §3.2), the four fixed guest tags of the `components` repository were deleted, one command per tag. They named no running digest after B10:
+On 2026-10-02 (`wamn-ld93`, B13 of `docs/history/kind-to-type.md` §3.2), the four fixed guest tags of the `components` repository were deleted, one command per tag. They named no running digest after B10:
 
 | Tag | Digest |
 |---|---|
@@ -2141,7 +2141,7 @@ Read-only live `qualify-upgrade` ran on 2026-10-02 at 18:28:21 UTC and refused a
 
 Package qualification reads no Kubernetes resource. It reads each package's application schema from the package manifest.
 
-`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
+`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/history/upgrade-environment.md`). It reads `deploy/gcp/environments/<org>--<project>--<env>.json` at that commit. No live run of the verb exists yet. Its first live run waits for the word of the owner (`wamn-m511.7`).
 
 ```bash
 target/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>

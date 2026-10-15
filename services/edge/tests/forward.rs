@@ -598,7 +598,7 @@ fn samples_where(directory: &Path, condition: &str) -> i64 {
 }
 
 /// The forward against a real platform route: the `sample.record` command of
-/// `apps/edge_samples` on a local stack (docs/plan/edge.md 4.8).
+/// `apps/edge_samples` on a local stack (docs/history/edge.md 4.8).
 ///
 /// Two frames are stored while the platform refuses the PAT, and the edge is
 /// killed before either is forwarded. The restart with the device PAT forwards

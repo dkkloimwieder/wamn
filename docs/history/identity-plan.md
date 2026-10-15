@@ -262,7 +262,7 @@ Use a maintained protocol library and authorization code flow with PKCE, which b
 Establish trusted issuer configuration and certificate roots explicitly.
 Before implementation, define upstream disablement limits and the external login lifecycle.
 A silent provider session is not automatically a new interactive login.
-The [federation plan](identity.md) retains these boundaries.
+The [federation plan](../plan/identity.md) retains these boundaries.
 
 Shared stations, passkeys, browser application delivery, SAML, and device certificates remain outside the three increments.
 A station authenticates as a service; an operator authenticates as a user.

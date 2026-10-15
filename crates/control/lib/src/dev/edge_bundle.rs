@@ -3,7 +3,7 @@
 //! The loop's release stage publishes the serving manifest and admits each
 //! component into its local artifacts directory. This writer copies those exact
 //! bytes into a new directory, adds the grants and the ingress guest, and pins
-//! every file in `edge-release.json` (docs/plan/edge.md section 4.6). The
+//! every file in `edge-release.json` (docs/history/edge.md section 4.6). The
 //! grants give the built-in role `admin` the permissions of every operation
 //! that an attachment serves, as `admin` holds every served operation in the
 //! cloud.

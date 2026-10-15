@@ -8,7 +8,7 @@ One verb applies a change of the platform schema to an installed database: the s
 
 The change adds one kind of file, a numbered platform migration, and one record table in each database. It uses the prefix rule that `apply-package` applies to package migrations today.
 
-Package migrations of an application stay the subject of `docs/plan/upgrades.md`. This spec does not change them.
+Package migrations of an application stay the subject of `docs/history/upgrades.md`. This spec does not change them.
 
 ## 2. Fixed rules
 
@@ -35,7 +35,7 @@ Measured on `main` at `47dc5a3e7` on 2026-09-30.
 | Package migrations | `catalog.package_migrations` records path, ordinal and sha256. An edited applied file refuses with `package-migration-drift`. |
 | Releases | `publish-release` refuses a package that is not applied (`crates/control/lib/src/publish_release.rs:1545-1548`). `select-release` sets the head. `deploy-release` refuses a schema-changing package on an installed database: "schema-changing deployment requires a fresh target; existing-data upgrades are unsupported" (`crates/control/lib/src/delivery/deployment.rs:474-516`). |
 | Hand record | `docs/history/gcp-install-history.md` section 7 holds one entry: `registry.capture_gap` and its grant, applied to `wamn_system` on 2026-09-29 as `wamn_system` (`wamn-59z6`). |
-| Planned hand statements | `docs/plan/kind-to-type.md` sections 4.3.3 and 4.3.4 plan two scripts as the `postgres` superuser. The `wamn_system` script renames P1 to P7, replaces `identity.lock_password_principal`, and appends `record-history.sql`. The project script renames `kind` to `type` and two constraints on every `%_history` table, 15 tables in two databases, and appends `record-history.sql`. The `reconcile-run-plane` cutover of its section 4.3.2 carries P8 and P10 to P12. |
+| Planned hand statements | `docs/history/kind-to-type.md` sections 4.3.3 and 4.3.4 plan two scripts as the `postgres` superuser. The `wamn_system` script renames P1 to P7, replaces `identity.lock_password_principal`, and appends `record-history.sql`. The project script renames `kind` to `type` and two constraints on every `%_history` table, 15 tables in two databases, and appends `record-history.sql`. The `reconcile-run-plane` cutover of its section 4.3.2 carries P8 and P10 to P12. |
 
 ## 4. Design
 
@@ -76,7 +76,7 @@ A migration changes the schema that the running binaries read. The order is:
 3. If the release needs them, run `reconcile-run-plane` and `apply-package` of the new commit.
 4. Start the new binaries, then publish and select the release as today.
 
-The verb never runs a migration that `publish-release` or `deploy-release` needs, and neither verb runs `upgrade-schema`. `deploy-release` keeps its refusal for a schema-changing package, because package upgrades stay in `docs/plan/upgrades.md`.
+The verb never runs a migration that `publish-release` or `deploy-release` needs, and neither verb runs `upgrade-schema`. `deploy-release` keeps its refusal for a schema-changing package, because package upgrades stay in `docs/history/upgrades.md`.
 
 ### 4.5 The installed databases of wamn-dev
 
@@ -105,7 +105,7 @@ One branch. Each issue lands with its tests.
 
 ## 6. Out of scope
 
-- Package migrations of an application and `deploy-release` on an installed database (`docs/plan/upgrades.md`).
+- Package migrations of an application and `deploy-release` on an installed database (`docs/history/upgrades.md`).
 - A migration that runs backward.
 - A change that needs a drain, a backfill in steps, or a second writer.
 - The Kubernetes objects of a change, such as the PAT Secret annotations of `kind-to-type.md` section 4.3.5.
@@ -114,7 +114,7 @@ One branch. Each issue lands with its tests.
 
 The owner answered these on 2026-09-30 (recorded on `wamn-o8b9`). Ruling 5 came after the code of issues 1 to 3.
 
-1. A project schema change means the platform schemas of a project database. Package migrations stay in `docs/plan/upgrades.md`.
+1. A project schema change means the platform schemas of a project database. Package migrations stay in `docs/history/upgrades.md`.
 2. The names are accepted: `upgrade-schema`, `deploy/sql/migrations/system/`, `deploy/sql/migrations/project/`, `registry.schema_migrations` and `app_system.schema_migrations`.
 3. `--baseline <ordinal>` is for the first run only. It is refused once the record table has a row.
 4. The P8 and P10 to P12 renames stay in `reconcile-run-plane` for the cutover. The first project migration of `upgrade-schema` is the baseline after the cutover. A P3 finding (`wamn-qpgq`) says that the in-code schema changes of `reconcile-run-plane` move under `upgrade-schema` later.

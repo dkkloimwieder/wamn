@@ -1,4 +1,4 @@
-"""The cost guard of docs/plan/gcp-deployment.md section 8.2.
+"""The cost guard of docs/history/gcp-deployment.md section 8.2.
 
 It acts on the one project and the one cluster that config.json names, and
 never on the billing account. A message cannot name another project.

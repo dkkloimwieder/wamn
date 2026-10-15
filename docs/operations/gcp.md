@@ -1,6 +1,6 @@
 # Google Cloud
 
-This page installs the platform and the environments `dkk/receiving/dev` and `dkk/wms/dev` on project `wamn-dev`. It starts at an empty project with no cluster and ends with two qualified releases that serve on `receiving.wamn.dev` and `wms.wamn.dev`. Run the sections in order. The [plan](../plan/gcp-deployment.md) gives the reasons and the costs. [Install history](../history/gcp-install-history.md) holds the earlier hand procedure and the records of each run.
+This page installs the platform and the environments `dkk/receiving/dev` and `dkk/wms/dev` on project `wamn-dev`. It starts at an empty project with no cluster and ends with two qualified releases that serve on `receiving.wamn.dev` and `wms.wamn.dev`. Run the sections in order. The [plan](../history/gcp-deployment.md) gives the reasons and the costs. [Install history](../history/gcp-install-history.md) holds the earlier hand procedure and the records of each run.
 
 Every command on this page runs in a shell with these two variables and nothing else:
 
@@ -791,7 +791,7 @@ target/debug/wamn-ctl env delete dkk/receiving/dev
 
 ### 5.6 Upgrade an environment
 
-`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/plan/upgrade-environment.md`). An upgrade of an installed package also needs `--predecessor-release <digest>`, the release that the environment serves. The qualify stage starts kind clusters on this machine. No live run of the verb exists yet, and its first live run waits for the word of the owner (`wamn-m511.7`):
+`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit (`docs/history/upgrade-environment.md`). An upgrade of an installed package also needs `--predecessor-release <digest>`, the release that the environment serves. The qualify stage starts kind clusters on this machine. No live run of the verb exists yet, and its first live run waits for the word of the owner (`wamn-m511.7`):
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh

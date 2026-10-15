@@ -26,7 +26,7 @@ struct GovernedLiteral {
 const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     // RETIRED `crates/authoring/model/src/lib.rs` / `SCHEMA_VERSION`: the
     // authoring contract moved to 0.2 with the kind → type rename
-    // (wamn-ld93.4, docs/plan/kind-to-type.md §3.1 A4), and the decoder
+    // (wamn-ld93.4, docs/history/kind-to-type.md §3.1 A4), and the decoder
     // refuses 0.1 by name, so the MVP 0.1 line no longer governs it.
     GovernedLiteral {
         path: "crates/control/registry/src/types.rs",
@@ -220,7 +220,7 @@ fn tracked_files(repository: &Path, patterns: &[&str]) -> Result<Vec<PathBuf>, S
         .collect())
 }
 
-/// A WAMN WIT package keeps its own version (`docs/plan/operation-ids.md`),
+/// A WAMN WIT package keeps its own version (`docs/history/operation-ids.md`),
 /// and the tree holds one version of it. Copies of that version may repeat.
 /// A YAML manifest names a package on separate lines (`namespace: wamn`,
 /// `package:`, `version:`), and those count too (`wamn-3vi3`).

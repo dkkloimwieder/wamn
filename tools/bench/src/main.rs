@@ -1,4 +1,4 @@
-//! A benchmark of a deployed host over HTTPS (docs/plan/gcp-deployment.md
+//! A benchmark of a deployed host over HTTPS (docs/history/gcp-deployment.md
 //! section 6).
 //!
 //! The tool drives one Receiving purchase-order call against the route

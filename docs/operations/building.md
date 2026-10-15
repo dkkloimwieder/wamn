@@ -185,7 +185,7 @@ docker build --target edge --output type=local,dest=target/edge .
 
 The result is one stripped file, `target/edge/wamn-edge`.
 The target compiles with the Debian trixie cross compiler, so the box needs glibc 2.38 or later.
-[The edge specification](../plan/edge.md) section 4.9 records the measured size and dependency counts.
+[The edge specification](../history/edge.md) section 4.9 records the measured size and dependency counts.
 
 ## Isolated worktrees
 

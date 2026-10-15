@@ -8,7 +8,7 @@ The built parts are in the operations pages.
 ## 1. Remaining work
 
 The first real deployment runs Receiving through the public host on Google Cloud, and a user signs in and completes a supplier change in a browser.
-`wamn-ghx2` holds it, and [Google Cloud deployment](gcp-deployment.md) is its plan. The owner named the project, the domain and the certificate issuer on 2026-09-25.
+`wamn-ghx2` holds it, and [Google Cloud deployment](../history/gcp-deployment.md) is its plan. The owner named the project, the domain and the certificate issuer on 2026-09-25.
 The Google Cloud part of the edge chart is assumed and not tested. Only a rendering checks it.
 
 ## 2. Fixed rules
@@ -44,7 +44,7 @@ Option C gives a tested shape before any cloud cost. The GCP shape is assumed an
 
 The shell already routes under one origin: `/api` for the platform and the environment as the first page segment. A tenant that needs a second host gets it later. Receiving and WMS share no route path today.
 
-A later owner ruling of 2026-09-25 changes this for Google Cloud testing. There, each application first gets its own subdomain, for example `receiving.wamn.dev`. [Google Cloud deployment](gcp-deployment.md) records it and its consequences.
+A later owner ruling of 2026-09-25 changes this for Google Cloud testing. There, each application first gets its own subdomain, for example `receiving.wamn.dev`. [Google Cloud deployment](../history/gcp-deployment.md) records it and its consequences.
 
 ### 3.3 A shared cache for authenticated reads
 

@@ -25,7 +25,7 @@ pub trait InvocationPolicy: HostPlugin + Sized {
     type ItemTransaction: ItemTransaction;
 
     /// Begin the host transaction of one item of a logged call, before its
-    /// claim and its guest call (`docs/plan/host-transaction.md` 4.1). It
+    /// claim and its guest call (`docs/history/host-transaction.md` 4.1). It
     /// admits the call as [`activate`](Self::activate) does. An operation that
     /// declares no SQL gets `None`.
     fn begin_item(

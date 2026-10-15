@@ -149,7 +149,7 @@ fn detail_name(key: OperationErrorDetailKey) -> &'static str {
 /// Emit component exports around an application's typed handler.
 ///
 /// A `transacted` operation works in the transaction that the host began for
-/// it (`docs/plan/host-transaction.md` 4.1), so its export takes no state: its
+/// it (`docs/history/host-transaction.md` 4.1), so its export takes no state: its
 /// handler gets the operation transaction.
 pub(super) fn emit_export_adapter(type_name: &str, direct: bool, transacted: bool) -> String {
     let input_type = if direct {

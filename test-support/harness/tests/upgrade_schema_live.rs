@@ -1,4 +1,4 @@
-//! Live test of `upgrade-schema` (`wamn-o8b9`, docs/plan/schema-upgrade.md
+//! Live test of `upgrade-schema` (`wamn-o8b9`, docs/history/schema-upgrade.md
 //! section 5, issue 2).
 //!
 //! The test starts its own PostgreSQL 18 server. It installs the control store

@@ -50,7 +50,7 @@ use wamn_engine::warm_reuse::WarmReuse;
 mod native_policy;
 
 /// What one cloud call needs to log its intents
-/// (`docs/plan/host-transaction.md` 5, issue 4).
+/// (`docs/history/host-transaction.md` 5, issue 4).
 #[derive(Debug)]
 pub struct CallIntents {
     /// The two-step store of an operation without SQL. An operation with SQL

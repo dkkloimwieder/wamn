@@ -1,4 +1,4 @@
-//! The `upgrade-schema` subcommand of `docs/plan/schema-upgrade.md`: apply
+//! The `upgrade-schema` subcommand of `docs/history/schema-upgrade.md`: apply
 //! the pending platform migrations to one installed database.
 //!
 //! With `--system-database-url` alone, the verb upgrades the system database.

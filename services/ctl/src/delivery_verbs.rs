@@ -95,7 +95,7 @@ pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
 }
 
 /// Take one installed environment to the bytes of one commit
-/// (docs/plan/upgrade-environment.md).
+/// (docs/history/upgrade-environment.md).
 #[derive(Debug, Args)]
 pub struct UpgradeEnvironmentArgs {
     #[arg(long)]

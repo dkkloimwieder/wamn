@@ -609,7 +609,7 @@ pub struct CloseCaptureGapArgs {
     pub system_database_url: String,
 }
 
-/// Arguments of `upgrade-schema` (docs/plan/schema-upgrade.md).
+/// Arguments of `upgrade-schema` (docs/history/schema-upgrade.md).
 #[derive(Debug, Args)]
 pub struct UpgradeSchemaArgs {
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`). Alone, it

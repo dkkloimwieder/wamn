@@ -122,7 +122,7 @@ Qualification refuses an omitted overlay, a changed contract, or a migration sta
 Reconciliation requires evidence for the complete current package set and privileges, without selecting by timestamp.
 Selection and kind deployment share the same rule for rollback to the qualified immediate predecessor while retaining committed migrations.
 The [package upgrade procedure](../operations/deployment.md#package-upgrades) owns command order and recovery.
-Changed operation contracts, migration exceptions, and broader rollback remain in [upgrade plans](../plan/upgrades.md).
+Changed operation contracts, migration exceptions, and broader rollback remain in [upgrade plans](../history/upgrades.md).
 
 ## Runtime owners
 

@@ -127,10 +127,10 @@ impl EdgeHost {
     }
 }
 
-/// The memory cap of one guest memory on the box (docs/plan/edge.md 4.9).
+/// The memory cap of one guest memory on the box (docs/history/edge.md 4.9).
 const EDGE_MEMORY_CAP_BYTES: usize = 256 << 20;
 /// The route requests the box serves at once, over all its routes
-/// (docs/plan/edge.md 4.9). It is the box's route limit and sizes the pool.
+/// (docs/history/edge.md 4.9). It is the box's route limit and sizes the pool.
 const EDGE_REQUESTS_IN_FLIGHT: NonZeroUsize = NonZeroUsize::new(4).expect("four is not zero");
 /// The compile cache directory, beside the run-state file.
 const COMPILE_CACHE_DIR: &str = "compile-cache";

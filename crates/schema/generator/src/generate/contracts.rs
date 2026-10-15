@@ -384,7 +384,7 @@ fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueCon
 }
 
 /// What a consumer must know about the retry of one claim operation
-/// (`docs/plan/host-transaction.md` 4.2).
+/// (`docs/history/host-transaction.md` 4.2).
 ///
 /// The host claims the key in the write log, the work runs and the host stores
 /// the result in one transaction. A retry with the same request answers the

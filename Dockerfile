@@ -104,7 +104,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
 
 # ---- edge box binary: aarch64 release, cross-compiled ----------------------
-# docs/plan/edge.md 4.10 option A. The C code in aws-lc-sys and libsqlite3-sys
+# docs/history/edge.md 4.10 option A. The C code in aws-lc-sys and libsqlite3-sys
 # needs the Debian cross compiler; the Rust linker is the same compiler.
 FROM root-source AS build-edge
 RUN apt-get update && apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross && rm -rf /var/lib/apt/lists/* \

@@ -743,7 +743,7 @@ qualify-upgrade
 - the separate wamn-dev/GCP host deployment path;
 - that reverse migration is not rollback.
 
-Reduce `docs/plan/upgrades.md` to the design debt that remains for Epics 2 and 3.
+Reduce `docs/history/upgrades.md` to the design debt that remains for Epics 2 and 3.
 
 ### 5. Real wamn-dev WMS run
 

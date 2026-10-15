@@ -1,26 +1,40 @@
 # Plans
 
-These pages describe unbuilt work and its limits. Current behavior belongs in [architecture](../architecture/README.md), and Beads records decisions and implementation status.
+Each page below is a plan with its status: done, live or deferred, and its bead. Current behavior belongs in [architecture](../architecture/README.md), and Beads records decisions and implementation status.
 
-- [Component pull](component-pull.md): Design for the GKE host to pull with a Workload Identity token in place of the registry token CronJob (finding `wamn-i87m`).
-- [Delivery](delivery.md): Deferred CI-provider configuration and conditional delivery extensions.
-- [Environment teardown](environment-teardown.md): Design for `delete-project-env`, the verb that deletes one project environment (finding `wamn-psss`).
-- [Identity](identity.md): External login providers within the existing identity authority.
-- [Edge](edge.md): Epic 19 scope for `wamn-edge`, one application and one device loop on a small aarch64 box.
-- [Generated operations](generated-operations.md): Draft design for generating the handler, data function, world export, route entry and declaration entry of each generated operation.
-- [Google Cloud deployment](gcp-deployment.md): Epic 23 proposal for the first deployment to the `wamn-dev` project, with costs, a limited mode and shutdown commands.
-- [Host-owned transaction](host-transaction.md): Design for one idempotency path, in which the host owns the transaction of an operation and the engine runs the intent rules around every call.
-- [User identity and login](identity-plan.md): Incremental password login, later account lifecycle, and PAT-free sensitive operations with planning at each epic start.
-- [Manifest authoring](manifest-authoring.md): Epic 1 design for authoring the manifest in `wamn.k`, compiled by a pinned `kcl` CLI to the committed `generated/wamn.json`.
-- [NATS outage](nats-outage.md): Design for the host and the runtime operator to stay up and connect again when the scheduler NATS stops or moves.
-- [Operation ids](operation-ids.md): Design for authoring the package version once, in `wamn.json`, and deriving each sealed operation id from it.
-- [Operator image](operator-image.md): Design for the image and the Jobs that run the verbs that call identity inside the cluster (findings `wamn-n5d1` and `wamn-lo7z`).
-- [Operator UI](operator-ui.md): Deferred client and screen capabilities.
-- [Release qualification](release-qualification.md): Draft design for `qualify-release` of any environment from its candidate (finding `wamn-ld93.33`).
-- [Schema upgrade](schema-upgrade.md): Design for `upgrade-schema`, the verb that applies a platform schema change to an installed database (finding `wamn-o8b9`).
-- [Upgrades](upgrades.md): Design for changing a schema after installation.
-- [Upgrade environment](upgrade-environment.md): Epic 1 spec for `upgrade-environment`, one verb that takes an installed environment to one pinned commit, measured on the cutover of 2026-10-02.
-- [Web deployment](web-deployment.md): Epic 20 rules for the web client host, and its remaining real deployment.
-- [Web operator client](web-operator-client.md): Generated browser UIs from the release contract, scoped one epic at a time.
-- [Write log](write-log.md): Epic 24 design for one idempotency record per database, `app_system.write_log`, in place of the claim tables.
-- [Workflow feature](workflow-feature.md): Epic 22 scope for the workflow contract, an event trigger, a JSONata node, and the WMS label workflow.
+- [CDC reader slot](cdc-reader-slot.md): done, `wamn-59z6`.
+- [Component pull](component-pull.md): done, `wamn-i87m`.
+- [Delivery](delivery.md): deferred, no bead.
+- [Environment teardown](environment-teardown.md): done, `wamn-psss`.
+- [Generated operations](generated-operations.md): done, `wamn-iowb`.
+- [Identity](identity.md): deferred, `wamn-jpx2`.
+- [Manifest authoring](manifest-authoring.md): done, `wamn-j1ti`.
+- [NATS outage](nats-outage.md): deferred, `wamn-gdex` and `wamn-ifh7`.
+- [Operator image](operator-image.md): done, `wamn-n5d1` and `wamn-lo7z`.
+- [Operator UI](operator-ui.md): deferred, no bead.
+- [Package upgrade](package-upgrade.md): live, `wamn-eycl` (Epic 4); Epic 3 `wamn-5ihq` is deferred.
+- [Platform deploy](platform-deploy.md): done, `wamn-jqdja`.
+- [Platform UI](platform-ui.md): done, `wamn-a40n`.
+- [Release qualification](release-qualification.md): done, `wamn-ld93.33`.
+- [Routes, workflows, and the router](routes-router.md): done, `wamn-upl3`.
+- [Table data loading](table-adv-data.md): done, `wamn-3nsf`.
+- [Table presentation](table-adv-ui.md): done, `wamn-8iul`.
+- [Transactional composition](trx-pkg-plan.md): done, `wamn-14bx8`, `wamn-lqtai`, `wamn-ponya` and `wamn-aemxz`.
+- [Web deployment](web-deployment.md): done, `wamn-xyxj`.
+- [Web operator client](web-operator-client.md): deferred, items 8 and 9 of §7 have no bead.
+- [Workflow feature](workflow-feature.md): done, `wamn-upl3`.
+- [Write log](write-log.md): done, `wamn-an24`.
+
+## Moved to history
+
+- [Google Cloud deployment](../history/gcp-deployment.md): done, `wamn-ghx2`; [platform deploy](platform-deploy.md) replaced it.
+- [Edge](../history/edge.md): done, `wamn-e5in`; its status section is now [architecture](../architecture/edge.md).
+- [Upgrades](../history/upgrades.md): done, `wamn-orb5`.
+- [Upgrade environment](../history/upgrade-environment.md): done, `wamn-m511`; replaced by [platform deploy](platform-deploy.md) §10.
+- [Schema upgrade](../history/schema-upgrade.md): done, `wamn-o8b9`.
+- [Kind to type](../history/kind-to-type.md): done, `wamn-sfea`.
+- [Application simplification](../history/application-simplification-plan.md): superseded; [platform deploy](platform-deploy.md) is the one authority.
+- [Host-owned transaction](../history/host-transaction.md): done, `wamn-4afx`.
+- [Operation ids](../history/operation-ids.md): done, `wamn-cuqc`.
+- [User identity and login](../history/identity-plan.md): done, `wamn-a045` and `wamn-k3mu`; open work is [identity](identity.md).
+- [Platform UI history](../history/platform-ui-history.md): sections 0, 1 and 3 to 9 of platform UI; section 5 is replaced by [platform deploy](platform-deploy.md) §12.

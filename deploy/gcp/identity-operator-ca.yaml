@@ -1,4 +1,4 @@
-# The operator CA of identity in docs/plan/gcp-deployment.md step 3. Identity
+# The operator CA of identity in docs/history/gcp-deployment.md step 3. Identity
 # accepts POST /pats and POST /invitations only from a client certificate of
 # this CA. It is separate from wasmcloud-ca, because every host certificate
 # chains to wasmcloud-ca and a host must not act as an operator.

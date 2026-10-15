@@ -1,4 +1,4 @@
-//! Numbered platform migrations of `docs/plan/schema-upgrade.md`.
+//! Numbered platform migrations of `docs/history/schema-upgrade.md`.
 //!
 //! A platform schema change goes into the full schema files and into a new
 //! file under `deploy/sql/migrations/system/` or `deploy/sql/migrations/project/`

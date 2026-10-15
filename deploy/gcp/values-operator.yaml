@@ -1,4 +1,4 @@
-# The runtime operator on GKE (docs/plan/gcp-deployment.md step 3), over
+# The runtime operator on GKE (docs/history/gcp-deployment.md step 3), over
 # deploy/infra/values-wamn.yaml. The operator, its NATS and its CA live in
 # namespace platform. The hosts run in namespace hosts.
 operator:

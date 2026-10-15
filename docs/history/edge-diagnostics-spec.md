@@ -15,8 +15,8 @@ Today the edge serves only the routes of its release, and the operator reads non
 
 ## 2. Fixed rules
 
-- The edge links nothing new from the list that `docs/plan/edge.md` section 2 refuses: no `wamn-runtime`, Postgres, NATS, OCI or OTLP gRPC. The dependency test stays as it is.
-- The release routes keep one path matcher and one lowering, the `http-route` guest (`docs/plan/edge.md` section 4.3). The read surface does not add a second matcher to that ingress.
+- The edge links nothing new from the list that `docs/history/edge.md` section 2 refuses: no `wamn-runtime`, Postgres, NATS, OCI or OTLP gRPC. The dependency test stays as it is.
+- The release routes keep one path matcher and one lowering, the `http-route` guest (`docs/history/edge.md` section 4.3). The read surface does not add a second matcher to that ingress.
 - The read surface reads. Resolving a refused sample stays the `wamn-edge samples resolve` command on a stopped edge.
 - The surface reports what the process holds. It adds no new stored state for the four facts.
 
@@ -34,7 +34,7 @@ Measured on `main` at `43497e343` on 2026-10-01.
 | Access to the host | `EdgeHost` holds the device loop, the forward and the sample store (`services/edge/src/serve.rs:47-73`). |
 | Ingress | wash-runtime's `Ingress` routes each request to a workload through its `Router` trait. It has no native handler. The edge's ingress serves the route guest only. |
 | Native listener precedent | wash-runtime's probe listener serves `/livez` and `/readyz` from the host on a port of its own (`wash_runtime::host::probes`). `services/host` binds it at `--probe-addr`. |
-| Edge documentation | The behavior of the edge is still in `docs/plan/edge.md`. No page under `docs/architecture` describes `wamn-edge`. |
+| Edge documentation | The behavior of the edge is still in `docs/history/edge.md`. No page under `docs/architecture` describes `wamn-edge`. |
 
 ## 4. Design
 
@@ -90,4 +90,4 @@ One chain, the routes agent, after acceptance. Each issue lands with its tests.
 - A credential on the status listener.
 - Sample bodies in the status answer.
 - A push of the facts to the platform.
-- Moving the rest of `docs/plan/edge.md` into `docs/architecture`.
+- Moving the rest of `docs/history/edge.md` into `docs/architecture`.

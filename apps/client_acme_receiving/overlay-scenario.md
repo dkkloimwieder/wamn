@@ -84,4 +84,4 @@ It also exercises the receipt consumer in each installation.
 
 A compatible additive base does not require rewriting the immutable overlay artifact.
 An incompatible consumed contract requires client work and a new package version.
-The separate [upgrade plan](../../docs/plan/upgrades.md) covers deferred changes to databases with retained data.
+The separate [upgrade plan](../../docs/history/upgrades.md) covers deferred changes to databases with retained data.

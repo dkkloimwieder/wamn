@@ -1,4 +1,4 @@
-# The public certificate of docs/plan/gcp-deployment.md step 2. cert-manager
+# The public certificate of docs/history/gcp-deployment.md step 2. cert-manager
 # answers the Let's Encrypt DNS-01 challenge in the Cloud DNS zone wamn-dev.
 # Its service account has roles/dns.admin on that zone only, through Workload
 # Identity, so the solver names the zone and never lists zones.

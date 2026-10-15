@@ -259,7 +259,7 @@ fn operation_owner_component(statement: &str) -> String {
     )
 }
 
-/// The operation transaction of `docs/plan/host-transaction.md` 4.1: the host
+/// The operation transaction of `docs/history/host-transaction.md` 4.1: the host
 /// begins it, the guest works in it, and only the host finishes it. A commit
 /// makes the guest's update visible, and a rollback undoes it.
 #[tokio::test]

@@ -6,7 +6,7 @@
 //! `max_frame`, and counts each dropped frame, because drops show a
 //! misconfigured device. It logs the first drop only. The device operation
 //! sees only the frame text. A device that the host must drive (write, poll, handshake) needs a
-//! host plugin with a WIT import instead (docs/plan/edge.md 4.2).
+//! host plugin with a WIT import instead (docs/history/edge.md 4.2).
 
 use std::fs::File;
 use std::io::Read;

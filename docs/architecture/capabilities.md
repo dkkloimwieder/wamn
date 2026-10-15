@@ -205,7 +205,7 @@ It requests 30 days and authenticates the returned token as the expected princip
 It writes the credential atomically to a mode-0600 file.
 There is no database issuance fallback or credential output on stdout.
 
-The [PAT client](../../crates/control/lib/src/pat_client.rs) requires HTTPS and complete explicit TLS inputs before resource writes.
+The [PAT client](../../crates/identity/client/src/lib.rs) requires HTTPS and complete explicit TLS inputs before resource writes.
 Its base URL cannot contain user information, a query, or a fragment.
 The request permits five seconds and a 4,096-byte response, with no redirect or retry.
 If the connection is lost after issuance, the token can exist without a recoverable raw value.
@@ -221,7 +221,7 @@ With `--registry-token-metadata`, the host reads no credential file.
 Each pull asks the GKE metadata server of the pod's Workload Identity for a token, and sends it as the password of `oauth2accesstoken`.
 The host keeps no token and no expiry, and each pull builds its own registry client.
 The server's host is `GCE_METADATA_HOST` when it is set, as Google's client libraries read it, and `metadata.google.internal` otherwise.
-The [reader](../../crates/platform/runtime/src/registry_credentials.rs) owns both accepted forms.
+The [reader](../../crates/catalog/package-artifact/src/registry_credentials.rs) owns both accepted forms.
 
 The host image also carries [`docker-credential-wamn`](../../crates/platform/runtime/src/bin/docker-credential-wamn.rs), a Docker credential helper for wash-runtime's own pulls.
 It answers `get` with the same token function, and supports no other command.

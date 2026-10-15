@@ -41,7 +41,7 @@ A packaging that changes location is a fact about the packaging, not a change of
 - The packaging record history keeps its rows with `retention: unlimited`. A retention period is a later decision of the retention verb.
 - The `wamn.json` workflow declaration gains an optional `condition`, the expression that the platform registration condition already takes.
 - Receiving stays in its own schema. No application writes the tables of another application.
-- The write log rules of [write-log.md](write-log.md) stay: the codec owns the transaction, and a retry answers the stored result and runs no post-commit work.
+- The write log rules of [write-log.md](../plan/write-log.md) stay: the codec owns the transaction, and a retry answers the stored result and runs no post-commit work.
 - A command that locks more than one packaging locks them in id order (`lock_both_packagings.sql`).
 
 ## 3. Current state

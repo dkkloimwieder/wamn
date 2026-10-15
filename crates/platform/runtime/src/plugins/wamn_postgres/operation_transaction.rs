@@ -1,5 +1,5 @@
 //! The transaction that the host owns for one logged operation item
-//! (`docs/plan/host-transaction.md` 4.1).
+//! (`docs/history/host-transaction.md` 4.1).
 //!
 //! The host begins it before the guest call, under the claims of the call, in
 //! the same `BEGIN` batch as every statement transaction. The guest works in

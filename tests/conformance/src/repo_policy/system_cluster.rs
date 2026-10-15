@@ -11,7 +11,7 @@ use super::Problems;
 /// The manifests, below `deploy/`, that define the cluster of the system
 /// database: the T1 cluster of kind, and the one cluster of the Google Cloud
 /// test deployment, which holds the system database and every tenant database
-/// (`docs/plan/gcp-deployment.md`).
+/// (`docs/history/gcp-deployment.md`).
 const ALLOWLIST: &[&str] = &["platform/wamn-sysdb.yaml", "gcp/cnpg-cluster.yaml"];
 
 /// The fewest manifests a real `deploy/` tree holds. A lower count means the

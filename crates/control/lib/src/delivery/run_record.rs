@@ -1,5 +1,5 @@
 //! The run record of an environment upgrade and its resume rule
-//! (docs/plan/upgrade-environment.md §2 and §4.2, the Record stage).
+//! (docs/history/upgrade-environment.md §2 and §4.2, the Record stage).
 //!
 //! The record names every step of a run with its start and end in UTC, its
 //! inputs and its result. It holds no credential: a caller never passes one as

@@ -37,7 +37,7 @@ const REFUSED: &[(&str, &str)] = &[
 ];
 
 /// The refused crates wash-runtime links with every feature off. The owner
-/// accepted this list (finding `wamn-qt1t`, docs/plan/edge.md section 4.1).
+/// accepted this list (finding `wamn-qt1t`, docs/history/edge.md section 4.1).
 const WASH_RUNTIME_LIST: &[&str] = &["async-nats", "opentelemetry-otlp", "redis", "tonic"];
 
 /// The build host, then the Raspberry Pi 3B class box.

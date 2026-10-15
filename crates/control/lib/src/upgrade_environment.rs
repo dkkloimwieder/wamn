@@ -1,5 +1,5 @@
 //! `wamn-ctl upgrade-environment`: one installed environment to the bytes of
-//! one commit (docs/plan/upgrade-environment.md).
+//! one commit (docs/history/upgrade-environment.md).
 //!
 //! Each stage of §4.2 is a function over the run record. A stage reads the
 //! state first and records `already_done` when the state is the target. The
@@ -130,7 +130,7 @@ fn platform(environment: &EnvironmentFile) -> anyhow::Result<crate::environment:
 }
 
 /// A refusal that changes what runs: the run stops at once and is not
-/// retried (docs/plan/upgrade-environment.md §2).
+/// retried (docs/history/upgrade-environment.md §2).
 #[derive(Debug)]
 struct StopRun(&'static str);
 
@@ -2818,7 +2818,7 @@ fn redact(text: &str) -> String {
 
 /// A port-forward to the primary pod of a CloudNativePG cluster, on a free
 /// local port. A pod forward, because a Service forward resets connections
-/// (`docs/plan/kind-to-type.md` B0). The forward ends with this value.
+/// (`docs/history/kind-to-type.md` B0). The forward ends with this value.
 struct PortForward {
     port: u16,
     _child: Child,

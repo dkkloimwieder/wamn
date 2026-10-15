@@ -1,6 +1,6 @@
 # Edge box
 
-These commands operate `wamn-edge` on its box. [Building](building.md#the-edge-box-binary) builds the binary, and [the edge specification](../plan/edge.md) holds its behavior.
+These commands operate `wamn-edge` on its box. [Building](building.md#the-edge-box-binary) builds the binary, and [the edge specification](../history/edge.md) holds its behavior.
 
 ## Serve
 

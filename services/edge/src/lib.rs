@@ -1,4 +1,4 @@
-//! One application and one device loop on a small box (docs/plan/edge.md).
+//! One application and one device loop on a small box (docs/history/edge.md).
 //!
 //! This crate exports:
 //!

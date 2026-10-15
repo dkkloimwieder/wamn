@@ -458,7 +458,7 @@ pub struct ServingRoute {
 }
 
 /// The canonical form of one route's input item
-/// (`docs/plan/host-transaction.md` 7, ruling (a)).
+/// (`docs/history/host-transaction.md` 7, ruling (a)).
 ///
 /// Two spellings of one request are one request: the host respells the
 /// declared leaves and orders the declared lines before it hashes the item

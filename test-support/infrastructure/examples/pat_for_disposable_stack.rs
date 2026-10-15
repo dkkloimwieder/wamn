@@ -1,5 +1,5 @@
 //! Issue a management-author PAT on a disposable stack, for a dry run of
-//! docs/plan/kind-to-type.md §3.2 B8 step 3.
+//! docs/history/kind-to-type.md §3.2 B8 step 3.
 //!
 //! An operator mints through the `mint-pat` Job of docs/operations/gcp.md
 //! §3.16. A disposable stack has no such Job, so this starts the temporary

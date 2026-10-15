@@ -1,5 +1,5 @@
 //! The edge release bundle: the files that publish writes for an edge box, and
-//! the one file whose digest pins them (docs/plan/edge.md section 4.6).
+//! the one file whose digest pins them (docs/history/edge.md section 4.6).
 //!
 //! The directory holds `edge-release.json`, the canonical serving manifest,
 //! `components.json`, `grants.json`, `flow-http.wasm`, and `<sha256>.wasm` for

@@ -97,4 +97,4 @@ The [test methods](../../docs/testing/application-tests.md#receiving-commands) d
 
 The application does not support atomic client extensions across separate component invocations.
 ERP integration and CSV import need an actual application requirement.
-Schema changes with retained installed data remain in the deferred [upgrade design](../../docs/plan/upgrades.md).
+Schema changes with retained installed data remain in the deferred [upgrade design](../../docs/history/upgrades.md).

@@ -35,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     let request = gate_document(
         &GateInput {
             // The version keeps a gate of a new package version apart from the
-            // recorded gate of the old one (docs/plan/kind-to-type.md §3.1 A11).
+            // recorded gate of the old one (docs/history/kind-to-type.md §3.1 A11).
             command_id: format!(
                 "gate-{}-{}-{wiring_id}",
                 package.package_id(),

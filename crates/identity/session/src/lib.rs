@@ -1,5 +1,5 @@
 //! Session-token verification over a key source, with no database and no HTTPS
-//! client (docs/plan/edge.md section 4.4).
+//! client (docs/history/edge.md section 4.4).
 //!
 //! This crate exports:
 //!

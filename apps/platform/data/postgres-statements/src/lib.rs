@@ -375,7 +375,7 @@ impl Transaction {
 }
 
 /// The transaction that the host began for this operation
-/// (`docs/plan/host-transaction.md` 4.1). The host commits or rolls it back
+/// (`docs/history/host-transaction.md` 4.1). The host commits or rolls it back
 /// after the call, so its `commit` and `rollback` refuse, and dropping it
 /// leaves it open.
 pub async fn operation_transaction() -> Result<Transaction, StatementError> {

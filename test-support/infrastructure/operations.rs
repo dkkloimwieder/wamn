@@ -3,7 +3,7 @@
 //! A test names an operation by its reference,
 //! `<package>:<interface>/<operation>`, as the authored publication files do.
 //! The version is authored once, in the package `wamn.json`, and these
-//! functions read it there (docs/plan/operation-ids.md). A cluster case reads
+//! functions read it there (docs/history/operation-ids.md). A cluster case reads
 //! it from the `wamn.json` of the candidate's package artifact instead
 //! ([`sealed_in`]): the runner has no checkout.
 

@@ -181,7 +181,7 @@ The intent rules, as issue `wamn-e5in.7` built them in the [engine](../../crates
 - A create, update, delete, or command logs. A get, query, projection, or event handler never logs.
 - Each input item is one intent. Its key is the item field that the route names in its `idempotency` member, or else the item's `request_id`. Publish writes that member from the generated input contract, as it writes `reads` and `revision`.
 - The input hash is the canonical JSON SHA-256 of the item without its `request_id`, with the key kept and the selected participation intent added. A key that repeats with another input answers the item error `idempotency_conflict`, with the detail `{field, intent}`.
-- Only new items run, each alone as a one-item list (`docs/plan/host-transaction.md` section 2). A finished key answers its stored item outcome, and the answers merge into one item list in the order of the input.
+- Only new items run, each alone as a one-item list (`docs/history/host-transaction.md` section 2). A finished key answers its stored item outcome, and the answers merge into one item list in the order of the input.
 - A refused item frees its key. The store keeps only successes, so a retry of a refused key runs again.
 - A begun key with no outcome answers the item error `intent-uncertain`, which names the intent. A trap, a missed deadline, or a host failure leaves the running item of a call in that state.
 - An operator resolves an uncertain intent with `wamn-edge intents resolve <id> <basis>` while the edge is stopped, and lists them with `wamn-edge intents list`. A resolved key answers `intent-resolved` with the basis and is never uncertain again, so the client sends a new key.
@@ -255,13 +255,7 @@ Tests run on the x86_64 host, because the edge logic does not depend on the targ
 
 ### 4.11 Status
 
-Epic `wamn-1bd2` added the status of a running edge ([its specification](../history/edge-diagnostics-spec.md)).
-
-- The edge serves `GET /status` on the Unix socket `status.sock` in the directory of the run-state file. It binds the socket before the host takes work and removes it when it stops. A socket file that a killed edge left is removed at the next start, because the start holds the run-state file.
-- The socket has no port and no configuration key, so nothing off the box reaches it. It checks no credential, as the host's probe listener checks none. Its own accept loop keeps it apart from the release routes.
-- The answer is one JSON object: `started_at`, `device.dropped_frames`, `forward.credential_failures`, `forward.stopped`, `samples.pending`, and `samples.refused`. `device` and `forward` are null when the configuration names no device or no forward. The counters count since `started_at`, because they live in memory.
-- `forward.stopped` is true after the forward stops at `credential_bound`. Each refused sample carries its `sample_key`, `captured_at` and `reason`, and no body.
-- `wamn-edge status` prints the answer as text: one name and value per line, separated by a tab, and one `refused` line per refused sample. It finds the socket from the run-state path in the configuration.
+Moved to [edge](../architecture/edge.md).
 
 ## 5. Issues
 

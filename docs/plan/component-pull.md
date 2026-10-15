@@ -75,7 +75,7 @@ A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docke
 - The host's existing Google service account, `wamn-blob`, gets `roles/artifactregistry.reader` on repository `wamn`. A pod has one Workload Identity binding, and the host needs both roles. The name `wamn-blob` now understates the account. Renaming it is not this finding.
 - The GKE host values drop the `wamn-registry-pull` volume, its mount and `WAMN_REGISTRY_AUTH_FILE`, and set the metadata source and the ConfigMap.
 - `deploy/gcp/registry-token.yaml` is deleted, with its service account, Secret, Role and RoleBinding. `wamn-registry-reader` and its two IAM bindings are deleted.
-- `docs/operations/gcp.md` and `docs/plan/gcp-deployment.md` lose the CronJob steps.
+- `docs/operations/gcp.md` and `docs/history/gcp-deployment.md` lose the CronJob steps.
 
 Done in `wamn-i87m` (06b3b771a). On 2026-10-14, the two hosts on fresh `wamn-dev` nodes loaded their releases (1 and 4 component digests) with `WAMN_REGISTRY_TOKEN_METADATA=true` and no pull Secret.
 

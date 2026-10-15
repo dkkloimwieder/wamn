@@ -112,7 +112,7 @@ pub fn idempotency_field(input_contract: &serde_json::Value) -> Option<String> {
 /// `canonicalization` of the contract adds its excluded fields, without the
 /// `request_id` and the key, and its line order. Publish writes it into the
 /// operation's route, and the host applies it before it hashes an item
-/// (`docs/plan/host-transaction.md` 7, ruling (a)).
+/// (`docs/history/host-transaction.md` 7, ruling (a)).
 #[must_use]
 pub fn route_canonicalization(
     input_contract: &serde_json::Value,

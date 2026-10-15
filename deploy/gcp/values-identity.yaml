@@ -1,4 +1,4 @@
-# Identity values of docs/plan/gcp-deployment.md step 3. The chart writes the
+# Identity values of docs/history/gcp-deployment.md step 3. The chart writes the
 # image as repository:tag, so the digest is split at its colon: the image is
 # us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity@sha256:<hex>. It is
 # the identity image wamn-identity:0.1.1 that build-platform pushed and

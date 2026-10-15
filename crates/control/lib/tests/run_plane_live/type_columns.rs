@@ -1,5 +1,5 @@
 //! The kind → type column cutover on an installed database
-//! (docs/plan/kind-to-type.md §4.3.2).
+//! (docs/history/kind-to-type.md §4.3.2).
 //!
 //! Each case installs today's schema and renames the P8 and P10 to P12 names
 //! back to their old spelling, which is the state of a database installed
@@ -89,7 +89,7 @@ async fn install_old_type_columns(su: &Client) {
 }
 
 /// The names of these four tables that still hold `kind`: the check query of
-/// docs/plan/kind-to-type.md §4.3, narrowed to them.
+/// docs/history/kind-to-type.md §4.3, narrowed to them.
 async fn kind_names(su: &Client) -> Vec<String> {
     su.query(
         "SELECT a.attname::text FROM pg_catalog.pg_attribute AS a \

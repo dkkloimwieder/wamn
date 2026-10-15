@@ -1,6 +1,6 @@
 # Release qualification
 
-Updated through: 2026-10-01, `main` at `01ca2425d`. Finding `wamn-ld93.33`. The owner ruled the four forks of §7 on 2026-10-01. The cutover of `docs/plan/kind-to-type.md` §3.2 waits on it, because no head is set without a qualification.
+Updated through: 2026-10-01, `main` at `01ca2425d`. Finding `wamn-ld93.33`. The owner ruled the four forks of §7 on 2026-10-01. The cutover of `docs/history/kind-to-type.md` §3.2 waits on it, because no head is set without a qualification.
 
 ## 1. Goal
 
@@ -94,7 +94,7 @@ The cases reach a host through a NodePort with a `Host` header. There is no ingr
 
 - `wamn-ctl-ops copy-project-env` (`crates/control/lib/src/copy_project_env.rs`) copies the rows of one data schema with `pg_dump -Fd` and `pg_restore --data-only` (`crates/control/provision/src/copy.rs:193-235`). It does not copy `catalog`. The destination must already be provisioned (`copy_project_env.rs:31-32`).
 - The dev loop clones a database with `CREATE DATABASE … TEMPLATE` (`dev/environment.rs:474-520`).
-- `docs/plan/upgrades.md:11` describes a representative copy of the prior database as deferred design.
+- `docs/history/upgrades.md:11` describes a representative copy of the prior database as deferred design.
 
 ## 4. Design
 
@@ -140,7 +140,7 @@ Acme takes part in `record_receipt` only through its own route `/acme/receiving/
 
 The WMS fixture publishes the authored attachments unchanged, so the bytes keep `["pat","session"]`. The change deletes `pat_only_attachments` (`apps/wamn_wms/tests/environment.rs:394-425` at `01ca2425d`) and its caller. The fixture installs the session issuer the way the Receiving cluster cases do, with `prepare_application`, `prepare` and `adjust_host`. These functions move from `route_authentication_live/cluster/session_cluster.rs` to `test-support`, and both fixtures call them. Without a candidate, the WMS fixture builds `wamn-identity:<name>` itself. With a candidate, it takes the image of `--identity-image`. The WMS cases keep calling PAT routes.
 
-Every candidate carries three images: `--host-image`, `--identity-image` and `--gates-image` (`docs/plan/kind-to-type.md` §3.2 B0, B7 and B8). The candidate names each image by its pushed digest. `qualify-release` pulls the host, identity and gates images by those digests, records their image ids, and builds none (owner ruling of 2026-10-03 on `wamn-t3ox`). The gates image is test equipment and never ships. Since `wamn-1s38` (2026-10-02) the candidate names a pinned gates digest. Only a change to the source of the gates image changes the pinned digest, in its own commit. The pin today is `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4`, built at `351f71337`.
+Every candidate carries three images: `--host-image`, `--identity-image` and `--gates-image` (`docs/history/kind-to-type.md` §3.2 B0, B7 and B8). The candidate names each image by its pushed digest. `qualify-release` pulls the host, identity and gates images by those digests, records their image ids, and builds none (owner ruling of 2026-10-03 on `wamn-t3ox`). The gates image is test equipment and never ships. Since `wamn-1s38` (2026-10-02) the candidate names a pinned gates digest. Only a change to the source of the gates image changes the pinned digest, in its own commit. The pin today is `us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-gates:src-38f6225813d8b634@sha256:eb5cfb8f0f0531bc85ab5e9bb45d16866b902c919c76d48457a31ddd797479c4`, built at `351f71337`.
 
 The kind cases read the host credential Secrets with `derive_host_secrets`. It refuses only a credential file, named `<family>.json`, that the case does not declare, and it names that file. Any other file beside the Secrets is ignored (owner ruling of 2026-10-03 on `wamn-h56j`).
 
@@ -164,7 +164,7 @@ The owner set this order on 2026-10-01. The deployment agent builds all four in 
 ## 6. Out of scope
 
 - The cutover steps of `kind-to-type.md` §3.2, which wait on this spec.
-- Package migrations of an application (`docs/plan/upgrades.md`).
+- Package migrations of an application (`docs/history/upgrades.md`).
 - `deploy-release` and its deployment documents.
 
 ## 7. Design forks
