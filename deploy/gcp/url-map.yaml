@@ -45,28 +45,28 @@ pathMatchers:
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /clients/wamn_receiving/7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f/assets/
+            pathPrefixRewrite: /clients/wamn_receiving/e459be23ace0482740993d88997b7615b3736545c6a71a4fa5ba350f9390c640/assets/
       - priority: 4
         matchRules:
           - fullPathMatch: /config.json
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /clients/wamn_receiving/7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f/config.json
+            pathPrefixRewrite: /clients/wamn_receiving/e459be23ace0482740993d88997b7615b3736545c6a71a4fa5ba350f9390c640/config.json
       - priority: 5
         matchRules:
           - fullPathMatch: /
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /clients/wamn_receiving/7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f/index.html
+            pathPrefixRewrite: /clients/wamn_receiving/e459be23ace0482740993d88997b7615b3736545c6a71a4fa5ba350f9390c640/index.html
       - priority: 6
         matchRules:
           - pathTemplateMatch: /{page=**}
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathTemplateRewrite: /clients/wamn_receiving/7de4138caad4009d235333e1685cb5c537de40791deb1f1078a6e65116f5109f/index.html
+            pathTemplateRewrite: /clients/wamn_receiving/e459be23ace0482740993d88997b7615b3736545c6a71a4fa5ba350f9390c640/index.html
   - name: wms
     defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
     routeRules:
