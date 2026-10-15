@@ -1,9 +1,10 @@
 # The platform part of the host group of dkk/wms/dev: WAMN_RELEASE_HOST_GROUP of
 # `wamn-ctl env apply` (docs/history/gcp-install-history.md section 11.10). It is hand-written
 # from the group `wms` of values-host.yaml. The release chart derives the name,
-# namespace, service, release arguments, WAMN_ORG, WAMN_PROJECT and the drain
-# bound, and `apply` adds the six credential variables, so this file sets none
-# of them. WAMN_SESSION_INSTANCE_SUFFIX is the instance suffix that the first
+# namespace, service, release arguments, WAMN_ORG, WAMN_PROJECT, the drain
+# bound, OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME (the cluster's
+# collector), and `apply` adds the six credential variables, so this file sets
+# none of them. WAMN_SESSION_INSTANCE_SUFFIX is the instance suffix that the first
 # apply recorded; write it again after a new first apply.
 replicas: 1
 # The operator release and its control NATS run in namespace platform, not in

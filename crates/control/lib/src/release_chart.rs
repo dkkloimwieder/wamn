@@ -22,7 +22,7 @@ use wamn_engine::release_manifest::release_label;
 
 /// The chart version this module renders for. It equals `version` in
 /// `deploy/platform/release/Chart.yaml`.
-pub const CHART_VERSION: &str = "0.1.16";
+pub const CHART_VERSION: &str = "0.1.17";
 
 /// The Helm release name of an environment: `r-<slug>-<hash>`.
 ///
@@ -255,12 +255,26 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
 /// `terminationGracePeriodSeconds` (R20).
 const HOST_VARIABLES: [&str; 3] = ["WAMN_ORG", "WAMN_PROJECT", "WAMN_DRAIN_BOUND_SECONDS"];
 
-/// The host variables a host group body must not set: the derived ones, and
-/// the chart's environment variable, which the release replaces by argument.
-const REFUSED_VARIABLES: [&str; 4] = [
+/// The host's OTLP export: the cluster's one collector in `platform`
+/// (docs/plan/observability.md R2, R6). The variables are not an application
+/// fact, so the chart sets them on every host it renders.
+pub const TELEMETRY_VARIABLES: [(&str, &str); 2] = [
+    (
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "http://otel-collector.platform.svc.cluster.local:4317",
+    ),
+    ("OTEL_SERVICE_NAME", "wamn-host"),
+];
+
+/// The host variables a host group body must not set: the derived ones, the
+/// telemetry ones, and the chart's environment variable, which the release
+/// replaces by argument.
+const REFUSED_VARIABLES: [&str; 6] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
     "WASMCLOUD_HOST_ENVIRONMENT",
 ];
 
@@ -320,6 +334,12 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         input.drain_bound_seconds.to_string(),
     ]) {
         variables.push(mapping([("name", variable.to_owned()), ("value", value)]));
+    }
+    for (variable, value) in TELEMETRY_VARIABLES {
+        variables.push(mapping([
+            ("name", variable.to_owned()),
+            ("value", value.to_owned()),
+        ]));
     }
     group.insert(
         "extraArgs".into(),
@@ -595,7 +615,10 @@ mod tests {
             group["env"],
             serde_yaml::from_str::<Value>(
                 "[{name: WAMN_ORG, value: acme}, {name: WAMN_PROJECT, value: wms}, \
-                 {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}]"
+                 {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}, \
+                 {name: OTEL_EXPORTER_OTLP_ENDPOINT, \
+                  value: 'http://otel-collector.platform.svc.cluster.local:4317'}, \
+                 {name: OTEL_SERVICE_NAME, value: wamn-host}]"
             )
             .expect("yaml")
         );

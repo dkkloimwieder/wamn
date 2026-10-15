@@ -37,12 +37,16 @@ use wamn_package_artifact::registry_credentials::read_registry_credentials;
 pub const NAMESPACE: &str = "wamn-system";
 /// The host group keys and variables that the release chart derives.
 const DERIVED_KEYS: [&str; 5] = ["name", "namespace", "service", "extraArgs", "image"];
-const DERIVED_VARIABLES: [&str; 4] = [
+const DERIVED_VARIABLES: [&str; 6] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
     "WASMCLOUD_HOST_ENVIRONMENT",
 ];
+/// The collector of a kind cluster (`deploy/infra/otel-collector.yaml`).
+const KIND_OTLP_ENDPOINT: &str = "http://otel-collector.wamn-system.svc.cluster.local:4317";
 
 /// One registry a role image is read from or written to.
 #[derive(Debug, Clone)]
@@ -793,13 +797,22 @@ pub async fn install(
 /// plain HTTP registry: `release_chart::values`, and
 /// `--allow-insecure-registries` after the release arguments. The release
 /// chart reads a registry over TLS only; without the flag every host exits at
-/// start, when it cannot read the release manifest (wamn-k8127.6).
+/// start, when it cannot read the release manifest (wamn-k8127.6). The hosts
+/// export to the kind cluster's own collector.
 fn case_values(input: &ValuesInput) -> anyhow::Result<Value> {
     let mut values = release_chart::values(input)?;
-    values["runtime-operator"]["runtime"]["hostGroups"][0]["extraArgs"]
+    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    group["extraArgs"]
         .as_sequence_mut()
         .context("the release chart renders the host group's arguments")?
         .push("--allow-insecure-registries".into());
+    let endpoint = group["env"]
+        .as_sequence_mut()
+        .context("the release chart renders the host group's variables")?
+        .iter_mut()
+        .find(|variable| variable["name"] == "OTEL_EXPORTER_OTLP_ENDPOINT")
+        .context("the release chart renders the OTLP endpoint")?;
+    endpoint["value"] = KIND_OTLP_ENDPOINT.into();
     Ok(values)
 }
 

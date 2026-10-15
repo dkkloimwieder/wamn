@@ -55,7 +55,7 @@ const REGISTRY_MOUNT: &str = "/etc/wamn/registry";
 /// The host variables that `env apply` derives from the coordinate, the
 /// policy and the credential Secrets (`environment/write.rs`,
 /// `release_chart::values`). The platform part of the host group must not set them.
-const DERIVED_VARIABLES: [&str; 10] = [
+const DERIVED_VARIABLES: [&str; 12] = [
     "WAMN_PG_URL",
     "WAMN_SYSTEM_URL",
     "WAMN_EXECUTOR_PLATFORM_PG_URL",
@@ -66,6 +66,8 @@ const DERIVED_VARIABLES: [&str; 10] = [
     "WAMN_PROJECT",
     "WASMCLOUD_HOST_ENVIRONMENT",
     "WAMN_DRAIN_BOUND_SECONDS",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_SERVICE_NAME",
 ];
 /// The host group keys that the release chart derives.
 const DERIVED_KEYS: [&str; 5] = ["name", "namespace", "service", "extraArgs", "image"];

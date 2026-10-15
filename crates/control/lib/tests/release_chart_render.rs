@@ -237,6 +237,23 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     let host = &containers[0];
     // R6 (2): no container lifecycle hook on the host pod.
     assert!(host.get("lifecycle").is_none());
+    // observability.md R6: the host exports to the cluster's collector, each
+    // variable once.
+    let variables = host["env"].as_sequence().expect("host variables");
+    for (name, value) in [
+        (
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "http://otel-collector.platform.svc.cluster.local:4317",
+        ),
+        ("OTEL_SERVICE_NAME", "wamn-host"),
+    ] {
+        let set: Vec<&Value> = variables
+            .iter()
+            .filter(|variable| variable["name"] == name)
+            .collect();
+        assert_eq!(set.len(), 1, "{name} is set once");
+        assert_eq!(set[0]["value"].as_str(), Some(value));
+    }
     let arguments: Vec<&str> = host["args"]
         .as_sequence()
         .expect("host arguments")

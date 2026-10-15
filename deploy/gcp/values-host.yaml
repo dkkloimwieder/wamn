@@ -330,6 +330,10 @@ runtime:
       value: /etc/wamn-control-administration
     - name: WAMN_DRAIN_BOUND_SECONDS
       value: '70'
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: http://otel-collector.platform.svc.cluster.local:4317
+    - name: OTEL_SERVICE_NAME
+      value: wamn-host
     volumes:
     - name: identity-ca
       configMap:
