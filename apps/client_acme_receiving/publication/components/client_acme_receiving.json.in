@@ -6,11 +6,11 @@
   "component": "client_acme_receiving",
   "interface-version": "0.1.0",
   "operations": {
-    "client-acme-receiving:receiving/record-receipt": {
-      "registered-operation": "client-acme-receiving:receiving/record-receipt",
+    "client-acme-receiving:acme/record-receipt": {
+      "registered-operation": "client-acme-receiving:acme/record-receipt",
       "dependencies": [{
         "package": "wamn_receiving",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "digest": "__BASE_DIGEST__",
         "operation": "wamn-receiving:receiving/record-receipt"
       }],

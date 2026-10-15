@@ -72,8 +72,7 @@ pub struct CustomOperationDeclaration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_commit: Option<CustomOperationInputDeclaration>,
     /// Whether an overlay that calls this command must name a participant.
-    /// Publish refuses an overlay that names none. An optional slot, the
-    /// default, is plugged at build by the generated no-op participant.
+    /// Publish refuses an overlay that names none.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pre_commit_required: bool,
     /// Package-local execution-only operation selected while composing this command.
@@ -209,7 +208,7 @@ pub enum CommandTransaction {
     Participant,
 }
 
-/// How one command survives a repeat, in exactly four declared shapes.
+/// How one command survives a repeat, in exactly three declared shapes.
 ///
 /// A command declares this. Generation infers none of it, not even for the
 /// composed case, because an inference is what let the pilot command ship with
@@ -218,8 +217,7 @@ pub enum CommandTransaction {
 /// `Claim` claims the idempotency key in the write log, so a repeat answers the
 /// stored result (`docs/plan/write-log.md`). `State` mints no identity and
 /// names the row versions that guard it, so a repeat after success sees a
-/// version moved and gets a typed conflict. `Inherited` rides the claim of a
-/// base operation it names, so a second claim never exists. `Stateless`
+/// version moved and gets a typed conflict. `Stateless`
 /// declares no connection, relation or statement, so it writes no state that a
 /// repeat could change. The engine's per-item intent is its replay guard
 /// (owner ruling, `wamn-hxow`).
@@ -229,7 +227,6 @@ pub enum CommandIdempotence {
     Claim,
     Stateless,
     State(StateGuardDeclaration),
-    Inherited(InheritedClaimDeclaration),
 }
 
 /// The row versions that make one command idempotent by state.
@@ -246,16 +243,6 @@ pub enum CommandIdempotence {
 pub struct StateGuardDeclaration {
     /// Guarded relation to the input field carrying its expected version.
     pub guards: BTreeMap<String, String>,
-}
-
-/// The base operation whose claim one composing command rides.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct InheritedClaimDeclaration {
-    /// Base dependency alias declared by this package.
-    pub base: String,
-    /// Operation under that dependency, whose claim mints the identity.
-    pub operation: String,
 }
 
 /// Typed custom-operation input, with optional command-envelope bounds.
@@ -1190,24 +1177,18 @@ fn validate_custom_operation_kind(
                     ),
                 ));
             }
-            validate_command_idempotence(manifest, operation_name, operation)?;
-            if participant
-                && (!matches!(
-                    operation.idempotent_by,
-                    Some(CommandIdempotence::Inherited(_))
-                ) || operation.automatic_retry.is_some()
-                    || operation.visibility != OperationVisibility::Public
-                    || operation.input.raw_body_maximum.is_some()
-                    || operation.input.envelope.is_some()
-                    || operation.input.line.is_some())
-            {
+            // A participant named its base by the claim it inherited, and
+            // inherited claims are gone (docs/plan/trx-pkg-plan.md, Cleanup
+            // after migration).
+            if participant {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidOperation,
                     format!(
-                        "participant command {operation_name} must be public with its own permission, plain typed input, inherited idempotence, and no result or automatic_retry"
+                        "participant command {operation_name} is retired; an overlay command calls the base operation and claims under its own operation"
                     ),
                 ));
             }
+            validate_command_idempotence(operation_name, operation)?;
             if operation.claims()
                 && operation.transaction != Some(CommandTransaction::ExplicitPerInput)
             {
@@ -1255,7 +1236,7 @@ fn validate_custom_operation_kind(
             if let Some(canonicalization) = &operation.canonicalization {
                 validate_command_canonicalization(operation_name, operation, canonicalization)?;
             }
-            validate_participant_reference(manifest, operation_name, operation)?;
+            validate_participant_reference(operation_name, operation)?;
         }
         CustomOperationType::EventHandler => {
             if operation.visibility != OperationVisibility::Private || operation.result.is_some() {
@@ -1284,59 +1265,21 @@ fn validate_custom_operation_kind(
 }
 
 fn validate_participant_reference(
-    manifest: &PackageManifest,
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    let Some(participant_name) = &operation.participant else {
+    if operation.participant.is_none() {
         return Ok(());
-    };
-    if operation.transaction.is_some()
-        || operation.connection.is_some()
-        || !operation.relations.is_empty()
-        || !operation.statements.is_empty()
-    {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!("composing command {operation_name} with a participant must not own local SQL"),
-        ));
     }
-    let Some(CommandIdempotence::Inherited(wrapper_inherited)) = &operation.idempotent_by else {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!(
-                "composing command {operation_name} with a participant must inherit its base claim"
-            ),
-        ));
-    };
-    let participant = manifest
-        .custom_operations
-        .get(participant_name)
-        .ok_or_else(|| {
-            GenerateError::new(
-                GenerateErrorType::InvalidOperation,
-                format!("command {operation_name} names unknown participant {participant_name}"),
-            )
-        })?;
-    if participant.transaction != Some(CommandTransaction::Participant) {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!(
-                "command {operation_name} participant {participant_name} is not execution-only"
-            ),
-        ));
-    }
-    if participant.idempotent_by.as_ref()
-        != Some(&CommandIdempotence::Inherited(wrapper_inherited.clone()))
-    {
-        return Err(GenerateError::new(
-            GenerateErrorType::InvalidOperation,
-            format!(
-                "command {operation_name} and participant {participant_name} must inherit the same base operation"
-            ),
-        ));
-    }
-    Ok(())
+    // A composing command named a participant that inherited its claim, and
+    // inherited claims are gone (docs/plan/trx-pkg-plan.md, Cleanup after
+    // migration).
+    Err(GenerateError::new(
+        GenerateErrorType::InvalidOperation,
+        format!(
+            "command {operation_name} names a participant, and the participant path is retired; call the base operation and claim under this operation"
+        ),
+    ))
 }
 
 /// The optimistic-concurrency guard one state-idempotent command declares.
@@ -1347,12 +1290,11 @@ const EXPECTED_REVISION_FIELD: &str = "expected_row_version";
 /// A command that says nothing reruns its work on a repeat. It then returns
 /// whatever the rows hold at that moment, not what the original call returned.
 ///
-/// Three shapes carry that law for a command with SQL, and a command names the
-/// one it has. The fourth, `stateless`, is for a command with no SQL at all. Nothing
+/// Two shapes carry that law for a command with SQL, and a command names the
+/// one it has. The third, `stateless`, is for a command with no SQL at all. Nothing
 /// here is inferred from the operation's other declarations. An inference is
 /// what let a pilot command ship with no idempotence and no test.
 fn validate_command_idempotence(
-    manifest: &PackageManifest,
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
@@ -1360,15 +1302,13 @@ fn validate_command_idempotence(
         return Err(GenerateError::new(
             GenerateErrorType::InvalidOperation,
             format!(
-                "command {operation_name} must declare idempotent_by as exactly one of four. \
+                "command {operation_name} must declare idempotent_by as exactly one of three. \
                  \"claim\": the generated codec claims the key of a non-null text \
                  value.idempotency_key input in the write log, and a repeat answers the stored \
                  result. {{\"state\": {{\"guards\"}}}}: for a command that mints no \
                  identity, so insert no row, and map each guarded relation to \
                  the input field carrying its expected version, such as \
-                 {EXPECTED_REVISION_FIELD}. {{\"inherited\": {{\"base\", \"operation\"}}}}: for a \
-                 command that rides the claim of a base operation, naming the base dependency \
-                 alias and the operation under it. \"stateless\": for a command that declares \
+                 {EXPECTED_REVISION_FIELD}. \"stateless\": for a command that declares \
                  no connection, relations or statements"
             ),
         ));
@@ -1383,7 +1323,7 @@ fn validate_command_idempotence(
                     GenerateErrorType::InvalidOperation,
                     format!(
                         "command {operation_name} is stateless and declares SQL; a command with \
-                         SQL declares idempotent_by as claim, state or inherited"
+                         SQL declares idempotent_by as claim or state"
                     ),
                 ));
             }
@@ -1402,29 +1342,6 @@ fn validate_command_idempotence(
         CommandIdempotence::State(state) => {
             refuse_minted_identity(operation_name, operation, "state")?;
             validate_state_guards(operation_name, operation, state)?;
-        }
-        CommandIdempotence::Inherited(inherited) => {
-            if operation.transaction != Some(CommandTransaction::Participant) {
-                refuse_minted_identity(operation_name, operation, "inherited")?;
-            }
-            let dependency = manifest.base_dependencies.get(&inherited.base).ok_or_else(|| {
-                GenerateError::new(
-                    GenerateErrorType::InvalidOperation,
-                    format!(
-                        "command {operation_name} inherits a claim from undeclared base dependency {}",
-                        inherited.base
-                    ),
-                )
-            })?;
-            if !dependency.operations.contains(&inherited.operation) {
-                return Err(GenerateError::new(
-                    GenerateErrorType::InvalidOperation,
-                    format!(
-                        "command {operation_name} inherits a claim from {}, which base dependency {} does not declare",
-                        inherited.operation, inherited.base
-                    ),
-                ));
-            }
         }
     }
     Ok(())
@@ -1481,15 +1398,8 @@ fn validate_state_guards(
 
 /// Refuse the row a command outside the claim shape must not insert.
 ///
-/// A command that is idempotent by state or by an inherited claim owns no
-/// claim in the write log, so a repeat would insert its row again. It therefore
-/// inserts no row of its own.
-///
-/// The insert rule is not narrowed to the id column. An inherited command
-/// decorates a base result, and the moment it writes its own row it writes
-/// state under an identity it does not own. That command is not inherited. It
-/// is a command with a claim that also composes, and `idempotent_by: claim` is
-/// its honest shape.
+/// A command that is idempotent by state owns no claim in the write log, so a
+/// repeat would insert its row again. It therefore inserts no row of its own.
 fn refuse_minted_identity(
     operation_name: &str,
     operation: &CustomOperationDeclaration,

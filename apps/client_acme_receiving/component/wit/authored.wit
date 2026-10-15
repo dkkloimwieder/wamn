@@ -1,7 +1,9 @@
-package client-acme-receiving:component@4.1.0;
+package client-acme-receiving:component@4.2.0;
 
 /// The Acme Receiving overlay component: every generated operation, and the
 /// custom operations it authors.
 world client-acme-receiving {
   include client-acme-receiving:generated/generated;
+  // Acme's record_receipt calls Receiving's operation.
+  import wamn-receiving:receiving/record-receipt@2.2.0;
 }

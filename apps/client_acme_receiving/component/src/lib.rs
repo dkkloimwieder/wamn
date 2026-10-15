@@ -5,7 +5,7 @@
 
 //! One package-grain component for executable Acme Receiving overlay operations.
 
-use exports::client_acme_receiving::receiving::record_receipt::Guest as RecordReceipt;
+use exports::client_acme_receiving::acme::record_receipt::Guest as RecordReceipt;
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
 use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorType};
 
@@ -34,7 +34,7 @@ mod create_codec {
 }
 
 wit_bindgen::generate!({
-    world: "client-acme-receiving:component/client-acme-receiving@4.1.0",
+    world: "client-acme-receiving:component/client-acme-receiving@4.2.0",
     path: [
         "../../../crates/execution/workflow/router/wit",
         "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.3",
@@ -130,11 +130,12 @@ fn access_detail(
     }
 }
 
-use wamn_receiving::receiving::record_receipt as contract;
+use exports::client_acme_receiving::acme::record_receipt as contract;
+use wamn_receiving::receiving::record_receipt as base;
 
 mod receipt_codec {
     use super::contract;
-    include!("../../../target/wamn/client_acme_receiving/wit/receiving_record_receipt_codec.rs");
+    include!("../../../target/wamn/client_acme_receiving/wit/acme_record_receipt_codec.rs");
 }
 
 /// The request id of the one item that Acme passes to Receiving's operation.
@@ -188,18 +189,18 @@ async fn record_receipt(
     request: contract::RecordReceiptRequest,
 ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
     let purchase_order_id = request.purchase_order_id.clone();
-    let outcomes = contract::run(
+    let outcomes = base::run(
         context,
-        vec![contract::RecordReceiptItem {
+        vec![base::RecordReceiptItem {
             request_id: BASE_REQUEST_ID.to_owned(),
-            input: Ok(request),
+            input: Ok(base_request(request)),
         }],
     )
     .await
     .map_err(|error| base_call_error(&error))?;
-    let [outcome] = <[contract::RecordReceiptOutcome; 1]>::try_from(outcomes)
+    let [outcome] = <[base::RecordReceiptOutcome; 1]>::try_from(outcomes)
         .map_err(|_| contract::RecordReceiptError::InternalError)?;
-    let result = outcome.outcome?;
+    let result = outcome.outcome.map_err(base_error)?;
     wamn_client_acme_receiving_data_access::operation::record_inspection(
         transaction,
         &result.receipt_id,
@@ -208,10 +209,101 @@ async fn record_receipt(
     .await
     .map_err(|error| {
         receipt_codec::map_error(error.error_type().literal(), |key| {
-            access_detail(&error, key, "receiving.record_receipt", None, None)
+            access_detail(&error, key, "acme.record_receipt", None, None)
         })
     })?;
-    Ok(result)
+    Ok(contract::RecordReceiptResult {
+        receipt_id: result.receipt_id,
+        purchase_order_id: result.purchase_order_id,
+        purchase_order_status: result.purchase_order_status,
+        row_version: result.row_version,
+    })
+}
+
+/// Acme's request, as Receiving's operation takes it.
+fn base_request(request: contract::RecordReceiptRequest) -> base::RecordReceiptRequest {
+    base::RecordReceiptRequest {
+        idempotency_key: request.idempotency_key,
+        line: request
+            .line
+            .into_iter()
+            .map(|line| base::RecordReceiptLine {
+                location_id: line.location_id,
+                purchase_order_line_id: line.purchase_order_line_id,
+                quantity: line.quantity,
+            })
+            .collect(),
+        occurred_at: request.occurred_at,
+        purchase_order_id: request.purchase_order_id,
+        receipt_reference: request.receipt_reference,
+    }
+}
+
+/// Receiving's refusal, as Acme's operation answers it.
+fn base_error(error: base::RecordReceiptError) -> contract::RecordReceiptError {
+    use base::RecordReceiptError as Base;
+    use contract::RecordReceiptError as Acme;
+
+    match error {
+        Base::InvalidInput(detail) => Acme::InvalidInput(contract::InvalidInputDetail {
+            field: detail.field,
+            minimum: detail.minimum,
+            maximum: detail.maximum,
+            observed: detail.observed,
+        }),
+        Base::PurchaseOrderNotFound(detail) => {
+            Acme::PurchaseOrderNotFound(contract::PurchaseOrderNotFoundDetail {
+                field: detail.field,
+            })
+        }
+        Base::PurchaseOrderNotOpen(detail) => {
+            Acme::PurchaseOrderNotOpen(contract::PurchaseOrderNotOpenDetail {
+                field: detail.field,
+            })
+        }
+        Base::PurchaseOrderLineNotFound(detail) => {
+            Acme::PurchaseOrderLineNotFound(contract::PurchaseOrderLineNotFoundDetail {
+                field: detail.field,
+                id: detail.id,
+            })
+        }
+        Base::PurchaseOrderLineMismatch(detail) => {
+            Acme::PurchaseOrderLineMismatch(contract::PurchaseOrderLineMismatchDetail {
+                field: detail.field,
+                id: detail.id,
+            })
+        }
+        Base::LocationNotFound(detail) => {
+            Acme::LocationNotFound(contract::LocationNotFoundDetail {
+                field: detail.field,
+                id: detail.id,
+            })
+        }
+        Base::QuantityExceedsRemaining(detail) => {
+            Acme::QuantityExceedsRemaining(contract::QuantityExceedsRemainingDetail {
+                field: detail.field,
+                id: detail.id,
+            })
+        }
+        Base::ReceiptReferenceConflict(detail) => {
+            Acme::ReceiptReferenceConflict(contract::ReceiptReferenceConflictDetail {
+                constraint: detail.constraint,
+            })
+        }
+        Base::IdempotencyConflict(detail) => {
+            Acme::IdempotencyConflict(contract::IdempotencyConflictDetail {
+                field: detail.field,
+            })
+        }
+        Base::Retry => Acme::Retry,
+        Base::Timeout => Acme::Timeout,
+        Base::PermissionDenied(detail) => {
+            Acme::PermissionDenied(contract::PermissionDeniedDetail {
+                operation: detail.operation,
+            })
+        }
+        Base::InternalError => Acme::InternalError,
+    }
 }
 
 /// Classify a failure of the whole call to Receiving's operation.

@@ -4,19 +4,17 @@
 //! The build compiles, each in its own Cargo invocation with the guest
 //! RUSTFLAGS of `tools/guest-rustflags`, release profile, for
 //! `wasm32-wasip2`: the components the package owns, the participants that
-//! `tools/component-composition.json` names for it, the no-op participant
-//! crates that the build generated into its output, and the palette
+//! `tools/component-composition.json` names for it, and the palette
 //! components its wirings name. Cargo combines dependency features within one
 //! invocation, which can change bytes, so no two guests share one.
 //!
 //! A built guest must carry no local path and must match the pin beside its
-//! crate, `<artifact>.wasm.sha256`, when it has one. The owned components, the
-//! no-op participants and the crates that `tools/component-virtualization.json`
-//! lists are virtualized. An overlay whose component declaration names a base
-//! operation dependency is composed with each base component, each base no-op
-//! participant (both read from the base's `build.json`) and its own
-//! participants. Each owned component, palette component and no-op
-//! participant is copied to `components/<name>.wasm` in the package's build
+//! crate, `<artifact>.wasm.sha256`, when it has one. The owned components and
+//! the crates that `tools/component-virtualization.json` lists are
+//! virtualized. An overlay whose component declaration names a base operation
+//! dependency is composed with each base component (read from the base's
+//! `build.json`) and its own participants. Each owned component and palette
+//! component is copied to `components/<name>.wasm` in the package's build
 //! output, and `outputs.components` of `build.json` names it with its digest.
 //!
 //! A package that lies outside a Cargo workspace, that is with no
@@ -111,11 +109,6 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     let rustflags = guest_rustflags(&repository).await?;
     let composition: Composition = read_json(&repository.join(COMPOSITION))?;
     let virtualization: Virtualization = read_json(&repository.join(VIRTUALIZATION))?;
-    let workspace_target = std::path::absolute(
-        std::env::var_os("CARGO_TARGET_DIR")
-            .map_or_else(|| workspace.join("target"), PathBuf::from),
-    )
-    .context("resolve the Cargo target directory")?;
 
     let mut allowlist = virtualization.packages.clone();
     let mut records = Vec::<(String, PathBuf)>::new();
@@ -136,23 +129,6 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
         )
         .await?;
         owned.push((name.clone(), built));
-    }
-    // The generated no-op participants.
-    for crate_manifest in no_op_manifests(&receipt, &output) {
-        stage_lock_file(&repository, &workspace, &crate_manifest, &workspace_target).await?;
-        let built = compile_guest(
-            &repository,
-            &rustflags,
-            &Guest {
-                manifest: crate_manifest,
-                package: None,
-                target_directory: Some(workspace_target.clone()),
-            },
-        )
-        .await?;
-        allowlist.insert(built.package.clone());
-        let built = virtualize(&repository, &virtualization, &allowlist, built).await?;
-        records.push((built.package.clone(), built.file));
     }
     // The participants of an overlay.
     let mut participants = Vec::new();
@@ -256,58 +232,6 @@ async fn guest_rustflags(repository: &Path) -> Result<String> {
         .context("read the guest RUSTFLAGS")?
         .trim()
         .to_owned())
-}
-
-/// The Cargo manifests of the no-op participant crates that the build wrote
-/// into the package's build output: each `<directory>/Cargo.toml` that
-/// `outputs.files` names.
-fn no_op_manifests(receipt: &BuildReceipt, output: &Path) -> Vec<PathBuf> {
-    receipt
-        .outputs
-        .files
-        .keys()
-        .filter(|path| {
-            let path = Path::new(path);
-            path.file_name().is_some_and(|name| name == "Cargo.toml")
-                && path.components().count() == 2
-        })
-        .map(|path| output.join(path))
-        .collect()
-}
-
-/// Give a no-op participant crate the lock file of the Cargo workspace,
-/// trimmed by Cargo to the crate, so it resolves the versions the workspace
-/// pins.
-async fn stage_lock_file(
-    repository: &Path,
-    workspace: &Path,
-    crate_manifest: &Path,
-    target_directory: &Path,
-) -> Result<()> {
-    let lock = crate_manifest.with_file_name("Cargo.lock");
-    fs::copy(workspace.join("Cargo.lock"), &lock)
-        .with_context(|| format!("stage the lock file {}", lock.display()))?;
-    let output = Command::new("cargo")
-        .current_dir(repository)
-        .env("CARGO_TARGET_DIR", target_directory)
-        .args([
-            "metadata",
-            "--offline",
-            "--format-version",
-            "1",
-            "--manifest-path",
-        ])
-        .arg(crate_manifest)
-        .output()
-        .await
-        .context("run cargo metadata")?;
-    ensure!(
-        output.status.success(),
-        "cannot trim the lock file of {}: {}",
-        crate_manifest.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(())
 }
 
 /// Build the guest `package` of the Cargo workspace at `manifest` the way step 7
@@ -539,8 +463,7 @@ async fn run_tool(mut command: Command, partial: &Path, output: &Path, what: &st
 }
 
 /// Compose an overlay whose component declaration names a base operation
-/// dependency with its bases, their no-op participants and its own
-/// participants. Any other component is returned as it is.
+/// dependency with its bases and its own participants. Any other component is returned as it is.
 async fn compose(
     request: &BuildRequest,
     repository: &Path,
@@ -611,13 +534,6 @@ async fn compose(
             .arg(&base_declaration)
             .arg("--base")
             .arg(component_file(&base_output, &base_receipt, base_component)?);
-        for no_op in no_op_manifests(&base_receipt, &base_output) {
-            command.arg("--no-op-participant").arg(component_file(
-                &base_output,
-                &base_receipt,
-                &crate_package(&no_op)?,
-            )?);
-        }
     }
     for participant in participants {
         command.arg("--participant").arg(&participant.file);
@@ -729,9 +645,6 @@ fn palette_declaration(workspace: &Path, name: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::receipt::{
-        RECEIPT_SCHEMA, ReceiptGenerator, ReceiptInputs, ReceiptOutputs, ReceiptPackage,
-    };
 
     struct Scratch(PathBuf);
 
@@ -749,45 +662,6 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create the scratch directory");
         Scratch(root)
-    }
-
-    #[test]
-    fn the_no_op_participants_are_the_crates_of_the_build_output() {
-        let files = [
-            "slot-no-op/Cargo.toml",
-            "slot-no-op/src/lib.rs",
-            "wit/world.wit",
-            "Cargo.toml",
-            "a/b/Cargo.toml",
-        ]
-        .map(|path| (path.to_owned(), sha256(path.as_bytes())));
-        let receipt = BuildReceipt {
-            schema: RECEIPT_SCHEMA.to_owned(),
-            package: ReceiptPackage {
-                id: "p".to_owned(),
-                version: "1.0.0".to_owned(),
-            },
-            inputs: ReceiptInputs {
-                digest: sha256(b"i"),
-                files: BTreeMap::new(),
-            },
-            dependencies: Vec::new(),
-            generator: ReceiptGenerator {
-                id: "g".to_owned(),
-                toolchain: "t".to_owned(),
-                sqlx: "s".to_owned(),
-            },
-            outputs: ReceiptOutputs {
-                manifest: sha256(b"m"),
-                files: files.into_iter().collect(),
-                components: Vec::new(),
-                web: None,
-            },
-        };
-        assert_eq!(
-            no_op_manifests(&receipt, Path::new("/out")),
-            [PathBuf::from("/out/slot-no-op/Cargo.toml")]
-        );
     }
 
     #[test]

@@ -114,7 +114,7 @@ const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
     ),
     (
         "receiving_record_receipt",
-        "client-acme-receiving:receiving/record-receipt",
+        "client-acme-receiving:acme/record-receipt",
     ),
     (
         "quality_load_purchase_order_detail",
@@ -134,7 +134,7 @@ const BASE_RECORD_RECEIPT_REFERENCE: &str = "wamn-receiving:receiving/record-rec
 static BASE_RECORD_RECEIPT: LazyLock<&'static str> =
     LazyLock::new(|| sealed(BASE_RECORD_RECEIPT_REFERENCE).leak());
 static OVERLAY_RECORD_RECEIPT: LazyLock<&'static str> =
-    LazyLock::new(|| sealed("client-acme-receiving:receiving/record-receipt").leak());
+    LazyLock::new(|| sealed("client-acme-receiving:acme/record-receipt").leak());
 
 /// The release this fixture provisions and publishes: the default Receiving
 /// journey release, with the packages of a supplied candidate's manifest.
@@ -297,7 +297,7 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 16] = [
     JourneyAttachment {
         package_id: OVERLAY_PACKAGE_ID,
         wiring_id: "receiving_record_receipt",
-        path: "/acme/receiving/record_receipt",
+        path: "/acme/acme/record_receipt",
     },
     JourneyAttachment {
         package_id: OVERLAY_PACKAGE_ID,

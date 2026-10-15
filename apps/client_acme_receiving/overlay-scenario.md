@@ -32,7 +32,7 @@ The [attachments](publication/attachments.json) expose five authenticated POST r
 |---|---|
 | `/acme/purchase_order/get` | `purchase_order.get` |
 | `/acme/purchase_order/update` | `purchase_order.update` |
-| `/acme/receiving/record_receipt` | `receiving.record_receipt` |
+| `/acme/acme/record_receipt` | `acme.record_receipt` |
 | `/acme/quality/load_purchase_order_detail` | `quality.load_purchase_order_detail` |
 | `/acme/quality/approve_inspection` | `quality.approve_inspection` |
 

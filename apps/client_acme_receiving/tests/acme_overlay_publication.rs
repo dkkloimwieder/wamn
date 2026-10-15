@@ -17,7 +17,7 @@ const INTERFACE_VERSION: &str = "0.1.0";
 // Each operation is named by reference, as the authored files name it, and
 // `sealed` reads its version from the package wamn.json.
 const PRIVATE_OPERATION: &str = "client-acme-receiving:quality/create-inspection";
-const RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt";
+const RECORD_RECEIPT: &str = "client-acme-receiving:acme/record-receipt";
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt";
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;
 struct DirectOperation {
@@ -38,9 +38,9 @@ const DIRECT_OPERATIONS: [DirectOperation; 5] = [
         route: "/acme/purchase_order/update",
     },
     DirectOperation {
-        token: "client-acme-receiving:receiving/record-receipt",
-        attachment: "client-acme-receiving-receiving-record-receipt-http",
-        route: "/acme/receiving/record_receipt",
+        token: "client-acme-receiving:acme/record-receipt",
+        attachment: "client-acme-receiving-acme-record-receipt-http",
+        route: "/acme/acme/record_receipt",
     },
     DirectOperation {
         token: "client-acme-receiving:quality/load-purchase-order-detail",

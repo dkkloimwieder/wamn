@@ -1,12 +1,10 @@
 //! `wamn build` of Receiving records the components that step 7 compiled,
-//! with the one no-op participant that the build generated, and every one it
-//! records is the virtualized guest (docs/operations/building.md). Receiving
-//! is the package with a no-op participant. The platform fixture has none.
+//! and every one it records is the virtualized guest
+//! (docs/operations/building.md).
 //!
 //! The build reads the virtualization allowlist from
 //! `tools/component-virtualization.json` and adds to it each component that
-//! the package owns and each no-op participant crate that the build generated
-//! into its output. A virtualized guest imports no ambient `wasi:cli`
+//! the package owns. A virtualized guest imports no ambient `wasi:cli`
 //! interface. This test builds Receiving into a scratch output against a
 //! server of its own and reads the result from `build.json` alone.
 
@@ -37,16 +35,6 @@ fn component_imports(bytes: &[u8]) -> Vec<String> {
     imports
 }
 
-/// The Cargo package name of a generated no-op participant crate.
-fn crate_name(manifest: &Path) -> String {
-    let text = fs::read_to_string(manifest).expect("read a no-op participant manifest");
-    text.lines()
-        .find_map(|line| line.strip_prefix("name = \""))
-        .and_then(|rest| rest.strip_suffix('"'))
-        .expect("a no-op participant manifest names its package")
-        .to_owned()
-}
-
 /// The palette components that the package's wirings name.
 fn wired_components(package: &Path) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
@@ -72,7 +60,7 @@ fn wired_components(package: &Path) -> BTreeSet<String> {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn the_receiving_build_records_its_no_op_set_and_virtualizes_every_recorded_component() {
+async fn the_receiving_build_records_its_components_and_virtualizes_every_recorded_component() {
     let database = wamn_test_postgres::database();
     let output_root = std::env::temp_dir().join(format!(
         "wamn-conformance-receiving-build-{}",
@@ -91,27 +79,6 @@ async fn the_receiving_build_records_its_no_op_set_and_virtualizes_every_recorde
         serde_json::from_slice(&fs::read(output.join("wamn.json")).expect("read wamn.json"))
             .expect("parse wamn.json");
 
-    // The no-op set: each `<crate>/Cargo.toml` that `outputs.files` names.
-    let no_ops = receipt["outputs"]["files"]
-        .as_object()
-        .expect("build.json records its files")
-        .keys()
-        .filter(|path| {
-            let path = Path::new(path);
-            path.file_name().is_some_and(|name| name == "Cargo.toml")
-                && path.components().count() == 2
-        })
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        no_ops,
-        BTreeSet::from(["receiving_record_receipt-no-op/Cargo.toml".to_owned()]),
-        "Receiving generates exactly one no-op participant"
-    );
-    let no_ops = no_ops
-        .iter()
-        .map(|path| crate_name(&output.join(path)))
-        .collect::<BTreeSet<_>>();
     let owned = manifest["components"]
         .as_object()
         .expect("Receiving owns components")
@@ -136,19 +103,14 @@ async fn the_receiving_build_records_its_no_op_set_and_virtualizes_every_recorde
                 .to_owned()
         })
         .collect::<BTreeSet<_>>();
-    let expected = owned
-        .iter()
-        .chain(&no_ops)
-        .chain(&palette)
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    let expected = owned.union(&palette).cloned().collect::<BTreeSet<_>>();
     assert_eq!(
         names, expected,
-        "build.json records the owned components, the no-op set and the wired palette"
+        "build.json records the owned components and the wired palette"
     );
 
-    // The owned components and the no-op set are in the allowlist, so each
-    // recorded guest of theirs is the virtualized one.
+    // The owned components are in the allowlist, so each recorded guest of
+    // theirs is the virtualized one.
     for component in recorded {
         let name = component["name"].as_str().expect("a component name");
         if palette.contains(name) {

@@ -8,7 +8,7 @@ _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"
 _claim_errors = ["idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
-    package = {id = "wamn_receiving", version = "2.1.0", predecessor_version = "2.0.0"}
+    package = {id = "wamn_receiving", version = "2.2.0", predecessor_version = "2.1.0"}
     client_package = {name = "@wamn/receiving-client"}
     required_platform_policy_contract = {id = "receiving_data_access", state = "satisfied"}
     models = {
@@ -129,7 +129,6 @@ manifest.Package {
             label = "Record a receipt"
             description = "One submission records every line of one receipt against one purchase order."
             idempotent_by = "claim"
-            pre_commit = {fields = [{path = "receipt_id", type = "uuid"}, {path = "purchase_order_id", type = "uuid"}]}
             input: {
                 line = {
                     minimum = 1

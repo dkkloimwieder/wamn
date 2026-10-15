@@ -92,7 +92,6 @@ fn routes() -> BTreeSet<ServingRoute> {
         revision: None,
         idempotency: None,
         canonicalization: None,
-        claim_operation: None,
     }])
 }
 

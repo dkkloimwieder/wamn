@@ -168,9 +168,6 @@ impl EdgeDelivery {
                 kind: route.type_,
                 key_field: route.idempotency.as_deref(),
                 canonicalization: route.canonicalization.as_ref(),
-                claim_operation: route.claim_operation.as_deref(),
-                // The edge selects no pre-commit participant.
-                participation: None,
             });
         let result = async {
             let fact = route_component(components, &target.package_id, component, operation)?;

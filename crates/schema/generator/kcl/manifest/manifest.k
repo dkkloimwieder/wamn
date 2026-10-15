@@ -128,15 +128,8 @@ schema Statement[directory: str, name: str]:
 schema StateGuard:
     guards: {str:str}
 
-schema InheritedClaim:
-    base: str
-    operation: str
-
 schema State:
     state: StateGuard
-
-schema Inherited:
-    inherited: InheritedClaim
 
 schema LineOrder:
     ascending_by: str
@@ -176,7 +169,7 @@ schema CustomOperation[name: str]:
     statements?: {str:Statement}
     transaction?: Transaction
     automatic_retry?: bool
-    idempotent_by?: "claim" | "stateless" | State | Inherited
+    idempotent_by?: "claim" | "stateless" | State
     canonicalization?: Canonicalization
     registration?: Registration
     label?: str
@@ -186,14 +179,10 @@ schema CustomOperation[name: str]:
     check:
         not error_details or "idempotency_conflict" not in error_details, "${name} states the detail of idempotency_conflict, which the generator derives; remove it"
 
+# Whether a command claims its key. Such a command takes the public envelope: a
+# batch of keyed inputs under one raw body bound.
 _claims = lambda idempotent_by: any -> bool {
     typeof(idempotent_by) == "str" and idempotent_by == "claim"
-}
-# Whether a command takes the public envelope: a batch of keyed inputs under one
-# raw body bound. A command that claims its key does, and so does one that rides
-# a base claim unless it is the base's execution-only participant.
-_takes_envelope = lambda idempotent_by: any, transaction: any -> bool {
-    _claims(idempotent_by) or (typeof(idempotent_by) == "Inherited" and transaction != "participant")
 }
 
 schema Command[name: str](CustomOperation):
@@ -205,9 +194,9 @@ schema Command[name: str](CustomOperation):
     transaction = "explicit_per_input"
     automatic_retry = False
 
-    if _takes_envelope(idempotent_by, transaction) and not input.raw_body_maximum:
+    if _claims(idempotent_by) and not input.raw_body_maximum:
         input.raw_body_maximum = 1048576
-    if _takes_envelope(idempotent_by, transaction) and not input.envelope:
+    if _claims(idempotent_by) and not input.envelope:
         input.envelope = {minimum = 1, maximum = 100}
     if _claims(idempotent_by) and not canonicalization:
         canonicalization = {}
@@ -391,7 +380,7 @@ schema Package:
         }, "a model operation has no permission: merge the operations with ':', operations: {get: {...}}, so that the model fills each permission"
         # The same holds for a command's input and its envelope bounds.
         not custom_operations or all _, operation in custom_operations {
-            operation.type != "command" or not _takes_envelope(operation.idempotent_by, operation.transaction) or (operation.input.raw_body_maximum and operation.input.envelope)
+            operation.type != "command" or not _claims(operation.idempotent_by) or (operation.input.raw_body_maximum and operation.input.envelope)
         }, "a command that takes the public envelope has no bounds: merge the input with ':', input: {...}, so that the command fills them"
 
 # Typed constructors of a statement value.

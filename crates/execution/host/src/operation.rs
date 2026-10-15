@@ -62,8 +62,6 @@ pub struct CallIntents {
     kind: wamn_catalog::OperationType,
     key_field: Option<String>,
     canonicalization: Option<wamn_catalog::RouteCanonicalization>,
-    claim_operation: Option<String>,
-    participation: Option<String>,
 }
 
 impl CallIntents {
@@ -77,8 +75,6 @@ impl CallIntents {
             kind: self.kind,
             key_field: self.key_field.as_deref(),
             canonicalization: self.canonicalization.as_ref(),
-            claim_operation: self.claim_operation.as_deref(),
-            participation: self.participation.as_deref(),
         }
     }
 }
@@ -376,21 +372,6 @@ impl OperationHost {
         else {
             return Ok(None);
         };
-        let participant = manifest
-            .components
-            .iter()
-            .find(|served| {
-                served.package_id == component.scope.package_id
-                    && served.descriptor.component == component.component
-                    && served.descriptor.component_digest.as_str() == component.component_digest
-            })
-            .and_then(|served| served.operations.get(operation))
-            .and_then(|released| released.participant.as_deref());
-        let participation = participant
-            .map(|participant| {
-                native_policy::participation_intent(&self.release, component, participant)
-            })
-            .transpose()?;
         let tenant = self.release.scope().tenant_id.clone();
         Ok(Some(CallIntents {
             store: WriteLogStore::new(
@@ -404,8 +385,6 @@ impl OperationHost {
             kind: route.type_,
             key_field: route.idempotency.clone(),
             canonicalization: route.canonicalization.clone(),
-            claim_operation: route.claim_operation.clone(),
-            participation,
         }))
     }
 

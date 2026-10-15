@@ -166,14 +166,7 @@ fn state_idempotence_requires_its_exact_shape() {
     let error = validate_operation_vocabulary(&parsed(&absent))
         .expect_err("command without idempotence was accepted");
     assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
-    for remedy in [
-        "idempotent_by",
-        "claim",
-        "state",
-        "guards",
-        "inherited",
-        "base",
-    ] {
+    for remedy in ["idempotent_by", "claim", "state", "guards"] {
         assert!(
             error.to_string().contains(remedy),
             "missing {remedy}: {error}"
@@ -182,8 +175,8 @@ fn state_idempotence_requires_its_exact_shape() {
 }
 
 /// `stateless` is for a command with no SQL, whose replay guard is the
-/// engine's per-item intent. A command with SQL still names claim, state or
-/// inherited (owner ruling, `wamn-hxow`).
+/// engine's per-item intent. A command with SQL still names claim or state
+/// (owner ruling, `wamn-hxow`).
 #[test]
 fn stateless_idempotence_is_only_for_a_command_without_sql() {
     let mut manifest = fixture::manifest();
@@ -674,8 +667,8 @@ fn custom_statement_declarations_drive_projections_and_require_unique_paths() {
     );
 }
 
-/// The fixture as an overlay whose `widget.archive` rides the base's claim.
-fn inherited_overlay_manifest() -> Value {
+/// The fixture as an overlay whose `widget.archive` composes the base's.
+fn overlay_manifest() -> Value {
     let mut manifest = fixture::manifest();
     manifest["package"]["id"] = json!("decorator_fixture");
     // An overlay owns no relation of the base package, so no model declares
@@ -704,14 +697,12 @@ fn inherited_overlay_manifest() -> Value {
         "digest": format!("sha256:{}", "a".repeat(64)),
         "operations": ["widget.archive"]
     }});
-    manifest["custom_operations"]["widget.archive"]["idempotent_by"] =
-        json!({"inherited": {"base": "base", "operation": "widget.archive"}});
     manifest
 }
 
 #[test]
-fn inherited_composition_is_exact_and_carries_its_contract() {
-    let manifest = inherited_overlay_manifest();
+fn composition_is_exact_and_carries_its_contract() {
+    let manifest = overlay_manifest();
     let mut sql_less = manifest.clone();
     let operation = sql_less["custom_operations"]["widget.archive"]
         .as_object_mut()
@@ -796,11 +787,11 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
         );
     }
 
-    let mut missing = manifest.clone();
+    let mut missing = sql_less.clone();
     missing["base_dependencies"] = json!({});
     assert_eq!(
         validate_operation_vocabulary(&parsed(&missing))
-            .expect_err("undeclared inherited base was accepted")
+            .expect_err("a SQL-less command with no base was accepted")
             .error_type(),
         GenerateErrorType::InvalidOperation
     );
@@ -822,61 +813,8 @@ fn inherited_composition_is_exact_and_carries_its_contract() {
     let mut writing = manifest;
     writing["custom_operations"]["widget.archive"]["relations"][0]["insert_fields"] = json!(["id"]);
     let error = validate_operation_vocabulary(&parsed(&writing))
-        .expect_err("inherited command minted local state");
+        .expect_err("state-idempotent command minted local state");
     assert!(error.to_string().contains("idempotent_by claim"));
-}
-
-#[test]
-fn a_participant_takes_the_request_record_of_the_base_pre_commit() {
-    let mut manifest = inherited_overlay_manifest();
-    let mut participant = manifest["custom_operations"]["widget.archive"].clone();
-    let operation = participant.as_object_mut().unwrap();
-    operation.remove("automatic_retry");
-    operation.remove("result");
-    operation.insert("transaction".into(), json!("participant"));
-    operation.insert("permission".into(), json!("widget.archive_participant"));
-    manifest["custom_operations"]["widget.archive_participant"] = participant;
-    let wrapper = manifest["custom_operations"]["widget.archive"]
-        .as_object_mut()
-        .unwrap();
-    for field in [
-        "connection",
-        "transaction",
-        "automatic_retry",
-        "relations",
-        "statements",
-    ] {
-        wrapper.remove(field);
-    }
-    wrapper.insert("participant".into(), json!("widget.archive_participant"));
-
-    let package = fixture::generate_with(&fixture::catalog(), &manifest);
-    let wit = std::str::from_utf8(
-        package
-            .file("generated/wit/deps/decorator-fixture-widget/package.wit")
-            .expect("generated overlay WIT")
-            .bytes(),
-    )
-    .unwrap();
-    assert!(
-        wit.contains(
-            "interface archive-participant {\n  use wamn:node/types@0.1.0.{emission, node-context, node-error};\n  use platform-fixture:widget/archive-pre-commit@2.1.0.{archive-pre-commit-request};\n\n  run: async func(ctx: node-context, input: archive-pre-commit-request) -> result<archive-pre-commit-request, node-error>;\n  run-json: async func(ctx: node-context, input: string) -> result<emission, node-error>;\n}\n"
-        ),
-        "{wit}"
-    );
-    assert!(!wit.contains("archive-participant-request"), "{wit}");
-    let codec = std::str::from_utf8(
-        package
-            .file("generated/wit/widget_archive_participant_codec.rs")
-            .expect("generated participant codec")
-            .bytes(),
-    )
-    .unwrap();
-    assert!(
-        codec.contains("contract::ArchivePreCommitRequest"),
-        "{codec}"
-    );
-    assert!(!codec.contains("ArchiveParticipantRequest"), "{codec}");
 }
 
 /// The fixture's claim command names its key and the canonical form of its

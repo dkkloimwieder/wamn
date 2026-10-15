@@ -22,10 +22,7 @@ use super::{
     CrudAction, GenerateError, ModelDeclaration, OperationDeclaration, PackageManifest,
     binding_identifier, insert_bytes, rust_identifier, rust_type_identifier,
 };
-use crate::manifest::{
-    CommandIdempotence, CommandTransaction, CustomOperationDeclaration, FilterMatch,
-    InheritedClaimDeclaration, PackageIdentity, canonical_operation_prefix,
-};
+use crate::manifest::{FilterMatch, PackageIdentity, canonical_operation_prefix};
 
 const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n";
 
@@ -288,27 +285,8 @@ fn emit_package_world(
     // component keeps its world byte for byte.
     let mut imports = String::new();
     let mut exports = String::new();
-    let mut participant = String::new();
     let mut postgres = !models.is_empty();
     for (local, operation) in &manifest.custom_operations {
-        if operation.transaction == Some(CommandTransaction::Participant) {
-            let inherited = inherited(operation).expect("a participant inherits its base claim");
-            let (group, name) = inherited
-                .operation
-                .split_once('.')
-                .expect("validated operation identity has one separator");
-            writeln!(
-                participant,
-                "  export {};\n  export {};",
-                sealed(
-                    &base(&inherited.base),
-                    &format!("{group}.{name}_pre_commit")
-                )?,
-                sealed(package, local)?
-            )
-            .expect("writing to a String cannot fail");
-            continue;
-        }
         postgres |= operation.connection.is_some();
         if operation.pre_commit.is_some() {
             writeln!(
@@ -327,15 +305,6 @@ fn emit_package_world(
         {
             writeln!(imports, "  import {};", sealed(&base(alias), local)?)
                 .expect("writing to a String cannot fail");
-        } else if operation.participant.is_some()
-            && let Some(inherited) = inherited(operation)
-        {
-            writeln!(
-                imports,
-                "  import {};",
-                sealed(&base(&inherited.base), &inherited.operation)?
-            )
-            .expect("writing to a String cannot fail");
         }
         writeln!(exports, "  export {};", sealed(package, local)?)
             .expect("writing to a String cannot fail");
@@ -356,27 +325,11 @@ fn emit_package_world(
 
     let namespace = package.id.replace('_', "-");
     let postgres = if postgres { POSTGRES } else { "" };
-    let mut world = format!(
+    let world = format!(
         "// @generated from the package manifest; do not edit.\n\n\
          package {namespace}:{WORLD_PACKAGE};\n\n\
          /// Every operation of the package. An authored world includes it.\n\
          world {WORLD_PACKAGE} {{\n{imports}{postgres}{exports}}}\n"
     );
-    if !participant.is_empty() {
-        write!(
-            world,
-            "\n/// The participant of the package. An authored participant world includes it.\n\
-             world participant {{\n{POSTGRES}{participant}}}\n"
-        )
-        .expect("writing to a String cannot fail");
-    }
     insert_bytes(files, "generated/wit/world.wit", world.into_bytes())
-}
-
-/// The base claim an operation inherits, when it inherits one.
-fn inherited(operation: &CustomOperationDeclaration) -> Option<&InheritedClaimDeclaration> {
-    match &operation.idempotent_by {
-        Some(CommandIdempotence::Inherited(inherited)) => Some(inherited),
-        _ => None,
-    }
 }

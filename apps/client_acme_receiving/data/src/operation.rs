@@ -4,8 +4,8 @@ use wamn_postgres_statements::{Connection, Transaction, Uuid as WamnUuid};
 
 use crate::error::AccessError;
 use crate::statements::{
-    quality_approve_inspection as approve_sql, quality_create_inspection as create_sql,
-    quality_load_purchase_order_detail as detail_sql, receiving_record_receipt as receipt_sql,
+    acme_record_receipt as receipt_sql, quality_approve_inspection as approve_sql,
+    quality_create_inspection as create_sql, quality_load_purchase_order_detail as detail_sql,
 };
 
 /// Result of one successful purchase-order detail load.

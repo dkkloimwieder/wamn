@@ -286,9 +286,6 @@ struct RouteContract {
     revision: Option<String>,
     idempotency: Option<String>,
     canonicalization: Option<RouteCanonicalization>,
-    /// The base operation whose claim the route's items take, when the
-    /// operation inherits it.
-    claim_operation: Option<String>,
 }
 
 #[cfg(test)]
@@ -300,7 +297,6 @@ impl From<OperationType> for RouteContract {
             revision: None,
             idempotency: None,
             canonicalization: None,
-            claim_operation: None,
         }
     }
 }
@@ -1687,7 +1683,6 @@ fn project_routes(
             revision: contract.revision.clone(),
             idempotency: contract.idempotency.clone(),
             canonicalization: contract.canonicalization.clone(),
-            claim_operation: contract.claim_operation.clone(),
         });
     }
     Ok(routes)

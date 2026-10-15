@@ -63,19 +63,9 @@ pub(super) fn read_package_manifests(
         }
     }
     let mut kinds = RouteContracts::new();
-    for (package_id, package) in &contracts {
+    for (package_id, package) in contracts {
         for contract in package {
-            let route = resolve_claim(&manifests[package_id], contract, |base| {
-                contracts.get(base).map(Vec::as_slice).ok_or_else(|| {
-                    PublishManifestError::new(
-                        PublishManifestErrorType::PackageManifest,
-                        format!(
-                            "package {package_id:?} inherits a claim from package {base:?}, which the release does not carry"
-                        ),
-                    )
-                })
-            })?;
-            kinds.insert((package_id.clone(), contract.operation.clone()), route);
+            kinds.insert((package_id.clone(), contract.operation), contract.route);
         }
     }
     Ok((manifests, kinds))
@@ -86,7 +76,7 @@ pub(super) fn read_package_manifests(
 ///
 /// A local application assembly calls it, so a test release carries the same
 /// route facts as a published one. `roots` holds the directory of every
-/// assembled package, so an inherited claim reads its base contract.
+/// assembled package.
 ///
 /// # Errors
 ///
@@ -118,29 +108,7 @@ pub fn package_route(
                 ),
             )
         })?;
-    let contract = if contract.inherited.is_some() {
-        let path = wamn_schema_generator::package_manifest_path(root);
-        let bytes = std::fs::read(&path).map_err(|error| {
-            PublishManifestError::with_source(
-                PublishManifestErrorType::PackageManifest,
-                format!("read package manifest {}", path.display()),
-                error,
-            )
-        })?;
-        let manifest =
-            wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
-                PublishManifestError::with_source(
-                    PublishManifestErrorType::PackageManifest,
-                    format!("parse package manifest {}", path.display()),
-                    error,
-                )
-            })?;
-        resolve_claim(&manifest, &contract, |base| {
-            read_operation_contracts(roots.get(base).ok_or_else(|| unassembled(base))?)
-        })?
-    } else {
-        contract.route
-    };
+    let contract = contract.route;
     Ok(ServingRoute {
         package_id: package_id.to_owned(),
         component: component.to_owned(),
@@ -150,67 +118,13 @@ pub fn package_route(
         revision: contract.revision,
         idempotency: contract.idempotency,
         canonicalization: contract.canonicalization,
-        claim_operation: contract.claim_operation,
     })
 }
 
-/// One generated contract of a package, before an inherited claim reads its
-/// base.
+/// One generated contract of a package.
 struct PackageContract {
     operation: String,
-    /// The manifest name of the operation, `<model>.<name>`.
-    declared: String,
-    /// The base operation whose claim the operation inherits.
-    inherited: Option<InheritedClaim>,
     route: RouteContract,
-}
-
-#[derive(serde::Deserialize)]
-struct InheritedClaim {
-    base: String,
-    operation: String,
-}
-
-/// The route facts of `contract`. An inherited claim is the base's: the
-/// route claims under the base operation, with the base key field and the
-/// base canonical form, so one key through either route is one request.
-fn resolve_claim<B: std::borrow::Borrow<[PackageContract]>>(
-    manifest: &wamn_schema_generator::PackageManifest,
-    contract: &PackageContract,
-    base_contracts: impl FnOnce(&str) -> Result<B, PublishManifestError>,
-) -> Result<RouteContract, PublishManifestError> {
-    let Some(inherited) = &contract.inherited else {
-        return Ok(contract.route.clone());
-    };
-    let refused = |detail: String| {
-        PublishManifestError::new(PublishManifestErrorType::PackageManifest, detail)
-    };
-    let dependency = manifest
-        .base_dependencies
-        .get(&inherited.base)
-        .ok_or_else(|| {
-            refused(format!(
-                "operation {:?} inherits a claim from undeclared base dependency {:?}",
-                contract.operation, inherited.base
-            ))
-        })?;
-    let base_contracts = base_contracts(&dependency.package)?;
-    let base = base_contracts
-        .borrow()
-        .iter()
-        .find(|base| base.declared == inherited.operation)
-        .ok_or_else(|| {
-            refused(format!(
-                "operation {:?} inherits the claim of {:?}, which package {:?} does not generate",
-                contract.operation, inherited.operation, dependency.package
-            ))
-        })?;
-    Ok(RouteContract {
-        idempotency: base.route.idempotency.clone(),
-        canonicalization: base.route.canonicalization.clone(),
-        claim_operation: Some(base.operation.clone()),
-        ..contract.route.clone()
-    })
 }
 
 /// The route facts of every generated contract `operation.json` under the package.
@@ -229,14 +143,6 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
         relations: Vec<Relation>,
         #[serde(default)]
         record: Option<Record>,
-        #[serde(default)]
-        idempotent_by: Option<IdempotentBy>,
-    }
-    #[derive(serde::Deserialize)]
-    #[serde(untagged)]
-    enum IdempotentBy {
-        Inherited { inherited: InheritedClaim },
-        Other(serde::de::IgnoredAny),
     }
     #[derive(serde::Deserialize)]
     struct Relation {
@@ -313,27 +219,14 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             } else {
                 read_input_identity(&path)?
             };
-            let inherited = match contract.idempotent_by {
-                Some(IdempotentBy::Inherited { inherited }) => Some(inherited),
-                _ => None,
-            };
-            let stem = path.file_name().unwrap_or_default().to_string_lossy();
-            let declared = format!(
-                "{}.{}",
-                model.file_name().unwrap_or_default().to_string_lossy(),
-                &stem[..stem.len() - ".operation.json".len()]
-            );
             kinds.push(PackageContract {
                 operation: contract.operation,
-                declared,
-                inherited,
                 route: RouteContract {
                     kind: contract.type_,
                     reads,
                     revision,
                     idempotency,
                     canonicalization,
-                    claim_operation: None,
                 },
             });
         }
@@ -492,39 +385,5 @@ mod tests {
             archive.expect("the archive has a contract").idempotency,
             None
         );
-    }
-
-    /// An inherited claim is the base's: the overlay route claims under the
-    /// base operation, with the base key field and the base canonical form.
-    #[test]
-    fn an_inherited_claim_carries_the_base_claim() {
-        let receiving = app("wamn_receiving");
-        let acme = app("client_acme_receiving");
-        let roots = BTreeMap::from([
-            ("wamn_receiving".to_owned(), receiving.as_path()),
-            ("client_acme_receiving".to_owned(), acme.as_path()),
-        ]);
-        let base = super::package_route(
-            &roots,
-            "wamn_receiving",
-            "receiving",
-            "wamn-receiving:receiving/record-receipt@2.1.0",
-        )
-        .expect("the base command has a contract");
-        let overlay = super::package_route(
-            &roots,
-            "client_acme_receiving",
-            "client_acme_receiving",
-            "client-acme-receiving:receiving/record-receipt@4.1.0",
-        )
-        .expect("the overlay command has a contract");
-        assert_eq!(base.claim_operation, None);
-        assert_eq!(
-            overlay.claim_operation.as_deref(),
-            Some(base.operation.as_str())
-        );
-        assert_eq!(overlay.idempotency, base.idempotency);
-        assert!(base.canonicalization.is_some());
-        assert_eq!(overlay.canonicalization, base.canonicalization);
     }
 }

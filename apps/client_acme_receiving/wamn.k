@@ -8,14 +8,14 @@ _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"
 _claim_errors = ["idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
-    package = {id = "client_acme_receiving", version = "4.1.0", predecessor_version = "4.0.0"}
+    package = {id = "client_acme_receiving", version = "4.2.0", predecessor_version = "4.1.0"}
     # The pin is the contract with the base: its version and the digest of its
     # built component. Nothing here imports the base's wamn.k.
     base_dependencies = {
         base_receiving = {
             package = "wamn_receiving"
-            version = "2.1.0"
-            digest = "sha256:a3c55a56367e12ae434be4c238ce248a7d23dfda8d961cb204d833a440c318c0"
+            version = "2.2.0"
+            digest = "sha256:4e38fce33934a84557e3846da0b765a2c9da3e00d14cdbfbd953182b60909e02"
             operations = ["receiving.record_receipt"]
         }
     }
@@ -51,7 +51,7 @@ manifest.Package {
         # Acme's entry calls Receiving's record_receipt, then records the
         # inspection in the same host transaction. It claims its key under its
         # own operation.
-        "receiving.record_receipt" = manifest.Command("receiving.record_receipt") {
+        "acme.record_receipt" = manifest.Command("acme.record_receipt") {
             transaction = "explicit_per_input"
             idempotent_by = "claim"
             input: {

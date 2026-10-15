@@ -1,14 +1,14 @@
 {
-  "client-acme-receiving-receiving-record-receipt-http": {
+  "client-acme-receiving-acme-record-receipt-http": {
     "type": "http",
     "package-id": "client_acme_receiving",
     "component": "client_acme_receiving",
-    "operation": "client-acme-receiving:receiving/record-receipt",
-    "definition-hash": "sha256:41adc92305df27b673f87a0f5221ff65bf1a8acb0d96113b0c80711fb29ecdc7",
+    "operation": "client-acme-receiving:acme/record-receipt",
+    "definition-hash": "sha256:1ab9edc2f7aaf35b0bf9d8e5a42b7bde0a2fa004cefdcf9001e55d23d0c593c9",
     "definition": {
-      "id": "client-acme-receiving-receiving-record-receipt-http",
+      "id": "client-acme-receiving-acme-record-receipt-http",
       "type": "http",
-      "route": {"path": "/acme/receiving/record_receipt"},
+      "route": {"path": "/acme/acme/record_receipt"},
       "raw-body-bytes": {"maximum": 1048576},
       "input-schema": {
         "type": "array",
@@ -51,7 +51,7 @@
       }
     },
     "auth-policy": {"modes": ["pat", "session"]},
-    "registered-operation": "client-acme-receiving:receiving/record-receipt"
+    "registered-operation": "client-acme-receiving:acme/record-receipt"
   },
   "client-acme-receiving-quality-load-purchase-order-detail-http": {
     "type": "http",

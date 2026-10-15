@@ -1627,7 +1627,6 @@ mod tests {
                     revision: None,
                     idempotency: None,
                     canonicalization: None,
-                    claim_operation: None,
                 }]),
                 BTreeMap::from([("route".to_string(), route)]),
             );

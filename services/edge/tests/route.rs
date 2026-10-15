@@ -134,7 +134,7 @@ async fn begin(store: &SqliteIntentStore, release: &str, item: &Value) -> Intent
             package: PACKAGE,
             operation: OPERATION,
             idempotency_key: item["request_id"].as_str().expect("a request id"),
-            input_hash: &item_input_hash(item, None),
+            input_hash: &item_input_hash(item),
             deadline_ms: 1_000,
         })
         .await

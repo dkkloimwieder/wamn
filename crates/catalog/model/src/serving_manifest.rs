@@ -549,13 +549,6 @@ pub struct ServingRoute {
     /// contract. A route without one takes its items as they are sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonicalization: Option<RouteCanonicalization>,
-    /// The base operation whose write log claim the route's items take, when
-    /// the operation inherits its claim (`idempotent_by: inherited`). The
-    /// key field and the canonical form are then the base's too, so one key
-    /// sent to the base route and to this route is one request. A route
-    /// without one claims under its own operation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub claim_operation: Option<String>,
 }
 
 /// The canonical form of one route's input item
@@ -1778,7 +1771,6 @@ mod tests {
             revision: None,
             idempotency: None,
             canonicalization: None,
-            claim_operation: None,
         }])
     }
 

@@ -37,8 +37,6 @@ pub const IDEMPOTENCY_CONFLICT: &str = "idempotency_conflict";
 const INVALID_INPUT: &str = "invalid_input";
 /// The item field that correlates an item with its result.
 const REQUEST_ID: &str = "request_id";
-/// The member that carries the participation intent in the request hash.
-const PARTICIPATION_INTENT: &str = "participation_intent";
 
 /// What one route call needs to log its intents.
 #[derive(Clone, Copy)]
@@ -56,13 +54,6 @@ pub struct IntentContext<'a> {
     /// The canonical form of an item, from the route. `None` takes each item
     /// as it is sent.
     pub canonicalization: Option<&'a RouteCanonicalization>,
-    /// The base operation whose claim the items take, from the route. `None`
-    /// claims under the called operation.
-    pub claim_operation: Option<&'a str>,
-    /// The intent of the pre-commit participant that the call selects, if
-    /// any. It is part of the request hash, so one key under two intents is
-    /// two requests.
-    pub participation: Option<&'a str>,
 }
 
 impl fmt::Debug for IntentContext<'_> {
@@ -75,8 +66,6 @@ impl fmt::Debug for IntentContext<'_> {
             .field("kind", &self.kind)
             .field("key_field", &self.key_field)
             .field("canonicalization", &self.canonicalization)
-            .field("claim_operation", &self.claim_operation)
-            .field("participation", &self.participation)
             .finish_non_exhaustive()
     }
 }
@@ -132,17 +121,13 @@ fn items<'v>(input: &'v Value, key_field: Option<&str>) -> Result<Vec<Item<'v>>,
 }
 
 /// The request hash of one item's intent: the canonical JSON SHA-256 of the
-/// item without its `request_id`, with the key kept, and with the selected
-/// participation intent added. A retry under one idempotency key with a new
-/// request id is the same request.
+/// item without its `request_id`, with the key kept. A retry under one
+/// idempotency key with a new request id is the same request.
 #[must_use]
-pub fn item_input_hash(item: &Value, participation: Option<&str>) -> String {
+pub fn item_input_hash(item: &Value) -> String {
     let mut body = item.clone();
     if let Some(object) = body.as_object_mut() {
         object.remove(REQUEST_ID);
-        if let Some(intent) = participation {
-            object.insert(PARTICIPATION_INTENT.to_owned(), Value::from(intent));
-        }
     }
     wamn_execution_contract::canonical_json_sha256(&body)
 }
@@ -367,12 +352,9 @@ async fn settle_item<H: ApplicationHost>(
             tenant: intent.tenant,
             release: intent.release,
             package: intent.package,
-            operation: intent.claim_operation.unwrap_or(call.operation),
+            operation: call.operation,
             idempotency_key: item.key,
-            input_hash: &item_input_hash(
-                hashed.as_ref().unwrap_or(item.value),
-                intent.participation,
-            ),
+            input_hash: &item_input_hash(hashed.as_ref().unwrap_or(item.value)),
             deadline_ms: call.deadline_ms,
         })
         .await?;
@@ -525,42 +507,29 @@ mod tests {
     #[test]
     fn a_new_request_id_under_one_key_is_the_same_input() {
         assert_eq!(
-            item_input_hash(
-                &json!({"request_id": "r-1", "value": {"idempotency_key": "k"}}),
-                None
-            ),
-            item_input_hash(
-                &json!({"request_id": "r-2", "value": {"idempotency_key": "k"}}),
-                None
-            )
+            item_input_hash(&json!({"request_id": "r-1", "value": {"idempotency_key": "k"}})),
+            item_input_hash(&json!({"request_id": "r-2", "value": {"idempotency_key": "k"}}))
         );
         assert_ne!(
-            item_input_hash(&json!({"request_id": "r-1", "value": 1}), None),
-            item_input_hash(&json!({"request_id": "r-1", "value": 2}), None)
+            item_input_hash(&json!({"request_id": "r-1", "value": 1})),
+            item_input_hash(&json!({"request_id": "r-1", "value": 2}))
         );
     }
 
     #[test]
-    fn the_request_hash_keeps_the_key_and_adds_the_participation_intent() {
+    fn the_request_hash_keeps_the_key_and_is_the_item_alone() {
         let item = json!({"request_id": "r-1", "value": {"idempotency_key": "k", "n": 1}});
         assert_ne!(
-            item_input_hash(&item, None),
+            item_input_hash(&item),
             item_input_hash(
-                &json!({"request_id": "r-1", "value": {"idempotency_key": "other", "n": 1}}),
-                None
+                &json!({"request_id": "r-1", "value": {"idempotency_key": "other", "n": 1}})
             ),
             "the key is part of the request"
         );
-        assert_ne!(
-            item_input_hash(&item, Some("ship")),
-            item_input_hash(&item, Some("hold")),
-            "one key under two intents is two requests"
-        );
         assert_eq!(
-            item_input_hash(&item, Some("ship")),
+            item_input_hash(&item),
             wamn_execution_contract::canonical_json_sha256(&json!({
-                "value": {"idempotency_key": "k", "n": 1},
-                "participation_intent": "ship"
+                "value": {"idempotency_key": "k", "n": 1}
             }))
         );
     }
@@ -586,7 +555,7 @@ mod tests {
 
     fn canonical_hash(form: &RouteCanonicalization, mut item: serde_json::Value) -> String {
         form.apply(&mut item);
-        item_input_hash(&form.hashed(&item), None)
+        item_input_hash(&form.hashed(&item))
     }
 
     #[test]

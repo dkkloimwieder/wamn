@@ -6,6 +6,7 @@
 //! One package-grain component exporting every Receiving operation.
 
 use exports::wamn_receiving::receiving::record_receipt as contract;
+#[cfg(test)]
 use wamn::node::types::NodeError;
 use wamn_receiving_data_access::record_receipt as receipt;
 
@@ -52,7 +53,7 @@ receipt_codec::export_operation!(
     Component,
     exports::wamn_receiving::receiving::record_receipt,
     wamn::node::types,
-    record_receipt_execute_with_context,
+    record_receipt_execute,
     receipt_codec
 );
 
@@ -99,36 +100,12 @@ fn map_record_receipt_error(error: &receipt::RecordReceiptError) -> contract::Re
     })
 }
 
-async fn record_receipt_execute_with_context(
-    context: wamn::node::types::NodeContext,
+async fn record_receipt_execute(
     transaction: &mut wamn_postgres_statements::Transaction,
     request: contract::RecordReceiptRequest,
 ) -> Result<contract::RecordReceiptResult, contract::RecordReceiptError> {
-    let participation = wamn_postgres_statements::participation()
+    receipt::execute(transaction, &record_receipt_command(request))
         .await
-        .map_err(receipt::RecordReceiptError::participation_statement_failed)
-        .map_err(|error| map_record_receipt_error(&error))?;
-    let command = record_receipt_command(request);
-    let result = match participation {
-        Some(participation) => receipt::execute_with_pre_commit(
-            transaction,
-            &command,
-            &participation.operation,
-            |request| async move {
-                let request = wamn_receiving::receiving::record_receipt_pre_commit::RecordReceiptPreCommitRequest {
-                    receipt_id: request.receipt_id.into(),
-                    purchase_order_id: request.purchase_order_id.into(),
-                };
-                wamn_receiving::receiving::record_receipt_pre_commit::run(context, request)
-                    .await
-                    .map(|_| ())
-                    .map_err(map_participant_error)
-            },
-        )
-        .await,
-        None => receipt::execute(transaction, &command).await,
-    };
-    result
         .map(|value| contract::RecordReceiptResult {
             receipt_id: value.receipt_id.into(),
             purchase_order_id: value.purchase_order_id.into(),
@@ -136,35 +113,6 @@ async fn record_receipt_execute_with_context(
             row_version: value.row_version,
         })
         .map_err(|error| map_record_receipt_error(&error))
-}
-
-fn map_participant_error(error: wamn::node::types::NodeError) -> receipt::RecordReceiptError {
-    use receipt::RecordReceiptErrorType as Kind;
-
-    match error {
-        NodeError::InvalidInput(detail) => {
-            receipt::RecordReceiptError::participation_refused(detail.message)
-        }
-        NodeError::Retryable(detail) => {
-            receipt::RecordReceiptError::participation_failed(Kind::Retry, detail.message)
-        }
-        NodeError::RateLimited(detail) => {
-            receipt::RecordReceiptError::participation_failed(Kind::Retry, detail.detail.message)
-        }
-        NodeError::Cancelled => receipt::RecordReceiptError::participation_failed(
-            Kind::Timeout,
-            "record_receipt participant was cancelled",
-        ),
-        NodeError::Terminal(detail) if detail.code.as_deref() == Some("permission_denied") => {
-            receipt::RecordReceiptError::participation_failed(
-                Kind::PermissionDenied,
-                detail.message,
-            )
-        }
-        NodeError::Terminal(detail) => {
-            receipt::RecordReceiptError::participation_failed(Kind::InternalError, detail.message)
-        }
-    }
 }
 
 #[cfg(test)]

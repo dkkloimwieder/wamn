@@ -87,7 +87,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         client
             .execute(
                 "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
-                 VALUES ($1, 'receipt-clerk', 'client-acme-receiving:receiving/record-receipt')",
+                 VALUES ($1, 'receipt-clerk', 'client-acme-receiving:acme/record-receipt')",
                 &[&tenant],
             )
             .await?;
@@ -119,7 +119,7 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
         };
 
         let entry = record(
-            "/acme/receiving/record_receipt",
+            "/acme/acme/record_receipt",
             "entry-grant",
             "00000000-0000-0000-0000-000000000920",
             "00000000-0000-0000-0000-000000000940",
@@ -210,7 +210,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     let item = async |application: &LocalApplication| {
         record(
             application,
-            "/acme/receiving/record_receipt",
+            "/acme/acme/record_receipt",
             key,
             key,
             "00000000-0000-0000-0000-000000000721",
@@ -338,7 +338,7 @@ async fn start_with(
             wamn_schema_generator::sealed_operation_reference(route_operation(&attachment));
         if matches!(
             operation,
-            "client-acme-receiving:receiving/record-receipt"
+            "client-acme-receiving:acme/record-receipt"
                 | "client-acme-receiving:quality/load-purchase-order-detail"
         ) || more_overlay.contains(&operation)
         {
@@ -380,7 +380,7 @@ const INSPECTION: &str = "command/record_receipt/record_inspection.sql";
 const LOCK: &str = "command/record_receipt/lock_purchase_order.sql";
 
 /// The versionless write-log operations of the two entries.
-const ACME_OPERATION: &str = "client-acme-receiving:receiving/record-receipt";
+const ACME_OPERATION: &str = "client-acme-receiving:acme/record-receipt";
 const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
 
 /// One record_receipt item on `path`, answered as JSON.
@@ -449,11 +449,11 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     )
     .await?;
 
-    // Not required: Receiving runs on its own named instance with only its
-    // no-op participant plugged, the receipt commits, and no row is written.
+    // Not required: Receiving runs on its own named instance, the receipt
+    // commits, and no row is written.
     let none = record(
         application,
-        "/acme/receiving/record_receipt",
+        "/acme/acme/record_receipt",
         "part-none",
         "part-none",
         "00000000-0000-0000-0000-000000000720",
@@ -487,7 +487,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     // Approved: the inspection row is written. An unchanged key replays.
     let approved = record(
         application,
-        "/acme/receiving/record_receipt",
+        "/acme/acme/record_receipt",
         "part-approved",
         "part-approved",
         "00000000-0000-0000-0000-000000000721",
@@ -500,7 +500,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     ensure!(project.query_one("SELECT status = 'approved' FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid", &[&approved_receipt]).await?.get::<_, bool>(0), "the approved receipt did not write an approved inspection");
     let replay = record(
         application,
-        "/acme/receiving/record_receipt",
+        "/acme/acme/record_receipt",
         "part-approved",
         "part-approved",
         "00000000-0000-0000-0000-000000000721",
@@ -526,7 +526,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     // Not approved: refused, and nothing commits, the receipt included.
     let refused = record(
         application,
-        "/acme/receiving/record_receipt",
+        "/acme/acme/record_receipt",
         "part-refused",
         "part-refused",
         "00000000-0000-0000-0000-000000000722",
@@ -561,7 +561,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     );
     let cross = record(
         application,
-        "/acme/receiving/record_receipt",
+        "/acme/acme/record_receipt",
         "part-cross",
         "part-cross-acme",
         "00000000-0000-0000-0000-000000000723",
@@ -610,7 +610,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
         .await?;
     let era = record(
         application,
-        "/acme/receiving/record_receipt",
+        "/acme/acme/record_receipt",
         "part-era",
         "part-era",
         "00000000-0000-0000-0000-000000000724",
@@ -626,7 +626,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     // spelled another way is the same request under Acme's canonical form.
     let reordered = async |lines: [&str; 2], occurred_at: &str| -> anyhow::Result<Value> {
         let response = reqwest::Client::new()
-            .post(format!("{}/acme/receiving/record_receipt", application.endpoint))
+            .post(format!("{}/acme/acme/record_receipt", application.endpoint))
             .header(reqwest::header::HOST, &application.route_host)
             .bearer_auth(&application.bearer)
             .json(&json!([{"request_id":"part-reordered","value":{
