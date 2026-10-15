@@ -807,7 +807,19 @@ member.revoke
 
 project_admin.grant
 project_admin.revoke
+
+release.profile
 ```
+
+### Release profile
+
+The profile screen shows what each operation of a release can touch in the database. It is information only. Nothing enforces on it, and it writes nothing.
+
+`release.profile` (ProjectAdmin, read-only) takes `project`, `env` and `digest`. It answers one row per operation and per export that the operation reaches. Each row lists the statements that its bindings reach, and the tables and columns that each statement reads, writes or locks. The profile is keyed by release digest, because a change to SQL alone changes the release and not the component.
+
+A row is imprecise when its reach is widened to a member union. A base member reached through composition binds to the statements of all its own operations, so the row lists every export of that base with "(imprecise)" after it. The real reach can be smaller. A statement that the SQL lexer cannot read shows as refused, with the reason, and the profile names no table for it.
+
+The project screen shows the profile of each environment's current release, one row per operation, with the columns reaches, reads, writes, locks and refused. The role grid shows the profile beside each operation row, and above the grid the union over the role's effective operations. The role grid runs in an application session, and `release.profile` is a control route, so the live role grid shows no profile yet (wamn-j157o).
 
 ### Membership
 
@@ -907,7 +919,7 @@ Membership remains authoritative; application administration cannot manufacture 
 
 ### Permissions
 
-`permission.list` reports for a role one row per served operation, with one toggle, and `deprecated` for a stored row that the release does not serve. Once the profile screen (trx-pkg-plan.md item B) exists, the derived profile (reaches, reads, writes) shows beside it as information.
+`permission.list` reports for a role one row per served operation, with one toggle, and `deprecated` for a stored row that the release does not serve. The release profile (reaches, reads, writes, locks) shows beside it as information ([Release profile](#release-profile)).
 
 `permission.grant` inserts the row. `permission.revoke` deletes it.
 
