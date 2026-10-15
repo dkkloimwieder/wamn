@@ -576,8 +576,8 @@ It needs TypeScript 5.5 or later, and it last passed with TypeScript 5.5.3.
 The emitted modules import the hand-written runtime by its package name, and the command maps that name to `web/runtime` in this checkout.
 
 The clients of the host routes are build output, and Git does not hold them.
-The generator writes the client of the application host routes, `@wamn/control-client`, to `target/wamn/wamn_control/client-ts` at the repository root.
-It writes the client of the control routes, `@wamn/control-org-client`, to `target/wamn/wamn_control/control/client-ts`.
+The generator writes the client of the application host routes, `@wamn/control-client`, to `apps/target/wamn/wamn_control/client-ts`.
+It writes the client of the control routes, `@wamn/control-org-client`, to `apps/target/wamn/wamn_control/control/client-ts`.
 It makes them from the contracts in `crates/catalog/model/src/host_route/contracts` and `host_route/control/contracts`.
 Every web script that reads the clients writes them first through `web/host-route-clients.mjs`, so you do not need to write them yourself.
 To write them without a web script, run:

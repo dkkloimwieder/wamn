@@ -3,7 +3,7 @@
 //!
 //! The lint refuses a tracked file that is:
 //! - in a `client-ts` directory: a TypeScript client generated from contracts.
-//!   The host route clients are written to `target/wamn/wamn_control` by
+//!   The host route clients are written to `apps/target/wamn/wamn_control` by
 //!   `web/host-route-clients.mjs`.
 //! - in a `generated` or `.sqlx` directory under `apps/`: a package's build
 //!   output, which `wamn build` writes to `apps/target/wamn/<package>`.

@@ -30,11 +30,11 @@ export default defineConfig({
       { find: "@wamn/ui/admin", replacement: local("../ui/src/admin/index.ts") },
       {
         find: "@wamn/control-client",
-        replacement: local("../../target/wamn/wamn_control/client-ts/index.ts"),
+        replacement: local("../../apps/target/wamn/wamn_control/client-ts/index.ts"),
       },
       {
         find: "@wamn/control-org-client",
-        replacement: local("../../target/wamn/wamn_control/control/client-ts/index.ts"),
+        replacement: local("../../apps/target/wamn/wamn_control/control/client-ts/index.ts"),
       },
     ],
     dedupe: ["solid-js", "@tanstack/solid-table"],
@@ -44,8 +44,8 @@ export default defineConfig({
     fs: {
       allow: [
         local(".."),
-        local("../../target/wamn/wamn_control/client-ts"),
-        local("../../target/wamn/wamn_control/control/client-ts"),
+        local("../../apps/target/wamn/wamn_control/client-ts"),
+        local("../../apps/target/wamn/wamn_control/control/client-ts"),
       ],
     },
   },

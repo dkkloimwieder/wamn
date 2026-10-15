@@ -22,10 +22,10 @@ export default defineConfig({
       "@wamn/ui/admin": fileURLToPath(new URL("../ui/src/admin/index.ts", import.meta.url)),
       "@wamn/ui": fileURLToPath(new URL("../ui/src/index.ts", import.meta.url)),
       "@wamn/control-client": fileURLToPath(
-        new URL("../../target/wamn/wamn_control/client-ts/index.ts", import.meta.url),
+        new URL("../../apps/target/wamn/wamn_control/client-ts/index.ts", import.meta.url),
       ),
       "@wamn/control-org-client": fileURLToPath(
-        new URL("../../target/wamn/wamn_control/control/client-ts/index.ts", import.meta.url),
+        new URL("../../apps/target/wamn/wamn_control/control/client-ts/index.ts", import.meta.url),
       ),
     },
     dedupe: ["solid-js", "@solidjs/router", "@tanstack/solid-table"],

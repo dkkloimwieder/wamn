@@ -54,6 +54,7 @@ A generic upstream component transfer cannot replace them by dropping those fact
 The [routing contract](execution.md#routing-and-availability) retains the native 404 and readiness limitations.
 
 The native operator can exit after an initial scheduler NATS dial timeout.
+Through a scheduler outage, Kubernetes restarts the operator with a backoff of at most 5 minutes, and the operator recovers when NATS returns. The owner accepted this window on 2026-10-13 (`wamn-ifh7`).
 `wamn-10yt.76` retains the retry-gap work and the unresolved fault-time liveness delay.
 Accepted supervised restarts do not establish the cause or removal of that delay.
 A successful recovery without a startup refusal cannot establish recovery after that refusal.

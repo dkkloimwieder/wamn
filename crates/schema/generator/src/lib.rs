@@ -91,7 +91,7 @@ pub use materialize::{
     materialize_host_route_client, materialize_package, materialize_package_from_catalog,
     materialize_package_verified, materialize_package_verified_with_catalog,
 };
-pub use output::output_root;
+pub use output::{host_route_client_output_root, output_root};
 pub use package_catalog::project_package_catalog;
 pub use sqlx_metadata::{
     SqlxVerifier, package_database_url, prepare_sqlx_metadata, stage_sqlx_verifier,

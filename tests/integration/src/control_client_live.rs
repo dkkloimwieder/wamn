@@ -103,7 +103,9 @@ async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
     let components = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/components");
     // `pnpm exec` runs no package script, so the clients are written here.
     wamn_schema_generator::materialize_host_route_client(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wamn"),
+        &wamn_schema_generator::host_route_client_output_root(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+        ),
     )?;
     let output = tokio::process::Command::new("pnpm")
         .current_dir(&components)

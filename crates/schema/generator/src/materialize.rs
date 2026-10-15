@@ -704,7 +704,7 @@ pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<Path
 /// the catalog's set, so each operation reaches the path the host serves it
 /// at.
 ///
-/// `output_root` is a build output root, `target/wamn` at the repository root
+/// `output_root` is a build output root, [`crate::host_route_client_output_root`]
 /// for the web packages. The application client goes to
 /// `<output_root>/wamn_control/client-ts` and the control client to
 /// `<output_root>/wamn_control/control/client-ts`. A file there that the

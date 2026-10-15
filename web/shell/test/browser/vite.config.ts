@@ -29,7 +29,7 @@ function required(name: string): string {
   return value;
 }
 
-const CLIENTS = "../../../../target/wamn/wamn_control";
+const CLIENTS = "../../../../apps/target/wamn/wamn_control";
 
 export default defineConfig({
   root: local("."),
