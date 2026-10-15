@@ -1,0 +1,178 @@
+# The OpenTelemetry Collector of the cluster (docs/plan/observability.md R2,
+# section 4): the one receiver of every host's OTLP export. It runs in the
+# namespace `platform`, and the platform install applies it with the values
+# of its cluster:
+#
+#   kubectl -n platform apply -f deploy/platform/otel-collector.yaml -f deploy/gcp/otel-collector-values.yaml
+#
+# The ConfigMap `otel-collector-values` supplies BUCKET, CLUSTER, PROJECT
+# and REGION. On GKE the platform install annotates the ServiceAccount with
+# `iam.gke.io/gcp-service-account` (docs/operations/gcp.md section 4.4).
+#
+# Traces and logs go to the bucket as gzip OTLP JSON, one object per flush,
+# below `<signal>/year=/month=/day=/hour=`. The pinned image writes no
+# Parquet, and its Cloud Storage exporter has no metrics, so metrics stop
+# here (wamn-22lsr.1).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 800
+        spike_limit_mib: 200
+      resource:
+        attributes:
+          - key: wamn.cluster
+            value: ${env:CLUSTER}
+            action: upsert
+      batch:
+        timeout: 60s
+        send_batch_size: 50000
+        send_batch_max_size: 100000
+    exporters:
+      google_cloud_storage/traces:
+        bucket:
+          name: ${env:BUCKET}
+          project_id: ${env:PROJECT}
+          region: ${env:REGION}
+          reuse_if_exists: true
+          compression: gzip
+          file_prefix: traces
+          partition:
+            prefix: traces
+            format: year=%Y/month=%m/day=%d/hour=%H
+        sending_queue:
+          enabled: true
+          storage: file_storage
+      google_cloud_storage/logs:
+        bucket:
+          name: ${env:BUCKET}
+          project_id: ${env:PROJECT}
+          region: ${env:REGION}
+          reuse_if_exists: true
+          compression: gzip
+          file_prefix: logs
+          partition:
+            prefix: logs
+            format: year=%Y/month=%m/day=%d/hour=%H
+        sending_queue:
+          enabled: true
+          storage: file_storage
+      nop: {}
+    extensions:
+      file_storage:
+        directory: /var/lib/otelcol/queue
+        create_directory: true
+    service:
+      extensions: [file_storage]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [google_cloud_storage/traces]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [google_cloud_storage/logs]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter]
+          exporters: [nop]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: otel-collector-queue
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+spec:
+  replicas: 1
+  # The queue volume is ReadWriteOnce, so the old pod leaves first.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+    spec:
+      serviceAccountName: otel-collector
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.161.0@sha256:fd328de2552466ad78385e1b1289c3f2402b1c45f265b252aab1955b42845ac1
+          args: ["--config=/etc/otelcol/config.yaml"]
+          envFrom:
+            - configMapRef:
+                name: otel-collector-values
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otelcol
+              readOnly: true
+            - name: queue
+              mountPath: /var/lib/otelcol/queue
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector
+        - name: queue
+          persistentVolumeClaim:
+            claimName: otel-collector-queue
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+spec:
+  selector:
+    app.kubernetes.io/name: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      appProtocol: grpc

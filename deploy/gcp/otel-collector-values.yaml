@@ -1,0 +1,11 @@
+# The values of the collector on wamn-dev (deploy/platform/otel-collector.yaml).
+# The bucket and its 30-day lifecycle are an owner input (docs/operations/gcp.md section 1).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-values
+data:
+  BUCKET: wamn-dev-otel
+  CLUSTER: wamn
+  PROJECT: wamn-dev
+  REGION: us-central1

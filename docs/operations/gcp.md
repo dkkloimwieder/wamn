@@ -29,7 +29,22 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
    ```
 
-4. The approval of the teardown of section 3. The teardown deletes every database.
+4. The telemetry bucket and its writer (`docs/plan/observability.md` R1, R7). The bucket `wamn-dev-otel` deletes an object 30 days after it lands. The Google service account `wamn-otel` writes to it and reads its metadata, because the collector exporter reads the bucket at start (`storage.buckets.get`). The Kubernetes service account `platform/otel-collector` acts as `wamn-otel`. A teardown keeps all three, because they are a bucket and IAM:
+
+   ```bash
+   echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > /tmp/otel-lifecycle.json
+   gcloud storage buckets create gs://wamn-dev-otel --project wamn-dev --location us-central1 \
+     --uniform-bucket-level-access --lifecycle-file=/tmp/otel-lifecycle.json
+   gcloud iam service-accounts create wamn-otel --project wamn-dev
+   for role in roles/storage.objectCreator roles/storage.legacyBucketReader; do
+     gcloud storage buckets add-iam-policy-binding gs://wamn-dev-otel \
+       --member serviceAccount:wamn-otel@wamn-dev.iam.gserviceaccount.com --role $role
+   done
+   gcloud iam service-accounts add-iam-policy-binding wamn-otel@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
+     --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[platform/otel-collector]"
+   ```
+
+5. The approval of the teardown of section 3. The teardown deletes every database.
 
 ## 2. Project resources
 
@@ -141,7 +156,7 @@ The issuer must be Let's Encrypt production, not `(STAGING)`.
 
 | Namespace | Holds |
 | --- | --- |
-| `platform` | the runtime operator, its NATS and CA, the event NATS, PostgreSQL |
+| `platform` | the runtime operator, its NATS and CA, the event NATS, PostgreSQL, the collector |
 | `identity` | identity |
 | `hosts` | the release namespace: the hosts of every environment and the CDC readers |
 | `edge` | the edge and the public certificate |
@@ -164,6 +179,20 @@ kubectl -n hosts wait --for=condition=Ready certificate/wasmcloud-runtime-tls ce
 ```
 
 The owner can now make the Secret `identity-resend` of section 1.
+
+### 4.4.1 Collector
+
+[deploy/platform/otel-collector.yaml](../../deploy/platform/otel-collector.yaml) is the one OpenTelemetry Collector of the cluster (`docs/plan/observability.md` section 4). [deploy/gcp/otel-collector-values.yaml](../../deploy/gcp/otel-collector-values.yaml) gives it the bucket and the cluster name. It writes traces and logs to the bucket of section 1 as gzip OTLP JSON, below `traces/` and `logs/` with hour partitions. It drops metrics. Apply it, then let it act as `wamn-otel`:
+
+```bash
+kubectl -n platform apply -f deploy/platform/otel-collector.yaml -f deploy/gcp/otel-collector-values.yaml
+kubectl -n platform annotate serviceaccount otel-collector --overwrite \
+  iam.gke.io/gcp-service-account=wamn-otel@wamn-dev.iam.gserviceaccount.com
+kubectl -n platform rollout restart deploy/otel-collector
+kubectl -n platform rollout status deploy/otel-collector --timeout=300s
+```
+
+If the bucket or the binding of section 1 is missing, the collector exits at start and its log names the bucket.
 
 ### 4.5 PostgreSQL
 
