@@ -276,7 +276,8 @@ const MATRIX: [FamilyReach; 10] = [
     },
     // `wamn-a40n.2`: the host-run administration routes read and write the
     // application authorization relations, and the status routes write the
-    // environment status (`wamn-zua8.2`). `app_system.roles`, the history
+    // environment status (`wamn-zua8.2`), and `release.profile` reads an
+    // installed release (`wamn-aemxz.1`). `app_system.roles`, the history
     // tables and `wamn_history.row_image` are outside the matrix universe.
     FamilyReach {
         family: WorkloadRoleFamily::Administration,
@@ -297,6 +298,7 @@ const MATRIX: [FamilyReach; 10] = [
             "app_system.users|INSERT|table",
             "app_system.users|SELECT|table",
             "app_system.users|UPDATE|table",
+            "catalog.releases|SELECT|table",
         ],
         routines: &["wamn_authority.tenant_key(text)"],
     },

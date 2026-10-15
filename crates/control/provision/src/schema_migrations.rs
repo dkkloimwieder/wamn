@@ -318,6 +318,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0019_drop_permission_required_by.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0020_administration_release_read.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0020_administration_release_read.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]
@@ -373,29 +379,28 @@ mod tests {
         }
     }
 
-    /// The header of the generated project migration that removes the release
-    /// head, the latest rendering of the administration surface. 0003, 0006
-    /// and 0008 hold the earlier surfaces, as installed databases recorded
-    /// them.
+    /// The header of the generated project migration that lets the
+    /// administration family read releases, the latest rendering of the
+    /// administration surface. 0003, 0006, 0008 and 0016 hold the earlier
+    /// surfaces, as installed databases recorded them.
     const ADMINISTRATION_GRANTS_HEADER: &str = "\
--- GENERATED FILE. Do not edit. After the DROP it is the output of
+-- GENERATED FILE. Do not edit. It is the output of
 -- wamn_control_provision::sql::grant_administration_surface_sql(\"wamn_run\"),
 -- and a test in crates/control/provision/src/schema_migrations.rs renders that
 -- function and compares the bytes.
 --
--- Remove the release head (docs/plan/platform-deploy.md §13, §15.1). The
--- release an environment serves is the newest successful revision of its
--- release chart, so no row records it, and the administration family loses
--- its read of the head. upgrade-schema runs this file once in one transaction
--- and records it. A fresh install records it as applied, because
--- catalog-schema.sql no longer creates the table and provision-project-env
--- applies the same surface when it prepares the administration credential.
+-- The administration family reads catalog.releases, so the control host's
+-- release.profile reads an installed release by its digest
+-- (docs/plan/trx-pkg-plan.md, Spike and acceptance B). upgrade-schema runs
+-- this file once in one transaction and records it. A fresh install records
+-- it as applied, because provision-project-env applies the same surface when
+-- it prepares the administration credential.
 ";
 
     #[test]
     fn the_latest_administration_migration_is_the_rendered_administration_surface() {
         let rendered = format!(
-            "{ADMINISTRATION_GRANTS_HEADER}\nDROP TABLE IF EXISTS catalog.effective_release_heads;\n{}\n",
+            "{ADMINISTRATION_GRANTS_HEADER}\n{}\n",
             crate::sql::grant_administration_surface_sql("wamn_run")
         );
         let migration = PROJECT_MIGRATIONS
@@ -403,9 +408,9 @@ mod tests {
             .find(|migration| {
                 migration
                     .relative_path
-                    .ends_with("_remove_release_heads.sql")
+                    .ends_with("_administration_release_read.sql")
             })
-            .expect("the project migration that removes the release head exists");
+            .expect("the project migration that lets administration read releases exists");
         assert_eq!(
             migration.sql, rendered,
             "{} is not the rendered administration surface",

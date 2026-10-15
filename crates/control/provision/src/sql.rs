@@ -564,8 +564,9 @@ pub const ADMINISTRATION_RELATIONS: [&str; 5] =
 /// through `wamn_history.row_image` with the writer's authority, and forms
 /// `<table>_tkey` index entries, so the role holds `INSERT` on the entry
 /// columns of those history tables, `USAGE` on `wamn_history`, `EXECUTE` on
-/// `row_image`, and `EXECUTE` on the tenant-key derivation. It holds nothing on the run plane or the
-/// catalog. `schema` is the run-plane revoke scope.
+/// `row_image`, and `EXECUTE` on the tenant-key derivation. On the catalog it
+/// reads `catalog.releases` only, for the control host's `release.profile`.
+/// It holds nothing on the run plane. `schema` is the run-plane revoke scope.
 pub fn grant_administration_surface_sql(schema: &str) -> String {
     let role = quote_ident(ADMINISTRATION_ROLE);
     let schema = quote_ident(schema);
@@ -576,7 +577,8 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
          FROM {role}; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_history, {schema} FROM {role}; \
          GRANT USAGE ON SCHEMA catalog, app_system, wamn_history TO {role}; \
-         GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role};",
+         GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
+         GRANT SELECT ON TABLE catalog.releases TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
     );
     for relation in ADMINISTRATION_RELATIONS {

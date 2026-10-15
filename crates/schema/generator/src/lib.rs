@@ -38,6 +38,7 @@ mod materialize;
 pub mod operation_reference;
 mod output;
 mod package_catalog;
+pub mod profile;
 /// `build.json`, the content receipt of one package build.
 pub mod receipt;
 pub mod route_schema;

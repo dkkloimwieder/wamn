@@ -1,0 +1,89 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "digest",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].package",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].component",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].operation",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].package",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].operations[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].imprecise",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].statements[].path",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].statements[].relations[].table",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].statements[].relations[].reads[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].statements[].relations[].writes[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].statements[].relations[].deletes",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].statements[].relations[].locks",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "operations[].reaches[].statements[].refused",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

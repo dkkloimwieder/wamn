@@ -703,8 +703,8 @@ pub(super) fn verify_http_admitter_grants(
 /// Exact surface of the administration family (`wamn-a40n.2`): `USAGE` on
 /// `catalog`, `app_system` and `wamn_history`, `SELECT`, `INSERT`, `UPDATE`
 /// and `DELETE` on each relation of `sql::ADMINISTRATION_RELATIONS`, `INSERT`
-/// on the entry columns of its history table, `SELECT` on the release head
-/// (`wamn-a40n.9`), and `EXECUTE` on `row_image` and on the tenant-key
+/// on the entry columns of its history table, `SELECT` on `catalog.releases`
+/// (`wamn-aemxz.1`), and `EXECUTE` on `row_image` and on the tenant-key
 /// derivation. The grants go to `wamn_administration` alone.
 pub(super) fn verify_administration_grants(
     role: &str,
@@ -734,6 +734,7 @@ pub(super) fn verify_administration_grants(
         tuple("schema", "wamn_history", "wamn_history", "USAGE"),
         tuple("routine", "wamn_history", "row_image", "EXECUTE"),
         tuple("routine", "wamn_authority", "tenant_key", "EXECUTE"),
+        tuple("relation", "catalog", "releases", "SELECT"),
     ]);
     for relation in sql::ADMINISTRATION_RELATIONS {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {

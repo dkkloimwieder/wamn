@@ -1553,6 +1553,7 @@ mod tests {
                 "wamn-control-environment-status-http",
                 "wamn-control-member-list-http",
                 "wamn-control-project-list-http",
+                "wamn-control-release-profile-http",
                 "wamn-control-user-list-http",
             ]
         );
@@ -2198,13 +2199,13 @@ mod tests {
             ..caller.clone()
         };
         assert!(admin.permits("platform-fixture:widget/query@1.0.0"));
-        assert!(admin.permits("wamn-control:role/create@0.7.0"));
+        assert!(admin.permits("wamn-control:role/create@0.8.0"));
         // A stored row that names a host route admits no caller but admin.
         let stored = AuthenticatedCaller {
             permissions: Arc::new(HashSet::from(["wamn-control:role/create".to_string()])),
             ..caller.clone()
         };
-        assert!(!stored.permits("wamn-control:role/create@0.7.0"));
+        assert!(!stored.permits("wamn-control:role/create@0.8.0"));
         assert_eq!(
             wamn_catalog::sealed_operation_reference("platform-fixture:widget/get@1.0.0"),
             "platform-fixture:widget/get"

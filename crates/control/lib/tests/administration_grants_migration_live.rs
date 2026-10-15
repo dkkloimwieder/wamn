@@ -1,5 +1,5 @@
-//! Live test of `project/0016_remove_release_heads.sql` (wamn-a40n.2,
-//! wamn-a40n.9, wamn-zua8.2, wamn-snz0.6): on an installed project database, the latest migration of the
+//! Live test of `project/0020_administration_release_read.sql` (wamn-a40n.2,
+//! wamn-a40n.9, wamn-zua8.2, wamn-snz0.6, wamn-aemxz.1): on an installed project database, the latest migration of the
 //! administration surface gives `wamn_administration` the exact surface that
 //! provisioning grants. The test holds the process lock of
 //! its server, because the file creates a cluster-wide role.
@@ -8,7 +8,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
 
 const MIGRATION: &str =
-    include_str!("../../../../deploy/sql/migrations/project/0016_remove_release_heads.sql");
+    include_str!("../../../../deploy/sql/migrations/project/0020_administration_release_read.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 
 async fn connect(url: &str) -> Client {
@@ -90,6 +90,7 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         "schema app_system USAGE",
         "schema catalog USAGE",
         "table app_system.environment UPDATE",
+        "table catalog.releases SELECT",
         "table app_system.permissions DELETE",
         "table app_system.user_roles INSERT",
         "table app_system.users UPDATE",

@@ -30,6 +30,11 @@
 //! `environment.status` reads one environment of the project from Kubernetes
 //! with the host's read-only ServiceAccount, and writes nothing
 //! (docs/plan/platform-deploy.md §11.4).
+//!
+//! `release.profile` reads one installed release of one environment of the
+//! project from its `catalog.releases`, and the columns of its application
+//! tables from `pg_catalog`, on the environment's administration login, and
+//! answers the release's effect profile. It writes nothing.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -172,6 +177,14 @@ struct EnvironmentRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReleaseRequest {
+    project: String,
+    env: String,
+    digest: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct InviteRequest {
     email: String,
     display_name: String,
@@ -294,6 +307,35 @@ impl ControlRoutes<'_> {
                     crate::environment_status::read(self.org, &request.project, &request.env)
                         .await?,
                 )
+            }
+            HostHandler::ReleaseProfile => {
+                let request: ReleaseRequest = parse(payload)?;
+                if !project_envs(self.control, self.org, &request.project)
+                    .await?
+                    .contains(&request.env)
+                {
+                    return Err(Refusal::Declared {
+                        code: "environment_not_found",
+                        detail: json!({ "field": "env" }),
+                    });
+                }
+                let directory = self.administration.ok_or_else(|| {
+                    anyhow::anyhow!("the control host has no administration logins")
+                })?;
+                let path =
+                    directory.join(control_administration_key(&request.project, &request.env));
+                let url = std::fs::read_to_string(&path)
+                    .with_context(|| format!("read the administration login {}", path.display()))?;
+                match release_profile(url.trim(), &request.digest).await? {
+                    Some(profile) => Ok(json!({
+                        "digest": request.digest,
+                        "operations": profile.operations,
+                    })),
+                    None => Err(Refusal::Declared {
+                        code: "release_not_found",
+                        detail: json!({ "field": "digest" }),
+                    }),
+                }
             }
             HostHandler::MemberList => {
                 let request: ProjectRequest = parse(payload)?;
@@ -787,6 +829,55 @@ async fn write_application(
         }
         transaction.commit().await?;
         anyhow::Ok(())
+    }
+    .await;
+    drop(client);
+    let _ = connection.await;
+    result
+}
+
+/// The release whose manifest digest is `digest`, read from the environment's
+/// `catalog.releases` on its administration login.
+const RELEASE_SQL: &str =
+    "SELECT canonical_bytes FROM catalog.releases WHERE manifest_digest = $1 LIMIT 1";
+
+/// The columns of each table of the environment's application schemas, by
+/// table name, as the release's unqualified SQL names them. The platform
+/// schemas hold no application table.
+const RELATION_COLUMNS_SQL: &str = "SELECT c.relname::text, a.attname::text \
+     FROM pg_catalog.pg_class AS c \
+     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+     JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid \
+     WHERE c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped \
+       AND n.nspname NOT IN ('information_schema', 'catalog', 'app_system') \
+       AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname NOT LIKE 'wamn\\_%'";
+
+/// The effect profile of the installed release `digest`
+/// (docs/plan/trx-pkg-plan.md, Spike and acceptance B), or `None` when the
+/// environment has no such release. It reads and writes nothing else.
+async fn release_profile(
+    url: &str,
+    digest: &str,
+) -> anyhow::Result<Option<wamn_schema_generator::profile::ReleaseProfile>> {
+    let (client, connection) = tokio_postgres::connect(url, NoTls)
+        .await
+        .context("connect the administration login")?;
+    let connection = tokio::spawn(connection);
+    let result = async {
+        let Some(row) = client.query_opt(RELEASE_SQL, &[&digest]).await? else {
+            return Ok(None);
+        };
+        let (manifest, _) =
+            wamn_catalog::ServingManifest::from_canonical_bytes(&row.get::<_, Vec<u8>>(0))
+                .context("decode the release manifest")?;
+        let mut relations = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+        for row in client.query(RELATION_COLUMNS_SQL, &[]).await? {
+            relations.entry(row.get(0)).or_default().insert(row.get(1));
+        }
+        anyhow::Ok(Some(wamn_schema_generator::profile::release_profile(
+            &manifest.components,
+            &relations,
+        )))
     }
     .await;
     drop(client);
