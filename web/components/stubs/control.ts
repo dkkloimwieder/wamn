@@ -9,7 +9,8 @@
  * `billing` and `shop` with the environment `dev` each. `environment.status`
  * answers one host pod of `sha256:a` with its workload ready. A refusal goes through
  * the runtime's classifier, so it carries the text of its contract.
- * `control.mine` answers whether the caller holds org-admin.
+ * `control.mine` answers whether the caller holds org-admin. `release.profile`
+ * answers `PROFILE` for `sha256:a`.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
@@ -18,6 +19,72 @@ export const ANN = "00000000-0000-4000-8000-0000000000a1";
 export const BOSS = "00000000-0000-4000-8000-0000000000b1";
 export const CAT = "00000000-0000-4000-8000-0000000000c1";
 const NEW = "00000000-0000-4000-8000-0000000000d1";
+
+/**
+ * The profile of `sha256:a`: `acme:receiving/record` locks and writes, and
+ * reaches every export of a base imprecisely, one of whose statements the
+ * lexer refused; `acme:purchase/get` reads.
+ */
+export const PROFILE = {
+  digest: "sha256:a",
+  operations: [
+    {
+      package: "acme",
+      component: "acme",
+      operation: "acme:receiving/record",
+      reaches: [
+        {
+          package: "acme",
+          operations: ["acme:receiving/record"],
+          imprecise: false,
+          statements: [
+            {
+              path: "record/insert_inspection.sql",
+              refused: null,
+              relations: [
+                { table: "inspection", reads: [], writes: ["receipt_id", "status"], deletes: false, locks: false },
+              ],
+            },
+          ],
+        },
+        {
+          package: "base",
+          operations: ["base:receipt/record", "base:receipt/void"],
+          imprecise: true,
+          statements: [
+            {
+              path: "record/lock_order.sql",
+              refused: null,
+              relations: [
+                { table: "purchase_order", reads: ["id", "status"], writes: [], deletes: false, locks: true },
+              ],
+            },
+            { path: "void/delete.sql", refused: "unsupported statement", relations: [] },
+          ],
+        },
+      ],
+    },
+    {
+      package: "acme",
+      component: "acme",
+      operation: "acme:purchase/get",
+      reaches: [
+        {
+          package: "acme",
+          operations: ["acme:purchase/get"],
+          imprecise: false,
+          statements: [
+            {
+              path: "purchase/get.sql",
+              refused: null,
+              relations: [{ table: "purchase_order", reads: ["cost", "id"], writes: [], deletes: false, locks: false }],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+} as const;
 
 /** The environments of each project. */
 const PROJECTS: Readonly<Record<string, readonly string[]>> = { billing: ["dev"], shop: ["dev"] };
@@ -195,6 +262,11 @@ export function controlStub(state: ControlState = controlState()): { transport: 
         }
         state.projectAdmins.delete(`${project} ${principal}`);
         return completed({ project, principal_id: principal, project_admin: false });
+      case "wamn-control:release/profile":
+        if (item["digest"] !== PROFILE.digest) {
+          return refused(request, "release_not_found", { field: "digest" });
+        }
+        return completed(PROFILE as unknown as JsonValue);
       default:
         return refused(request, "permission_denied", { operation: request.operation });
     }

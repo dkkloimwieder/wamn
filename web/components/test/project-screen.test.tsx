@@ -87,6 +87,20 @@ describe("the project screen", () => {
     expect(read?.items[0]).toEqual({ project: "billing", env: "dev" });
   });
 
+  it("shows the profile of each environment's release, per operation, imprecise and refused as such", async () => {
+    const { sent } = await open("billing");
+    await waitFor(() => expect(document.querySelector('[data-operation="acme:receiving/record"]')).not.toBeNull());
+    const record = document.querySelector('[data-operation="acme:receiving/record"]')?.textContent ?? "";
+    expect(record).toContain("base:receipt/record (imprecise), base:receipt/void (imprecise)");
+    expect(record).toContain("purchase_order.id, purchase_order.status");
+    expect(record).toContain("inspection.receipt_id, inspection.status");
+    expect(record).toContain("void/delete.sql: unsupported statement");
+    const get = document.querySelector('[data-operation="acme:purchase/get"]')?.textContent ?? "";
+    expect(get).toContain("purchase_order.cost, purchase_order.id");
+    const read = sent.find((each) => each.operation.startsWith("wamn-control:release/profile@"));
+    expect(read?.items[0]).toEqual({ project: "billing", env: "dev", digest: "sha256:a" });
+  });
+
   it("shows a refusal with its contract text", async () => {
     const state = controlState();
     await open("billing", state);

@@ -16,6 +16,8 @@
  * For each environment it reads `environment.status`
  * (docs/plan/platform-deploy.md §11.4): the digest of the host Deployment,
  * its rollout, the workload conditions and the live set. Current state only.
+ * For each environment with a digest it shows the effect profile of that
+ * release, one row per operation, from `release.profile`, as information.
  */
 
 import { environment, member, projectAdmin, user } from "@wamn/control-org-client";
@@ -27,6 +29,7 @@ import { Switch } from "../components/ui/switch";
 import { ChoiceField } from "../fields";
 import { announceOutcome } from "../outcome";
 import { controlRefusal } from "./refusal";
+import { ReleaseProfile } from "./release-profile";
 
 export interface ProjectScreenProps {
   readonly transport: Transport;
@@ -226,6 +229,18 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
           </tbody>
         </table>
       </section>
+      <For each={statuses() ?? []}>
+        {(each) => (
+          <Show when={each.status?.digest}>
+            {(digest) => (
+              <section class="flex flex-col gap-2" data-profile={each.env}>
+                <p class="text-sm font-semibold uppercase">profile of {each.env}</p>
+                <ReleaseProfile transport={props.transport} project={props.project} env={each.env} digest={digest()} />
+              </section>
+            )}
+          </Show>
+        )}
+      </For>
       <section class="flex max-w-md flex-col gap-3" data-slot="project-add">
         <p class="text-sm font-semibold uppercase">add a member</p>
         <ChoiceField

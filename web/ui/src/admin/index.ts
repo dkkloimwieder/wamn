@@ -9,5 +9,12 @@
 
 export { OrgScreen, type OrgScreenProps } from "./org-screen";
 export { ProjectScreen, type ProjectScreenProps } from "./project-screen";
+export {
+  profileOf,
+  ReleaseProfile,
+  type ProfileSummary,
+  type ReleaseProfileProps,
+  type ReleaseProfileResult,
+} from "./release-profile";
 export { operationInterface, RoleGrid, type RoleGridProps } from "./role-grid";
 export { UserGrid, type UserGridProps } from "./user-grid";

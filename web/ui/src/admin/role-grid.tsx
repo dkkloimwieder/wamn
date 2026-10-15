@@ -12,6 +12,11 @@
  * every operation the release serves, and it has no toggle. Each write
  * announces its outcome, a refusal shows the text of its contract, and the
  * grid reads again after each write. It writes no database directly.
+ *
+ * Given the effect profile of the serving release (`release.profile`), it
+ * shows beside each row what that operation reaches, reads, writes and locks,
+ * and above the grid the union over the operations the role holds. The
+ * profile is information: it changes no toggle.
  */
 
 import { permission, role } from "@wamn/control-client";
@@ -25,11 +30,14 @@ import { builtColumns, type BuiltColumn, type TableColumn, type TableSort } from
 import { defaultGridView } from "../table/grid-view";
 import { SetTable } from "../table/set-table";
 import { defaultSetView } from "../table/set-view";
+import { PROFILE_FIELDS, profileOf, ProfileList, profileText, type ReleaseProfileResult } from "./release-profile";
 
 export interface RoleGridProps {
   readonly transport: Transport;
   /** The role chosen first. The default is no role. */
   readonly role?: string | undefined;
+  /** The effect profile of the release the environment serves, or none. */
+  readonly profile?: ReleaseProfileResult | undefined;
 }
 
 /** One operation of the role, as the grid shows it. */
@@ -101,7 +109,14 @@ export function RoleGrid(props: RoleGridProps): JSX.Element {
     return outcome.status === "completed" ? outcome.value : null;
   });
   const [view, setView] = createSignal(defaultSetView([{ field: "interface", time: false }]));
-  const [grid, setGrid] = createSignal(defaultGridView([...COLUMNS.map((column) => column.field), "control"]));
+  const [grid, setGrid] = createSignal(
+    defaultGridView([
+      ...COLUMNS.map((column) => column.field),
+      "control",
+      // eslint-disable-next-line solid/reactivity -- the profile columns are fixed at the first render.
+      ...(props.profile === undefined ? [] : PROFILE_FIELDS),
+    ]),
+  );
   const [sort, setSort] = createSignal<readonly TableSort[]>([{ field: "operation", direction: "ascending" }]);
 
   /** Announces one write, shows a refusal's text, and reads the role again. */
@@ -137,6 +152,21 @@ export function RoleGrid(props: RoleGridProps): JSX.Element {
           <span class="text-muted-foreground text-xs">{row.control}</span>
         ),
     },
+    ...PROFILE_FIELDS.flatMap((field): BuiltColumn<PermissionRow>[] => {
+      const profile = props.profile;
+      return profile === undefined
+        ? []
+        : [
+            {
+              id: field,
+              size: 200,
+              header: () => field,
+              cell: (row) => (
+                <span class="text-xs break-words">{profileText(profileOf(profile, [row.operation])[field])}</span>
+              ),
+            },
+          ];
+    }),
   ];
 
   return (
@@ -157,6 +187,19 @@ export function RoleGrid(props: RoleGridProps): JSX.Element {
           <>
             <Show when={current().admin}>
               <p>The role admin holds every operation that the release serves.</p>
+            </Show>
+            <Show when={props.profile}>
+              {(profile) => (
+                <ProfileList
+                  slot="role-profile"
+                  summary={profileOf(
+                    profile(),
+                    rows(current())
+                      .filter((row) => row.effective)
+                      .map((row) => row.operation),
+                  )}
+                />
+              )}
             </Show>
             <SetTable
               name={`role-${current().role}`}
