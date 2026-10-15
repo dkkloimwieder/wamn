@@ -33,15 +33,6 @@ const HANDLER_SIGNATURE: &str =
 pub struct ComponentAdmissionRequest {
     pub declaration: ComponentDeclaration,
     pub admitted_platform_packages: BTreeSet<String>,
-    /// The declared operation dependencies the caller confirmed as effect-free,
-    /// named by their exact operation import.
-    ///
-    /// A component's effect posture is its own imports union the posture of
-    /// the operations it declares a dependency on. A dependency absent from
-    /// this set carries an effect into the component that declares it.
-    /// Admission holds one component's bytes and reads no dependency closure,
-    /// so absence is a refusal, exactly as an unregistered import is.
-    pub effect_free_operation_dependencies: BTreeSet<String>,
 }
 
 /// Stable classification for a refused component admission.
@@ -743,7 +734,6 @@ mod tests {
                 connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
-            effect_free_operation_dependencies: BTreeSet::new(),
         }
     }
 
@@ -1251,7 +1241,7 @@ mod tests {
         assert_eq!(facts.connections[0].store_alias, "erp");
     }
 
-    /// The negative control. A composed dependency adds no inherited effect:
+    /// The negative control. A composed dependency adds no effect of its own:
     /// its base's imports are the composed component's own imports, so an
     /// ambient import and an effect-free base keep the effect-free case path.
     #[test]

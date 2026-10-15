@@ -543,7 +543,6 @@ fn member_admission_request(child_digest: &str) -> ComponentAdmissionRequest {
             connections: Vec::new(),
         },
         admitted_platform_packages: BTreeSet::from(["wamn:postgres".to_owned()]),
-        effect_free_operation_dependencies: BTreeSet::new(),
     }
 }
 

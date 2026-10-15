@@ -526,7 +526,6 @@ mod tests {
                 connections: Vec::new(),
             },
             admitted_platform_packages: BTreeSet::new(),
-            effect_free_operation_dependencies: BTreeSet::new(),
         }
     }
 

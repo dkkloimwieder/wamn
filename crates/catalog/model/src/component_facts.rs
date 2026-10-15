@@ -186,12 +186,9 @@ pub struct AdmittedComponentParameter {
 /// author cannot claim fewer effects than the closure reaches, and an empty
 /// list is the positive statement that the occurrence is pure.
 ///
-/// An imported effect comes from this component's own audited imports, and
-/// `interfaces` names them. An inherited effect comes from a declared operation
-/// dependency the caller did not show is pure. Then `package` names the
-/// dependency package and `interfaces` is empty: this component imports the
-/// dependency operation, not the authority behind it, so it holds no interface
-/// that shows the effect.
+/// An effect comes from this component's own audited imports, and
+/// `interfaces` names them. A composed base is inside these bytes, so its
+/// imports are this component's imports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponentEffect {
@@ -204,17 +201,13 @@ pub struct AdmittedComponentEffect {
 ///
 /// The capability registry classifies an import by posture, and it is
 /// package-grain and declared. This classifies an effect by provenance on the
-/// same grain, because the two classes carry different evidence and admission
-/// applies a different rule to each.
+/// same grain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ComponentEffectProvenance {
     /// This component's audited imports show the effect, and `interfaces`
     /// names them.
     Imported,
-    /// A declared operation dependency carries the effect in. `package` names
-    /// that dependency package and `interfaces` is empty.
-    Inherited,
 }
 
 /// Closed PostgreSQL value vocabulary carried by one admitted SQL statement.
@@ -454,7 +447,6 @@ pub enum ComponentFactErrorType {
     InvalidComponentDigest,
     InvalidOperationDependency,
     DuplicateOperationDependency,
-    ConflictingOperationDependency,
     OperationDependencyMismatch,
     DuplicateInputPort,
     DuplicateOutputPort,
@@ -463,7 +455,6 @@ pub enum ComponentFactErrorType {
     RemoteSchemaReference,
     UnimportedEffect,
     UnprojectedEffect,
-    InheritedEffectInterfaces,
     DuplicateConnection,
     UnimportedConnection,
     UndeclaredConnection,
@@ -585,9 +576,8 @@ pub fn normalize_component_fact(
     imports.sort();
     imports.dedup();
     let imports_fingerprint = imports_fingerprint(&imports, &BTreeMap::new());
-    let dependency_imports = operation_dependency_imports(&operations)?;
-    validate_operation_dependency_imports(&imports, &dependency_imports)?;
-    let effects = normalize_effects(effects, &imports, &dependency_imports)?;
+    refuse_application_operation_imports(&imports)?;
+    let effects = normalize_effects(effects, &imports)?;
     let connections = normalize_connections(declaration.connections, &effects)?;
 
     Ok(AdmittedComponentFacts {
@@ -655,14 +645,8 @@ pub fn verify_stored_effect_projection(
         }
         validate_operation_statement_facts(export, &operation.statements)?;
     }
-    let dependency_imports = operation_dependency_imports(&component.operations)?;
-    validate_operation_dependency_imports(&component.imports, &dependency_imports)?;
-    normalize_effects(
-        component.effects.clone(),
-        &component.imports,
-        &dependency_imports,
-    )
-    .map(|_| ())
+    refuse_application_operation_imports(&component.imports)?;
+    normalize_effects(component.effects.clone(), &component.imports).map(|_| ())
 }
 
 /// Attach generated SQL facts to manifest-backed exports atomically.
@@ -865,59 +849,24 @@ fn normalize_operation_dependencies(
     Ok(dependencies)
 }
 
-fn validate_operation_dependency_imports(
-    imports: &[String],
-    dependencies: &BTreeSet<&str>,
-) -> Result<(), ComponentFactError> {
-    let imported_dependencies = imports
+/// Refuse an application operation import. A declared dependency composes
+/// into the component bytes at build, so no application operation remains an
+/// import.
+fn refuse_application_operation_imports(imports: &[String]) -> Result<(), ComponentFactError> {
+    let extra = imports
         .iter()
         .map(String::as_str)
         .filter(|import| is_application_operation_import(import))
-        .collect::<BTreeSet<_>>();
-    if &imported_dependencies != dependencies {
-        let missing = dependencies
-            .difference(&imported_dependencies)
-            .copied()
-            .collect::<Vec<_>>();
-        let extra = imported_dependencies
-            .difference(dependencies)
-            .copied()
-            .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
+    if !extra.is_empty() {
         return Err(ComponentFactError::new(
             ComponentFactErrorType::OperationDependencyMismatch,
             format!(
-                "declared operation dependencies differ from audited imports: missing={missing:?}, extra={extra:?}"
+                "declared operation dependencies differ from audited imports: missing=[], extra={extra:?}"
             ),
         ));
     }
     Ok(())
-}
-
-fn operation_dependency_imports(
-    operations: &BTreeMap<String, AdmittedComponentOperation>,
-) -> Result<BTreeSet<&str>, ComponentFactError> {
-    let mut pins = BTreeMap::new();
-    for dependency in operations
-        .values()
-        .flat_map(|operation| operation.dependencies.iter())
-    {
-        if let Some(existing) = pins.insert(dependency.operation.as_str(), dependency)
-            && (existing.package != dependency.package
-                || existing.version != dependency.version
-                || existing.digest != dependency.digest)
-        {
-            return Err(ComponentFactError::new(
-                ComponentFactErrorType::ConflictingOperationDependency,
-                format!(
-                    "operation dependency {:?} carries conflicting package, version, or digest pins",
-                    dependency.operation
-                ),
-            ));
-        }
-    }
-    // A dependency composes into the component bytes at build, so it is not an
-    // import.
-    Ok(BTreeSet::new())
 }
 
 /// Whether an import is a cross-package APPLICATION call rather than a
@@ -942,19 +891,12 @@ fn is_application_operation_import(name: &str) -> bool {
 
 /// Sort and deduplicate derived effects, pinning them to platform imports.
 ///
-/// Both directions are checked after excluding exact cross-package operation
-/// dependencies: those remain in the audited import list but are resolved
-/// as component calls, not host capability effects.
-///
-/// Provenance decides which rule an effect meets. An imported effect keeps the
-/// audited-imports check, so every interface it names is one of this
-/// component's own platform-capability imports. An inherited effect identifies no
-/// interface, so it carries none, and a fact that carries one is refused
-/// rather than trimmed.
+/// Both directions are checked: every interface an effect names is one of
+/// this component's own platform-capability imports, and every effectful
+/// import is in the projection.
 fn normalize_effects(
     effects: Vec<AdmittedComponentEffect>,
     imports: &[String],
-    dependency_imports: &BTreeSet<&str>,
 ) -> Result<Vec<AdmittedComponentEffect>, ComponentFactError> {
     let mut normalized = Vec::with_capacity(effects.len());
     for effect in effects {
@@ -962,32 +904,14 @@ fn normalize_effects(
         let mut interfaces = effect.interfaces;
         interfaces.sort();
         interfaces.dedup();
-        match effect.provenance {
-            ComponentEffectProvenance::Imported => {
-                for interface in &interfaces {
-                    if !imports.iter().any(|import| import == interface)
-                        || dependency_imports.contains(interface.as_str())
-                    {
-                        return Err(ComponentFactError::new(
-                            ComponentFactErrorType::UnimportedEffect,
-                            format!(
-                                "effect interface {interface:?} is not an audited platform-capability import"
-                            ),
-                        ));
-                    }
-                }
-            }
-            ComponentEffectProvenance::Inherited => {
-                if !interfaces.is_empty() {
-                    return Err(ComponentFactError::new(
-                        ComponentFactErrorType::InheritedEffectInterfaces,
-                        format!(
-                            "inherited effect {:?} carries interfaces {interfaces:?}, and a \
-                             dependency declares none for this component",
-                            effect.package
-                        ),
-                    ));
-                }
+        for interface in &interfaces {
+            if !imports.iter().any(|import| import == interface) {
+                return Err(ComponentFactError::new(
+                    ComponentFactErrorType::UnimportedEffect,
+                    format!(
+                        "effect interface {interface:?} is not an audited platform-capability import"
+                    ),
+                ));
             }
         }
         normalized.push(AdmittedComponentEffect {
@@ -1000,9 +924,6 @@ fn normalize_effects(
     normalized.dedup_by(|left, right| left.package == right.package);
 
     for import in imports {
-        if dependency_imports.contains(import.as_str()) {
-            continue;
-        }
         let package = wamn_component_policy::import_pkg(import);
         if wamn_component_policy::import_posture(import)
             != Some(wamn_component_policy::Posture::Effect)
@@ -1278,16 +1199,6 @@ mod tests {
         }
     }
 
-    /// The effect `operation_dependency` carries into a component that declares
-    /// it and does not show it is pure.
-    fn inherited_fixture_effect() -> AdmittedComponentEffect {
-        AdmittedComponentEffect {
-            package: "platform-fixture:widget".to_string(),
-            provenance: ComponentEffectProvenance::Inherited,
-            interfaces: Vec::new(),
-        }
-    }
-
     fn operation_dependency() -> ComponentOperationDependency {
         ComponentOperationDependency {
             package: "platform_fixture".to_string(),
@@ -1528,24 +1439,6 @@ mod tests {
             .unwrap_err()
             .error_type(),
             ComponentFactErrorType::DuplicateOperationDependency
-        );
-
-        let mut conflicting = declaration();
-        let operation = operation_mut(&mut conflicting);
-        operation.dependencies = vec![dependency.clone()];
-        let mut second = operation.clone();
-        second.dependencies[0].digest = format!("sha256:{}", "d".repeat(64));
-        conflicting.operations.insert("map-two".to_string(), second);
-        assert_eq!(
-            normalize_component_fact(
-                conflicting,
-                format!("sha256:{}", "a".repeat(64)),
-                Vec::<String>::new(),
-                Vec::new(),
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::ConflictingOperationDependency
         );
     }
 
@@ -1862,78 +1755,18 @@ mod tests {
         );
     }
 
-    /// The inherited arm. A declared dependency the caller did not show is pure
-    /// carries its package in. The fact names that package and holds no
-    /// interface, because this component imports the dependency operation and
-    /// not the authority behind it.
-    #[test]
-    fn an_inherited_effect_admits_naming_its_dependency_package_and_no_interfaces() {
-        let dependency = operation_dependency();
-        let mut declared = declaration();
-        operation_mut(&mut declared).dependencies = vec![dependency.clone()];
-
-        let facts = normalize_component_fact(
-            declared,
-            format!("sha256:{}", "a".repeat(64)),
-            Vec::<String>::new(),
-            vec![inherited_fixture_effect()],
-        )
-        .expect("an inherited effect admits");
-
-        assert_eq!(
-            facts.component.effects,
-            vec![inherited_fixture_effect()],
-            "the inherited fact names the dependency package and carries no interfaces"
-        );
-        verify_stored_effect_projection(&facts.component)
-            .expect("the stored inherited projection remains verifiable");
-    }
-
-    /// The emptiness is by construction, not by convention. The tempting
-    /// mistake is to record the dependency import as the interface that shows
-    /// the effect, and that import shows a component call.
-    #[test]
-    fn an_inherited_effect_that_carries_interfaces_is_refused() {
-        let dependency = operation_dependency();
-        let mut declared = declaration();
-        operation_mut(&mut declared).dependencies = vec![dependency.clone()];
-        let mut widened = inherited_fixture_effect();
-        widened.interfaces = vec![dependency.operation.clone()];
-
-        assert_eq!(
-            normalize_component_fact(
-                declared,
-                format!("sha256:{}", "a".repeat(64)),
-                Vec::<String>::new(),
-                vec![widened],
-            )
-            .unwrap_err()
-            .error_type(),
-            ComponentFactErrorType::InheritedEffectInterfaces
-        );
-    }
-
     /// The stored shape is what the type doc describes: a package, its
-    /// provenance, and the interfaces only an imported effect holds. This
+    /// provenance, and the interfaces that show it. This
     /// freezes the whole persisted value, so an added, removed or renamed
     /// field fails here.
     #[test]
-    fn the_persisted_effect_fact_spells_both_provenance_classes() {
+    fn the_persisted_effect_fact_spells_its_provenance() {
         assert_eq!(
             serde_json::to_value(postgres_effect()).expect("an imported effect serializes"),
             json!({
                 "package": "wamn:postgres",
                 "provenance": "imported",
                 "interfaces": ["wamn:postgres/client@0.1.0"],
-            })
-        );
-        assert_eq!(
-            serde_json::to_value(inherited_fixture_effect())
-                .expect("an inherited effect serializes"),
-            json!({
-                "package": "platform-fixture:widget",
-                "provenance": "inherited",
-                "interfaces": [],
             })
         );
     }

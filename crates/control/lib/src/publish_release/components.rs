@@ -244,37 +244,6 @@ fn resolve_component_dependency<'a>(
     Ok(component)
 }
 
-/// Name the declared operation dependencies whose admitted facts show no effects.
-///
-/// `ComponentAdmissionRequest::effect_free_operation_dependencies` is
-/// fail-closed, so a caller that names nothing leaves every dependency
-/// effectful. This is the evidence a caller holding the admitted facts can supply.
-///
-/// One lookup answers the whole closure. A dependency's own admitted row
-/// carries the effect projection of everything that dependency reaches, because
-/// admission computed that row under this same rule, so an empty effects array
-/// is sufficient evidence. A dependency stays out of the set if its facts do not
-/// resolve exactly. The exact-resolution refusal belongs to
-/// `resolve_component_dependency_closure`, which walks the same facts when the
-/// release is published.
-pub fn effect_free_operation_dependencies(
-    declaration: &wamn_catalog::ComponentDeclaration,
-    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    rule: DependencyDigestRule,
-) -> BTreeSet<String> {
-    let mut dependencies = BTreeSet::new();
-    for operation in declaration.operations.values() {
-        for dependency in &operation.dependencies {
-            if resolve_component_dependency(dependency, component_facts, rule)
-                .is_ok_and(|component| component.effects.is_empty())
-            {
-                dependencies.insert(dependency.operation.clone());
-            }
-        }
-    }
-    dependencies
-}
-
 /// Every edge is keyed by the fact it RESOLVES TO, never by the digest the
 /// declaration named. Under the durable rule the two are the same value,
 /// because resolution demanded equality. Under the development rule they differ

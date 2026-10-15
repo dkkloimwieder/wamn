@@ -9,10 +9,9 @@ use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
 use super::{
-    DependencyDigestRule, PublishManifestErrorType, PublishReleaseManifest, PublishedRelease,
-    ReleaseComponents, ReleaseWiringTarget, effect_free_operation_dependencies,
-    publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
-    resolve_route_methods, sha256,
+    PublishManifestErrorType, PublishReleaseManifest, PublishedRelease, ReleaseComponents,
+    ReleaseWiringTarget, publish_release_with_package_manifests, read_package_attachments,
+    read_package_manifests, resolve_route_methods, sha256,
 };
 use crate::apply_package::{self, ApplyPackageRequest};
 use crate::author_wiring::{self, AuthorWiringRequest};
@@ -187,10 +186,6 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
     let engine = wamn_engine::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
     let mut release_components = ReleaseComponents::default();
-    // The test admits packages in dependency order, base before overlay, so
-    // the fact a dependency resolves to is already in hand when the component
-    // that declares the dependency reaches admission.
-    let mut component_facts: BTreeMap<(String, String), Vec<AdmittedComponent>> = BTreeMap::new();
     for input in inputs {
         // The template leaves its base dependency digest as a placeholder, so
         // the render -- not a tenant substitution -- is what makes it a
@@ -220,11 +215,6 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                 input.version
             );
         }
-        let effect_free_operation_dependencies = effect_free_operation_dependencies(
-            &declaration,
-            &component_facts,
-            DependencyDigestRule::Declared,
-        );
         let facts = validate_component_admission(
             &engine,
             &bytes,
@@ -234,7 +224,6 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
                     "wamn:node".to_owned(),
                     "wamn:postgres".to_owned(),
                 ]),
-                effect_free_operation_dependencies,
             },
         )
         .unwrap_or_else(|error| panic!("admit {}@{} component: {error}", input.id, input.version));
@@ -246,14 +235,6 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
             input.id.to_owned(),
             facts.component.component_digest.clone(),
         );
-        let scope = (
-            facts.component.scope.package_id.clone(),
-            facts.component.scope.package_version.clone(),
-        );
-        component_facts
-            .entry(scope)
-            .or_default()
-            .push(facts.component.clone());
         release_components
             .insert(
                 facts.component,

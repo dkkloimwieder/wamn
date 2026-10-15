@@ -44,7 +44,6 @@ use components::{
 pub use package_sources::package_route;
 use package_sources::read_package_manifests;
 
-pub use components::effect_free_operation_dependencies;
 pub use manifest_push::push_manifest_bytes;
 
 #[cfg(test)]
@@ -1745,7 +1744,7 @@ mod effective_release_live;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_catalog::{AdmittedComponentEffect, AdmittedComponentOperation};
+    use wamn_catalog::AdmittedComponentOperation;
 
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -2835,93 +2834,6 @@ mod tests {
         assert_eq!(closure.len(), 2);
         assert!(closure.contains(&base));
         assert!(closure.contains(&overlay));
-    }
-
-    /// Read the fixture dependency used by effect-projection tests.
-    fn fixture_overlay_dependency() -> (
-        wamn_catalog::ComponentDeclaration,
-        wamn_catalog::ComponentOperationDependency,
-    ) {
-        let declaration = fixture_overlay_declaration();
-        let mut declared = declaration
-            .operations
-            .values()
-            .flat_map(|operation| operation.dependencies.iter());
-        let dependency = declared
-            .next()
-            .expect("the fixture overlay declares an operation dependency")
-            .clone();
-        assert!(
-            declared.next().is_none(),
-            "the fixture overlay declares exactly one operation dependency"
-        );
-        (declaration, dependency)
-    }
-
-    /// The admitted fact the declared dependency resolves to, carrying the
-    /// effect projection under test.
-    fn dependency_facts(
-        dependency: &wamn_catalog::ComponentOperationDependency,
-        effects: Vec<AdmittedComponentEffect>,
-    ) -> BTreeMap<(String, String), Vec<AdmittedComponent>> {
-        let mut admitted = closure_component("stock", Some(dependency.operation.as_str()));
-        admitted.scope.package_id = dependency.package.clone();
-        admitted.scope.package_version = dependency.version.clone();
-        admitted.component_digest = dependency.digest.clone();
-        admitted.effects = effects;
-        BTreeMap::from([(
-            (dependency.package.clone(), dependency.version.clone()),
-            vec![admitted],
-        )])
-    }
-
-    /// The case the caller wiring exists to serve. The dependency's admitted
-    /// row carries an empty effects array, so the caller identifies the dependency as
-    /// effect-free and admission keeps the effect-free case path. The
-    /// admission half of that test is
-    /// `a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path`
-    /// in `wamn_engine::component_admission`.
-    #[test]
-    fn a_dependency_admitted_with_no_effects_keeps_the_effect_free_case_path() {
-        let (declaration, dependency) = fixture_overlay_dependency();
-        let facts = dependency_facts(&dependency, Vec::new());
-
-        let dependencies = effect_free_operation_dependencies(
-            &declaration,
-            &facts,
-            DependencyDigestRule::Declared,
-        );
-
-        assert_eq!(dependencies, BTreeSet::from([dependency.operation]));
-    }
-
-    /// The negative control uses the same
-    /// declaration and the same lookup, except the dependency's admitted row
-    /// carries the effect it really holds. The caller returns no dependency, so the
-    /// wrapper takes the dependency package into its own projection and loses
-    /// the effect-free case path.
-    #[test]
-    fn a_dependency_admitted_with_one_effect_loses_the_effect_free_case_path() {
-        let (declaration, dependency) = fixture_overlay_dependency();
-        let facts = dependency_facts(
-            &dependency,
-            vec![AdmittedComponentEffect {
-                package: "wamn:postgres".to_owned(),
-                provenance: wamn_catalog::ComponentEffectProvenance::Imported,
-                interfaces: vec!["client".to_owned()],
-            }],
-        );
-
-        let dependencies = effect_free_operation_dependencies(
-            &declaration,
-            &facts,
-            DependencyDigestRule::Declared,
-        );
-
-        assert!(
-            dependencies.is_empty(),
-            "an effectful dependency was classified as pure: {dependencies:?}"
-        );
     }
 
     #[test]

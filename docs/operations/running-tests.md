@@ -103,7 +103,7 @@ cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p http-route
 ```
 
-The build composes Acme with the Receiving base and the Acme participant into one component.
+The build composes Acme with the Receiving base into one component.
 It writes the virtualized application components to `apps/target/virtualized/std-empty-environment`.
 These paths use the default Cargo target directories.
 If you set `CARGO_TARGET_DIR`, use that directory for both workspace build outputs.

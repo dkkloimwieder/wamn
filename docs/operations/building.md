@@ -47,27 +47,23 @@ If you change the router on purpose, write its new digest to `apps/platform/ingr
 A plain `cargo build` of a guest does not use the guest RUSTFLAGS, so its bytes depend on the machine. Do not pin such a guest.
 The workload guests `http-route` and `materializer` belong to no package. Release qualification and the cluster cases build each one with the same guest build, through `wamn_schema_generator::build::build_guest`.
 
-The build virtualizes each component that the package owns, each no-op participant, and each crate that [`tools/component-virtualization.json`](../../tools/component-virtualization.json) lists under `packages`.
+The build virtualizes each component that the package owns and each crate that [`tools/component-virtualization.json`](../../tools/component-virtualization.json) lists under `packages`.
 It writes the virtualized guest to `virtualized/std-empty-environment` in the Cargo target directory.
 The list is an allowlist, not discovery: a std guest that it does not name stays raw and fails its own admission.
 
 The build then composes an overlay whose component declaration names a base operation dependency.
-`wamn-component-composer` joins the overlay component, each base component, and each participant component into one component.
-It reads each base component and each base no-op participant from the base's `build.json`, so build the base first.
-A no-op participant crate is not an apps workspace member. It is a standalone crate in the build output of its base package, `apps/target/wamn/<package>/`.
-The build copies `apps/Cargo.lock` beside the crate, lets Cargo trim it to the crate, and builds the crate by `--manifest-path` with `--locked` into the apps target directory.
+`wamn-component-composer` joins the overlay component and each base component into one component.
+It reads each base component from the base's `build.json`, so build the base first.
 The declarations give each link.
 The overlay imports each base operation that it depends on, and the base supplies that operation.
-The base imports its pre-commit interface, and the participant that the overlay dependency names supplies it.
-If the dependency names no participant, the base's no-op participant fills an optional slot. It stays inside the composition and is not exported.
-Composition refuses a required slot that has no participant.
+Each member that imports `wamn:postgres/statements` gets its own outer import, `sql-0`, `sql-1`, in member order ([components](../architecture/components.md)).
 The composed component exports every export of its members.
 Imports that no member supplies stay imports of the composed component.
 Each member is embedded with its bytes unchanged.
 The composed component replaces the overlay's virtualized output.
 The composer does not compare the base bytes with the digest pin in `wamn.json`. Publication checks the pin.
 
-Last, the build copies each component that the package owns, each palette component that its wirings name, and each no-op participant to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
+Last, the build copies each component that the package owns and each palette component that its wirings name to `components/<name>.wasm` in the package's build output. It records each one in `outputs.components` of the package's `build.json`, with its path and `sha256` digest.
 `wamn-ctl push-package` and the dev loop read `build.json` for the bytes of each component.
 `push-package` refuses a component without an entry, and a file whose digest differs from its entry.
 For the `build.json` that `push-package` needs, see [Pushing a package](#pushing-a-package).

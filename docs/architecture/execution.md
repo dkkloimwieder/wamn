@@ -17,7 +17,7 @@ A host plugs in through two traits.
 The cloud implements them as [`PlatformRouteAuthenticator`](../../crates/platform/runtime/src/plugins/route_authentication.rs) and [`RouterDeliveryBridge`](../../crates/execution/host/src/router_delivery.rs).
 Publish decides authorization, and the runtime trusts the loaded release.
 An application's components compose at build into one component, so a call inside an application reaches no host.
-Publish folds each export's call graph into the union of the statements of its released operation. The required permission is the entry's own operation; nothing derives into it.
+Publish folds each export's call graph into the union of the statements of its released operation, and the host begins a transaction for an operation whose union is not empty. The required permission is the entry's own operation; nothing derives into it.
 The host checks that the original caller holds the entry, once, before the entry runs. A caller holds exactly the permission rows of its roles.
 Component membership alone grants no permission to call an operation.
 
@@ -182,7 +182,7 @@ The router calls `deliver-stream` of [`wamn:router-delivery` 0.3.0](../../crates
 The cloud route, the router driver and the edge each pass one for every route, so every create, update, delete and command claims through the engine.
 In the cloud the store is the [write log](data-access.md#the-write-log). On the edge it is SQLite, and the [edge plan](../plan/edge.md#47-sqlite-schema) states the rules.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
-Publish writes three input facts into the serving manifest route from the generated contracts: the key field (`idempotency`), the canonical item form (`canonicalization`) and, for an inherited claim, the base operation (`claim_operation`).
+Publish writes two input facts into the serving manifest route from the generated contracts: the key field (`idempotency`) and the canonical item form (`canonicalization`).
 
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
@@ -296,7 +296,6 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 
 The same transaction binds the executing operation as `app.operation`.
 A node binds the operation token of the entry that it runs. A composed callee runs under that token.
-A participant statement records the participant operation and then restores the entry's token.
 A registration delivery binds the token of its handler.
 A host queue claim, reap, renew, or complete transaction binds the `wamn:executor` credential-class identity.
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.

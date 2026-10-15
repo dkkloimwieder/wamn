@@ -165,7 +165,6 @@ async fn build_with_credentials(
                 "wamn:node".to_owned(),
                 "wamn:connection".to_owned(),
             ]),
-            effect_free_operation_dependencies: BTreeSet::new(),
         },
     )
     .context("admit the http-request guest")?

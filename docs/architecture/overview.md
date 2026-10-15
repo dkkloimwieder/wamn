@@ -71,7 +71,7 @@ That refresh clears the instance claim even when the suffix stays unchanged.
 The developer coordinator claims an instance with one update and refuses a missing projection.
 
 Authoring cases judge a wiring document and permit no effects.
-The case runner refuses a reachable component with admitted effects, including effects reached through operation dependencies.
+The case runner refuses a reachable component with admitted effects, including the effects of each base composed into it.
 Reports are immutable and keyed by the wiring hash within the tenant.
 Concurrent attempts return the stored winner for that hash.
 The service keeps no durable table for resuming individual cases.

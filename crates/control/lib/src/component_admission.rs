@@ -256,11 +256,6 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
                 .admitted_platform_packages
                 .into_iter()
                 .collect::<BTreeSet<_>>(),
-            // Empty is the fail-closed answer, not a stub. This function
-            // reads local paths only, so no admitted fact of a dependency is
-            // in reach here and every declared operation dependency stays
-            // effectful.
-            effect_free_operation_dependencies: BTreeSet::new(),
         },
     )
     .context("validate exact component bytes")?;
@@ -1387,7 +1382,6 @@ mod tests {
                     connections: Vec::new(),
                 },
                 admitted_platform_packages: std::collections::BTreeSet::new(),
-                effect_free_operation_dependencies: std::collections::BTreeSet::new(),
             },
         )
         .expect("fixture bytes admit")

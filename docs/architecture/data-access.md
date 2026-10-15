@@ -152,9 +152,8 @@ The generator compares those choices with the schema and SQL. It does not replac
 | Filter `binding` (`json_array` for a list, `json_range` for a range, `json_boolean` for is-null), sort `max_fields`, pagination `type`, `.cursor`, and limit `invalid` | Fixed query protocol, including cursor version, canonical JSON, encoding, opacity, and refusal. Derive in generated contracts. |
 | `internal_relations.*.schema`, `.table`, `.cdc` | Application relation selection and event-publication policy. PostgreSQL owns relation shape. Retain. |
 | Custom operation `type`, `visibility`, `permission`, `connection` | Application operation exposure and authority selection. Retain. |
-| `transaction`, `automatic_retry`, `idempotent_by` | Application transaction and replay choices. `idempotent_by: claim` is the whole declaration of a claim: the engine claims the key in the [write log](#the-write-log), and `inherited` takes the claim of a base operation. Validation refuses a `claim` object. Retain. |
-| `pre_commit`, `participant` | Application participation contract and selection. Retain. |
-| `input.raw_body_maximum`, `.envelope.minimum`, `.maximum` | Application input bounds. A command that claims its key, or that rides a base claim and is not the base's participant, takes the public envelope, and the schema module fills a raw body of at most 1048576 bytes and 1 to 100 inputs. Written only to change. |
+| `transaction`, `automatic_retry`, `idempotent_by` | Application transaction and replay choices. `idempotent_by: claim` is the whole declaration of a claim: the engine claims the key in the [write log](#the-write-log). Validation refuses a `claim` object. Retain. |
+| `input.raw_body_maximum`, `.envelope.minimum`, `.maximum` | Application input bounds. A command that claims its key takes the public envelope, and the schema module fills a raw body of at most 1048576 bytes and 1 to 100 inputs. Written only to change. |
 | `input.line.minimum`, `.maximum` | Application input bounds. Retain. |
 | Input `item_semantics` and count-bound `invalid` | Fixed per-item outcomes and input refusal. Derive. |
 | Input/result `fields[].path`, `.type`, `.nullable`, `.values`, `.revision`, and result `class` | Application boundary contract. Generated WIT consumes these fields, so it cannot replace their source. Retain. |
@@ -207,7 +206,7 @@ Generation writes these files for each package. A path below is a logical path: 
 1. `generated/data/<model>.rs` holds one data function for each operation of the model. The function parses the scalars, calls the generated accessor, and returns the one generated refusal type.
 2. `generated/data/error.rs` holds that refusal type. It spells the closed vocabulary of the operation contracts, and its details are the declared detail fields.
 3. `generated/component/<model>.rs` holds one module for each operation, with its codec, its handler, and its export.
-4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every operation of the package and imports what those operations call. A package with a participant also gets the world `participant`.
+4. `generated/wit/world.wit` holds the world `<package>:generated/generated`, which exports every operation of the package and imports what those operations call.
 5. `generated/publication/attachments.json` holds one route entry for each generated operation, with its definition hash.
 6. `generated/publication/component-operations.json` holds one declaration entry for each generated operation, keyed by component.
 
@@ -309,34 +308,19 @@ Each outer item of a write carries its `request_id`. A read carries none, and it
 For `per_input` commands, each item owns one transaction on one PostgreSQL connection.
 The transaction resource never crosses a wiring edge, and separate outer items have no shared atomicity.
 A composed write followed by a projection is not one transaction.
-A declared pre-commit participant can extend a base command within its transaction.
-The base declares the typed callback input. The overlay operation that forwards to the base names the participant.
-The overlay build composes the overlay, its pinned base, and the participant into one component.
-The generator types the participant's interface with the base's pre-commit request record and declares no request type of its own.
-The participant also exports the base's pre-commit interface, so composition plugs it into the base's import.
-The host requires the original caller to hold the overlay entry only; the base operation and the participant run under the entry's authority.
-The base declares each pre-commit slot required or optional with `pre_commit_required`. The default is optional, and Receiving's `record_receipt` slot is optional.
-If a required slot has no participant, publish refuses: "operation X needs a pre-commit participant; the overlay declares none".
-For each optional slot, the generator emits a no-op participant crate in the base's generated output. It exports the slot and returns its input unchanged. The crate is standalone, not an apps workspace member, and `wamn build` of the base builds it in `apps/target/wamn/<package>/`, where it writes it.
-If an overlay names no participant, composition plugs the no-op participant into the optional slot. The release selects no participant, so the base does not call the slot.
+An overlay command can call a base command within its transaction.
+The overlay operation imports the base operation, and its component declaration names that operation as a dependency, with the base's digest from `base_dependencies`.
+The overlay build composes the overlay and its pinned base into one component, so the call is a component-model call with no host between.
+The host requires the original caller to hold the overlay entry only. The base operation runs under the entry's authority.
 The generated contracts carry ordinary typed values. Application code owns the transaction sequence and conditional business rules.
 
-`wamn:postgres/statements` provides an execution-only `transaction-view` resource with call-scoped access.
-The host binds the participant that the release publishes for the entry, and `selected-participation` returns it.
-The base calls `transaction.select-participant` with that participant before it calls its pre-commit slot. The call reaches the participant inside the composed component.
-The participant calls `participant-view` to obtain a view of the same invocation's transaction. No resource crosses the application operation interface.
-The resource holds no connection. Retaining it cannot extend the transaction lifetime.
-Each use checks the invocation, the original caller, tenant, release, database identity, deadline, and the entry's statements.
-One selection lends one view. The view cannot commit or roll back.
-The participant runs in the entry's invocation scope, so the host does not separate the participant's other SQL from the base's SQL. The published grant covers both.
-SQL uses the same held connection and records the participant operation before restoring the entry operation.
-Return, trap, cancellation, deadline, or transaction completion revokes access. Finalization cancels and waits for active view SQL before using the connection.
-The earlier cross-component borrowed-resource contract failed with `mismatched resource types` on the current pin.
-That result does not describe participant-local resources. Explicit resource transfer between stores remains unimplemented.
+Publish folds each export's call graph: the released operation carries the union of its own statements and those of every base operation it reaches.
+The host begins the item's transaction when that union is not empty, so an overlay command without SQL of its own that calls a base command still runs in one host transaction.
+The base reaches that transaction through `operation-transaction`. Each member binds its own statements through its own `statements` import, so the fold decides only whether the host begins a transaction.
+Generation admits a command without SQL of its own only without a `transaction`, so the authored field cannot yet replace the fold.
 
-The engine stores the result in the write log after successful participation, and the host commits.
-The request hash includes the selected participation intent. A retry answers the stored result without repeated writes, and a changed intent refuses.
-Receiving and Acme use this path for conditional inspection under the existing purchase-order lock.
+Acme's `acme.record_receipt` calls Receiving's `record_receipt` and then records its inspection in the same host transaction, under the existing purchase-order lock.
+Acme claims the key under its own operation.
 No inspection requirement produces no inspection row. An approved requirement permits the write. An unmet requirement rolls back the entire item.
 Permitted direct Receiving calls retain base behavior.
 
@@ -376,19 +360,13 @@ A retry that answers a stored result commits nothing, so no event publishes a se
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
 
-The request is the SHA-256 of the canonical item without `request_id`, with the key kept and the participation intent of the selected participant added.
+The request is the SHA-256 of the canonical item without `request_id`, with the key kept.
 The route carries the canonical form of its input item (`canonicalization`), which publish reads from the generated input contract.
 The engine applies it before it hashes an item and before the component gets it.
 It spells each `numeric` leaf as PostgreSQL does, with its scale kept, and each `timestamptz` leaf in UTC with six fractional digits.
 It orders the declared lines, and the declared exclusions leave the hash.
 The component's normalize keeps only its checks.
 The result is the answer body of the item, `{"value": ...}`, without its `request_id`.
-
-An operation that declares `idempotent_by: inherited` takes the claim of its base operation.
-Publish reads the base contract through `base_dependencies`, and it gives the route the base operation (`claim_operation`), the base key field and the base canonical form.
-The participant intent stays in the hash, because the overlay does the participant's work.
-So a key sent through the overlay route and then through the base route answers `idempotency_conflict`, and a repeat through one route in any line order answers the stored result.
-Acme's `receiving.record_receipt` inherits the claim of Receiving's.
 
 Production-claim errors retain PostgreSQL's primary message and constraint name.
 They omit `DETAIL` and `HINT`, which can include failing row values.
