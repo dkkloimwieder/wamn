@@ -659,8 +659,10 @@ async fn render_database_acl(admin: &Client, database: &str) -> anyhow::Result<S
     Ok(sql)
 }
 
-/// Install the catalog, the application authorization schema, and the
-/// platform principal rows of `tenant`, the tenant the project database serves.
+/// Install the catalog, the application authorization schema with its
+/// migration record, and the platform principal rows of `tenant`, the tenant
+/// the project database serves. Like `reconcile-run-plane`, it records every
+/// project migration as held, because the full schema holds them.
 pub async fn install_journey_platform_floor(
     project: &Client,
     tenant: &str,
@@ -673,9 +675,15 @@ pub async fn install_journey_platform_floor(
         .await
         .context("install the catalog schema")?;
     project
-        .batch_execute(include_str!("../../../../../deploy/sql/app-schema.sql"))
+        .batch_execute(wamn_control_provision::APP_SCHEMA_SQL)
         .await
         .context("install the application authorization schema")?;
+    crate::upgrade_schema::record_fresh_install(
+        project,
+        wamn_control_provision::schema_migrations::MigrationTarget::Project,
+    )
+    .await
+    .context("record the project migrations that the full schema holds")?;
     project
         .batch_execute(&platform_principals)
         .await
