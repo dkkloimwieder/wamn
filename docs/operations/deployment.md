@@ -94,7 +94,7 @@ For an installed package successor, follow [package upgrades](#package-upgrades)
 
 Read each command's current required arguments with `--help`.
 
-## Publish and select a release
+## Publish a release
 
 The example below selects Receiving.
 `publish-release` composes package artifacts.
@@ -221,7 +221,7 @@ The route bodies and limits are in [password enrollment](../architecture/executi
 
 `apply-package` writes the built-in role `admin` in each tenant.
 `admin` has no permission rows and holds every operation that the serving release serves.
-Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` selected for it, with the operations that each selection requires (docs/plan/platform-ui.md §2.3).
+Every other role is authored in the tenant, and it holds the stable operation references `<package>:<interface>/<operation>` granted to it (docs/plan/platform-ui.md §2.3).
 A user or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
@@ -234,7 +234,7 @@ wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-datab
 
 The admin URL must be SUPERUSER or BYPASSRLS.
 The verbs refuse a role that does not exist in the tenant, an unknown email, and an email that names more than one user.
-The user needs its tenant `users` row, which `reconcile-run-plane` writes, so run that verb first after a new principal.
+The user needs its tenant `users` row, which `wamn-ctl env apply` writes, so apply the environment again after a new principal.
 The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
 `env apply` writes its PAT Secret when it can reach identity. When it cannot, mint the PAT with the Job of [Google Cloud releases](gcp.md#414-releases).
 
@@ -254,11 +254,8 @@ wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin
   --operation <package>:<interface>/<operation>
 ```
 
-The operation must be served by the release the environment serves, which `wamn-ctl env apply` installs.
-The grant also writes each operation that the selected operation requires in that release, and it prints them.
-`wamn-ctl revoke-permission` removes the selection and the operations that it required.
-An operation that another selected operation of the role requires stays effective, and the verb names that operation.
-The verb refuses an operation that the role holds only because another selected operation requires it.
+The grant stores the operation even when the serving release does not serve it.
+`wamn-ctl revoke-permission` removes the operation, and it refuses an operation that the role does not hold.
 
 
 ## Mailbox-loss recovery
@@ -317,7 +314,7 @@ After commit, ask the user to request normal recovery with the replacement email
 The recovery endpoint and reset fields are in [password enrollment](../architecture/execution.md#password-enrollment-foundation).
 Keep reset secrets and passwords out of command arguments and logs.
 After reset, require normal login with the new email and password.
-Run the existing `reconcile-run-plane` procedure for affected environments to update their copied user rows.
+Run `wamn-ctl env apply` for affected environments to update their copied user rows.
 
 ## Identity target credentials
 

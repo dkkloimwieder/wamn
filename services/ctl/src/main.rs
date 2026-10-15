@@ -62,7 +62,7 @@ enum Command {
     CreateRole(role_verbs::RoleArgs),
     /// Delete an authored role with its assignments and permissions.
     DeleteRole(role_verbs::RoleArgs),
-    /// Select an operation for an authored role, with the operations it requires.
+    /// Grant an operation to an authored role.
     GrantPermission(role_verbs::PermissionArgs),
     /// Remove the selection of an operation from an authored role.
     RevokePermission(role_verbs::PermissionArgs),

@@ -81,7 +81,6 @@ Effectful application tests remain separate from this authoring contract.
 
 A release fixes package versions, component digests, base pins, SQL, connections, routes, and wiring versions.
 Sealing prevents later changes to its content.
-Promotion compares target manifests and ordered migrations, copies admitted facts, and admits target wirings.
 Conflicting content refuses, and exact retries retain their original facts.
 
 Publication mints one route for each attachment that targets a route.
@@ -93,7 +92,6 @@ The route `input-schema` and the operation input port name the route schema file
 Each one writes `{"$ref": "generated/routes/<model>/<action>.json"}`.
 Publication, component admission and the client generator resolve the name against the package root, so a contract change moves the served schema and its definition hash.
 An authored operation keeps the input schema that its author writes.
-Promotion reads no package directory, so it copies the routes and registrations of the source release.
 Publication refuses a wiring with no edges, because a graph with no edges is a route.
 The one exception is a wiring that a registration names, because a registration still delivers to a wiring.
 Each release component member binds a component to one wiring node or to one route, and a CHECK constraint refuses a member that binds both.
@@ -107,8 +105,8 @@ Frozen candidate execution retains its own admitted facts throughout the travers
 
 The delivery code qualifies exact artifacts against a selected clean source revision through the existing application tests.
 Publication requires that qualification and the same immutable manifest.
-Deployment locks the environment's selected release through workload readiness, an authenticated operation, and activation.
-A later selection makes a superseded deployment refuse before changing workloads.
+`wamn-ctl env apply` holds the environment's lifecycle lock through the Helm write and workload readiness.
+A second verb on the same environment refuses while the lock is held.
 The [delivery commands](../operations/delivery.md) reuse the existing release records and package lineage locks.
 
 An additive base can satisfy an unchanged overlay's declared schema and operation requirements.

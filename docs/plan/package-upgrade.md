@@ -15,7 +15,7 @@ That proof is **upgrade qualification**. It is distinct from ordinary **release 
 - `qualify-upgrade` proves the predecessor → candidate database transition before production mutation;
 - `qualify-release` proves the exact published release, source and deployment artifacts after the candidate package is installed and the release exists.
 
-The existing lifecycle remains authoritative. Upgrade adds one pre-apply proof and one persisted compatibility fact; it does not replace `apply-package`, `reconcile-package-data-access`, `push-component`, `publish-release`, `prepare-release`, `qualify-release`, `publish-qualified-release`, `select-release`, or the environment's existing host deployment mechanism.
+The existing lifecycle remains authoritative. Upgrade adds one pre-apply proof and one persisted compatibility fact. It does not replace `apply-package`, `reconcile-package-data-access`, `push-package`, `publish-release`, `qualify-release`, or `wamn-ctl env apply`.
 
 Today the platform already has immutable package lineages, transactional suffix application, generated data-access reconciliation, immutable release publication, release qualification and release selection. It does not yet have the pre-apply compatibility proof, durable installed-superset rollback evidence, or the documented ordering that connects them.
 
@@ -288,7 +288,6 @@ For an installed Epic-1 environment:
    → publish-release
    → prepare-release
    → qualify-release
-   → publish-qualified-release
    ```
 
    Ordinary release qualification still proves the exact candidate release and artifacts. Upgrade qualification does not replace it.
@@ -600,7 +599,7 @@ Live acceptance remains parked. Stopping serving workloads is not an accepted mi
 
 ### 7.4 Epic 4: upgrade in the platform UI
 
-Goal only: expose `environment.upgrade` as the lifecycle worker's saga using the proven command path.
+Goal only: let the platform UI start an upgrade through the proven command path.
 
 Scoped after Epic 3 closes and the platform lifecycle worker exists.
 
@@ -729,7 +728,6 @@ qualify-upgrade
 → publish-release
 → prepare-release
 → qualify-release
-→ publish-qualified-release
 → select-release
 → environment-specific host/workload deployment
 → optional web upload
@@ -783,7 +781,6 @@ qualify-upgrade 2.0.0 → 2.1.0
 → publish-release
 → prepare-release
 → qualify-release
-→ publish-qualified-release
 → select-release 2.1.0
 → render host values
 → helm upgrade

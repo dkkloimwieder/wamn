@@ -14,7 +14,7 @@ The change needs no fork of wasmCloud and no patch of it. The pinned revision of
 - No Secret and no file holds a registry token. Each pull asks for the token it uses.
 - No service account key.
 - The kind clusters keep the projected docker configuration file for their in-cluster registry. Only the GKE host changes.
-- The operator verbs of `wamn-ctl` (`push-component`, `promote`, the delivery verbs) keep `--registry-auth-file`. They run by hand, outside the cluster.
+- The operator verbs of `wamn-ctl` (`push-package`, `publish-release`, the delivery verbs) keep `--registry-auth-file`. They run by hand, outside the cluster.
 - A host that is set up for the metadata server and cannot get a token refuses the pull with a named outcome. It never falls back to an anonymous pull.
 
 ## 3. Current state

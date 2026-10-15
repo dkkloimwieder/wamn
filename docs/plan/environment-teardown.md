@@ -4,7 +4,7 @@ Updated through: 2026-09-30, `main` at `0d6c1cfd0`. The owner accepted this spec
 
 ## 1. Goal
 
-One verb, `delete-project-env`, deletes one project environment and everything that its instance names. It replaces the hand procedure of section 6.7 of `docs/operations/gcp.md` (finding `wamn-psss`). After the verb, `provision-project-env` for the same triple mints a new instance suffix, and the package, gate and CDC steps run again as written.
+One verb, `wamn-ctl env delete`, deletes one project environment and everything that its instance names. It replaces the hand procedure that `docs/operations/gcp.md` ran before it (finding `wamn-psss`). After the verb, `wamn-ctl env apply` for the same triple mints a new instance suffix.
 
 The verb adds no new rule. It runs the steps of the hand runs of 2026-09-28 and 2026-09-29 in one order. It adds the three catalog tables that section 3 finds missing. The second epic of the platform UI (`wamn-zua8`) waits on this verb.
 

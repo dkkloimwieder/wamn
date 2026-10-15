@@ -74,7 +74,7 @@ It is a subpath, so a page that places no administration screen does not resolve
 
 | Export | Purpose |
 | --- | --- |
-| `RoleGrid` | One role's operations, grouped by interface: the direct selection, the effective state and the roots that require each one. A served, grantable operation has a toggle that grants or revokes it. An operation that is effective only through other roots, an operation fixed to `admin` or to every member, and every row of `admin` have no toggle |
+| `RoleGrid` | One role's operations, grouped by interface: the direct selection and the effective state. A served, grantable operation has a toggle that grants or revokes it. An operation fixed to `admin` or to every member, and every row of `admin` have no toggle |
 | `UserGrid` | One user's roles, with a toggle for each, and the effective permissions of the held roles. An `admin` that `project-admin` or `org-admin` covers is hierarchy-controlled, with no toggle |
 | `OrgScreen` | The members of the org, with an `org-admin` toggle and an activate or deactivate button for each, and a form that invites a user with memberships, `org-admin` and `project-admin` |
 | `ProjectScreen` | The members of one project, with a membership toggle for each environment and a `project-admin` toggle. A grant that a higher grant covers is hierarchy-controlled, with no toggle. A new member is chosen from the members of the org. Each environment shows its `environment.status`: the digest, the rollout, the workload conditions and the live set |

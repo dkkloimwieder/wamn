@@ -1,7 +1,7 @@
 # WAMN
 
 WAMN provides application data, component execution, and generated operator interfaces on wasmCloud.
-Applications declare their data and operations in `wamn.json`.
+Applications declare their data and operations in `wamn.k`.
 Rust owns platform behavior, and PostgreSQL stores its durable state.
 
 Start with the [documentation index](docs/README.md) or the [architecture overview](docs/architecture/overview.md).
@@ -34,4 +34,4 @@ Select the relevant instructions:
 - [Development loop](docs/operations/development-loop.md): Developer sessions, operator interfaces, and the authoring pilot.
 - [Running tests](docs/operations/running-tests.md): Test selection, database isolation, generation, SQLx preparation, and live inputs.
 - [Cluster tests](docs/operations/cluster-tests.md): Owned Receiving, WMS, and native test fixtures.
-- [Deployment](docs/operations/deployment.md): Release qualification, publication, selection, and activation.
+- [Deployment](docs/operations/deployment.md): Release qualification, publication, and selection.
