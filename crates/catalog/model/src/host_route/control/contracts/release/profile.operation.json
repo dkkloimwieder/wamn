@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:release/profile@0.8.0",
+  "operation": "wamn-control:release/profile@0.9.0",
   "type": "get",
   "label": "Profile of a release",
-  "grant": "wamn-control:release/profile@0.8.0",
+  "grant": "wamn-control:release/profile@0.9.0",
   "permission_token": "release.profile",
   "result": "one",
   "transaction": "implicit",

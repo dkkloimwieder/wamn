@@ -22,7 +22,7 @@ use wamn_engine::release_manifest::release_label;
 
 /// The chart version this module renders for. It equals `version` in
 /// `deploy/platform/release/Chart.yaml`.
-pub const CHART_VERSION: &str = "0.1.12";
+pub const CHART_VERSION: &str = "0.1.13";
 
 /// The Helm release name of an environment: `r-<slug>-<hash>`.
 ///

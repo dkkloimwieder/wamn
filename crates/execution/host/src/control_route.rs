@@ -34,7 +34,9 @@
 //! `release.profile` reads one installed release of one environment of the
 //! project from its `catalog.releases`, and the columns of its application
 //! tables from `pg_catalog`, on the environment's administration login, and
-//! answers the release's effect profile. It writes nothing.
+//! answers the release's effect profile, with the operations each role of the
+//! environment holds (`admin` holds every operation of the release), from its
+//! `app_system.roles` and `app_system.permissions`. It writes nothing.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -50,8 +52,8 @@ use wamn_control_registry::identifiers::valid_project;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_platform_identity::application::{
-    ApplicationUser, environment_tenant, remove_admin, remove_user, write_admin,
-    write_environment_status, write_user,
+    ApplicationUser, environment_tenant, permission_rows, remove_admin, remove_user, role_names,
+    write_admin, write_environment_status, write_user,
 };
 use wamn_platform_identity::control::{
     control_projects, is_org_admin, is_project_admin, org_projects,
@@ -65,6 +67,7 @@ use wamn_platform_identity::org::{
 use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
 };
+use wamn_project_state::ADMIN_ROLE;
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -327,9 +330,13 @@ impl ControlRoutes<'_> {
                 let url = std::fs::read_to_string(&path)
                     .with_context(|| format!("read the administration login {}", path.display()))?;
                 match release_profile(url.trim(), &request.digest).await? {
-                    Some(profile) => Ok(json!({
+                    Some((profile, roles)) => Ok(json!({
                         "digest": request.digest,
                         "operations": profile.operations,
+                        "roles": roles
+                            .into_iter()
+                            .map(|(role, operations)| json!({ "role": role, "operations": operations }))
+                            .collect::<Vec<_>>(),
                     })),
                     None => Err(Refusal::Declared {
                         code: "release_not_found",
@@ -853,12 +860,18 @@ const RELATION_COLUMNS_SQL: &str = "SELECT c.relname::text, a.attname::text \
        AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname NOT LIKE 'wamn\\_%'";
 
 /// The effect profile of the installed release `digest`
-/// (docs/plan/trx-pkg-plan.md, Spike and acceptance B), or `None` when the
-/// environment has no such release. It reads and writes nothing else.
+/// (docs/plan/trx-pkg-plan.md, Spike and acceptance B) and the operations each
+/// role of the environment holds, or `None` when the environment has no such
+/// release. `admin` holds every operation of the release. It writes nothing.
 async fn release_profile(
     url: &str,
     digest: &str,
-) -> anyhow::Result<Option<wamn_schema_generator::profile::ReleaseProfile>> {
+) -> anyhow::Result<
+    Option<(
+        wamn_schema_generator::profile::ReleaseProfile,
+        BTreeMap<String, Vec<String>>,
+    )>,
+> {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await
         .context("connect the administration login")?;
@@ -874,10 +887,23 @@ async fn release_profile(
         for row in client.query(RELATION_COLUMNS_SQL, &[]).await? {
             relations.entry(row.get(0)).or_default().insert(row.get(1));
         }
-        anyhow::Ok(Some(wamn_schema_generator::profile::release_profile(
-            &manifest.components,
-            &relations,
-        )))
+        let profile =
+            wamn_schema_generator::profile::release_profile(&manifest.components, &relations);
+        let tenant = environment_tenant(&client).await?;
+        let mut roles = BTreeMap::new();
+        for role in role_names(&client, &tenant).await? {
+            let operations = if role == ADMIN_ROLE {
+                profile
+                    .operations
+                    .iter()
+                    .map(|each| each.operation.clone())
+                    .collect()
+            } else {
+                permission_rows(&client, &tenant, &role).await?
+            };
+            roles.insert(role, operations);
+        }
+        anyhow::Ok(Some((profile, roles)))
     }
     .await;
     drop(client);

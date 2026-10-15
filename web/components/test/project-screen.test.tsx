@@ -101,6 +101,18 @@ describe("the project screen", () => {
     expect(read?.items[0]).toEqual({ project: "billing", env: "dev", digest: "sha256:a" });
   });
 
+  it("shows the profile of each role, the union over the operations it holds", async () => {
+    await open("billing");
+    await waitFor(() => expect(document.querySelector('[data-role="clerk"]')).not.toBeNull());
+    // clerk holds only receiving/record, so its union leaves out purchase_order.cost.
+    const clerk = document.querySelector('[data-role="clerk"]')?.textContent ?? "";
+    expect(clerk).toContain("purchase_order.id, purchase_order.status");
+    expect(clerk).toContain("void/delete.sql: unsupported statement");
+    expect(clerk).not.toContain("cost");
+    const admin = document.querySelector('[data-role="admin"]')?.textContent ?? "";
+    expect(admin).toContain("purchase_order.cost, purchase_order.id, purchase_order.status");
+  });
+
   it("shows a refusal with its contract text", async () => {
     const state = controlState();
     await open("billing", state);

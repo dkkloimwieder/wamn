@@ -10,7 +10,7 @@
  * answers one host pod of `sha256:a` with its workload ready. A refusal goes through
  * the runtime's classifier, so it carries the text of its contract.
  * `control.mine` answers whether the caller holds org-admin. `release.profile`
- * answers `PROFILE` for `sha256:a`.
+ * answers `PROFILE` for `sha256:a`, where `clerk` holds `acme:receiving/record`.
  */
 
 import { classify, type JsonValue, type Outcome, type Transport, type WireRequest } from "@wamn/web-runtime";
@@ -25,7 +25,7 @@ const NEW = "00000000-0000-4000-8000-0000000000d1";
  * reaches every export of a base imprecisely, one of whose statements the
  * lexer refused; `acme:purchase/get` reads.
  */
-export const PROFILE = {
+const PROFILE = {
   digest: "sha256:a",
   operations: [
     {
@@ -83,6 +83,10 @@ export const PROFILE = {
         },
       ],
     },
+  ],
+  roles: [
+    { role: "admin", operations: ["acme:purchase/get", "acme:receiving/record"] },
+    { role: "clerk", operations: ["acme:receiving/record"] },
   ],
 } as const;
 

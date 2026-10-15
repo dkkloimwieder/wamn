@@ -17,7 +17,8 @@
  * (docs/plan/platform-deploy.md §11.4): the digest of the host Deployment,
  * its rollout, the workload conditions and the live set. Current state only.
  * For each environment with a digest it shows the effect profile of that
- * release, one row per operation, from `release.profile`, as information.
+ * release from `release.profile`, as information: one row per operation, and
+ * one row per role with the union over the operations the role holds.
  */
 
 import { environment, member, projectAdmin, user } from "@wamn/control-org-client";

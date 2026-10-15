@@ -13,7 +13,6 @@ import { operationInterface, RoleGrid } from "@wamn/ui/admin";
 import type { JsonValue } from "@wamn/web-runtime";
 
 import { adminState, adminStub } from "../stubs/admin.js";
-import { PROFILE } from "../stubs/control.js";
 import { pick } from "./choose.js";
 import { bodyRows, theButton } from "./dom.js";
 
@@ -32,9 +31,9 @@ const shown = () =>
 /** The switch of one operation's row. */
 const toggle = (operation: string) => screen.getByLabelText(`select ${operation}`) as HTMLInputElement;
 
-async function open(state = adminState(), role = "clerk", profile?: typeof PROFILE) {
+async function open(state = adminState(), role = "clerk") {
   const stub = adminStub(state);
-  render(() => <RoleGrid transport={stub.transport} profile={profile} />);
+  render(() => <RoleGrid transport={stub.transport} />);
   await pick("role", role);
   await waitFor(() => expect(bodyRows().length).toBeGreaterThan(0));
   fireEvent.click(theButton("expand all interface"));
@@ -46,22 +45,6 @@ describe("the role grid", () => {
     expect(operationInterface("acme:receiving/record")).toBe("receiving");
     expect(operationInterface("wamn-control:user-role/grant")).toBe("user-role");
     expect(operationInterface("acme:a/b/c")).toBe("a/b");
-  });
-
-  it("shows the profile beside each row and the union over the role's operations", async () => {
-    await open(adminState(), "clerk", PROFILE);
-    const row = (operation: string) =>
-      bodyRows()
-        .find((each) => each.textContent?.includes(operation))
-        ?.textContent?.trim() ?? "";
-    expect(row("acme:purchase/get")).toContain("purchase_order.cost, purchase_order.id");
-    expect(row("acme:receiving/record")).toContain("base:receipt/void (imprecise)");
-    expect(row("acme:receiving/record")).toContain("void/delete.sql: unsupported statement");
-    // clerk holds only receiving/record, so the union leaves out purchase_order.cost.
-    const role = document.querySelector('[data-slot="role-profile"]')?.textContent ?? "";
-    expect(role).toContain("lockspurchase_order");
-    expect(role).toContain("readspurchase_order.id, purchase_order.status");
-    expect(role).not.toContain("cost");
   });
 
   it("shows the direct and the effective state of each row", async () => {

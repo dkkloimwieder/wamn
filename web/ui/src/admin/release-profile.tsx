@@ -4,9 +4,9 @@
  *
  * `release.profile` answers, for each operation of the release, the
  * operations it reaches and the tables and columns that its statements read,
- * write and lock. `profileOf` folds operations into one summary: one
- * operation for an operation row, and the operations a role holds for the
- * role. A reach that is a base member's whole statement set names every
+ * write and lock, and the operations each role of the environment holds.
+ * `profileOf` folds operations into one summary: one operation for an
+ * operation row, and the operations a role holds for a role row. A reach that is a base member's whole statement set names every
  * export of the base, each marked imprecise. A statement that the lexer could
  * not read is listed as refused, with the reason.
  */
@@ -76,27 +76,11 @@ export function profileOf(profile: ReleaseProfileResult, operations: readonly st
 }
 
 /** The fields of a summary, in the order the screens show them. */
-export const PROFILE_FIELDS: readonly (keyof ProfileSummary)[] = ["reaches", "reads", "writes", "locks", "refused"];
+const PROFILE_FIELDS: readonly (keyof ProfileSummary)[] = ["reaches", "reads", "writes", "locks", "refused"];
 
 /** One field of a summary as text. */
-export function profileText(items: readonly string[]): string {
+function profileText(items: readonly string[]): string {
   return items.length > 0 ? items.join(", ") : "none";
-}
-
-/** A summary as a list of its fields. */
-export function ProfileList(props: { summary: ProfileSummary; slot: string }): JSX.Element {
-  return (
-    <dl class="grid grid-cols-[auto_1fr] gap-x-3 text-sm" data-slot={props.slot}>
-      <For each={PROFILE_FIELDS}>
-        {(field) => (
-          <>
-            <dt class="text-muted-foreground">{field}</dt>
-            <dd class="break-words">{profileText(props.summary[field])}</dd>
-          </>
-        )}
-      </For>
-    </dl>
-  );
 }
 
 export interface ReleaseProfileProps {
@@ -106,7 +90,7 @@ export interface ReleaseProfileProps {
   readonly digest: string;
 }
 
-/** The profile of one release of one environment, one row per operation. */
+/** The profile of one release of one environment, one row per operation and one per role. */
 export function ReleaseProfile(props: ReleaseProfileProps): JSX.Element {
   const [profile] = createResource(
     () => ({ project: props.project, env: props.env, digest: props.digest }),
@@ -118,29 +102,54 @@ export function ReleaseProfile(props: ReleaseProfileProps): JSX.Element {
   return (
     <Show when={profile()} fallback={<p class="text-muted-foreground text-sm">unavailable</p>}>
       {(current) => (
-        <table class="w-full text-sm" data-slot="release-profile">
-          <thead>
-            <tr class="text-left">
-              <th>operation</th>
-              <For each={PROFILE_FIELDS}>{(field) => <th>{field}</th>}</For>
-            </tr>
-          </thead>
-          <tbody>
-            <For each={current().operations}>
-              {(operation) => {
-                const summary = profileOf(current(), [operation.operation]);
-                return (
-                  <tr data-operation={operation.operation}>
-                    <td class="font-mono break-all">{operation.operation}</td>
-                    <For each={PROFILE_FIELDS}>
-                      {(field) => <td class="break-words">{profileText(summary[field])}</td>}
-                    </For>
-                  </tr>
-                );
-              }}
-            </For>
-          </tbody>
-        </table>
+        <>
+          <table class="w-full text-sm" data-slot="release-profile">
+            <thead>
+              <tr class="text-left">
+                <th>operation</th>
+                <For each={PROFILE_FIELDS}>{(field) => <th>{field}</th>}</For>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={current().operations}>
+                {(operation) => {
+                  const summary = profileOf(current(), [operation.operation]);
+                  return (
+                    <tr data-operation={operation.operation}>
+                      <td class="font-mono break-all">{operation.operation}</td>
+                      <For each={PROFILE_FIELDS}>
+                        {(field) => <td class="break-words">{profileText(summary[field])}</td>}
+                      </For>
+                    </tr>
+                  );
+                }}
+              </For>
+            </tbody>
+          </table>
+          <table class="w-full text-sm" data-slot="release-role-profile">
+            <thead>
+              <tr class="text-left">
+                <th>role</th>
+                <For each={PROFILE_FIELDS}>{(field) => <th>{field}</th>}</For>
+              </tr>
+            </thead>
+            <tbody>
+              <For each={current().roles}>
+                {(role) => {
+                  const summary = profileOf(current(), role.operations);
+                  return (
+                    <tr data-role={role.role}>
+                      <td>{role.role}</td>
+                      <For each={PROFILE_FIELDS}>
+                        {(field) => <td class="break-words">{profileText(summary[field])}</td>}
+                      </For>
+                    </tr>
+                  );
+                }}
+              </For>
+            </tbody>
+          </table>
+        </>
       )}
     </Show>
   );

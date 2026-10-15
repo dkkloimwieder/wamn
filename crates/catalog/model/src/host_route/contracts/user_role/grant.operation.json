@@ -1,8 +1,8 @@
 {
-  "operation": "wamn-control:user-role/grant@0.8.0",
+  "operation": "wamn-control:user-role/grant@0.9.0",
   "type": "command",
   "label": "Give a role to a user",
-  "grant": "wamn-control:user-role/grant@0.8.0",
+  "grant": "wamn-control:user-role/grant@0.9.0",
   "permission_token": "user_role.grant",
   "result": "one",
   "transaction": "explicit_per_input",

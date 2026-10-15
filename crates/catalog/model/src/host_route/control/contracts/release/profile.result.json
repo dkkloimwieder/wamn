@@ -84,6 +84,18 @@
       "type": "text",
       "nullable": true,
       "values": []
+    },
+    {
+      "path": "roles[].role",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "roles[].operations[]",
+      "type": "text",
+      "nullable": false,
+      "values": []
     }
   ]
 }
