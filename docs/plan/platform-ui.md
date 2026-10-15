@@ -819,7 +819,7 @@ The profile screen shows what each operation of a release can touch in the datab
 
 A row is imprecise when its reach is widened to a member union. A base member reached through composition binds to the statements of all its own operations, so the row lists every export of that base with "(imprecise)" after it. The real reach can be smaller. A statement that the SQL lexer cannot read shows as refused, with the reason, and the profile names no table for it.
 
-The project screen shows the profile of each environment's current release, one row per operation, with the columns reaches, reads, writes, locks and refused. The role grid shows the profile beside each operation row, and above the grid the union over the role's effective operations. The role grid runs in an application session, and `release.profile` is a control route, so the live role grid shows no profile yet (wamn-j157o).
+The project screen shows the profile of each environment's current release, one row per operation, with the columns reaches, reads, writes, locks and refused. Below it, the project screen shows one row per role with the union over the role's operations. `release.profile` returns the roles and their operations for this view. The role grid shows no profile, because it runs in an application session and `release.profile` is a control route (owner ruling on wamn-j157o, 2026-10-15).
 
 ### Membership
 
@@ -919,7 +919,7 @@ Membership remains authoritative; application administration cannot manufacture 
 
 ### Permissions
 
-`permission.list` reports for a role one row per served operation, with one toggle, and `deprecated` for a stored row that the release does not serve. The release profile (reaches, reads, writes, locks) shows beside it as information ([Release profile](#release-profile)).
+`permission.list` reports for a role one row per served operation, with one toggle, and `deprecated` for a stored row that the release does not serve. The release profile per role (reaches, reads, writes, locks) shows on the project screen as information ([Release profile](#release-profile)).
 
 `permission.grant` inserts the row. `permission.revoke` deletes it.
 

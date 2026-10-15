@@ -10,7 +10,7 @@ This is container-managed transaction propagation (Java EE CMT, Spring `@Transac
 
 Security follows the component model: authority arrives only through WIT imports, and publish checks imports per member. A member that does not import the transaction interface cannot touch the transaction.
 
-Status: direction, cut to a core on 2026-10-11 after ten review rounds, and split into three independent items (A composition, B profile screen, C authorization) that ship alone. Core (spike A, then stop reviewing until there is a result): per-member instances of `wamn:postgres/statements`, with member→instance wiring verified in the composed artifact; transaction selection unchanged; `run`/`run-stream` refused inside a host transaction; `client` denied to application components. No version bump on anything: `wamn:postgres` stays 0.3. B is a review screen with no enforcement on it. C is the ACL ruling, pure deletion; grantable administration is a follow-up after C, rescoped then. Cleanup after migration (section below): every deletion is kept and lands after Acme moves off the participant; nothing is lost. Deferred (section below): everything else the reviews added. The design supersedes the participant and pre-commit path in data-access.md; the permission folds of data-access.md:313 and execution.md:20, `ReleaseClosures::expand`, and platform-ui.md §2.3–2.4; `fresh_only`; and the mechanism half of the 2026-09-24 "composition at build" line, not the ruling that nested calls are in-process component calls.
+Status: done 2026-10-15. All four items closed: C `wamn-14bx8`, A `wamn-lqtai`, Cleanup after migration `wamn-ponya` with `wamn-azko6`, and B `wamn-aemxz` (owner acceptance 2026-10-15). The text below is the plan as it was carried out. Earlier status: direction, cut to a core on 2026-10-11 after ten review rounds, and split into three independent items (A composition, B profile screen, C authorization) that ship alone. Core (spike A, then stop reviewing until there is a result): per-member instances of `wamn:postgres/statements`, with member→instance wiring verified in the composed artifact; transaction selection unchanged; `run`/`run-stream` refused inside a host transaction; `client` denied to application components. No version bump on anything: `wamn:postgres` stays 0.3. B is a review screen with no enforcement on it. C is the ACL ruling, pure deletion; grantable administration is a follow-up after C, rescoped then. Cleanup after migration (section below): every deletion is kept and lands after Acme moves off the participant; nothing is lost. Deferred (section below): everything else the reviews added. The design supersedes the participant and pre-commit path in data-access.md; the permission folds of data-access.md:313 and execution.md:20, `ReleaseClosures::expand`, and platform-ui.md §2.3–2.4; `fresh_only`; and the mechanism half of the 2026-09-24 "composition at build" line, not the ruling that nested calls are in-process component calls.
 
 ## How this plan is worked
 
@@ -348,6 +348,15 @@ Things earlier drafts verified that WIT or OCI already prove:
 - **A new interface name (`transaction`) and removing `begin`/`commit`/`rollback`.** `statements` minus the participant trio and `transaction-view` is the same thing with no rename. Guest `begin`/`commit`/`rollback` stay: Receiving's reads use them (`read.rs:84-163`) and they already refuse inside a host-transaction operation, which is the only property needed.
 
 ## Spike and acceptance
+
+Result (owner acceptance 2026-10-15): all four items are closed. The checklists below stay as written, and the commits are the record.
+
+- C, authorization: epic `wamn-14bx8`, 89e57dc3c, 132b413f1, 99fc8c5b6 and 2464b06f9.
+- A, composition: epic `wamn-lqtai`, 8d04837c7, 15ecd4b5e, aec1a85e9 and 20c66f535.
+- Cleanup after migration: epic `wamn-ponya`, 2d5250b29, 0571d16aa, bbb2d663c, 9083d4f55 and c71437d7f. The fold and `operations[].dependencies` went in 8278c9fa2 (`wamn-azko6`), because the host now begins an item transaction from the authored `transaction` field.
+- B, profile screen: epic `wamn-aemxz`, 3bde5d2bc, aeb976ed3 and a0b0c8503. By the owner ruling on `wamn-j157o`, the per-role view is on the project screen and the role grid has no profile (3b5da9d51).
+
+Left open and not scheduled: `wamn-xt0tg` and `wamn-b71vg` (wire contracts, with the next contract bump), grantable administration (needs an owner sentence), `wamn-t4hrr` (repo-policy drift) and `wamn-j7qz7` (PAT overlays).
 
 Three independent items, each shippable alone. Earlier drafts let B and C ride on A; they are not prerequisites for proving per-member transaction propagation, and A runs with the current ACL untouched. Each item's tests are its own gate.
 
