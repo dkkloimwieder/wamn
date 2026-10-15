@@ -98,6 +98,9 @@ kind: PersistentVolumeClaim
 metadata:
   name: otel-collector-queue
 spec:
+  # `standard` is pd-standard on GKE, as Postgres and NATS use (wamn-dev has
+  # no SSD quota), and the default class of kind.
+  storageClassName: standard
   accessModes: [ReadWriteOnce]
   resources:
     requests:
