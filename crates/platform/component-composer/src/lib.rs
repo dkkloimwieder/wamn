@@ -18,7 +18,8 @@
 //! in the composed bytes and the host can bind each import to the statements
 //! of that member (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
 //! A composition that plugs a participant keeps one shared import: the
-//! participant path shares the entry's statements until it retires.
+//! participant path shares the entry's statements until it retires. A
+//! generated no-op participant that imports no statements does not count.
 
 use std::collections::BTreeMap;
 
@@ -199,7 +200,13 @@ pub fn compose(
         }
     }
 
-    let statement_instances = if participant_members.is_empty() && no_op_members.is_empty() {
+    // A generated no-op participant runs no SQL, so plugging one leaves each
+    // member's statements its own.
+    let statement_instances = if participant_members.is_empty()
+        && !no_op_members
+            .iter()
+            .any(|member| imports_statements(&graph, member))
+    {
         name_statement_instances(&mut graph, &members)?
     } else {
         BTreeMap::new()
@@ -238,6 +245,13 @@ pub fn compose(
         );
     }
     Ok(composed)
+}
+
+/// Whether a member imports the statements interface.
+fn imports_statements(graph: &CompositionGraph, member: &Member) -> bool {
+    graph.types()[graph[member.package].ty()]
+        .imports
+        .contains_key(STATEMENTS_INTERFACE)
 }
 
 /// Give each member that imports the statements interface an outer import of
@@ -652,6 +666,59 @@ mod tests {
                 ("sql-0".to_owned(), format!("sha256:{}", hex(&base))),
                 ("sql-1".to_owned(), format!("sha256:{}", hex(&overlay))),
             ])
+        );
+    }
+
+    /// The top-level import names of a composed component.
+    fn outer_imports(composed: &[u8]) -> Vec<String> {
+        let mut types = Types::default();
+        let package = Package::from_bytes("composed", None, composed.to_vec(), &mut types)
+            .expect("the composed bytes are a component");
+        types[package.ty()].imports.keys().cloned().collect()
+    }
+
+    #[test]
+    fn a_no_op_participant_without_statements_keeps_the_named_instances() {
+        let overlay = component(
+            &format!(
+                "{STATEMENTS_IMPORT}{}",
+                operation_import("test:base/op@1.0.0")
+            ),
+            "test:overlay/main@1.0.0",
+        );
+        let base = component(
+            &format!(
+                "{STATEMENTS_IMPORT}{}",
+                operation_import("test:base/pre-commit@1.0.0")
+            ),
+            "test:base/op@1.0.0",
+        );
+        let compose_with = |no_op: Vec<u8>| {
+            compose(
+                &overlay_declaration_without_participant(),
+                overlay.clone(),
+                vec![Base {
+                    declaration: base_declaration(),
+                    bytes: base.clone(),
+                }],
+                Vec::new(),
+                &[no_op],
+            )
+            .expect("the no-op participant fills the optional slot")
+        };
+
+        assert_eq!(
+            outer_imports(&compose_with(participant("test:base/pre-commit@1.0.0"))),
+            ["test:host/log@1.0.0", "sql-0", "sql-1"],
+            "a no-op participant that runs no SQL leaves each member its own instance"
+        );
+        assert_eq!(
+            outer_imports(&compose_with(component(
+                STATEMENTS_IMPORT,
+                "test:base/pre-commit@1.0.0"
+            ))),
+            [wamn_component_policy::STATEMENTS_INTERFACE],
+            "a plugged participant that imports statements keeps one shared import"
         );
     }
 }

@@ -1666,8 +1666,9 @@ impl statement_wit::HostTransactionView for ActiveCtx<'_> {
     }
 }
 
-/// A named `statements` import refuses the participant path: a participant
-/// runs under the entry's set, which a member's instance must not reach.
+/// A named `statements` import refuses a participant view and a selection: a
+/// participant runs under the entry's set, which a member's instance must not
+/// reach.
 #[cfg(feature = "wasm_component_model_implements")]
 fn named_participation_refused() -> StatementError {
     StatementError::Postgres(PgError::PermissionDenied)
@@ -1682,16 +1683,19 @@ impl bindings::named_imports::wamn::postgres::statements::Host for ActiveCtx<'_>
 impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::HostWithStore<T>
     for SharedCtx
 {
+    /// A composition with named instances plugs no participant, so a member
+    /// that asks is told none is selected, and a base that asks on every
+    /// call runs its plain path.
     #[expect(
         clippy::unused_async_trait_impl,
-        reason = "the async WIT method refuses without host work"
+        reason = "the async WIT method answers without host work"
     )]
     async fn selected_participation(
         _accessor: &Accessor<T, Self>,
         _id: super::NamedStatements,
     ) -> wash_runtime::wasmtime::Result<Result<Option<statement_wit::Participation>, StatementError>>
     {
-        Ok(Err(named_participation_refused()))
+        Ok(Ok(None))
     }
 
     #[expect(

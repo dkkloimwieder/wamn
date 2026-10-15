@@ -318,7 +318,16 @@ fn emit_package_world(
             )
             .expect("writing to a String cannot fail");
         }
-        if operation.participant.is_some()
+        // An operation that bears a base operation's name forwards to it, so
+        // the component imports that operation to call it.
+        if let Some((alias, _)) = manifest
+            .base_dependencies
+            .iter()
+            .find(|(_, dependency)| dependency.operations.iter().any(|name| name == local))
+        {
+            writeln!(imports, "  import {};", sealed(&base(alias), local)?)
+                .expect("writing to a String cannot fail");
+        } else if operation.participant.is_some()
             && let Some(inherited) = inherited(operation)
         {
             writeln!(
