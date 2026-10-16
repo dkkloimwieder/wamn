@@ -281,20 +281,20 @@ fn assert_permission_reads(
         "only the single permission statement executes: {changes:?}"
     );
     let (query, calls) = changes[0];
+    assert!(query.starts_with("SELECT u.status = "), "{query}");
     assert!(
-        query.starts_with("SELECT r.role_name, p.permission FROM app_system.users u"),
+        query.contains("FROM app_system.users u LEFT JOIN app_system.user_roles r")
+            && query.contains("u.tenant_id = $1 AND u.id = $2::text::uuid"),
         "{query}"
     );
-    assert!(
-        query.contains("u.tenant_id = $1 AND u.id = $3::text::uuid")
-            && query.contains("r.role_name = ANY($2::text[])"),
-        "{query}"
+    assert_eq!(
+        calls, expected,
+        "one permission read per principal the memory lacks"
     );
-    assert_eq!(calls, expected, "one fresh permission read per request");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity()
+async fn sessions_read_permissions_once_per_principal_and_preserve_the_signed_identity()
 -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[
         ("shared_preload_libraries", "pg_stat_statements"),
@@ -363,10 +363,13 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         .batch_execute("SET ROLE session_identity_reader")
         .await?;
     let identity_reader = Arc::new(identity_reader);
+    // A raw SQL change below publishes no drop, so the test drops the memory
+    // of this reader where a writer would.
+    let reader = permission_reader(url.as_str())?;
     let authentication = Arc::new(SessionRouteAuthentication::new(
         verifier.clone(),
         Arc::clone(&identity_reader),
-        permission_reader(url.as_str())?,
+        Arc::clone(&reader),
         PROJECT,
     ));
     let route = routing(authentication.clone(), &["session"])?;
@@ -400,7 +403,8 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         let caller = accepted(&route, &empty).await;
         assert!(!caller.permits(READ) && !caller.permits(WRITE) && !caller.permits(OTHER_TENANT));
     }
-    assert_permission_reads(&before, &statements(&admin, &generation).await?, 5);
+    // The memory answers the first principal, and the second one reads once.
+    assert_permission_reads(&before, &statements(&admin, &generation).await?, 1);
 
     // A grant stores a reference the loaded release does not serve. It holds
     // on a host whose release serves it, with no write in between.
@@ -435,7 +439,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     );
 
     // A browser sends the signed token in its cookie and the CSRF token in a header.
-    // The admitted request reads permissions once, and the refused one reads nothing.
+    // The memory answers the admitted request, and the refused one reads nothing.
     let before = statements(&admin, &generation).await?;
     let csrf = "fixture-csrf-token";
     let mut carried = first.clone();
@@ -460,7 +464,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         (401, "unauthorized".into()),
         "a cookie without its CSRF header refuses"
     );
-    assert_permission_reads(&before, &statements(&admin, &generation).await?, 1);
+    assert_permission_reads(&before, &statements(&admin, &generation).await?, 0);
     assert_eq!(
         server.count(),
         1,
@@ -492,6 +496,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
             &[&TENANT, &WRITE],
         )
         .await?;
+    reader.auth_cache().clear();
     let changed = accepted(&route, &first).await;
     assert!(
         changed.permits(READ) && !changed.permits(WRITE),
@@ -520,6 +525,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
             &[&TENANT],
         )
         .await?;
+    reader.auth_cache().clear();
     let snapshot = accepted(&route, &first).await;
     assert!(
         !snapshot.permits(READ) && !snapshot.permits(WRITE),
@@ -527,7 +533,8 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     );
     assert_permission_reads(&before, &statements(&admin, &generation).await?, 2);
 
-    // Each request reuses the same unexpired signed token. No cached approval survives.
+    // Each request reuses the same unexpired signed token. No kept approval
+    // survives the drop of a revoke.
     for (revoke, restore) in [
         (
             "UPDATE identity.password_logins SET revoked_at=clock_timestamp()",
@@ -551,6 +558,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         ),
     ] {
         admin.batch_execute(revoke).await?;
+        reader.auth_cache().clear();
         assert_eq!(
             route
                 .authenticate_authorization_for_test(
@@ -579,6 +587,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     admin
         .batch_execute("REVOKE SELECT ON identity.password_logins FROM wamn_identity_reader")
         .await?;
+    reader.auth_cache().clear();
     assert_eq!(
         route
             .authenticate_authorization_for_test(
@@ -650,6 +659,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
 
     // A real blocked permission SELECT crosses token expiry before final admission.
     let before = statements(&admin, &generation).await?;
+    reader.auth_cache().clear();
     admin
         .batch_execute("BEGIN; LOCK TABLE app_system.permissions IN ACCESS EXCLUSIVE MODE")
         .await?;
@@ -694,6 +704,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     // keys and admits it, because the issuer signed it (wamn-co0p).
     let before = statements(&admin, &generation).await?;
     let fetches = server.count();
+    reader.auth_cache().clear();
     admin
         .batch_execute("BEGIN; LOCK TABLE app_system.permissions IN ACCESS EXCLUSIVE MODE")
         .await?;
