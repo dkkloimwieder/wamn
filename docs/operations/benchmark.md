@@ -133,6 +133,7 @@ Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)). Each run resets `pg_
 | 0.1.19, 12:41 | main 3 nodes, Postgres shares a node | 427/s, p50 31.0 | 159/s, p50 81.1 | 7 | 15 |
 | 0.1.21, 13:16, `wamn-stxy9.1` | main 2 nodes, Postgres alone on pool pg | 360/s, p50 37.3 | 276/s, p50 49.7 | 6 | 14 |
 | 0.1.21, 14:07, `wamn-0371x` | Receiving host alone on pool bench, Postgres alone on pool pg | 632/s, p50 22.6 | 284/s, p50 46.3 | 6 | 14 |
+| 0.1.23, 18:42, `wamn-stxy9.2` | Receiving host alone on pool bench, Postgres alone on pool pg | 645/s, p50 21.8 | 376/s, p50 36.3 | 2 | 10 |
 
 Issue 1 deleted the actor label query. Each call makes one call fewer, and the own time of `wamn.route.deliver` fell from 4.0 ms to 0.15 ms. The two runs differ in placement too. In the 0.1.21 run, both hosts, the collector and the event NATS share one 2-vCPU node, and the get host p50 rose to 31.7 ms. The collector restarted 11 times with `OOMKilled` (`wamn-kclnp`), so the 0.1.21 traces hold 2091 of 21636 get requests and no update request.
 
@@ -152,3 +153,18 @@ The 14:07 run is the clean row before issue 2. The Receiving host runs alone on 
 | `wamn.write_log.finish` | | 4.5 |
 | `wamn.operation.commit` | | 7.6 |
 | `wamn.route.deliver` | 6.0 | 29.4 |
+
+Issue 2 moved auth into the memory of the host. A get makes 2 statements per request: the claim settings and the read. An update makes 10. The auth queries ran 124 times in the get run of 38710 requests, because a fact lives 60 s. Update throughput rose from 284/s to 376/s, and the update p50 fell from 46.3 ms to 36.3 ms. The collector did not restart, so the traces hold 19458 of 38710 get requests and 3879 of 22604 update requests. The host p50 (`handle_http_request`) is 9.6 ms for get and 24.2 ms for update.
+
+| Span, p50 ms, 0.1.23 | get | update |
+| --- | --- | --- |
+| `wamn.route.authenticate` | 0.02 | 0.02 |
+| `wamn.auth.permissions` | 0.01 | 0.01 |
+| `wamn.postgres.session_settings` | 2.2 | |
+| `wamn.postgres.bind_claims` | | 1.4 |
+| `wamn.postgres.statement` | 1.8 | 4.3 |
+| `wamn.operation.begin_item` | | 1.5 |
+| `wamn.write_log.claim` | | 2.5 |
+| `wamn.write_log.finish` | | 3.0 |
+| `wamn.operation.commit` | | 6.7 |
+| `wamn.route.deliver` | 8.8 | 22.8 |
