@@ -16,20 +16,28 @@ Do not run `gcloud config configurations activate`. Do not read or write `~/.con
 The owner supplies these inputs. The install stops at the first step that reads a missing one.
 
 1. The agent identity. `CLOUDSDK_CONFIG` holds the login of `wamn-agent@wamn-dev.iam.gserviceaccount.com` and application default credentials, which `wamn web upload` reads. `KUBECONFIG` names a file of the agent's own. The cluster create of section 4.2 writes the cluster into it.
-2. The Resend key, as the Secret `identity-resend` in namespace `identity`, key `api-key`. The owner makes it after section 4.4 makes the namespace and before section 4.12. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`). Most editors end a file with a line end, so the command removes all whitespace:
+2. The SSD quota. The quota preference `wamn-ssd-us-central1` sets `SSD_TOTAL_GB` in `us-central1` to 200, not 0. The PostgreSQL volume is `premium-rwo` (pd-balanced), which counts against it. A teardown keeps the preference, because it is a project quota. If the preference is missing, the owner sets it again:
+
+   ```bash
+   gcloud beta quotas preferences create wamn-ssd-us-central1 --project wamn-dev \
+     --service compute.googleapis.com --quota-id SSD-TOTAL-GB-per-project-region \
+     --dimensions region=us-central1 --preferred-value 200
+   ```
+
+3. The Resend key, as the Secret `identity-resend` in namespace `identity`, key `api-key`. The owner makes it after section 4.4 makes the namespace and before section 4.12. Write the key to a mode 0600 file. Identity refuses whitespace in the key (`Resend configuration refused`). Most editors end a file with a line end, so the command removes all whitespace:
 
    ```bash
    kubectl -n identity create secret generic identity-resend --from-literal=api-key="$(tr -d '[:space:]' < <file>)"
    ```
 
-3. The Workload Identity binding of the host service account. The Kubernetes service account `hosts/wamn-host` acts as the Google service account `wamn-blob`. A teardown keeps this binding, because it is IAM. If the binding is missing, the owner runs:
+4. The Workload Identity binding of the host service account. The Kubernetes service account `hosts/wamn-host` acts as the Google service account `wamn-blob`. A teardown keeps this binding, because it is IAM. If the binding is missing, the owner runs:
 
    ```bash
    gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
      --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
    ```
 
-4. The telemetry bucket and its writer (`docs/plan/observability.md` R1, R7). The bucket `wamn-dev-otel` deletes an object 30 days after it lands. The Google service account `wamn-otel` writes to it and reads its metadata, because the collector exporter reads the bucket at start (`storage.buckets.get`). The Kubernetes service account `platform/otel-collector` acts as `wamn-otel`. A teardown keeps all three, because they are a bucket and IAM:
+5. The telemetry bucket and its writer (`docs/plan/observability.md` R1, R7). The bucket `wamn-dev-otel` deletes an object 30 days after it lands. The Google service account `wamn-otel` writes to it and reads its metadata, because the collector exporter reads the bucket at start (`storage.buckets.get`). The Kubernetes service account `platform/otel-collector` acts as `wamn-otel`. A teardown keeps all three, because they are a bucket and IAM:
 
    ```bash
    echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}' > /tmp/otel-lifecycle.json
@@ -44,7 +52,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[platform/otel-collector]"
    ```
 
-5. The approval of the teardown of section 3. The teardown deletes every database.
+6. The approval of the teardown of section 3. The teardown deletes every database.
 
 ## 2. Project resources
 
@@ -110,7 +118,7 @@ cargo build --locked -p wamn-scenario-worker
 
 ### 4.2 Cluster
 
-gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 1 Spot node replaces it. The pool `pg` holds one node for PostgreSQL alone: its taint keeps every other pod off, and the `Cluster` selects it (section 4.5). The pool `bench` holds one Spot node for the Receiving host alone: its taint keeps every other pod off, and an admission policy places the host there (section 4.9). The 8-vCPU project quota and the SSD quota of 0 set its size and disk. The create writes the cluster into `KUBECONFIG` and makes it the current context:
+gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 1 Spot node replaces it. The pool `pg` holds one node for PostgreSQL alone: its taint keeps every other pod off, and the `Cluster` selects it (section 4.5). The pool `bench` holds one Spot node for the Receiving host alone: its taint keeps every other pod off, and an admission policy places the host there (section 4.9). The 8-vCPU project quota sets its size. The create writes the cluster into `KUBECONFIG` and makes it the current context:
 
 ```bash
 NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
@@ -205,7 +213,7 @@ If the bucket or the binding of section 1 is missing, the collector exits at sta
 
 ### 4.5 PostgreSQL
 
-[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is one instance that holds the system database `wamn_system` and every environment database. CloudNativePG keeps the superuser login in the Secret `wamn-pg-superuser`:
+[deploy/gcp/cnpg-cluster.yaml](../../deploy/gcp/cnpg-cluster.yaml) is one instance that holds the system database `wamn_system` and every environment database. Its volume uses the storage class `premium-rwo` (pd-balanced), which needs the SSD quota of section 1. CloudNativePG keeps the superuser login in the Secret `wamn-pg-superuser`:
 
 ```bash
 kubectl apply --server-side -f deploy/infra/cnpg-operator.yaml
