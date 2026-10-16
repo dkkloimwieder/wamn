@@ -66,3 +66,60 @@ At get c16, `wamn.auth.permissions` spends 87 percent of its 9.3 ms mean in `wam
 ## Bytes per span
 
 The benchmark hour holds 4321511 spans in 110 objects of 273851478 bytes. One span is 63 bytes in gzip OTLP JSON and 1036 bytes before compression. The plan inferred 100 bytes per span and 8 spans per request. The measured request is 22 spans, about 1.4 KB compressed.
+
+## Pool size 8 and node placement
+
+Commit `6458911fe` sets the guest pool to 16 and the platform pool to 8 in both wamn-dev host groups. The pool `main` has 3 nodes of 2 vCPU. The scheduler places the Receiving host and `wamn-pg-1` freely, because the runtime-operator 2.10.3 subchart has no affinity setting. To separate them, cordon the Postgres node, delete the host pod, and uncordon the node after the rollout.
+
+| Call c16 | Run | Throughput | p50 / p95 / p99 |
+| --- | --- | --- | --- |
+| get | 0.1.18, pool 8, host on the Postgres node, 02:49 | 291/s | 49.9 / 79.2 / 115.2 |
+| get | 0.1.19, pool 8, host on its own node, 10:14 | 531/s | 28.1 / 42.5 / 60.6 |
+| update | 0.1.18, pool 8, host on the Postgres node, 02:50 | 167/s | 83.8 / 141.2 / 213.4 |
+| update | 0.1.19, pool 8, host on its own node, 10:15 | 240/s | 54.7 / 109.2 / 229.1 |
+| update | 0.1.19, pool 8, host on its own node, 10:21 | 266/s | 54.4 / 87.7 / 151.9 |
+
+All runs had 0 errors. Pool size 8 removed the wait for a connection. The p50 of `wamn.postgres.acquire` under `wamn.auth.permissions` fell from 8 ms to 0.01 ms. At 02:49, the host and `wamn-pg-1` shared one node, and each SQL span was about 4 times slower than at 02:24. For example, `wamn.auth.perm.query` went from 0.9 ms to 3.5 ms. Keep the host off the Postgres node for every benchmark run.
+
+At 10:15, the collector failed to upload part of its data with `failed to upload traces: context deadline exceeded`. The traces of that hour hold 11939 of the 31925 get requests and no update request. The run at 10:21 repeated update, and its traces hold 15815 of 16009 requests.
+
+## Named parts
+
+These are the host times of the 0.1.19 runs at 10:14 (get) and 10:21 (update), in ms. Each part is the time of one span without its child spans, or the time of a leaf span. The means of the parts add up to the mean of `invoke_component_handler`, which is the request in the host. The p50 values do not add up. `handle_http_request` ends when the response starts, before `invoke_component_handler` ends, so it is not the total.
+
+| Part | Source | get p50 | get mean | update p50 | update mean |
+| --- | --- | --- | --- | --- | --- |
+| wash-runtime invoke | `invoke_component_handler` without its children | 6.15 | 6.92 | 5.50 | 6.09 |
+| record_actor_labels query | `wamn.route.deliver` without its children | 4.01 | 4.61 | 3.87 | 4.49 |
+| identity | `wamn.auth.identity` | 2.20 | 2.58 | 1.97 | 2.52 |
+| permission query | `wamn.auth.perm.query` | 1.82 | 2.11 | 1.66 | 2.14 |
+| principal claims query | `wamn.claims.principal.query` | 1.47 | 1.92 | 1.91 | 2.39 |
+| bind claims | `wamn.postgres.bind_claims` | | | 1.74 | 2.18 |
+| session settings | `wamn.postgres.session_settings` | 1.75 | 2.04 | | |
+| application statement | `wamn.postgres.statement` and `decode_rows` | 1.73 | 2.01 | 6.79 | 8.44 |
+| write-log claim | `wamn.write_log.claim` | | | 3.20 | 3.68 |
+| item commit | `wamn.operation.commit` | | | 8.42 | 12.11 |
+| write-log finish | `wamn.write_log.finish` | | | 4.60 | 5.60 |
+| operation instantiation | `wamn.operation.instantiate` | 0.19 | 0.21 | 0.19 | 0.22 |
+| guest execution | `wamn.operation.call` without its children | 0.30 | 0.38 | 0.35 | 0.38 |
+| dispatch, request hash and answer | `wamn.component.invoke` without its children | 0.35 | 0.39 | 0.55 | 0.61 |
+| route match, input validation, permit | `wamn.route.match`, `validate_input`, `permit` | 0.06 | 0.08 | 0.09 | 0.10 |
+| router taps | `wamn.jetstream`, two per request | 0.02 | 0.09 | 0.02 | 0.06 |
+| pool acquire | every `wamn.postgres.acquire` | 0.02 | 0.25 | 0.02 | 0.11 |
+| span bookkeeping | `wamn.route.authenticate`, `wamn.auth.permissions`, `wamn.postgres`, `wamn.operation.begin_item` without their children | 0.02 | 0.16 | 0.02 | 0.19 |
+| total | `invoke_component_handler` | 22.19 | 23.76 | 47.13 | 51.33 |
+
+The wash-runtime invoke part is the store creation, the instantiation and the guest execution of the `http_route` component, which wamn does not split further. The record_actor_labels query is the Postgres call that `RouterDeliveryBridge::deliver` makes after the second router tap (`crates/execution/host/src/router_delivery.rs`). The trace shows it as one `wamn.postgres.acquire` child and 3.8 ms after it, until `wamn.route.deliver` ends. The query has no span of its own.
+
+For get, wash-runtime invoke is the largest part. For update, the item commit and the application statement are larger. Postgres work is 13.3 ms of the get mean and 37.4 ms of the update mean.
+
+## Postgres floor
+
+pgbench ran in a pod in the cluster against `wamn-pg-1`, at scale 10 with 16 clients for 60 s.
+
+| Script | TPS | p50 | p99 |
+| --- | --- | --- | --- |
+| select-only | 10377 | 0.34 | 6.36 |
+| simple-update | 1888 | 6.88 | 23.04 |
+
+The item commit p50 of update (8.42 ms) is near the simple-update p50 of pgbench (6.88 ms), which also ends in a commit.

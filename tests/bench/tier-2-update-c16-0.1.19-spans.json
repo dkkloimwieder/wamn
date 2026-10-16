@@ -1,0 +1,39 @@
+{
+  "host": "receiving.wamn.dev",
+  "call": "update",
+  "tier": "tier-2",
+  "concurrency": 16,
+  "duration_secs": 60.046074415,
+  "started_at_unix": 1792145744,
+  "orders": 1000,
+  "calls": 14422,
+  "errors": 0,
+  "error_rate": 0.0,
+  "error_kinds": {},
+  "throughput_per_sec": 240.1822290717021,
+  "p50_ms": 54.656,
+  "p95_ms": 109.236,
+  "p99_ms": 229.12,
+  "postgres": {
+    "before": {
+      "database": {
+        "xact_commit": 274568,
+        "blks_hit": 643281,
+        "blks_read": 821,
+        "numbackends": 28
+      },
+      "statements": null,
+      "statements_error": "relation \"pg_stat_statements\" does not exist"
+    },
+    "after": {
+      "database": {
+        "xact_commit": 375083,
+        "blks_hit": 1948362,
+        "blks_read": 15627,
+        "numbackends": 27
+      },
+      "statements": null,
+      "statements_error": "relation \"pg_stat_statements\" does not exist"
+    }
+  }
+}
