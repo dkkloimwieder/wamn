@@ -111,7 +111,7 @@ These are the host times of the 0.1.19 runs at 10:14 (get) and 10:21 (update), i
 
 The wash-runtime invoke part is the store creation, the instantiation and the guest execution of the `http_route` component, which wamn does not split further. The record_actor_labels query is the Postgres call that `RouterDeliveryBridge::deliver` makes after the second router tap (`crates/execution/host/src/router_delivery.rs`). The trace shows it as one `wamn.postgres.acquire` child and 3.8 ms after it, until `wamn.route.deliver` ends. The query has no span of its own.
 
-For get, wash-runtime invoke is the largest part. For update, the item commit and the application statement are larger. Postgres work is 13.3 ms of the get mean and 37.4 ms of the update mean.
+For get, wash-runtime invoke is the largest part. For update, the item commit and the application statement are larger.
 
 ## Postgres floor
 
