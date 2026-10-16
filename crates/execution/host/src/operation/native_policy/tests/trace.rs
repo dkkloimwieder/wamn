@@ -149,8 +149,25 @@ impl TraceCapture {
                 .iter()
                 .find(|span| attribute(span, "wamn.operation") == Some(operation))
                 .expect("the guest performed its host effect");
+            // The guest call and the instantiation before it are named
+            // children of the invocation, and the guest's host effects nest
+            // under the call.
+            let named = |name: &str| {
+                spans
+                    .iter()
+                    .find(|span| span.name == name)
+                    .unwrap_or_else(|| panic!("span {name:?} must be exported"))
+            };
+            let call = named("wamn.operation.call");
+            let instantiate = named("wamn.operation.instantiate");
+            assert_eq!(call.parent_span_id, invocation.span_context.span_id());
+            assert_eq!(
+                instantiate.parent_span_id,
+                invocation.span_context.span_id()
+            );
+            assert!(instantiate.end_time <= call.start_time);
             assert_eq!(effect.span_context.trace_id(), incoming.trace_id());
-            assert_eq!(effect.parent_span_id, invocation.span_context.span_id());
+            assert_eq!(effect.parent_span_id, call.span_context.span_id());
             assert_eq!(
                 attribute(effect, "wamn.component_digest"),
                 Some(fact.component_digest.as_str())

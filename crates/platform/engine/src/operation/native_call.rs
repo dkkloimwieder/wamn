@@ -11,6 +11,7 @@ use crate::invocation_trace::InvocationTrace;
 use anyhow::Context as _;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, timeout_at};
+use tracing::Instrument as _;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::wasmtime::StoreContextMut;
@@ -104,6 +105,10 @@ struct NativeCall<P: InvocationPolicy> {
     trace: InvocationTrace,
     retired_after_reply: Arc<AtomicBool>,
     scope: Arc<InvocationScope<P>>,
+    /// `wamn.operation.instantiate`: open from the dispatch until the call
+    /// begins, so it holds the store creation, the instantiation and the
+    /// wait for an instance.
+    instantiate: tracing::Span,
 }
 
 /// Restore the native identity after the request's capability scope is revoked.
@@ -153,8 +158,13 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 failure,
                 retired_after_reply,
                 scope,
+                instantiate,
                 ..
             } = *self;
+            drop(instantiate);
+            // The guest's host calls parent to this span, because the policy
+            // binds the current span when it activates the scope.
+            async move {
             anyhow::ensure!(
                 Instant::now() < request.deadline,
                 "native-node-deadline-exceeded"
@@ -311,6 +321,9 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                 );
             }
             Ok(refused)
+            }
+            .instrument(tracing::info_span!("wamn.operation.call"))
+            .await
         }))
     }
 }
@@ -536,6 +549,7 @@ pub async fn invoke_owned<P: InvocationPolicy>(
                 trace: InvocationTrace::capture(),
                 retired_after_reply: Arc::clone(&retired_after_reply),
                 scope,
+                instantiate: tracing::info_span!("wamn.operation.instantiate"),
             })
             .await
         {

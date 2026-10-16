@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::{Map, Value, json};
+use tracing::Instrument as _;
 use wamn_catalog::{OperationType, RouteCanonicalization};
 use wamn_run_state::IntentStore;
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
@@ -223,6 +224,7 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
         let transaction = application
             .policy
             .begin_item(component_id, call.operation, &call.facts)
+            .instrument(tracing::info_span!("wamn.operation.begin_item"))
             .await?;
         let facts = match &transaction {
             Some(transaction) => application.policy.item_facts(&call.facts, transaction),
@@ -284,15 +286,21 @@ pub(super) async fn invoke_logged<H: ApplicationHost>(
             answers.push(body);
             continue;
         }
-        answers.push(match transaction.commit().await {
-            Ok(()) => body,
-            Err(ItemCommitFailure::Uncertain { .. }) => {
-                uncertain(&id.context("a committed item has an intent")?)
-            }
-            Err(ItemCommitFailure::RolledBack { code, message }) => {
-                json!({"error": {"code": code, "message": message}})
-            }
-        });
+        answers.push(
+            match transaction
+                .commit()
+                .instrument(tracing::info_span!("wamn.operation.commit"))
+                .await
+            {
+                Ok(()) => body,
+                Err(ItemCommitFailure::Uncertain { .. }) => {
+                    uncertain(&id.context("a committed item has an intent")?)
+                }
+                Err(ItemCommitFailure::RolledBack { code, message }) => {
+                    json!({"error": {"code": code, "message": message}})
+                }
+            },
+        );
     }
     let merged = items
         .iter()
@@ -357,6 +365,7 @@ async fn settle_item<H: ApplicationHost>(
             input_hash: &item_input_hash(hashed.as_ref().unwrap_or(item.value)),
             deadline_ms: call.deadline_ms,
         })
+        .instrument(tracing::info_span!("wamn.write_log.claim"))
         .await?;
     let id = match begun {
         Begun::New(id) => id,
@@ -427,6 +436,7 @@ async fn settle_item<H: ApplicationHost>(
     intent
         .store
         .finish(&id, &StoredOutcome(body.clone()))
+        .instrument(tracing::info_span!("wamn.write_log.finish"))
         .await?;
     Ok(Settled::Answer {
         body,

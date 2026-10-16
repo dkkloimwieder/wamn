@@ -16,6 +16,7 @@ use std::task::{Context, Poll};
 
 use anyhow::Context as _;
 use tokio::sync::mpsc;
+use tracing::Instrument as _;
 use wamn_catalog::{
     AdmittedComponent, AttachmentAuthPolicy, AttachmentTarget, HostAttachment,
     ServingComponentOperation, ServingManifest, parse_attachment_auth_policy,
@@ -152,7 +153,11 @@ impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
                 .transpose()?;
             Ok::<_, wash_runtime::wasmtime::Error>((plugin, caller))
         })?;
-        Ok(plugin.delivery.deliver(request, caller).await)
+        Ok(plugin
+            .delivery
+            .deliver(request, caller)
+            .instrument(tracing::info_span!(target: "wamn::route", "wamn.route.deliver"))
+            .await)
     }
 
     async fn deliver_stream(
@@ -169,7 +174,12 @@ impl<T: 'static + Send> delivery::HostWithStore<T> for SharedCtx {
                 .transpose()?;
             Ok::<_, wash_runtime::wasmtime::Error>((plugin, caller))
         })?;
-        match plugin.delivery.deliver_stream(request, caller).await {
+        match plugin
+            .delivery
+            .deliver_stream(request, caller)
+            .instrument(tracing::info_span!(target: "wamn::route", "wamn.route.deliver"))
+            .await
+        {
             Err(report) => Ok(Err(report)),
             Ok(streamed) => accessor.with(|mut access| {
                 let lines = StreamReader::new(
