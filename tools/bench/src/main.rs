@@ -10,7 +10,8 @@
 //! Before the timed part, the tool lists every purchase order and the
 //! suppliers they name. Each worker takes its own slice of the orders, so no
 //! two workers write one row. A write changes the supplier of the order to the
-//! next supplier in the cycle. Any refusal counts as an error, a concurrency
+//! next supplier in the cycle. Each request id carries the run start, so a
+//! later run never repeats one. Any refusal counts as an error, a concurrency
 //! conflict included. After a failed write, the worker reads the row again,
 //! outside the timing, and goes on.
 //!
@@ -33,6 +34,7 @@
 //!   --concurrency 16 --duration-secs 60 --tier tier-1 --output tests/bench/<file>.json \
 //!   [--db-url postgres://...]
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -122,6 +124,16 @@ struct Target {
 struct Measured {
     latencies_micros: Vec<u64>,
     errors: u64,
+    /// The errors counted by kind: the refusal code or the status.
+    error_kinds: BTreeMap<String, u64>,
+}
+
+impl Measured {
+    /// Count one error under its kind.
+    fn error(&mut self, error: &anyhow::Error) {
+        self.errors += 1;
+        *self.error_kinds.entry(error.to_string()).or_default() += 1;
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -136,6 +148,7 @@ struct Summary {
     calls: usize,
     errors: u64,
     error_rate: f64,
+    error_kinds: BTreeMap<String, u64>,
     throughput_per_sec: f64,
     p50_ms: f64,
     p95_ms: f64,
@@ -248,17 +261,22 @@ async fn main() -> anyhow::Result<()> {
         } else {
             let own = orders[worker * slice..(worker + 1) * slice].to_vec();
             let suppliers = Arc::clone(&suppliers);
+            let run = started_at_unix;
             workers.push(tokio::spawn(async move {
-                run_worker(&target, call, worker, own, &suppliers, deadline).await
+                run_worker(&target, call, run, worker, own, &suppliers, deadline).await
             }));
         }
     }
     let mut latencies = Vec::new();
     let mut errors = 0;
+    let mut error_kinds = BTreeMap::new();
     for worker in workers {
         let measured = worker.await?;
         latencies.extend(measured.latencies_micros);
         errors += measured.errors;
+        for (kind, count) in measured.error_kinds {
+            *error_kinds.entry(kind).or_default() += count;
+        }
     }
     let elapsed = started.elapsed().as_secs_f64();
     let postgres = match (&database, before) {
@@ -281,6 +299,7 @@ async fn main() -> anyhow::Result<()> {
         calls,
         errors,
         error_rate: ratio(errors, calls),
+        error_kinds,
         throughput_per_sec: to_f64(calls) / elapsed,
         p50_ms: millis(percentile(&latencies, 50)),
         p95_ms: millis(percentile(&latencies, 95)),
@@ -298,6 +317,7 @@ async fn main() -> anyhow::Result<()> {
 async fn run_worker(
     target: &Target,
     call: Call,
+    run: u64,
     worker: usize,
     mut own: Vec<Order>,
     suppliers: &[String],
@@ -318,7 +338,7 @@ async fn run_worker(
                 let order = &own[index];
                 let supplier = (order.supplier + 1) % suppliers.len();
                 let item = json!([{
-                    "request_id": format!("bench-{worker}-{sequence}"),
+                    "request_id": format!("bench-{run}-{worker}-{sequence}"),
                     "id": order.id,
                     "expected_row_version": order.row_version,
                     "change": { "supplier_id": suppliers[supplier] },
@@ -335,8 +355,8 @@ async fn run_worker(
         };
         let micros = u64::try_from(begun.elapsed().as_micros()).unwrap_or(u64::MAX);
         measured.latencies_micros.push(micros);
-        if outcome.is_err() {
-            measured.errors += 1;
+        if let Err(error) = &outcome {
+            measured.error(error);
             if matches!(call, Call::Update)
                 && let Ok(value) = read(target, "get", &json!({ "id": own[index].id })).await
             {
@@ -383,8 +403,8 @@ async fn run_receipts(
         let outcome = post(target, "acme/acme/record_receipt", &item).await;
         let micros = u64::try_from(begun.elapsed().as_micros()).unwrap_or(u64::MAX);
         measured.latencies_micros.push(micros);
-        if outcome.is_err() {
-            measured.errors += 1;
+        if let Err(error) = &outcome {
+            measured.error(error);
         }
     }
     measured
@@ -430,12 +450,18 @@ async fn post(target: &Target, path: &str, items: &Value) -> anyhow::Result<Valu
 async fn outcome(response: reqwest::Response) -> anyhow::Result<Value> {
     let status = response.status();
     let body: Value = response.json().await?;
-    ensure!(status.is_success(), "the route answered {status}");
+    ensure!(
+        status.is_success(),
+        "the route answered {status} {}",
+        body.pointer("/error/code").unwrap_or(&Value::Null)
+    );
     match body.as_array().map(Vec::as_slice) {
-        Some([item]) => item
-            .get("value")
-            .cloned()
-            .with_context(|| format!("the outcome is a refusal: {item}")),
+        Some([item]) => item.get("value").cloned().with_context(|| {
+            format!(
+                "refusal {}",
+                item.pointer("/error/code").unwrap_or(&Value::Null)
+            )
+        }),
         _ => bail!("the reply is not one outcome"),
     }
 }
@@ -591,7 +617,14 @@ async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
             ),
             None,
         ),
-        Err(error) => (None, Some(error.to_string())),
+        Err(error) => (
+            None,
+            Some(
+                error
+                    .as_db_error()
+                    .map_or_else(|| error.to_string(), |db| db.message().to_owned()),
+            ),
+        ),
     };
     Ok(Sample {
         database: DatabaseStats {
