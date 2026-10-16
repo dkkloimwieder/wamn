@@ -110,7 +110,7 @@ cargo build --locked -p wamn-scenario-worker
 
 ### 4.2 Cluster
 
-gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 3 Spot nodes replaces it. The create writes the cluster into `KUBECONFIG` and makes it the current context:
+gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 2 Spot nodes replaces it. The pool `pg` holds one node for PostgreSQL alone: its taint keeps every other pod off, and the `Cluster` selects it (section 4.5). The 8-vCPU project quota and the SSD quota of 0 set its size and disk. The create writes the cluster into `KUBECONFIG` and makes it the current context:
 
 ```bash
 NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
@@ -122,15 +122,19 @@ gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
   --service-account $NSA --disk-type pd-standard --disk-size 30 \
   --num-nodes 1 --machine-type e2-standard-2 --spot
 gcloud container node-pools create main --cluster wamn --project wamn-dev \
-  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 3 \
+  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 2 \
   --disk-type pd-standard --disk-size 30 --service-account $NSA \
   --max-surge-upgrade 0 --max-unavailable-upgrade 1
+gcloud container node-pools create pg --cluster wamn --project wamn-dev \
+  --zone us-central1-a --machine-type e2-standard-2 --num-nodes 1 \
+  --disk-type pd-standard --disk-size 50 --service-account $NSA \
+  --node-labels role=postgres --node-taints role=postgres:NoSchedule
 gcloud container node-pools delete default-pool --cluster wamn --project wamn-dev --zone us-central1-a --quiet
 gcloud container clusters get-credentials wamn --project wamn-dev --zone us-central1-a
 kubectl get nodes
 ```
 
-The pool has a fixed size and no autoscaler, so the scale to 0 of the guard holds. If `kubectl get nodes` lists no node after 03:00 New York time, run section 5.1.
+The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubectl get nodes` lists no node after 03:00 New York time, run section 5.1.
 
 ### 4.3 cert-manager and the edge certificate
 
@@ -735,10 +739,11 @@ openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev 
 
 ### 5.1 Pool after the daily guard
 
-The guard sets pool `main` to 0 nodes every day. Scale it back to 3 nodes. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
+The guard sets pool `main` to 0 nodes every day. Scale `main` back to 2 nodes and `pg` to 1 node. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
 
 ```bash
-gcloud container clusters resize wamn --node-pool main --num-nodes 3 --zone us-central1-a --project wamn-dev --quiet
+gcloud container clusters resize wamn --node-pool pg --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
+gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-central1-a --project wamn-dev --quiet
 until kubectl -n platform get pod wamn-pg-1 >/dev/null 2>&1; do sleep 5; done
 kubectl -n platform wait pod/wamn-pg-1 --for=condition=Ready --timeout=900s
 kubectl -n platform rollout status statefulset/evt-nats --timeout=600s
@@ -751,10 +756,11 @@ The port-forwards end with their pods, so start them again (sections 4.5 and 4.8
 
 ### 5.2 Pause
 
-Set pool `main` to 0 nodes. The PostgreSQL volume keeps the data:
+Set pools `main` and `pg` to 0 nodes. The PostgreSQL volume keeps the data:
 
 ```bash
 gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool main --num-nodes 0 --quiet
+gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool pg --num-nodes 0 --quiet
 gcloud compute instances list --project wamn-dev
 ```
 

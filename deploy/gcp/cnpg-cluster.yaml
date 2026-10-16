@@ -8,6 +8,11 @@
 # it from the pg_stat_statements.* parameters: it preloads the library and
 # creates the extension in every database. Without such a parameter, CNPG
 # drops the extension from every database.
+# The instance runs alone on the node pool pg (gcp.md section 4.2): the node
+# selector puts it there, and the taint keeps every other pod off. A shared
+# 2-vCPU node made each SQL span about 4 times slower (wamn-48d4d). CNPG
+# applies the affinity only when it creates the pod, so a change needs a
+# restart of the pod.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -18,6 +23,14 @@ metadata:
 spec:
   instances: 1
   enablePDB: false
+  affinity:
+    nodeSelector:
+      role: postgres
+    tolerations:
+      - key: role
+        operator: Equal
+        value: postgres
+        effect: NoSchedule
   imageName: ghcr.io/cloudnative-pg/postgresql:18
   enableSuperuserAccess: true
   primaryUpdateStrategy: unsupervised
