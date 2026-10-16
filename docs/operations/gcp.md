@@ -214,14 +214,7 @@ setsid kubectl -n platform port-forward pod/wamn-pg-1 15432:5432 > $W/pf-pg.log 
 
 If a step cannot connect to `127.0.0.1:15432`, start the forward again.
 
-The Cluster preloads `pg_stat_statements`. Install the extension in `wamn_system` and in each environment database that exists. A package apply installs it in a new environment database (`PLATFORM_EXTENSIONS` in `crates/control/provision/src/sql/database.rs`).
-
-```bash
-for db in $(kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
-    "SELECT datname FROM pg_database WHERE datname = 'wamn_system' OR datname LIKE 'wamn-db-%'"); do
-  kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d "$db" -qc 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements'
-done
-```
+The Cluster sets `pg_stat_statements.max` and `pg_stat_statements.track`. From these parameters, CloudNativePG preloads the library and creates the extension in every database. If no `pg_stat_statements.*` parameter is set, CloudNativePG drops the extension from every database.
 
 ### 4.6 Packages and platform build
 

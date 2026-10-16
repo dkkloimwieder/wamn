@@ -4,9 +4,10 @@
 # database. Backups are not configured. enablePDB is false: with one instance
 # the primary PodDisruptionBudget can never allow an eviction, so a scale of
 # pool main to 0 waited up to one hour for GKE (wamn-7huhc).
-# pg_stat_statements is preloaded for the benchmark samples (wamn-smtdg).
-# CNPG refuses shared_preload_libraries under parameters, because it is a
-# fixed parameter, so the list goes in its own field.
+# pg_stat_statements serves the benchmark samples (wamn-smtdg). CNPG manages
+# it from the pg_stat_statements.* parameters: it preloads the library and
+# creates the extension in every database. Without such a parameter, CNPG
+# drops the extension from every database.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -28,12 +29,12 @@ spec:
     storageClass: standard
     size: 10Gi
   postgresql:
-    shared_preload_libraries:
-      - pg_stat_statements
     pg_hba:
       - host all all all scram-sha-256
     parameters:
       max_slot_wal_keep_size: "4GB"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: "top"
   bootstrap:
     initdb:
       database: wamn_system
