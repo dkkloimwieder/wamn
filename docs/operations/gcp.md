@@ -214,6 +214,15 @@ setsid kubectl -n platform port-forward pod/wamn-pg-1 15432:5432 > $W/pf-pg.log 
 
 If a step cannot connect to `127.0.0.1:15432`, start the forward again.
 
+The Cluster preloads `pg_stat_statements`. Install the extension in `wamn_system` and in each environment database that exists. A package apply installs it in a new environment database (`PLATFORM_EXTENSIONS` in `crates/control/provision/src/sql/database.rs`).
+
+```bash
+for db in $(kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
+    "SELECT datname FROM pg_database WHERE datname = 'wamn_system' OR datname LIKE 'wamn-db-%'"); do
+  kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d "$db" -qc 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements'
+done
+```
+
 ### 4.6 Packages and platform build
 
 `wamn build` needs a PostgreSQL server ([building](building.md#wamn-build)). Run a local one on a loopback port, and build every package that the runner image reads. The server takes some seconds to start. Wait for its answer on TCP:

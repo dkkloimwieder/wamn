@@ -77,7 +77,11 @@ pub fn set_database_owner_sql(database: &str) -> String {
 /// overlap rule is unreachable from a package (`wamn-yk9l`). Three independent
 /// agents authoring a dock-appointment package hit exactly that and all three
 /// fell back to a row lock.
-pub const PLATFORM_EXTENSIONS: [&str; 1] = ["btree_gist"];
+///
+/// `pg_stat_statements` gives the operator the calls and the time of each
+/// statement (`wamn-smtdg`). Its view reads only where the server preloads the
+/// library. Without the preload, the extension still installs.
+pub const PLATFORM_EXTENSIONS: [&str; 2] = ["btree_gist", "pg_stat_statements"];
 
 /// `CREATE EXTENSION IF NOT EXISTS` for every platform extension, for the
 /// CURRENT database.

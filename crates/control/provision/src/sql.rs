@@ -1033,11 +1033,12 @@ mod tests {
     /// The platform extension list is PINNED, because a package cannot install
     /// one and a silent removal would take an author's constraint with it.
     #[test]
-    fn the_platform_installs_btree_gist_and_nothing_else() {
-        assert_eq!(PLATFORM_EXTENSIONS, ["btree_gist"]);
+    fn the_platform_installs_btree_gist_and_pg_stat_statements_only() {
+        assert_eq!(PLATFORM_EXTENSIONS, ["btree_gist", "pg_stat_statements"]);
         assert_eq!(
             install_platform_extensions_sql(),
-            "CREATE EXTENSION IF NOT EXISTS \"btree_gist\";\n"
+            "CREATE EXTENSION IF NOT EXISTS \"btree_gist\";\n\
+             CREATE EXTENSION IF NOT EXISTS \"pg_stat_statements\";\n"
         );
     }
 
