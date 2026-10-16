@@ -14,6 +14,12 @@ replicas: 1
 schedulerNatsUrl: nats://nats.platform.svc.cluster.local:4222
 dataNatsUrl: nats://nats.platform.svc.cluster.local:4222
 env:
+# Warm reuse of the reviewed Receiving component (deployment.md, native
+# dispatch): one warm instance per concurrent call of the c16 bench.
+- name: WAMN_TRUSTED_WARM_COMPONENT_DIGESTS
+  value: sha256:6df6c962a6cfb26f61c475e15115c7bdcf54e48991bea99b5f3b49acb81639e2
+- name: WAMN_COMPONENT_POOL_SIZE
+  value: '16'
 - name: WAMN_PG_GUEST_POOL_MAX
   value: '16'
 - name: WAMN_PG_PLATFORM_POOL_MAX
