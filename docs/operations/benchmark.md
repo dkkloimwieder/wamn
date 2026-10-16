@@ -123,3 +123,16 @@ pgbench ran in a pod in the cluster against `wamn-pg-1`, at scale 10 with 16 cli
 | simple-update | 1888 | 6.88 | 23.04 |
 
 The item commit p50 of update (8.42 ms) is near the simple-update p50 of pgbench (6.88 ms), which also ends in a commit.
+
+## Request round-trips
+
+Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)). Each run resets `pg_stat_statements` before it and reads every row after it, into `tests/bench/*.pgss.csv`. Calls per request is the calls of a statement divided by the requests of the run, summed over the statements that run once per request.
+
+| Run | Placement | get | update | get calls | update calls |
+| --- | --- | --- | --- | --- | --- |
+| 0.1.19, 12:41 | main 3 nodes, Postgres shares a node | 427/s, p50 31.0 | 159/s, p50 81.1 | 7 | 15 |
+| 0.1.21, 13:16, `wamn-stxy9.1` | main 2 nodes, Postgres alone on pool pg | 360/s, p50 37.3 | 276/s, p50 49.7 | 6 | 14 |
+
+Issue 1 deleted the actor label query. Each call makes one call fewer, and the own time of `wamn.route.deliver` fell from 4.0 ms to 0.15 ms. The two runs differ in placement too. In the 0.1.21 run, both hosts, the collector and the event NATS share one 2-vCPU node, and the get host p50 rose to 31.7 ms. The collector restarted 11 times with `OOMKilled` (`wamn-kclnp`), so the 0.1.21 traces hold 2091 of 21636 get requests and no update request.
+
+In the 0.1.19 run, `wamn_cache.bump_version` took 20.2 ms mean per update, and the update statement 15.0 ms. With Postgres alone on its node, they took 2.1 ms and 3.0 ms.

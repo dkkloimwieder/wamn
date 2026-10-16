@@ -1,0 +1,179 @@
+{
+  "host": "receiving.wamn.dev",
+  "call": "update",
+  "tier": "tier-2",
+  "concurrency": 16,
+  "duration_secs": 60.192563531,
+  "started_at_unix": 1792156891,
+  "orders": 1000,
+  "calls": 13567,
+  "errors": 0,
+  "error_rate": 0.0,
+  "error_kinds": {},
+  "throughput_per_sec": 225.39329119971453,
+  "p50_ms": 59.426,
+  "p95_ms": 105.626,
+  "p99_ms": 201.698,
+  "postgres": {
+    "before": {
+      "database": {
+        "xact_commit": 1005248,
+        "blks_hit": 6701835,
+        "blks_read": 78096,
+        "numbackends": 27
+      },
+      "statements": [
+        {
+          "query": "FETCH FORWARD 500 FROM wamn_stream",
+          "calls": 10,
+          "total_exec_time_ms": 4.670440999999999,
+          "mean_exec_time_ms": 0.46704409999999996,
+          "rows": 1009
+        },
+        {
+          "query": "DECLARE wamn_stream NO SCROLL CURSOR FOR SELECT\n    model.created_at,\n    model.created_by,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at,\n    model.updated_by\nFROM purchase_order AS model\nWHERE\n    ($1::jsonb IS NULL OR model.supplier_id IN (\n        SELECT filter.value::uuid\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n    ))\n    AND\n    ($2::jsonb IS NULL OR model.status IN (\n        SELECT filter.value::text\n        FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n    ))\n    AND\n    ($3::jsonb IS NULL OR EXISTS (\n        SELECT $7\n        FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n        WHERE strpos(model.purchase_order_number, filter.value) > $8\n    ))\n    AND\n    ($4::timestamptz IS NULL OR model.created_at > $4::timestamptz\n        OR (model.created_at = $4::timestamptz AND model.id > $5::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $6::int8",
+          "calls": 10,
+          "total_exec_time_ms": 3.1768479999999997,
+          "mean_exec_time_ms": 0.3176848,
+          "rows": 0
+        },
+        {
+          "query": "SELECT 1 FROM app_system.users WHERE tenant_id = $1 AND id = $2::text::uuid",
+          "calls": 10,
+          "total_exec_time_ms": 1.759113,
+          "mean_exec_time_ms": 0.17591129999999996,
+          "rows": 10
+        },
+        {
+          "query": "SELECT status = $1 FROM app_system.environment",
+          "calls": 10,
+          "total_exec_time_ms": 0.913671,
+          "mean_exec_time_ms": 0.0913671,
+          "rows": 0
+        },
+        {
+          "query": "SELECT EXISTS ( SELECT $2 FROM pg_catalog.pg_roles AS authority WHERE authority.rolname = $1 AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, $3))",
+          "calls": 18,
+          "total_exec_time_ms": 0.49928700000000004,
+          "mean_exec_time_ms": 0.027738166666666668,
+          "rows": 18
+        },
+        {
+          "query": "SELECT set_config('app.tenant', $1, true), set_config('statement_timeout', $2, true), set_config('search_path', COALESCE($3, current_setting('search_path')), true), set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true), set_config('app.role', $5, true), set_config('app.user_id', $6, true), set_config('app.operation', $7, true)",
+          "calls": 18,
+          "total_exec_time_ms": 0.4479000000000001,
+          "mean_exec_time_ms": 0.024883333333333337,
+          "rows": 18
+        },
+        {
+          "query": "SELECT user_roles.role_name, permissions.permission FROM app_system.users AS users JOIN app_system.user_roles AS user_roles ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id LEFT JOIN app_system.permissions AS permissions ON permissions.tenant_id = user_roles.tenant_id AND permissions.role_name = user_roles.role_name WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active'",
+          "calls": 10,
+          "total_exec_time_ms": 0.41824,
+          "mean_exec_time_ms": 0.041824,
+          "rows": 10
+        },
+        {
+          "query": "BEGIN ISOLATION LEVEL READ COMMITTED",
+          "calls": 18,
+          "total_exec_time_ms": 0.32763899999999996,
+          "mean_exec_time_ms": 0.018202166666666665,
+          "rows": 0
+        },
+        {
+          "query": "SELECT q.tenant_id, q.run_id, selected_run.status, selected_run.flow_id, selected_run.flow_version, selected_run.durability_class, selected_run.wiring_id, selected_run.wiring_version FROM run_queue AS q JOIN runs AS selected_run ON selected_run.tenant_id = q.tenant_id AND selected_run.run_id = q.run_id WHERE q.tenant_id = current_setting('app.tenant', true) AND selected_run.package_id = ANY($2::text[]) AND selected_run.environment = $3 AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at + ($1::bigint * interval '1 millisecond') <= now() AND q.attempts >= q.max_attempts AND selected_run.status IN ('dispatched', 'running') ORDER BY q.available_at, q.stream_seq, q.run_id FOR UPDATE OF selected_run, q SKIP LOCKED LIMIT 1",
+          "calls": 9,
+          "total_exec_time_ms": 0.313032,
+          "mean_exec_time_ms": 0.03478133333333334,
+          "rows": 0
+        },
+        {
+          "query": "SELECT COALESCE(current.version, $3) FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS named (schema_name, relation_name, position) LEFT JOIN wamn_cache.model_versions AS current USING (schema_name, relation_name) ORDER BY named.position",
+          "calls": 10,
+          "total_exec_time_ms": 0.302249,
+          "mean_exec_time_ms": 0.030224900000000002,
+          "rows": 10
+        }
+      ]
+    },
+    "after": {
+      "database": {
+        "xact_commit": 1072988,
+        "blks_hit": 7842526,
+        "blks_read": 88885,
+        "numbackends": 27
+      },
+      "statements": [
+        {
+          "query": "WITH target AS MATERIALIZED (\n    SELECT id, row_version\n    FROM purchase_order\n    WHERE id = $1::uuid\n    FOR UPDATE\n),\nupdated AS (\n    UPDATE purchase_order AS model\n    SET\n        supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,\n        row_version = CASE\n            WHEN ($3::boolean AND $4::uuid::text IS DISTINCT FROM model.supplier_id::text)\n            THEN model.row_version + $5\n            ELSE model.row_version\n        END\n    FROM target\n    WHERE model.id = target.id\n      AND target.row_version = $2::int4\n    RETURNING\n    model.created_at,\n    model.created_by,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at,\n    model.updated_by\n)\nSELECT\n    CASE\n        WHEN NOT EXISTS (SELECT $6 FROM target) THEN $7\n        WHEN NOT EXISTS (SELECT $8 FROM updated) THEN $9\n        ELSE $10\n    END AS outcome,\n    (SELECT target.row_version FROM target) AS observed_row_version,\n    updated.created_at,\n    updated.created_by,\n    updated.id,\n    updated.purchase_order_number,\n    updated.row_version,\n    updated.status,\n    updated.supplier_id,\n    updated.updated_at,\n    updated.updated_by\nFROM (SELECT $11) AS singleton\nLEFT JOIN updated ON $12",
+          "calls": 13567,
+          "total_exec_time_ms": 28890.698214000106,
+          "mean_exec_time_ms": 2.129483173435543,
+          "rows": 13567
+        },
+        {
+          "query": "SELECT wamn_cache.bump_version(relation ->> 0, relation ->> 1)",
+          "calls": 13567,
+          "total_exec_time_ms": 26748.779448000038,
+          "mean_exec_time_ms": 1.971606062357194,
+          "rows": 13567
+        },
+        {
+          "query": "SELECT 1 FROM app_system.users WHERE tenant_id = $1 AND id = $2::text::uuid",
+          "calls": 13577,
+          "total_exec_time_ms": 2940.571769999999,
+          "mean_exec_time_ms": 0.21658479561022365,
+          "rows": 13577
+        },
+        {
+          "query": "UPDATE app_system.write_log SET result = $3::text WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL RETURNING idempotency_key",
+          "calls": 13567,
+          "total_exec_time_ms": 1492.1963359999984,
+          "mean_exec_time_ms": 0.10998719952826734,
+          "rows": 13567
+        },
+        {
+          "query": "SELECT status = $1 FROM app_system.environment",
+          "calls": 13577,
+          "total_exec_time_ms": 1488.415346000006,
+          "mean_exec_time_ms": 0.10962770464756616,
+          "rows": 0
+        },
+        {
+          "query": "INSERT INTO app_system.write_log (operation, idempotency_key, request) VALUES ($1::text, $2::text, $3::bytea) ON CONFLICT (operation, idempotency_key) DO NOTHING RETURNING idempotency_key",
+          "calls": 13567,
+          "total_exec_time_ms": 1413.5294510000056,
+          "mean_exec_time_ms": 0.10418880010319118,
+          "rows": 13567
+        },
+        {
+          "query": "SELECT user_roles.role_name, permissions.permission FROM app_system.users AS users JOIN app_system.user_roles AS user_roles ON user_roles.tenant_id = users.tenant_id AND user_roles.user_id = users.id LEFT JOIN app_system.permissions AS permissions ON permissions.tenant_id = user_roles.tenant_id AND permissions.role_name = user_roles.role_name WHERE users.tenant_id = $1 AND users.id = $2::text::uuid AND users.status = 'active'",
+          "calls": 13577,
+          "total_exec_time_ms": 663.8592230000035,
+          "mean_exec_time_ms": 0.048895869706120504,
+          "rows": 13577
+        },
+        {
+          "query": "SELECT entry.value FROM jsonb_each(changed) AS entry ORDER BY entry.key COLLATE \"C\"",
+          "calls": 13567,
+          "total_exec_time_ms": 316.96238,
+          "mean_exec_time_ms": 0.023362746369868036,
+          "rows": 13567
+        },
+        {
+          "query": "SELECT set_config('statement_timeout', $1, true), set_config('search_path', COALESCE($2, current_setting('search_path')), true), set_config('app.runner', COALESCE($3, current_setting('app.runner', true)), true), set_config('app.role', $4, true), set_config('app.user_id', $5, true), set_config('app.operation', $6, true)",
+          "calls": 13577,
+          "total_exec_time_ms": 305.81959800000135,
+          "mean_exec_time_ms": 0.02252482860720334,
+          "rows": 13577
+        },
+        {
+          "query": "SELECT pg_logical_emit_message($1, $2, $3)",
+          "calls": 13577,
+          "total_exec_time_ms": 270.46954499999987,
+          "mean_exec_time_ms": 0.019921156735655858,
+          "rows": 13577
+        }
+      ]
+    }
+  }
+}
