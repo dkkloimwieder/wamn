@@ -130,6 +130,7 @@ impl WamnPostgres {
                 pool,
                 statement_timeout_ms: cfg.statement_timeout_ms,
                 row_limit: cfg.row_limit,
+                session_settings: std::sync::Mutex::new(Vec::new()),
             }),
             Err(e) => {
                 tracing::warn!(

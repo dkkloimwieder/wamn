@@ -180,7 +180,12 @@ impl OperationTransaction {
             .iter()
             .map(|param| param.as_ref() as &(dyn ToSql + Sync))
             .collect();
-        match connection.connection().query(sql, &params).await {
+        let result = async {
+            let prepared = connection.connection().prepare_cached(sql).await?;
+            connection.connection().query(&prepared, &params).await
+        }
+        .await;
+        match result {
             Ok(rows) => {
                 connection.restore(state);
                 Ok(rows)
@@ -263,7 +268,12 @@ impl WriteLogStore {
             .iter()
             .map(|param| param.as_ref() as &(dyn ToSql + Sync))
             .collect();
-        match connection.query(sql, &params).await {
+        let result = async {
+            let prepared = connection.prepare_cached(sql).await?;
+            connection.query(&prepared, &params).await
+        }
+        .await;
+        match result {
             Ok(rows) => Ok(rows),
             Err(error) => {
                 self.postgres.destroy(connection);

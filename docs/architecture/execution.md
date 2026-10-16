@@ -307,6 +307,13 @@ The [record history log](data-access.md#history-tables-and-the-log-trigger) reco
 
 A platform claims transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.
+
+For that path, each pooled connection remembers its last schema and runner.
+If these values match, the read executes only its application statement.
+If either value changes, the host pipelines the session configuration before the read.
+An absent schema restores the server default, and an absent runner clears the prior runner.
+This reuse stores no principal, role, or operation claim. Those claims stay local to each transaction.
+
 The [claims owner](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
 That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.
 

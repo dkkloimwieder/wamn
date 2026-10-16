@@ -1992,7 +1992,11 @@ impl WamnPostgres {
             .checkout_guest(project, tenant)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let row = match connection.query_opt(ENVIRONMENT_INACTIVE_SQL, &[]).await {
+        let statement = connection
+            .prepare_cached(ENVIRONMENT_INACTIVE_SQL)
+            .await
+            .context("prepare the environment status")?;
+        let row = match connection.query_opt(&statement, &[]).await {
             Ok(row) => row,
             Err(error) => {
                 self.destroy(connection);

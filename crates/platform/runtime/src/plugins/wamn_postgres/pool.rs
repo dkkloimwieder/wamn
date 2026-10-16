@@ -553,6 +553,15 @@ pub(super) struct ProjectPool {
     pub(super) pool: Pool,
     pub(super) statement_timeout_ms: u32,
     pub(super) row_limit: u64,
+    pub(super) session_settings: std::sync::Mutex<Vec<SessionSettings>>,
+}
+
+/// Options last applied outside a transaction on one physical connection.
+/// Caller claims are never cached here. Weak ownership drops dead sessions.
+pub(super) struct SessionSettings {
+    pub(super) connection: std::sync::Weak<deadpool_postgres::StatementCache>,
+    pub(super) schema: Option<String>,
+    pub(super) runner: Option<String>,
 }
 
 /// Connection lifecycle whose pool owns a checked-out PostgreSQL session.

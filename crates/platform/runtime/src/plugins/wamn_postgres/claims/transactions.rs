@@ -95,8 +95,9 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 /// connection resolves this package's unqualified relations and how long it may
 /// run. A read outside a transaction cannot take them transaction-locally, and
 /// without `search_path` every generated statement fails to resolve its own
-/// tables. They are POOL-UNIFORM: the pool is keyed by class, project and
-/// tenant, so every borrower of this connection wants the same two values.
+/// tables. The timeout is uniform within a pool. Each connection remembers
+/// its last schema and runner, and a change applies before the next read.
+/// An absent schema restores the server default; an absent runner clears it.
 ///
 /// `app.role`, `app.user_id`, and `app.operation` are deliberately ABSENT.
 /// Those are per-caller claims, and a session-scoped claim would outlive the
@@ -107,8 +108,8 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 /// that writes nothing fires no trigger.
 const GUEST_AUTOCOMMIT_SETTINGS_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, false), \
-     set_config('search_path', COALESCE($2, current_setting('search_path')), false), \
-     set_config('app.runner', COALESCE($3, current_setting('app.runner', true)), false)";
+     set_config('search_path', COALESCE($2, (SELECT reset_val FROM pg_settings WHERE name = 'search_path')), false), \
+     set_config('app.runner', COALESCE($3, ''), false)";
 
 const GUEST_CLAIM_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, true), \
@@ -402,41 +403,60 @@ impl WamnPostgres {
         // not: the read skips app.user_id and app.operation, which only the
         // record-history triggers read.
         if !statement.transactional && role.is_none() {
-            let timeout = policy.statement_timeout_ms.to_string();
-            // The settings must be APPLIED before the statement that depends on
-            // search_path. They cannot ride the statement's flight: each side is
-            // a prepare followed by an execute, and interleaving two such
-            // futures does not order the two EXECUTES -- only the sends. So this
-            // is two flights, not one, and it still removes the COMMIT.
-            //
-            // wamn-0h0g.17.18 moves these to connection setup, where they belong:
-            // they are pool-uniform, so paying for them per request is waste.
-            async {
+            let identity = Arc::downgrade(&connection.connection().statement_cache);
+            let unchanged = policy
+                .session_settings
+                .lock()
+                .expect("session settings lock poisoned")
+                .iter()
+                .any(|settings| {
+                    settings.connection.ptr_eq(&identity)
+                        && settings.schema == schema
+                        && settings.runner == runner
+                });
+            let rows = if unchanged {
+                run_verified_query(
+                    connection.connection(),
+                    digest,
+                    statement,
+                    binds,
+                    policy.row_limit,
+                )
+                .await?
+            } else {
+                // Warm before polling the query: its Parse must follow settings.
                 let prepared = connection
                     .connection()
                     .prepare_cached(GUEST_AUTOCOMMIT_SETTINGS_SQL)
                     .await
-                    .map_err(|error| map_pg_error(&error))?;
-                connection
-                    .connection()
-                    .execute(
-                        &prepared,
-                        &[&timeout, &schema.as_deref(), &runner.as_deref()],
-                    )
-                    .await
-                    .map_err(|error| map_pg_error(&error))
-            }
-            .instrument(tracing::info_span!("wamn.postgres.session_settings"))
-            .await
-            .map_err(StatementError::Postgres)?;
-            let rows = run_verified_query(
-                connection.connection(),
-                digest,
-                statement,
-                binds,
-                policy.row_limit,
-            )
-            .await?;
+                    .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
+                let timeout = policy.statement_timeout_ms.to_string();
+                let params: &[&(dyn ToSql + Sync)] =
+                    &[&timeout, &schema.as_deref(), &runner.as_deref()];
+                let (settings, rows) = tokio::join!(
+                    biased;
+                    connection.connection().execute(&prepared, params),
+                    run_verified_query(
+                        connection.connection(), digest, statement, binds, policy.row_limit,
+                    ),
+                );
+                // Never return rows if settings failed; the guard destroys the session.
+                settings.map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
+                let rows = rows?;
+                let mut settings = policy
+                    .session_settings
+                    .lock()
+                    .expect("session settings lock poisoned");
+                settings.retain(|entry| {
+                    entry.connection.strong_count() > 0 && !entry.connection.ptr_eq(&identity)
+                });
+                settings.push(super::super::pool::SessionSettings {
+                    connection: identity,
+                    schema,
+                    runner,
+                });
+                rows
+            };
             connection.repool();
             return Ok(rows);
         }

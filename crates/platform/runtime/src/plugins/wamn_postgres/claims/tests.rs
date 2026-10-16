@@ -2319,6 +2319,7 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
 #[tokio::test]
 async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit() {
     const TENANT: &str = "principal";
+    const PRINCIPAL_B: &str = "00000000-0000-0000-0000-000000000020";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
@@ -2327,7 +2328,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let guest_url = live_guest_url(admin_url, TENANT).await;
-    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL]).await;
+    ensure_live_users_rows(admin_url, TENANT, &[LIVE_PRINCIPAL, PRINCIPAL_B]).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2369,6 +2370,31 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         "the read took the autocommit path and bound no app.user_id: {:?}",
         read.rows
     );
+
+    // B borrows the same physical connection after A's transaction and read.
+    let before = pg.probe_checkout(TENANT).await.unwrap().backend_pid;
+    pg.revoke_session_claims(scope);
+    pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            tenant: TENANT.into(),
+            user_id: Some(PRINCIPAL_B.into()),
+            ..SessionClaims::default()
+        },
+    )
+    .await
+    .unwrap();
+    let bound = pg
+        .one_shot_statement(scope, "sha256:principal", &principal_statement(true), &[])
+        .await
+        .unwrap();
+    assert!(matches!(&bound.rows[0][0], SqlValue::Text(value) if value == PRINCIPAL_B));
+    let read = pg
+        .one_shot_statement(scope, "sha256:principal", &principal_statement(false), &[])
+        .await
+        .unwrap();
+    assert!(matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()));
+    assert_eq!(pg.probe_checkout(TENANT).await.unwrap().backend_pid, before);
 
     drop(pg);
     let admin = connect_raw(admin_url).await;
@@ -2808,4 +2834,98 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
         ))
         .await
         .expect("drop the fixture");
+}
+
+/// A warm get executes only its application SQL. A changed schema or runner
+/// applies before the query, including a cold Parse on the same connection.
+#[tokio::test]
+async fn live_autocommit_settings_are_reused_only_on_their_connection() {
+    const TENANT: &str = "settings";
+    let mut server =
+        wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])
+            .expect("start PostgreSQL with statement statistics");
+    let database = server.create_database("settings").unwrap();
+    let admin = connect_raw(database.url()).await;
+    admin
+        .batch_execute("CREATE EXTENSION pg_stat_statements")
+        .await
+        .unwrap();
+    let guest_url = live_guest_url(database.url(), TENANT).await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 10,
+    })
+    .unwrap();
+    let statement = VerifiedStatement {
+        exact_sql:
+            "SELECT current_setting('search_path'), current_setting('app.runner'), pg_backend_pid()"
+                .into(),
+        binds: Box::new([]),
+        columns: Box::new([
+            StatementField {
+                value_type: StatementValueType::Text,
+                nullable: true,
+            },
+            StatementField {
+                value_type: StatementValueType::Text,
+                nullable: true,
+            },
+            StatementField {
+                value_type: StatementValueType::Int32,
+                nullable: true,
+            },
+        ]),
+        transactional: false,
+    };
+    let mut backend = None;
+    for (schema, runner) in [
+        (Some("public"), Some("first")),
+        (Some("pg_catalog"), Some("second")),
+        (None, None),
+    ] {
+        pg.revoke_session_claims("settings");
+        pg.bind_session_claims(
+            "settings",
+            &SessionClaims {
+                tenant: TENANT.into(),
+                schema: schema.map(str::to_owned),
+                runner: runner.map(str::to_owned),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .unwrap();
+        let first = pg
+            .one_shot_statement("settings", "sha256:settings", &statement, &[])
+            .await
+            .unwrap();
+        assert!(
+            matches!(&first.rows[0][0], SqlValue::Text(value) if value == schema.unwrap_or("\"$user\", public"))
+        );
+        assert!(
+            matches!(&first.rows[0][1], SqlValue::Text(value) if value == runner.unwrap_or_default())
+        );
+        let SqlValue::Int32(pid) = first.rows[0][2] else {
+            panic!("pg_backend_pid returns an integer");
+        };
+        if let Some(backend) = backend {
+            assert_eq!(pid, backend);
+        }
+        backend = Some(pid);
+        admin
+            .batch_execute("SELECT pg_stat_statements_reset()")
+            .await
+            .unwrap();
+        pg.one_shot_statement("settings", "sha256:settings", &statement, &[])
+            .await
+            .unwrap();
+        let calls: i64 = admin.query_one(
+            "SELECT COALESCE(sum(calls), 0)::bigint FROM pg_stat_statements WHERE userid = (SELECT oid FROM pg_roles WHERE rolname LIKE 'wamn_app_%' AND rolcanlogin)", &[],
+        ).await.unwrap().get(0);
+        assert_eq!(calls, 1, "a warm get runs only its application statement");
+    }
 }
