@@ -132,7 +132,23 @@ Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)). Each run resets `pg_
 | --- | --- | --- | --- | --- | --- |
 | 0.1.19, 12:41 | main 3 nodes, Postgres shares a node | 427/s, p50 31.0 | 159/s, p50 81.1 | 7 | 15 |
 | 0.1.21, 13:16, `wamn-stxy9.1` | main 2 nodes, Postgres alone on pool pg | 360/s, p50 37.3 | 276/s, p50 49.7 | 6 | 14 |
+| 0.1.21, 14:07, `wamn-0371x` | Receiving host alone on pool bench, Postgres alone on pool pg | 632/s, p50 22.6 | 284/s, p50 46.3 | 6 | 14 |
 
 Issue 1 deleted the actor label query. Each call makes one call fewer, and the own time of `wamn.route.deliver` fell from 4.0 ms to 0.15 ms. The two runs differ in placement too. In the 0.1.21 run, both hosts, the collector and the event NATS share one 2-vCPU node, and the get host p50 rose to 31.7 ms. The collector restarted 11 times with `OOMKilled` (`wamn-kclnp`), so the 0.1.21 traces hold 2091 of 21636 get requests and no update request.
 
 In the 0.1.19 run, `wamn_cache.bump_version` took 20.2 ms mean per update, and the update statement 15.0 ms. With Postgres alone on its node, they took 2.1 ms and 3.0 ms.
+
+The 14:07 run is the clean row before issue 2. The Receiving host runs alone on pool `bench`, and every other pod runs on the one node of pool `main` (`wamn-0371x`). The collector did not restart (`wamn-kclnp`), so the traces hold 30771 of 38197 get requests and 16413 of 18121 update requests. The host p50 (`handle_http_request`) is 14.3 ms for get and 39.3 ms for update.
+
+| Span, p50 ms | get | update |
+| --- | --- | --- |
+| `wamn.route.authenticate` | 3.6 | 4.2 |
+| `wamn.auth.identity` | 1.8 | 2.1 |
+| `wamn.auth.permissions` | 1.6 | 1.8 |
+| `wamn.postgres.session_settings` | 1.4 | |
+| `wamn.postgres.statement` | 1.5 | 6.0 |
+| `wamn.operation.begin_item` | | 4.2 |
+| `wamn.write_log.claim` | | 3.8 |
+| `wamn.write_log.finish` | | 4.5 |
+| `wamn.operation.commit` | | 7.6 |
+| `wamn.route.deliver` | 6.0 | 29.4 |
