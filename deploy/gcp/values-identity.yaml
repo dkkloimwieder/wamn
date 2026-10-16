@@ -5,7 +5,7 @@
 # stamped into the release chart (wamn-rk9l2, 2026-10-13).
 image:
   repository: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity@sha256
-  tag: 15a7fe153996e1a2a2b25bf370dbaf78dc1288895055ce5aca7b2a6194302123
+  tag: e9cd2dba3c20421d127a6aecaeed5b0ffcbdb05b17d7f1252030624de92e005e
   pullPolicy: IfNotPresent
 issuer: https://identity.identity.svc.cluster.local
 databaseSecret: wamn-identity-db
