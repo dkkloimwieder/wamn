@@ -6421,6 +6421,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-gate-harness",
  "wamn-integration-tests",
+ "wamn-platform-identity",
  "wamn-record-history",
  "wamn-run-state",
  "wamn-runtime",

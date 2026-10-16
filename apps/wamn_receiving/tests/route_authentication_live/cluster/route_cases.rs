@@ -3,6 +3,7 @@
 use std::fs;
 
 use anyhow::{Context as _, ensure};
+use base64::Engine as _;
 use serde_json::{Value, json};
 
 use super::{
@@ -33,6 +34,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             )
                 .await?;
         postcommit_case::assert_unknown_route(&cluster, &endpoint).await?;
+        let auth_nats = auth_nats(&cluster).await?;
         // The component digests and the package artifacts of the candidate.
         let (_, manifest) = cluster.candidate()?;
         let digests = manifest.components.iter()
@@ -50,6 +52,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         let path = evidence.join("receiving-correctness.jsonl");
         let inputs = serde_json::from_value(json!({
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
+            "auth_nats":auth_nats,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
             "tenant":super::super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,
             "component_digests":digests,
@@ -71,6 +74,61 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         Ok(())
     }.await;
     finish(&mut cluster, result).await
+}
+
+async fn auth_nats(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
+    let resources = &cluster.resources;
+    let namespace = "wamn-system";
+    let name = "receiving-auth-nats-nodeport";
+    checked(kubectl(resources).args([
+        "-n",
+        namespace,
+        "expose",
+        "service",
+        "nats",
+        "--type=NodePort",
+        "--port=4222",
+        "--name",
+        name,
+    ]))
+    .await?;
+    let service: Value = serde_json::from_slice(
+        &checked(kubectl(resources).args(["-n", namespace, "get", "service", name, "-o", "json"]))
+            .await?,
+    )?;
+    let port = service["spec"]["ports"][0]["nodePort"]
+        .as_u64()
+        .context("the scheduler NATS service has an allocated NodePort")?;
+    let address = resources::kind_address(&resources::inspect(resources, "control-plane").await?)?;
+    let secret: Value = serde_json::from_slice(
+        &checked(kubectl(resources).args([
+            "-n",
+            namespace,
+            "get",
+            "secret",
+            "wasmcloud-runtime-tls",
+            "-o",
+            "json",
+        ]))
+        .await?,
+    )?;
+    let mut connection = json!({
+        "url":format!("nats://{address}:{port}"),
+        // The operator chart's server certificate includes this Service name.
+        "server_name":"nats.wamn-system.svc.cluster.local",
+    });
+    for (field, key) in [("ca", "ca.crt"), ("cert", "tls.crt"), ("key", "tls.key")] {
+        let path = resources.work.join(format!("auth-nats-{key}"));
+        let encoded = secret["data"][key]
+            .as_str()
+            .with_context(|| format!("the runtime TLS Secret has {key}"))?;
+        write_private(
+            &path,
+            &base64::engine::general_purpose::STANDARD.decode(encoded)?,
+        )?;
+        connection[field] = json!(path);
+    }
+    Ok(connection)
 }
 
 #[tokio::test]

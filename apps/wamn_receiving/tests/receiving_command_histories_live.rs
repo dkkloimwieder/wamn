@@ -18,6 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
+use wamn_control::user_roles::{grant_role_on, revoke_role_on};
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
 
 use database::{
     Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
@@ -32,6 +34,7 @@ const OCCURRED_AT: &str = "2026-09-09T12:00:00.000000Z";
 #[serde(deny_unknown_fields)]
 pub(crate) struct Inputs {
     project_pg_url: String,
+    auth_nats: AuthNatsInputs,
     route_endpoint: String,
     route_host: String,
     operator_secret: PathBuf,
@@ -48,6 +51,16 @@ pub(crate) struct Inputs {
     seed: u64,
     cases: u32,
     history: Option<History>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthNatsInputs {
+    url: String,
+    ca: PathBuf,
+    cert: PathBuf,
+    key: PathBuf,
+    server_name: String,
 }
 
 #[derive(Clone)]
@@ -875,13 +888,24 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     );
     let before = snapshot(db, &fixture).await?;
     // The caller holds `admin`, which has no permission row to remove, so the
-    // fixture takes the role from its holders and gives it back after the
-    // denied call. A caller without a role holds no operation, and the denial
-    // names the route's own operation.
-    let removed = db
+    // fixture uses the role writer to revoke and invalidate each holder, then
+    // restore it after the denied call. The next call must refuse without a
+    // sleep. A caller without a role holds no operation, and the denial names
+    // the route's own operation.
+    let auth = AuthChanges::connect(&AuthNats {
+        nats_url: inputs.auth_nats.url.clone(),
+        nats_tls_ca: inputs.auth_nats.ca.clone(),
+        nats_tls_cert: inputs.auth_nats.cert.clone(),
+        nats_tls_key: inputs.auth_nats.key.clone(),
+        nats_tls_server_name: Some(inputs.auth_nats.server_name.clone()),
+    })
+    .await?;
+    let mut writer = connect(&inputs.project_pg_url).await?;
+    let holders = db
         .query(
-            "DELETE FROM app_system.user_roles WHERE tenant_id=$1 AND role_name=$2 \
-             RETURNING user_id::text",
+            "SELECT u.email FROM app_system.user_roles AS r \
+             JOIN app_system.users AS u ON u.tenant_id=r.tenant_id AND u.id=r.user_id \
+             WHERE r.tenant_id=$1 AND r.role_name=$2 ORDER BY u.id",
             &[&inputs.tenant, &inputs.caller_role],
         )
         .await?
@@ -889,19 +913,34 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         .map(|row| row.get::<_, String>(0))
         .collect::<Vec<_>>();
     ensure!(
-        !removed.is_empty(),
+        !holders.is_empty(),
         "authority fixture found no holder of {}",
         inputs.caller_role
     );
+    for user in &holders {
+        revoke_role_on(
+            &mut writer.client,
+            &inputs.tenant,
+            user,
+            &inputs.caller_role,
+            &auth,
+        )
+        .await?;
+    }
     let denied = route.post(RECEIPT_PATH, &body).await;
     let denied_state = snapshot(db, &fixture).await;
-    let restored = db
-        .execute(
-            "INSERT INTO app_system.user_roles(tenant_id,user_id,role_name) \
-             SELECT $1, holder::uuid, $2 FROM unnest($3::text[]) AS holder",
-            &[&inputs.tenant, &inputs.caller_role, &removed],
+    let mut restored = Ok(());
+    for user in &holders {
+        let result = grant_role_on(
+            &mut writer.client,
+            &inputs.tenant,
+            user,
+            &inputs.caller_role,
+            &auth,
         )
         .await;
+        restored = restored.and(result.map(|_| ()));
+    }
     let denied = denied?;
     restored?;
     ensure!(

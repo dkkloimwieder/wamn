@@ -111,6 +111,17 @@ pub async fn grant_role_on(
     change_user_role(client, tenant, user, role, Change::Grant, auth).await
 }
 
+/// Take the role from the user by email on a connection the caller already checked.
+pub async fn revoke_role_on(
+    client: &mut Client,
+    tenant: &str,
+    user: &str,
+    role: &str,
+    auth: &AuthChanges,
+) -> anyhow::Result<UserRoleOutcome> {
+    change_user_role(client, tenant, user, role, Change::Revoke, auth).await
+}
+
 async fn change_user_role(
     client: &mut Client,
     tenant: &str,
