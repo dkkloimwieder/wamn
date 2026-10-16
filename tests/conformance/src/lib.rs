@@ -9,6 +9,9 @@ pub mod repo_policy;
 pub mod socket_test;
 
 #[cfg(test)]
+mod benchmark;
+
+#[cfg(test)]
 mod ip_name_lookup;
 
 #[cfg(test)]
