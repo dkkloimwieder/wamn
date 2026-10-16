@@ -35,16 +35,16 @@ mod transactions;
 /// tenant floor.
 const ENVIRONMENT_INACTIVE_SQL: &str = "SELECT status = 'inactive' FROM app_system.environment";
 
-/// Each signed role that the active user still holds, with each permission
-/// of that role. A role without permissions, such as `admin`, yields one row
-/// with a null reference.
-const SESSION_OPERATION_PERMISSIONS_SQL: &str = "SELECT r.role_name, p.permission \
-    FROM app_system.users u JOIN app_system.user_roles r \
+/// The users row of one principal, each role it holds and each permission
+/// of that role, in one read. No row means no users row. A role without
+/// permissions, such as `admin`, yields one row with a null permission, and a
+/// principal without roles yields one row with a null role.
+const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.permission \
+    FROM app_system.users u LEFT JOIN app_system.user_roles r \
     ON r.tenant_id = u.tenant_id AND r.user_id = u.id \
     LEFT JOIN app_system.permissions p \
     ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name \
-    WHERE u.tenant_id = $1 AND u.id = $3::text::uuid AND u.status = 'active' \
-    AND r.role_name = ANY($2::text[])";
+    WHERE u.tenant_id = $1 AND u.id = $2::text::uuid";
 
 /// One row of the bound principal, read under the tenant's own guest login.
 ///
@@ -55,7 +55,7 @@ const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM app_system.users \
     WHERE tenant_id = $1 AND id = $2::text::uuid";
 
 /// Each role that the active user holds, with each permission of that
-/// role, as [`SESSION_OPERATION_PERMISSIONS_SQL`] reads them.
+/// role.
 const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_roles.role_name, permissions.permission \
     FROM app_system.users AS users \
     JOIN app_system.user_roles AS user_roles \
@@ -89,6 +89,43 @@ impl HeldOperationGrants {
         }
         Ok(Self { admin, references })
     }
+}
+
+fn principal_grants_from_rows(
+    rows: &[tokio_postgres::Row],
+) -> Result<crate::auth_cache::PrincipalGrants, tokio_postgres::Error> {
+    let mut grants = crate::auth_cache::PrincipalGrants {
+        present: !rows.is_empty(),
+        ..Default::default()
+    };
+    for row in rows {
+        grants.active = row.try_get(0)?;
+        if let Some(role) = row.try_get::<_, Option<String>>(1)? {
+            let permissions = grants.roles.entry(role).or_default();
+            permissions.extend(row.try_get::<_, Option<String>>(2)?);
+        }
+    }
+    Ok(grants)
+}
+
+/// The grants an active principal holds, from all its roles or only from the
+/// `signed` roles it still holds.
+fn held_grants(
+    grants: &crate::auth_cache::PrincipalGrants,
+    signed: Option<&[String]>,
+) -> HeldOperationGrants {
+    let mut held = HeldOperationGrants::default();
+    if !grants.active {
+        return held;
+    }
+    for (role, permissions) in &grants.roles {
+        if signed.is_some_and(|signed| !signed.contains(role)) {
+            continue;
+        }
+        held.admin |= role == wamn_project_state::ADMIN_ROLE;
+        held.references.extend(permissions.iter().cloned());
+    }
+    held
 }
 
 /// Names the shape only: the credential provider and the live pools carry
@@ -193,6 +230,8 @@ pub struct WamnPostgres {
     pub(super) destroyed: Arc<AtomicU64>,
     /// How many times each half of the un-fused workload bind has run.
     pub(super) bind_counters: super::BindCounters,
+    /// The auth facts this host keeps (docs/plan/request-round-trips.md).
+    auth: crate::auth_cache::AuthCache,
 }
 
 /// The release a pod carries — the manifest digest derived from the verified
@@ -892,7 +931,14 @@ impl WamnPostgres {
             operation_transactions: std::sync::Mutex::default(),
             destroyed: Arc::new(AtomicU64::new(0)),
             bind_counters: super::BindCounters::default(),
+            auth: crate::auth_cache::AuthCache::default(),
         }
+    }
+
+    /// The auth facts this host keeps. A message on
+    /// [`changed_subject`](crate::auth_cache::changed_subject) clears them.
+    pub fn auth_cache(&self) -> &crate::auth_cache::AuthCache {
+        &self.auth
     }
 
     /// Build from the deployment's configuration: the default project from the
@@ -1294,21 +1340,19 @@ impl WamnPostgres {
     ///
     /// # The executing principal must own a users row (`wamn-0h0g.9.19`)
     ///
-    /// A bind that names an `app.user_id` reads `app_system.users` in the
-    /// tenant's project database and refuses when the principal owns no row.
-    /// The credential of such a principal is a provisioning defect, and every
-    /// write it makes records an actor that names no row. The read happens
-    /// here, at the bind, because the two production callers reach this
-    /// function once per invocation, so the cost is one read per invocation
-    /// rather than one per transactional statement. An item that begins its
-    /// own transaction binds twice, and its second bind is
+    /// A bind that names an `app.user_id` refuses when the principal owns no
+    /// `app_system.users` row in the tenant's project database. The credential
+    /// of such a principal is a provisioning defect, and every write it makes
+    /// records an actor that names no row. The host's
+    /// [auth memory](crate::auth_cache) answers first: the route authenticator
+    /// read the same row a moment before. On a miss the bind reads the row and
+    /// keeps the answer. An item that begins its own transaction binds twice,
+    /// and its second bind is
     /// [`bind_item_session_claims`](Self::bind_item_session_claims), which
-    /// does not read again.
+    /// does not check again.
     ///
-    /// The answer holds for the life of the binding because the bind IS the
-    /// read. Nothing re-reads inside one invocation, so a users row deleted in
-    /// the middle of an invocation stays accepted until the next bind. No cache
-    /// carries that fact, because one call per invocation already gives it.
+    /// A users row deleted after the check stays accepted until a change
+    /// message clears the memory or the memory's TTL ends.
     ///
     /// The read runs LAST, after every claim is written and validated, so a
     /// bind that is going to be refused for a malformed claim never opens a
@@ -1452,6 +1496,9 @@ impl WamnPostgres {
         project: &str,
         principal_id: &str,
     ) -> anyhow::Result<()> {
+        if self.auth.provisioned(project, tenant, principal_id) {
+            return Ok(());
+        }
         let (connection, _policy) = self
             .checkout_guest(project, tenant)
             .await
@@ -1483,6 +1530,7 @@ impl WamnPostgres {
             }
             .into());
         }
+        self.auth.keep_provisioned(project, tenant, principal_id);
         Ok(())
     }
 
@@ -1792,10 +1840,8 @@ impl WamnPostgres {
         }
     }
 
-    /// Read the fresh grants for roles from a verified session.
-    ///
-    /// This single tenant read uses the existing callable-HTTP authority.
-    /// Signed roles contribute only while the active user still holds them.
+    /// The grants of the signed roles of a verified session that the active
+    /// user still holds, from [`principal_grants`](Self::principal_grants).
     pub async fn session_operation_permissions(
         &self,
         project: &str,
@@ -1803,31 +1849,8 @@ impl WamnPostgres {
         roles: &[String],
         principal: &wamn_platform_identity::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
-        anyhow::ensure!(
-            valid_project(project),
-            "invalid operation-permission project"
-        );
-        anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
-        let (connection, _policy) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let statement = match connection
-            .prepare_cached(SESSION_OPERATION_PERMISSIONS_SQL)
-            .await
-        {
-            Ok(statement) => statement,
-            Err(error) => {
-                self.destroy(connection);
-                return Err(error).context("prepare session operation permissions");
-            }
-        };
-        let rows = connection
-            .query(&statement, &[&tenant, &roles, &principal.as_str()])
-            .instrument(tracing::info_span!("wamn.auth.perm.query"))
-            .await
-            .context("read session operation permissions")?;
-        HeldOperationGrants::from_rows(&rows).context("decode session operation permission")
+        let grants = self.principal_grants(project, tenant, principal).await?;
+        Ok(held_grants(&grants, Some(roles)))
     }
 
     /// The model version of each named relation (`deploy/sql/model-versions.sql`).
@@ -1863,41 +1886,58 @@ impl WamnPostgres {
         rows.into_iter().map(|row| Ok(row.try_get(0)?)).collect()
     }
 
-    /// Read the current grants of an org-issued user in this tenant.
+    /// The grants every role of an active org-issued user gives it in this
+    /// tenant, from [`principal_grants`](Self::principal_grants).
     ///
     /// Route authentication first requires membership in the release environment.
-    /// This single tenant read uses the callable-HTTP authority, with no session claims.
     pub async fn user_operation_permissions(
         &self,
         project: &str,
         tenant: &str,
         principal_id: &wamn_platform_identity::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
+        let grants = self.principal_grants(project, tenant, principal_id).await?;
+        Ok(held_grants(&grants, None))
+    }
+
+    /// The users row, roles and permissions of one principal, from the host's
+    /// memory or, on a miss, from one read under the callable-HTTP authority
+    /// with no session claims. The read also answers the provisioned-principal
+    /// check of the claim bind.
+    pub async fn principal_grants(
+        &self,
+        project: &str,
+        tenant: &str,
+        principal: &wamn_platform_identity::PrincipalId,
+    ) -> anyhow::Result<crate::auth_cache::PrincipalGrants> {
         anyhow::ensure!(
             valid_project(project),
             "invalid operation-permission project"
         );
         anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
+        if let Some(grants) = self.auth.grants(project, tenant, principal.as_str()) {
+            return Ok(grants);
+        }
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let statement = match connection
-            .prepare_cached(USER_OPERATION_PERMISSIONS_SQL)
-            .await
-        {
+        let statement = match connection.prepare_cached(PRINCIPAL_GRANTS_SQL).await {
             Ok(statement) => statement,
             Err(error) => {
                 self.destroy(connection);
-                return Err(error).context("prepare user operation permissions");
+                return Err(error).context("prepare the principal grants");
             }
         };
         let rows = connection
-            .query(&statement, &[&tenant, &principal_id.as_str()])
+            .query(&statement, &[&tenant, &principal.as_str()])
             .instrument(tracing::info_span!("wamn.auth.perm.query"))
             .await
-            .context("read user operation permissions")?;
-        HeldOperationGrants::from_rows(&rows).context("decode user operation permission")
+            .context("read the principal grants")?;
+        let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
+        self.auth
+            .keep_grants(project, tenant, principal.as_str(), grants.clone());
+        Ok(grants)
     }
 
     /// The application roles and stored permissions a caller holds, read by
@@ -1934,10 +1974,14 @@ impl WamnPostgres {
     /// itself.
     /// Whether the environment of `tenant` is inactive, from its row of
     /// `app_system.environment`, read as `wamn_app` (docs/plan/platform-ui.md
-    /// §5.4). No row means active.
+    /// §5.4). No row means active. The host keeps the answer in its
+    /// [auth memory](crate::auth_cache).
     pub async fn environment_inactive(&self, project: &str, tenant: &str) -> anyhow::Result<bool> {
         anyhow::ensure!(valid_project(project), "invalid environment-status project");
         anyhow::ensure!(valid_tenant(tenant), "invalid environment-status tenant");
+        if let Some(inactive) = self.auth.environment_inactive(project, tenant) {
+            return Ok(inactive);
+        }
         let (connection, _pool) = self
             .checkout_guest(project, tenant)
             .await
@@ -1949,7 +1993,10 @@ impl WamnPostgres {
                 return Err(error).context("read the environment status");
             }
         };
-        Ok(row.is_some_and(|row| row.get(0)))
+        let inactive = row.is_some_and(|row| row.get(0));
+        self.auth
+            .keep_environment_inactive(project, tenant, inactive);
+        Ok(inactive)
     }
 
     pub async fn administration_transaction<T, E>(

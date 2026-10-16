@@ -68,6 +68,7 @@ use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
 };
 use wamn_project_state::ADMIN_ROLE;
+use wamn_runtime::auth_cache::AuthChanges;
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -126,6 +127,8 @@ pub(crate) struct ControlRoutes<'a> {
     /// environment.
     pub(crate) administration: Option<&'a Path>,
     pub(crate) org: &'a str,
+    /// Publishes each users row and status change of an environment.
+    pub(crate) changes: &'a AuthChanges,
 }
 
 /// What a write does to the application rows of one environment. A later
@@ -628,15 +631,18 @@ impl ControlRoutes<'_> {
         let logins = self.logins(environments)?;
         let mut completed: Vec<String> = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            if let Err(error) = write_status(&url, attachment, caller, status).await {
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    project,
-                    env,
-                    reference = attachment.reference,
-                    "an environment status write failed"
-                );
-                return Err(incomplete(project, env, &completed));
+            match write_status(&url, attachment, caller, status).await {
+                Ok(tenant) => self.changes.publish(&tenant).await,
+                Err(error) => {
+                    tracing::warn!(
+                        error = format!("{error:#}"),
+                        project,
+                        env,
+                        reference = attachment.reference,
+                        "an environment status write failed"
+                    );
+                    return Err(incomplete(project, env, &completed));
+                }
             }
             completed.push(format!("{project}/{env}"));
         }
@@ -717,17 +723,19 @@ impl ControlRoutes<'_> {
                     email,
                     display_name,
                 });
-            if let Err(error) =
-                write_application(&url, attachment, caller, principal, user, *write).await
-            {
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    project,
-                    env,
-                    reference = attachment.reference,
-                    "an application write failed"
-                );
-                return Err(incomplete(project, env, &completed));
+            match write_application(&url, attachment, caller, principal, user, *write).await {
+                Ok(Some(tenant)) => self.changes.publish(&tenant).await,
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        error = format!("{error:#}"),
+                        project,
+                        env,
+                        reference = attachment.reference,
+                        "an application write failed"
+                    );
+                    return Err(incomplete(project, env, &completed));
+                }
             }
             completed.push(format!("{project}/{env}"));
         }
@@ -786,7 +794,8 @@ impl ControlRoutes<'_> {
 }
 
 /// One environment's application write, in its own transaction on its
-/// administration login.
+/// administration login. It returns the tenant it wrote, or `None` when the
+/// database holds no platform rows.
 async fn write_application(
     url: &str,
     attachment: &HostAttachment,
@@ -794,7 +803,7 @@ async fn write_application(
     principal: &PrincipalId,
     user: Option<ApplicationUser<'_>>,
     write: ApplicationWrite,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls)
         .await
         .context("connect the administration login")?;
@@ -815,7 +824,7 @@ async fn write_application(
                 if error.error_type() == IdentityErrorType::NotFound
                     && write >= ApplicationWrite::RemoveAdmin =>
             {
-                return Ok(());
+                return Ok(None);
             }
             Err(error) => return Err(error.into()),
         };
@@ -835,7 +844,7 @@ async fn write_application(
             (write, None) => anyhow::bail!("{write:?} needs the user's email and display name"),
         }
         transaction.commit().await?;
-        anyhow::Ok(())
+        anyhow::Ok(Some(tenant))
     }
     .await;
     drop(client);
@@ -912,13 +921,13 @@ async fn release_profile(
 }
 
 /// One environment's status row, in its own transaction on its
-/// administration login.
+/// administration login. It returns the tenant it wrote.
 async fn write_status(
     url: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<String> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls)
         .await
         .context("connect the administration login")?;
@@ -935,7 +944,7 @@ async fn write_status(
         let tenant = environment_tenant(&transaction).await?;
         write_environment_status(&transaction, &tenant, status).await?;
         transaction.commit().await?;
-        anyhow::Ok(())
+        anyhow::Ok(tenant)
     }
     .await;
     drop(client);

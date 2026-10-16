@@ -5,7 +5,8 @@
 //! [`PlatformRouteAuthenticator`]. That authenticator verifies a PAT through
 //! the system identity reader, or a session through the issuer keys. It then
 //! reads the caller's permissions through the existing callable-HTTP
-//! project pool.
+//! project pool. Each read answer stays in the host's
+//! [auth memory](crate::auth_cache), so a repeated caller costs no read.
 
 use std::sync::Arc;
 
@@ -112,7 +113,7 @@ impl RouteAuthentication {
 
 /// The application host's read of the status of its environment
 /// (docs/plan/platform-ui.md §5.4): its row of `app_system.environment`, as
-/// `wamn_app`, once for each request.
+/// `wamn_app`, kept in the host's [auth memory](crate::auth_cache).
 pub struct EnvironmentStatusReader {
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
     project: String,
@@ -246,20 +247,24 @@ impl PlatformRouteAuthenticator {
                 tracing::warn!(error = %error, "route operation grants unavailable");
                 authentication_unavailable()
             })?;
-        let active = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            wamn_platform_identity::session_token::session_is_active(
-                authentication.identity_reader.as_ref(),
-                session.claims(),
-                &authentication.project,
-                environment,
-            ),
-        )
-        .await
-        .map_err(|_| authentication_unavailable())?
-        .map_err(|_| authentication_unavailable())?;
-        if !active {
-            return Err(unauthorized());
+        let cache = authentication.postgres.auth_cache();
+        if !cache.session_active(token) {
+            let active = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                wamn_platform_identity::session_token::session_is_active(
+                    authentication.identity_reader.as_ref(),
+                    session.claims(),
+                    &authentication.project,
+                    environment,
+                ),
+            )
+            .await
+            .map_err(|_| authentication_unavailable())?
+            .map_err(|_| authentication_unavailable())?;
+            if !active {
+                return Err(unauthorized());
+            }
+            cache.keep_session_active(token);
         }
         // Permission I/O cannot extend the evidence that admitted this request.
         // Once returned, nested work retains this caller without reauthentication.
@@ -317,23 +322,30 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .as_ref()
                 .ok_or_else(authentication_unavailable)?;
             let token = required_bearer_token(headers)?;
-            let principal = authentication
-                .prepared
-                .authenticate_route_pat(
-                    authentication.identity_reader.as_ref(),
-                    token,
-                    &authentication.org,
-                    &authentication.project,
-                    &scope.environment,
-                    &[ADMIN_ROLE],
-                )
-                .instrument(tracing::info_span!("wamn.auth.identity"))
-                .await
-                .map_err(|error| {
-                    tracing::warn!(error = %error, "route PAT authentication unavailable");
-                    authentication_unavailable()
-                })?
-                .ok_or_else(unauthorized)?;
+            let cache = authentication.postgres.auth_cache();
+            let principal = if let Some(principal) = cache.pat(token) {
+                principal
+            } else {
+                let principal = authentication
+                    .prepared
+                    .authenticate_route_pat(
+                        authentication.identity_reader.as_ref(),
+                        token,
+                        &authentication.org,
+                        &authentication.project,
+                        &scope.environment,
+                        &[ADMIN_ROLE],
+                    )
+                    .instrument(tracing::info_span!("wamn.auth.identity"))
+                    .await
+                    .map_err(|error| {
+                        tracing::warn!(error = %error, "route PAT authentication unavailable");
+                        authentication_unavailable()
+                    })?
+                    .ok_or_else(unauthorized)?;
+                cache.keep_pat(token, principal.clone());
+                principal
+            };
             let principal = principal.principal();
             match principal.principal_type() {
                 PrincipalType::Platform => return Err(unauthorized()),

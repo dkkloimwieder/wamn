@@ -317,6 +317,7 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
             writer,
             identity: None,
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     ));

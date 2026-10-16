@@ -30,6 +30,7 @@ use wamn_platform_identity::application::{
 };
 use wamn_platform_identity::control::is_project_admin;
 use wamn_project_state::ADMIN_ROLE;
+use wamn_runtime::auth_cache::AuthChanges;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 use crate::control_route::{Refusal, parse};
@@ -38,6 +39,8 @@ use crate::control_route::{Refusal, parse};
 pub(crate) struct ApplicationRoutes<'a> {
     pub(crate) postgres: &'a WamnPostgres,
     pub(crate) project: &'a str,
+    /// Publishes each role or permission change.
+    pub(crate) changes: &'a AuthChanges,
     pub(crate) release: &'a LoadedRelease,
     /// The identity reader of `wamn_system` and the org, for the covering
     /// fact of `user.list` and the covering check of an `admin` revoke.
@@ -105,6 +108,32 @@ impl ApplicationRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let tenant = self.release.scope().tenant_id.as_str();
+        let writes = matches!(
+            attachment.route.handler,
+            HostHandler::RoleCreate
+                | HostHandler::RoleDelete
+                | HostHandler::PermissionGrant
+                | HostHandler::PermissionRevoke
+                | HostHandler::UserRoleGrant
+                | HostHandler::UserRoleRevoke
+        );
+        let result = self.serve(attachment, principal, payload, tenant).await;
+        // The host drops its own memory at once, and the message reaches the
+        // other hosts of the tenant.
+        if writes && result.is_ok() {
+            self.postgres.auth_cache().clear();
+            self.changes.publish(tenant).await;
+        }
+        result
+    }
+
+    async fn serve(
+        &self,
+        attachment: &HostAttachment,
+        principal: &PrincipalId,
+        payload: &str,
+        tenant: &str,
+    ) -> Result<Value, Refusal> {
         match attachment.route.handler {
             HostHandler::ApplicationUserList => {
                 let Empty {} = parse(payload)?;

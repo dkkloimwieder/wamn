@@ -762,10 +762,10 @@ The application host writes roles, permissions and user roles through its [host 
 A member that `wamn-ctl grant-project-env-membership` or `wamn-ctl invite` adds gains the row at the next `wamn-ctl env apply`, because those verbs hold no tenant connection.
 A principal with no users row cannot write in the tenant.
 The invocation bind refuses it.
-`WamnPostgres::bind_session_claims` reads `app_system.users` in the tenant and refuses a principal that owns no row.
+`WamnPostgres::bind_session_claims` refuses a principal that owns no `app_system.users` row in the tenant.
 The caller sees `permission-denied`.
-The bind reads once per invocation.
-A row removed during an invocation stays accepted until the next bind.
+The host's [auth memory](execution.md#auth-memory) answers the check, and a miss reads the row.
+A removed row stays accepted until a change message clears the memory or 60 seconds pass.
 There is still no foreign key on a stamp column.
 Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution and `app.operation`.
 Within its tenant, a guest can insert a `configurations_history` entry directly, because it holds `INSERT` on the entry columns.

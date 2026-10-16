@@ -40,6 +40,7 @@ use wamn_execution_host::{
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::operator_subject;
+use wamn_runtime::auth_cache::{AuthChanges, clear_on_changes};
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
@@ -1214,6 +1215,18 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("activate declared event streams: {error:?}"))?;
     let flow_http =
         FlowHttpRouting::from_env(release.clone()).context("wamn:flow-http-routing plugin init")?;
+    // A role, permission, users row or status change of this tenant clears
+    // the host's auth memory (docs/plan/request-round-trips.md).
+    let auth_changes = AuthChanges::new(scheduler_nats_client.clone());
+    if let Some(release) = release.as_ref().filter(|_| !args.control) {
+        clear_on_changes(
+            &scheduler_nats_client,
+            &release.scope().tenant_id,
+            Arc::clone(&postgres),
+        )
+        .await
+        .context("subscribe to the auth changes of the tenant")?;
+    }
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
     let authenticator = PlatformRouteAuthenticator::default();
@@ -1328,6 +1341,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                         .as_ref()
                         .zip(identity_reader.as_ref())
                         .map(|((org, _), client)| (Arc::clone(client), org.clone())),
+                    changes: auth_changes.clone(),
                 },
                 Some(Arc::new(bridge)),
             ),
@@ -1349,6 +1363,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     identity,
                     administration: args.control_administration_dir.clone(),
                     org: connection.org.clone(),
+                    changes: auth_changes.clone(),
                 },
                 None,
             ),

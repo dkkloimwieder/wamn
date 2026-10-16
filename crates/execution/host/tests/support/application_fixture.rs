@@ -261,6 +261,7 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
             postgres: postgres_credentials,
             project: PROJECT.to_owned(),
             identity: Some((reader().await?, ORG.to_owned())),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );

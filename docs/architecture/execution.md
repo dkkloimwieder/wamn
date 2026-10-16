@@ -21,8 +21,9 @@ The host begins a transaction for an operation whose admitted operation declares
 The host checks that the original caller holds the entry, once, before the entry runs. A caller holds exactly the permission rows of its roles.
 Component membership alone grants no permission to call an operation.
 
-An application host reads the status of its environment once for each request, before the auth policy of the route.
+An application host checks the status of its environment for each request, before the auth policy of the route.
 It reads its row of `app_system.environment` through the guest login of its tenant, as `wamn_app`, and no row means active.
+The host keeps the answer in its [auth memory](#auth-memory).
 While the status is `inactive`, every route answers 503 with the code `environment-inactive`, and an anonymous route does too.
 A failed read answers 503 `authentication-unavailable`.
 The control host and an edge box read no status.
@@ -378,17 +379,29 @@ Receiving and Acme publish both modes on their existing authenticated applicatio
 Both modes use the same operation permissions. Private event handlers remain private.
 A personal access token, or PAT, is an opaque bearer credential.
 PAT authentication reads the current principal, credential, organization scope, and applicable membership before admitting the request.
-Authorization reads current operation permissions.
+Authorization reads the operation permissions of the principal.
+The host keeps both answers in its [auth memory](#auth-memory).
 Service credentials retain their declared scope and cannot mint a user session.
 
 A session token carries the user roles selected at minting and its revocable authority.
-For each new request, the host reads the current principal, environment membership, and password login or source PAT.
-It intersects signed roles with current assignments and reads current permissions for the active tenant user.
+For each new request, the host checks the principal, environment membership, and password login or source PAT.
+It intersects signed roles with the held roles and their permissions for the active tenant user.
 A caller that holds `admin` holds every operation of the serving release. Any other role holds its stored stable references `<package>:<interface>/<operation>`, and the host matches each sealed operation of the release by its reference (docs/plan/platform-ui.md §2.3).
-No active-session result is cached. Missing, revoked, expired, or mismatched authority returns 401.
+Missing, revoked, expired, or mismatched authority returns 401.
 An unavailable identity read refuses admission with 503. The read has a five-second timeout.
-Logout, reset, account disablement, membership removal, and PAT revocation therefore affect the next admission.
+Logout, reset, account disablement, membership removal, and PAT revocation affect admission within 60 seconds, the TTL of the auth memory.
 Already admitted work retains its caller. Revocation does not cancel that work or undo its effects.
+
+### Auth memory
+
+The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip ([round-trips](../plan/request-round-trips.md)).
+The [memory](../../crates/platform/runtime/src/auth_cache.rs) holds an admitted PAT, an active session, the users row, roles and permissions of a principal, and the environment status.
+One read of `app_system.users`, `app_system.user_roles` and `app_system.permissions` answers the permission check and the users-row check of the invocation bind.
+The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
+Each fact lives for at most 60 seconds.
+After a role, permission, users row or status write commits, the application host and the control host publish on the scheduler NATS subject `wamn.auth.<tenant>`.
+Each host of that tenant then drops its whole memory, and the application host that wrote drops its own at once.
+A change that no host publishes waits for the TTL: a PAT revoke, a logout, a membership revoke and a `wamn-ctl` role or permission write.
 
 The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
 The configured environment supplies its current suffix.

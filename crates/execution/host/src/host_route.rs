@@ -22,6 +22,7 @@ use wamn_engine::router_delivery::{
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::control::{control_projects, is_org_admin, org_projects};
+use wamn_runtime::auth_cache::AuthChanges;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 use crate::application_route::ApplicationRoutes;
@@ -37,6 +38,8 @@ pub enum HostRouteHandlers {
         /// the covering check of an `admin` revoke. A host without an
         /// authenticated route has none.
         identity: Option<(Arc<tokio_postgres::Client>, String)>,
+        /// Publishes each role or permission change.
+        changes: AuthChanges,
     },
     /// The control routes of one org, through its `control` login.
     Control {
@@ -51,6 +54,8 @@ pub enum HostRouteHandlers {
         /// per environment that holds its administration login.
         administration: Option<std::path::PathBuf>,
         org: String,
+        /// Publishes each users row and status change of an environment.
+        changes: AuthChanges,
     },
 }
 
@@ -153,11 +158,13 @@ impl HostRouteDelivery {
                     postgres,
                     project,
                     identity,
+                    changes,
                 },
             ) => {
                 ApplicationRoutes {
                     postgres,
                     project,
+                    changes,
                     release: &self.release,
                     identity: identity
                         .as_ref()
@@ -174,6 +181,7 @@ impl HostRouteDelivery {
                     identity,
                     administration,
                     org,
+                    changes,
                 },
             ) => {
                 ControlRoutes {
@@ -182,6 +190,7 @@ impl HostRouteDelivery {
                     identity: identity.as_ref(),
                     administration: administration.as_deref(),
                     org,
+                    changes,
                 }
                 .handle(attachment, &principal, payload)
                 .await

@@ -196,6 +196,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             postgres: postgres_credentials,
             project: PROJECT.to_owned(),
             identity: None,
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );
@@ -623,6 +624,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
             writer,
             identity: None,
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );

@@ -219,6 +219,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
             writer,
             identity: None,
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     ));

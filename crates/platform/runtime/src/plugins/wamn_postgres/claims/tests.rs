@@ -2457,13 +2457,11 @@ async fn live_a_bind_refuses_a_principal_with_no_users_row() {
         .expect("drop the fixture");
 }
 
-/// A row removed after the credential was issued is refused on the next bind,
-/// and the binding that already read it is unaffected (`wamn-0h0g.9.19`).
-///
-/// This is the whole consequence of reading once per invocation. Nothing
-/// re-reads inside a live binding, so the removal lands on the next bind.
+/// A row removed after the credential was issued is refused on the first bind
+/// after the host's auth memory clears, and the binding that already read it
+/// is unaffected (`wamn-0h0g.9.19`, `wamn-stxy9.2`).
 #[tokio::test]
-async fn live_a_removed_users_row_is_refused_on_the_next_bind() {
+async fn live_a_removed_users_row_is_refused_once_the_auth_memory_clears() {
     const TENANT: &str = "removed";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -2507,10 +2505,14 @@ async fn live_a_removed_users_row_is_refused_on_the_next_bind() {
         "the live binding still carries the principal it read"
     );
 
+    pg.bind_session_claims(scope, &claims)
+        .await
+        .expect("the auth memory still answers for the removed row");
+    pg.auth_cache().clear();
     let refused = pg
         .bind_session_claims(scope, &claims)
         .await
-        .expect_err("the next bind reads again and refuses");
+        .expect_err("the bind after the clear reads again and refuses");
     assert!(refused.downcast_ref::<UnprovisionedPrincipal>().is_some());
 
     drop(pg);

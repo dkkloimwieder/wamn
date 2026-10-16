@@ -321,6 +321,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: Some(identity.config.clone()),
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );
@@ -547,6 +548,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );
@@ -765,6 +767,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
             identity: None,
             administration: Some(logins.clone()),
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );
@@ -954,6 +957,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             identity: None,
             administration: Some(logins.clone()),
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );
@@ -1153,6 +1157,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
             org: ORG.to_owned(),
+            changes: wamn_runtime::auth_cache::AuthChanges::default(),
         },
         None,
     );

@@ -1,7 +1,8 @@
 //! The route plugin refuses every route of an inactive environment
 //! (docs/plan/platform-ui.md §5.4, wamn-zua8.2). The host reads its row of
-//! `app_system.environment` as a tenant's `wamn_app` generation on each
-//! request, before the route's policy, so an anonymous route is refused too.
+//! `app_system.environment` as a tenant's `wamn_app` generation, before the
+//! route's policy, so an anonymous route is refused too. The host keeps the
+//! answer until a change message clears its auth memory (wamn-stxy9.2).
 //!
 //! This test starts its own PostgreSQL 18 server.
 #![cfg(feature = "test-util")]
@@ -146,7 +147,7 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
     let route = FlowHttpRouting::new(Some(release()?), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(PlatformRouteAuthenticator::default()))
         .with_environment_status(Arc::new(EnvironmentStatusReader::new(
-            reader,
+            Arc::clone(&reader),
             PROJECT.to_owned(),
         )));
 
@@ -167,11 +168,18 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .await?;
     assert_eq!(
         admitted(&route).await,
+        Ok(false),
+        "the host's auth memory answers until a change message clears it"
+    );
+    reader.auth_cache().clear();
+    assert_eq!(
+        admitted(&route).await,
         Err((503, "environment-inactive".to_owned()))
     );
     admin
         .execute("UPDATE app_system.environment SET status = 'active'", &[])
         .await?;
+    reader.auth_cache().clear();
     assert_eq!(
         admitted(&route).await,
         Ok(false),
