@@ -893,6 +893,10 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         "authority fixture found no holder of {}",
         inputs.caller_role
     );
+    // Raw SQL is not a writer of the auth memory and deletes no key, so the
+    // fixture waits until every host memory forgot the old grants.
+    let forgotten = wamn_runtime::auth_cache::AUTH_TTL + std::time::Duration::from_secs(1);
+    tokio::time::sleep(forgotten).await;
     let denied = route.post(RECEIPT_PATH, &body).await;
     let denied_state = snapshot(db, &fixture).await;
     let restored = db
@@ -904,6 +908,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         .await;
     let denied = denied?;
     restored?;
+    tokio::time::sleep(forgotten).await;
     ensure!(
         denied.status == reqwest::StatusCode::FORBIDDEN
             && denied.body
