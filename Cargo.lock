@@ -6352,7 +6352,7 @@ dependencies = [
  "argon2",
  "async-nats",
  "base64 0.22.1",
- "bytes",
+ "futures-util",
  "hex",
  "ring",
  "rustls",

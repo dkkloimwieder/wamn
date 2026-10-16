@@ -8,8 +8,8 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 # The publication of auth changes on the scheduler NATS (src/auth_changes.rs).
-async-nats = { workspace = true }
-bytes = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "kv"] }
+futures-util = { workspace = true }
 rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 tracing = { workspace = true }
 argon2 = { workspace = true }

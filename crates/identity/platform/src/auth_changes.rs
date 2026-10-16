@@ -3,13 +3,16 @@
 //!
 //! Every function of this crate that writes a fact a host keeps takes an
 //! [`AuthDrops`] and records the fact in it. Its caller publishes the list
-//! with [`AuthChanges::publish`] after the commit. The facts are the users
+//! with [`AuthChanges::publish`] after the commit, which deletes the keys of
+//! the facts from the NATS KV bucket [`BUCKET`]. Every host watches the
+//! bucket and keeps the values as its memory. The facts are the users
 //! rows, roles, permissions and user roles of a tenant, its environment
 //! status, and the PATs, logins, memberships and status of a principal.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// One auth fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -61,17 +64,54 @@ impl AuthDrops {
     }
 }
 
-/// The scheduler NATS subject a change of the facts of `tenant` goes to.
-pub fn tenant_subject(tenant: &str) -> String {
-    format!("wamn.auth.{tenant}")
+/// The NATS KV bucket of the auth memory, on the scheduler NATS.
+pub const BUCKET: &str = "wamn-auth";
+
+/// How long the bucket keeps a value, and a host its copy: the backstop for
+/// a lost delete.
+pub const AUTH_TTL: Duration = Duration::from_secs(60);
+
+/// The key of the grants of `principal` in `tenant`.
+pub fn principal_key(tenant: &str, principal: &str) -> String {
+    format!("{tenant}.{principal}")
 }
 
-/// The scheduler NATS subject a change of an identity fact goes to. Every
-/// host listens on it, because an identity fact holds in every tenant.
-pub const IDENTITY_SUBJECT: &str = "wamn.identity";
+/// The key of the environment status of `tenant`. A principal id is a UUID,
+/// so it is never `environment`.
+pub fn environment_key(tenant: &str) -> String {
+    format!("{tenant}.environment")
+}
 
-/// Publishes the changes of a commit on the scheduler NATS. A host without
-/// that client publishes nothing, and the TTL of its memory applies.
+/// The first token of the key of an identity fact. A tenant name holds only
+/// `[A-Za-z0-9_-]`, so this token never meets a tenant key.
+pub const IDENTITY_TOKEN: &str = "=identity";
+
+/// The key a change of an identity fact of `principal` deletes.
+pub fn identity_key(principal: &str) -> String {
+    format!("{IDENTITY_TOKEN}.{principal}")
+}
+
+/// Open the bucket, and make it when it is absent: the scheduler NATS keeps
+/// JetStream in memory of its pod, so a restart loses the bucket.
+pub async fn auth_bucket(
+    client: &async_nats::Client,
+) -> anyhow::Result<async_nats::jetstream::kv::Store> {
+    use anyhow::Context as _;
+    async_nats::jetstream::new(client.clone())
+        .create_or_update_key_value(async_nats::jetstream::kv::Config {
+            bucket: BUCKET.to_owned(),
+            history: 1,
+            max_age: AUTH_TTL,
+            storage: async_nats::jetstream::stream::StorageType::Memory,
+            ..Default::default()
+        })
+        .await
+        .with_context(|| format!("open the NATS KV bucket {BUCKET}"))
+}
+
+/// Deletes the keys of the changes of a commit from the bucket. A writer
+/// without a scheduler NATS client deletes nothing, and the TTL of the memory
+/// applies.
 #[derive(Debug, Clone, Default)]
 pub struct AuthChanges(Option<async_nats::Client>);
 
@@ -85,32 +125,67 @@ impl AuthChanges {
         Ok(Self::new(connection.connect().await?))
     }
 
-    /// Publish after the commit that made `drops`. A failed publish is
-    /// logged, because the commit stands and the TTL of the memory bounds it.
+    /// Delete the keys of `drops` after the commit that made them. A failed
+    /// delete is logged, because the commit stands and the TTL bounds it.
+    /// Each publish opens the bucket, so a writer outlives a restart of the
+    /// scheduler NATS.
     pub async fn publish(&self, drops: AuthDrops) {
         let Some(client) = &self.0 else {
             return;
         };
-        let subjects: BTreeSet<String> = drops
-            .0
-            .into_iter()
-            .map(|change| match change {
-                AuthChange::Principal { tenant, .. } | AuthChange::Tenant(tenant) => {
-                    tenant_subject(&tenant)
-                }
-                AuthChange::Identity(_) => IDENTITY_SUBJECT.to_owned(),
-            })
-            .collect();
-        for subject in subjects {
-            if let Err(error) = client.publish(subject.clone(), bytes::Bytes::new()).await {
-                tracing::warn!(%error, subject, "the auth change was not published; the TTL bounds it");
+        if drops.is_empty() {
+            return;
+        }
+        let store = match auth_bucket(client).await {
+            Ok(store) => store,
+            Err(error) => {
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    "the auth changes were not deleted; the TTL bounds them"
+                );
+                return;
+            }
+        };
+        for change in drops.0 {
+            if let Err(error) = delete(&store, &change).await {
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    ?change,
+                    "the auth change was not deleted; the TTL bounds it"
+                );
             }
         }
-        // A short-lived writer, such as a wamn-ctl verb, exits right after this.
-        if let Err(error) = client.flush().await {
-            tracing::warn!(%error, "the auth changes were not flushed; the TTL bounds them");
-        }
     }
+}
+
+async fn delete(
+    store: &async_nats::jetstream::kv::Store,
+    change: &AuthChange,
+) -> anyhow::Result<()> {
+    use futures_util::TryStreamExt as _;
+    let keys = match change {
+        AuthChange::Principal { tenant, principal } => vec![principal_key(tenant, principal)],
+        AuthChange::Identity(principal) => vec![identity_key(principal)],
+        // Every key of the tenant: the grants of each principal, which hold
+        // the role, and the environment status.
+        AuthChange::Tenant(tenant) => {
+            let mut subjects = store
+                .stream
+                .info_with_subjects(format!("{}{tenant}.*", store.prefix))
+                .await?;
+            let mut keys = Vec::new();
+            while let Some((subject, _)) = subjects.try_next().await? {
+                if let Some(key) = subject.strip_prefix(&store.prefix) {
+                    keys.push(key.to_owned());
+                }
+            }
+            keys
+        }
+    };
+    for key in keys {
+        store.delete(&key).await?;
+    }
+    Ok(())
 }
 
 /// The scheduler NATS connection of a writer that is not a host: the identity

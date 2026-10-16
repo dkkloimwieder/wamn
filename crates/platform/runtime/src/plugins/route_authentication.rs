@@ -249,6 +249,7 @@ impl PlatformRouteAuthenticator {
             })?;
         let cache = authentication.postgres.auth_cache();
         if !cache.session_active(token) {
+            let ticket = cache.identity_ticket();
             let active = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 wamn_platform_identity::session_token::session_is_active(
@@ -264,7 +265,7 @@ impl PlatformRouteAuthenticator {
             if !active {
                 return Err(unauthorized());
             }
-            cache.keep_session_active(token);
+            cache.keep_session_active(ticket, token, session.claims().sub.as_str());
         }
         // Permission I/O cannot extend the evidence that admitted this request.
         // Once returned, nested work retains this caller without reauthentication.
@@ -326,6 +327,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             let principal = if let Some(principal) = cache.pat(token) {
                 principal
             } else {
+                let ticket = cache.identity_ticket();
                 let principal = authentication
                     .prepared
                     .authenticate_route_pat(
@@ -343,7 +345,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         authentication_unavailable()
                     })?
                     .ok_or_else(unauthorized)?;
-                cache.keep_pat(token, principal.clone());
+                cache.keep_pat(ticket, token, principal.clone());
                 principal
             };
             let principal = principal.principal();

@@ -936,7 +936,8 @@ impl WamnPostgres {
     }
 
     /// The auth facts this host keeps. A message on
-    /// [`changed_subject`](crate::auth_cache::changed_subject) clears them.
+    /// [`replicate`](crate::auth_cache::replicate) keeps them in step with
+    /// the other hosts.
     pub fn auth_cache(&self) -> &crate::auth_cache::AuthCache {
         &self.auth
     }
@@ -1496,9 +1497,9 @@ impl WamnPostgres {
         project: &str,
         principal_id: &str,
     ) -> anyhow::Result<()> {
-        if self.auth.provisioned(project, tenant, principal_id) {
+        let Err(ticket) = self.auth.provisioned(tenant, principal_id) else {
             return Ok(());
-        }
+        };
         let (connection, _policy) = self
             .checkout_guest(project, tenant)
             .await
@@ -1530,7 +1531,9 @@ impl WamnPostgres {
             }
             .into());
         }
-        self.auth.keep_provisioned(project, tenant, principal_id);
+        self.auth
+            .keep_provisioned(tenant, principal_id, ticket)
+            .await;
         Ok(())
     }
 
@@ -1915,9 +1918,10 @@ impl WamnPostgres {
             "invalid operation-permission project"
         );
         anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
-        if let Some(grants) = self.auth.grants(project, tenant, principal.as_str()) {
-            return Ok(grants);
-        }
+        let ticket = match self.auth.grants(tenant, principal.as_str()) {
+            Ok(grants) => return Ok(grants),
+            Err(ticket) => ticket,
+        };
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
@@ -1936,7 +1940,8 @@ impl WamnPostgres {
             .context("read the principal grants")?;
         let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
         self.auth
-            .keep_grants(project, tenant, principal.as_str(), grants.clone());
+            .keep_grants(tenant, principal.as_str(), ticket, grants.clone())
+            .await;
         Ok(grants)
     }
 
@@ -1979,9 +1984,10 @@ impl WamnPostgres {
     pub async fn environment_inactive(&self, project: &str, tenant: &str) -> anyhow::Result<bool> {
         anyhow::ensure!(valid_project(project), "invalid environment-status project");
         anyhow::ensure!(valid_tenant(tenant), "invalid environment-status tenant");
-        if let Some(inactive) = self.auth.environment_inactive(project, tenant) {
-            return Ok(inactive);
-        }
+        let ticket = match self.auth.environment_inactive(tenant) {
+            Ok(inactive) => return Ok(inactive),
+            Err(ticket) => ticket,
+        };
         let (connection, _pool) = self
             .checkout_guest(project, tenant)
             .await
@@ -1995,7 +2001,8 @@ impl WamnPostgres {
         };
         let inactive = row.is_some_and(|row| row.get(0));
         self.auth
-            .keep_environment_inactive(project, tenant, inactive);
+            .keep_environment_inactive(tenant, ticket, inactive)
+            .await;
         Ok(inactive)
     }
 
@@ -2079,6 +2086,12 @@ impl WamnPostgres {
 pub(super) enum OneShotResult {
     Rows(RowSet),
     Count(u64),
+}
+
+impl AsRef<crate::auth_cache::AuthCache> for WamnPostgres {
+    fn as_ref(&self) -> &crate::auth_cache::AuthCache {
+        &self.auth
+    }
 }
 
 #[cfg(test)]

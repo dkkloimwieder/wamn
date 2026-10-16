@@ -395,20 +395,32 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 ### Auth memory
 
 The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip ([round-trips](../plan/request-round-trips.md)).
-The [memory](../../crates/platform/runtime/src/auth_cache.rs) holds an admitted PAT, an active session, the users row, roles and permissions of a principal, and the environment status.
+The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the scheduler NATS.
+The key `<tenant>.<principal>` holds the grants of a principal and whether the tenant has its users row.
+The key `<tenant>.environment` holds the environment status.
 One read of `app_system.users`, `app_system.user_roles` and `app_system.permissions` answers the permission check and the users-row check of the invocation bind.
+A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
+Each host watches the keys of its tenant and keeps each value it sees, so a fact one host reads serves every host of the tenant.
+The control host serves every tenant, so it watches every key.
+The bucket keeps a value for at most 60 seconds, and so does the replica.
+
+An admitted PAT and an active session stay in the host that read them, because a token answer never leaves the host.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
-Each fact lives for at most 60 seconds.
+A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
+A tenant name holds only `[A-Za-z0-9_-]`, so that key never meets a tenant key.
+A host does not keep a token answer when any identity key changed during its read.
+While the watch is broken, the host keeps no fact and opens the bucket again.
+
 Every function that writes one of these facts takes an [`AuthDrops`](../../crates/identity/platform/src/auth_changes.rs) and records the change in it.
-Its caller publishes the list on the scheduler NATS after the commit.
+Its caller deletes the keys of the list after the commit.
 [`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and checks the drop it records.
-A tenant fact goes to `wamn.auth.<tenant>`: a users row, a role, a permission, a user role and the environment status.
-An identity fact goes to `wamn.identity`, because it holds in every tenant: a PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal.
-Each host of the tenant drops its whole memory on either subject, and the application host that wrote drops its own at once.
+A change of a users row or a user role deletes the key of the principal.
+A change of a role, a permission or the environment status deletes every key of the tenant.
+A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
 The writers are the application host, the control host, the identity service and `wamn-ctl`.
 The identity service and `wamn-ctl` read the connection from `WAMN_AUTH_NATS_URL`, `WAMN_AUTH_NATS_TLS_CA`, `WAMN_AUTH_NATS_TLS_CERT` and `WAMN_AUTH_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
 `WAMN_AUTH_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
-A lost message waits for the TTL.
+A lost delete waits for the 60 seconds.
 
 The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
 The configured environment supplies its current suffix.
