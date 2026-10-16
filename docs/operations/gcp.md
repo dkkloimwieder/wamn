@@ -654,6 +654,26 @@ for project in receiving wms; do
 done
 ```
 
+### 4.15.1 Benchmark
+
+Run the benchmark once after qualification, with the qualified release serving Receiving.
+For a first install, complete sections 4.17 through 4.21 before this step.
+Prepare the bench VM and its binary as described in section 5.8.
+Keep the PostgreSQL forward on local port 15432 open.
+
+The script reads `CHART_VERSION` from `crates/control/lib/src/release_chart.rs` and sources the platform file from section 4.10.
+That file supplies `db_url receiving` and `$G/operator-pat.json`, the operator token file.
+The script uses `CLOUDSDK_CONFIG` and `KUBECONFIG` from this page's opening commands.
+It refuses an existing result for the current version.
+Commit the result from the repository root:
+
+```bash
+tools/bench/tier.sh
+version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/control/lib/src/release_chart.rs)
+git add "tests/bench/platform-$version.json"
+git commit -m "Record platform $version benchmark"
+```
+
 ### 4.16 Record the releases
 
 Each environment document names its release digest. The edge values and the URL map name the bucket path of each web client, which holds the digest hex. Write the new digests into the four files:
@@ -877,4 +897,30 @@ target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 
 ### 5.8 Benchmark
 
-The tier 2 benchmark runs from the VM `wamn-bench-client` with the operator PAT of Receiving ([install history](../history/gcp-install-history.md#64-bench-client-and-pat) sections 6.4 and 6.5). Tier 2 is the Receiving host alone on pool `bench`, PostgreSQL alone on pool `pg`, and every other pod on pool `main`. The results and the span breakdown are in [benchmark](benchmark.md).
+The tier 2 benchmark runs from `wamn-bench-client` in project `wamn-dev`, zone `us-central1-a`.
+The Receiving host runs alone on pool `bench`, and PostgreSQL runs alone on pool `pg`.
+Every other pod runs on pool `main`.
+Prepare the VM and its `~/wamn/target/release/wamn-bench` binary with [install history](../history/gcp-install-history.md#64-bench-client-and-pat), section 6.4.
+Use the 1000-order Receiving seed from [install history](../history/gcp-install-history.md#61-morning-start-and-the-1000-seed), section 6.1.
+Use the operator PAT from section 4.14 and the platform file from section 4.10.
+Install `psql` and Python 3 on the repository machine.
+Keep the PostgreSQL forward on local port 15432 open for the VM's reverse SSH tunnel.
+Use section 4.15.1 to run and commit the benchmark.
+
+`tools/bench/tier.sh` runs get and update for 60 seconds each at c16, which means 16 concurrent requests.
+It writes one `tests/bench/platform-<version>.json` file per platform version.
+Each call records throughput, p50, p95, p99, calls, errors, and `pg_stat_statements` calls per request.
+The script resets database statement counts before each call.
+It divides each statement count by the request count, rounds each ratio, and sums the ratios.
+This excludes setup queries and background polling from the per-request count.
+The [benchmark page](benchmark.md) holds earlier measurements and the span breakdown.
+
+The conformance test `benchmark::platform_benchmark_gate` compares the newest two result files in semantic version order.
+It fails if get or update `throughput_per_sec` drops more than 20% at c16.
+With fewer than two files, it passes and prints that no comparison ran.
+The workspace sweep includes this test.
+Run it from the repository root:
+
+```bash
+cargo test --offline -p wamn-conformance-tests benchmark::platform_benchmark_gate -- --nocapture
+```

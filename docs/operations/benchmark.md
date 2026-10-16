@@ -1,6 +1,11 @@
 # Benchmark
 
-This page holds the tier 2 benchmark of Receiving on `wamn-dev` with the collector in place (wamn-ini3j). The procedure is in [the install history](../history/gcp-install-history.md#64-bench-client-and-pat), sections 6.4 and 6.5. The raw files are in `tests/bench/`. Latency is in milliseconds.
+This page holds the tier 2 benchmark of Receiving on `wamn-dev` with the collector in place (wamn-ini3j).
+The current procedure and regression gate are in [Google Cloud operations](gcp.md#58-benchmark).
+`tools/bench/tier.sh` writes one result per platform version to `tests/bench/platform-<version>.json`.
+The [0.1.25 result](../../tests/bench/platform-0.1.25.json) supplies the first baseline.
+Git retains earlier per-run files.
+Latency is in milliseconds.
 
 ## Setup
 
@@ -126,7 +131,10 @@ The item commit p50 of update (8.42 ms) is near the simple-update p50 of pgbench
 
 ## Request round-trips
 
-Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)). Each run resets `pg_stat_statements` before it and reads every row after it, into `tests/bench/*.pgss.csv`. Calls per request is the calls of a statement divided by the requests of the run, summed over the statements that run once per request.
+Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)).
+These runs reset `pg_stat_statements` before each run and saved every row afterward in per-run CSV files.
+Git retains those files.
+The current [procedure](gcp.md#58-benchmark) stores the calls per request with each platform result.
 
 | Run | Placement | get | update | get calls | update calls |
 | --- | --- | --- | --- | --- | --- |
