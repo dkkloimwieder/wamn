@@ -1,6 +1,17 @@
 # Request round-trips
 
-Updated through: 2026-10-16, `main` at `77a7587b6`. Epic `wamn-stxy9`.
+Updated through: 2026-10-16, `main` at `fe6d74a4d`. Epic `wamn-stxy9`, closed. No unbuilt work remains.
+
+## Result
+
+Platform 0.1.25, Receiving host alone on pool `bench`, warm reuse pool 16, concurrency 16, 60 s. Source: [benchmark](../operations/benchmark.md#request-round-trips).
+
+| Run | get | update | get statements | update statements |
+| --- | --- | --- | --- | --- |
+| 0.1.19, before the epic | 427/s, p50 31.0 | 159/s, p50 81.1 | 7 | 15 |
+| 0.1.25, after issue 3 | 822/s, p50 16.2 | 415/s, p50 34.8 | 1 | 7 |
+
+A get sends only its read. An update sends BEGIN, the claims and the write-log claim in one trip, then the write-log finish, the logical message and COMMIT in one trip. The host answers auth from its memory (`wamn-stxy9.2`). Project migration 0021 deleted the `wamn_cache` counter row, and the list ETag uses the WAL position.
 
 ## Law
 
