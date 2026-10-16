@@ -5,7 +5,8 @@
 # bound, OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME (the cluster's
 # collector), and `apply` adds the six credential variables, so this file sets
 # none of them. WAMN_SESSION_INSTANCE_SUFFIX is the instance suffix that the first
-# apply recorded; write it again after a new first apply.
+# apply recorded; write it again after a new first apply. The 2.10.3 chart has no
+# nodeSelector or tolerations field, so bench-host-placement.yaml places this host.
 replicas: 1
 # The operator release and its control NATS run in namespace platform, not in
 # the release namespace hosts, so the host group names the scheduler and data

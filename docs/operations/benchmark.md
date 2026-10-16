@@ -69,7 +69,7 @@ The benchmark hour holds 4321511 spans in 110 objects of 273851478 bytes. One sp
 
 ## Pool size 8 and node placement
 
-Commit `6458911fe` sets the guest pool to 16 and the platform pool to 8 in both wamn-dev host groups. The pool `main` has 3 nodes of 2 vCPU. The scheduler places the Receiving host and `wamn-pg-1` freely, because the runtime-operator 2.10.3 subchart has no affinity setting. To separate them, cordon the Postgres node, delete the host pod, and uncordon the node after the rollout.
+Commit `6458911fe` sets the guest pool to 16 and the platform pool to 8 in both wamn-dev host groups. The pool `main` has 3 nodes of 2 vCPU. Since `wamn-0371x`, PostgreSQL runs alone on pool `pg` and the Receiving host runs alone on pool `bench` ([gcp](gcp.md#42-cluster)).
 
 | Call c16 | Run | Throughput | p50 / p95 / p99 |
 | --- | --- | --- | --- |

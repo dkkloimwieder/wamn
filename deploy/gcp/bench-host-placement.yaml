@@ -1,0 +1,49 @@
+# The Receiving host of dkk/receiving/dev runs alone on the node of pool
+# `bench` (docs/operations/gcp.md section 4.2). The pool's taint
+# role=bench-host:NoSchedule keeps every other pod off that node. The
+# runtime-operator 2.10.3 chart renders the host Deployment with no
+# nodeSelector or tolerations field, so the host group file cannot carry them.
+# This policy adds both to the host pod when the API server admits it.
+# r-dev-ee95c37ee965257ff856 is the release name of dkk/receiving/dev and its
+# host group (release_name in crates/control/lib/src/release_chart.rs).
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: bench-host-placement
+spec:
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: hosts
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["pods"]
+  matchConditions:
+  - name: receiving-host
+    expression: >-
+      has(object.metadata.labels) &&
+      object.metadata.labels[?'wasmcloud.com/hostgroup'].orValue('') == 'r-dev-ee95c37ee965257ff856'
+  failurePolicy: Fail
+  reinvocationPolicy: Never
+  mutations:
+  - patchType: JSONPatch
+    jsonPatch:
+      # The pod keeps the tolerations that admission already gave it.
+      expression: >-
+        [
+          JSONPatch{op: "add", path: "/spec/nodeSelector", value: {"role": "bench-host"}},
+          has(object.spec.tolerations)
+            ? JSONPatch{op: "add", path: "/spec/tolerations/-",
+                value: Object.spec.tolerations{key: "role", operator: "Equal", value: "bench-host", effect: "NoSchedule"}}
+            : JSONPatch{op: "add", path: "/spec/tolerations",
+                value: [Object.spec.tolerations{key: "role", operator: "Equal", value: "bench-host", effect: "NoSchedule"}]}
+        ]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: bench-host-placement
+spec:
+  policyName: bench-host-placement

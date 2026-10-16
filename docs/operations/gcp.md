@@ -110,7 +110,7 @@ cargo build --locked -p wamn-scenario-worker
 
 ### 4.2 Cluster
 
-gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 2 Spot nodes replaces it. The pool `pg` holds one node for PostgreSQL alone: its taint keeps every other pod off, and the `Cluster` selects it (section 4.5). The 8-vCPU project quota and the SSD quota of 0 set its size and disk. The create writes the cluster into `KUBECONFIG` and makes it the current context:
+gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 1 Spot node replaces it. The pool `pg` holds one node for PostgreSQL alone: its taint keeps every other pod off, and the `Cluster` selects it (section 4.5). The pool `bench` holds one Spot node for the Receiving host alone: its taint keeps every other pod off, and an admission policy places the host there (section 4.9). The 8-vCPU project quota and the SSD quota of 0 set its size and disk. The create writes the cluster into `KUBECONFIG` and makes it the current context:
 
 ```bash
 NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
@@ -122,9 +122,14 @@ gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
   --service-account $NSA --disk-type pd-standard --disk-size 30 \
   --num-nodes 1 --machine-type e2-standard-2 --spot
 gcloud container node-pools create main --cluster wamn --project wamn-dev \
-  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 2 \
+  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 1 \
   --disk-type pd-standard --disk-size 30 --service-account $NSA \
   --max-surge-upgrade 0 --max-unavailable-upgrade 1
+gcloud container node-pools create bench --cluster wamn --project wamn-dev \
+  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 1 \
+  --disk-type pd-standard --disk-size 30 --service-account $NSA \
+  --max-surge-upgrade 0 --max-unavailable-upgrade 1 \
+  --node-labels role=bench-host --node-taints role=bench-host:NoSchedule
 gcloud container node-pools create pg --cluster wamn --project wamn-dev \
   --zone us-central1-a --machine-type e2-standard-2 --num-nodes 1 \
   --disk-type pd-standard --disk-size 50 --service-account $NSA \
@@ -368,10 +373,11 @@ setsid kubectl -n platform port-forward svc/evt-nats 14222:4222 > $W/pf-nats.log
 
 ### 4.9 Platform install inputs
 
-`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Every host runs as the service account `wamn-host`, which acts as `wamn-blob` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The two platform manifests state no namespace, so apply them into the release namespace:
+`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Every host runs as the service account `wamn-host`, which acts as `wamn-blob` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. The two platform manifests state no namespace, so apply them into the release namespace:
 
 ```bash
 kubectl apply -f deploy/gcp/registry-helper.yaml
+kubectl apply -f deploy/gcp/bench-host-placement.yaml
 kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
 kubectl -n hosts annotate serviceaccount wamn-host --overwrite \
   iam.gke.io/gcp-service-account=wamn-blob@wamn-dev.iam.gserviceaccount.com
@@ -739,11 +745,12 @@ openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev 
 
 ### 5.1 Pool after the daily guard
 
-The guard sets pool `main` to 0 nodes every day. Scale `main` back to 2 nodes and `pg` to 1 node. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
+The guard sets pool `main` to 0 nodes every day. Scale `pg`, `main` and `bench` back to 1 node each. The `Cluster` keeps its old `Ready` condition while its pod is gone, so wait for the pod `wamn-pg-1`. The event NATS keeps `WAMN_TAP` in memory, so run the tap-stream Job again after every restart of the broker:
 
 ```bash
 gcloud container clusters resize wamn --node-pool pg --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
-gcloud container clusters resize wamn --node-pool main --num-nodes 2 --zone us-central1-a --project wamn-dev --quiet
+gcloud container clusters resize wamn --node-pool main --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
+gcloud container clusters resize wamn --node-pool bench --num-nodes 1 --zone us-central1-a --project wamn-dev --quiet
 until kubectl -n platform get pod wamn-pg-1 >/dev/null 2>&1; do sleep 5; done
 kubectl -n platform wait pod/wamn-pg-1 --for=condition=Ready --timeout=900s
 kubectl -n platform rollout status statefulset/evt-nats --timeout=600s
@@ -756,10 +763,11 @@ The port-forwards end with their pods, so start them again (sections 4.5 and 4.8
 
 ### 5.2 Pause
 
-Set pools `main` and `pg` to 0 nodes. The PostgreSQL volume keeps the data:
+Set pools `main`, `bench` and `pg` to 0 nodes. The PostgreSQL volume keeps the data:
 
 ```bash
 gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool main --num-nodes 0 --quiet
+gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool bench --num-nodes 0 --quiet
 gcloud container clusters resize wamn --project wamn-dev --zone us-central1-a --node-pool pg --num-nodes 0 --quiet
 gcloud compute instances list --project wamn-dev
 ```
@@ -855,4 +863,4 @@ target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 
 ### 5.8 Benchmark
 
-The tier 2 benchmark runs from the VM `wamn-bench-client` with the operator PAT of Receiving ([install history](../history/gcp-install-history.md#64-bench-client-and-pat) sections 6.4 and 6.5). Tier 2 is pool `main` at 2 nodes. The results and the span breakdown are in [benchmark](benchmark.md).
+The tier 2 benchmark runs from the VM `wamn-bench-client` with the operator PAT of Receiving ([install history](../history/gcp-install-history.md#64-bench-client-and-pat) sections 6.4 and 6.5). Tier 2 is the Receiving host alone on pool `bench`, PostgreSQL alone on pool `pg`, and every other pod on pool `main`. The results and the span breakdown are in [benchmark](benchmark.md).
