@@ -28,7 +28,7 @@ pub struct DevSessionRequest {
 /// The platform WIT sources that every component build reads, from the
 /// repository root.
 const SHARED_WIT_ROOTS: [&str; 3] = [
-    "crates/execution/host/wit/deps/wamn-router-delivery-0.3",
+    "crates/execution/host/wit/deps/wamn-router-delivery-0.4",
     "crates/execution/workflow/router/wit",
     "crates/platform/runtime/wit/deps",
 ];

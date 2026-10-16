@@ -5,7 +5,6 @@
 //! `web/runtime/test/classification.test.ts` reads this file too. A case that one client reads differently is a defect
 //! in one of them.
 
-use std::collections::BTreeMap;
 
 use serde_json::Value;
 use wamn_client::HttpResponse;
@@ -64,7 +63,6 @@ fn every_shared_case_classifies_as_the_table_states() {
         let name = case["name"].as_str().expect("a case name");
         let contract = response_contract(&table["contracts"][case["contract"].as_str().unwrap()]);
         let response = HttpResponse {
-            actor_labels: BTreeMap::new(),
             status: u16::try_from(case["status"].as_u64().expect("a status")).expect("a status"),
             body: case["body"].as_str().expect("a body").to_owned(),
         };
@@ -88,7 +86,6 @@ fn every_shared_many_item_case_classifies_as_the_table_states() {
         let name = case["name"].as_str().expect("a case name");
         let contract = response_contract(&table["contracts"][case["contract"].as_str().unwrap()]);
         let response = HttpResponse {
-            actor_labels: BTreeMap::new(),
             status: u16::try_from(case["status"].as_u64().expect("a status")).expect("a status"),
             body: case["body"].as_str().expect("a body").to_owned(),
         };

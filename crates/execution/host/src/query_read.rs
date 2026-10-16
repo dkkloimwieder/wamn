@@ -45,16 +45,10 @@ impl StreamEnd {
         }
     }
 
-    /// The last reply line, with the labels of the actors its rows name.
-    pub(crate) fn line(&self, actor_labels: &[(String, String)]) -> String {
+    /// The last reply line.
+    pub(crate) fn line(&self) -> String {
         let outcome = match self {
-            Self::Completed { more } => {
-                let labels: serde_json::Map<String, serde_json::Value> = actor_labels
-                    .iter()
-                    .map(|(actor, label)| (actor.clone(), serde_json::Value::from(label.as_str())))
-                    .collect();
-                serde_json::json!({ "value": { "more": more }, "actor_labels": labels })
-            }
+            Self::Completed { more } => serde_json::json!({ "value": { "more": more } }),
             Self::Refused(error) => serde_json::json!({ "error": error }),
             Self::Uncertain => serde_json::json!({ "uncertain": {} }),
         };
@@ -90,21 +84,21 @@ mod tests {
     fn the_last_line_says_how_the_read_ended() {
         let completed = StreamEnd::of_outcome(r#"{"value":{"next_cursor":"abc"}}"#);
         assert_eq!(
-            completed.line(&[("actor".to_owned(), "Ada".to_owned())]),
-            r#"{"outcome":{"actor_labels":{"actor":"Ada"},"value":{"more":true}}}"#
+            completed.line(),
+            r#"{"outcome":{"value":{"more":true}}}"#
         );
         let last = StreamEnd::of_outcome(r#"{"value":{"next_cursor":null}}"#);
         assert_eq!(
-            last.line(&[]),
-            r#"{"outcome":{"actor_labels":{},"value":{"more":false}}}"#
+            last.line(),
+            r#"{"outcome":{"value":{"more":false}}}"#
         );
         let refused = StreamEnd::of_outcome(r#"{"error":{"code":"timeout","detail":{}}}"#);
         assert_eq!(
-            refused.line(&[]),
+            refused.line(),
             r#"{"outcome":{"error":{"code":"timeout","detail":{}}}}"#
         );
         assert_eq!(
-            StreamEnd::of_outcome("not json").line(&[]),
+            StreamEnd::of_outcome("not json").line(),
             r#"{"outcome":{"uncertain":{}}}"#
         );
         assert_eq!(row_line(r#"{"id":"a"}"#), r#"{"row":{"id":"a"}}"#);

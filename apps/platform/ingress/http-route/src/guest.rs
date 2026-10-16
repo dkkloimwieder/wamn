@@ -9,7 +9,7 @@ mod bindings {
         world: "wamn:flow-http/flow-http@0.1.0",
         path: [
             "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
-            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.3",
+            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.4",
             "../../execution/materializer/wit/deps/wasi-clocks",
             "wit",
         ],
@@ -17,8 +17,8 @@ mod bindings {
         async: [
             "export:wasi:http/handler@0.3.0#handle",
             "wamn:flow-http-routing/routing@0.1.0#authenticate",
-            "wamn:router-delivery/delivery@0.3.0#deliver",
-            "wamn:router-delivery/delivery@0.3.0#deliver-stream",
+            "wamn:router-delivery/delivery@0.4.0#deliver",
+            "wamn:router-delivery/delivery@0.4.0#deliver-stream",
         ],
     });
 }
@@ -173,7 +173,6 @@ fn delivery_report(
     report: bindings::wamn::router_delivery::delivery::DeliveryReport,
 ) -> DeliveryReport {
     DeliveryReport {
-        actor_labels: report.actor_labels,
         etag: report.etag,
         outcome: report
             .outcome
@@ -424,16 +423,6 @@ fn send_response(response: HttpResponse, mut backend: GuestBackend) -> Response 
     }
     for (name, value) in response.cache_headers() {
         let _ = headers.set(name, &[value.into_bytes()]);
-    }
-    if !response.actor_labels.is_empty() {
-        let labels: std::collections::BTreeMap<_, _> = response.actor_labels.into_iter().collect();
-        // Keep optional presentation metadata below common HTTP header limits.
-        // A large label set falls back to the unchanged actor IDs.
-        if let Ok(value) = serde_json::to_vec(&labels)
-            && value.len() <= 4096
-        {
-            let _ = headers.set("wamn-actor-labels", &[value]);
-        }
     }
     if !response.deadline_adjustments.is_empty() {
         let value = serde_json::to_vec(&response.deadline_adjustments)

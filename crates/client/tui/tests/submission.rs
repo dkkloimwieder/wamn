@@ -103,7 +103,6 @@ fn request() -> wamn_client::request::BuiltRequest {
 )]
 fn response(status: u16, body: Value) -> Result<HttpResponse, ClientError> {
     Ok(HttpResponse {
-        actor_labels: std::collections::BTreeMap::new(),
         status,
         body: body.to_string(),
     })
@@ -248,7 +247,6 @@ fn malformed_unknown_and_ambiguous_outcomes_never_become_editable_refusals() {
             &contract,
             Some("intent-1"),
             Ok(HttpResponse {
-                actor_labels: std::collections::BTreeMap::new(),
                 status: 200,
                 body: "not JSON".into()
             })
@@ -408,7 +406,6 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
             &contract,
             Some("intent-1"),
             Ok(HttpResponse {
-                actor_labels: std::collections::BTreeMap::new(),
                 status: 413,
                 body: "request body exceeds 1048576-byte limit\n".into()
             })

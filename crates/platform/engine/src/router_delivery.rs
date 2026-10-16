@@ -1,4 +1,4 @@
-//! Host plugin for `wamn:router-delivery@0.3.0`, the one guest-to-host
+//! Host plugin for `wamn:router-delivery@0.4.0`, the one guest-to-host
 //! delivery import that attachment and registration ingress share.
 //! `deliver-stream` answers a query read as its rows arrive.
 //!
@@ -78,7 +78,6 @@ pub trait RouteDelivery: Send + Sync + fmt::Debug {
         Err(DeliveryReport {
             outcome: Err(DeliveryError::InvalidRequest),
             deadline_adjustments: Vec::new(),
-            actor_labels: Vec::new(),
             etag: None,
         })
     }
@@ -114,7 +113,7 @@ impl HostPlugin for RouterDelivery {
 
     fn world(&self) -> WitWorld {
         WitWorld {
-            imports: HashSet::from([WitInterface::from("wamn:router-delivery/delivery@0.3.0")]),
+            imports: HashSet::from([WitInterface::from("wamn:router-delivery/delivery@0.4.0")]),
             exports: HashSet::new(),
         }
     }

@@ -470,7 +470,6 @@ pub fn classify_each(
                 contract,
                 *request_id,
                 Ok(HttpResponse {
-                    actor_labels: response.actor_labels.clone(),
                     status: 200,
                     body: Value::Array(vec![item.clone()]).to_string(),
                 }),

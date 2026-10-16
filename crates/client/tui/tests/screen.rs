@@ -174,7 +174,6 @@ fn response(screen: &Screen, value: &Value) -> HttpResponse {
         outcome.insert("request_id".to_owned(), request_id.clone());
     }
     HttpResponse {
-        actor_labels: std::collections::BTreeMap::new(),
         status: 200,
         body: json!([outcome]).to_string(),
     }
@@ -366,7 +365,6 @@ fn captured_retry_keeps_new_intent_values_and_success_spends_the_mutation() {
     command.resolve(
         first,
         Ok(HttpResponse {
-            actor_labels: std::collections::BTreeMap::new(),
             status: 502,
             body: "response lost".to_owned(),
         }),
@@ -502,7 +500,6 @@ fn delete_needs_confirmation_and_pending_prevents_exit_or_draft_discard() {
     command.resolve(
         attempt,
         Ok(HttpResponse {
-            actor_labels: std::collections::BTreeMap::new(),
             status: 401,
             body: String::new(),
         }),
@@ -616,7 +613,6 @@ mod cursor_transport {
             Box::pin(async move {
                 self.0.lock().expect("record request").push(request);
                 Ok(HttpResponse {
-                    actor_labels: std::collections::BTreeMap::new(),
                     status: 200,
                     body: json!([{
                         "value":{"item":[result()],"next_cursor":CURSOR}

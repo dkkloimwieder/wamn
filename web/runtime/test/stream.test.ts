@@ -52,7 +52,7 @@ describe("the reply lines of a streamed load", () => {
   it("hands the rows over in batches and ends with the outcome line", async () => {
     const batches: (readonly Row[])[] = [];
     const end = await readLoadLines(
-      text(row("a"), row("b"), outcome({ value: { more: true }, actor_labels: {} })),
+      text(row("a"), row("b"), outcome({ value: { more: true } })),
       revive,
       (rows) => batches.push(rows),
     );

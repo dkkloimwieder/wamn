@@ -23,7 +23,6 @@ impl FakeTransport {
     fn replying(status: u16, body: &str) -> Arc<Self> {
         Arc::new(Self {
             response: Mutex::new(HttpResponse {
-                actor_labels: std::collections::BTreeMap::new(),
                 status,
                 body: body.to_owned(),
             }),

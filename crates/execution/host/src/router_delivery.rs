@@ -471,32 +471,13 @@ impl RouteDelivery for RouterDeliveryBridge {
         request: DeliveryRequest,
         caller: Option<AuthenticatedCaller>,
     ) -> DeliveryReport {
-        let label_eligible = caller.is_some() && matches!(request.source, Source::Attachment(_));
         let mut deadline_adjustments = Vec::new();
         let mut etag = None;
         let outcome = self
             .deliver_inner(request, caller, &mut deadline_adjustments, &mut etag)
             .await;
-        let mut actor_labels = Vec::new();
-        if label_eligible && let Ok(DeliveryOutcome::Respond(payload)) = &outcome {
-            let actors = result_actors(payload);
-            match self
-                .operations
-                .postgres
-                .record_actor_labels(
-                    &self.operations.project,
-                    &self.release.scope().tenant_id,
-                    &actors,
-                )
-                .await
-            {
-                Ok(labels) => actor_labels = labels,
-                Err(error) => tracing::warn!(%error, "record actor labels unavailable"),
-            }
-        }
         DeliveryReport {
             outcome,
-            actor_labels,
             etag,
             deadline_adjustments: deadline_adjustments
                 .into_iter()
@@ -584,7 +565,6 @@ impl RouterDeliveryBridge {
         let report = |outcome, etag| DeliveryReport {
             outcome,
             deadline_adjustments: Vec::new(),
-            actor_labels: Vec::new(),
             etag,
         };
         let read = self
@@ -724,22 +704,13 @@ impl RouterDeliveryBridge {
         lines: tokio::sync::mpsc::Sender<Vec<String>>,
         first: tokio::sync::oneshot::Sender<Option<EarlyEnd>>,
     ) {
-        let labelled = caller.is_some();
         let (rows, mut batches) = tokio::sync::mpsc::channel(ROW_BATCHES_IN_FLIGHT);
         let invocation = invoke_route_stream(&self.operations, read.call(caller), rows);
         let forward = async move {
             let mut first = Some(first);
-            let mut actors = std::collections::BTreeSet::new();
             while let Some(batch) = batches.recv().await {
                 if let Some(first) = first.take() {
                     let _ = first.send(None);
-                }
-                if labelled {
-                    for row in &batch {
-                        if let Ok(row) = serde_json::from_str(row) {
-                            collect_actors(&row, &mut actors);
-                        }
-                    }
                 }
                 // A reader that left drops its lines, and dropping the rows
                 // ends the query (`wamn-utci.3`).
@@ -748,12 +719,12 @@ impl RouterDeliveryBridge {
                     .await
                     .is_err()
                 {
-                    return (first, actors, None);
+                    return (first, None);
                 }
             }
-            (first, actors, Some(lines))
+            (first, Some(lines))
         };
-        let (outcome, (mut first, actors, lines)) = tokio::join!(invocation, forward);
+        let (outcome, (mut first, lines)) = tokio::join!(invocation, forward);
         let end = match outcome {
             Ok(Ok(outcome)) => StreamEnd::of_outcome(&outcome),
             Ok(Err(error)) => {
@@ -789,24 +760,7 @@ impl RouterDeliveryBridge {
         let Some(lines) = lines else {
             return;
         };
-        let mut labels = Vec::new();
-        if matches!(end, StreamEnd::Completed { .. }) && !actors.is_empty() {
-            let actors = actors.into_iter().collect::<Vec<_>>();
-            match self
-                .operations
-                .postgres
-                .record_actor_labels(
-                    &self.operations.project,
-                    &self.release.scope().tenant_id,
-                    &actors,
-                )
-                .await
-            {
-                Ok(found) => labels = found,
-                Err(error) => tracing::warn!(%error, "record actor labels unavailable"),
-            }
-        }
-        let _ = lines.send(vec![end.line(&labels)]).await;
+        let _ = lines.send(vec![end.line()]).await;
     }
 }
 
@@ -817,46 +771,6 @@ fn refusal(error: &anyhow::Error) -> DeliveryError {
         Some(denial) => lower_operation_refusal(denial),
         None => DeliveryError::ExecutionFailed,
     }
-}
-
-/// Collect the actor IDs a result value names in `created_by` and `updated_by`.
-fn collect_actors(value: &serde_json::Value, actors: &mut std::collections::BTreeSet<String>) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            for (name, value) in fields {
-                if matches!(name.as_str(), "created_by" | "updated_by") {
-                    if let Some(actor) = value.as_str().filter(|actor| {
-                        actor.parse::<wamn_platform_identity::PrincipalId>().is_ok()
-                    }) {
-                        actors.insert(actor.to_owned());
-                    }
-                } else {
-                    collect_actors(value, actors);
-                }
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_actors(value, actors);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Only successful result values supply actor IDs. Refusals and input do not.
-fn result_actors(payload: &str) -> Vec<String> {
-    let mut actors = std::collections::BTreeSet::new();
-    if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(payload) {
-        for item in items {
-            if item.get("error").is_none()
-                && let Some(value) = item.get("value")
-            {
-                collect_actors(value, &mut actors);
-            }
-        }
-    }
-    actors.into_iter().collect()
 }
 
 impl fmt::Debug for RouterDeliveryBridge {
@@ -929,22 +843,6 @@ fn delivery_attributes(source: SourceRef<'_>, target: &AttachmentTarget) -> Vec<
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn labels_only_use_actors_from_successful_result_values() {
-        let actor = "01234567-89ab-cdef-0123-456789abcdef";
-        let refused = "11234567-89ab-cdef-0123-456789abcdef";
-        let payload = serde_json::json!([
-            {"request_id": refused, "created_by": refused, "value": {"item": [
-                {"created_by": actor, "updated_by": actor, "changed_by": refused},
-                {"created_by": "not-an-id"}
-            ]}},
-            {"error": {"created_by": refused}, "value": {"created_by": refused}}
-        ])
-        .to_string();
-        assert_eq!(super::result_actors(&payload), [actor]);
-        assert!(super::result_actors("invalid").is_empty());
-    }
-
     use super::*;
     use opentelemetry::metrics::MeterProvider as _;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};

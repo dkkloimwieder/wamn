@@ -40,7 +40,7 @@ impl<'a> Table<'a> {
         self
     }
 
-    /// Cap ordinary cells, but keep actor labels and their full ID fallback.
+    /// Cap ordinary cells, but keep actor IDs whole.
     fn widths(&self) -> Vec<usize> {
         const MAX: usize = 24;
         self.fields

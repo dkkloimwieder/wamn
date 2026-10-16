@@ -236,7 +236,6 @@ fn report(outcome: Result<DeliveryOutcome, DeliveryError>) -> DeliveryReport {
     DeliveryReport {
         outcome,
         deadline_adjustments: Vec::new(),
-        actor_labels: Vec::new(),
         etag: None,
     }
 }

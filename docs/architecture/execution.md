@@ -166,8 +166,8 @@ The router checks the rest of the item against the input schema.
 
 A streamed load answers with `Content-Type: application/x-ndjson`, one JSON value per line.
 Each row is one line `{"row":…}`, and the last line is `{"outcome":…}`.
-The outcome is `{"value":{"more":…},"actor_labels":{…}}` when the read ended, `{"error":…}` when the query refused, or `{"uncertain":{}}` when the host cannot say how the read ended.
-`more` is true when rows exist past the cap. The actor labels move from the response header into the outcome line, because the header leaves before the rows.
+The outcome is `{"value":{"more":…}}` when the read ended, `{"error":…}` when the query refused, or `{"uncertain":{}}` when the host cannot say how the read ended.
+`more` is true when rows exist past the cap.
 A body that ends without the outcome line is a failed load.
 The response is `private, no-cache` with the weak list ETag, which the host reads before the query runs, so an unchanged load answers 304.
 It sends `X-Accel-Buffering: no`, and the router writes one body chunk for each batch of lines, so no proxy holds a line back.
@@ -178,7 +178,7 @@ Every stage between the database and the socket holds a few batches at most, so 
 A load that stops ends its database query, whether it reached its cap, the client aborted it, or the connection dropped.
 A closed connection drops the reply lines, the host then drops the rows and the component's stream, and the host rolls the query's transaction back.
 The test `a_streamed_load_that_stops_ends_its_database_query` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) watches the server's open transactions for each of the three stops.
-The router calls `deliver-stream` of [`wamn:router-delivery` 0.3.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.3/package.wit), the one version in the tree.
+The router calls `deliver-stream` of [`wamn:router-delivery` 0.3.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit), the one version in the tree.
 [`query_read`](../../crates/execution/host/src/query_read.rs) owns the ceiling and the lines.
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
@@ -755,14 +755,9 @@ Nested and repeated fields retain their declared bounds.
 Unsupported input types block submission.
 Unknown output types remain display-only and appear as opaque values.
 
-Record screens recognize the reserved `created_by` and `updated_by` fields.
-The platform resolves their returned IDs through `app_system.users.display_name` in the same tenant.
-Label access inherits the authorized record read and requires no additional permission.
-The delivery report carries labels separately, and HTTP sends them in the `wamn-actor-labels` header.
-Generated SQL, application result contracts, and actor IDs remain unchanged.
-The screen shows the full ID when a name is missing, empty, or unavailable.
-HTTP omits label metadata above 4,096 bytes, so those results also show full IDs.
-Labels remain within the accepted screen response and reset with its records or session.
+Record screens show the returned `created_by` and `updated_by` IDs.
+A display name comes from the application's own SQL, which joins `app_system.users.display_name` where it needs a name.
+The platform adds no query after the result (`wamn-stxy9.1`).
 The history view keeps its existing behavior.
 
 The served route supplies its terminal response contract and whole-operation replay guarantee.

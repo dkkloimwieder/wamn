@@ -1,6 +1,7 @@
-package wamn:router-delivery@0.3.0;
+package wamn:router-delivery@0.4.0;
 
-/// 0.3.0 is 0.2.0 with `failure-kind` renamed `failure-type`, and the field
+/// 0.4.0 is 0.3.0 without `delivery-report.actor-labels`: actor names come
+/// from the application's own SQL (wamn-stxy9.1). 0.3.0 is 0.2.0 with `failure-kind` renamed `failure-type`, and the field
 /// `delivery-failure.kind` renamed `failure-type` (wamn-ld93.1). 0.2.0 added
 /// `deliver-stream`, which answers a query read as the rows arrive (owner
 /// ruling on wamn-utci, 2026-09-26). This is the one version in the tree.
@@ -131,8 +132,6 @@ interface delivery {
   record delivery-report {
     outcome: result<delivery-outcome, delivery-error>,
     deadline-adjustments: list<deadline-adjustment>,
-    /// Labels only for actor IDs in the authorized result.
-    actor-labels: list<tuple<string, string>>,
     /// The ETag of a read that responded or was not modified.
     etag: option<string>,
   }

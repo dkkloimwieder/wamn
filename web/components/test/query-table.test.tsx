@@ -138,7 +138,7 @@ describe("QueryTable", () => {
     const asked: unknown[] = [];
     const revalidated: (string | undefined)[] = [];
     const lines = `${rows.map((row) => JSON.stringify({ row })).join("\n")}\n${JSON.stringify({
-      outcome: { value: { more: true }, actor_labels: {} },
+      outcome: { value: { more: true } },
     })}\n`;
     const transport: Transport = {
       invoke: async () => ({ status: "uncertain", reason: "a stream reads no page", retryRefusal: null }),
@@ -185,7 +185,7 @@ describe("QueryTable", () => {
       created_at: "2026-09-21T00:00:00.000000Z",
     };
     const lines = `${JSON.stringify({ row })}\n${JSON.stringify({
-      outcome: { value: { more: false }, actor_labels: {} },
+      outcome: { value: { more: false } },
     })}\n`;
     const writes: ((writes: readonly string[] | null) => void)[] = [];
     let opens = 0;
