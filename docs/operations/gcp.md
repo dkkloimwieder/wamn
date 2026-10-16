@@ -844,3 +844,7 @@ After the resync, or on the owner's word while no resync exists, run `close-capt
 . $HOME/.cache/wamn-install/platform.sh
 target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 ```
+
+### 5.8 Benchmark
+
+The tier 2 benchmark runs from the VM `wamn-bench-client` with the operator PAT of Receiving ([install history](../history/gcp-install-history.md#64-bench-client-and-pat) sections 6.4 and 6.5). Tier 2 is pool `main` at 2 nodes. The results and the span breakdown are in [benchmark](benchmark.md).
