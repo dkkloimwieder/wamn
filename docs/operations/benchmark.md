@@ -137,6 +137,25 @@ Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)). Each run resets `pg_
 | 0.1.23, 19:48, warm reuse pool 16 | Receiving host alone on pool bench, Postgres alone on pool pg | 855/s, p50 15.2 | 335/s, p50 41.1 | 2 | 10 |
 | 0.1.25, 21:39, `wamn-stxy9.3` | Receiving host alone on pool bench, Postgres alone on pool pg | 822/s, p50 16.2 | 415/s, p50 34.8 | 1 | 7 |
 
+### Host profile, 0.1.25
+
+`wamn-xqxoa`. The run used `perf record -F 99 --call-graph dwarf` on the Receiving host for 60 s of get c16 (822/s), from a node debug pod on pool `bench`. The host used 1.64 CPUs under `perf`. The [flamegraph](../../tests/bench/flamegraph-get-c16-0.1.25.svg) holds the stacks. No symbol takes more than 2.5% except the two groups that `perf` cannot name, and the top 10 hold 35% of the samples.
+
+| Self time | Symbol |
+| --- | --- |
+| 13.86% | libc, no symbols (the debug pod libc is a different build) |
+| 8.90% | guest wasm code (`perf-<pid>.map`) |
+| 2.41% | `malloc` |
+| 2.36% | `free` |
+| 1.95% | `handle_softirqs` (network receive) |
+| 1.42% | `smp_call_function_many_cond` (TLB shootdown) |
+| 1.06% | `_raw_spin_unlock_irqrestore` |
+| 0.86% | `native_write_msr` |
+| 0.81% | `serde_json::Value::eq` |
+| 0.70% | `nft_do_chain` (packet filter) |
+
+During update c16, `pg_stat_activity` showed no lock wait. The update sessions waited on the host (`ClientRead`), on `WALWrite` and `WalSync` at commit, and on CPU. The bench gives each worker its own orders, so the 5.6 ms update statement is not one hot row.
+
 Issue 1 deleted the actor label query. Each call makes one call fewer, and the own time of `wamn.route.deliver` fell from 4.0 ms to 0.15 ms. The two runs differ in placement too. In the 0.1.21 run, both hosts, the collector and the event NATS share one 2-vCPU node, and the get host p50 rose to 31.7 ms. The collector restarted 11 times with `OOMKilled` (`wamn-kclnp`), so the 0.1.21 traces hold 2091 of 21636 get requests and no update request.
 
 In the 0.1.19 run, `wamn_cache.bump_version` took 20.2 ms mean per update, and the update statement 15.0 ms. With Postgres alone on its node, they took 2.1 ms and 3.0 ms.

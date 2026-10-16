@@ -1,0 +1,39 @@
+wamn-db-dkk--receiving--dev--mkvywy5s,23890,0.033,"SELECT set_config('statement_timeout', $1, true), set_config('search_path', COALESCE($2, current_setting('search_path')), true), set_config("
+wamn-db-dkk--receiving--dev--mkvywy5s,23881,0.001,COMMIT
+wamn-db-dkk--receiving--dev--mkvywy5s,23880,5.418,"WITH target AS MATERIALIZED ( SELECT id, row_version FROM purchase_order WHERE id = $1::uuid FOR UPDATE ), updated AS ( "
+wamn-db-dkk--receiving--dev--mkvywy5s,23880,0.015,BEGIN ISOLATION LEVEL READ COMMITTED
+wamn-db-dkk--receiving--dev--mkvywy5s,23880,0.165,"INSERT INTO app_system.write_log (operation, idempotency_key, request) VALUES ($1::text, $2::text, $3::bytea) ON CONFLICT (operation, idempo"
+wamn-db-dkk--receiving--dev--mkvywy5s,23880,0.015,"SELECT pg_logical_emit_message($1, $2, $3)"
+wamn-db-dkk--receiving--dev--mkvywy5s,23880,0.164,WITH finished AS (UPDATE app_system.write_log SET result = $3::text WHERE operation = $1::text AND idempotency_key = $2::text AND result IS 
+wamn-db-dkk--receiving--dev--mkvywy5s,478,0.070,"SELECT EXISTS ( SELECT $2 FROM pg_catalog.pg_roles AS authority WHERE authority.rolname = $1 AND pg_catalog.pg_has_role(CURRENT_USER, author"
+wamn-db-dkk--receiving--dev--mkvywy5s,478,0.033,"SELECT set_config('app.tenant', $1, true), set_config('statement_timeout', $2, true), set_config('search_path', COALESCE($3, current_setting"
+wamn-db-dkk--receiving--dev--mkvywy5s,478,0.013,BEGIN ISOLATION LEVEL READ COMMITTED
+wamn-db-dkk--receiving--dev--mkvywy5s,478,0.001,COMMIT
+wamn-db-dkk--wms--dev--uaoq8cmt,474,0.035,"SELECT set_config('app.tenant', $1, true), set_config('statement_timeout', $2, true), set_config('search_path', COALESCE($3, current_setting"
+wamn-db-dkk--wms--dev--uaoq8cmt,474,0.001,COMMIT
+wamn-db-dkk--wms--dev--uaoq8cmt,474,0.058,"SELECT EXISTS ( SELECT $2 FROM pg_catalog.pg_roles AS authority WHERE authority.rolname = $1 AND pg_catalog.pg_has_role(CURRENT_USER, author"
+wamn-db-dkk--wms--dev--uaoq8cmt,474,0.019,BEGIN ISOLATION LEVEL READ COMMITTED
+wamn-db-dkk--receiving--dev--mkvywy5s,239,0.047,"SELECT q.tenant_id, q.run_id, selected_run.status, selected_run.flow_id, selected_run.flow_version, selected_run.durability_class, selected_"
+wamn-db-dkk--receiving--dev--mkvywy5s,239,0.077,"WITH candidate AS MATERIALIZED ( SELECT q.tenant_id, q.run_id, q.lease_expires_at IS NOT NULL AS had_prior_lease FROM run_queue AS q JOIN ru"
+wamn-db-dkk--wms--dev--uaoq8cmt,237,0.035,"WITH candidate AS MATERIALIZED ( SELECT q.tenant_id, q.run_id, q.lease_expires_at IS NOT NULL AS had_prior_lease FROM run_queue AS q JOIN ru"
+wamn-db-dkk--wms--dev--uaoq8cmt,237,0.046,"SELECT q.tenant_id, q.run_id, selected_run.status, selected_run.flow_id, selected_run.flow_version, selected_run.durability_class, selected_"
+wamn-db-dkk--receiving--dev--mkvywy5s,89,0.049,"SELECT u.status = 'active', r.role_name, p.permission FROM app_system.users u LEFT JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id"
+wamn-db-dkk--receiving--dev--mkvywy5s,86,0.547,SELECT $3 FROM app_system.users WHERE tenant_id = $1 AND id = $2::text::uuid
+wamn_system,30,1.149,"SELECT coalesce(wait_event_type,$1), coalesce(wait_event,$2), state, count(*) FROM pg_stat_activity WHERE datname LIKE $3 AND state <> $4 GR"
+wamn-db-dkk--wms--dev--uaoq8cmt,26,0.009,BEGIN ISOLATION LEVEL READ COMMITTED
+wamn-db-dkk--wms--dev--uaoq8cmt,26,0.026,"SELECT set_config('app.tenant', $1, true), set_config('statement_timeout', $2, true), set_config('search_path', COALESCE($3, current_setting"
+wamn-db-dkk--wms--dev--uaoq8cmt,26,0.001,COMMIT
+wamn-db-dkk--wms--dev--uaoq8cmt,13,0.054,"SELECT registration_id, package_id, registration::text AS registration, tenant_id FROM catalog.event_registrations WHERE tenant_id = current"
+wamn-db-dkk--wms--dev--uaoq8cmt,13,0.047,"SELECT DISTINCT package_id FROM catalog.packages WHERE tenant_id = current_setting('app.tenant', true) ORDER BY package_id"
+wamn-db-dkk--receiving--dev--mkvywy5s,10,0.035,BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY
+wamn-db-dkk--receiving--dev--mkvywy5s,10,0.011,SELECT pg_current_wal_lsn()::text
+wamn-db-dkk--receiving--dev--mkvywy5s,10,0.653,FETCH FORWARD 500 FROM wamn_stream
+wamn-db-dkk--receiving--dev--mkvywy5s,10,0.539,"DECLARE wamn_stream NO SCROLL CURSOR FOR SELECT model.created_at, model.created_by, model.id, model.purchase_order_number, "
+wamn-db-dkk--receiving--dev--mkvywy5s,9,0.002,ROLLBACK
+wamn-db-dkk--receiving--dev--mkvywy5s,3,0.226,SELECT status = 'inactive' FROM app_system.environment
+wamn-db-dkk--receiving--dev--mkvywy5s,2,0.315,"SELECT query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname ="
+wamn_system,2,0.154,"SELECT p.id::text, p.type, p.subject, p.display_name, p.status, identity.pats.token_hash, (identity.pats.revoked_at IS NULL AND identity.pat"
+wamn-db-dkk--receiving--dev--mkvywy5s,2,0.044,"SELECT wal_status::text, safe_wal_size, (pg_current_wal_lsn() - restart_lsn)::bigint FROM pg_replication_slots WHERE slot_name = $1"
+wamn-db-dkk--wms--dev--uaoq8cmt,2,0.069,"SELECT wal_status::text, safe_wal_size, (pg_current_wal_lsn() - restart_lsn)::bigint FROM pg_replication_slots WHERE slot_name = $1"
+wamn-db-dkk--receiving--dev--mkvywy5s,2,0.192,"SELECT xact_commit, blks_hit, blks_read, numbackends FROM pg_stat_database WHERE datname = current_database()"
+wamn_system,1,0.238,SELECT pg_stat_statements_reset()
