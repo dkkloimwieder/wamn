@@ -1,0 +1,179 @@
+{
+  "host": "receiving.wamn.dev",
+  "call": "get",
+  "tier": "tier-2",
+  "concurrency": 16,
+  "duration_secs": 60.022764661,
+  "started_at_unix": 1792186793,
+  "orders": 1000,
+  "calls": 49396,
+  "errors": 0,
+  "error_rate": 0.0,
+  "error_kinds": {},
+  "throughput_per_sec": 822.954428690207,
+  "p50_ms": 16.188,
+  "p95_ms": 31.62,
+  "p99_ms": 51.715,
+  "postgres": {
+    "before": {
+      "database": {
+        "xact_commit": 1975941,
+        "blks_hit": 14654262,
+        "blks_read": 172562,
+        "numbackends": 5
+      },
+      "statements": [
+        {
+          "query": "FETCH FORWARD 500 FROM wamn_stream",
+          "calls": 10,
+          "total_exec_time_ms": 9.003233,
+          "mean_exec_time_ms": 0.9003232999999999,
+          "rows": 1009
+        },
+        {
+          "query": "DECLARE wamn_stream NO SCROLL CURSOR FOR SELECT\n    model.created_at,\n    model.created_by,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at,\n    model.updated_by\nFROM purchase_order AS model\nWHERE\n    ($1::jsonb IS NULL OR model.supplier_id IN (\n        SELECT filter.value::uuid\n        FROM jsonb_array_elements_text($1::jsonb) AS filter(value)\n    ))\n    AND\n    ($2::jsonb IS NULL OR model.status IN (\n        SELECT filter.value::text\n        FROM jsonb_array_elements_text($2::jsonb) AS filter(value)\n    ))\n    AND\n    ($3::jsonb IS NULL OR EXISTS (\n        SELECT $7\n        FROM jsonb_array_elements_text($3::jsonb) AS filter(value)\n        WHERE strpos(model.purchase_order_number, filter.value) > $8\n    ))\n    AND\n    ($4::timestamptz IS NULL OR model.created_at > $4::timestamptz\n        OR (model.created_at = $4::timestamptz AND model.id > $5::uuid))\nORDER BY model.created_at ASC, model.id ASC\nLIMIT $6::int8",
+          "calls": 10,
+          "total_exec_time_ms": 3.708464999999999,
+          "mean_exec_time_ms": 0.3708465,
+          "rows": 0
+        },
+        {
+          "query": "SELECT status = $1 FROM app_system.environment",
+          "calls": 1,
+          "total_exec_time_ms": 0.763844,
+          "mean_exec_time_ms": 0.763844,
+          "rows": 0
+        },
+        {
+          "query": "SELECT EXISTS ( SELECT $2 FROM pg_catalog.pg_roles AS authority WHERE authority.rolname = $1 AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, $3))",
+          "calls": 18,
+          "total_exec_time_ms": 0.6016230000000001,
+          "mean_exec_time_ms": 0.033423499999999995,
+          "rows": 18
+        },
+        {
+          "query": "SELECT set_config('app.tenant', $1, true), set_config('statement_timeout', $2, true), set_config('search_path', COALESCE($3, current_setting('search_path')), true), set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true), set_config('app.role', $5, true), set_config('app.user_id', $6, true), set_config('app.operation', $7, true)",
+          "calls": 18,
+          "total_exec_time_ms": 0.51351,
+          "mean_exec_time_ms": 0.028528333333333336,
+          "rows": 18
+        },
+        {
+          "query": "SELECT set_config($7, $1, $8), set_config($9, COALESCE($2, current_setting($10)), $11), set_config($12, COALESCE($3, current_setting($13, $14)), $15), set_config($16, $4, $17), set_config($18, $5, $19), set_config($20, $6, $21)",
+          "calls": 10,
+          "total_exec_time_ms": 0.41509700000000005,
+          "mean_exec_time_ms": 0.0415097,
+          "rows": 10
+        },
+        {
+          "query": "BEGIN ISOLATION LEVEL READ COMMITTED",
+          "calls": 18,
+          "total_exec_time_ms": 0.341456,
+          "mean_exec_time_ms": 0.01896977777777778,
+          "rows": 0
+        },
+        {
+          "query": "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
+          "calls": 10,
+          "total_exec_time_ms": 0.325639,
+          "mean_exec_time_ms": 0.0325639,
+          "rows": 0
+        },
+        {
+          "query": "WITH candidate AS MATERIALIZED ( SELECT q.tenant_id, q.run_id, q.lease_expires_at IS NOT NULL AS had_prior_lease FROM run_queue AS q JOIN runs AS selected_run ON selected_run.tenant_id = q.tenant_id AND selected_run.run_id = q.run_id WHERE q.tenant_id = current_setting('app.tenant', true) AND selected_run.package_id = ANY($1::text[]) AND selected_run.environment = $2 AND selected_run.manifest_digest IS NOT DISTINCT FROM $3::text AND q.available_at <= now() AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) AND ( q.attempts < q.max_attempts OR q.lease_expires_at IS NULL OR EXISTS ( SELECT 1 FROM effect_attempts AS effect WHERE effect.tenant_id = q.tenant_id AND effect.run_id = q.run_id AND selected_run.durability_class = 'durable' ) ) ORDER BY q.available_at, q.stream_seq, q.run_id FOR UPDATE OF selected_run, q SKIP LOCKED LIMIT 1 ) SELECT candidate.run_id, candidate.had_prior_lease, r.status, (CASE WHEN r.event_root_run_id IS NOT NULL AND r.event_depth IS NOT NULL THEN r.input_json || jsonb_build_object( 'causation', jsonb_build_object( 'run', r.run_id, 'root', r.event_root_run_id, 'depth', r.event_depth)) ELSE r.input_json END)::text AS input_json, r.durability_class, r.wiring_id, r.wiring_version, COALESCE( r.trigger_source IN ('http','internal','studio') OR (r.flow_id IS NULL AND r.flow_version IS NULL AND r.trigger_source IN ('scenario-draft','test-case')), false ) AS router_caller_attached, COALESCE(r.trigger_source IN ('http','internal','studio'), false) AS durable_caller_attached, r.flow_id, r.flow_version, r.wiring_hash, r.binding_world_json::text, r.package_id, r.service_principal_id::text FROM candidate JOIN runs AS r ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
+          "calls": 9,
+          "total_exec_time_ms": 0.31557300000000005,
+          "mean_exec_time_ms": 0.03506366666666667,
+          "rows": 0
+        },
+        {
+          "query": "SELECT q.tenant_id, q.run_id, selected_run.status, selected_run.flow_id, selected_run.flow_version, selected_run.durability_class, selected_run.wiring_id, selected_run.wiring_version FROM run_queue AS q JOIN runs AS selected_run ON selected_run.tenant_id = q.tenant_id AND selected_run.run_id = q.run_id WHERE q.tenant_id = current_setting('app.tenant', true) AND selected_run.package_id = ANY($2::text[]) AND selected_run.environment = $3 AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at + ($1::bigint * interval '1 millisecond') <= now() AND q.attempts >= q.max_attempts AND selected_run.status IN ('dispatched', 'running') ORDER BY q.available_at, q.stream_seq, q.run_id FOR UPDATE OF selected_run, q SKIP LOCKED LIMIT 1",
+          "calls": 9,
+          "total_exec_time_ms": 0.31036199999999997,
+          "mean_exec_time_ms": 0.034484666666666663,
+          "rows": 0
+        }
+      ]
+    },
+    "after": {
+      "database": {
+        "xact_commit": 2025768,
+        "blks_hit": 14812594,
+        "blks_read": 172563,
+        "numbackends": 25
+      },
+      "statements": [
+        {
+          "query": "SELECT\n    model.created_at,\n    model.created_by,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at,\n    model.updated_by\nFROM purchase_order AS model\nWHERE model.id = $1::uuid",
+          "calls": 49396,
+          "total_exec_time_ms": 1545.5061960000012,
+          "mean_exec_time_ms": 0.03128808397441084,
+          "rows": 49396
+        },
+        {
+          "query": "SELECT $3 FROM app_system.users WHERE tenant_id = $1 AND id = $2::text::uuid",
+          "calls": 66,
+          "total_exec_time_ms": 111.094355,
+          "mean_exec_time_ms": 1.683247803030303,
+          "rows": 66
+        },
+        {
+          "query": "SELECT status = $1 FROM app_system.environment",
+          "calls": 11,
+          "total_exec_time_ms": 16.201368,
+          "mean_exec_time_ms": 1.4728516363636361,
+          "rows": 0
+        },
+        {
+          "query": "SELECT EXISTS ( SELECT $2 FROM pg_catalog.pg_roles AS authority WHERE authority.rolname = $1 AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, $3))",
+          "calls": 468,
+          "total_exec_time_ms": 15.943528999999993,
+          "mean_exec_time_ms": 0.03406736965811963,
+          "rows": 468
+        },
+        {
+          "query": "SELECT set_config('app.tenant', $1, true), set_config('statement_timeout', $2, true), set_config('search_path', COALESCE($3, current_setting('search_path')), true), set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true), set_config('app.role', $5, true), set_config('app.user_id', $6, true), set_config('app.operation', $7, true)",
+          "calls": 468,
+          "total_exec_time_ms": 14.089087,
+          "mean_exec_time_ms": 0.030104886752136774,
+          "rows": 468
+        },
+        {
+          "query": "FETCH FORWARD 500 FROM wamn_stream",
+          "calls": 10,
+          "total_exec_time_ms": 9.003233,
+          "mean_exec_time_ms": 0.9003232999999999,
+          "rows": 1009
+        },
+        {
+          "query": "SELECT q.tenant_id, q.run_id, selected_run.status, selected_run.flow_id, selected_run.flow_version, selected_run.durability_class, selected_run.wiring_id, selected_run.wiring_version FROM run_queue AS q JOIN runs AS selected_run ON selected_run.tenant_id = q.tenant_id AND selected_run.run_id = q.run_id WHERE q.tenant_id = current_setting('app.tenant', true) AND selected_run.package_id = ANY($2::text[]) AND selected_run.environment = $3 AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at + ($1::bigint * interval '1 millisecond') <= now() AND q.attempts >= q.max_attempts AND selected_run.status IN ('dispatched', 'running') ORDER BY q.available_at, q.stream_seq, q.run_id FOR UPDATE OF selected_run, q SKIP LOCKED LIMIT 1",
+          "calls": 234,
+          "total_exec_time_ms": 8.753509999999995,
+          "mean_exec_time_ms": 0.03740816239316242,
+          "rows": 0
+        },
+        {
+          "query": "WITH candidate AS MATERIALIZED ( SELECT q.tenant_id, q.run_id, q.lease_expires_at IS NOT NULL AS had_prior_lease FROM run_queue AS q JOIN runs AS selected_run ON selected_run.tenant_id = q.tenant_id AND selected_run.run_id = q.run_id WHERE q.tenant_id = current_setting('app.tenant', true) AND selected_run.package_id = ANY($1::text[]) AND selected_run.environment = $2 AND selected_run.manifest_digest IS NOT DISTINCT FROM $3::text AND q.available_at <= now() AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) AND ( q.attempts < q.max_attempts OR q.lease_expires_at IS NULL OR EXISTS ( SELECT 1 FROM effect_attempts AS effect WHERE effect.tenant_id = q.tenant_id AND effect.run_id = q.run_id AND selected_run.durability_class = 'durable' ) ) ORDER BY q.available_at, q.stream_seq, q.run_id FOR UPDATE OF selected_run, q SKIP LOCKED LIMIT 1 ) SELECT candidate.run_id, candidate.had_prior_lease, r.status, (CASE WHEN r.event_root_run_id IS NOT NULL AND r.event_depth IS NOT NULL THEN r.input_json || jsonb_build_object( 'causation', jsonb_build_object( 'run', r.run_id, 'root', r.event_root_run_id, 'depth', r.event_depth)) ELSE r.input_json END)::text AS input_json, r.durability_class, r.wiring_id, r.wiring_version, COALESCE( r.trigger_source IN ('http','internal','studio') OR (r.flow_id IS NULL AND r.flow_version IS NULL AND r.trigger_source IN ('scenario-draft','test-case')), false ) AS router_caller_attached, COALESCE(r.trigger_source IN ('http','internal','studio'), false) AS durable_caller_attached, r.flow_id, r.flow_version, r.wiring_hash, r.binding_world_json::text, r.package_id, r.service_principal_id::text FROM candidate JOIN runs AS r ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
+          "calls": 234,
+          "total_exec_time_ms": 8.402288000000002,
+          "mean_exec_time_ms": 0.03590721367521364,
+          "rows": 0
+        },
+        {
+          "query": "SELECT u.status = $3, r.role_name, p.permission FROM app_system.users u LEFT JOIN app_system.user_roles r ON r.tenant_id = u.tenant_id AND r.user_id = u.id LEFT JOIN app_system.permissions p ON p.tenant_id = r.tenant_id AND p.role_name = r.role_name WHERE u.tenant_id = $1 AND u.id = $2::text::uuid",
+          "calls": 78,
+          "total_exec_time_ms": 7.921497999999999,
+          "mean_exec_time_ms": 0.10155766666666667,
+          "rows": 78
+        },
+        {
+          "query": "BEGIN ISOLATION LEVEL READ COMMITTED",
+          "calls": 468,
+          "total_exec_time_ms": 6.446832000000003,
+          "mean_exec_time_ms": 0.013775282051282057,
+          "rows": 0
+        }
+      ]
+    }
+  }
+}

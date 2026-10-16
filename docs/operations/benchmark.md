@@ -134,6 +134,8 @@ Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)). Each run resets `pg_
 | 0.1.21, 13:16, `wamn-stxy9.1` | main 2 nodes, Postgres alone on pool pg | 360/s, p50 37.3 | 276/s, p50 49.7 | 6 | 14 |
 | 0.1.21, 14:07, `wamn-0371x` | Receiving host alone on pool bench, Postgres alone on pool pg | 632/s, p50 22.6 | 284/s, p50 46.3 | 6 | 14 |
 | 0.1.23, 18:42, `wamn-stxy9.2` | Receiving host alone on pool bench, Postgres alone on pool pg | 645/s, p50 21.8 | 376/s, p50 36.3 | 2 | 10 |
+| 0.1.23, 19:48, warm reuse pool 16 | Receiving host alone on pool bench, Postgres alone on pool pg | 855/s, p50 15.2 | 335/s, p50 41.1 | 2 | 10 |
+| 0.1.25, 21:39, `wamn-stxy9.3` | Receiving host alone on pool bench, Postgres alone on pool pg | 822/s, p50 16.2 | 415/s, p50 34.8 | 1 | 7 |
 
 Issue 1 deleted the actor label query. Each call makes one call fewer, and the own time of `wamn.route.deliver` fell from 4.0 ms to 0.15 ms. The two runs differ in placement too. In the 0.1.21 run, both hosts, the collector and the event NATS share one 2-vCPU node, and the get host p50 rose to 31.7 ms. The collector restarted 11 times with `OOMKilled` (`wamn-kclnp`), so the 0.1.21 traces hold 2091 of 21636 get requests and no update request.
 
