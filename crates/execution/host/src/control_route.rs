@@ -55,6 +55,7 @@ use wamn_platform_identity::application::{
     ApplicationUser, environment_tenant, permission_rows, remove_admin, remove_user, role_names,
     write_admin, write_environment_status, write_user,
 };
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::{
     control_projects, is_org_admin, is_project_admin, org_projects,
 };
@@ -68,7 +69,6 @@ use wamn_platform_identity::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, check_user_contact,
 };
 use wamn_project_state::ADMIN_ROLE;
-use wamn_runtime::auth_cache::AuthChanges;
 
 /// Why an org route did not answer.
 #[derive(Debug)]
@@ -260,13 +260,15 @@ impl ControlRoutes<'_> {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
-                deactivate_org_membership(&transaction, &principal, self.org).await?;
+                let mut drops = AuthDrops::default();
+                deactivate_org_membership(&transaction, &principal, self.org, &mut drops).await?;
                 let environments = self
                     .environments(None, ApplicationWrite::RemoveUser)
                     .await?;
                 self.write_applications(attachment, caller, &principal, &environments)
                     .await?;
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 Ok(json!({ "principal_id": principal.as_str(), "status": "inactive" }))
             }
             HostHandler::OrgAdminGrant => {
@@ -284,13 +286,15 @@ impl ControlRoutes<'_> {
                 let principal = principal(payload)?;
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
-                revoke_org_admin(&transaction, &principal, self.org).await?;
+                let mut drops = AuthDrops::default();
+                revoke_org_admin(&transaction, &principal, self.org, &mut drops).await?;
                 let environments = self
                     .environments(None, ApplicationWrite::RemoveAdmin)
                     .await?;
                 self.write_applications(attachment, caller, &principal, &environments)
                     .await?;
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 Ok(json!({ "principal_id": principal.as_str(), "org_admin": false }))
             }
             HostHandler::EnvironmentList => {
@@ -388,12 +392,14 @@ impl ControlRoutes<'_> {
                 let transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
+                let mut drops = AuthDrops::default();
                 revoke_member(
                     &transaction,
                     &principal,
                     self.org,
                     &request.project,
                     &request.env,
+                    &mut drops,
                 )
                 .await?;
                 let environment = [(
@@ -403,6 +409,7 @@ impl ControlRoutes<'_> {
                 self.write_applications(attachment, caller, &principal, &environment)
                     .await?;
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 Ok(json!({
                     "principal_id": principal.as_str(),
                     "project": request.project,
@@ -437,13 +444,22 @@ impl ControlRoutes<'_> {
                 let transaction = self
                     .begin_in(&mut writer, attachment, caller, Some(&request.project))
                     .await?;
-                revoke_project_admin(&transaction, &principal, self.org, &request.project).await?;
+                let mut drops = AuthDrops::default();
+                revoke_project_admin(
+                    &transaction,
+                    &principal,
+                    self.org,
+                    &request.project,
+                    &mut drops,
+                )
+                .await?;
                 let environments = self
                     .environments(Some(&request.project), ApplicationWrite::RemoveAdmin)
                     .await?;
                 self.write_applications(attachment, caller, &principal, &environments)
                     .await?;
                 transaction.commit().await?;
+                self.changes.publish(drops).await;
                 Ok(json!({
                     "principal_id": principal.as_str(),
                     "project": request.project,
@@ -632,7 +648,7 @@ impl ControlRoutes<'_> {
         let mut completed: Vec<String> = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
             match write_status(&url, attachment, caller, status).await {
-                Ok(tenant) => self.changes.publish(&tenant).await,
+                Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
                         error = format!("{error:#}"),
@@ -724,8 +740,7 @@ impl ControlRoutes<'_> {
                     display_name,
                 });
             match write_application(&url, attachment, caller, principal, user, *write).await {
-                Ok(Some(tenant)) => self.changes.publish(&tenant).await,
-                Ok(None) => {}
+                Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
                         error = format!("{error:#}"),
@@ -794,7 +809,7 @@ impl ControlRoutes<'_> {
 }
 
 /// One environment's application write, in its own transaction on its
-/// administration login. It returns the tenant it wrote, or `None` when the
+/// administration login. It returns the drops of the write, none when the
 /// database holds no platform rows.
 async fn write_application(
     url: &str,
@@ -803,7 +818,7 @@ async fn write_application(
     principal: &PrincipalId,
     user: Option<ApplicationUser<'_>>,
     write: ApplicationWrite,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<AuthDrops> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls)
         .await
         .context("connect the administration login")?;
@@ -824,27 +839,28 @@ async fn write_application(
                 if error.error_type() == IdentityErrorType::NotFound
                     && write >= ApplicationWrite::RemoveAdmin =>
             {
-                return Ok(None);
+                return Ok(AuthDrops::default());
             }
             Err(error) => return Err(error.into()),
         };
+        let mut drops = AuthDrops::default();
         match (write, user) {
             (ApplicationWrite::User, Some(user)) => {
-                write_user(&transaction, &tenant, user).await?;
+                write_user(&transaction, &tenant, user, &mut drops).await?;
             }
             (ApplicationWrite::Admin, Some(user)) => {
-                write_admin(&transaction, &tenant, user).await?;
+                write_admin(&transaction, &tenant, user, &mut drops).await?;
             }
             (ApplicationWrite::RemoveAdmin, _) => {
-                remove_admin(&transaction, &tenant, principal).await?;
+                remove_admin(&transaction, &tenant, principal, &mut drops).await?;
             }
             (ApplicationWrite::RemoveUser, _) => {
-                remove_user(&transaction, &tenant, principal).await?;
+                remove_user(&transaction, &tenant, principal, &mut drops).await?;
             }
             (write, None) => anyhow::bail!("{write:?} needs the user's email and display name"),
         }
         transaction.commit().await?;
-        anyhow::Ok(Some(tenant))
+        anyhow::Ok(drops)
     }
     .await;
     drop(client);
@@ -921,13 +937,13 @@ async fn release_profile(
 }
 
 /// One environment's status row, in its own transaction on its
-/// administration login. It returns the tenant it wrote.
+/// administration login. It returns the drops of the write.
 async fn write_status(
     url: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<AuthDrops> {
     let (mut client, connection) = tokio_postgres::connect(url, NoTls)
         .await
         .context("connect the administration login")?;
@@ -942,9 +958,10 @@ async fn write_status(
             )
             .await?;
         let tenant = environment_tenant(&transaction).await?;
-        write_environment_status(&transaction, &tenant, status).await?;
+        let mut drops = AuthDrops::default();
+        write_environment_status(&transaction, &tenant, status, &mut drops).await?;
         transaction.commit().await?;
-        anyhow::Ok(tenant)
+        anyhow::Ok(drops)
     }
     .await;
     drop(client);

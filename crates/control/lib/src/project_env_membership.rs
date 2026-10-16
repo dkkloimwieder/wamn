@@ -7,6 +7,7 @@ use crate::provision_project_env::provisioning_transaction;
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
 use wamn_control_provision::validate_project_env;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::{
     PrincipalId, grant_project_env_membership, revoke_project_env_membership,
 };
@@ -37,13 +38,18 @@ enum Action {
 }
 
 /// Grant membership without changing an existing grant.
+/// A grant writes no fact that a host keeps, because a host keeps only the
+/// positive answer of a credential.
 pub async fn grant(args: ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
-    run(args, Action::Grant).await
+    run(args, Action::Grant, &AuthChanges::default()).await
 }
 
 /// Revoke membership without failing if the grant is absent.
-pub async fn revoke(args: ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
-    run(args, Action::Revoke).await
+pub async fn revoke(
+    args: ProjectEnvMembershipRequest,
+    changes: &AuthChanges,
+) -> anyhow::Result<PrincipalId> {
+    run(args, Action::Revoke, changes).await
 }
 
 fn validate_args(args: &ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
@@ -52,7 +58,11 @@ fn validate_args(args: &ProjectEnvMembershipRequest) -> anyhow::Result<Principal
     args.principal_id.parse().context("invalid --principal-id")
 }
 
-async fn run(args: ProjectEnvMembershipRequest, action: Action) -> anyhow::Result<PrincipalId> {
+async fn run(
+    args: ProjectEnvMembershipRequest,
+    action: Action,
+    changes: &AuthChanges,
+) -> anyhow::Result<PrincipalId> {
     let principal_id = validate_args(&args)?;
     let (mut client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)
         .await
@@ -64,6 +74,7 @@ async fn run(args: ProjectEnvMembershipRequest, action: Action) -> anyhow::Resul
             .await
             .context("SET ROLE wamn_system for project environment membership")?;
         let transaction = provisioning_transaction(&mut client).await?;
+        let mut drops = AuthDrops::default();
         match action {
             Action::Grant => {
                 grant_project_env_membership(
@@ -83,6 +94,7 @@ async fn run(args: ProjectEnvMembershipRequest, action: Action) -> anyhow::Resul
                     &args.org,
                     &args.project,
                     &args.env,
+                    &mut drops,
                 )
                 .await
                 .context("revoke project environment membership")?;
@@ -92,6 +104,7 @@ async fn run(args: ProjectEnvMembershipRequest, action: Action) -> anyhow::Resul
             .commit()
             .await
             .context("commit project environment membership")?;
+        changes.publish(drops).await;
         Ok::<(), anyhow::Error>(())
     }
     .await;

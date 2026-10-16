@@ -28,9 +28,9 @@ use wamn_platform_identity::application::{
     grant_permission, grant_user_role, permission_rows, require_user, revoke_permission,
     revoke_user_role, role_names,
 };
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::is_project_admin;
 use wamn_project_state::ADMIN_ROLE;
-use wamn_runtime::auth_cache::AuthChanges;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 use crate::control_route::{Refusal, parse};
@@ -108,21 +108,15 @@ impl ApplicationRoutes<'_> {
         payload: &str,
     ) -> Result<Value, Refusal> {
         let tenant = self.release.scope().tenant_id.as_str();
-        let writes = matches!(
-            attachment.route.handler,
-            HostHandler::RoleCreate
-                | HostHandler::RoleDelete
-                | HostHandler::PermissionGrant
-                | HostHandler::PermissionRevoke
-                | HostHandler::UserRoleGrant
-                | HostHandler::UserRoleRevoke
-        );
-        let result = self.serve(attachment, principal, payload, tenant).await;
+        let mut drops = AuthDrops::default();
+        let result = self
+            .serve(attachment, principal, payload, tenant, &mut drops)
+            .await;
         // The host drops its own memory at once, and the message reaches the
         // other hosts of the tenant.
-        if writes && result.is_ok() {
+        if result.is_ok() && !drops.is_empty() {
             self.postgres.auth_cache().clear();
-            self.changes.publish(tenant).await;
+            self.changes.publish(drops).await;
         }
         result
     }
@@ -133,6 +127,7 @@ impl ApplicationRoutes<'_> {
         principal: &PrincipalId,
         payload: &str,
         tenant: &str,
+        drops: &mut AuthDrops,
     ) -> Result<Value, Refusal> {
         match attachment.route.handler {
             HostHandler::ApplicationUserList => {
@@ -165,7 +160,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleCreate => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let created = create_role(client, tenant, &request.role).await?;
+                    let created = create_role(client, tenant, &request.role, drops).await?;
                     Ok(json!({ "created": created }))
                 })
                 .await
@@ -173,7 +168,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleDelete => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let deleted = delete_role(client, tenant, &request.role).await?;
+                    let deleted = delete_role(client, tenant, &request.role, drops).await?;
                     Ok(json!({ "deleted": deleted }))
                 })
                 .await
@@ -202,7 +197,8 @@ impl ApplicationRoutes<'_> {
                 }
                 self.run(attachment, principal, true, async |client| {
                     let outcome =
-                        grant_permission(client, tenant, &request.role, &request.operation).await?;
+                        grant_permission(client, tenant, &request.role, &request.operation, drops)
+                            .await?;
                     Ok(json!({ "rows_added": outcome.rows_added }))
                 })
                 .await
@@ -210,7 +206,8 @@ impl ApplicationRoutes<'_> {
             HostHandler::PermissionRevoke => {
                 let request: PermissionRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    revoke_permission(client, tenant, &request.role, &request.operation).await?;
+                    revoke_permission(client, tenant, &request.role, &request.operation, drops)
+                        .await?;
                     Ok(json!({}))
                 })
                 .await
@@ -221,7 +218,8 @@ impl ApplicationRoutes<'_> {
                 let user_id = user.as_str();
                 self.run(attachment, principal, false, async |client| {
                     require_user(client, tenant, user_id).await?;
-                    let granted = grant_user_role(client, tenant, user_id, &request.role).await?;
+                    let granted =
+                        grant_user_role(client, tenant, user_id, &request.role, drops).await?;
                     Ok(json!({ "granted": granted }))
                 })
                 .await
@@ -243,7 +241,8 @@ impl ApplicationRoutes<'_> {
                 let user_id = user.as_str();
                 self.run(attachment, principal, false, async |client| {
                     require_user(client, tenant, user_id).await?;
-                    let revoked = revoke_user_role(client, tenant, user_id, &request.role).await?;
+                    let revoked =
+                        revoke_user_role(client, tenant, user_id, &request.role, drops).await?;
                     Ok(json!({ "revoked": revoked }))
                 })
                 .await

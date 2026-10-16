@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
+use wamn_platform_identity::auth_changes::AuthDrops;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
@@ -408,6 +409,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
         TENANT,
         "purchase-writer",
         "session-test:purchase/approve",
+        &mut AuthDrops::default(),
     )
     .await?;
     assert_eq!(granted.rows_added, 1, "the unserved reference is stored");

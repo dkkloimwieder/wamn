@@ -211,6 +211,7 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         &app.work.join("release-chart"),
     )?;
     let platform = Platform {
+        auth_nats: None,
         system_database_url: app.system_database_url.to_owned(),
         target: Target {
             kubeconfig: app.kept.kubeconfig(),

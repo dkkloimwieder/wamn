@@ -1,6 +1,7 @@
 //! Real-PostgreSQL test for the platform identity core.
 
 use std::time::Duration;
+use wamn_platform_identity::auth_changes::AuthDrops;
 
 use tokio_postgres::error::SqlState;
 use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
@@ -137,7 +138,7 @@ async fn platform_identity_round_trip_on_postgres() {
     project_environment_membership_round_trip(&client, &user, &service).await;
     project_delete_removes_its_roles_and_memberships(&client, &user).await;
 
-    let disabled = disable_principal(&client, user.id())
+    let disabled = disable_principal(&client, user.id(), &mut AuthDrops::default())
         .await
         .expect("disable user");
     assert_eq!(disabled.status(), PrincipalStatus::Disabled);
@@ -411,9 +412,16 @@ async fn project_environment_membership_round_trip(
             .expect("grant independent memberships before revocation");
     }
     assert!(
-        revoke_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-            .await
-            .expect("revoke membership")
+        revoke_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            "dev",
+            &mut AuthDrops::default()
+        )
+        .await
+        .expect("revoke membership")
     );
     assert!(
         route_principal_id(&reads, client, user_token.token(), "demo", "widgets", "dev")
@@ -422,9 +430,16 @@ async fn project_environment_membership_round_trip(
         "the prepared PAT query must observe membership revocation"
     );
     assert!(
-        !revoke_project_env_membership(client, user.id(), "demo", "widgets", "dev")
-            .await
-            .expect("repeat revocation harmlessly")
+        !revoke_project_env_membership(
+            client,
+            user.id(),
+            "demo",
+            "widgets",
+            "dev",
+            &mut AuthDrops::default()
+        )
+        .await
+        .expect("repeat revocation harmlessly")
     );
     for (principal, org, project, env) in other_memberships {
         assert!(

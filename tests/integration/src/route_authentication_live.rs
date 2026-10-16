@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 
 use anyhow::Context as _;
 use tokio_postgres::Client;
@@ -124,7 +125,7 @@ async fn grant_service_operator(
         user: email,
         role: ITEM_READER.to_owned(),
     };
-    let outcome = user_roles::grant_role(&request)
+    let outcome = user_roles::grant_role(&request, &AuthChanges::default())
         .await
         .context("grant the authored role")?;
     anyhow::ensure!(outcome.changed, "the first grant wrote no row");
@@ -608,7 +609,7 @@ async fn assert_user_environment_membership(
             .expect("authenticate user before PAT revocation")
             .is_some()
     );
-    revoke_pat(admin, revoked.record().prefix()).await?;
+    revoke_pat(admin, revoked.record().prefix(), &mut AuthDrops::default()).await?;
     for (label, invalid) in [
         ("forged user PAT", flip_last_hex_digit(token.token())),
         ("expired user PAT", expired.token().to_owned()),
@@ -687,7 +688,11 @@ async fn assert_user_environment_membership(
     .await
     .expect("restored environment role authorizes again");
     for _ in 0..2 {
-        project_env_membership::revoke(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+        project_env_membership::revoke(
+            membership(ORG, ENVIRONMENT, user.id().as_str()),
+            &AuthChanges::default(),
+        )
+        .await?;
         assert_eq!(
             invoke(
                 route_auth,
@@ -700,7 +705,7 @@ async fn assert_user_environment_membership(
         );
     }
     project_env_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
-    disable_principal(admin, user.id()).await?;
+    disable_principal(admin, user.id(), &mut AuthDrops::default()).await?;
     assert_eq!(
         invoke(
             route_auth,
@@ -865,7 +870,7 @@ async fn production_operator_authentication_and_operation_authorization() {
             .expect("authenticate service before PAT revocation")
             .is_some()
     );
-    revoke_pat(admin.as_ref(), &revoked.1)
+    revoke_pat(admin.as_ref(), &revoked.1, &mut AuthDrops::default())
         .await
         .expect("revoke PAT");
     admin
@@ -971,7 +976,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     .await
     .expect("the admin project role passes the identity check");
     assert_eq!(admin_admissions, 1);
-    disable_principal(admin.as_ref(), principal.id())
+    disable_principal(admin.as_ref(), principal.id(), &mut AuthDrops::default())
         .await
         .expect("disable the configured service principal");
     assert_eq!(
@@ -1010,7 +1015,7 @@ async fn production_operator_authentication_and_operation_authorization() {
     .await
     .expect("a live PAT reaches router admission before its revocation");
     assert_eq!(in_use_admissions, 1);
-    revoke_pat(admin.as_ref(), &in_use.1)
+    revoke_pat(admin.as_ref(), &in_use.1, &mut AuthDrops::default())
         .await
         .expect("revoke the PAT that just authenticated");
     assert_eq!(
@@ -1187,7 +1192,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         ("service@example.invalid", ITEM_READER),
         ("Person@Example.invalid", ITEM_READER),
     ] {
-        let outcome = user_roles::grant_role(&request(user, role))
+        let outcome = user_roles::grant_role(&request(user, role), &AuthChanges::default())
             .await
             .unwrap_or_else(|error| panic!("grant {role} to {user}: {error:#}"));
         assert!(
@@ -1195,9 +1200,12 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
             "the grant of {role} to {user} wrote no row"
         );
     }
-    let again = user_roles::grant_role(&request("service@example.invalid", ITEM_READER))
-        .await
-        .expect("a repeated grant succeeds");
+    let again = user_roles::grant_role(
+        &request("service@example.invalid", ITEM_READER),
+        &AuthChanges::default(),
+    )
+    .await
+    .expect("a repeated grant succeeds");
     assert!(!again.changed, "a repeated grant wrote a second row");
     assert_eq!(
         held("person@example.invalid").await,
@@ -1211,7 +1219,7 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         ("nobody@example.invalid", ITEM_READER, "env apply"),
         ("twin@example.invalid", ITEM_READER, "names 2 users"),
     ] {
-        let error = user_roles::grant_role(&request(user, role))
+        let error = user_roles::grant_role(&request(user, role), &AuthChanges::default())
             .await
             .expect_err("the grant must refuse");
         assert!(
@@ -1222,21 +1230,32 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
     let mut wrong_env = request("person@example.invalid", ITEM_READER);
     wrong_env.env = OTHER_ENVIRONMENT.to_owned();
     assert!(
-        user_roles::grant_role(&wrong_env).await.is_err(),
+        user_roles::grant_role(&wrong_env, &AuthChanges::default())
+            .await
+            .is_err(),
         "a registry target without a recorded instance was accepted"
     );
 
-    let revoked = user_roles::revoke_role(&request("person@example.invalid", ADMIN_ROLE))
-        .await
-        .expect("revoke admin");
+    let revoked = user_roles::revoke_role(
+        &request("person@example.invalid", ADMIN_ROLE),
+        &AuthChanges::default(),
+    )
+    .await
+    .expect("revoke admin");
     assert!(revoked.changed);
-    let revoked = user_roles::revoke_role(&request("service@example.invalid", ITEM_READER))
-        .await
-        .expect("revoke the authored role");
+    let revoked = user_roles::revoke_role(
+        &request("service@example.invalid", ITEM_READER),
+        &AuthChanges::default(),
+    )
+    .await
+    .expect("revoke the authored role");
     assert!(revoked.changed);
-    let unchanged = user_roles::revoke_role(&request("service@example.invalid", ITEM_READER))
-        .await
-        .expect("a repeated revoke succeeds");
+    let unchanged = user_roles::revoke_role(
+        &request("service@example.invalid", ITEM_READER),
+        &AuthChanges::default(),
+    )
+    .await
+    .expect("a repeated revoke succeeds");
     assert!(!unchanged.changed, "a repeated revoke removed a row");
     assert_eq!(held("person@example.invalid").await, [ITEM_READER]);
     assert!(held("service@example.invalid").await.is_empty());
@@ -1251,27 +1270,45 @@ async fn role_verbs_grant_and_revoke_existing_roles() {
         tenant: TENANT.to_owned(),
     };
     assert!(
-        role_permissions::create_role_in(&target, "clerk")
+        role_permissions::create_role_in(&target, "clerk", &AuthChanges::default())
             .await
             .expect("create an authored role")
     );
-    user_roles::grant_role(&request("service@example.invalid", "clerk"))
-        .await
-        .expect("grant the created role");
+    user_roles::grant_role(
+        &request("service@example.invalid", "clerk"),
+        &AuthChanges::default(),
+    )
+    .await
+    .expect("grant the created role");
     // R18 (4): a grant stores the root with no serving release to check.
-    let granted = role_permissions::grant_permission_in(&target, "clerk", OPERATION_REFERENCE)
-        .await
-        .expect("a grant stores the root");
+    let granted = role_permissions::grant_permission_in(
+        &target,
+        "clerk",
+        OPERATION_REFERENCE,
+        &AuthChanges::default(),
+    )
+    .await
+    .expect("a grant stores the root");
     assert_eq!(granted.rows_added, 1);
-    role_permissions::revoke_permission_in(&target, "clerk", OPERATION_REFERENCE)
-        .await
-        .expect("revoke the stored root");
-    let error = role_permissions::revoke_permission_in(&target, "clerk", OPERATION_REFERENCE)
-        .await
-        .expect_err("a revoke of an unheld permission refuses");
+    role_permissions::revoke_permission_in(
+        &target,
+        "clerk",
+        OPERATION_REFERENCE,
+        &AuthChanges::default(),
+    )
+    .await
+    .expect("revoke the stored root");
+    let error = role_permissions::revoke_permission_in(
+        &target,
+        "clerk",
+        OPERATION_REFERENCE,
+        &AuthChanges::default(),
+    )
+    .await
+    .expect_err("a revoke of an unheld permission refuses");
     assert!(format!("{error:#}").contains("does not hold"), "{error:#}");
     assert!(
-        role_permissions::delete_role_in(&target, "clerk")
+        role_permissions::delete_role_in(&target, "clerk", &AuthChanges::default())
             .await
             .expect("delete the authored role")
     );

@@ -21,8 +21,8 @@ use wamn_engine::router_delivery::{
 };
 use wamn_identity_client::PatIssuerConfig;
 use wamn_platform_identity::PrincipalId;
+use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::control::{control_projects, is_org_admin, org_projects};
-use wamn_runtime::auth_cache::AuthChanges;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 
 use crate::application_route::ApplicationRoutes;

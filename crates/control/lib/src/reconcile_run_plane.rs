@@ -155,6 +155,9 @@ pub struct ReconcileRunPlaneRequest {
 
     /// Plan without applying (strictly read-only).
     pub dry_run: bool,
+
+    /// Publishes the users rows the reconciliation wrote or removed.
+    pub changes: wamn_platform_identity::auth_changes::AuthChanges,
 }
 
 /// Result of one run-plane reconciliation.
@@ -356,9 +359,14 @@ pub async fn reconcile_run_plane(
             &args.env,
         )
         .await?;
-        let tenant_identity =
-            converge_tenant_identity(&mut client, &args.tenant, &identity_source, !args.dry_run)
-                .await?;
+        let tenant_identity = converge_tenant_identity(
+            &mut client,
+            &args.tenant,
+            &identity_source,
+            !args.dry_run,
+            &args.changes,
+        )
+        .await?;
         Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, tenant_identity))
     }
     .await;
@@ -567,6 +575,7 @@ async fn converge_tenant_identity(
     tenant_id: &str,
     source: &TenantIdentitySource,
     apply: bool,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
 ) -> anyhow::Result<TenantIdentityOutcome> {
     anyhow::ensure!(!tenant_id.is_empty(), "tenant must not be empty");
     let mut outcome = TenantIdentityOutcome::default();
@@ -709,6 +718,7 @@ async fn converge_tenant_identity(
         .transaction()
         .await
         .context("open the tenant identity transaction")?;
+    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
     if !app_schema_present {
         transaction
             .batch_execute(APP_SCHEMA_SQL)
@@ -739,41 +749,45 @@ async fn converge_tenant_identity(
             .await
             .context("bind wamn:provisioning for the service and user rows")?;
         for id in &stale_users {
-            transaction
-                .execute(
-                    "DELETE FROM app_system.users \
-                     WHERE tenant_id = $1 AND id = $2::text::uuid AND type = 'user'",
-                    &[&tenant_id, id],
-                )
-                .await
-                .with_context(|| format!("remove the user row of principal {id}"))?;
+            let principal_id: wamn_platform_identity::PrincipalId = id.parse()?;
+            wamn_platform_identity::application::remove_user(
+                &transaction,
+                tenant_id,
+                &principal_id,
+                &mut drops,
+            )
+            .await
+            .with_context(|| format!("remove the user row of principal {id}"))?;
         }
         for service in &missing_services {
-            transaction
-                .execute(
-                    "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
-                     VALUES ($1, $2::text::uuid, 'service', $3, $4)",
-                    &[
-                        &tenant_id,
-                        &service.id,
-                        &format!("{}@{platform_domain}", service.subject),
-                        &service.display_name,
-                    ],
-                )
-                .await
-                .with_context(|| {
-                    format!("write the service row of principal {:?}", service.subject)
-                })?;
+            let principal_id: wamn_platform_identity::PrincipalId = service.id.parse()?;
+            wamn_platform_identity::application::write_service(
+                &transaction,
+                tenant_id,
+                wamn_platform_identity::application::ApplicationUser {
+                    principal_id: &principal_id,
+                    email: &format!("{}@{platform_domain}", service.subject),
+                    display_name: &service.display_name,
+                },
+                &mut drops,
+            )
+            .await
+            .with_context(|| format!("write the service row of principal {:?}", service.subject))?;
         }
         for user in &missing_users {
-            transaction
-                .execute(
-                    "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
-                     VALUES ($1, $2::text::uuid, 'user', $3, $4)",
-                    &[&tenant_id, &user.id, &user.email, &user.display_name],
-                )
-                .await
-                .with_context(|| format!("write the user row of principal {}", user.id))?;
+            let principal_id: wamn_platform_identity::PrincipalId = user.id.parse()?;
+            wamn_platform_identity::application::write_user(
+                &transaction,
+                tenant_id,
+                wamn_platform_identity::application::ApplicationUser {
+                    principal_id: &principal_id,
+                    email: &user.email,
+                    display_name: &user.display_name,
+                },
+                &mut drops,
+            )
+            .await
+            .with_context(|| format!("write the user row of principal {}", user.id))?;
         }
         for user in &missing_admins {
             let principal_id: wamn_platform_identity::PrincipalId = user.id.parse()?;
@@ -785,6 +799,7 @@ async fn converge_tenant_identity(
                     email: &user.email,
                     display_name: &user.display_name,
                 },
+                &mut drops,
             )
             .await
             .with_context(|| format!("write the admin row of principal {}", user.id))?;
@@ -794,6 +809,7 @@ async fn converge_tenant_identity(
         .commit()
         .await
         .context("commit the tenant identity rows")?;
+    changes.publish(drops).await;
     Ok(outcome)
 }
 

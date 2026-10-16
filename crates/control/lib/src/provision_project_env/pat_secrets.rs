@@ -213,7 +213,11 @@ async fn resolve_or_create_service(
     }
 }
 
-pub async fn revoke_provisioning_pat(system_url: &str, prefix: &str) -> anyhow::Result<()> {
+pub async fn revoke_provisioning_pat(
+    system_url: &str,
+    prefix: &str,
+    changes: &wamn_platform_identity::auth_changes::AuthChanges,
+) -> anyhow::Result<()> {
     let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect for PAT revocation")?;
@@ -224,13 +228,15 @@ pub async fn revoke_provisioning_pat(system_url: &str, prefix: &str) -> anyhow::
             .await
             .context("SET ROLE wamn_system for PAT revocation")?;
         let transaction = provisioning_transaction(&mut client).await?;
-        revoke_pat(&transaction, prefix)
+        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        revoke_pat(&transaction, prefix, &mut drops)
             .await
             .context("revoke PAT by prefix")?;
         transaction
             .commit()
             .await
             .context("commit PAT revocation")?;
+        changes.publish(drops).await;
         Ok::<(), anyhow::Error>(())
     }
     .await;

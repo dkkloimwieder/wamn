@@ -8,6 +8,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
@@ -219,7 +220,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
             writer,
             identity: None,
             org: ORG.to_owned(),
-            changes: wamn_runtime::auth_cache::AuthChanges::default(),
+            changes: AuthChanges::default(),
         },
         None,
     ));

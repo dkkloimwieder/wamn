@@ -1310,9 +1310,14 @@ impl Run {
             .iter()
             .map(|row| row.get(0))
             .collect();
+        let changes = platform(&environment)?.auth_changes().await?;
         for prefix in &older {
-            crate::provision_project_env::revoke_provisioning_pat(&databases.system_url(), prefix)
-                .await?;
+            crate::provision_project_env::revoke_provisioning_pat(
+                &databases.system_url(),
+                prefix,
+                &changes,
+            )
+            .await?;
         }
         outputs.insert("revoked PATs".to_owned(), older.join(", "));
         outputs.insert("current PAT".to_owned(), pat);

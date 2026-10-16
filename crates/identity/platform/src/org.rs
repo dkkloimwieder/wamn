@@ -9,6 +9,7 @@
 
 use tokio_postgres::GenericClient;
 
+use crate::auth_changes::AuthDrops;
 use crate::{
     IdentityError, IdentityErrorType, IdentityRefusal, PrincipalId, checked_scope_segment, control,
     database_error,
@@ -176,6 +177,7 @@ pub async fn revoke_member(
     org: &str,
     project: &str,
     env: &str,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
@@ -203,7 +205,7 @@ pub async fn revoke_member(
             ),
         ));
     }
-    crate::revoke_project_env_membership(client, principal_id, &org, &project, env).await?;
+    crate::revoke_project_env_membership(client, principal_id, &org, &project, env, drops).await?;
     Ok(())
 }
 
@@ -217,10 +219,12 @@ pub async fn revoke_project_admin(
     principal_id: &PrincipalId,
     org: &str,
     project: &str,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
+    drops.identity(principal_id.as_str());
     client
         .execute(
             DROP_PROJECT_ADMIN_SQL,
@@ -456,9 +460,11 @@ pub async fn deactivate_org_membership(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
     org: &str,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = member(client, principal_id, org).await?;
     let principal = principal_id.as_str();
+    drops.identity(principal);
     let every: Option<&str> = None;
     client
         .execute(DROP_ENV_MEMBERSHIPS_SQL, &[&principal, &org])
@@ -485,9 +491,11 @@ pub async fn revoke_org_admin(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
     org: &str,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let principal = principal_id.as_str();
+    drops.identity(principal);
     client
         .execute(
             DROP_PROJECT_ROLES_SQL,

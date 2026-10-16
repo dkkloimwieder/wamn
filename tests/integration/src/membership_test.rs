@@ -9,6 +9,7 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 use anyhow::{Context as _, anyhow, ensure};
 use clap::Args;
@@ -312,7 +313,8 @@ async fn membership(
                 wamn_control::project_env_membership::grant(arguments).await
             }
             "revoke-project-env-membership" => {
-                wamn_control::project_env_membership::revoke(arguments).await
+                wamn_control::project_env_membership::revoke(arguments, &AuthChanges::default())
+                    .await
             }
             _ => unreachable!("the membership test names only its two control operations"),
         }

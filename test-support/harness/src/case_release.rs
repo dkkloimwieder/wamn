@@ -633,6 +633,7 @@ pub async fn install_candidate(
     let registry = package_registry(candidate)?;
     // The stage reads the system database and the package registry only.
     let platform = Platform {
+        auth_nats: None,
         system_database_url: system_database_url.to_owned(),
         target: Target {
             kubeconfig: PathBuf::new(),

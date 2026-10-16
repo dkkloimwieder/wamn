@@ -14,6 +14,9 @@ operatorCaSecret: identity-operator-ca
 resendSecret: identity-resend
 resendFrom: noreply@wamn.dev
 inviteUrl: https://receiving.wamn.dev
+authNats:
+  url: nats://nats.platform.svc.cluster.local:4222
+  tlsSecret: wasmcloud-runtime-tls
 sessionTargetSecrets:
   - wamn-session-role-reader-dkk--receiving--dev
   - wamn-session-role-reader-dkk--wms--dev

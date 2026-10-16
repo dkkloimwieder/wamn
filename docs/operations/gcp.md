@@ -364,20 +364,22 @@ kubectl -n platform logs evt-nats-check
 kubectl -n platform delete pod evt-nats-check
 ```
 
-Forward the event NATS to this machine:
+Forward the event NATS and the scheduler NATS to this machine. `wamn-ctl` publishes its auth changes on the scheduler NATS:
 
 ```bash
 W=$HOME/.cache/wamn-install
 setsid kubectl -n platform port-forward svc/evt-nats 14222:4222 > $W/pf-nats.log 2>&1 < /dev/null &
+setsid kubectl -n platform port-forward svc/nats 14223:4222 > $W/pf-sched.log 2>&1 < /dev/null &
 ```
 
 ### 4.9 Platform install inputs
 
-`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Every host runs as the service account `wamn-host`, which acts as `wamn-blob` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. The two platform manifests state no namespace, so apply them into the release namespace:
+`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Every host runs as the service account `wamn-host`, which acts as `wamn-blob` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. [auth-nats-clients.yaml](../../deploy/gcp/auth-nats-clients.yaml) holds the scheduler NATS client certificates of identity and `wamn-ctl`, which publish auth changes to the hosts. The two platform manifests state no namespace, so apply them into the release namespace:
 
 ```bash
 kubectl apply -f deploy/gcp/registry-helper.yaml
 kubectl apply -f deploy/gcp/bench-host-placement.yaml
+kubectl apply -f deploy/gcp/auth-nats-clients.yaml
 kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
 kubectl -n hosts annotate serviceaccount wamn-host --overwrite \
   iam.gke.io/gcp-service-account=wamn-blob@wamn-dev.iam.gserviceaccount.com
@@ -405,6 +407,18 @@ export WAMN_RELEASE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/relea
 export WAMN_PACKAGE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/packages
 export WAMN_REGISTRY_AUTH_FILE=$W/registry/config.json
 export WAMN_EVENT_NATS_URL=nats://127.0.0.1:14222
+# The scheduler NATS of the auth changes, through the port-forward of section 4.8.
+export WAMN_AUTH_NATS_URL=nats://127.0.0.1:14223
+export WAMN_AUTH_NATS_TLS_SERVER_NAME=nats.platform.svc.cluster.local
+export WAMN_AUTH_NATS_TLS_CA=$W/auth-nats/ca.crt
+export WAMN_AUTH_NATS_TLS_CERT=$W/auth-nats/tls.crt
+export WAMN_AUTH_NATS_TLS_KEY=$W/auth-nats/tls.key
+if [ ! -d $W/auth-nats ]; then
+  (umask 077; mkdir $W/auth-nats
+   for k in ca.crt tls.crt tls.key; do
+     kubectl -n platform get secret wamn-ctl-auth-nats -o jsonpath="{.data.${k//./\\.}}" | base64 -d > $W/auth-nats/$k
+   done)
+fi
 export DOCKER_CONFIG=$W/docker
 # The registry token lasts one hour. Write a new one before each step that reads it.
 registry_token() {

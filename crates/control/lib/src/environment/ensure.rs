@@ -143,6 +143,7 @@ pub async fn ensure(
             env: document.env.clone(),
             schema: RUN_SCHEMA.to_owned(),
             dry_run: false,
+            changes: platform.auth_changes().await?,
         },
     )
     .await

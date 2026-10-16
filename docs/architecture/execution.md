@@ -399,9 +399,16 @@ The [memory](../../crates/platform/runtime/src/auth_cache.rs) holds an admitted 
 One read of `app_system.users`, `app_system.user_roles` and `app_system.permissions` answers the permission check and the users-row check of the invocation bind.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
 Each fact lives for at most 60 seconds.
-After a role, permission, users row or status write commits, the application host and the control host publish on the scheduler NATS subject `wamn.auth.<tenant>`.
-Each host of that tenant then drops its whole memory, and the application host that wrote drops its own at once.
-A change that no host publishes waits for the TTL: a PAT revoke, a logout, a membership revoke and a `wamn-ctl` role or permission write.
+Every function that writes one of these facts takes an [`AuthDrops`](../../crates/identity/platform/src/auth_changes.rs) and records the change in it.
+Its caller publishes the list on the scheduler NATS after the commit.
+[`auth_drops_live`](../../crates/identity/platform/tests/auth_drops_live.rs) runs each writer once and checks the drop it records.
+A tenant fact goes to `wamn.auth.<tenant>`: a users row, a role, a permission, a user role and the environment status.
+An identity fact goes to `wamn.identity`, because it holds in every tenant: a PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal.
+Each host of the tenant drops its whole memory on either subject, and the application host that wrote drops its own at once.
+The writers are the application host, the control host, the identity service and `wamn-ctl`.
+The identity service and `wamn-ctl` read the connection from `WAMN_AUTH_NATS_URL`, `WAMN_AUTH_NATS_TLS_CA`, `WAMN_AUTH_NATS_TLS_CERT` and `WAMN_AUTH_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
+`WAMN_AUTH_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
+A lost message waits for the TTL.
 
 The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
 The configured environment supplies its current suffix.

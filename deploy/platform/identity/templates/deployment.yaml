@@ -71,6 +71,16 @@ spec:
             - name: WAMN_IDENTITY_OPERATOR_CA
               value: /var/run/wamn-identity/operator/ca.crt
             {{- end }}
+            {{- if .Values.authNats.url }}
+            - name: WAMN_AUTH_NATS_URL
+              value: {{ .Values.authNats.url | quote }}
+            - name: WAMN_AUTH_NATS_TLS_CA
+              value: /var/run/wamn-identity/nats/ca.crt
+            - name: WAMN_AUTH_NATS_TLS_CERT
+              value: /var/run/wamn-identity/nats/tls.crt
+            - name: WAMN_AUTH_NATS_TLS_KEY
+              value: /var/run/wamn-identity/nats/tls.key
+            {{- end }}
           ports:
             - name: https
               containerPort: 8443
@@ -86,6 +96,11 @@ spec:
             {{- if .Values.operatorCaSecret }}
             - name: operator-ca
               mountPath: /var/run/wamn-identity/operator
+              readOnly: true
+            {{- end }}
+            {{- if .Values.authNats.url }}
+            - name: auth-nats
+              mountPath: /var/run/wamn-identity/nats
               readOnly: true
             {{- end }}
             {{- range $index, $secret := .Values.sessionTargetSecrets }}
@@ -115,6 +130,20 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
+        {{- end }}
+        {{- if .Values.authNats.url }}
+        - name: auth-nats
+          secret:
+            secretName: {{ required "Set authNats.tlsSecret when authNats.url is set." .Values.authNats.tlsSecret | quote }}
+            optional: false
+            defaultMode: 0400
+            items:
+              - key: ca.crt
+                path: ca.crt
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
         {{- end }}
         {{- range $index, $secret := .Values.sessionTargetSecrets }}
         - name: {{ printf "session-target-%d" $index }}

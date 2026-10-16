@@ -13,6 +13,7 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Row, Transaction};
 use zeroize::Zeroizing;
 
+use crate::auth_changes::AuthDrops;
 use crate::{
     AuthenticatedPrincipal, IdentityError, IdentityErrorType, PrincipalId, resolve_principal,
 };
@@ -175,6 +176,7 @@ pub async fn authenticate_renewal(
     issuer: &str,
     audience: &str,
     secret: &str,
+    drops: &mut AuthDrops,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
     let Some(digest) = hash(secret) else {
         return Ok(None);
@@ -189,7 +191,7 @@ pub async fn authenticate_renewal(
     .await
     .map_err(|error| database(&error))?;
     if consumed {
-        revoke_family(tx, &login.id).await?;
+        revoke_family(tx, &login, drops).await?;
         return Ok(None);
     }
     if !usable {
@@ -212,6 +214,7 @@ pub async fn rotate_login(
     issuer: &str,
     audience: &str,
     secret: &str,
+    drops: &mut AuthDrops,
 ) -> Result<Option<Renewal>, IdentityError> {
     let Some(digest) = hash(secret) else {
         return Ok(None);
@@ -220,7 +223,7 @@ pub async fn rotate_login(
         return Ok(None);
     };
     if consumed {
-        revoke_family(tx, &login.id).await?;
+        revoke_family(tx, &login, drops).await?;
         return Ok(None);
     }
     if !usable {
@@ -235,8 +238,13 @@ pub async fn rotate_login(
     tx.execute("UPDATE identity.password_logins SET renewal_expires_at=LEAST(expires_at,clock_timestamp()+($2::bigint*interval '1 second')) WHERE id=$1::text::uuid", &[&login.id,&INACTIVITY_LIFETIME]).await.map_err(|error| database(&error))?;
     Ok(Some(credential(tx, login).await?))
 }
-async fn revoke_family(tx: &Transaction<'_>, login: &str) -> Result<(), IdentityError> {
-    tx.execute("UPDATE identity.password_logins SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1::text::uuid", &[&login]).await.map_err(|error| database(&error))?;
+async fn revoke_family(
+    tx: &Transaction<'_>,
+    login: &Login,
+    drops: &mut AuthDrops,
+) -> Result<(), IdentityError> {
+    tx.execute("UPDATE identity.password_logins SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1::text::uuid", &[&login.id]).await.map_err(|error| database(&error))?;
+    drops.identity(login.principal.as_str());
     Ok(())
 }
 
@@ -246,11 +254,12 @@ pub async fn revoke_login(
     issuer: &str,
     audience: &str,
     secret: &str,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     if let Some(digest) = hash(secret)
         && let Some((login, _, _)) = lookup(tx, issuer, audience, &digest).await?
     {
-        revoke_family(tx, &login.id).await?;
+        revoke_family(tx, &login, drops).await?;
     }
     Ok(())
 }
@@ -261,9 +270,11 @@ pub async fn revoke_login(
 pub async fn revoke_all(
     tx: &Transaction<'_>,
     principal: &PrincipalId,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     lock_principal(tx, principal).await?;
     tx.execute("UPDATE identity.password_logins SET revoked_at=clock_timestamp() WHERE principal_id=$1::text::uuid AND revoked_at IS NULL", &[&principal.as_str()]).await.map_err(|error| database(&error))?;
+    drops.identity(principal.as_str());
     Ok(())
 }
 

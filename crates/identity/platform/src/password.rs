@@ -18,6 +18,7 @@ use tokio::sync::Semaphore;
 use tokio_postgres::{Client, GenericClient, Transaction};
 use zeroize::Zeroizing;
 
+use crate::auth_changes::AuthDrops;
 use crate::{AuthenticatedPrincipal, PrincipalId, decode_principal};
 
 /// Maximum UTF-8 password input; at least 64 Unicode characters fit.
@@ -484,8 +485,12 @@ pub async fn reset_password(
     principal: &PrincipalId,
     secret: &str,
     password: Password,
+    drops: &mut AuthDrops,
 ) -> Result<(), PasswordError> {
-    establish_password(client, work, principal, secret, password, RESET_PURPOSE).await
+    establish_password(client, work, principal, secret, password, RESET_PURPOSE).await?;
+    // The reset revoked every login of the principal (store_password).
+    drops.identity(principal.as_str());
+    Ok(())
 }
 
 async fn establish_password(
@@ -526,7 +531,8 @@ async fn store_password(
     bind_actor(&tx, principal).await?;
     if purpose == RESET_PURPOSE {
         tx.execute("UPDATE identity.password_credentials SET password_hash=$2 WHERE principal_id=$1::text::uuid", &[&principal.as_str(), &hash]).await.map_err(|source| database(&source))?;
-        crate::password_login::revoke_all(&tx, principal)
+        // reset_password records the drop of this revoke after the commit.
+        crate::password_login::revoke_all(&tx, principal, &mut AuthDrops::default())
             .await
             .map_err(|source| infrastructure("reset revocation failed", source))?;
     } else {

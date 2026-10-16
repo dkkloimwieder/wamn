@@ -5,6 +5,7 @@ use super::{
     project_env_database_name, project_environment_policy, reconcile_run_plane, recreate_database,
     reset, schema,
 };
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 async fn seed_target_guard_registry(su: &Client) {
     su.batch_execute(
@@ -136,6 +137,7 @@ fn target_guard_args(
     dry_run: bool,
 ) -> ReconcileRunPlaneRequest {
     ReconcileRunPlaneRequest {
+        changes: AuthChanges::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: CLI_ORG.to_string(),

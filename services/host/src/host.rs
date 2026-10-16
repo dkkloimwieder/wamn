@@ -39,8 +39,9 @@ use wamn_execution_host::{
     WiringDelivery,
 };
 use wamn_identity_client::PatIssuerConfig;
+use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::operator_subject;
-use wamn_runtime::auth_cache::{AuthChanges, clear_on_changes};
+use wamn_runtime::auth_cache::clear_on_changes;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };

@@ -31,6 +31,8 @@ wamn-integration-tests = { workspace = true }
 
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 wamn-control = { workspace = true }
+# The publisher a run-plane reconciliation takes (AuthChanges).
+wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-test-infrastructure = { workspace = true }

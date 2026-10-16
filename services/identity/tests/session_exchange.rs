@@ -6,6 +6,7 @@
 
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use wamn_platform_identity::auth_changes::AuthDrops;
 
 use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use serde_json::{Value, json};
@@ -355,9 +356,16 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     refuse(https, service_pat.token(), aud).await;
 
     assert!(
-        revoke_project_env_membership(system, alice.id(), "demo", "widgets", "dev")
-            .await
-            .expect_redacted("revoke exact membership")
+        revoke_project_env_membership(
+            system,
+            alice.id(),
+            "demo",
+            "widgets",
+            "dev",
+            &mut AuthDrops::default()
+        )
+        .await
+        .expect_redacted("revoke exact membership")
     );
     refuse(https, alice_pat.token(), aud).await;
     grant(system, &alice, "demo", "dev").await;
@@ -417,7 +425,7 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     failed_role_queries_discard_reader(fixture, https, alice_pat.token(), &alice, &jwks).await;
 
     // Every fresh credential change must affect the very next exchange.
-    disable_principal(system, alice.id())
+    disable_principal(system, alice.id(), &mut AuthDrops::default())
         .await
         .expect_redacted("disable principal");
     refuse(https, alice_pat.token(), aud).await;
@@ -435,9 +443,13 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     system.execute("UPDATE identity.pats SET expires_at=created_at+interval '1 microsecond' WHERE token_prefix=$1", &[&expired.record().prefix()])
         .await.expect_redacted("expired PAT control");
     refuse(https, expired.token(), aud).await;
-    revoke_pat(system, alice_pat.record().prefix())
-        .await
-        .expect_redacted("revoke user PAT");
+    revoke_pat(
+        system,
+        alice_pat.record().prefix(),
+        &mut AuthDrops::default(),
+    )
+    .await
+    .expect_redacted("revoke user PAT");
     assert!(
         !wamn_platform_identity::session_token::session_is_active(system, &first, "widgets", "dev")
             .await
@@ -1598,9 +1610,16 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         .unwrap();
         assert_failure(reply, 401, "{\"error\":\"unauthorized\"}").await;
     }
-    revoke_project_env_membership(&fixture.system.client, alice.id(), "demo", "widgets", "dev")
-        .await
-        .unwrap();
+    revoke_project_env_membership(
+        &fixture.system.client,
+        alice.id(),
+        "demo",
+        "widgets",
+        "dev",
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         post(&https, "/password/session", login.clone())
             .send()
@@ -1634,9 +1653,13 @@ async fn password_enrollment_and_sessions_preserve_current_authority() {
         )
         .await
         .unwrap();
-    disable_principal(&fixture.system.client, alice.id())
-        .await
-        .unwrap();
+    disable_principal(
+        &fixture.system.client,
+        alice.id(),
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         post(&https, "/password/session", login.clone())
             .send()
@@ -1753,6 +1776,7 @@ async fn password_environment_discovery_requires_current_authority() {
         "other",
         "widgets",
         "dev",
+        &mut AuthDrops::default(),
     )
     .await
     .unwrap();
@@ -1813,9 +1837,16 @@ async fn password_environment_discovery_requires_current_authority() {
         .unwrap();
     assert_environments(discover().send().await.unwrap(), expected(&[0])).await;
     // A prior discovery cannot authorize issuance after membership changes.
-    revoke_project_env_membership(&fixture.system.client, alice.id(), "demo", "widgets", "dev")
-        .await
-        .unwrap();
+    revoke_project_env_membership(
+        &fixture.system.client,
+        alice.id(),
+        "demo",
+        "widgets",
+        "dev",
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     assert_failure(
         https
             .client
@@ -1843,9 +1874,13 @@ async fn password_environment_discovery_requires_current_authority() {
             .unwrap();
         assert_failure(response, 401, "{\"error\":\"unauthorized\"}").await;
     }
-    disable_principal(&fixture.system.client, alice.id())
-        .await
-        .unwrap();
+    disable_principal(
+        &fixture.system.client,
+        alice.id(),
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     assert_failure(
         discover().send().await.unwrap(),
         401,

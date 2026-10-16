@@ -12,6 +12,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls};
@@ -195,6 +196,7 @@ async fn provision(work: &Path, admin_url: &str, system_url: &str) -> String {
     close(project).await;
     wamn_control::reconcile_run_plane::reconcile_run_plane(
         wamn_control::reconcile_run_plane::ReconcileRunPlaneRequest {
+            changes: AuthChanges::default(),
             system_database_url: system_url.into(),
             admin_database_url: url.clone(),
             org: ORG.into(),

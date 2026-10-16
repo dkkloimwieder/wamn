@@ -259,6 +259,7 @@ async fn delete_locked(
             crate::provision_project_env::revoke_provisioning_pat(
                 &platform.system_database_url,
                 &prefix,
+                &platform.auth_changes().await?,
             )
             .await
             .with_context(|| format!("revoke the PAT of {secret}"))?;

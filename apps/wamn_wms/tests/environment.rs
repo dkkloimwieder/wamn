@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::LazyLock;
 use std::time::Duration;
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
@@ -223,6 +224,7 @@ pub async fn prepare_project(
     task.abort();
     installed?;
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        changes: AuthChanges::default(),
         system_database_url: inputs.system_pg_url.clone(),
         admin_database_url: route.database_url.clone(),
         org: identity().org.clone(),

@@ -23,12 +23,15 @@ use tokio_postgres::{GenericClient, Row, Statement, error::SqlState};
 use wamn_session::PAT_TOKEN_PREFIX;
 
 pub mod application;
+pub mod auth_changes;
 pub mod control;
 pub mod org;
 pub mod password;
 pub mod password_login;
 pub mod session_keys;
 pub mod session_token;
+
+use auth_changes::AuthDrops;
 
 #[cfg(test)]
 const PRINCIPAL_COLUMNS: &str = "id::text, type, subject, display_name, status";
@@ -117,7 +120,8 @@ const REVOKE_PAT_SQL: &str = "UPDATE identity.pats \
     RETURNING id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
-        to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
+        to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+        principal_id::text";
 
 /// Maximum accepted principal-subject length.
 pub const MAX_SUBJECT_LEN: usize = 254;
@@ -665,6 +669,7 @@ pub async fn resolve_subject(
 pub async fn disable_principal(
     client: &(impl GenericClient + Sync),
     id: &PrincipalId,
+    drops: &mut AuthDrops,
 ) -> Result<Principal, IdentityError> {
     let row = client
         .query_opt(DISABLE_PRINCIPAL_SQL, &[&id.as_str()])
@@ -673,6 +678,7 @@ pub async fn disable_principal(
         .ok_or_else(|| {
             IdentityError::new(IdentityErrorType::NotFound, "principal does not exist")
         })?;
+    drops.identity(id.as_str());
     decode_principal(&row)
 }
 
@@ -782,6 +788,7 @@ fn decide_pat(
 pub async fn revoke_pat(
     client: &(impl GenericClient + Sync),
     prefix: &str,
+    drops: &mut AuthDrops,
 ) -> Result<PatRecord, IdentityError> {
     let prefix = checked_pat_prefix(prefix)?;
     let row = client
@@ -789,6 +796,8 @@ pub async fn revoke_pat(
         .await
         .map_err(|error| database_error(&error))?
         .ok_or_else(|| IdentityError::new(IdentityErrorType::NotFound, "token does not exist"))?;
+    let principal: String = row.try_get(6).map_err(|error| database_error(&error))?;
+    drops.identity(&principal);
     decode_pat(&row)
 }
 
@@ -910,6 +919,7 @@ pub async fn revoke_project_env_membership(
     org: &str,
     project: &str,
     env: &str,
+    drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
@@ -921,6 +931,7 @@ pub async fn revoke_project_env_membership(
         )
         .await
         .map_err(|error| database_error(&error))?;
+    drops.identity(principal_id.as_str());
     Ok(removed != 0)
 }
 

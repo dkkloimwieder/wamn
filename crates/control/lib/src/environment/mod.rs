@@ -72,6 +72,9 @@ pub struct Platform {
     /// The event broker of CDC. Needed only when a release's packages declare
     /// a model schema and the environment has no CDC reader yet.
     pub events: Option<EventBroker>,
+    /// The scheduler NATS the verbs publish their auth changes on.
+    /// [`Platform::from_env`] requires it. A test without hosts sets `None`.
+    pub auth_nats: Option<wamn_platform_identity::auth_changes::AuthNats>,
 }
 
 /// The event broker inputs of CDC (`enable-cdc-project-env`).
@@ -152,12 +155,25 @@ impl Platform {
                         .unwrap_or(120),
                 }),
             },
+            auth_nats: Some(wamn_platform_identity::auth_changes::AuthNats::from_env()?),
             target: release_chart::Target {
                 kubeconfig,
                 context,
                 namespace,
             },
         })
+    }
+
+    /// The publisher of the auth changes of a verb.
+    pub async fn auth_changes(
+        &self,
+    ) -> anyhow::Result<wamn_platform_identity::auth_changes::AuthChanges> {
+        match &self.auth_nats {
+            Some(connection) => {
+                wamn_platform_identity::auth_changes::AuthChanges::connect(connection).await
+            }
+            None => Ok(wamn_platform_identity::auth_changes::AuthChanges::default()),
+        }
     }
 }
 

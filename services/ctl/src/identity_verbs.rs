@@ -224,7 +224,11 @@ pub async fn grant(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
 
 /// Revoke one user's project environment membership and print the new state.
 pub async fn revoke(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
-    let principal_id = project_env_membership::revoke(membership_request(&args)).await?;
+    let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
+        &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+    )
+    .await?;
+    let principal_id = project_env_membership::revoke(membership_request(&args), &changes).await?;
     print_membership("revoked", &args, &principal_id);
     Ok(())
 }

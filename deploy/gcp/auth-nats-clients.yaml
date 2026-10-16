@@ -1,0 +1,41 @@
+# The scheduler NATS client certificates of the auth changes writers that are
+# not hosts (docs/architecture/execution.md#auth-memory). The server maps the
+# common name wasmcloud-runtime to the user of every host. Identity mounts its
+# Secret through deploy/gcp/values-identity.yaml. The operator reads the
+# Secret in platform into mode 0600 files for wamn-ctl (docs/operations/gcp.md
+# section 4.10).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-runtime-tls
+  namespace: identity
+spec:
+  secretName: wasmcloud-runtime-tls
+  commonName: wasmcloud-runtime
+  dnsNames:
+    - wasmcloud-runtime
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-ctl-auth-nats
+  namespace: platform
+spec:
+  secretName: wamn-ctl-auth-nats
+  commonName: wasmcloud-runtime
+  dnsNames:
+    - wasmcloud-runtime
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca

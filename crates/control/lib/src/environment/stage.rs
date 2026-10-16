@@ -45,9 +45,12 @@ pub async fn stage(
     // 0. The platform schema the packages run on: the pending project
     // migrations of this binary, in one transaction. A drifted or failing file
     // refuses here and names itself.
-    crate::upgrade_schema::upgrade_schema(&schema_request(&platform.system_database_url, project_url))
-        .await
-        .context("apply the pending project migrations")?;
+    crate::upgrade_schema::upgrade_schema(&schema_request(
+        &platform.system_database_url,
+        project_url,
+    ))
+    .await
+    .context("apply the pending project migrations")?;
 
     // 1. The predecessor: the installed versions are those analysis judged.
     let observed = installed(platform, document).await?;
@@ -390,7 +393,10 @@ mod tests {
             "postgres://postgres@db/wamn_system",
             "postgres://postgres@db/wamn_dkk_receiving_dev_x",
         );
-        assert_eq!(request.system_database_url, "postgres://postgres@db/wamn_system");
+        assert_eq!(
+            request.system_database_url,
+            "postgres://postgres@db/wamn_system"
+        );
         assert_eq!(
             request.admin_database_url.as_deref(),
             Some("postgres://postgres@db/wamn_dkk_receiving_dev_x")

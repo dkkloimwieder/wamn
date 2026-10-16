@@ -716,7 +716,11 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
             .system_database_url
             .as_deref()
             .context("--revoke-pat-prefix requires --system-database-url")?;
-        provision_project_env::revoke_provisioning_pat(system_url, prefix).await?;
+        let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
+            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        )
+        .await?;
+        provision_project_env::revoke_provisioning_pat(system_url, prefix, &changes).await?;
         println!("revoked PAT prefix {prefix}");
         return Ok(());
     }

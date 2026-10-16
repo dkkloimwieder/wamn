@@ -182,7 +182,21 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             None => tls_config(&certificate, &private_key)?,
         };
         drop(private_key);
-        let service = IdentityService::connect(config).await?;
+        // Logouts, resets and replay revocations go to the scheduler NATS. A
+        // deployment with hosts sets WAMN_AUTH_NATS_URL.
+        let changes = if std::env::var_os("WAMN_AUTH_NATS_URL").is_some() {
+            let connected = async {
+                let connection = wamn_platform_identity::auth_changes::AuthNats::from_env()?;
+                wamn_platform_identity::auth_changes::AuthChanges::connect(&connection).await
+            };
+            connected.await.map_err(|error| {
+                tracing::error!(%error, "the scheduler NATS refused the identity service");
+                IdentityServiceError::new("connect to the scheduler NATS failed")
+            })?
+        } else {
+            wamn_platform_identity::auth_changes::AuthChanges::default()
+        };
+        let service = IdentityService::connect(config.with_auth_changes(changes)).await?;
         let listener = TcpListener::bind(bind)
             .await
             .map_err(|_| IdentityServiceError::new("bind identity HTTPS listener failed"))?;
@@ -190,6 +204,11 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             .local_addr()
             .map_err(|_| IdentityServiceError::new("read identity HTTPS address failed"))?;
         tracing::info!("identity listening on {address}");
+        if std::env::var_os("WAMN_AUTH_NATS_URL").is_none() {
+            tracing::warn!(
+                "WAMN_AUTH_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
+            );
+        }
         return tokio::select! {
             result = serve(listener, service, tls) => result,
             result = tokio::signal::ctrl_c() => result.map_err(|_| IdentityServiceError::new("identity shutdown signal failed")),

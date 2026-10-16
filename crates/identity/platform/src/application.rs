@@ -16,6 +16,7 @@ use tokio_postgres::GenericClient;
 
 use wamn_project_state::ADMIN_ROLE;
 
+use crate::auth_changes::AuthDrops;
 use crate::{IdentityError, IdentityErrorType, PrincipalId, database_error};
 
 /// One project database serves one tenant. Its platform rows, which
@@ -26,6 +27,9 @@ const TENANT_SQL: &str =
 const USER_ROW_SQL: &str = "INSERT INTO app_system.users \
     (tenant_id, id, type, email, display_name) VALUES ($1, $2::text::uuid, 'user', $3, $4) \
     ON CONFLICT (tenant_id, id) DO NOTHING";
+
+const SERVICE_ROW_SQL: &str = "INSERT INTO app_system.users \
+    (tenant_id, id, type, email, display_name) VALUES ($1, $2::text::uuid, 'service', $3, $4)";
 
 const ROLE_SQL: &str = "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2) \
     ON CONFLICT (tenant_id, name) DO NOTHING";
@@ -87,11 +91,13 @@ pub async fn write_environment_status(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     status: crate::org::EnvironmentStatus,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
         .execute(ENVIRONMENT_STATUS_ROW_SQL, &[&tenant, &status.as_str()])
         .await
         .map_err(|error| database_error(&error))?;
+    drops.tenant(tenant);
     Ok(())
 }
 
@@ -100,6 +106,7 @@ pub async fn write_user(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     user: ApplicationUser<'_>,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
         .execute(
@@ -113,6 +120,30 @@ pub async fn write_user(
         )
         .await
         .map_err(|error| database_error(&error))?;
+    drops.principal(tenant, user.principal_id.as_str());
+    Ok(())
+}
+
+/// Write the users row of the service principal `service`.
+pub async fn write_service(
+    client: &(impl GenericClient + Sync),
+    tenant: &str,
+    service: ApplicationUser<'_>,
+    drops: &mut AuthDrops,
+) -> Result<(), IdentityError> {
+    client
+        .execute(
+            SERVICE_ROW_SQL,
+            &[
+                &tenant,
+                &service.principal_id.as_str(),
+                &service.email,
+                &service.display_name,
+            ],
+        )
+        .await
+        .map_err(|error| database_error(&error))?;
+    drops.principal(tenant, service.principal_id.as_str());
     Ok(())
 }
 
@@ -122,8 +153,9 @@ pub async fn write_admin(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     user: ApplicationUser<'_>,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    write_user(client, tenant, user).await?;
+    write_user(client, tenant, user, drops).await?;
     client
         .execute(ROLE_SQL, &[&tenant, &ADMIN_ROLE])
         .await
@@ -143,6 +175,7 @@ pub async fn remove_admin(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     principal_id: &PrincipalId,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
         .execute(
@@ -151,6 +184,7 @@ pub async fn remove_admin(
         )
         .await
         .map_err(|error| database_error(&error))?;
+    drops.principal(tenant, principal_id.as_str());
     Ok(())
 }
 
@@ -160,11 +194,13 @@ pub async fn remove_user(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     principal_id: &PrincipalId,
+    drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     client
         .execute(DROP_USER_ROW_SQL, &[&tenant, &principal_id.as_str()])
         .await
         .map_err(|error| database_error(&error))?;
+    drops.principal(tenant, principal_id.as_str());
     Ok(())
 }
 
@@ -289,6 +325,7 @@ pub async fn create_role(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     role: &str,
+    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminCreated.into());
@@ -303,6 +340,7 @@ pub async fn create_role(
         .execute(ROLE_SQL, &[&tenant, &role])
         .await
         .map_err(|error| database_error(&error))?;
+    drops.tenant(tenant);
     Ok(written == 1)
 }
 
@@ -312,6 +350,7 @@ pub async fn delete_role(
     client: &(impl GenericClient + Sync),
     tenant: &str,
     role: &str,
+    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminDeleted.into());
@@ -320,6 +359,7 @@ pub async fn delete_role(
         .execute(DROP_ROLE_SQL, &[&tenant, &role])
         .await
         .map_err(|error| database_error(&error))?;
+    drops.tenant(tenant);
     Ok(removed == 1)
 }
 
@@ -353,6 +393,7 @@ pub async fn grant_permission(
     tenant: &str,
     role: &str,
     reference: &str,
+    drops: &mut AuthDrops,
 ) -> Result<PermissionGrantOutcome, AdministrationError> {
     if role == ADMIN_ROLE {
         return Err(AdministrationRefusal::AdminTakesNoPermission.into());
@@ -362,6 +403,7 @@ pub async fn grant_permission(
         .execute(PERMISSION_SQL, &[&tenant, &role, &reference])
         .await
         .map_err(|error| database_error(&error))?;
+    drops.tenant(tenant);
     Ok(PermissionGrantOutcome { rows_added })
 }
 
@@ -372,6 +414,7 @@ pub async fn revoke_permission(
     tenant: &str,
     role: &str,
     reference: &str,
+    drops: &mut AuthDrops,
 ) -> Result<(), AdministrationError> {
     require_role(client, tenant, role).await?;
     let removed = client
@@ -385,6 +428,7 @@ pub async fn revoke_permission(
         }
         .into());
     }
+    drops.tenant(tenant);
     Ok(())
 }
 
@@ -395,12 +439,14 @@ pub async fn grant_user_role(
     tenant: &str,
     user_id: &str,
     role: &str,
+    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     require_role(client, tenant, role).await?;
     let written = client
         .execute(USER_ROLE_SQL, &[&tenant, &user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
+    drops.principal(tenant, user_id);
     Ok(written == 1)
 }
 
@@ -411,11 +457,13 @@ pub async fn revoke_user_role(
     tenant: &str,
     user_id: &str,
     role: &str,
+    drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
     let removed = client
         .execute(DROP_USER_ROLE_SQL, &[&tenant, &user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
+    drops.principal(tenant, user_id);
     Ok(removed == 1)
 }
 

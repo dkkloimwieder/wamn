@@ -10,6 +10,7 @@ use anyhow::Context as _;
 use tokio_postgres::{Client, Transaction};
 use wamn_platform_identity::application;
 pub use wamn_platform_identity::application::PermissionGrantOutcome;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 
 use crate::user_roles::{EnvironmentTarget, connect_target};
 use wamn_control_provision::operation_grants::{
@@ -43,9 +44,10 @@ pub async fn grant_permission(
     tenant: &str,
     role: &str,
     reference: &str,
+    drops: &mut AuthDrops,
 ) -> anyhow::Result<PermissionGrantOutcome> {
     prepare(tx, tenant).await?;
-    Ok(application::grant_permission(tx, tenant, role, reference).await?)
+    Ok(application::grant_permission(tx, tenant, role, reference, drops).await?)
 }
 
 /// Remove the permission `reference` from `role`. A reference the role does
@@ -55,29 +57,41 @@ pub async fn revoke_permission(
     tenant: &str,
     role: &str,
     reference: &str,
+    drops: &mut AuthDrops,
 ) -> anyhow::Result<()> {
     prepare(tx, tenant).await?;
-    Ok(application::revoke_permission(tx, tenant, role, reference).await?)
+    Ok(application::revoke_permission(tx, tenant, role, reference, drops).await?)
 }
 
 /// Create the empty authored role `role`. A second create changes nothing.
-pub async fn create_role(tx: &Transaction<'_>, tenant: &str, role: &str) -> anyhow::Result<bool> {
+pub async fn create_role(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    role: &str,
+    drops: &mut AuthDrops,
+) -> anyhow::Result<bool> {
     prepare(tx, tenant).await?;
-    Ok(application::create_role(tx, tenant, role).await?)
+    Ok(application::create_role(tx, tenant, role, drops).await?)
 }
 
 /// Delete the authored role `role` with its assignments and permissions. A
 /// delete of an absent role changes nothing.
-pub async fn delete_role(tx: &Transaction<'_>, tenant: &str, role: &str) -> anyhow::Result<bool> {
+pub async fn delete_role(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    role: &str,
+    drops: &mut AuthDrops,
+) -> anyhow::Result<bool> {
     prepare(tx, tenant).await?;
-    Ok(application::delete_role(tx, tenant, role).await?)
+    Ok(application::delete_role(tx, tenant, role, drops).await?)
 }
 
 /// Run `change` in one transaction on the registry-checked database of
-/// `target`.
+/// `target`, and publish its drops after the commit.
 async fn in_environment<T>(
     target: &EnvironmentTarget,
-    change: impl AsyncFnOnce(&Transaction<'_>) -> anyhow::Result<T>,
+    changes: &AuthChanges,
+    change: impl AsyncFnOnce(&Transaction<'_>, &mut AuthDrops) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let (mut client, connection): (Client, _) = connect_target(target).await?;
     let result = async {
@@ -85,8 +99,10 @@ async fn in_environment<T>(
             .transaction()
             .await
             .context("begin the role change")?;
-        let value = change(&tx).await?;
+        let mut drops = AuthDrops::default();
+        let value = change(&tx, &mut drops).await?;
         tx.commit().await.context("commit the role change")?;
+        changes.publish(drops).await;
         Ok(value)
     }
     .await;
@@ -96,18 +112,26 @@ async fn in_environment<T>(
 }
 
 /// `wamn-ctl create-role`: create an empty authored role.
-pub async fn create_role_in(target: &EnvironmentTarget, role: &str) -> anyhow::Result<bool> {
-    in_environment(target, async |tx| {
-        create_role(tx, &target.tenant, role).await
+pub async fn create_role_in(
+    target: &EnvironmentTarget,
+    role: &str,
+    changes: &AuthChanges,
+) -> anyhow::Result<bool> {
+    in_environment(target, changes, async |tx, drops| {
+        create_role(tx, &target.tenant, role, drops).await
     })
     .await
 }
 
 /// `wamn-ctl delete-role`: delete an authored role with its assignments and
 /// permissions.
-pub async fn delete_role_in(target: &EnvironmentTarget, role: &str) -> anyhow::Result<bool> {
-    in_environment(target, async |tx| {
-        delete_role(tx, &target.tenant, role).await
+pub async fn delete_role_in(
+    target: &EnvironmentTarget,
+    role: &str,
+    changes: &AuthChanges,
+) -> anyhow::Result<bool> {
+    in_environment(target, changes, async |tx, drops| {
+        delete_role(tx, &target.tenant, role, drops).await
     })
     .await
 }
@@ -117,9 +141,10 @@ pub async fn grant_permission_in(
     target: &EnvironmentTarget,
     role: &str,
     reference: &str,
+    changes: &AuthChanges,
 ) -> anyhow::Result<PermissionGrantOutcome> {
-    in_environment(target, async |tx| {
-        grant_permission(tx, &target.tenant, role, reference).await
+    in_environment(target, changes, async |tx, drops| {
+        grant_permission(tx, &target.tenant, role, reference, drops).await
     })
     .await
 }
@@ -129,9 +154,10 @@ pub async fn revoke_permission_in(
     target: &EnvironmentTarget,
     role: &str,
     reference: &str,
+    changes: &AuthChanges,
 ) -> anyhow::Result<()> {
-    in_environment(target, async |tx| {
-        revoke_permission(tx, &target.tenant, role, reference).await
+    in_environment(target, changes, async |tx, drops| {
+        revoke_permission(tx, &target.tenant, role, reference, drops).await
     })
     .await
 }

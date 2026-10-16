@@ -1,6 +1,7 @@
 //! Real-PostgreSQL test for the personal-access-token presenter.
 
 use std::time::Duration;
+use wamn_platform_identity::auth_changes::AuthDrops;
 
 use tokio_postgres::error::SqlState;
 use tokio_postgres::{Client, Transaction};
@@ -150,7 +151,7 @@ async fn platform_pat_round_trip_on_postgres() {
         Some("actor-required")
     );
     assert_eq!(
-        revoke_pat(&client, issued.record().prefix())
+        revoke_pat(&client, issued.record().prefix(), &mut AuthDrops::default())
             .await
             .expect_err("the library revocation also needs a bound actor")
             .error_type(),
@@ -166,9 +167,13 @@ async fn platform_pat_round_trip_on_postgres() {
     transaction.commit().await.expect("commit the issuance");
     let before = pat_stamps(&client, revocable.record().prefix()).await;
     let transaction = provisioning_transaction(&mut client).await;
-    let revoked = revoke_pat(&transaction, revocable.record().prefix())
-        .await
-        .expect("revoke token");
+    let revoked = revoke_pat(
+        &transaction,
+        revocable.record().prefix(),
+        &mut AuthDrops::default(),
+    )
+    .await
+    .expect("revoke token");
     transaction.commit().await.expect("commit the revocation");
     assert!(revoked.revoked_at().is_some());
     let after = pat_stamps(&client, revocable.record().prefix()).await;
@@ -225,19 +230,27 @@ async fn platform_pat_round_trip_on_postgres() {
         )
         .await
         .expect("backdate the revocation");
-    let backdated = revoke_pat(&client, revocable.record().prefix())
-        .await
-        .expect("re-revoke token");
+    let backdated = revoke_pat(
+        &client,
+        revocable.record().prefix(),
+        &mut AuthDrops::default(),
+    )
+    .await
+    .expect("re-revoke token");
     assert_ne!(backdated.revoked_at(), revoked.revoked_at());
     assert_eq!(
-        revoke_pat(&client, revocable.record().prefix())
-            .await
-            .expect("revoke token again")
-            .revoked_at(),
+        revoke_pat(
+            &client,
+            revocable.record().prefix(),
+            &mut AuthDrops::default()
+        )
+        .await
+        .expect("revoke token again")
+        .revoked_at(),
         backdated.revoked_at()
     );
     assert_eq!(
-        revoke_pat(&client, &"0".repeat(16))
+        revoke_pat(&client, &"0".repeat(16), &mut AuthDrops::default())
             .await
             .expect_err("unknown prefix must not revoke")
             .error_type(),
@@ -275,7 +288,7 @@ async fn platform_pat_round_trip_on_postgres() {
     assert!(!format!("{listed:?}").contains(&token));
 
     // Disabling the principal refuses live tokens and further issuance.
-    disable_principal(&client, user.id())
+    disable_principal(&client, user.id(), &mut AuthDrops::default())
         .await
         .expect("disable user");
     assert!(

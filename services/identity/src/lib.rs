@@ -43,6 +43,7 @@ pub struct IdentityConfig {
     connection: IdentityIssuerConnection,
     targets: BTreeMap<String, SessionTarget>,
     mail: Option<mail::ResendConfig>,
+    changes: wamn_platform_identity::auth_changes::AuthChanges,
 }
 
 impl IdentityConfig {
@@ -55,7 +56,18 @@ impl IdentityConfig {
             connection,
             targets: BTreeMap::new(),
             mail: None,
+            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         })
+    }
+
+    /// Publish each logout, logout-all, reset and replay revocation to the
+    /// memory of the hosts.
+    pub fn with_auth_changes(
+        mut self,
+        changes: wamn_platform_identity::auth_changes::AuthChanges,
+    ) -> Self {
+        self.changes = changes;
+        self
     }
 
     /// Enable invitation and password endpoints with explicit mail configuration.
@@ -97,6 +109,7 @@ struct Inner {
     // closes it, for example when the server restarts.
     connection: IdentityIssuerConnection,
     passwords: Option<password::State>,
+    changes: wamn_platform_identity::auth_changes::AuthChanges,
     database: std::sync::RwLock<Arc<Database>>,
     reopening: Mutex<()>,
     // PAT issuance needs a transaction, so it holds its own connection.
@@ -200,6 +213,7 @@ impl IdentityService {
                 issuer: config.issuer,
                 connection: config.connection,
                 passwords,
+                changes: config.changes,
                 database: std::sync::RwLock::new(Arc::new(database)),
                 reopening: Mutex::new(()),
                 issuance,

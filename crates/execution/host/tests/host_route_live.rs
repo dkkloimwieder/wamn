@@ -7,6 +7,7 @@
 //! administration login.
 
 use std::sync::Arc;
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -196,7 +197,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
             postgres: postgres_credentials,
             project: PROJECT.to_owned(),
             identity: None,
-            changes: wamn_runtime::auth_cache::AuthChanges::default(),
+            changes: AuthChanges::default(),
         },
         None,
     );
@@ -624,7 +625,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
             writer,
             identity: None,
             org: ORG.to_owned(),
-            changes: wamn_runtime::auth_cache::AuthChanges::default(),
+            changes: AuthChanges::default(),
         },
         None,
     );

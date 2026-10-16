@@ -14,6 +14,7 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 use wamn_platform_identity::application;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 
 /// One grant or revoke of a user role in one environment.
 #[derive(Debug, Clone)]
@@ -47,14 +48,20 @@ pub struct UserRoleOutcome {
 }
 
 /// Give the user the role. A second grant of the same role changes nothing.
-pub async fn grant_role(request: &UserRoleRequest) -> anyhow::Result<UserRoleOutcome> {
-    change_role(request, Change::Grant).await
+pub async fn grant_role(
+    request: &UserRoleRequest,
+    auth: &AuthChanges,
+) -> anyhow::Result<UserRoleOutcome> {
+    change_role(request, Change::Grant, auth).await
 }
 
 /// Take the role from the user. A revoke of a role the user does not hold
 /// changes nothing.
-pub async fn revoke_role(request: &UserRoleRequest) -> anyhow::Result<UserRoleOutcome> {
-    change_role(request, Change::Revoke).await
+pub async fn revoke_role(
+    request: &UserRoleRequest,
+    auth: &AuthChanges,
+) -> anyhow::Result<UserRoleOutcome> {
+    change_role(request, Change::Revoke, auth).await
 }
 
 #[derive(Clone, Copy)]
@@ -63,7 +70,11 @@ enum Change {
     Revoke,
 }
 
-async fn change_role(request: &UserRoleRequest, change: Change) -> anyhow::Result<UserRoleOutcome> {
+async fn change_role(
+    request: &UserRoleRequest,
+    change: Change,
+    auth: &AuthChanges,
+) -> anyhow::Result<UserRoleOutcome> {
     let (mut client, connection) = connect_target(&EnvironmentTarget {
         system_database_url: request.system_database_url.clone(),
         admin_database_url: request.admin_database_url.clone(),
@@ -79,6 +90,7 @@ async fn change_role(request: &UserRoleRequest, change: Change) -> anyhow::Resul
         &request.user,
         &request.role,
         change,
+        auth,
     )
     .await;
     drop(client);
@@ -94,8 +106,9 @@ pub async fn grant_role_on(
     tenant: &str,
     user: &str,
     role: &str,
+    auth: &AuthChanges,
 ) -> anyhow::Result<UserRoleOutcome> {
-    change_user_role(client, tenant, user, role, Change::Grant).await
+    change_user_role(client, tenant, user, role, Change::Grant, auth).await
 }
 
 async fn change_user_role(
@@ -104,6 +117,7 @@ async fn change_user_role(
     user: &str,
     role: &str,
     change: Change,
+    auth: &AuthChanges,
 ) -> anyhow::Result<UserRoleOutcome> {
     anyhow::ensure!(!role.is_empty(), "--role must not be empty");
     anyhow::ensure!(!tenant.is_empty(), "--tenant must not be empty");
@@ -119,16 +133,20 @@ async fn change_user_role(
         ))
         .await
         .context("bind wamn:provisioning for the role change")?;
+    let mut drops = AuthDrops::default();
     let changed = match change {
-        Change::Grant => application::grant_user_role(&transaction, tenant, &user_id, role).await?,
+        Change::Grant => {
+            application::grant_user_role(&transaction, tenant, &user_id, role, &mut drops).await?
+        }
         Change::Revoke => {
-            application::revoke_user_role(&transaction, tenant, &user_id, role).await?
+            application::revoke_user_role(&transaction, tenant, &user_id, role, &mut drops).await?
         }
     };
     transaction
         .commit()
         .await
         .context("commit the user role change")?;
+    auth.publish(drops).await;
     Ok(UserRoleOutcome { user_id, changed })
 }
 

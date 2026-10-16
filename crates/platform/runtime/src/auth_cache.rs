@@ -3,11 +3,9 @@
 //!
 //! Postgres stays the owner of every fact here. The host reads a fact once,
 //! keeps it for at most [`AUTH_TTL`], and answers the next request from
-//! memory. A host that changes a role, a permission, a users row or the
-//! environment status publishes on [`changed_subject`] after its commit, and
-//! every host of that tenant drops its whole memory. The TTL is the backstop
-//! for a lost message and for a change no host publishes: a PAT revoke, a
-//! logout, a membership revoke and a `wamn-ctl` grant.
+//! memory. Every writer of a fact here publishes the change after its commit
+//! ([`wamn_platform_identity::auth_changes`]), and every host of the tenant
+//! drops its whole memory. The TTL is the backstop for a lost message.
 //!
 //! Only a positive identity answer is kept, so a new PAT or a new login works
 //! on its first request.
@@ -25,11 +23,6 @@ pub const AUTH_TTL: Duration = Duration::from_secs(60);
 
 /// A map that grows past this many entries drops its expired ones.
 const SWEEP_AT: usize = 10_000;
-
-/// The scheduler NATS subject a change of the auth facts of `tenant` goes to.
-pub fn changed_subject(tenant: &str) -> String {
-    format!("wamn.auth.{tenant}")
-}
 
 /// The roles a principal holds in one tenant, with the permissions of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -134,7 +127,7 @@ impl AuthCache {
         }
     }
 
-    /// Drop every fact. A message on [`changed_subject`] calls this.
+    /// Drop every fact. A published auth change calls this.
     pub fn clear(&self) {
         self.pats.clear();
         self.sessions.clear();
@@ -201,40 +194,20 @@ impl AuthCache {
     }
 }
 
-/// Publishes a change of the auth facts of a tenant on the scheduler NATS.
-/// A host without that client publishes nothing, and the TTL applies.
-#[derive(Debug, Clone, Default)]
-pub struct AuthChanges(Option<async_nats::Client>);
-
-impl AuthChanges {
-    pub fn new(client: async_nats::Client) -> Self {
-        Self(Some(client))
-    }
-
-    /// Publish after the commit that changed the facts of `tenant`. A failed
-    /// publish is logged, because the commit stands and the TTL bounds it.
-    pub async fn publish(&self, tenant: &str) {
-        let Some(client) = &self.0 else {
-            return;
-        };
-        if let Err(error) = client
-            .publish(changed_subject(tenant), bytes::Bytes::new())
-            .await
-        {
-            tracing::warn!(%error, tenant, "the auth change was not published; the TTL bounds it");
-        }
-    }
-}
-
-/// Clear the memory of `postgres` on each message on the subject of
-/// `tenant`. The subscription runs until the client closes.
+/// Clear the memory of `postgres` on each change of the facts of `tenant`
+/// and on each change of an identity fact. The subscriptions run until the
+/// client closes.
 pub async fn clear_on_changes(
     client: &async_nats::Client,
     tenant: &str,
     postgres: std::sync::Arc<crate::plugins::wamn_postgres::WamnPostgres>,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     use futures_util::StreamExt as _;
-    let mut changes = client.subscribe(changed_subject(tenant)).await?;
+    use wamn_platform_identity::auth_changes::{IDENTITY_SUBJECT, tenant_subject};
+    let mut changes = futures_util::stream::select(
+        client.subscribe(tenant_subject(tenant)).await?,
+        client.subscribe(IDENTITY_SUBJECT).await?,
+    );
     Ok(tokio::spawn(async move {
         while changes.next().await.is_some() {
             postgres.auth_cache().clear();

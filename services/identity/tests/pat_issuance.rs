@@ -7,6 +7,7 @@ use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use wamn_platform_identity::auth_changes::AuthDrops;
 
 use rcgen::{
     BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
@@ -216,7 +217,7 @@ async fn operator_pat_issuance_over_https() {
     )
     .await
     .expect_redacted("disabled fixture");
-    disable_principal(&system, disabled.id())
+    disable_principal(&system, disabled.id(), &mut AuthDrops::default())
         .await
         .expect_redacted("disable fixture principal");
     let key = publish_session_key(&mut system, ISSUER)
@@ -382,7 +383,7 @@ async fn operator_pat_issuance_over_https() {
         "known prefix alone is insufficient"
     );
     let prefix = user_pat["token_prefix"].as_str().expect("PAT prefix");
-    revoke_pat(&system, prefix)
+    revoke_pat(&system, prefix, &mut AuthDrops::default())
         .await
         .expect_redacted("revoke service-issued PAT");
     assert!(
@@ -392,7 +393,7 @@ async fn operator_pat_issuance_over_https() {
             .is_none()
     );
     let machine_token = machine_pat["token"].as_str().expect("machine PAT string");
-    disable_principal(&system, machine.id())
+    disable_principal(&system, machine.id(), &mut AuthDrops::default())
         .await
         .expect_redacted("disable service-issued principal");
     assert!(

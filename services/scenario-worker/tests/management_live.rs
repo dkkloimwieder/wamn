@@ -38,6 +38,7 @@
 //! The recipe in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` supplies one disposable database.
 
 use std::fmt::Write as _;
+use wamn_platform_identity::auth_changes::AuthDrops;
 
 use std::time::{Duration, SystemTime};
 
@@ -1535,7 +1536,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     let revoked = admitted_user(&admin, "revoked@example.com", PROJECT, "project-author")
         .await
         .expect("admit the revoked principal");
-    revoke_pat(&admin, revoked.record().prefix())
+    revoke_pat(&admin, revoked.record().prefix(), &mut AuthDrops::default())
         .await
         .expect("revoke a token");
     let expired = admitted_user(&admin, "expired@example.com", PROJECT, "project-author")

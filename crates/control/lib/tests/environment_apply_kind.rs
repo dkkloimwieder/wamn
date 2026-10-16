@@ -900,6 +900,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         }))?,
     )?;
     let platform = Platform {
+        auth_nats: None,
         system_database_url: system_url.clone(),
         target: Target {
             kubeconfig: work.join("kubeconfig"),

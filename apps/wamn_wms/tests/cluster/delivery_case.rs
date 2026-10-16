@@ -196,6 +196,7 @@ async fn run(
         },
         // The package stage reads the kept registry over TLS.
         &Platform {
+            auth_nats: None,
             system_database_url: document.system_pg_url.clone(),
             target: Target {
                 kubeconfig: kept.kubeconfig(),

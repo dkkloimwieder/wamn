@@ -712,6 +712,8 @@ pub async fn grant_operator_admin_role(
         tenant,
         &format!("{subject}@{platform_domain}"),
         wamn_project_state::ADMIN_ROLE,
+        // A journey writes the role before its host serves.
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
     )
     .await;
     drop(client);
@@ -733,6 +735,8 @@ pub async fn reconcile_journey_run_plane(
         env: scope.environment.clone(),
         schema: "wamn_run".to_owned(),
         dry_run: false,
+        // A journey reconciles before its host serves.
+        changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
     })
     .await
     .context("reconcile the journey run plane")?;

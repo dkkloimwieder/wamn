@@ -197,9 +197,16 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     .await
     .unwrap();
     assert_failure(wrong, 401, "{\"error\":\"unauthorized\"}").await;
-    revoke_project_env_membership(&fixture.system.client, user.id(), "demo", "widgets", "dev")
-        .await
-        .unwrap();
+    revoke_project_env_membership(
+        &fixture.system.client,
+        user.id(),
+        "demo",
+        "widgets",
+        "dev",
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         request(&https, &fixture, "/password/renew", &active)
             .send()
@@ -345,7 +352,7 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     );
     let disabled = login(&https, &fixture).await;
     assert!(self::active(&fixture, &disabled).await);
-    disable_principal(&fixture.system.client, user.id())
+    disable_principal(&fixture.system.client, user.id(), &mut AuthDrops::default())
         .await
         .unwrap();
     assert!(!self::active(&fixture, &disabled).await);
@@ -701,6 +708,7 @@ async fn login_reset_and_renewal_logout_races_keep_transaction_order() {
             &reset_principal,
             reset_secret.secret(),
             Password::new("a different valid replacement password".into()).unwrap(),
+            &mut AuthDrops::default(),
         )
         .await
     });

@@ -14,6 +14,7 @@ use std::net::TcpListener as StdListener;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 use anyhow::Context as _;
 use bytes::Bytes;
@@ -317,7 +318,7 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
             writer,
             identity: None,
             org: ORG.to_owned(),
-            changes: wamn_runtime::auth_cache::AuthChanges::default(),
+            changes: AuthChanges::default(),
         },
         None,
     ));

@@ -90,6 +90,7 @@ use partition::{
     partition_plane_cutover_leg, partition_plane_dead_letter_refusal_leg,
     partition_plane_unobservable_lease_refusal_leg,
 };
+use wamn_platform_identity::auth_changes::AuthChanges;
 
 use run_history::{
     child_run_cutover_leg, failure_detail_cutover_leg, node_runs_retirement_leg,
@@ -363,6 +364,7 @@ async fn tenant_identity_leg(su: &Client) {
 async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
     let reconcile = async || {
         reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+            changes: AuthChanges::default(),
             system_database_url: system_url.to_string(),
             admin_database_url: target_url.to_string(),
             org: "acme".to_string(),
@@ -1020,6 +1022,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
 
     // The REAL CLI path (arg validation + connect + apply).
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        changes: AuthChanges::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -1063,6 +1066,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .await
         .expect("change the system env policy");
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        changes: AuthChanges::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -1087,6 +1091,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .get(0);
     assert_eq!(after_dry_run, "durable", "dry-run mutated local policy");
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
+        changes: AuthChanges::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -1608,6 +1613,7 @@ async fn registry_durability_column_migration_leg(
     assert!(!before, "missing-column mutant was not installed");
 
     let args = |dry_run| ReconcileRunPlaneRequest {
+        changes: AuthChanges::default(),
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),

@@ -16,6 +16,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
 use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, identity_issuer::IdentityIssuerConnection};
+use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::{
     IdentityErrorType, PrincipalId,
     control::{control_audience, control_orgs},
@@ -540,17 +541,20 @@ async fn handle(
                         Ok(value) => value,
                         Err(error) => return refusal(&error, &email),
                     };
+                    let mut drops = AuthDrops::default();
                     if let Err(error) = reset_password(
                         &mut database.client,
                         &state.work,
                         &principal,
                         &secret,
                         password,
+                        &mut drops,
                     )
                     .await
                     {
                         return refusal(&error, &email);
                     }
+                    inner.changes.publish(drops).await;
                     let notified = state.mail.password_changed(&email).await.is_ok();
                     return response(StatusCode::OK, "application/json", serde_json::to_vec(&serde_json::json!({"status":"password_reset", "notification": if notified { "accepted_for_delivery" } else { "unavailable" }})).expect("fixed response"));
                 }
@@ -606,9 +610,15 @@ async fn handle(
             let Ok(tx) = database.client.transaction().await else {
                 return unavailable();
             };
-            let Ok(principal) =
-                password_login::authenticate_renewal(&tx, &inner.issuer, &request.aud, &secret)
-                    .await
+            let mut drops = AuthDrops::default();
+            let Ok(principal) = password_login::authenticate_renewal(
+                &tx,
+                &inner.issuer,
+                &request.aud,
+                &secret,
+                &mut drops,
+            )
+            .await
             else {
                 return unavailable();
             };
@@ -617,6 +627,7 @@ async fn handle(
                 if tx.commit().await.is_err() {
                     return unavailable();
                 }
+                inner.changes.publish(drops).await;
                 return if parts.uri.path() == "/password/logout" {
                     logged_out(request.carrier)
                 } else {
@@ -625,30 +636,45 @@ async fn handle(
             };
             if parts.uri.path() != "/password/renew" {
                 let result = if parts.uri.path() == "/password/logout-all" {
-                    password_login::revoke_all(&tx, principal.principal().id()).await
+                    password_login::revoke_all(&tx, principal.principal().id(), &mut drops).await
                 } else {
-                    password_login::revoke_login(&tx, &inner.issuer, &request.aud, &secret).await
+                    password_login::revoke_login(
+                        &tx,
+                        &inner.issuer,
+                        &request.aud,
+                        &secret,
+                        &mut drops,
+                    )
+                    .await
                 };
                 if result.is_err() || tx.commit().await.is_err() {
                     return unavailable();
                 }
+                inner.changes.publish(drops).await;
                 return logged_out(request.carrier);
             }
             let Some(target) = session::audience(inner, &request.aud) else {
                 return session::unauthorized();
             };
-            let renewal =
-                match password_login::rotate_login(&tx, &inner.issuer, &request.aud, &secret).await
-                {
-                    Ok(Some(renewal)) => renewal,
-                    Ok(None) => {
-                        if tx.commit().await.is_err() {
-                            return unavailable();
-                        }
-                        return session::unauthorized();
+            let renewal = match password_login::rotate_login(
+                &tx,
+                &inner.issuer,
+                &request.aud,
+                &secret,
+                &mut drops,
+            )
+            .await
+            {
+                Ok(Some(renewal)) => renewal,
+                Ok(None) => {
+                    if tx.commit().await.is_err() {
+                        return unavailable();
                     }
-                    Err(_) => return unavailable(),
-                };
+                    inner.changes.publish(drops).await;
+                    return session::unauthorized();
+                }
+                Err(_) => return unavailable(),
+            };
             let authority = wamn_session::token::SessionAuthority::Login(renewal.login.id.clone());
             let claims = match session::claims_for_audience(
                 inner, &tx, &principal, &target, authority,
@@ -1203,9 +1229,13 @@ mod tests {
                 actor.as_str()
             ]
         );
-        wamn_platform_identity::disable_principal(&admin.client, bob.id())
-            .await
-            .unwrap();
+        wamn_platform_identity::disable_principal(
+            &admin.client,
+            bob.id(),
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        )
+        .await
+        .unwrap();
         let disabled = client
             .post(format!("{endpoint}/users"))
             .json(&json!({"email": "bob@example.invalid", "display_name": "Bob"}))

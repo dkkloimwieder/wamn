@@ -26,6 +26,14 @@ operatorCaSecret: ""
 # Empty keeps POST /session disabled. Restart after credential rotation.
 sessionTargetSecrets: []
 
+# The scheduler NATS that logouts, resets and replay revocations go to, so
+# every host drops the login from its auth memory
+# (docs/architecture/execution.md#auth-memory). tlsSecret holds ca.crt,
+# tls.crt and tls.key of a client certificate of the wasmCloud CA.
+authNats:
+  url: ""
+  tlsSecret: ""
+
 resources:
   requests:
     cpu: 100m
