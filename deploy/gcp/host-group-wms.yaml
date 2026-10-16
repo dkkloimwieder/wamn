@@ -14,9 +14,9 @@ schedulerNatsUrl: nats://nats.platform.svc.cluster.local:4222
 dataNatsUrl: nats://nats.platform.svc.cluster.local:4222
 env:
 - name: WAMN_PG_GUEST_POOL_MAX
-  value: '14'
+  value: '16'
 - name: WAMN_PG_PLATFORM_POOL_MAX
-  value: '2'
+  value: '8'
 - name: WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT
   value: '64'
 - name: WAMN_WASMTIME_CACHE_DIR
