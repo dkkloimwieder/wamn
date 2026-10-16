@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
-use wamn_catalog::{VERSION_BUMP_TRIGGER, VERSION_NOTE_TRIGGER};
 use wamn_control_provision::AUDIT_RETENTION_ROLE;
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, reconcile_audit_retention_grants_sql,
@@ -70,10 +69,8 @@ pub(super) async fn create_history_tables(
 /// The triggers are derived state, like the operation grants. A declaration
 /// that selects no column has no stamp trigger, and a retention of `none` has
 /// no log trigger. A trigger that a declaration no longer needs is removed. The
-/// log trigger carries the retention as its one argument. Every owned relation
-/// also carries the two model version triggers of
-/// `deploy/sql/model-versions.sql`. One format string gives the text that
-/// creates each trigger and the text that PostgreSQL renders for it. The
+/// log trigger carries the retention as its one argument. One format string
+/// gives the text that creates each trigger and the text that PostgreSQL renders for it. The
 /// installed triggers of the owned relations are then read as
 /// `pg_get_triggerdef` text and compared with the declared text.
 ///
@@ -126,20 +123,7 @@ pub(super) async fn reconcile_record_history_triggers(
                 retention.replace('\'', "''")
             )
         });
-        let note = format!(
-            "TRIGGER {VERSION_NOTE_TRIGGER} AFTER INSERT OR DELETE OR UPDATE OR TRUNCATE ON {quoted} \
-             FOR EACH STATEMENT EXECUTE FUNCTION wamn_cache.note_change()"
-        );
-        let bump = format!(
-            "CONSTRAINT TRIGGER {VERSION_BUMP_TRIGGER} AFTER INSERT OR DELETE OR UPDATE ON {quoted} \
-             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION wamn_cache.bump_changed()"
-        );
-        for (name, definition) in [
-            (STAMP_TRIGGER, stamp),
-            (LOG_TRIGGER, log),
-            (VERSION_NOTE_TRIGGER, Some(note)),
-            (VERSION_BUMP_TRIGGER, Some(bump)),
-        ] {
+        for (name, definition) in [(STAMP_TRIGGER, stamp), (LOG_TRIGGER, log)] {
             let installed = definitions.get(name);
             let Some(definition) = definition else {
                 if installed.is_some() {
@@ -149,15 +133,7 @@ pub(super) async fn reconcile_record_history_triggers(
             };
             let created = format!("CREATE {definition}");
             if installed != Some(&created) {
-                // PostgreSQL cannot replace a constraint trigger in place.
-                if definition.starts_with("CONSTRAINT") {
-                    if installed.is_some() {
-                        statements.push(format!("DROP TRIGGER {name} ON {quoted}"));
-                    }
-                    statements.push(created.clone());
-                } else {
-                    statements.push(format!("CREATE OR REPLACE {definition}"));
-                }
+                statements.push(format!("CREATE OR REPLACE {definition}"));
             }
             expected.insert(created);
         }

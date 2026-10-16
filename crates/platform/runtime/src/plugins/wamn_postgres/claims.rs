@@ -29,7 +29,7 @@ use super::statements::{StatementScopes, VerifiedStatement};
 use super::{DEFAULT_PROJECT, PgError, RowSet};
 
 mod pools;
-mod transactions;
+pub(super) mod transactions;
 
 /// The status row of the environment, which `wamn_app` reads under its
 /// tenant floor.
@@ -200,7 +200,7 @@ pub struct WamnPostgres {
     /// between runs. Absent (the default) ⇒ no causation is stamped — so every
     /// non-run path (S2..S6, the gateway, benches without a declaration) is
     /// byte-unchanged. When set, [`begin_with_claims`] appends a
-    /// TRANSACTIONAL `wamn.causation` logical message to every transaction the
+    /// TRANSACTIONAL `wamn.causation` logical message to each write transaction the
     /// plugin opens for that component, which the CDC reader (l5i9.12.1)
     /// stitches onto the txn's row events.
     current_run: std::sync::RwLock<HashMap<String, Causation>>,
@@ -1242,7 +1242,7 @@ impl WamnPostgres {
     }
 
     /// Declare (`Some`) or clear (`None`) the causation context of the run a
-    /// component is driving (l5i9.12.2). While set, every transaction the plugin
+    /// component is driving (l5i9.12.2). While set, each write transaction the plugin
     /// opens for the component carries a `wamn.causation` message. Host-injected
     /// like the other claim registries — callers set it directly, exactly like
     /// [`set_tenant`](Self::set_tenant) / [`set_runner`](Self::set_runner).
@@ -1259,6 +1259,11 @@ impl WamnPostgres {
     }
 
     pub(super) fn current_run_for(&self, component_id: &str) -> Option<Causation> {
+        // Read-only calls produce no row events. Emitting a logical message would
+        // write WAL and invalidate the weak ETag of the read itself.
+        if self.active_read(component_id) {
+            return None;
+        }
         self.current_run
             .read()
             .expect("current_run lock poisoned")
@@ -1856,37 +1861,21 @@ impl WamnPostgres {
         Ok(held_grants(&grants, Some(roles)))
     }
 
-    /// The model version of each named relation (`deploy/sql/model-versions.sql`).
+    /// The current WAL position used by weak ETags.
     ///
-    /// A relation that no transaction changed has no row, and its version is 0.
-    /// The names come from the loaded release, never from client input.
-    pub async fn model_versions(
-        &self,
-        project: &str,
-        relations: &[(&str, &str)],
-    ) -> anyhow::Result<Vec<i64>> {
+    /// The shared WAL position covers commits from every writer without a counter.
+    /// Unrelated writes can invalidate the tag too. Read it before the query snapshot.
+    pub async fn model_version(&self, project: &str) -> anyhow::Result<String> {
         anyhow::ensure!(valid_project(project), "invalid model-version project");
-        if relations.is_empty() {
-            return Ok(Vec::new());
-        }
-        let (schemas, tables): (Vec<&str>, Vec<&str>) = relations.iter().copied().unzip();
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let rows = connection
-            .query(
-                "SELECT COALESCE(current.version, 0) \
-                   FROM unnest($1::text[], $2::text[]) WITH ORDINALITY \
-                        AS named (schema_name, relation_name, position) \
-                   LEFT JOIN wamn_cache.model_versions AS current \
-                     USING (schema_name, relation_name) \
-                  ORDER BY named.position",
-                &[&schemas, &tables],
-            )
+        let row = connection
+            .query_one("SELECT pg_current_wal_lsn()::text", &[])
             .await
-            .context("read the model versions")?;
-        rows.into_iter().map(|row| Ok(row.try_get(0)?)).collect()
+            .context("read the WAL position for model versions")?;
+        Ok(row.try_get(0)?)
     }
 
     /// The grants every role of an active org-issued user gives it in this

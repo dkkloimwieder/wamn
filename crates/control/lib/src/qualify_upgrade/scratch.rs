@@ -230,15 +230,13 @@ async fn restore_platform_grants(database_url: &str) -> anyhow::Result<()> {
     let mut floor =
         include_str!("../../../../../deploy/sql/record-history-app-grants.sql").to_owned();
     floor.push_str(
-        "GRANT USAGE ON SCHEMA wamn_history, wamn_cache TO wamn_db_owner; \
+        "GRANT USAGE ON SCHEMA wamn_history TO wamn_db_owner; \
          GRANT EXECUTE ON FUNCTION \
            wamn_history.stamp_row(), \
            wamn_history.create_history_table(text, text, boolean), \
            wamn_history.row_image(record), \
            wamn_history.timestamptz_image(timestamptz), \
-           wamn_history.log_row_change(), \
-           wamn_cache.note_change(), \
-           wamn_cache.bump_changed() TO wamn_db_owner; \
+           wamn_history.log_row_change() TO wamn_db_owner; \
          GRANT USAGE ON SCHEMA wamn_authority TO wamn_app; \
          GRANT EXECUTE ON FUNCTION \
            wamn_authority.tenant_key(text), \

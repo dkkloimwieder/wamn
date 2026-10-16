@@ -2,10 +2,12 @@
 //!
 //! A `get` has a strong ETag from the release and the revision of the record
 //! it returns. A `query` or `projection` has a weak ETag from the release and
-//! the model versions of the relations it reads (`deploy/sql/model-versions.sql`).
+//! the WAL position read before the query snapshot.
 //! A new release changes every tag, because it can change the response bytes.
 //! The host compares If-None-Match with the tag and answers not-modified on a
 //! match (`docs/architecture/execution.md`).
+
+use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 use wamn_catalog::ServingRelation;
@@ -30,13 +32,16 @@ pub(crate) fn get_tag(release: &str, result: &Value, revision_field: &str) -> Op
     ))
 }
 
-/// The weak ETag of a list over `reads`, each paired with its model version.
-pub(crate) fn list_tag(release: &str, versions: &[(&ServingRelation, i64)]) -> String {
-    let versions = versions
+/// The weak ETag of a list over `reads`, at one WAL position.
+pub(crate) fn list_tag(release: &str, reads: &BTreeSet<ServingRelation>, version: &str) -> String {
+    let relations = reads
         .iter()
-        .map(|(relation, version)| json!([relation.schema, relation.relation, version]))
+        .map(|relation| json!([relation.schema, relation.relation]))
         .collect::<Vec<_>>();
-    format!("W/\"{}\"", digest(&json!(["list", release, versions])))
+    format!(
+        "W/\"{}\"",
+        digest(&json!(["list", release, relations, version]))
+    )
 }
 
 /// Whether an If-None-Match value matches `tag`.
@@ -61,6 +66,8 @@ fn digest(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use serde_json::json;
     use wamn_catalog::ServingRelation;
 
@@ -112,14 +119,17 @@ mod tests {
     }
 
     #[test]
-    fn a_list_tag_is_weak_and_follows_the_release_and_every_version() {
-        let (pallet, quantity) = (relation("pallet"), relation("pallet_quantity"));
-        let tag = list_tag("sha256:a", &[(&pallet, 2), (&quantity, 5)]);
+    fn a_list_tag_is_weak_and_follows_the_release_relations_and_wal_position() {
+        let reads = BTreeSet::from([relation("pallet"), relation("pallet_quantity")]);
+        let tag = list_tag("sha256:a", &reads, "0/5");
         assert!(tag.starts_with("W/\"") && tag.ends_with('"'), "{tag}");
-        assert_eq!(list_tag("sha256:a", &[(&pallet, 2), (&quantity, 5)]), tag);
-        assert_ne!(list_tag("sha256:a", &[(&pallet, 3), (&quantity, 5)]), tag);
-        assert_ne!(list_tag("sha256:a", &[(&pallet, 2), (&quantity, 6)]), tag);
-        assert_ne!(list_tag("sha256:b", &[(&pallet, 2), (&quantity, 5)]), tag);
+        assert_eq!(list_tag("sha256:a", &reads, "0/5"), tag);
+        assert_ne!(list_tag("sha256:a", &reads, "0/6"), tag);
+        assert_ne!(list_tag("sha256:b", &reads, "0/5"), tag);
+        assert_ne!(
+            list_tag("sha256:a", &BTreeSet::from([relation("pallet")]), "0/5"),
+            tag
+        );
     }
 
     #[test]

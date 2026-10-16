@@ -238,8 +238,6 @@ async fn require_known_triggers(
             let platform = [
                 wamn_record_history::STAMP_TRIGGER,
                 wamn_record_history::LOG_TRIGGER,
-                wamn_catalog::VERSION_NOTE_TRIGGER,
-                wamn_catalog::VERSION_BUMP_TRIGGER,
             ]
             .contains(&name);
             let inherited = declarations.iter().any(|planned| {

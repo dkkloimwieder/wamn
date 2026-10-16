@@ -8,8 +8,7 @@ use crate::migration_policy::{StageRelation, StageSynchronization, validate_stag
 
 use super::{
     LOG_TRIGGER, PostgresIntrospectionError, PostgresIntrospectionErrorType, STAMP_TRIGGER,
-    TRIGGERS_SQL, VERSION_BUMP_TRIGGER, VERSION_NOTE_TRIGGER, database_error, postgres_type,
-    refusal, relation_is_excluded,
+    TRIGGERS_SQL, database_error, postgres_type, refusal, relation_is_excluded,
 };
 
 /// Expected artifact bytes plus caller-established package and writable-field authority.
@@ -252,13 +251,7 @@ pub(super) async fn verify_catalog_synchronizations(
 }
 
 fn platform_trigger(name: &str) -> bool {
-    [
-        STAMP_TRIGGER,
-        LOG_TRIGGER,
-        VERSION_NOTE_TRIGGER,
-        VERSION_BUMP_TRIGGER,
-    ]
-    .contains(&name)
+    [STAMP_TRIGGER, LOG_TRIGGER].contains(&name)
 }
 
 fn error(

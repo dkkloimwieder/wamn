@@ -36,7 +36,6 @@ async fn install(client: &Client) {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE; \
              DO $roles$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app NOLOGIN; \
@@ -201,14 +200,11 @@ async fn inventory_triggers(client: &Client) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The record history triggers among `triggers`. Every owned relation also
-/// carries the two model version triggers, which
-/// `model_versions_advance_once_for_each_committed_transaction` covers.
+/// The record history triggers among `triggers`.
 fn trigger_definitions(triggers: &[(String, String)]) -> Vec<&str> {
     triggers
         .iter()
         .map(|(definition, _)| definition.as_str())
-        .filter(|definition| !definition.contains(" wamn_cache_"))
         .collect()
 }
 
@@ -1539,8 +1535,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE;",
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
         )
         .await
         .expect("clean package-runner schemas");
@@ -1669,7 +1664,6 @@ async fn record_history_triggers_follow_the_declaration() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE; \
              DROP FUNCTION public.record_history_foreign();",
         )
         .await
@@ -1981,8 +1975,7 @@ async fn record_history_log_follows_the_declaration() {
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE;",
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
         )
         .await
         .expect("clean record-history log schemas");
@@ -2326,8 +2319,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE;",
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
         )
         .await
         .expect("clean local target schemas");
@@ -2411,8 +2403,7 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE;",
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
         )
         .await
         .expect("clean local target reuse schemas");
@@ -2479,222 +2470,76 @@ async fn apply_created_then_added(relation: &str) {
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE;",
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
         )
         .await
         .expect("clean created-then-added schemas");
     std::fs::remove_dir_all(package).expect("remove created-then-added package fixture");
 }
 
-/// The model version of each inventory relation that a transaction changed.
-async fn inventory_versions(client: &Client) -> std::collections::BTreeMap<String, i64> {
-    client
-        .query(
-            "SELECT relation_name, version FROM wamn_cache.model_versions \
-              WHERE schema_name = 'inventory'",
-            &[],
-        )
-        .await
-        .expect("read the inventory model versions")
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1)))
-        .collect()
-}
-
-fn versions(entries: &[(&str, i64)]) -> std::collections::BTreeMap<String, i64> {
-    entries
-        .iter()
-        .map(|(relation, version)| ((*relation).to_owned(), *version))
-        .collect()
-}
-
-/// A committed transaction adds 1 to the version of each relation that it
-/// changed, once, and at commit (`deploy/sql/model-versions.sql`).
+/// Application writers share no counter row, including after an installed upgrade.
 #[tokio::test]
-async fn model_versions_advance_once_for_each_committed_transaction() {
+async fn model_versions_use_wal_without_counter_triggers() {
     let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     install(&client).await;
-    let package = fixture_root().with_file_name(format!(
-        "apply-package-model-versions-{}",
-        std::process::id()
-    ));
+    let package =
+        fixture_root().with_file_name(format!("apply-package-wal-{}", std::process::id()));
     copy_base_fixture(&package);
     apply(&url, &package).await.expect("apply the base fixture");
-
-    let installed = inventory_triggers(&client).await;
-    for relation in ["dock", "ingot", "panel", "panel_line", "rack", "rack_line"] {
-        assert_eq!(
-            installed
-                .iter()
-                .filter(|(definition, _)| {
-                    definition.contains(" wamn_cache_")
-                        && definition.contains(&format!(" ON inventory.{relation} "))
-                })
-                .map(|(definition, _)| definition.as_str())
-                .collect::<Vec<_>>(),
-            [
-                format!(
-                    "CREATE CONSTRAINT TRIGGER wamn_cache_bump AFTER INSERT OR DELETE OR UPDATE \
-                     ON inventory.{relation} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
-                     EXECUTE FUNCTION wamn_cache.bump_changed()"
-                ),
-                format!(
-                    "CREATE TRIGGER wamn_cache_note AFTER INSERT OR DELETE OR UPDATE OR TRUNCATE \
-                     ON inventory.{relation} FOR EACH STATEMENT \
-                     EXECUTE FUNCTION wamn_cache.note_change()"
-                ),
-            ],
-            "every owned relation carries both version triggers"
-        );
-    }
+    // Model the retired schema and dependent application triggers on an installed database.
+    client
+        .batch_execute(
+            "CREATE SCHEMA wamn_cache;
+         CREATE TABLE wamn_cache.model_versions (version bigint);
+         CREATE FUNCTION wamn_cache.note_change() RETURNS trigger LANGUAGE plpgsql AS
+           $$ BEGIN RETURN NULL; END $$;
+         CREATE FUNCTION wamn_cache.bump_changed() RETURNS trigger LANGUAGE plpgsql AS
+           $$ BEGIN RETURN NULL; END $$;
+         CREATE TRIGGER wamn_cache_note AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE
+           ON inventory.dock FOR EACH STATEMENT EXECUTE FUNCTION wamn_cache.note_change();
+         CREATE CONSTRAINT TRIGGER wamn_cache_bump AFTER INSERT OR UPDATE OR DELETE
+           ON inventory.dock DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+           EXECUTE FUNCTION wamn_cache.bump_changed();",
+        )
+        .await
+        .expect("install retired counter dependencies");
+    client
+        .batch_execute(include_str!(
+            "../../../../deploy/sql/migrations/project/0021_remove_model_versions.sql"
+        ))
+        .await
+        .expect("remove the installed counter and triggers");
     apply(&url, &package)
         .await
-        .expect("an exact replay keeps the version triggers");
-    assert_eq!(inventory_triggers(&client).await, installed);
-    assert_eq!(inventory_versions(&client).await, versions(&[]));
-
-    // The guest role writes through the triggers but holds no grant on the
-    // version table.
-    client
-        .batch_execute(
-            "GRANT USAGE ON SCHEMA inventory TO wamn_app; \
-             GRANT SELECT, INSERT, UPDATE, DELETE ON inventory.dock, inventory.ingot TO wamn_app;",
-        )
-        .await
-        .expect("grant the guest role the fixture writes");
-    client
-        .batch_execute(
-            "BEGIN; SET LOCAL ROLE wamn_app; \
-             INSERT INTO inventory.dock (dock_code) VALUES ('d-1'), ('d-2'); \
-             INSERT INTO inventory.dock (dock_code) VALUES ('d-3'); \
-             UPDATE inventory.dock SET dock_code = 'd-0' WHERE dock_code = 'd-3'; \
-             INSERT INTO inventory.ingot (ingot_number) VALUES ('i-1'), ('i-2'); \
-             COMMIT;",
-        )
-        .await
-        .expect("a guest transaction writes two relations");
-    assert_eq!(
-        inventory_versions(&client).await,
-        versions(&[("dock", 1), ("ingot", 1)]),
-        "one transaction adds 1 to each relation it changed, whatever its statements"
-    );
-    let refused = client
-        .batch_execute(
-            "BEGIN; SET LOCAL ROLE wamn_app; \
-             UPDATE wamn_cache.model_versions SET version = version + 1;",
-        )
-        .await
-        .expect_err("the guest role cannot write a version");
-    assert_eq!(
-        refused.code(),
-        Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
-    );
-    client
-        .batch_execute("ROLLBACK")
-        .await
-        .expect("end the refused transaction");
-
-    for (statement, expected) in [
-        (
-            "UPDATE inventory.ingot SET ingot_number = 'i-3' WHERE ingot_number = 'i-2'",
-            [("dock", 1), ("ingot", 2)],
-        ),
-        (
-            "DELETE FROM inventory.ingot WHERE ingot_number = 'i-3'",
-            [("dock", 1), ("ingot", 3)],
-        ),
-        (
-            "UPDATE inventory.dock SET dock_code = dock_code WHERE false",
-            [("dock", 1), ("ingot", 3)],
-        ),
-    ] {
+        .expect("a package replay does not recreate counters");
+    assert!(
         client
-            .batch_execute(&format!(
-                "BEGIN; SET LOCAL ROLE wamn_app; {statement}; COMMIT;"
-            ))
+            .query_one("SELECT to_regnamespace('wamn_cache') IS NULL", &[])
             .await
-            .expect("a guest write commits");
-        assert_eq!(
-            inventory_versions(&client).await,
-            versions(&expected),
-            "{statement}: an update and a delete add 1, and a statement that changes no row adds nothing"
-        );
-    }
-
-    client
-        .batch_execute(
-            "BEGIN; INSERT INTO inventory.dock (dock_code) VALUES ('d-rolled-back'); ROLLBACK; \
-             BEGIN; INSERT INTO inventory.dock (dock_code) VALUES ('d-4'); SAVEPOINT partial; \
-             INSERT INTO inventory.ingot (ingot_number) VALUES ('i-rolled-back'); \
-             ROLLBACK TO SAVEPOINT partial; COMMIT;",
-        )
-        .await
-        .expect("a rolled-back transaction and a rolled-back savepoint");
-    assert_eq!(
-        inventory_versions(&client).await,
-        versions(&[("dock", 2), ("ingot", 3)]),
-        "a rolled-back write adds nothing"
+            .unwrap()
+            .get::<_, bool>(0)
+    );
+    assert!(
+        inventory_triggers(&client)
+            .await
+            .iter()
+            .all(|(definition, _)| !definition.contains("wamn_cache"))
     );
 
     client
-        .batch_execute("TRUNCATE inventory.rack_line")
+        .batch_execute("INSERT INTO inventory.dock (dock_code) VALUES ('d-1'), ('d-2')")
         .await
-        .expect("truncate a relation that nothing references");
-    assert_eq!(
-        inventory_versions(&client).await,
-        versions(&[("dock", 2), ("ingot", 3), ("rack_line", 1)]),
-        "a truncate adds 1"
-    );
-
-    // Two transactions change two relations in opposite order. The versions
-    // are bumped in name order at commit, so both commit, and each adds 1 to
-    // each relation.
+        .expect("create separate rows");
     let first = connect(&url).await;
     let second = connect(&url).await;
+    first.batch_execute("BEGIN; UPDATE inventory.dock SET dock_code = 'd-1a' WHERE dock_code = 'd-1'; SET CONSTRAINTS ALL IMMEDIATE")
+        .await.expect("the first writer remains open after all triggers");
+    second.batch_execute("BEGIN; SET LOCAL lock_timeout = '1s'; UPDATE inventory.dock SET dock_code = 'd-2b' WHERE dock_code = 'd-2'; COMMIT")
+        .await.expect("a different row of the same table commits without waiting for the first writer");
     first
-        .batch_execute(
-            "BEGIN; UPDATE inventory.ingot SET ingot_number = 'i-1a' WHERE ingot_number = 'i-1'",
-        )
+        .batch_execute("COMMIT")
         .await
-        .expect("the first transaction changes ingot");
-    second
-        .batch_execute(
-            "BEGIN; UPDATE inventory.dock SET dock_code = 'd-1b' WHERE dock_code = 'd-1'",
-        )
-        .await
-        .expect("the second transaction changes dock");
-    first
-        .batch_execute("UPDATE inventory.dock SET dock_code = 'd-2a' WHERE dock_code = 'd-2'")
-        .await
-        .expect("the first transaction changes dock");
-    second
-        .batch_execute("INSERT INTO inventory.ingot (ingot_number) VALUES ('i-5')")
-        .await
-        .expect("the second transaction changes ingot");
-    let (first_commit, second_commit) = tokio::join!(
-        first.batch_execute("COMMIT"),
-        second.batch_execute("COMMIT")
-    );
-    first_commit.expect("the first transaction commits");
-    second_commit.expect("the second transaction commits");
-    assert_eq!(
-        inventory_versions(&client).await,
-        versions(&[("dock", 4), ("ingot", 5), ("rack_line", 1)]),
-        "both transactions commit, and each adds 1 to both versions"
-    );
-
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS inventory CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_cache CASCADE;",
-        )
-        .await
-        .expect("clean model version schemas");
-    std::fs::remove_dir_all(package).expect("remove model version package fixture");
+        .expect("the first writer commits");
+    std::fs::remove_dir_all(package).expect("remove the WAL fixture");
 }

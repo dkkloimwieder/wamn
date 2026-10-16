@@ -488,19 +488,41 @@ pub(super) async fn begin_statement_transaction(
     component_id: &str,
     project: &str,
 ) -> Result<PgTransaction, PgError> {
+    let (transaction, mut claims) =
+        prepare_statement_transaction(plugin, component_id, project).await?;
+    let connection = StatementConnectionGuard::new(
+        take_conn(&transaction.state)?,
+        Arc::clone(&transaction.destroyed),
+    );
+    if let Some(run) = plugin.current_run_for(component_id) {
+        claims.begin_sql.push(';');
+        claims
+            .begin_sql
+            .push_str(&super::claims::transactions::causation_emit_sql(&run));
+    }
+    claims.bind(connection.connection()).await?;
+    connection.restore(&transaction.state);
+    Ok(transaction)
+}
+
+pub(super) async fn prepare_statement_transaction(
+    plugin: &WamnPostgres,
+    component_id: &str,
+    project: &str,
+) -> Result<(PgTransaction, super::claims::transactions::BoundClaims), PgError> {
     let tenant = plugin.require_tenant(component_id)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
     let user_id = plugin.user_id_for(component_id);
     let operation = plugin.operation_for(component_id);
-    let run = plugin.current_run_for(component_id);
+
     let (connection, policy, authority) = plugin
         .checkout_workload(component_id, project, &tenant)
         .await?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
-    plugin
-        .begin_with_claims(
+    let claims = plugin
+        .prepare_claims(
             connection.connection(),
             authority,
             plugin.active_read(component_id),
@@ -510,20 +532,23 @@ pub(super) async fn begin_statement_transaction(
             role.as_deref(),
             user_id.as_deref(),
             operation.as_deref(),
-            run.as_ref(),
+            None,
             policy.statement_timeout_ms,
         )
         .await?;
-    Ok(PgTransaction {
-        state: Arc::new(std::sync::Mutex::new(TxnState {
-            conn: Some(connection.into_connection()),
-            finished: false,
-        })),
-        destroyed: Arc::clone(&plugin.destroyed),
-        cursor_seq: 0,
-        row_limit: policy.row_limit,
-        lent: false,
-    })
+    Ok((
+        PgTransaction {
+            state: Arc::new(std::sync::Mutex::new(TxnState {
+                conn: Some(connection.into_connection()),
+                finished: false,
+            })),
+            destroyed: Arc::clone(&plugin.destroyed),
+            cursor_seq: 0,
+            row_limit: policy.row_limit,
+            lent: false,
+        },
+        claims,
+    ))
 }
 
 impl client::Host for ActiveCtx<'_> {}
@@ -1239,15 +1264,11 @@ impl<T: 'static + Send> statement_wit::HostWithStore<T> for SharedCtx {
         super::run_stream::run_stream(accessor, None, statement_path, binds).await
     }
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the async WIT method lends only a local resource"
-    )]
     async fn operation_transaction(
         accessor: &Accessor<T, Self>,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
     {
-        lend_operation_transaction(accessor, None)
+        lend_operation_transaction(accessor, None).await
     }
 }
 
@@ -1379,21 +1400,33 @@ async fn statement_begin<T: 'static>(
 
 /// Lend the operation's host transaction to the `statements` import named
 /// `instance`, with that import's statement set.
-fn lend_operation_transaction<T: 'static>(
+async fn lend_operation_transaction<T: 'static>(
     accessor: &Accessor<T, SharedCtx>,
     instance: Option<&str>,
 ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>> {
-    accessor.with(|mut access| {
+    let (transaction, statements, component_id) = accessor.with(|mut access| {
         let ctx = access.get();
         let plugin = plugin_of(&ctx)?;
         let component_id = ctx.component_id.to_string();
-        let Some(transaction) = plugin.operation_transaction_for(&component_id) else {
-            return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
-        };
-        let statements = plugin.active_statement_set(&component_id, instance);
-        ctx.table
+        Ok::<_, wash_runtime::wasmtime::Error>((
+            plugin.operation_transaction_for(&component_id),
+            plugin.active_statement_set(&component_id, instance),
+            component_id,
+        ))
+    })?;
+    let Some(transaction) = transaction else {
+        return Ok(Err(StatementError::Postgres(PgError::PermissionDenied)));
+    };
+    let transaction = match transaction.lend().await {
+        Ok(transaction) => transaction,
+        Err(error) => return Ok(Err(StatementError::Postgres(error))),
+    };
+    accessor.with(|mut access| {
+        access
+            .get()
+            .table
             .push(PgStatementTransaction {
-                transaction: transaction.lend(),
+                transaction,
                 owner_scope: component_id,
                 statements,
             })
@@ -1651,16 +1684,12 @@ impl<T: 'static + Send> bindings::named_imports::wamn::postgres::statements::Hos
         statement_begin(accessor, Some(id.instance())).await
     }
 
-    #[expect(
-        clippy::unused_async_trait_impl,
-        reason = "the async WIT method lends only a local resource"
-    )]
     async fn operation_transaction(
         accessor: &Accessor<T, Self>,
         id: super::NamedStatements,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
     {
-        lend_operation_transaction(accessor, Some(id.instance()))
+        lend_operation_transaction(accessor, Some(id.instance())).await
     }
 }
 

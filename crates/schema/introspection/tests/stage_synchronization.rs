@@ -142,8 +142,6 @@ fn synchronization_refuses_platform_trigger_names() {
     for name in [
         wamn_record_history::STAMP_TRIGGER,
         wamn_record_history::LOG_TRIGGER,
-        wamn_catalog::VERSION_NOTE_TRIGGER,
-        wamn_catalog::VERSION_BUMP_TRIGGER,
     ] {
         let sql = SQL.replace(
             "CREATE TRIGGER mirror_note",

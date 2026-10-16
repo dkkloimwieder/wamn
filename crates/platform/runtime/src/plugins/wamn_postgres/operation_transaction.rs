@@ -2,17 +2,17 @@
 //! (`docs/history/host-transaction.md` 4.1).
 //!
 //! The host begins it before the guest call, under the claims of the call, in
-//! the same `BEGIN` batch as every statement transaction. The guest works in
+//! a pipeline with its write-log claim. The guest works in
 //! it through `statements.operation-transaction`, and its `begin`, `run` and
 //! `run-stream` refuse while it is bound, because each would run on a
 //! connection of its own that the host's rollback does not reach. After the
 //! call the host commits or rolls it back.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use super::resources::{
-    PgTransaction, StatementConnectionGuard, begin_statement_transaction, take_conn,
+    PgTransaction, StatementConnectionGuard, prepare_statement_transaction, take_conn,
 };
 use super::{PgError, StatementError, WamnPostgres};
 
@@ -30,6 +30,9 @@ pub(super) const FINISH_REFUSED: &str = "2D000";
 #[derive(Debug, Clone)]
 pub struct OperationTransaction {
     transaction: Arc<PgTransaction>,
+    pub(super) claims: Arc<Mutex<Option<super::claims::transactions::BoundClaims>>>,
+    pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
+    commit_sql: Arc<str>,
 }
 
 /// Why a commit of an [`OperationTransaction`] did not succeed.
@@ -59,8 +62,26 @@ impl std::error::Error for CommitFailure {}
 impl OperationTransaction {
     /// A guest handle of this transaction. Dropping it leaves the transaction
     /// open, and it refuses `commit` and `rollback`.
-    pub(super) fn lend(&self) -> PgTransaction {
-        self.transaction.lent()
+    pub(super) async fn lend(&self) -> Result<PgTransaction, PgError> {
+        self.start().await?;
+        Ok(self.transaction.lent())
+    }
+
+    async fn start(&self) -> Result<(), PgError> {
+        let claims = self
+            .claims
+            .lock()
+            .expect("item claims lock poisoned")
+            .take();
+        if let Some(claims) = claims {
+            let connection = StatementConnectionGuard::new(
+                take_conn(&self.transaction.state)?,
+                Arc::clone(&self.transaction.destroyed),
+            );
+            claims.bind(connection.connection()).await?;
+            connection.restore(&self.transaction.state);
+        }
+        Ok(())
     }
 
     /// The owned transaction, for the host's own statements in it.
@@ -75,6 +96,7 @@ impl OperationTransaction {
     /// Returns [`CommitFailure::Uncertain`] only when `COMMIT` was sent and
     /// its answer was not read. Every other failure is a certain rollback.
     pub async fn commit(&self) -> Result<(), CommitFailure> {
+        self.start().await.map_err(CommitFailure::RolledBack)?;
         let state = &self.transaction.state;
         let connection = take_conn(state).map_err(CommitFailure::RolledBack)?;
         let connection =
@@ -88,7 +110,41 @@ impl OperationTransaction {
             mark_finished();
             return Err(CommitFailure::RolledBack(PgError::ConnectionUnavailable));
         }
-        match connection.connection().batch_execute("COMMIT").await {
+        let finish = self
+            .finish
+            .lock()
+            .expect("item finish lock poisoned")
+            .take();
+        let result = if let Some(params) = finish {
+            // Prepare before polling COMMIT: a cache miss must not reorder the writes.
+            let statement = connection
+                .connection()
+                .prepare_cached(super::write_log::COMMIT_FINISH_SQL)
+                .await
+                .map_err(|error| CommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
+            let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
+                .iter()
+                .map(|value| value as &(dyn tokio_postgres::types::ToSql + Sync))
+                .collect();
+            let (finished, committed) = tokio::join!(biased;
+                connection.connection().query(&statement, &params),
+                connection.connection().batch_execute(&self.commit_sql));
+            if let Err(error) = finished {
+                mark_finished();
+                return Err(if error.as_db_error().is_some() {
+                    CommitFailure::RolledBack(super::types::map_pg_error(&error))
+                } else {
+                    CommitFailure::Uncertain(super::types::map_pg_error(&error))
+                });
+            }
+            committed
+        } else {
+            connection
+                .connection()
+                .batch_execute(&self.commit_sql)
+                .await
+        };
+        match result {
             Ok(()) => {
                 mark_finished();
                 connection.repool();
@@ -181,15 +237,27 @@ impl WamnPostgres {
     ///
     /// # Errors
     ///
-    /// Returns the error of the checkout or of the `BEGIN` batch.
+    /// Returns the error of checkout or claim preparation. BEGIN waits for the claim.
     pub async fn begin_operation_transaction(
         &self,
         scope: &str,
     ) -> Result<OperationTransaction, PgError> {
         let project = self.project_for(scope);
-        let transaction = begin_statement_transaction(self, scope, &project).await?;
+        let (transaction, claims) = prepare_statement_transaction(self, scope, &project).await?;
+        let commit_sql = self.current_run_for(scope).map_or_else(
+            || "COMMIT".to_owned(),
+            |run| {
+                format!(
+                    "{} COMMIT",
+                    super::claims::transactions::causation_emit_sql(&run)
+                )
+            },
+        );
         Ok(OperationTransaction {
             transaction: Arc::new(transaction),
+            claims: Arc::new(Mutex::new(Some(claims))),
+            finish: Arc::new(Mutex::new(None)),
+            commit_sql: commit_sql.into(),
         })
     }
 

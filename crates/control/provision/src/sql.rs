@@ -161,7 +161,7 @@ pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 5] = [
 ];
 
 /// The schemas that the callable-HTTP admitter uses.
-pub const HTTP_ADMITTER_SCHEMAS: [&str; 3] = ["catalog", "app_system", "wamn_cache"];
+pub const HTTP_ADMITTER_SCHEMAS: [&str; 2] = ["catalog", "app_system"];
 
 /// Every relation that the callable-HTTP admitter reads, as `(schema, relation)`.
 ///
@@ -175,7 +175,6 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
             ("app_system", "permissions"),
             ("app_system", "users"),
             ("app_system", "user_roles"),
-            ("wamn_cache", "model_versions"),
         ])
 }
 
@@ -502,9 +501,9 @@ fn quoted_column_list(columns: &[&str]) -> String {
 /// [`http_admitter_relations`].
 /// User permission reads join the active application user to its role grants;
 /// service permission reads continue to read `app_system.permissions` alone.
-/// A read route's ETag reads `wamn_cache.model_versions`
-/// (`deploy/sql/model-versions.sql`). `USAGE` on those three schemas plus
-/// eleven `SELECT`s is the family's authority.
+/// A read route's ETag reads the WAL position without a table grant.
+/// `USAGE` on those two schemas plus
+/// eight `SELECT`s is the family's authority.
 ///
 /// # What it deliberately does NOT hold
 ///
@@ -1216,13 +1215,13 @@ mod tests {
         let sql = grant_http_admitter_surface_sql("wamn_run");
         assert_eq!(
             surface_grants(WorkloadRoleFamily::HttpAdmitter, &sql),
-            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, wamn_cache, \"wamn_run\" \
+            "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, wamn_cache, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, wamn_cache, \"wamn_run\" \
+             REVOKE ALL PRIVILEGES ON SCHEMA catalog, app_system, \"wamn_run\" \
              FROM \"wamn_http_admitter\"; \
-             GRANT USAGE ON SCHEMA catalog, app_system, wamn_cache TO \"wamn_http_admitter\"; \
+             GRANT USAGE ON SCHEMA catalog, app_system TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
              TO \"wamn_http_admitter\"; \
@@ -1231,10 +1230,8 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE app_system.\"permissions\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE app_system.\"users\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE wamn_cache.\"model_versions\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads five catalog relations, three permission relations and the \
-             model versions, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
+             GRANT SELECT ON TABLE app_system.\"user_roles\" TO \"wamn_http_admitter\";",
+            "the callable-HTTP admitter reads five catalog relations and three permission relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));

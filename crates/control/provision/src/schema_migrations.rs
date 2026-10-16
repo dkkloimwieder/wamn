@@ -324,6 +324,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0020_administration_release_read.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0021_remove_model_versions.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0021_remove_model_versions.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]

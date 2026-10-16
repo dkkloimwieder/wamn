@@ -544,10 +544,8 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
         )
         .collect::<Vec<_>>();
     assert!(
-        exact
-            .iter()
-            .any(|acl| acl.schema_name == "wamn_cache" && acl.object_name == "model_versions"),
-        "the setup check expects the model-version read that a read route's ETag needs"
+        exact.iter().all(|acl| acl.schema_name != "wamn_cache"),
+        "WAL-based ETags need no counter schema grant"
     );
     let verify = |grants: &[RoleAcl]| {
         verify_http_admitter_grants(

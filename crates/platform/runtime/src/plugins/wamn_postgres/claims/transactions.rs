@@ -23,7 +23,7 @@ use super::{OneShotResult, WamnPostgres, refuse_unattributed_statement, validate
 /// no bind params. `transactional = true` so the message rides the txn's commit
 /// at its own LSN; the reader (l5i9.12.1) buffers the whole txn and stamps this
 /// onto every row event regardless of frame order.
-pub(super) fn causation_emit_sql(c: &Causation) -> String {
+pub(in super::super) fn causation_emit_sql(c: &Causation) -> String {
     let json = serde_json::to_string(c).expect("Causation serializes to JSON");
     let literal = wamn_pg_core::quote_literal(&json);
     format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', {literal});")
@@ -137,6 +137,37 @@ const BEGIN_READ_COMMITTED: &str = "BEGIN ISOLATION LEVEL READ COMMITTED";
 /// statement in it reads one snapshot and none writes.
 const BEGIN_READ_SNAPSHOT: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY";
 
+/// Prepared claims whose first poll sends BEGIN before the bound settings.
+#[derive(Debug)]
+pub(in super::super) struct BoundClaims {
+    pub(in super::super) begin_sql: String,
+    statement: tokio_postgres::Statement,
+    params: Vec<Option<String>>,
+    class: AuthorityClass,
+}
+
+impl BoundClaims {
+    pub(in super::super) async fn bind(&self, conn: &Object) -> Result<(), PgError> {
+        let params: Vec<&(dyn ToSql + Sync)> = self
+            .params
+            .iter()
+            .map(|value| value as &(dyn ToSql + Sync))
+            .collect();
+        async {
+            let (begin, claims) = tokio::join!(biased;
+                conn.batch_execute(&self.begin_sql), conn.execute(&self.statement, &params));
+            begin.map_err(|error| map_pg_error(&error))?;
+            claims.map_err(|error| map_pg_error(&error))?;
+            Ok(())
+        }
+        .instrument(tracing::info_span!(
+            "wamn.postgres.bind_claims",
+            wamn.authority_class = self.class.as_str()
+        ))
+        .await
+    }
+}
+
 impl WamnPostgres {
     /// `BEGIN` + claim/limit injection. The claims are injected by ONE fully
     /// bound statement ([`CLAIM_SQL`]) whose every value travels as a bind
@@ -171,6 +202,42 @@ impl WamnPostgres {
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
+        self.prepare_claims(
+            conn,
+            class,
+            read,
+            tenant,
+            schema,
+            runner,
+            role,
+            user_id,
+            operation,
+            run,
+            statement_timeout_ms,
+        )
+        .await?
+        .bind(conn)
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every claim this transaction binds is an independently trusted input"
+    )]
+    pub(in super::super) async fn prepare_claims(
+        &self,
+        conn: &Object,
+        class: AuthorityClass,
+        read: bool,
+        tenant: &str,
+        schema: Option<&str>,
+        runner: Option<&str>,
+        role: Option<&str>,
+        user_id: Option<&str>,
+        operation: Option<&str>,
+        run: Option<&Causation>,
+        statement_timeout_ms: u32,
+    ) -> Result<BoundClaims, PgError> {
         // The tenant is still VALIDATED on the guest path even though it is no
         // longer bound: it selected the credential this connection was checked
         // out with, so a malformed one is a bug worth failing on.
@@ -187,24 +254,17 @@ impl WamnPostgres {
             .prepare_cached(claim_sql(class))
             .await
             .map_err(|e| map_pg_error(&e))?;
-        // statement_timeout binds as TEXT (a bare-integer string = ms).
-        let timeout = statement_timeout_ms.to_string();
-        // An absent role / user id binds the empty claim, not NULL: `''` is the
-        // value the compiled policies' COALESCE / NULLIF floors deny on. An
-        // absent operation binds the same empty value.
-        let role = role.unwrap_or_default();
-        let user_id = user_id.unwrap_or_default();
-        let operation = operation.unwrap_or_default();
-        let platform_params: [&(dyn ToSql + Sync); 7] = [
-            &tenant, &timeout, &schema, &runner, &role, &user_id, &operation,
+        let mut params = vec![
+            Some(statement_timeout_ms.to_string()),
+            schema.map(str::to_owned),
+            runner.map(str::to_owned),
+            Some(role.unwrap_or_default().to_owned()),
+            Some(user_id.unwrap_or_default().to_owned()),
+            Some(operation.unwrap_or_default().to_owned()),
         ];
-        let guest_params: [&(dyn ToSql + Sync); 6] =
-            [&timeout, &schema, &runner, &role, &user_id, &operation];
-        let params: &[&(dyn ToSql + Sync)] = if guest {
-            &guest_params
-        } else {
-            &platform_params
-        };
+        if !guest {
+            params.insert(0, Some(tenant.to_owned()));
+        }
         // l5i9.12.2: stamp the run's causation onto this txn, IN THE BEGIN
         // BATCH. The TRANSACTIONAL emit rides the commit; a rolled-back txn
         // emits nothing and the reader (l5i9.12.1) stitches it onto the txn's
@@ -232,32 +292,12 @@ impl WamnPostgres {
             Some(run) => format!("{begin};{}", causation_emit_sql(run)),
             None => begin.to_string(),
         };
-        // ONE FLIGHT. `batch_execute` and `execute` each enqueue their whole
-        // message batch synchronously on their FIRST poll, and `biased;` pins
-        // that poll order, so BEGIN is on the wire ahead of the bound claim
-        // statement and tokio-postgres's FIFO ordering does the rest: the txn is
-        // open before the transaction-LOCAL `set_config`s run. Nothing here
-        // awaits before those two sends, which is the property a pipelining
-        // caller depends on.
-        //
-        // Claim binding is a full server round trip on every request. It sat
-        // inside wamn.postgres with no span of its own, so it was
-        // indistinguishable from pool checkout and statement time.
-        async {
-            let (begin, claims) = tokio::join!(
-                biased;
-                conn.batch_execute(&begin_sql),
-                conn.execute(&stmt, params),
-            );
-            begin.map_err(|e| map_pg_error(&e))?;
-            claims.map_err(|e| map_pg_error(&e))?;
-            Ok::<(), PgError>(())
-        }
-        .instrument(tracing::info_span!(
-            "wamn.postgres.bind_claims",
-            wamn.authority_class = class.as_str(),
-        ))
-        .await
+        Ok(BoundClaims {
+            begin_sql,
+            statement: stmt,
+            params,
+            class,
+        })
     }
 
     /// Parse the bound claim statement on `conn` if this connection has not

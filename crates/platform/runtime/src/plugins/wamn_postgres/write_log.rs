@@ -46,6 +46,11 @@ pub const FINISH_SQL: &str = "UPDATE app_system.write_log SET result = $3::text 
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key";
 
+/// Abort on a missing claim because COMMIT is already queued behind this statement.
+pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE app_system.write_log SET result = $3::text \
+     WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
+     RETURNING idempotency_key) SELECT 1 / count(*)::integer FROM finished";
+
 /// Free the key of a two-step claim whose item was refused.
 const RELEASE_SQL: &str = "DELETE FROM app_system.write_log \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
@@ -181,8 +186,29 @@ impl OperationTransaction {
             .map(|param| param.as_ref() as &(dyn ToSql + Sync))
             .collect();
         let result = async {
-            let prepared = connection.connection().prepare_cached(sql).await?;
-            connection.connection().query(&prepared, &params).await
+            let prepared = connection
+                .connection()
+                .prepare_cached(sql)
+                .await
+                .map_err(|error| super::types::map_pg_error(&error))?;
+            let claims = self
+                .claims
+                .lock()
+                .expect("item claims lock poisoned")
+                .take();
+            if let Some(claims) = claims {
+                let (bound, rows) = tokio::join!(biased;
+                    claims.bind(connection.connection()),
+                    connection.connection().query(&prepared, &params));
+                bound?;
+                rows.map_err(|error| super::types::map_pg_error(&error))
+            } else {
+                connection
+                    .connection()
+                    .query(&prepared, &params)
+                    .await
+                    .map_err(|error| super::types::map_pg_error(&error))
+            }
         }
         .await;
         match result {
@@ -197,7 +223,7 @@ impl OperationTransaction {
                     transaction.finished = true;
                 }
                 drop(connection);
-                Err(super::types::map_pg_error(&error))
+                Err(error)
             }
         }
     }
@@ -213,8 +239,20 @@ impl IntentStore for OperationTransaction {
         begin_with(intent, |sql, params| self.log_statement(sql, params)).await
     }
 
+    /// Stage the guest result for the owner's finish-and-commit pipeline.
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
-        finish_with(id, outcome, |sql, params| self.log_statement(sql, params)).await
+        let (operation, key) = claim_of("finish", id)?;
+        let result = serde_json::to_string(&outcome.0)
+            .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
+        let mut finish = self.finish.lock().expect("item finish lock poisoned");
+        if finish.is_some() {
+            return Err(contract(
+                "finish",
+                "the item already has a pending finish".to_owned(),
+            ));
+        }
+        *finish = Some([operation.to_owned(), key.to_owned(), result]);
+        Ok(())
     }
 
     /// The owner's rollback undoes the claim.

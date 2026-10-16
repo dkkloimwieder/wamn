@@ -227,6 +227,9 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
     // A statement that finds its connection lost fails, and the rollback
     // after it answers that the transaction ended.
     let lost = begin().await;
+    lost.begin(&intent("lost", "h1"))
+        .await
+        .expect("open the transaction before disconnect");
     database
         .execute(&["SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
              WHERE state = 'idle in transaction' AND pid <> pg_backend_pid()"])
@@ -239,4 +242,102 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
         .await
         .expect("the rollback of a lost connection succeeds");
     assert_eq!(rows().trim(), "2", "a lost connection leaves no row");
+}
+
+/// A failed finish must abort business writes even when COMMIT is already queued.
+#[tokio::test]
+async fn a_missing_finish_rolls_back_the_pipelined_commit() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres) = tenant_database("writelogtx").await;
+    postgres
+        .bind_session_claims(
+            SCOPE,
+            &SessionClaims {
+                tenant: "writelogtx".into(),
+                user_id: Some(LIVE_PRINCIPAL.into()),
+                operation: Some("base:widget/create@1.0.0".into()),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .unwrap();
+    let transaction = postgres.begin_operation_transaction(SCOPE).await.unwrap();
+    let Begun::New(mut id) = transaction.begin(&intent("open", "h1")).await.unwrap() else {
+        panic!("new claim")
+    };
+    id.0.push_str("-missing");
+    transaction
+        .finish(&id, &StoredOutcome(json!({"value": 1})))
+        .await
+        .unwrap();
+    assert!(matches!(
+        transaction.commit().await,
+        Err(super::super::operation_transaction::CommitFailure::RolledBack(_))
+    ));
+    assert_eq!(
+        database
+            .execute(&["SELECT count(*) FROM app_system.write_log"])
+            .unwrap()
+            .trim(),
+        "0"
+    );
+}
+
+/// Every writer's committed WAL invalidates weak model tags, including deletes and truncates.
+#[tokio::test]
+async fn model_versions_follow_wal_without_a_counter() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let family = wamn_control_provision::WorkloadRoleFamily::HttpAdmitter;
+    let role = wamn_control_provision::workload_generation_role(
+        family,
+        wamn_control_provision::WorkloadRoleScope::ProjectEnvironment {
+            org: "wal-test",
+            project: PROJECT,
+            environment: "test",
+            database: database.name(),
+        },
+        wamn_control_provision::CredentialGeneration::A,
+    )
+    .unwrap();
+    database
+        .execute(&[&format!(
+            "CREATE ROLE {} LOGIN PASSWORD 'wal-reader'; {}",
+            wamn_pg_core::quote_ident(&role),
+            wamn_control_provision::sql::normalize_workload_generation_membership_sql(
+                family, &role, true
+            ),
+        )])
+        .unwrap();
+    let mut reader_url = url::Url::parse(database.url()).unwrap();
+    reader_url.set_username(&role).unwrap();
+    reader_url.set_password(Some("wal-reader")).unwrap();
+    let postgres = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::default().with_class(
+            wamn_run_state::AuthorityClass::CallableHttp,
+            reader_url.to_string(),
+        )),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 5_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 10,
+    })
+    .unwrap();
+    database
+        .execute(&[
+            "CREATE TABLE public.etag_rows (id int); INSERT INTO public.etag_rows VALUES (1), (2)",
+        ])
+        .unwrap();
+    let mut previous = postgres.model_version(PROJECT).await.unwrap();
+    for statement in [
+        "UPDATE public.etag_rows SET id = 3 WHERE id = 1",
+        "DELETE FROM public.etag_rows WHERE id = 3",
+        "TRUNCATE public.etag_rows",
+    ] {
+        database.execute(&[statement]).unwrap();
+        let current = postgres.model_version(PROJECT).await.unwrap();
+        assert_ne!(previous, current, "{statement}");
+        previous = current;
+    }
 }

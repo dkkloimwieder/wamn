@@ -347,6 +347,11 @@ For an operation with SQL, the host begins one transaction for each item, and th
 3. If the insert claimed nothing, a committed claim holds the key. The engine reads its request and result. The same request answers the stored result, and another request answers `idempotency_conflict` with the detail `{field, intent}`. The host rolls back, so the retry runs no work.
 4. If the insert claimed the key, the component does the work in the same transaction. The engine stores the result in the claim, and it commits with the work. A refusal rolls back, and the claim goes with it.
 
+The host pipelines `BEGIN`, local session claims, and the write-log claim before it runs the component.
+After the component returns its result, the host queues the finish, causation message when present, and `COMMIT` together.
+The guest statement needs its own trip because the finish stores the returned value.
+The [execution path](execution.md#native-dispatch) describes the statement and round-trip counts.
+
 The component reaches that transaction with `wamn_postgres_statements::operation_transaction()` of `wamn:postgres` 0.4.0, and its data access takes the `Transaction`.
 A `begin` inside such an operation refuses.
 An operation without SQL claims in two steps on a host connection of its own: begin before the call, and finish after it.
@@ -792,28 +797,19 @@ The system database has two more limits:
 
 ## Model versions
 
-A model version is a counter that changes with every committed write to a model relation.
-A read of a query or a projection takes its weak ETag from the versions of the relations that it reads, as [execution](execution.md) describes.
-[`deploy/sql/model-versions.sql`](../../deploy/sql/model-versions.sql) defines the table, the functions and the grants, and `CATALOG_SCHEMA_SQL` carries it into each project database.
-A project database created before `e8360c3e6` has no `wamn_cache` schema. Recreate it before you run apply-package.
+A model version uses PostgreSQL's current WAL position, the position in its write-ahead log.
+The host reads `pg_current_wal_lsn()::text` before it opens the query snapshot.
+It uses that position for every declared relation in the weak ETag, together with the release digest and relation names.
+Committed writes from every host advance the WAL position without a counter row or a table-level lock.
+Unrelated writes and rolled-back work can also advance it, so they can invalidate a tag without a change to the queried rows.
+The position belongs to the database server, not to one relation.
 
-`wamn_cache.model_versions` holds one row for each relation that a transaction changed, keyed by schema and relation name.
-A relation with no row has version 0.
-One project database serves one tenant, so the table has no tenant column.
-
-apply-package installs two platform triggers on each relation that the package owns, in the same step as the record history triggers.
-The statement trigger `wamn_cache_note` records the changed relation in the transaction and takes no lock.
-The deferred constraint trigger `wamn_cache_bump` fires at commit.
-Its first firing adds 1 to the version of each recorded relation, in name order, and the later firings do nothing.
-A transaction therefore adds 1 to each relation that it changed, once, whatever its statements.
-Two transactions that change two relations in opposite order cannot deadlock on the versions, because both lock them in name order and only through the commit.
-A rolled-back transaction or savepoint adds nothing, and a statement that changes no row adds nothing.
-A `TRUNCATE` fires no row trigger, so the statement trigger adds 1 at once.
-
-Both trigger functions run as their owner.
-`wamn_app` holds no privilege on `wamn_cache`, so a guest cannot write a version directly.
-The callable-HTTP admitter role holds `USAGE` on `wamn_cache` and `SELECT` on `model_versions`, because the host reads the versions for the [ETag](execution.md) of a list.
-The catalog reader skips both triggers by name, as it skips the record history triggers.
+An admitted read-only call emits no causation message, so it does not invalidate its own tag.
+The read uses the callable-HTTP connection and needs no application-table grant.
+The list reads this position before it runs the query, as [execution](execution.md) describes.
+A failed position read leaves the response without an ETag.
+Project migration `0021_remove_model_versions.sql` removes `wamn_cache`, its counter table, its functions, and their dependent application triggers.
+Fresh databases install none of these objects, and apply-package installs only the record history triggers.
 
 ## Canonical values and SQL names
 

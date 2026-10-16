@@ -299,7 +299,7 @@ impl RouterDeliveryBridge {
 
     /// Call one route, with the ETag of a read (`docs/architecture/execution.md`).
     ///
-    /// A list reads the model versions of its relations before it runs, and a
+    /// A list reads the WAL position before it runs, and a
     /// match with If-None-Match answers not-modified without running it. The
     /// caller passes the operation grant first. A `get` runs, and its tag comes
     /// from the revision of the record it returns. A read without a tag, and
@@ -333,7 +333,7 @@ impl RouterDeliveryBridge {
                 }
                 Ok(list) => tag = Some(list),
                 Err(error) => {
-                    tracing::warn!(%error, "model versions unavailable; the list has no ETag");
+                    tracing::warn!(%error, "model version unavailable; the list has no ETag");
                 }
             }
         }
@@ -354,24 +354,14 @@ impl RouterDeliveryBridge {
         Ok(settled)
     }
 
-    /// The weak ETag of a list from the current versions of the relations it reads.
+    /// The weak ETag of a list from its relations and the current WAL position.
     async fn list_tag(&self, read: &ServingRoute, release: &str) -> anyhow::Result<String> {
-        let names = read
-            .reads
-            .iter()
-            .map(|relation| (relation.schema.as_str(), relation.relation.as_str()))
-            .collect::<Vec<_>>();
-        let versions = self
+        let version = self
             .operations
             .postgres
-            .model_versions(&self.operations.project, &names)
+            .model_version(&self.operations.project)
             .await?;
-        anyhow::ensure!(
-            versions.len() == names.len(),
-            "model-version-count-mismatch"
-        );
-        let versions = read.reads.iter().zip(versions).collect::<Vec<_>>();
-        Ok(list_tag(release, &versions))
+        Ok(list_tag(release, &read.reads, &version))
     }
 
     /// Settle a delivery that the route path or the driver refused, or that
@@ -550,7 +540,7 @@ impl RouterDeliveryBridge {
     /// Serve one query read as reply lines (`docs/architecture/execution.md`).
     ///
     /// The host refuses a cap above the ceiling and answers not-modified from
-    /// the model versions, both before the query runs. The query then runs in
+    /// the WAL position, both before the query runs. The query then runs in
     /// its own task. A read that ends before its first row returns the same
     /// report as a page would, so a refusal keeps its HTTP status.
     #[expect(
@@ -585,7 +575,7 @@ impl RouterDeliveryBridge {
         let tag = match self.list_tag(&read.route, &release).await {
             Ok(tag) => Some(tag),
             Err(error) => {
-                tracing::warn!(%error, "model versions unavailable; the load has no ETag");
+                tracing::warn!(%error, "model version unavailable; the load has no ETag");
                 None
             }
         };

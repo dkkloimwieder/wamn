@@ -147,10 +147,12 @@ A read also carries an ETag, which the host derives and compares.
 A `get` has a strong ETag from the manifest digest of the release and the revision field of the record that it returns.
 The generator writes the revision column of the model into each `get` contract. The model's operations name that one column as `revision_field`.
 A `get` of a model with no revision column has no strong ETag, and the generated client index names that model.
-A `query` or `projection` has a weak ETag from the manifest digest and the [model versions](data-access.md#model-versions) of the relations that it reads.
+A `query` or `projection` has a weak ETag from the manifest digest, declared relation names, and the current WAL position.
+The [model version source](data-access.md#model-versions) covers commits from every host and can also change after unrelated writes.
 Publish writes the relations and the revision field into the serving manifest route from the generated contract, and a history table stands for its model relation.
 The router forwards `If-None-Match` on a GET, and the host compares it with the weak comparison.
-For a list, the host applies the operation grant, reads the versions, and answers not-modified on a match without running the read.
+For a list, the host applies the operation grant and reads the WAL position.
+On a matching ETag, it answers not-modified without running the read.
 For a `get`, the host runs the read and then compares.
 On not-modified, the router answers 304 with the ETag, the `Cache-Control` and `Vary` of the route, and no body.
 A read without a revision field, or with no declared relations, has no ETag, and a failed version read leaves the list without one.
@@ -290,6 +292,16 @@ HTTP admission and queue delivery use separate concurrency bounds, so one worklo
 Each host replica polls the durable queue and claims work through database leases; replicas need no wake service or process-local handoff.
 
 The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on; the guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.
+For a new logged update, the host sends `BEGIN`, local claims, and the write-log claim together, then waits before it runs the guest.
+A duplicate reads the stored claim and never runs the guest.
+The guest waits for its SQL result before it returns the value that the write log stores.
+The host then sends the write-log finish, the transactional causation message when present, and `COMMIT` together.
+A missing finish row causes a SQL error, so the queued commit cannot preserve an unfinished write.
+With one guest statement and warm prepared statements, the update transaction takes three round-trips and seven top-level SQL statements with causation.
+Without causation it takes six statements. Preparation on a cold connection and duplicate-claim reads add trips.
+The guest return value prevents the guest statement and finish from sharing one trip.
+No counter trigger, changed-relation read, or counter reset runs on the write path.
+
 The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
 [Record history](data-access.md#record-history) stamps that principal on every write.
 

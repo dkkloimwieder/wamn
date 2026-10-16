@@ -2758,7 +2758,7 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
     )
     .await
     .expect("the scope binds");
-    // A route read carries its run, so the BEGIN batch emits its causation.
+    // A route read carries its run, but must not write a causation message.
     pg.set_current_run(
         scope,
         Some(Causation {
@@ -2808,6 +2808,15 @@ async fn live_a_read_invocation_transaction_reads_one_snapshot() {
             .expect("read the isolation level")
             .get(0);
         assert_eq!(level, isolation, "read={read}");
+        let no_write: bool = connection
+            .query_one("SELECT pg_current_xact_id_if_assigned() IS NULL", &[])
+            .await
+            .expect("read whether causation assigned a write transaction")
+            .get(0);
+        assert_eq!(
+            no_write, read,
+            "only a write invocation emits causation into WAL"
+        );
         let select = || run_verified_query(&connection, path, &statement, &[], 1_000);
         let first = select().await.expect("the first select runs");
         assert!(matches!(first.rows[0][0], SqlValue::Int32(1)), "{first:?}");

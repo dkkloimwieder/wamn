@@ -121,8 +121,6 @@ pub fn inspect_stage_synchronization_declaration(
     if [
         wamn_record_history::STAMP_TRIGGER,
         wamn_record_history::LOG_TRIGGER,
-        wamn_catalog::VERSION_NOTE_TRIGGER,
-        wamn_catalog::VERSION_BUMP_TRIGGER,
     ]
     .contains(&trigger.as_str())
     {

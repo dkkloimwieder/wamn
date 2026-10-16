@@ -232,8 +232,8 @@ impl InvocationPolicy for NativePolicy {
     type ItemTransaction = OperationTransaction;
 
     /// Begin the item's transaction under the claims of the call, on a scope
-    /// of its own that ends when the `BEGIN` batch has run, when the admitted
-    /// operation declares a host transaction.
+    /// of its own that ends after the transaction captures its claims, when the
+    /// admitted operation declares a host transaction. BEGIN waits for the claim.
     async fn begin_item(
         &self,
         component_id: &str,
