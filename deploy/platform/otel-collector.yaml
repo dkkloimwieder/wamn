@@ -32,8 +32,8 @@ data:
     processors:
       memory_limiter:
         check_interval: 1s
-        limit_mib: 800
-        spike_limit_mib: 200
+        limit_mib: 1500
+        spike_limit_mib: 400
       resource:
         attributes:
           - key: wamn.cluster
@@ -58,6 +58,7 @@ data:
         sending_queue:
           enabled: true
           storage: file_storage
+          queue_size: 100
       google_cloud_storage/logs:
         bucket:
           name: ${env:BUCKET}
@@ -72,6 +73,7 @@ data:
         sending_queue:
           enabled: true
           storage: file_storage
+          queue_size: 100
       nop: {}
     extensions:
       file_storage:
@@ -147,7 +149,7 @@ spec:
               memory: 256Mi
             limits:
               cpu: 500m
-              memory: 1Gi
+              memory: 2Gi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
