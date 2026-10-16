@@ -728,7 +728,7 @@ pub(super) fn refuse_unattributed_statement(
 
 /// True if `sql` calls `pg_logical_emit_message` (either overload) AND names the
 /// reserved `wamn.` message-prefix namespace (l5i9.12.2). Only the plugin's own
-/// [`begin_with_claims`] emit — which runs through `batch_execute`, NOT this
+/// [`begin_with_claims`] emit — which runs through the plugin, NOT this
 /// guest surface — may write a `wamn.causation` frame; a guest forging one over
 /// the parameterized query/execute/cursor surface would ride its own txn's
 /// commit and the reader (l5i9.12.1) would stitch it, misattributing causation.
@@ -1782,8 +1782,12 @@ impl WamnPostgres {
                 &lookup.origin_operation,
                 &lookup.operation,
             ];
+            let statement = conn
+                .prepare_cached(CONNECTION_EFFECT_SNAPSHOT_SQL)
+                .await
+                .context("prepare HTTP effect authorization snapshot")?;
             let row = conn
-                .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL, &params)
+                .query_opt(&statement, &params)
                 .await
                 .context("query HTTP effect authorization snapshot")?;
             let Some(row) = row else {
@@ -1833,7 +1837,7 @@ impl WamnPostgres {
         .await;
         match result {
             Ok(snapshot) => {
-                if let Err(error) = conn.batch_execute("COMMIT").await {
+                if let Err(error) = transactions::finish_transaction(&conn, "COMMIT").await {
                     self.destroy(conn);
                     return Err(error).context("commit HTTP effect authorization snapshot");
                 }
@@ -1871,8 +1875,12 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let statement = connection
+            .prepare_cached("SELECT pg_current_wal_lsn()::text")
+            .await
+            .context("prepare the WAL position for model versions")?;
         let row = connection
-            .query_one("SELECT pg_current_wal_lsn()::text", &[])
+            .query_one(&statement, &[])
             .await
             .context("read the WAL position for model versions")?;
         Ok(row.try_get(0)?)
@@ -2034,7 +2042,7 @@ impl WamnPostgres {
         }
         let result = work(&connection).await;
         let end = if result.is_ok() { "COMMIT" } else { "ROLLBACK" };
-        if let Err(error) = connection.batch_execute(end).await {
+        if let Err(error) = transactions::finish_transaction(&connection, end).await {
             self.destroy(connection);
             return Err(error).context("end the host route transaction");
         }

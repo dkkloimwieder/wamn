@@ -495,10 +495,11 @@ pub(super) async fn begin_statement_transaction(
         Arc::clone(&transaction.destroyed),
     );
     if let Some(run) = plugin.current_run_for(component_id) {
-        claims.begin_sql.push(';');
-        claims
-            .begin_sql
-            .push_str(&super::claims::transactions::causation_emit_sql(&run));
+        claims.causation = Some(
+            super::claims::transactions::prepare_causation(connection.connection(), &run)
+                .await
+                .map_err(|error| map_pg_error(&error))?,
+        );
     }
     claims.bind(connection.connection()).await?;
     connection.restore(&transaction.state);
@@ -1145,7 +1146,7 @@ async fn finish_txn(
     verb: &str,
 ) -> Result<(), PgError> {
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
-    match connection.connection().batch_execute(verb).await {
+    match super::claims::transactions::finish_transaction(connection.connection(), verb).await {
         Ok(()) => {
             if let Ok(mut st) = state.lock() {
                 st.finished = true;
@@ -1594,7 +1595,7 @@ pub(super) async fn finish_statement_txn(
     verb: &str,
 ) -> Result<(), PgError> {
     let connection = StatementConnectionGuard::new(take_conn(state)?, Arc::clone(destroyed));
-    match connection.connection().batch_execute(verb).await {
+    match super::claims::transactions::finish_transaction(connection.connection(), verb).await {
         Ok(()) => {
             if let Ok(mut transaction) = state.lock() {
                 transaction.finished = true;

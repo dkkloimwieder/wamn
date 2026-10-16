@@ -114,7 +114,12 @@ pub(super) async fn run_stream<T: 'static + Send>(
             } else {
                 "ROLLBACK"
             };
-            let finished = match connection.connection().batch_execute(verb).await {
+            let finished = match super::claims::transactions::finish_transaction(
+                connection.connection(),
+                verb,
+            )
+            .await
+            {
                 Ok(()) => {
                     connection.repool();
                     pumped.map(drop)

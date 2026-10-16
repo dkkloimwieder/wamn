@@ -23,10 +23,34 @@ use super::{OneShotResult, WamnPostgres, refuse_unattributed_statement, validate
 /// no bind params. `transactional = true` so the message rides the txn's commit
 /// at its own LSN; the reader (l5i9.12.1) buffers the whole txn and stamps this
 /// onto every row event regardless of frame order.
+#[cfg(test)]
 pub(in super::super) fn causation_emit_sql(c: &Causation) -> String {
     let json = serde_json::to_string(c).expect("Causation serializes to JSON");
     let literal = wamn_pg_core::quote_literal(&json);
     format!(" SELECT pg_logical_emit_message(true, 'wamn.causation', {literal});")
+}
+
+pub(in super::super) async fn prepare_causation(
+    conn: &Object,
+    run: &Causation,
+) -> Result<(tokio_postgres::Statement, String), tokio_postgres::Error> {
+    let statement = conn
+        .prepare_cached("SELECT pg_logical_emit_message(true, 'wamn.causation', $1::text)")
+        .await?;
+    let json = serde_json::to_string(run).expect("Causation serializes to JSON");
+    Ok((statement, json))
+}
+
+pub(in super::super) async fn finish_transaction(
+    conn: &Object,
+    verb: &str,
+) -> Result<(), tokio_postgres::Error> {
+    if verb == "COMMIT" {
+        let statement = conn.prepare_cached(verb).await?;
+        conn.execute(&statement, &[]).await.map(drop)
+    } else {
+        conn.batch_execute(verb).await
+    }
 }
 
 /// The fully-bound claim statement run inside the plugin-managed transaction
@@ -62,7 +86,7 @@ pub(in super::super) fn causation_emit_sql(c: &Causation) -> String {
 ///   pooled connection never carries the operation of an earlier request.
 ///
 /// The `wamn.causation` emit (l5i9.12.2) is NOT part of this statement — it is a
-/// separate, already-escaped simple-query emit appended by [`begin_with_claims`]
+/// separate prepared emit pipelined by [`begin_with_claims`]
 /// only for a run-owned transaction.
 pub(super) const CLAIM_SQL: &str = "SELECT \
      set_config('app.tenant', $1, true), \
@@ -140,7 +164,8 @@ const BEGIN_READ_SNAPSHOT: &str = "BEGIN ISOLATION LEVEL REPEATABLE READ READ ON
 /// Prepared claims whose first poll sends BEGIN before the bound settings.
 #[derive(Debug)]
 pub(in super::super) struct BoundClaims {
-    pub(in super::super) begin_sql: String,
+    begin: tokio_postgres::Statement,
+    pub(in super::super) causation: Option<(tokio_postgres::Statement, String)>,
     statement: tokio_postgres::Statement,
     params: Vec<Option<String>>,
     class: AuthorityClass,
@@ -154,9 +179,17 @@ impl BoundClaims {
             .map(|value| value as &(dyn ToSql + Sync))
             .collect();
         async {
-            let (begin, claims) = tokio::join!(biased;
-                conn.batch_execute(&self.begin_sql), conn.execute(&self.statement, &params));
+            let (begin, causation, claims) = tokio::join!(biased;
+                conn.execute(&self.begin, &[]),
+                async {
+                    if let Some((statement, json)) = &self.causation {
+                        conn.execute(statement, &[json]).await?;
+                    }
+                    Ok::<_, tokio_postgres::Error>(())
+                },
+                conn.execute(&self.statement, &params));
             begin.map_err(|error| map_pg_error(&error))?;
+            causation.map_err(|error| map_pg_error(&error))?;
             claims.map_err(|error| map_pg_error(&error))?;
             Ok(())
         }
@@ -243,13 +276,8 @@ impl WamnPostgres {
         // out with, so a malformed one is a bug worth failing on.
         validate_claims(tenant, schema, runner, role, user_id, operation)?;
         let guest = class == AuthorityClass::GuestSql;
-        // A CACHE HIT SENDS NOTHING AND DOES NOT YIELD (deadpool's cell is
-        // checked before the init future is ever awaited), so this call is the
-        // whole reason the flight below can be interleaved with a caller's own
-        // statement. A MISS is a Parse and a full round trip, and whatever is
-        // polled during that await reaches the server FIRST -- so a caller that
-        // pipelines must run [`WamnPostgres::warm_claim_statement`] before it
-        // starts the other half (wamn-0h0g.17.33).
+        // Prepare every statement before a caller polls the pipeline. A cache
+        // miss must not let the application statement run ahead of BEGIN.
         let stmt = conn
             .prepare_cached(claim_sql(class))
             .await
@@ -265,19 +293,6 @@ impl WamnPostgres {
         if !guest {
             params.insert(0, Some(tenant.to_owned()));
         }
-        // l5i9.12.2: stamp the run's causation onto this txn, IN THE BEGIN
-        // BATCH. The TRANSACTIONAL emit rides the commit; a rolled-back txn
-        // emits nothing and the reader (l5i9.12.1) stitches it onto the txn's
-        // row events regardless of frame order. It carries no bind params, so
-        // the already-escaped simple-query emit is unchanged by R2.
-        //
-        // RIDING BEGIN RATHER THAN FOLLOWING IT is what keeps the claim half of
-        // a run-owned request to ONE flight: as a separate `batch_execute` it
-        // could not be sent until BEGIN's own reply came back, and it would then
-        // be the only message this function still had outstanding when a
-        // pipelined caller's statement failed -- so an aborted transaction
-        // surfaced here as a claim error and misattributed the cause.
-        //
         // The isolation level is stated, not inherited from a session default:
         // the write log's retry reads the claim that its insert waited on, and
         // only a fresh READ COMMITTED snapshot sees it (`docs/plan/write-log.md`
@@ -288,36 +303,25 @@ impl WamnPostgres {
         } else {
             BEGIN_READ_COMMITTED
         };
-        let begin_sql = match run {
-            Some(run) => format!("{begin};{}", causation_emit_sql(run)),
-            None => begin.to_string(),
+        let begin = conn
+            .prepare_cached(begin)
+            .await
+            .map_err(|e| map_pg_error(&e))?;
+        let causation = match run {
+            Some(run) => Some(
+                prepare_causation(conn, run)
+                    .await
+                    .map_err(|e| map_pg_error(&e))?,
+            ),
+            None => None,
         };
         Ok(BoundClaims {
-            begin_sql,
+            begin,
+            causation,
             statement: stmt,
             params,
             class,
         })
-    }
-
-    /// Parse the bound claim statement on `conn` if this connection has not
-    /// parsed it yet, so that the [`begin_with_claims`] that follows reaches its
-    /// `BEGIN` inside its own first poll.
-    ///
-    /// This exists ONLY for the pipelined path (wamn-0h0g.17.33). A caller that
-    /// simply awaits `begin_with_claims` does not need it -- the `prepare_cached`
-    /// in there is the same call and the same cache entry.
-    ///
-    /// [`begin_with_claims`]: WamnPostgres::begin_with_claims
-    async fn warm_claim_statement(
-        &self,
-        conn: &Object,
-        class: AuthorityClass,
-    ) -> Result<(), PgError> {
-        conn.prepare_cached(claim_sql(class))
-            .await
-            .map(drop)
-            .map_err(|e| map_pg_error(&e))
     }
 
     /// Single statement in an implicit transaction: claims injected,
@@ -385,7 +389,7 @@ impl WamnPostgres {
                 .map(OneShotResult::Count)
         };
         match result {
-            Ok(v) => match conn.batch_execute("COMMIT").await {
+            Ok(v) => match finish_transaction(&conn, "COMMIT").await {
                 Ok(()) => Ok(v),
                 Err(e) => {
                     self.destroy(conn);
@@ -501,47 +505,10 @@ impl WamnPostgres {
             return Ok(rows);
         }
 
-        // THE CLAIMS LAND BEFORE ANYTHING ELSE TOUCHES THE CONNECTION, AND THEY
-        // STILL TRAVEL IN THE STATEMENT'S FLIGHT.
-        //
-        // The claim transaction and the statement are issued without an await
-        // between them, on the reasoning that tokio-postgres preserves FIFO
-        // order per connection. That reasoning was right about FIFO and wrong
-        // about what had been SENT: `begin_with_claims` OPENED by awaiting its
-        // own `prepare_cached`, and on a newly created connection that Parse is
-        // a full round trip. The statement half, polled during that await, sent
-        // its Parse first -- measured in the Receiving journey cluster with
-        // log_statement=all and reproducible by restarting the hosts
-        // (wamn-0h0g.15.137.15): the guest statement parsed before BEGIN and
-        // failed with `relation "purchase_order" does not exist`, carrying
-        // neither the `search_path` nor the `app.role` / `app.user_id` the
-        // claims install. Awaiting the claims outright fixed the order and cost
-        // the round trip the flight saved -- bind_claims at 0.45-0.89 ms plus a
-        // wakeup, against a 0.6 ms statement (measurement record in commit 494b5b8d5595).
-        //
-        // Parsing the claim statement FIRST deletes the await that let it
-        // happen, and deletes it for a COLD connection too, which is why this
-        // needs no knowledge of what the statement cache holds.
-        // `begin_with_claims` then reaches its `BEGIN` inside its own first
-        // poll, so `BEGIN` and the bound claim statement are the first two
-        // messages this request enqueues whatever this connection has cached. A
-        // cold statement's Parse is enqueued behind them and the server, reading
-        // its socket in order, runs it INSIDE the transaction with the claims
-        // already applied. `biased;` pins that poll order instead of leaving it
-        // to `join!`'s rotation (wamn-0h0g.17.33).
-        //
-        // Tested by `live_a_cold_connection_parses_inside_the_claim_transaction`,
-        // which fails against either the pre-fix shape or a swapped `join!`.
-        if let Err(error) = self
-            .warm_claim_statement(connection.connection(), authority)
-            .await
-        {
-            // Nothing is open yet -- the guard destroys the connection.
-            return Err(StatementError::Postgres(error));
-        }
-        let (claims, result) = tokio::join!(
-            biased;
-            self.begin_with_claims(
+        // Prepare before polling the application query, including on a cold
+        // connection. The biased join sends BEGIN and claims first.
+        let claims = self
+            .prepare_claims(
                 connection.connection(),
                 authority,
                 false,
@@ -553,7 +520,12 @@ impl WamnPostgres {
                 operation.as_deref(),
                 run.as_ref(),
                 policy.statement_timeout_ms,
-            ),
+            )
+            .await
+            .map_err(StatementError::Postgres)?;
+        let (claims, result) = tokio::join!(
+            biased;
+            claims.bind(connection.connection()),
             run_verified_query(
                 connection.connection(),
                 digest,
@@ -579,7 +551,7 @@ impl WamnPostgres {
             // COMMIT is a SECOND full server round trip on every request, and it
             // sat inside wamn.postgres with no span: statement ended at 13.7 ms
             // and the postgres span at 15.9 ms, so 2.1 ms was invisible here.
-            Ok(rows) => match async { connection.connection().batch_execute("COMMIT").await }
+            Ok(rows) => match async { finish_transaction(connection.connection(), "COMMIT").await }
                 .instrument(tracing::info_span!("wamn.postgres.commit"))
                 .await
             {

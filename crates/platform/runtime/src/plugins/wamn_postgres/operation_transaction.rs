@@ -32,7 +32,7 @@ pub struct OperationTransaction {
     transaction: Arc<PgTransaction>,
     pub(super) claims: Arc<Mutex<Option<super::claims::transactions::BoundClaims>>>,
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
-    commit_sql: Arc<str>,
+    causation: Option<wamn_event_wire::Causation>,
 }
 
 /// Why a commit of an [`OperationTransaction`] did not succeed.
@@ -110,6 +110,34 @@ impl OperationTransaction {
             mark_finished();
             return Err(CommitFailure::RolledBack(PgError::ConnectionUnavailable));
         }
+        // Prepare every statement before polling any part of the commit pipeline.
+        let commit = connection
+            .connection()
+            .prepare_cached("COMMIT")
+            .await
+            .map_err(|error| CommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
+        let causation = match &self.causation {
+            Some(run) => Some(
+                super::claims::transactions::prepare_causation(connection.connection(), run)
+                    .await
+                    .map_err(|error| {
+                        CommitFailure::RolledBack(super::types::map_pg_error(&error))
+                    })?,
+            ),
+            None => None,
+        };
+        let commit = async {
+            let (emitted, committed) = tokio::join!(biased;
+                async {
+                    if let Some((statement, json)) = &causation {
+                        connection.connection().execute(statement, &[json]).await?;
+                    }
+                    Ok::<_, tokio_postgres::Error>(())
+                },
+                connection.connection().execute(&commit, &[]));
+            emitted?;
+            committed.map(drop)
+        };
         let finish = self
             .finish
             .lock()
@@ -128,7 +156,7 @@ impl OperationTransaction {
                 .collect();
             let (finished, committed) = tokio::join!(biased;
                 connection.connection().query(&statement, &params),
-                connection.connection().batch_execute(&self.commit_sql));
+                commit);
             if let Err(error) = finished {
                 mark_finished();
                 return Err(if error.as_db_error().is_some() {
@@ -139,10 +167,7 @@ impl OperationTransaction {
             }
             committed
         } else {
-            connection
-                .connection()
-                .batch_execute(&self.commit_sql)
-                .await
+            commit.await
         };
         match result {
             Ok(()) => {
@@ -244,20 +269,11 @@ impl WamnPostgres {
     ) -> Result<OperationTransaction, PgError> {
         let project = self.project_for(scope);
         let (transaction, claims) = prepare_statement_transaction(self, scope, &project).await?;
-        let commit_sql = self.current_run_for(scope).map_or_else(
-            || "COMMIT".to_owned(),
-            |run| {
-                format!(
-                    "{} COMMIT",
-                    super::claims::transactions::causation_emit_sql(&run)
-                )
-            },
-        );
         Ok(OperationTransaction {
             transaction: Arc::new(transaction),
             claims: Arc::new(Mutex::new(Some(claims))),
             finish: Arc::new(Mutex::new(None)),
-            commit_sql: commit_sql.into(),
+            causation: self.current_run_for(scope),
         })
     }
 
