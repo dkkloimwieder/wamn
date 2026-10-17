@@ -1017,8 +1017,7 @@ fn a_generated_read_and_an_authored_read_populate_by_the_same_rule() {
 
 #[test]
 fn the_result_fields_of_an_operation_have_one_owner() {
-    // client_rust.rs held the same rule and could drift from the columns.
-    // wamn-7kmr.
+    // Result fields must come from the route to avoid drift from its columns.
     let mut ir = release();
     let served = operation(&mut ir, "get");
     let route_fields = served

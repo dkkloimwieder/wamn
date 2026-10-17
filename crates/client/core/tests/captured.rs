@@ -13,9 +13,6 @@ use wamn_client::{
     WamnClient,
 };
 
-#[path = "../../../../apps/target/wamn/platform_fixture/client/widget.rs"]
-pub mod widget;
-
 #[derive(Debug, Default)]
 struct RotatingCredential {
     calls: AtomicUsize,
@@ -150,7 +147,41 @@ async fn captured_retries_preserve_actual_command_bytes_and_raw_response_evidenc
 }
 
 #[tokio::test]
-async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null() {
+async fn code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null() {
+    const FIELDS: &[FieldSchema] = &[
+        scalar("request_id", "string"),
+        scalar("id", "uuid"),
+        scalar("expected_edit_version", "int64"),
+        FieldSchema {
+            children: &[
+                FieldSchema {
+                    field: FieldDescriptor {
+                        values: &["priority", "standard"],
+                        ..scalar("change.code", "text").field
+                    },
+                    required: false,
+                    ..scalar("change.code", "text")
+                },
+                FieldSchema {
+                    field: FieldDescriptor {
+                        nullable: true,
+                        ..scalar("change.maker_id", "uuid").field
+                    },
+                    required: false,
+                    ..scalar("change.maker_id", "uuid")
+                },
+                FieldSchema {
+                    field: FieldDescriptor {
+                        nullable: true,
+                        ..scalar("change.note", "text").field
+                    },
+                    required: false,
+                    ..scalar("change.note", "text")
+                },
+            ],
+            ..scalar("change", "object")
+        },
+    ];
     let credentials = Arc::new(RotatingCredential::default());
     let transport = Arc::new(RecordingTransport {
         requests: Mutex::new(Vec::new()),
@@ -176,12 +207,14 @@ async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blo
     ))
     .expect("read the fixture serving schema");
     let schema = &schema;
-    let fields = widget::WIDGET_UPDATE_INPUT_SCHEMA;
-    let route = widget::update_route();
+    let route = RouteMetadata {
+        method: "POST".into(),
+        template: "/widget/update".into(),
+    };
     let mut item = json!({"request_id":"code-absent", "id":"00000000-0000-0000-0000-000000000001",
         "expected_edit_version":4,"change":{}});
 
-    let absent = build_request(fields, &item, Some(schema)).expect("a code can stay absent");
+    let absent = build_request(FIELDS, &item, Some(schema)).expect("a code can stay absent");
     client
         .submit(&route, &BTreeMap::new(), &absent)
         .await
@@ -189,8 +222,8 @@ async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blo
 
     item["request_id"] = json!("code-null");
     item["change"]["code"] = serde_json::Value::Null;
-    let error = build_request(fields, &item, Some(schema))
-        .expect_err("the generated code field refuses null");
+    let error =
+        build_request(FIELDS, &item, Some(schema)).expect_err("the code field refuses null");
     assert_eq!(
         error.error_type(),
         wamn_client::request::RequestErrorType::NullNotAllowed
@@ -202,7 +235,7 @@ async fn generated_code_contract_preserves_absence_and_value_on_the_wire_and_blo
     item["request_id"] = json!("code-value");
     item["change"]["code"] = json!("priority");
     item["change"]["maker_id"] = json!("ABCDEF00000000000000000000000002");
-    let value = build_request(fields, &item, Some(schema)).expect("the code and maker are valid");
+    let value = build_request(FIELDS, &item, Some(schema)).expect("the code and maker are valid");
     client
         .submit(&route, &BTreeMap::new(), &value)
         .await

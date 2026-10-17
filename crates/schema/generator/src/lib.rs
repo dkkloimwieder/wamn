@@ -24,7 +24,6 @@ pub mod client_ir;
 /// The UI-neutral screen plan. Every client emitter reads its rules.
 pub mod client_plan;
 mod client_route;
-pub mod client_rust;
 /// The TypeScript client emitter. Browser bindings from the same contract IR.
 pub mod client_ts;
 mod components;

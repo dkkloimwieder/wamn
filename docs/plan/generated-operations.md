@@ -101,7 +101,7 @@ After §4.4, no generated operation needs authored Rust.
 
 - Authored operations. Their data function, handler, route entry and declaration entry stay authored.
 - A new operation kind, or a change to the SQL that the generator emits for an existing kind.
-- The TypeScript and Rust clients, apart from reading the generated route file.
+- The TypeScript clients, apart from reading the generated route file.
 - The error style of authored operations. The authored kinds of Receiving and Acme keep their typed accessors.
 
 ## 7. Owner rulings

@@ -19,7 +19,6 @@ use crate::authoring::{
 use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_plan::ClientPlan;
-use crate::client_rust::emit_rust_client;
 use crate::client_ts::{emit_ts_client, emit_ts_package_json};
 use crate::generate::GeneratedFile;
 use crate::{
@@ -32,7 +31,7 @@ use crate::{
     manifest::CONTROL_OWNED_RELATION_TABLES,
 };
 
-pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.0";
+pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.1";
 pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
 
 #[derive(Debug)]
@@ -382,21 +381,13 @@ pub fn materialize_package_classified(
     write_files(&output_root, &expected)
 }
 
-/// The Rust client bindings this package's release publishes.
+/// The TypeScript bindings and components that this package declares.
 ///
-/// Emitted HERE and not by a caller, because `generated/` is one owned set:
-/// materialization refuses any file in it that it did not produce, so a
-/// binding written beside the contracts by anything else is an unexpected file
-/// on the very next run. Folding the emitter in is what makes the bindings a
-/// GENERATE OUTPUT rather than something dropped next to one (`wamn-10yt.45`).
-///
-/// The contracts are read from the generated package still in memory, and the
-/// routes from the package's own `publication/attachments.json` and the
-/// generated route entries still in memory. Route
-/// templates are release facts — the base package publishes
-/// `/purchase_order/get` and the overlay publishes its own at
-/// `/acme/purchase_order/get` — so a binding that derived a path from an
-/// operation name would call the wrong one.
+/// Materialization owns these files with the rest of the generated output.
+/// It refuses files that it did not produce.
+/// Contracts and generated routes come from the package still in memory.
+/// Authored routes come from `publication/attachments.json`.
+/// Route templates are release facts, so bindings use them directly.
 pub(crate) fn client_bindings(
     package_root: &Path,
     manifest: &PackageManifest,
@@ -433,7 +424,7 @@ pub(crate) fn client_bindings(
     .context("read the release's published routes")?;
     let ir = ClientContractIr::from_release_contracts(&manifest.package.id, &contracts, &routes)
         .context("project the client-contract IR")?;
-    let mut files = emit_rust_client(&ir).context("emit the Rust client bindings")?;
+    let mut files = Vec::new();
     // A package opts in to TypeScript by declaring the package name that a
     // browser application imports. Generation never infers one.
     if let Some(client) = &manifest.client_package {

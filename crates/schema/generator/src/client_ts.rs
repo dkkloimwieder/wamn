@@ -7,10 +7,10 @@
 //!
 //! # What is NOT emitted, and why
 //!
-//! No base URL and no host, for the reason [`crate::client_rust`] states: a
-//! release does not record a deployment fact. No framework import and no
-//! component. The transport interface is declared here and implemented outside
-//! the generator.
+//! Bindings omit the base URL and host because these deployment facts can
+//! change when the same release runs elsewhere. The client supplies them.
+//! Bindings import no framework and contain no component.
+//! The transport interface is declared here and implemented outside the generator.
 //!
 //! No classification of a response. The four outcomes of one intent come from
 //! the response status, the raw body, the result class, the result fields and
@@ -499,7 +499,7 @@ fn emit_operation(
     write_result_field_map(source, &result_fields_const, result_class, result_fields)?;
 
     let Some(route) = &operation.route else {
-        // Stated, not silently omitted, for the reason `client_rust.rs` gives.
+        // An unpublished operation has types but no HTTP route to invoke.
         writeln!(
             source,
             "\n// `{}` is not published over HTTP by this release, so it has no route\n// and no invoke function. It remains listed for its types.",
@@ -1029,10 +1029,8 @@ fn identifier(name: &str, subject: &str) -> Result<String, ClientTsError> {
 mod tests {
     use super::*;
 
-    /// The type map is a contract, and the compile gate cannot check it: a
-    /// `uuid` emitted as `string` still type-checks, because the alias IS a
-    /// string. The map is pinned here directly, as `client_rust.rs` pins its
-    /// own.
+    /// A `uuid` emitted as `string` still compiles because the alias is a string.
+    /// These assertions pin the exact contract types.
     #[test]
     fn every_contract_type_has_its_exact_typescript_spelling() {
         for (contract, typescript) in [
@@ -1058,8 +1056,7 @@ mod tests {
         }
     }
 
-    /// An unknown type REFUSES, for the reason `client_rust.rs` states: an
-    /// approximation compiles and describes the wrong shape.
+    /// An unknown type refuses because an approximation can compile with the wrong shape.
     #[test]
     fn an_unknown_contract_type_refuses_by_name() {
         let refusal = ts_type("geography").expect_err("an unmapped type refuses");
