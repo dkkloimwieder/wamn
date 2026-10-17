@@ -11,6 +11,8 @@ Latency is in milliseconds.
 
 Run `tools/bench/local.sh` from this checkout on an eight-core Linux machine.
 It builds release binaries and guests because debug builds do not represent host timing.
+It builds the host in a separate Cargo call with the Dockerfile's packages and binaries.
+
 It requires Docker, Python 3, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
 Prepare SQLx and web dependencies as described in [running tests](running-tests.md#application-generation-and-sqlx).
 The Docker images `postgres:18`, `nats:2.10-alpine`, and `grafana/tempo:2.6.1` must already exist locally.
@@ -37,6 +39,7 @@ Each result includes `max_ms` and a `slow` list for requests above one second.
 The list holds the first 100 requests by start time, with `start_ms` from the timed run start and `latency_ms`.
 
 It writes `tests/bench/local-<CHART_VERSION>.json` and refuses an existing file.
+It prints guest SHA-256 digests and stores them as `http_route_sha256` and `materializer_sha256` in the result.
 The platform regression gate does not read local results.
 On exit, the script stops its development processes and removes only its own containers and their volumes.
 It prints the private temporary directory that holds logs and raw results.

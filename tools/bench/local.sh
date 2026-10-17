@@ -86,14 +86,21 @@ trap 'exit 143' TERM
 for image in postgres:18 nats:2.10-alpine grafana/tempo:2.6.1; do
   docker image inspect "$image" >/dev/null
 done
+# Match the Dockerfile host build without unifying control-tool features.
+cargo build --offline --locked --release -p wamn-host -p wamn-runtime \
+  --bin wamn-host --bin docker-credential-wamn
 cargo build --offline --release -p wamn-ctl --bin wamn \
-  -p wamn-host --bin wamn-host -p wamn-identity --bin wamn-identity \
+  -p wamn-identity --bin wamn-identity \
   -p wamn-cdc-reader --bin wamn-cdc-reader -p wamn-bench --bin wamn-bench
 cargo build --offline --release -p wamn-test-infrastructure --example event_broker_files
 for guest in http-route materializer; do
   RUSTFLAGS="$(tools/guest-rustflags)" cargo build --offline --release \
     --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p "$guest"
 done
+http_route_sha256=$(sha256sum "$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" | cut -d ' ' -f 1)
+materializer_sha256=$(sha256sum "$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm" | cut -d ' ' -f 1)
+echo "http_route_sha256=$http_route_sha256"
+echo "materializer_sha256=$materializer_sha256"
 
 # Choose distinct free loopback ports before publishing each explicit mapping.
 read -r pg_port scheduler_port event_port tempo_port otlp_port < <(python3 - <<'PY'
@@ -283,13 +290,17 @@ for call in get update; do
   sql 'SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' \
     >"$work/$call.pgss"
 done
-python3 - "$work" "$output" "$concurrency" <<'PY'
+python3 - "$work" "$output" "$concurrency" "$http_route_sha256" "$materializer_sha256" <<'PY'
 import json
 import pathlib
 import sys
 
 work = pathlib.Path(sys.argv[1])
-result = {"concurrency": int(sys.argv[3])}
+result = {
+    "concurrency": int(sys.argv[3]),
+    "http_route_sha256": sys.argv[4],
+    "materializer_sha256": sys.argv[5],
+}
 for call in ("get", "update"):
     run = json.loads((work / f"{call}.json").read_text())
     result[call] = {key: run[key] for key in (
@@ -307,6 +318,6 @@ print("local: " + "; ".join(
     f"{call} {run['throughput_per_sec']:.1f}/s p50={run['p50_ms']:.3f}ms "
     f"p99={run['p99_ms']:.3f}ms max={run['max_ms']:.3f}ms slow={len(run['slow'])} "
     f"errors={run['errors']} statements/request={run['pg_stat_statements_calls_per_request']}"
-    for call, run in result.items() if call != "concurrency"
+    for call, run in result.items() if call in ("get", "update")
 ) + f"; {sys.argv[2]}")
 PY
