@@ -1,16 +1,9 @@
 /**
  * The transport that turns one HTTP reply into one outcome.
  *
- * The rule it follows is `classify()` in `crates/client/tui/src/submission.rs`,
- * which the terminal uses. Both read the same case table, at
- * `crates/client/tui/tests/data/classification-cases.json`.
- *
- * It classifies the shape of the reply and trusts the platform for the values
- * inside it. The platform enforces its own contract, so the browser does not
- * repeat that work: it holds no JSON Schema validator and no copy of the wire
- * spelling rules. One difference follows, and it is deliberate: a reply whose
- * value violates its own field contract reads as completed here and as
- * uncertain in the terminal.
+ * Tests read the cases in `web/runtime/test/classification-cases.json`.
+ * The transport classifies reply shapes and trusts the platform to enforce field contracts.
+ * It holds no JSON Schema validator or copy of the wire spelling rules.
  */
 
 import { en } from "zod/locales";
@@ -141,8 +134,7 @@ function refused(code: string | null, detail: JsonValue): Outcome<JsonValue> {
 
 /**
  * Everything one refusal states besides its code, or null when it states
- * nothing else. The terminal carries the whole error object, and this carries
- * the same members beside the code.
+ * nothing else.
  */
 function withoutCode(error: { [key: string]: unknown }): JsonValue {
   const rest: { [key: string]: JsonValue } = {};

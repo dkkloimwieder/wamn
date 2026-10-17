@@ -14,8 +14,8 @@
 //!
 //! No classification of a response. The four outcomes of one intent come from
 //! the response status, the raw body, the result class, the result fields and
-//! the partial completion contract together, which
-//! `crates/client/tui/src/submission.rs` owns for the terminal. A transport
+//! the partial completion contract together. The web runtime owns these rules.
+//! A transport
 //! returns an [`Outcome`](self) that it classified, so the bindings hold no
 //! second copy of that reducer.
 //!
@@ -709,8 +709,7 @@ fn literals(values: &[String]) -> String {
 /// serves a collection.
 ///
 /// A bounded list and a page do not return one record: they return an envelope
-/// that carries the rows. `validate_value` in
-/// `crates/client/tui/src/submission.rs` states it. A bounded list carries its
+/// that carries the rows. A bounded list carries its
 /// array under `rows`. A page carries its array under `item`, beside a
 /// `next_cursor` that is present and either null or a string. The envelope is
 /// what the transport returns, so the envelope is the result type, and the row

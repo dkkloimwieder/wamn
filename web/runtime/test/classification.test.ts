@@ -1,15 +1,8 @@
-/**
- * The browser side of the shared classification cases.
- *
- * The table lives beside the rule it mirrors, at
- * `crates/client/tui/tests/data/classification-cases.json`, and
- * `crates/client/tui/tests/classification_table.rs` reads the same file. A case
- * that the two clients read differently is a defect in one of them.
- */
+/** Response classification cases owned by the browser runtime. */
 
 import { describe, expect, it } from "vitest";
 
-import table from "../../../crates/client/tui/tests/data/classification-cases.json" with { type: "json" };
+import table from "./classification-cases.json" with { type: "json" };
 import { refusalSentence } from "../src/refusal.js";
 import { classify, classifyEach, createTransport } from "../src/transport.js";
 import type { ErrorCase, JsonValue, Outcome, ResponseContract } from "../src/wire.js";

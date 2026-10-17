@@ -17,7 +17,7 @@ use tokio::process::Command;
 use crate::workload::HostObservation;
 
 /// The chart name and version that `helm list` reports for an environment release.
-pub const CHART: &str = "release-0.1.26";
+pub const CHART: &str = "release-0.1.27";
 
 /// How long the A1 probe waits for a host it must not get.
 const PROBE_WAIT: Duration = Duration::from_secs(120);

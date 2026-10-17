@@ -630,9 +630,8 @@ To run its tests, run:
 cd web/runtime && pnpm test
 ```
 
-The tests read the shared case table at `crates/client/tui/tests/data/classification-cases.json`.
-`crates/client/tui/tests/classification_table.rs` reads the same file, so one table holds both clients to one rule.
-If you change the table, run both.
+The tests read the case table at `web/runtime/test/classification-cases.json`.
+If you change the table, run these tests.
 
 ### Platform UI
 

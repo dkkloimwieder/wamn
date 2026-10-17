@@ -1,21 +1,13 @@
 {
   "comment": [
-    "One case table, read by two clients. The Rust test is",
-    "crates/client/tui/tests/classification_table.rs, and the TypeScript test is",
-    "web/runtime/test/classification.test.ts. Each case states one HTTP reply and",
-    "the outcome that both must reach.",
-    "A refusal states its code, and its detail is everything else the error",
-    "carries, or null when it carries nothing else.",
-    "The browser trusts the platform for the values inside a reply, so no case",
-    "turns on the spelling of a value. A malformed uuid reads as completed in the",
-    "browser and as uncertain in the terminal, which wamn-lajk.7 records.",
-    "A transport failure, such as a dropped connection, is language specific and",
-    "keeps its own test on each side.",
-    "Each of many_cases states one reply to a call that carries many items, the",
-    "request identity of each item, and one outcome for each item, in order. A",
-    "200 reply with one outcome for each item classifies each by the rule of one",
-    "case. Any other reply gives every item the same outcome. The browser reads",
-    "them. The terminal reads them once wamn-zsrk lands."
+    "The web runtime test classification.test.ts owns these cases.",
+    "Each case states one HTTP reply and its expected outcome.",
+    "A refusal carries its code and every other error member as detail, or null.",
+    "The browser trusts the platform to enforce field contracts inside replies.",
+    "Transport failures have separate tests.",
+    "Each many_cases entry states one reply, each request identity, and each expected outcome.",
+    "A 200 reply with one outcome per item classifies each item separately.",
+    "Any other reply gives every item the same outcome."
   ],
   "contracts": {
     "record": {

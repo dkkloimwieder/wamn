@@ -688,13 +688,11 @@ A field that declares a closed value domain types as a union of its literals.
 The [web runtime](../../web/runtime/) is the hand-written package that the bindings import.
 It is TypeScript source, it builds nothing, and a generated package declares it as its one dependency.
 It implements the transport: the URL, the credential the application supplies, the request envelope, and the classification of one reply.
-The rule it follows is `classify()` in `crates/client/tui/src/submission.rs`, which the terminal uses.
-Both clients read one case table at `crates/client/tui/tests/data/classification-cases.json`.
+The runtime tests read the cases in `web/runtime/test/classification-cases.json`.
 The browser transport also sends one write that carries many items, each with its own request identity, and reads one outcome for each item.
 A 200 reply with one outcome for each item classifies each item by the rule of one item, so a refusal marks only its own item.
-Any other reply gives every item the same outcome. The table's `many_cases` state this rule, and both clients read them.
+Any other reply gives every item the same outcome. The table's `many_cases` state this rule.
 The browser trusts the platform for the values inside a reply, so it holds no schema validator and no copy of the wire spelling rules.
-A reply whose value violates its own field contract therefore reads as completed in the browser and as uncertain in the terminal.
 The runtime also holds what a generated component calls: the state of one read, the members of a draft, and the display text of a declared value.
 
 Each transport holds a [read store](../../web/runtime/src/readCache.ts), keyed by the operation and the canonical GET target.
