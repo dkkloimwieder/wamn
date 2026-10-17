@@ -47,6 +47,8 @@ const MATERIALIZER_WORKLOAD_ID: &str = "wamn-dev-materializer";
 const MATERIALIZER_TEMPLATE: &str =
     include_str!("../../../../../deploy/platform/materializer.example.yaml");
 const LOOPBACK_HTTP_BIND: &str = "127.0.0.1:0";
+// The runtime-operator chart template sets the same HOME value.
+const HOST_HOME: &str = "/tmp";
 const OTEL_EXPORTER_OTLP_PROTOCOL: &str = "grpc";
 const OTEL_BSP_SCHEDULE_DELAY_MILLIS: &str = "1";
 const OTEL_BSP_MAX_EXPORT_BATCH_SIZE: &str = "1";
@@ -986,21 +988,7 @@ fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> H
             OTEL_BSP_MAX_EXPORT_BATCH_SIZE.to_owned(),
         ),
     ];
-    for variable in runtime["env"]
-        .as_sequence()
-        .expect("platform host environment")
-    {
-        env.push((
-            variable["name"]
-                .as_str()
-                .expect("environment name")
-                .to_owned(),
-            variable["value"]
-                .as_str()
-                .expect("environment value")
-                .to_owned(),
-        ));
-    }
+    env.push(("HOME".to_owned(), HOST_HOME.to_owned()));
     for variable in group["env"].as_sequence().expect("host group environment") {
         let name = variable["name"].as_str().expect("environment name");
         if [

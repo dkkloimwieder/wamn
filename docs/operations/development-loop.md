@@ -104,9 +104,9 @@ The loop runs from a Git worktree.
 After changing generator code, rebuild `wamn` and restart the developer process.
 
 The host reads platform defaults from `deploy/platform/release/values.yaml` embedded at build time.
-The bundled operator template takes HOME from these values through native `runtime.env`, which prevents duplicate entries.
-[Native alignment](../architecture/native-alignment.md) records the chart patch and its removal condition.
-These defaults supply HOME, the drain delay, the NATS connection timeout, and probe enablement.
+These defaults supply the drain delay, the NATS connection timeout, and probe enablement.
+Activation sets HOME to `/tmp`, the same value that the runtime-operator chart template sets.
+The parity test compares HOME directly, so a change on either side fails the test.
 The probe binds to a free loopback port.
 Activation reads pool sizes, the request limit, and Wasmtime resource limits from the embedded `deploy/gcp/host-group-receiving.yaml`.
 Warm reuse trusts only the digest of the HTTP route component staged by this developer session.
