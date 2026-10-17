@@ -32,6 +32,13 @@ It prints the private temporary directory that holds logs and raw results.
 For a smoke run, use `tools/bench/local.sh --concurrency 4 --duration-secs 10`.
 Either override puts the result in a private directory under `$TMPDIR`, which defaults to `/var/tmp`.
 
+Add `--profile` to record the host during get with `perf record -F 99 --call-graph dwarf` for the requested duration.
+Install `perf`, with `inferno-collapse-perf` and `inferno-flamegraph` in `~/.cargo/bin`.
+The default run writes `tests/bench/flamegraph-local-get-c16-<CHART_VERSION>.svg` and refuses an existing file.
+Smoke overrides also put the profile in the temporary directory, with the requested concurrency in its name.
+If `/proc/sys/kernel/perf_event_paranoid` is above 1, the script refuses before builds or services start.
+Run `sudo sysctl kernel.perf_event_paranoid=1` before profiling.
+
 ## Setup
 
 The runs of 2026-10-16 used Receiving release `sha256:b3813ee613efb0caae4f15685b86438e7108587bcfbf46fc3034b0cdc2dd1cba`. The platform was 0.1.18 (`bd08a13b4`), and the bench was commit `7189b3020`. The pool `main` had 2 x `e2-standard-2` Spot nodes, which is tier 2. The client was the VM `wamn-bench-client`, an `e2-small` in `us-central1-a`. The database held the 1000 seed: 1000 purchase orders and 500500 lines. Each run lasted 60 seconds and had 0 errors.

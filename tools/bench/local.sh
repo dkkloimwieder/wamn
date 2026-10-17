@@ -6,8 +6,10 @@ repository=$PWD
 duration=60
 concurrency=16
 smoke=false
+profile=false
 while (($#)); do
   case "$1" in
+    --profile) profile=true; shift ;;
     --duration-secs|--concurrency)
       [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || { echo "$1 needs a positive integer" >&2; exit 2; }
       if [[ $1 == --duration-secs ]]; then duration=$2; else concurrency=$2; fi
@@ -17,11 +19,26 @@ while (($#)); do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if $profile; then
+  if (( $(</proc/sys/kernel/perf_event_paranoid) > 1 )); then
+    echo 'run `sudo sysctl kernel.perf_event_paranoid=1` first' >&2
+    exit 1
+  fi
+  command -v perf >/dev/null
+  for tool in "$HOME/.cargo/bin/inferno-collapse-perf" "$HOME/.cargo/bin/inferno-flamegraph"; do
+    [[ -x $tool ]] || { echo "Missing executable: $tool" >&2; exit 1; }
+  done
+fi
 version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/control/lib/src/release_chart.rs)
 test -n "$version"
 output="tests/bench/local-$version.json"
+flamegraph="tests/bench/flamegraph-local-get-c$concurrency-$version.svg"
 if ! $smoke && [[ -e $output ]]; then
   echo "Refusing to overwrite $output" >&2
+  exit 1
+fi
+if ! $smoke && $profile && [[ -e $flamegraph ]]; then
+  echo "Refusing to overwrite $flamegraph" >&2
   exit 1
 fi
 export CARGO_TARGET_DIR="$repository/target"
@@ -30,13 +47,21 @@ umask 077
 work=$(mktemp -d "$TMPDIR/wamn-lbench.XXXXXXXX")
 root="$work/env"
 mkdir "$root"
-$smoke && output="$work/local-$version.json"
+if $smoke; then
+  output="$work/local-$version.json"
+  flamegraph="$work/flamegraph-local-get-c$concurrency-$version.svg"
+fi
 bin="$CARGO_TARGET_DIR/release"
 containers=()
 dev_pid=
+perf_pid=
 cleanup() {
   local status=$?
   trap - EXIT
+  if [[ -n $perf_pid ]]; then
+    kill -INT "$perf_pid" 2>/dev/null || true
+    wait "$perf_pid" || true
+  fi
   if [[ -n $dev_pid ]]; then
     kill -TERM "$dev_pid" 2>/dev/null || true
     wait "$dev_pid" || true
@@ -133,7 +158,7 @@ fi
 
 # Activation clears its environment. Export limits inside the host wrapper,
 # reading their values from the deployment that owns them.
-python3 - "$bin/wamn-host" >"$work/host" <<'PY'
+python3 - "$bin/wamn-host" "$work/host.pid" >"$work/host" <<'PY'
 import pathlib
 import re
 import shlex
@@ -146,6 +171,7 @@ for name in ("WAMN_COMPONENT_POOL_SIZE", "WAMN_PG_GUEST_POOL_MAX",
              "WAMN_PG_PLATFORM_POOL_MAX", "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT"):
     value, = re.findall(r"^- name: " + name + r"\n  value: '([0-9]+)'$", deployment, re.M)
     print(f"export {name}={value}")
+print(f'echo "$$" > {shlex.quote(sys.argv[2])}')
 print(f'exec /usr/bin/taskset -c 0-3 {shlex.quote(sys.argv[1])} "$@"')
 PY
 chmod +x "$work/host"
@@ -193,10 +219,26 @@ psql "$database_url" -X -v ON_ERROR_STOP=1 -v scale=1000 \
 sql 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >/dev/null
 for call in get update; do
   sql 'SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))' >/dev/null
+  if $profile && [[ $call == get ]]; then
+    host_pid=$(<"$work/host.pid")
+    perf record -F 99 --call-graph dwarf -p "$host_pid" \
+      -o "$work/get.perf.data" -- sleep "$duration" >"$work/perf.log" 2>&1 &
+    perf_pid=$!
+  fi
   taskset -c 6-7 "$bin/wamn-bench" --base-url "$served_url" --host "$route_host" \
     --pat-file "$root/operator-pat.json" --call "$call" --concurrency "$concurrency" \
     --duration-secs "$duration" --tier local --db-url "$database_url" \
     --output "$work/$call.json" >"$work/$call.log" 2>&1 || { cat "$work/$call.log" >&2; exit 1; }
+  if [[ -n $perf_pid ]]; then
+    wait "$perf_pid" || { cat "$work/perf.log" >&2; exit 1; }
+    perf_pid=
+    (
+      set -o noclobber
+      perf script -i "$work/get.perf.data" | "$HOME/.cargo/bin/inferno-collapse-perf" \
+        | "$HOME/.cargo/bin/inferno-flamegraph" >"$flamegraph"
+    )
+    echo "$flamegraph"
+  fi
   sql 'SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' \
     >"$work/$call.pgss"
 done
