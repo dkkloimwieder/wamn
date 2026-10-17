@@ -49,9 +49,6 @@ const MATERIALIZER_TEMPLATE: &str =
 const LOOPBACK_HTTP_BIND: &str = "127.0.0.1:0";
 // The runtime-operator chart template sets the same HOME value.
 const HOST_HOME: &str = "/tmp";
-const OTEL_EXPORTER_OTLP_PROTOCOL: &str = "grpc";
-const OTEL_BSP_SCHEDULE_DELAY_MILLIS: &str = "1";
-const OTEL_BSP_MAX_EXPORT_BATCH_SIZE: &str = "1";
 
 /// Exact deployment identity carried into the local serving process.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -971,23 +968,17 @@ fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> H
             "WAMN_EVT_ENV".to_owned(),
             event_identity.environment.clone(),
         ),
-        (
-            "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
-            request.config.otel_exporter_otlp_endpoint().to_owned(),
-        ),
-        (
-            "OTEL_EXPORTER_OTLP_PROTOCOL".to_owned(),
-            OTEL_EXPORTER_OTLP_PROTOCOL.to_owned(),
-        ),
-        (
-            "OTEL_BSP_SCHEDULE_DELAY".to_owned(),
-            OTEL_BSP_SCHEDULE_DELAY_MILLIS.to_owned(),
-        ),
-        (
-            "OTEL_BSP_MAX_EXPORT_BATCH_SIZE".to_owned(),
-            OTEL_BSP_MAX_EXPORT_BATCH_SIZE.to_owned(),
-        ),
     ];
+    env.extend(
+        crate::release_chart::TELEMETRY_VARIABLES.map(|(name, value)| {
+            let value = if name == "OTEL_EXPORTER_OTLP_ENDPOINT" {
+                request.config.otel_exporter_otlp_endpoint()
+            } else {
+                value
+            };
+            (name.to_owned(), value.to_owned())
+        }),
+    );
     env.push(("HOME".to_owned(), HOST_HOME.to_owned()));
     for variable in group["env"].as_sequence().expect("host group environment") {
         let name = variable["name"].as_str().expect("environment name");
@@ -2146,11 +2137,7 @@ mod tests {
             "WAMN_SESSION_ISSUER",        // Local identity uses a disposable issuer.
             "WAMN_SESSION_JWKS_CA",       // Local identity uses its private TLS CA.
             "WAMN_SESSION_INSTANCE_SUFFIX", // Local identity uses its provisioned instance.
-            "OTEL_EXPORTER_OTLP_ENDPOINT", // Telemetry parity belongs to wamn-d0mt4.
-            "OTEL_EXPORTER_OTLP_PROTOCOL", // Telemetry parity belongs to wamn-d0mt4.
-            "OTEL_BSP_SCHEDULE_DELAY",    // Telemetry parity belongs to wamn-d0mt4.
-            "OTEL_BSP_MAX_EXPORT_BATCH_SIZE", // Telemetry parity belongs to wamn-d0mt4.
-            "OTEL_SERVICE_NAME",          // Telemetry parity belongs to wamn-d0mt4.
+            "OTEL_EXPORTER_OTLP_ENDPOINT", // The local collector has a loopback endpoint.
         ] {
             let deployed = deployed.remove(key);
             let local = local.remove(key);
@@ -2571,9 +2558,7 @@ mod tests {
                     "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
                     "http://127.0.0.1:41016".to_owned(),
                 ),
-                ("OTEL_EXPORTER_OTLP_PROTOCOL".to_owned(), "grpc".to_owned(),),
-                ("OTEL_BSP_SCHEDULE_DELAY".to_owned(), "1".to_owned()),
-                ("OTEL_BSP_MAX_EXPORT_BATCH_SIZE".to_owned(), "1".to_owned(),),
+                ("OTEL_SERVICE_NAME".to_owned(), "wamn-host".to_owned()),
                 ("HOME".to_owned(), "/tmp".to_owned()),
                 ("WAMN_COMPONENT_POOL_SIZE".to_owned(), "16".to_owned()),
                 ("WAMN_PG_GUEST_POOL_MAX".to_owned(), "16".to_owned()),
