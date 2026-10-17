@@ -83,15 +83,9 @@ mod tests {
     #[test]
     fn the_last_line_says_how_the_read_ended() {
         let completed = StreamEnd::of_outcome(r#"{"value":{"next_cursor":"abc"}}"#);
-        assert_eq!(
-            completed.line(),
-            r#"{"outcome":{"value":{"more":true}}}"#
-        );
+        assert_eq!(completed.line(), r#"{"outcome":{"value":{"more":true}}}"#);
         let last = StreamEnd::of_outcome(r#"{"value":{"next_cursor":null}}"#);
-        assert_eq!(
-            last.line(),
-            r#"{"outcome":{"value":{"more":false}}}"#
-        );
+        assert_eq!(last.line(), r#"{"outcome":{"value":{"more":false}}}"#);
         let refused = StreamEnd::of_outcome(r#"{"error":{"code":"timeout","detail":{}}}"#);
         assert_eq!(
             refused.line(),

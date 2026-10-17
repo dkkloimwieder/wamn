@@ -387,9 +387,15 @@ fn control_group(application: &Value) -> anyhow::Result<Value> {
     // The cluster's collector (docs/plan/observability.md R6).
     env.push(entry(&[
         ("name", "OTEL_EXPORTER_OTLP_ENDPOINT"),
-        ("value", "http://otel-collector.platform.svc.cluster.local:4317"),
+        (
+            "value",
+            "http://otel-collector.platform.svc.cluster.local:4317",
+        ),
     ]));
-    env.push(entry(&[("name", "OTEL_SERVICE_NAME"), ("value", "wamn-host")]));
+    env.push(entry(&[
+        ("name", "OTEL_SERVICE_NAME"),
+        ("value", "wamn-host"),
+    ]));
     group.insert("env".into(), Value::Sequence(env));
     group.insert(
         "volumes".into(),
