@@ -126,12 +126,31 @@ struct Target {
 #[derive(Debug, Default)]
 struct Measured {
     latencies_micros: Vec<u64>,
+    slow: Vec<SlowRequest>,
     errors: u64,
     /// The errors counted by kind: the refusal code or the status.
     error_kinds: BTreeMap<String, u64>,
 }
 
+#[derive(Debug, Serialize)]
+struct SlowRequest {
+    start_ms: f64,
+    latency_ms: f64,
+}
+
 impl Measured {
+    fn record(&mut self, started: Instant, begun: Instant) {
+        let latency = begun.elapsed();
+        let micros = u64::try_from(latency.as_micros()).unwrap_or(u64::MAX);
+        self.latencies_micros.push(micros);
+        if latency > Duration::from_secs(1) && self.slow.len() < 100 {
+            self.slow.push(SlowRequest {
+                start_ms: begun.duration_since(started).as_secs_f64() * 1000.0,
+                latency_ms: millis(micros),
+            });
+        }
+    }
+
     /// Count one error under its kind.
     fn error(&mut self, error: &anyhow::Error) {
         self.errors += 1;
@@ -156,6 +175,8 @@ struct Summary {
     p50_ms: f64,
     p95_ms: f64,
     p99_ms: f64,
+    max_ms: f64,
+    slow: Vec<SlowRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     postgres: Option<Samples>,
 }
@@ -266,23 +287,34 @@ async fn main() -> anyhow::Result<()> {
             let own = receipts[worker * slice..(worker + 1) * slice].to_vec();
             let run = started_at_unix;
             workers.push(tokio::spawn(async move {
-                run_receipts(&target, run, worker, own, deadline).await
+                run_receipts(&target, run, worker, own, started..deadline).await
             }));
         } else {
             let own = orders[worker * slice..(worker + 1) * slice].to_vec();
             let suppliers = Arc::clone(&suppliers);
             let run = started_at_unix;
             workers.push(tokio::spawn(async move {
-                run_worker(&target, call, run, worker, own, &suppliers, deadline).await
+                run_worker(
+                    &target,
+                    call,
+                    run,
+                    worker,
+                    own,
+                    &suppliers,
+                    started..deadline,
+                )
+                .await
             }));
         }
     }
     let mut latencies = Vec::new();
+    let mut slow = Vec::new();
     let mut errors = 0;
     let mut error_kinds = BTreeMap::new();
     for worker in workers {
         let measured = worker.await?;
         latencies.extend(measured.latencies_micros);
+        slow.extend(measured.slow);
         errors += measured.errors;
         for (kind, count) in measured.error_kinds {
             *error_kinds.entry(kind).or_default() += count;
@@ -297,6 +329,8 @@ async fn main() -> anyhow::Result<()> {
         _ => None,
     };
     latencies.sort_unstable();
+    slow.sort_unstable_by(|left, right| left.start_ms.total_cmp(&right.start_ms));
+    slow.truncate(100);
     let calls = latencies.len();
     let result = Summary {
         host: args.host,
@@ -314,6 +348,8 @@ async fn main() -> anyhow::Result<()> {
         p50_ms: millis(percentile(&latencies, 50)),
         p95_ms: millis(percentile(&latencies, 95)),
         p99_ms: millis(percentile(&latencies, 99)),
+        max_ms: millis(latencies.last().copied().unwrap_or_default()),
+        slow,
         postgres,
     };
     let text = serde_json::to_string_pretty(&result)?;
@@ -331,12 +367,12 @@ async fn run_worker(
     worker: usize,
     mut own: Vec<Order>,
     suppliers: &[String],
-    deadline: Instant,
+    window: std::ops::Range<Instant>,
 ) -> Measured {
     let mut measured = Measured::default();
     let mut next = 0;
     let mut sequence = 0_u64;
-    while Instant::now() < deadline {
+    while Instant::now() < window.end {
         let index = next % own.len();
         next += 1;
         let begun = Instant::now();
@@ -363,8 +399,7 @@ async fn run_worker(
                 })
             }
         };
-        let micros = u64::try_from(begun.elapsed().as_micros()).unwrap_or(u64::MAX);
-        measured.latencies_micros.push(micros);
+        measured.record(window.start, begun);
         if let Err(error) = &outcome {
             measured.error(error);
             if matches!(call, Call::Update)
@@ -387,11 +422,11 @@ async fn run_receipts(
     run: u64,
     worker: usize,
     own: Vec<Receipt>,
-    deadline: Instant,
+    window: std::ops::Range<Instant>,
 ) -> Measured {
     let mut measured = Measured::default();
     for (sequence, receipt) in own.iter().enumerate() {
-        if Instant::now() >= deadline {
+        if Instant::now() >= window.end {
             break;
         }
         let key = format!("bench-{run}-{worker}-{sequence}");
@@ -411,8 +446,7 @@ async fn run_receipts(
         }]);
         let begun = Instant::now();
         let outcome = post(target, "acme/acme/record_receipt", &item).await;
-        let micros = u64::try_from(begun.elapsed().as_micros()).unwrap_or(u64::MAX);
-        measured.latencies_micros.push(micros);
+        measured.record(window.start, begun);
         if let Err(error) = &outcome {
             measured.error(error);
         }

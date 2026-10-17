@@ -252,7 +252,7 @@ result = {"concurrency": int(sys.argv[3])}
 for call in ("get", "update"):
     run = json.loads((work / f"{call}.json").read_text())
     result[call] = {key: run[key] for key in (
-        "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "calls", "errors"
+        "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "max_ms", "slow", "calls", "errors"
     )}
     # Match tier.sh: round each ratio to exclude setup and background polling.
     result[call]["pg_stat_statements_calls_per_request"] = sum(
@@ -264,6 +264,7 @@ with open(sys.argv[2], "x") as output:
     output.write("\n")
 print("local: " + "; ".join(
     f"{call} {run['throughput_per_sec']:.1f}/s p50={run['p50_ms']:.3f}ms "
+    f"p99={run['p99_ms']:.3f}ms max={run['max_ms']:.3f}ms slow={len(run['slow'])} "
     f"errors={run['errors']} statements/request={run['pg_stat_statements_calls_per_request']}"
     for call, run in result.items() if call != "concurrency"
 ) + f"; {sys.argv[2]}")

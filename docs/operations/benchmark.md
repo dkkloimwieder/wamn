@@ -17,13 +17,18 @@ The Docker images `postgres:18`, `nats:2.10-alpine`, and `grafana/tempo:2.6.1` m
 The script does not pull images.
 
 The script starts its own PostgreSQL, scheduler NATS, event NATS, and Tempo containers on free loopback ports.
+`wamn dev up` also creates or updates `WAMN_TAP` from `deploy/gcp/nats-jetstream.yaml`.
+Its event provisioning credential needs permission to read, create, and update that stream.
+Without this stream, pending previews can exhaust the publisher queue and stall requests.
 It starts Receiving through `wamn dev up` and `wamn dev --hold`, with an operator PAT issued by `wamn-identity`.
 It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to cores 6–7.
 The host wrapper reads the component pool, database pools, and request limit from `deploy/gcp/host-group-receiving.yaml`.
 The local path has no edge or load balancer, so compare host-side numbers.
 
 The script loads the 1000-order seed and runs get and update for 60 seconds each at concurrency 16.
-It resets `pg_stat_statements` before each run and uses the same statement-count calculation and JSON shape as `tier.sh`.
+It resets `pg_stat_statements` before each run and uses the same statement-count calculation as `tier.sh`.
+Each result includes `max_ms` and a `slow` list for requests above one second.
+The list holds the first 100 requests by start time, with `start_ms` from the timed run start and `latency_ms`.
 It writes `tests/bench/local-<CHART_VERSION>.json` and refuses an existing file.
 The platform regression gate does not read local results.
 On exit, the script stops its development processes and removes only its own containers and their volumes.
