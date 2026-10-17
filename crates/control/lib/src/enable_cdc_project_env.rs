@@ -10,11 +10,9 @@
 //! 1. apply the emitted **replication-role SQL** to the target cluster's
 //!    superuser (any database — roles are cluster-global);
 //! 2. apply the emitted **CDC SQL** connected to the PROJECT-ENV database
-//!    (publications and logical slots are database-bound): the eager schema
-//!    guard, the publication (`FOR TABLES IN SCHEMA` — auto-includes tables
-//!    catalog-publish creates later), the **failover-enabled slot** (WAL is
-//!    pinned from here — capture starts at CDC-enable, bounded by
-//!    `max_slot_wal_keep_size`), and the role's grants;
+//!    (publications and logical slots are database-bound): the failover-enabled
+//!    slot first, then the schema guard, decode maps, and role grants. The slot
+//!    pins WAL from CDC-enable, bounded by `max_slot_wal_keep_size`;
 //! 3. `kubectl apply -f` the emitted **replication-credential Secret**.
 //!
 //! This command also creates the declared source and advisory streams and
@@ -283,19 +281,17 @@ pub async fn enable_cdc_project_env(
     })
 }
 
-/// The CDC SQL the runbook applies connected to the PROJECT-ENV database, in
-/// dependency order: the eager schema guard (F2 — `FOR TABLES IN SCHEMA`
-/// auto-includes tables created later, so the publication may precede package
-/// apply), the failover slot (WAL pinned from here),
-/// the decode-time entity and exclusion maps (created BEFORE the grants so the
-/// role's exact SELECT grants cover them; package apply owns their rows),
-/// then the replication role's grants (the role SQL must have been applied to
-/// the cluster first). Every statement is idempotent — re-applying is a no-op.
+/// Render the CDC SQL for the project-env database, with the failover slot first.
+/// No write precedes slot creation, even when the caller runs the whole bundle
+/// in one transaction. The schema guard follows, then the decode-time entity
+/// and exclusion maps, then the replication role's grants. Package apply owns
+/// the map rows. Apply the role SQL to the cluster before this bundle.
+/// Every statement is idempotent (safe to apply again).
 fn cdc_sql_bundle(schema: &str, cdc_name: &str, db_name: &str) -> String {
     format!(
-        "{schema_guard};\n{slot}\n{entity_map};\n{exclusion_map};\n{grants}\n",
-        schema_guard = sql::ensure_schema_sql(schema),
+        "{slot}\n{schema_guard};\n{entity_map};\n{exclusion_map};\n{grants}\n",
         slot = sql::create_failover_slot_sql(cdc_name),
+        schema_guard = sql::ensure_schema_sql(schema),
         entity_map = sql::ensure_entity_map_sql(schema),
         exclusion_map = sql::ensure_cdc_exclusion_map_sql(schema),
         grants = sql::grant_replication_access_sql(db_name, cdc_name, schema),
@@ -366,13 +362,11 @@ pub async fn record_event_reader(
 mod tests {
     use super::*;
 
-    /// The CDC bundle's statements land in dependency order: the schema guard
-    /// first (the `Publication` CR applied after it needs the schema), the
-    /// entity map before the grants (so `SELECT ON ALL TABLES` covers it — the
-    /// reader's decode-time lookup needs it), the grants last. The bundle
-    /// creates no publication, because only a superuser can.
+    /// Slot creation precedes every write, including the schema guard.
+    /// The maps precede the grants so the reader can select from them.
+    /// The bundle creates no publication, because only a superuser can.
     #[test]
-    fn cdc_sql_bundle_orders_schema_slot_map_grants() {
+    fn cdc_sql_bundle_orders_slot_schema_map_grants() {
         let bundle = cdc_sql_bundle(
             "app",
             "wamn_cdc_acme__billing__dev",
@@ -394,7 +388,7 @@ mod tests {
             .find("GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\"")
             .expect("grants");
         assert!(!bundle.contains("PUBLICATION"));
-        assert!(schema < slot && slot < entity_map);
+        assert!(slot < schema && schema < entity_map);
         assert!(entity_map < exclusion_map && exclusion_map < grants);
     }
 

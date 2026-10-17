@@ -234,7 +234,7 @@ async fn enable_cdc(
     .await?;
     // No CNPG operator runs here, so the superuser that local dev holds creates
     // the publication with the statement the fixtures use. It follows the
-    // schema guard of the bundle, and no write precedes it.
+    // schema guard of the bundle. The bundle creates the slot before any write.
     std::fs::write(
         &cdc_sql_file,
         format!(
