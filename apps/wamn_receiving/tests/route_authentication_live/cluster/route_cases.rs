@@ -12,6 +12,9 @@ use super::{
     write_private,
 };
 
+const AUTH_NATS_NAMESPACE: &str = "wamn-system";
+const AUTH_NATS_SERVER_NAME: &str = "nats.wamn-system.svc.cluster.local";
+
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm"]
 async fn command_histories() -> anyhow::Result<()> {
@@ -78,7 +81,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
 
 async fn auth_nats(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
     let resources = &cluster.resources;
-    let namespace = "wamn-system";
+    let namespace = AUTH_NATS_NAMESPACE;
     let name = "receiving-auth-nats-nodeport";
     checked(kubectl(resources).args([
         "-n",
@@ -100,22 +103,11 @@ async fn auth_nats(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
         .as_u64()
         .context("the scheduler NATS service has an allocated NodePort")?;
     let address = resources::kind_address(&resources::inspect(resources, "control-plane").await?)?;
-    let secret: Value = serde_json::from_slice(
-        &checked(kubectl(resources).args([
-            "-n",
-            namespace,
-            "get",
-            "secret",
-            "wasmcloud-runtime-tls",
-            "-o",
-            "json",
-        ]))
-        .await?,
-    )?;
+    let secret = auth_nats_tls(cluster).await?;
     let mut connection = json!({
         "url":format!("nats://{address}:{port}"),
         // The operator chart's server certificate includes this Service name.
-        "server_name":"nats.wamn-system.svc.cluster.local",
+        "server_name":AUTH_NATS_SERVER_NAME,
     });
     for (field, key) in [("ca", "ca.crt"), ("cert", "tls.crt"), ("key", "tls.key")] {
         let path = resources.work.join(format!("auth-nats-{key}"));
@@ -129,6 +121,21 @@ async fn auth_nats(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
         connection[field] = json!(path);
     }
     Ok(connection)
+}
+
+async fn auth_nats_tls(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
+    Ok(serde_json::from_slice(
+        &checked(kubectl(&cluster.resources).args([
+            "-n",
+            AUTH_NATS_NAMESPACE,
+            "get",
+            "secret",
+            "wasmcloud-runtime-tls",
+            "-o",
+            "json",
+        ]))
+        .await?,
+    )?)
 }
 
 #[tokio::test]
@@ -155,6 +162,7 @@ async fn membership_job(
     service: &str,
 ) -> anyhow::Result<()> {
     let resources = &cluster.resources;
+    let tls = auth_nats_tls(cluster).await?;
     let secret = resources.work.join("membership-secret.json");
     write_private(
         &secret,
@@ -162,6 +170,7 @@ async fn membership_job(
             "apiVersion":"v1","kind":"Secret","type":"Opaque",
             "metadata":{"name":"membership-test-fixture","namespace":resources.name},
             "stringData":{"system-url":cluster.inputs.system_pg_url,"project-url":project_url},
+            "data":tls["data"],
         }))?,
     )?;
     apply(resources, &secret).await?;
@@ -172,14 +181,22 @@ async fn membership_job(
     let job = json!({"apiVersion":"batch/v1","kind":"Job",
     "metadata":{"name":"membership-test","namespace":resources.name},
     "spec":{"activeDeadlineSeconds":660,"backoffLimit":0,"template":{"spec":{
-        "restartPolicy":"Never","automountServiceAccountToken":false,"containers":[{
+        "restartPolicy":"Never","automountServiceAccountToken":false,
+        "volumes":[{"name":"auth-nats","secret":{"secretName":"membership-test-fixture","defaultMode":0o400}}],
+        "containers":[{
             "name":"membership-test","image":image,"imagePullPolicy":"Never",
             "command":["/usr/local/bin/wamn-gates","membership-test"],
             "args":["--endpoint-url",format!("http://{service}.{}.svc.cluster.local",super::NAMESPACE),
                 "--host",cluster.inputs.route_host,"--org",super::super::identity().org.as_str(),
                 "--project",super::super::identity().project.as_str(),"--env",super::super::identity().environment.as_str(),"--tenant",super::super::identity().tenant.as_str()],
             "env":[{"name":"WAMN_SYSTEM_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"system-url"}}},
-                {"name":"WAMN_PROJECT_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"project-url"}}}],
+                {"name":"WAMN_PROJECT_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"project-url"}}},
+                {"name":"WAMN_AUTH_NATS_URL","value":format!("nats://{AUTH_NATS_SERVER_NAME}:4222")},
+                {"name":"WAMN_AUTH_NATS_TLS_CA","value":"/auth-nats/ca.crt"},
+                {"name":"WAMN_AUTH_NATS_TLS_CERT","value":"/auth-nats/tls.crt"},
+                {"name":"WAMN_AUTH_NATS_TLS_KEY","value":"/auth-nats/tls.key"},
+                {"name":"WAMN_AUTH_NATS_TLS_SERVER_NAME","value":AUTH_NATS_SERVER_NAME}],
+            "volumeMounts":[{"name":"auth-nats","mountPath":"/auth-nats","readOnly":true}],
         }]
     }}}});
     let path = resources.work.join("membership-job.json");

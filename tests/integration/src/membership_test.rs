@@ -1,6 +1,7 @@
 //! Show user membership and permission revocation through the deployed Receiving HTTP route.
 //!
 //! The caller supplies an already provisioned disposable Receiving fixture.
+//! The HTTP test uses the AuthNats environment inputs to invalidate cached authorization.
 //! Only this run's new identity, PAT, tenant user, and role are created and removed.
 
 use std::fmt;
@@ -9,7 +10,8 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
-use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_platform_identity::application;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops, AuthNats};
 
 use anyhow::{Context as _, anyhow, ensure};
 use clap::Args;
@@ -75,6 +77,12 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     wamn_control_provision::validate_project_env(&args.org, &args.project, &args.env)
         .context("invalid membership test scope")?;
     ensure!(!args.tenant.is_empty(), "membership test needs a tenant");
+    // The benchmark seeds a fresh identity without invoking a host.
+    let auth = if args.throughput_pat_file.is_some() {
+        AuthChanges::default()
+    } else {
+        AuthChanges::connect(&AuthNats::from_env()?).await?
+    };
     let http = reqwest::Client::builder()
         .timeout(OPERATION_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
@@ -109,8 +117,8 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     let role = format!("membership-test-{nonce}");
     if let Some(path) = &args.throughput_pat_file {
         let result = tokio::time::timeout(TEST_TIMEOUT, async {
-            seed_tenant_role(&args, &mut project, user.id(), &role).await?;
-            membership(&args, user.id(), "grant-project-env-membership").await?;
+            seed_tenant_role(&args, &mut project, user.id(), &role, &auth).await?;
+            membership(&args, user.id(), "grant-project-env-membership", &auth).await?;
             let token = issue_pat(
                 &system,
                 user.id(),
@@ -125,7 +133,15 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         .map_err(|_| anyhow!("user benchmark fixture timed out"))
         .and_then(|result| result);
         if result.is_err() {
-            cleanup(&mut system, &mut project, &args.tenant, user.id(), &role).await?;
+            cleanup(
+                &mut system,
+                &mut project,
+                &args.tenant,
+                user.id(),
+                &role,
+                &auth,
+            )
+            .await?;
         }
         result?;
         println!("MEMBERSHIP_BENCH fixture=ready credential=user-pat cleanup=journey");
@@ -133,14 +149,21 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     }
     let result = tokio::time::timeout(
         TEST_TIMEOUT,
-        exercise(&args, &http, &system, &mut project, user.id(), &role),
+        exercise(&args, &http, &system, &mut project, user.id(), &role, &auth),
     )
     .await
     .map_err(|_| anyhow!("membership test exceeded its five-minute deadline"))
     .and_then(|result| result);
     let cleaned = tokio::time::timeout(
         TEST_TIMEOUT,
-        cleanup(&mut system, &mut project, &args.tenant, user.id(), &role),
+        cleanup(
+            &mut system,
+            &mut project,
+            &args.tenant,
+            user.id(),
+            &role,
+            &auth,
+        ),
     )
     .await
     .map_err(|_| anyhow!("membership test cleanup timed out"))
@@ -191,6 +214,7 @@ async fn exercise(
     project: &mut Client,
     principal: &PrincipalId,
     role: &str,
+    auth: &AuthChanges,
 ) -> anyhow::Result<()> {
     let token = issue_pat(
         system,
@@ -203,38 +227,30 @@ async fn exercise(
     assign_project_role(system, principal, &args.org, &args.project, "admin")
         .await
         .context("assign the project role that must not imply membership")?;
-    seed_tenant_role(args, project, principal, role).await?;
+    seed_tenant_role(args, project, principal, role, auth).await?;
 
     let request = |case: &'static str, status| get_case(args, http, token.token(), case, status);
     request("absent_membership", 401).await?;
     for case in ["granted", "repeated_grant"] {
-        membership(args, principal, "grant-project-env-membership").await?;
+        membership(args, principal, "grant-project-env-membership", auth).await?;
         request(case, 200).await?;
     }
-    let removed = project
-        .execute(
-            "DELETE FROM app_system.user_roles \
-             WHERE tenant_id = $1 AND user_id = $2::text::uuid AND role_name = $3",
-            &[&args.tenant, &principal.as_str(), &role],
-        )
-        .await
-        .context("remove this user's permission-bearing role")?;
+    let user = format!("{role}@example.test");
+    let removed =
+        wamn_control::user_roles::revoke_role_on(project, &args.tenant, &user, role, auth)
+            .await
+            .context("remove this user's permission-bearing role")?;
     ensure!(
-        removed == 1,
+        removed.changed,
         "test role assignment was missing before removal"
     );
     request("role_removed", 403).await?;
-    project
-        .execute(
-            "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-             VALUES ($1, $2::text::uuid, $3)",
-            &[&args.tenant, &principal.as_str(), &role],
-        )
+    wamn_control::user_roles::grant_role_on(project, &args.tenant, &user, role, auth)
         .await
         .context("restore this user's tenant role")?;
     request("role_restored", 200).await?;
     for case in ["revoked", "repeated_revoke"] {
-        membership(args, principal, "revoke-project-env-membership").await?;
+        membership(args, principal, "revoke-project-env-membership", auth).await?;
         request(case, 401).await?;
     }
     Ok(())
@@ -245,9 +261,10 @@ async fn seed_tenant_role(
     project: &mut Client,
     principal: &PrincipalId,
     role: &str,
+    auth: &AuthChanges,
 ) -> anyhow::Result<()> {
     // The fixture writes as the test user, whose row stamps itself. Both
-    // bindings stay on this session for the role restore and the cleanup.
+    // bindings stay on this session for the cleanup.
     project
         .execute(
             "SELECT set_config('app.user_id', $1, false), \
@@ -271,27 +288,18 @@ async fn seed_tenant_role(
     )
     .await
     .context("seed the exact platform-issued UUID in the tenant")?;
-    tx.execute(
-        "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
-        &[&args.tenant, &role],
-    )
-    .await
-    .context("seed the dedicated test role")?;
-    tx.execute(
-        "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
-         VALUES ($1, $2, $3)",
-        &[&args.tenant, &role, &operation_grant()?],
-    )
-    .await
-    .context("grant only the canonical purchase-order/get operation to the test role")?;
-    tx.execute(
-        "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
-         VALUES ($1, $2::text::uuid, $3)",
-        &[&args.tenant, &principal.as_str(), &role],
-    )
-    .await
-    .context("link the test user to its tenant role")?;
+    let mut drops = AuthDrops::default();
+    application::create_role(&tx, &args.tenant, role, &mut drops)
+        .await
+        .context("seed the dedicated test role")?;
+    application::grant_permission(&tx, &args.tenant, role, &operation_grant()?, &mut drops)
+        .await
+        .context("grant only the canonical purchase-order/get operation to the test role")?;
+    application::grant_user_role(&tx, &args.tenant, principal.as_str(), role, &mut drops)
+        .await
+        .context("link the test user to its tenant role")?;
     tx.commit().await.context("commit test fixture seed")?;
+    auth.publish(drops).await;
     Ok(())
 }
 
@@ -299,6 +307,7 @@ async fn membership(
     args: &MembershipTestArgs,
     principal: &PrincipalId,
     verb: &str,
+    auth: &AuthChanges,
 ) -> anyhow::Result<()> {
     let arguments = wamn_control::project_env_membership::ProjectEnvMembershipRequest {
         org: args.org.clone(),
@@ -313,8 +322,7 @@ async fn membership(
                 wamn_control::project_env_membership::grant(arguments).await
             }
             "revoke-project-env-membership" => {
-                wamn_control::project_env_membership::revoke(arguments, &AuthChanges::default())
-                    .await
+                wamn_control::project_env_membership::revoke(arguments, auth).await
             }
             _ => unreachable!("the membership test names only its two control operations"),
         }
@@ -391,6 +399,7 @@ async fn cleanup(
     tenant: &str,
     principal: &PrincipalId,
     role: &str,
+    auth: &AuthChanges,
 ) -> anyhow::Result<()> {
     let project_result: anyhow::Result<()> = async {
         let tx = project.transaction().await?;
@@ -399,12 +408,10 @@ async fn cleanup(
             &[&tenant, &principal.as_str()],
         )
         .await?;
-        tx.execute(
-            "DELETE FROM app_system.roles WHERE tenant_id = $1 AND name = $2",
-            &[&tenant, &role],
-        )
-        .await?;
+        let mut drops = AuthDrops::default();
+        application::delete_role(&tx, tenant, role, &mut drops).await?;
         tx.commit().await?;
+        auth.publish(drops).await;
         Ok(())
     }
     .await;
