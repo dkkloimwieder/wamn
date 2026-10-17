@@ -7,9 +7,11 @@ duration=60
 concurrency=16
 smoke=false
 profile=false
+edge=true
 while (($#)); do
   case "$1" in
     --profile) profile=true; shift ;;
+    --no-edge) edge=false; shift ;;
     --duration-secs|--concurrency)
       [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || { echo "$1 needs a positive integer" >&2; exit 2; }
       if [[ $1 == --duration-secs ]]; then duration=$2; else concurrency=$2; fi
@@ -83,6 +85,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # Use only cached images. Never contact a registry.
+if $edge; then
+  command -v helm >/dev/null
+  docker image inspect nginx:1.27-alpine >/dev/null
+fi
 for image in postgres:18 nats:2.10-alpine grafana/tempo:2.6.1; do
   docker image inspect "$image" >/dev/null
 done
@@ -247,6 +253,65 @@ if [[ -z $served ]]; then
   exit 1
 fi
 read -r served_url route_host <<<"$served"
+bench_url=$served_url
+if $edge; then
+  read -r edge_port identity_ca < <(python3 - "$root/dev.json" "$work/edge-values.json" "$served_url" "$route_host" <<'PY'
+import json
+import socket
+import sys
+
+configuration = json.load(open(sys.argv[1]))
+identity = configuration["session_identity"]
+with open(sys.argv[2], "w") as output:
+    json.dump({
+        "applications": [{"host": sys.argv[4], "api": sys.argv[3], "bucketPath": "local"}],
+        "identity": identity["issuer"],
+        "tlsSecret": "local",
+        "identityCaConfigMap": "local",
+        "neg": True,
+    }, output)
+with socket.socket() as listener:
+    listener.bind(("127.0.0.1", 0))
+    print(listener.getsockname()[1], identity["ca"])
+PY
+  )
+  helm template "local-edge-1" deploy/platform/edge \
+    --show-only templates/configmap.yaml -f "$work/edge-values.json" >"$work/edge.yaml"
+  python3 - "$work/edge.yaml" "$work/nginx.conf" "$edge_port" <<'PY'
+import pathlib
+import sys
+import textwrap
+
+rendered = pathlib.Path(sys.argv[1]).read_text()
+configuration = textwrap.dedent(rendered.split("  nginx.conf: |\n", 1)[1])
+# Only the public listener differs locally. Routing remains chart-owned.
+assert configuration.count("listen 8443 ssl;") == 1
+configuration = configuration.replace("listen 8443 ssl;", f"listen 127.0.0.1:{sys.argv[3]};")
+configuration = "\n".join(line for line in configuration.splitlines()
+    if not line.strip().startswith(("ssl_certificate ", "ssl_certificate_key "))) + "\n"
+pathlib.Path(sys.argv[2]).write_text(configuration)
+PY
+  # Host networking lets nginx reach the host's loopback-only listener.
+  start_container --name "$prefix-edge" --network host \
+    --mount "type=bind,src=$work/nginx.conf,dst=/etc/nginx/nginx.conf,readonly" \
+    --mount "type=bind,src=$identity_ca,dst=/etc/wamn-edge/identity-ca/ca.crt,readonly" \
+    nginx:1.27-alpine
+  ready=false
+  for ((attempt=0; attempt<30; attempt++)); do
+    if curl -fsS -H "Host: $route_host" "http://127.0.0.1:$edge_port/healthz" >/dev/null 2>&1; then
+      ready=true
+      break
+    fi
+    sleep 1
+  done
+  if ! $ready; then
+    docker logs "$prefix-edge" >&2
+    echo 'Local edge did not become ready' >&2
+    exit 1
+  fi
+  bench_url="http://127.0.0.1:$edge_port/api"
+fi
+
 database_url=$(python3 - "$root/dev.json" <<'PY'
 import json
 import sys
@@ -265,7 +330,7 @@ for call in get update; do
       -o "$work/get.perf.data" -- sleep "$duration" >"$work/perf.log" 2>&1 &
     perf_pid=$!
   fi
-  taskset -c 6-7 "$bin/wamn-bench" --base-url "$served_url" --host "$route_host" \
+  taskset -c 6-7 "$bin/wamn-bench" --base-url "$bench_url" --host "$route_host" \
     --pat-file "$root/operator-pat.json" --call "$call" --concurrency "$concurrency" \
     --duration-secs "$duration" --tier local --db-url "$database_url" \
     --output "$work/$call.json" >"$work/$call.log" 2>&1 || { cat "$work/$call.log" >&2; exit 1; }
@@ -282,7 +347,7 @@ for call in get update; do
   sql 'SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' \
     >"$work/$call.pgss"
 done
-python3 - "$work" "$output" "$concurrency" "$http_route_sha256" "$materializer_sha256" <<'PY'
+python3 - "$work" "$output" "$concurrency" "$http_route_sha256" "$materializer_sha256" "$edge" <<'PY'
 import json
 import pathlib
 import sys
@@ -290,6 +355,7 @@ import sys
 work = pathlib.Path(sys.argv[1])
 result = {
     "concurrency": int(sys.argv[3]),
+    "edge": sys.argv[6] == "true",
     "http_route_sha256": sys.argv[4],
     "materializer_sha256": sys.argv[5],
 }

@@ -13,9 +13,9 @@ Run `tools/bench/local.sh` from this checkout on an eight-core Linux machine.
 It builds release binaries and guests because debug builds do not represent host timing.
 It builds the host in a separate Cargo call with the Dockerfile's packages and binaries.
 
-It requires Docker, Python 3, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
+It requires Docker, Helm, Python 3, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
 Prepare SQLx and web dependencies as described in [running tests](running-tests.md#application-generation-and-sqlx).
-The Docker images `postgres:18`, `nats:2.10-alpine`, and `grafana/tempo:2.6.1` must already exist locally.
+The Docker images `postgres:18`, `nats:2.10-alpine`, `grafana/tempo:2.6.1`, and `nginx:1.27-alpine` must already exist locally.
 The script does not pull images.
 
 The script starts its own PostgreSQL, scheduler NATS, event NATS, and Tempo containers on free loopback ports.
@@ -32,10 +32,17 @@ It starts Receiving through `wamn dev up` and `wamn dev --hold`, with an operato
 It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to cores 6–7.
 Activation supplies the shared host settings described in [development loop](development-loop.md).
 The wrapper only records the process ID and pins the host CPU cores.
-The local path has no edge or load balancer, so compare host-side numbers.
+The default run sends requests through an nginx container using the configuration rendered from `deploy/platform/edge`.
+The local listener uses plain HTTP on a free loopback port. The chart owns `/api/` removal and Host handling.
+It also owns the single worker and HTTP/1.1 upstream connections without keepalive.
+The container uses host networking to reach the loopback host and mounts the local identity CA.
+There is no load balancer in this local run.
+For a direct comparison, run `tools/bench/local.sh --no-edge --concurrency 16 --duration-secs 60`.
+`--no-edge` bypasses nginx and does not require Helm or the nginx image.
 
 The script loads the 1000-order seed and runs get and update for 60 seconds each at concurrency 16.
 It resets `pg_stat_statements` before each run and uses the same statement-count calculation as `tier.sh`.
+Each result records whether `edge` was enabled.
 Each result includes `max_ms` and a `slow` list for requests above one second.
 The list holds the first 100 requests by start time, with `start_ms` from the timed run start and `latency_ms`.
 

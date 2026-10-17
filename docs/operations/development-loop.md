@@ -112,6 +112,10 @@ Activation reads pool sizes, the request limit, and Wasmtime resource limits fro
 Warm reuse trusts only the digest of the HTTP route component staged by this developer session.
 Rebuild `wamn` after changing these YAML files.
 
+The URL printed by `wamn dev` reaches the host directly.
+The [local benchmark](benchmark.md#local-run) adds the deployed nginx edge configuration with a plain HTTP listener.
+Its `--no-edge` flag uses the direct host URL for comparison.
+
 ## Saved changes and target state
 
 The running loop holds a lease, an exclusive claim on its application database.
