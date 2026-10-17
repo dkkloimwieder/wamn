@@ -89,6 +89,7 @@ done
 cargo build --offline --release -p wamn-ctl --bin wamn \
   -p wamn-host --bin wamn-host -p wamn-identity --bin wamn-identity \
   -p wamn-cdc-reader --bin wamn-cdc-reader -p wamn-bench --bin wamn-bench
+cargo build --offline --release -p wamn-test-infrastructure --example event_broker_files
 for guest in http-route materializer; do
   RUSTFLAGS="$(tools/guest-rustflags)" cargo build --offline --release \
     --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p "$guest"
@@ -109,31 +110,71 @@ start_container() {
   id=$(docker run --pull=never -d "$@")
   containers+=("$id")
 }
+# Use the deployed permission generator with the development identity's owner.
+read -r org project environment tenant < <(python3 - <<'IDENTITY'
+import pathlib
+import re
+
+source = pathlib.Path("crates/control/lib/src/dev/environment.rs").read_text()
+values = []
+for name in ("ORG", "PROJECT", "ENVIRONMENT", "TENANT"):
+    value, = re.findall(r'^pub const ' + name + r': &str = "([^"]+)";$', source, re.M)
+    values.append(value)
+print(*values)
+IDENTITY
+)
+"$bin/examples/event_broker_files" "$work" "nats://127.0.0.1:$event_port" \
+  "$org" "$project" "$environment" "$tenant" 1 \
+  "$repository/apps/target/wamn/wamn_receiving/wamn.json" >"$work/event-broker.log"
+event_memory=$(python3 - "$work" "$prefix-events" <<'CONFIGURATION'
+import json
+import pathlib
+import re
+import sys
+import textwrap
+
+work = pathlib.Path(sys.argv[1])
+deployment = pathlib.Path("deploy/gcp/nats-jetstream.yaml").read_text()
+configuration, = re.findall(r"^  nats.conf: \|\n(.*?)(?=^---$)", deployment, re.M | re.S)
+configuration = textwrap.dedent(configuration).replace("$POD_NAME", sys.argv[2])
+(work / "events.conf").write_text(configuration)
+
+# The local provisioner also creates the shared tap, using its deployed rights.
+authorization_path = work / "event-nats/authorization.conf"
+authorization = json.loads(authorization_path.read_text().split(":", 1)[1])
+users = authorization["users"]
+tap_admin = next(user for user in users if user["user"] == "tap-admin")
+provisioner = next(user for user in users if user["user"].startswith("provisioning_"))
+provisioner["permissions"]["publish"]["allow"].extend(
+    subject for subject in tap_admin["permissions"]["publish"]["allow"]
+    if subject.startswith("$JS.API.STREAM.")
+)
+authorization["users"].remove(tap_admin)
+authorization_path.write_text("authorization: " + json.dumps(authorization) + "\n")
+
+postgres = pathlib.Path("deploy/gcp/cnpg-cluster.yaml").read_text()
+parameters = []
+for name in ("max_slot_wal_keep_size", "pg_stat_statements.max", "pg_stat_statements.track"):
+    value, = re.findall(r'^      ' + re.escape(name) + r': "([^"]+)"$', postgres, re.M)
+    parameters.extend(("-c", f"{name}={value}"))
+(work / "postgres-parameters").write_text("\n".join(parameters) + "\n")
+broker, = (document for document in deployment.split("\n---\n") if "\nkind: StatefulSet\n" in document)
+memory, = re.findall(r'^            limits: \{ memory: "([^"]+)" \}$', broker, re.M)
+amount, unit = re.fullmatch(r"([0-9]+)(Ki|Mi|Gi)", memory).groups()
+print(int(amount) * {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}[unit])
+CONFIGURATION
+)
+mapfile -t postgres_parameters <"$work/postgres-parameters"
 start_container --name "$prefix-postgres" --cpuset-cpus 4-5 \
   -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=wamn_system \
   -p "127.0.0.1:$pg_port:5432" postgres:18 \
-  -c wal_level=logical -c shared_preload_libraries=pg_stat_statements
+  -c wal_level=logical -c shared_preload_libraries=pg_stat_statements "${postgres_parameters[@]}"
 start_container --name "$prefix-scheduler" -p "127.0.0.1:$scheduler_port:4222" \
   nats:2.10-alpine --jetstream --store_dir=/data --http_port=8222
-
-# The disposable event broker has separate logins for each development role.
-printf '%s' probe >"$work/event-password"
-cat >"$work/events.conf" <<'NATS'
-port: 4222
-http_port: 8222
-jetstream { store_dir: /data }
-authorization {
-  users: [
-    {user: runtime, password: probe},
-    {user: provisioning, password: probe},
-    {user: publisher, password: probe},
-    {user: materializer, password: probe}
-  ]
-}
-NATS
-start_container --name "$prefix-events" -p "127.0.0.1:$event_port:4222" \
-  --mount "type=bind,src=$work/events.conf,dst=/etc/nats/nats.conf,readonly" \
-  nats:2.10-alpine --config=/etc/nats/nats.conf
+start_container --name "$prefix-events" --memory "$event_memory" -p "127.0.0.1:$event_port:4222" \
+  --mount "type=bind,src=$work/events.conf,dst=/etc/nats-config/nats.conf,readonly" \
+  --mount "type=bind,src=$work/event-nats/authorization.conf,dst=/etc/nats-authorization/authorization.conf,readonly" \
+  nats:2.10-alpine --config=/etc/nats-config/nats.conf
 start_container --name "$prefix-tempo" \
   -p "127.0.0.1:$tempo_port:3200" -p "127.0.0.1:$otlp_port:4317" \
   --mount "type=bind,src=$repository/test-support/infrastructure/tempo-dev.yaml,dst=/etc/tempo/tempo.yaml,readonly" \
@@ -179,10 +220,10 @@ chmod +x "$work/host"
   --system-database-url "postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
   --root "$root" --nats-url "nats://127.0.0.1:$scheduler_port" \
   --event-nats-url "nats://127.0.0.1:$event_port" \
-  --event-nats-username runtime --event-nats-password-file "$work/event-password" \
-  --event-provisioning-username provisioning --event-provisioning-password-file "$work/event-password" \
-  --event-publisher-username publisher --event-publisher-password-file "$work/event-password" \
-  --event-materializer-username materializer --event-materializer-password-file "$work/event-password" \
+  --event-nats-username "$(<"$work/event-nats/runtime-username")" --event-nats-password-file "$work/event-nats/runtime-password" \
+  --event-provisioning-username "$(<"$work/event-nats/provisioning-username")" --event-provisioning-password-file "$work/event-nats/provisioning-password" \
+  --event-publisher-username "$(<"$work/event-nats/publisher-username")" --event-publisher-password-file "$work/event-nats/publisher-password" \
+  --event-materializer-username "$(<"$work/event-nats/materializer-username")" --event-materializer-password-file "$work/event-nats/materializer-password" \
   --stream-replicas 1 --dup-window-secs 120 \
   --tempo-query-url "http://127.0.0.1:$tempo_port" \
   --otel-exporter-otlp-endpoint "http://127.0.0.1:$otlp_port" \
