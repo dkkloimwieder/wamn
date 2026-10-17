@@ -911,7 +911,7 @@ Every other pod runs on pool `main`.
 Prepare the VM and its `~/wamn/target/release/wamn-bench` binary with [install history](../history/gcp-install-history.md#64-bench-client-and-pat), section 6.4.
 Use the 1000-order Receiving seed from [install history](../history/gcp-install-history.md#61-morning-start-and-the-1000-seed), section 6.1.
 Use the operator PAT from section 4.14 and the platform file from section 4.10.
-Install `psql` and Python 3 on the repository machine.
+Install Python 3 on the repository machine.
 Keep the PostgreSQL forward on local port 15432 open for the VM's reverse SSH tunnel.
 Use section 4.15.1 to run and commit the benchmark.
 

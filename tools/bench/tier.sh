@@ -13,6 +13,9 @@ fi
 # shellcheck source=/dev/null
 source "$HOME/.cache/wamn-install/platform.sh"
 database_url=$(db_url receiving)
+database=${database_url##*/}
+# Read counts through kubectl exec. A port-forward exits when a tunneled connection resets.
+sql() { kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -d "$database" -XAt -v ON_ERROR_STOP=1 -c "$1"; }
 cloud=(--project wamn-dev --zone us-central1-a --quiet)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -21,15 +24,13 @@ printf '%s' "$database_url" | gcloud compute ssh wamn-bench-client "${cloud[@]}"
   --command 'umask 077; cat > ~/pat/db-url'
 
 for call in get update; do
-  psql "$database_url" -XAt -v ON_ERROR_STOP=1 \
-    -c "SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))" >/dev/null
+  sql "SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))" >/dev/null
   gcloud compute ssh wamn-bench-client "${cloud[@]}" -- \
     -o ExitOnForwardFailure=yes -R 15432:localhost:15432 \
     "cd wamn && target/release/wamn-bench --host receiving.wamn.dev --pat-file ~/pat/operator-pat.json \
       --call $call --concurrency 16 --duration-secs 60 --tier tier-2 \
       --db-url \"\$(cat ~/pat/db-url)\" --output /tmp/wamn-bench-$call.json" >"$work/$call.json"
-  psql "$database_url" -XAt -v ON_ERROR_STOP=1 \
-    -c "SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())" \
+  sql "SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())" \
     >"$work/$call.pgss"
 done
 
