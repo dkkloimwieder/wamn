@@ -27,7 +27,9 @@ use wasmtime_wasi_http::p3::bindings::Service;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
 mod assembly;
+mod auth_nats;
 pub use assembly::LocalPackage;
+pub use auth_nats::LocalAuthNats;
 
 /// Production adapters required by the shipped flow-http component.
 #[derive(Clone)]
@@ -97,6 +99,7 @@ impl std::fmt::Debug for LocalApplicationConfig<'_> {
 }
 
 pub(crate) struct PreparedLocalApplication {
+    pub auth_nats: LocalAuthNats,
     pub runtime: LocalApplicationRuntime,
     pub route_host: String,
     pub bearer: String,
@@ -109,6 +112,7 @@ pub(crate) struct PreparedLocalApplication {
 /// A loopback endpoint backed by a fresh flow-http store for every request,
 /// which streams each response body as the production host does.
 pub struct LocalApplication {
+    pub auth_nats: LocalAuthNats,
     pub endpoint: String,
     pub route_host: String,
     pub bearer: String,
@@ -136,6 +140,7 @@ impl std::fmt::Debug for LocalApplication {
 impl LocalApplication {
     pub async fn start(config: LocalApplicationConfig<'_>) -> anyhow::Result<Self> {
         let PreparedLocalApplication {
+            auth_nats,
             runtime,
             route_host,
             bearer,
@@ -153,6 +158,7 @@ impl LocalApplication {
         )
         .await?;
         Ok(Self {
+            auth_nats,
             endpoint,
             route_host,
             bearer,
@@ -167,6 +173,7 @@ impl LocalApplication {
 
     pub async fn shutdown(mut self) -> anyhow::Result<()> {
         self.task.abort();
+        self.auth_nats.shutdown().await?;
         match (&mut self.task).await {
             Ok(()) => Ok(()),
             Err(error) if error.is_cancelled() => Ok(()),

@@ -303,11 +303,12 @@ async fn start(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn a_route_answers_every_operation_kind_as_its_one_node_wiring() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
     ]);
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
@@ -732,11 +733,12 @@ async fn transactions(
 /// client reads no more, the load holds one transaction open on the server,
 /// and each stop ends that transaction.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
     ]);
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
@@ -821,11 +823,12 @@ async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<
 /// from the snapshot the statement started with, so a write that commits
 /// during the load does not show in it (wamn-utci.5).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn a_streamed_load_reads_one_statement_as_of_its_start() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
     ]);
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
@@ -941,11 +944,12 @@ fn names(answer: &Value, member: &str) -> anyhow::Result<Vec<String>> {
 /// days until the request sends one, and its search finds a part of the name
 /// in any case.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
     ]);
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();

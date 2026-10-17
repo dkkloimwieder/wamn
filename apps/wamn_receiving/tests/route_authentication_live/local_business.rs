@@ -10,11 +10,12 @@ use wamn_integration_tests::local_application::{
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn command_histories() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
     ]);
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
@@ -37,11 +38,12 @@ async fn command_histories() -> anyhow::Result<()> {
 /// Receiving's record_receipt directly is refused, because nothing derives
 /// that grant from the entry it holds.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
     ]);
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
@@ -184,11 +186,12 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
 /// a second database that carries the first one's write-log row and none of
 /// its business rows: a replay that ran again would find no purchase order.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
     ]);
     let _lock = wamn_test_postgres::lock();
     let scratch = ScratchRoot::create()?;
@@ -839,7 +842,13 @@ async fn histories(
     evidence: &std::path::Path,
 ) -> anyhow::Result<()> {
     let path = evidence.join("receiving-correctness.jsonl");
+    let auth_nats = &application.auth_nats.connection;
     let inputs = serde_json::from_value(json!({
+        "auth_nats": {
+            "url":auth_nats.nats_url,"ca":auth_nats.nats_tls_ca,
+            "cert":auth_nats.nats_tls_cert,"key":auth_nats.nats_tls_key,
+            "server_name":auth_nats.nats_tls_server_name,
+        },
         "project_pg_url":database_url,"route_endpoint":application.endpoint,
         "route_host":application.route_host,"operator_secret":application.caller_secret_path,
         "tenant":super::identity().tenant.as_str(),"caller_role":"admin","evidence_file":path,

@@ -315,6 +315,12 @@ pub(super) async fn assemble(
             None,
         ),
     )));
+    let auth_nats = super::LocalAuthNats::start(input.scratch).await?;
+    wamn_runtime::auth_cache::replicate(
+        &auth_nats.client,
+        Some(input.tenant),
+        Arc::clone(&postgres),
+    );
     let driver = Arc::new(RouterDriver::new(
         Arc::new(OperationHost::new(
             Arc::clone(&engine),
@@ -415,6 +421,7 @@ pub(super) async fn assemble(
     project_task.abort();
     system_task.abort();
     Ok(PreparedLocalApplication {
+        auth_nats,
         runtime: LocalApplicationRuntime {
             engine,
             flow_http,

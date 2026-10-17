@@ -92,7 +92,9 @@ The expected value of the test must not come from the code under test.
 
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
 They share the in-process runtime setup in `tests/integration/src/local_application.rs`.
-These tests need no registry, broker, cluster, gate binary, or container image.
+The fixture starts a private scheduler NATS with TLS and replicates the host auth cache from its `wamn-auth` bucket.
+Set `WAMN_NATIVE_C_NATS_BIN` to a local `nats-server` executable.
+These tests need no registry, cluster, gate binary, or container image.
 Deployment tests retain startup, restart, queue, CDC/materializer, and label delivery assertions.
 
 Build the packages that these tests use, with a PostgreSQL server URL in `DATABASE_URL` ([building](building.md#wamn-build)), and the route guest:
@@ -113,6 +115,7 @@ Run the local business assertions:
 ```bash
 WAMN_APPLICATION_COMPONENTS="$PWD/apps/target/virtualized/std-empty-environment" \
 WAMN_FLOW_HTTP_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/http_route.wasm" \
+WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
   cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
     --lib local_business:: -- --ignored --test-threads=1
 ```
