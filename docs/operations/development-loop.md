@@ -116,6 +116,13 @@ The URL printed by `wamn dev` reaches the host directly.
 The [local benchmark](benchmark.md#local-run) adds the deployed nginx edge configuration with a plain HTTP listener.
 Its `--no-edge` flag uses the direct host URL for comparison.
 
+The activation unit test `local_host_matches_the_deployed_host_contract` requires Helm.
+It renders the bundled release chart with the host-group and release-value functions used by `env apply`.
+It compares all host arguments and environment variables with local activation after normalizing equivalent flags and environment names.
+The test lists each permitted local difference with its reason, including telemetry until `wamn-d0mt4` lands.
+A setting on only one side or an unapproved value difference fails the test.
+The test also rejects duplicate environment names and unused exceptions. It contacts no cluster or registry.
+
 ## Saved changes and target state
 
 The running loop holds a lease, an exclusive claim on its application database.

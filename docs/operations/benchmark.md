@@ -31,6 +31,7 @@ Without this stream, pending previews can exhaust the publisher queue and stall 
 It starts Receiving through `wamn dev up` and `wamn dev --hold`, with an operator PAT issued by `wamn-identity`.
 It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to cores 6–7.
 Activation supplies the shared host settings described in [development loop](development-loop.md).
+That page also describes the unit test that compares local activation with the rendered deployed host.
 The wrapper only records the process ID and pins the host CPU cores.
 The default run sends requests through an nginx container using the configuration rendered from `deploy/platform/edge`.
 The local listener uses plain HTTP on a free loopback port. The chart owns `/api/` removal and Host handling.

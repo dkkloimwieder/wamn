@@ -1968,6 +1968,209 @@ mod tests {
         }
     }
 
+    /// Render locally with Helm: no cluster, release install, or registry access.
+    #[test]
+    fn local_host_matches_the_deployed_host_contract() {
+        use crate::release_chart;
+        use serde::Deserialize as _;
+        use serde_yaml::Value;
+        use std::collections::BTreeMap;
+
+        // Compare effective settings, including flags with equivalent env fallbacks.
+        fn settings(env: &[(String, String)], args: &[String]) -> BTreeMap<String, String> {
+            assert_eq!(args.iter().filter(|arg| arg.as_str() == "host").count(), 1);
+            let mut result = BTreeMap::new();
+            for (key, value) in env {
+                assert!(
+                    result.insert(key.clone(), value.clone()).is_none(),
+                    "duplicate env {key}"
+                );
+            }
+            let mut args = args.iter();
+            while let Some(arg) = args.next() {
+                if arg == "host" {
+                    continue;
+                }
+                let (key, value) = arg
+                    .split_once('=')
+                    .unwrap_or_else(|| (arg, args.next().expect("flag value")));
+                let key = match key {
+                    "--org" => "WAMN_ORG",
+                    "--project" => "WAMN_PROJECT",
+                    "--schema" => "WAMN_SCHEMA",
+                    "--drain-bound-seconds" => "WAMN_DRAIN_BOUND_SECONDS",
+                    "--wasmtime-cache-dir" => "WAMN_WASMTIME_CACHE_DIR",
+                    "--materializer-nats-binding-file" => "WAMN_MAT_NATS_BINDING_FILE",
+                    _ => key,
+                };
+                // The release's --environment overrides the chart's namespace argument.
+                result.insert(key.to_owned(), value.to_owned());
+            }
+            result
+        }
+
+        let directory = host_log_fixture();
+        let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/platform/release");
+        let digest = format!("sha256:{}", "7".repeat(64));
+        let chart = release_chart::stamp(
+            &chart,
+            &release_chart::ImageSet {
+                host: format!("local/host:test@{digest}"),
+                http: format!("local/http@{digest}"),
+                materializer: format!("local/materializer@{digest}"),
+            },
+            None,
+            &directory.0.join("chart"),
+        )
+        .unwrap();
+        let (org, project, environment) = ("dkk", "receiving", "dev");
+        let group_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../deploy/gcp/host-group-receiving.yaml");
+        let input = release_chart::ValuesInput {
+            org: org.into(),
+            project: project.into(),
+            env: environment.into(),
+            manifest_digest: digest.clone(),
+            artifact_base: "local/releases".into(),
+            route_host: "receiving.localhost".into(),
+            roles: vec![],
+            // The fixture environment policy allows a 70-second drain.
+            drain_bound_seconds: 70,
+            actor: "parity-test".into(),
+            host_group: crate::environment::write::host_group(
+                Some(&group_path),
+                org,
+                project,
+                environment,
+            )
+            .unwrap(),
+        };
+        let values = directory.0.join("values.yaml");
+        std::fs::write(
+            &values,
+            serde_yaml::to_string(&release_chart::values(&input).unwrap()).unwrap(),
+        )
+        .unwrap();
+        let output = std::process::Command::new("helm")
+            .arg("template")
+            .arg("parity-test")
+            .arg(&chart)
+            .args(["--namespace", "platform", "-f"])
+            .arg(&values)
+            .output()
+            .expect("Helm must be installed for the host parity test");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let deployments: Vec<Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
+            .map(|document| Value::deserialize(document).unwrap())
+            .filter(|document| document["kind"].as_str() == Some("Deployment"))
+            .collect();
+        assert_eq!(deployments.len(), 1);
+        let host = &deployments[0]["spec"]["template"]["spec"]["containers"][0];
+        let deployed_env = host["env"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["name"].as_str().unwrap().to_owned(),
+                    entry["value"].as_str().map_or_else(
+                        || serde_json::to_string(&entry["valueFrom"]).unwrap(),
+                        str::to_owned,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        let deployed_args = host["args"]
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+
+        let mut document = config_document();
+        document["org"] = input.org.into();
+        document["project"] = input.project.into();
+        document["environment"] = input.env.into();
+        document["schema"] = "receiving".into();
+        document["session_identity"] = json!({
+            "issuer": "https://127.0.0.1:8443", "ca": "/tmp/identity-ca.pem", "instance_suffix": "abc12345"
+        });
+        document["credentials_file"] = "/tmp/credentials.json".into();
+        let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
+        let identity = config.activation_identity();
+        let release = release();
+        let local = host_process_spec(
+            &DevActivationRequest {
+                config: &config,
+                release: &release,
+                identity,
+                host_binary: config.host_binary(),
+                wasmtime_cache_dir: config.wasmtime_cache_dir(),
+            },
+            &digest,
+        );
+
+        let mut deployed = settings(&deployed_env, &deployed_args);
+        let mut local = settings(&local.env, &local.args);
+        // Exact names only: new settings remain visible and fail the comparison.
+        for key in [
+            "WASMCLOUD_HOST_IP",                   // Kubernetes supplies the pod IP.
+            "WASMCLOUD_HOST_ENVIRONMENT", // Local workloads use the session environment, not a pod namespace.
+            "--host-name", // Local sessions choose a process identity instead of a pod IP.
+            "--host-group", // Local sessions choose an isolated host group.
+            "--runner",    // Local sessions choose an isolated runner identity.
+            "--http-addr", // Local HTTP binds a free loopback port.
+            "--probe-addr", // Local probes bind a free loopback port.
+            "--scheduler-nats-url", // Local NATS has a disposable loopback endpoint.
+            "--data-nats-url", // Local activation does not use the deployed data-plane endpoint.
+            "--scheduler-nats-tls-ca", // Local scheduler NATS uses plain TCP.
+            "--scheduler-nats-tls-cert", // Local scheduler NATS uses plain TCP.
+            "--scheduler-nats-tls-key", // Local scheduler NATS uses plain TCP.
+            "--data-nats-tls-ca", // Local data-plane NATS uses plain TCP.
+            "--data-nats-tls-cert", // Local data-plane NATS uses plain TCP.
+            "--data-nats-tls-key", // Local data-plane NATS uses plain TCP.
+            "--oci-ca-path", // Local release bytes require no registry TLS.
+            "--oci-cache-dir", // Local release bytes require no OCI cache.
+            "--release-artifact-base", // Deployed releases use a registry.
+            "--release-manifest-digest", // Deployed releases use a registry.
+            "--local-application", // Local releases use staged files.
+            "--local-application-digest", // Local releases use staged files.
+            "DOCKER_CONFIG", // Local releases require no registry credentials.
+            "WAMN_COMPONENT_ARTIFACT_BASE", // Local components use staged files.
+            "WAMN_REGISTRY_TOKEN_METADATA", // Local releases require no registry token.
+            "WAMN_WASMTIME_CACHE_DIR", // Local sessions own their cache directory.
+            "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS", // The developer trusts the locally staged HTTP component.
+            "WAMN_PG_URL", // Local databases use disposable credentials and endpoints.
+            "WAMN_SYSTEM_URL", // Local databases use disposable credentials and endpoints.
+            "WAMN_EXECUTOR_PLATFORM_PG_URL", // Local databases use disposable credentials and endpoints.
+            "WAMN_HTTP_ADMITTER_PG_URL", // Local databases use disposable credentials and endpoints.
+            "WAMN_EVENT_MATERIALIZER_PG_URL", // Local databases use disposable credentials and endpoints.
+            "WAMN_ADMINISTRATION_PG_URL", // Local databases use disposable credentials and endpoints.
+            "WAMN_EVT_NATS_URL",          // Local events use a disposable broker endpoint.
+            "WAMN_EVT_NATS_USERNAME",     // Local events use disposable broker credentials.
+            "WAMN_EVT_NATS_PASSWORD_FILE", // Local event credentials use a private file.
+            "WAMN_MAT_NATS_BINDING_FILE", // Local materializer credentials use a private file.
+            "WAMN_CREDENTIALS_FILE",      // Local application credentials use a private file.
+            "WAMN_SESSION_ISSUER",        // Local identity uses a disposable issuer.
+            "WAMN_SESSION_JWKS_CA",       // Local identity uses its private TLS CA.
+            "WAMN_SESSION_INSTANCE_SUFFIX", // Local identity uses its provisioned instance.
+            "OTEL_EXPORTER_OTLP_ENDPOINT", // Telemetry parity belongs to wamn-d0mt4.
+            "OTEL_EXPORTER_OTLP_PROTOCOL", // Telemetry parity belongs to wamn-d0mt4.
+            "OTEL_BSP_SCHEDULE_DELAY",    // Telemetry parity belongs to wamn-d0mt4.
+            "OTEL_BSP_MAX_EXPORT_BATCH_SIZE", // Telemetry parity belongs to wamn-d0mt4.
+            "OTEL_SERVICE_NAME",          // Telemetry parity belongs to wamn-d0mt4.
+        ] {
+            let deployed = deployed.remove(key);
+            let local = local.remove(key);
+            assert_ne!(deployed, local, "remove stale exception {key}");
+        }
+        assert_eq!(deployed, local, "unapproved host contract difference");
+    }
+
     #[test]
     fn session_identity_reaches_the_host_without_ambient_environment() {
         let mut document = config_document();

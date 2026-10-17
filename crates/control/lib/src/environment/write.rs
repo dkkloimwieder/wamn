@@ -11,6 +11,7 @@
 //! A connection-only apply writes no revision,
 //! because no connection fact is in the values.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
@@ -101,7 +102,12 @@ pub async fn write(
         roles,
         drain_bound_seconds: u32::try_from(policy.drain_bound_seconds)?,
         actor: analysis.actor.clone(),
-        host_group: host_group(platform, document)?,
+        host_group: host_group(
+            platform.host_group.as_deref(),
+            &document.org,
+            &document.project,
+            &document.env,
+        )?,
     })?;
     let release_name = analysis.authorities.release_name.clone();
     let unchanged = analysis
@@ -149,8 +155,13 @@ pub async fn write(
 /// The host group body: the platform's part, read from
 /// `WAMN_RELEASE_HOST_GROUP`, and the environment's credential Secret
 /// references, which the verb derives from the coordinate.
-fn host_group(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Result<Mapping> {
-    let mut group = match &platform.host_group {
+pub(crate) fn host_group(
+    path: Option<&Path>,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> anyhow::Result<Mapping> {
+    let mut group = match path {
         None => Mapping::new(),
         Some(path) => serde_yaml::from_str(
             &std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?,
@@ -169,12 +180,7 @@ fn host_group(platform: &Platform, document: &EnvironmentDocument) -> anyhow::Re
                 .any(|entry| entry["name"].as_str() == Some(variable)),
             "the platform host group sets {variable}, which apply derives from the coordinate"
         );
-        let secret = wamn_control_provision::workload_secret_name(
-            family,
-            &document.org,
-            &document.project,
-            &document.env,
-        );
+        let secret = wamn_control_provision::workload_secret_name(family, org, project, env);
         variables.push(serde_yaml::from_str(&format!(
             "{{name: {variable}, valueFrom: {{secretKeyRef: {{name: {secret}, key: url, optional: false}}}}}}"
         ))?);
