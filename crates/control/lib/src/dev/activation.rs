@@ -32,7 +32,7 @@ pub const HOST_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const WORKLOAD_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bound for graceful host shutdown before the kill-and-reap fallback.
 ///
-/// The local release host has seven plugins and no drain delay: native cleanup
+/// The local release host has seven plugins and the chart drain delay: native cleanup
 /// takes up to 51 seconds, then identity, probes, flush, and runtime exit add five.
 /// Its cleared environment excludes ambient WASH timeout overrides.
 pub const HOST_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(70);
@@ -751,9 +751,47 @@ pub async fn activate(
     request: DevActivationRequest<'_>,
 ) -> Result<DevActivation, DevActivationError> {
     validate_request(&request)?;
+    let digest = staged_http_digest(&request)?;
     let backend = NativeActivationBackend::connect(request.config.scheduler_nats_url()).await?;
-    let active = activate_backend(request, backend).await?;
+    let active = activate_backend(request, backend, &digest).await?;
     Ok(DevActivation { active })
+}
+
+fn staged_http_digest(request: &DevActivationRequest<'_>) -> Result<String, DevActivationError> {
+    let path = request
+        .config
+        .local_artifacts()
+        .directory
+        .join("flow-http.json");
+    let bytes = std::fs::read(&path).map_err(|source| {
+        DevActivationError::with_source(
+            DevActivationErrorType::InvalidInput,
+            "read-local-workload",
+            "read the staged HTTP workload",
+            source,
+        )
+    })?;
+    let staged: v2::WorkloadStartRequest = serde_json::from_slice(&bytes).map_err(|source| {
+        DevActivationError::with_source(
+            DevActivationErrorType::InvalidInput,
+            "read-local-workload",
+            "decode the staged HTTP workload",
+            source,
+        )
+    })?;
+    staged
+        .workload
+        .as_ref()
+        .and_then(|workload| workload.wit_world.as_ref())
+        .and_then(|world| world.components.first())
+        .map(|component| component.image.clone())
+        .ok_or_else(|| {
+            DevActivationError::new(
+                DevActivationErrorType::InvalidInput,
+                "read-local-workload",
+                "the staged HTTP workload has no component",
+            )
+        })
 }
 
 fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivationError> {
@@ -809,11 +847,20 @@ fn host_namespace(identity: &DevActivationIdentity) -> &str {
     &identity.environment
 }
 
-fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
+fn host_process_spec(request: &DevActivationRequest<'_>, http_digest: &str) -> HostProcessSpec {
+    let platform: serde_yaml::Value = serde_yaml::from_str(include_str!(
+        "../../../../../deploy/platform/release/values.yaml"
+    ))
+    .expect("the platform chart defaults are valid YAML");
+    let runtime = &platform["runtime-operator"]["runtime"];
+    let group: serde_yaml::Value = serde_yaml::from_str(include_str!(
+        "../../../../../deploy/gcp/host-group-receiving.yaml"
+    ))
+    .expect("the Receiving host group is valid YAML");
     let identity = request.identity;
     let event_identity = request.config.activation_identity();
     let local = request.config.local_artifacts();
-    let args = vec![
+    let mut args = vec![
         "host".to_owned(),
         "--host-group".to_owned(),
         identity.host_group.clone(),
@@ -848,6 +895,18 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         "--drain-bound-seconds".to_owned(),
         HOST_SHUTDOWN_TIMEOUT.as_secs().to_string(),
     ];
+    for (field, flag) in [
+        ("drainDelaySeconds", "--drain-delay"),
+        ("natsConnectTimeoutSeconds", "--nats-connect-timeout"),
+    ] {
+        args.extend([
+            flag.to_owned(),
+            format!("{}s", runtime[field].as_u64().expect("chart timeout")),
+        ]);
+    }
+    if runtime["probes"]["endpoint"]["enabled"].as_bool() == Some(true) {
+        args.extend(["--probe-addr".to_owned(), LOOPBACK_HTTP_BIND.to_owned()]);
+    }
     let mut env = vec![
         (
             "WASMCLOUD_HOST_ENVIRONMENT".to_owned(),
@@ -927,6 +986,60 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             OTEL_BSP_MAX_EXPORT_BATCH_SIZE.to_owned(),
         ),
     ];
+    for variable in runtime["env"]
+        .as_sequence()
+        .expect("platform host environment")
+    {
+        env.push((
+            variable["name"]
+                .as_str()
+                .expect("environment name")
+                .to_owned(),
+            variable["value"]
+                .as_str()
+                .expect("environment value")
+                .to_owned(),
+        ));
+    }
+    for variable in group["env"].as_sequence().expect("host group environment") {
+        let name = variable["name"].as_str().expect("environment name");
+        if [
+            "WAMN_COMPONENT_POOL_SIZE",
+            "WAMN_PG_GUEST_POOL_MAX",
+            "WAMN_PG_PLATFORM_POOL_MAX",
+            "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
+        ]
+        .contains(&name)
+        {
+            env.push((
+                name.to_owned(),
+                variable["value"].as_str().expect("tuning value").to_owned(),
+            ));
+        }
+    }
+    let resources = &group["resources"];
+    for (name, value) in [
+        ("WASH_HOST_MAX_GUEST_MEMORY", &resources["limits"]["memory"]),
+        ("WASH_DEFAULT_HEAP_MEMORY", &resources["defaultHeapMemory"]),
+        ("WASH_CORE_INSTANCES", &resources["coreInstances"]),
+        ("WASH_GUEST_MEMORY_MODE", &resources["guestMemoryMode"]),
+        (
+            "WASH_MAX_CONCURRENT_STARTS",
+            &resources["maxConcurrentStarts"],
+        ),
+    ] {
+        env.push((
+            name.to_owned(),
+            value.as_str().map_or_else(
+                || value.as_u64().expect("host resource value").to_string(),
+                str::to_owned,
+            ),
+        ));
+    }
+    env.push((
+        "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS".to_owned(),
+        http_digest.to_owned(),
+    ));
     if let Some(path) = request.config.credentials_file() {
         env.push((
             "WAMN_CREDENTIALS_FILE".to_owned(),
@@ -1054,6 +1167,7 @@ fn wit_interface(
 async fn activate_backend<B>(
     request: DevActivationRequest<'_>,
     mut backend: B,
+    http_digest: &str,
 ) -> Result<BackendActivation<B>, DevActivationError>
 where
     B: ActivationBackend,
@@ -1068,7 +1182,7 @@ where
         .flush()
         .await
         .map_err(|source| backend_error("flush-heartbeats", source))?;
-    let spec = host_process_spec(&request);
+    let spec = host_process_spec(&request, http_digest);
     backend.spawn_host(&spec).await.map_err(|source| {
         DevActivationError::with_source(
             DevActivationErrorType::HostProcess,
@@ -1870,7 +1984,7 @@ mod tests {
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
         };
-        let spec = host_process_spec(&request);
+        let spec = host_process_spec(&request, "sha256:fixture");
         for (name, value) in [
             ("WAMN_SESSION_ISSUER", "https://127.0.0.1:8443"),
             ("WAMN_SESSION_JWKS_CA", "/tmp/owned-identity-ca.pem"),
@@ -1901,7 +2015,7 @@ mod tests {
             host_binary: config.host_binary(),
             wasmtime_cache_dir: config.wasmtime_cache_dir(),
         };
-        let spec = host_process_spec(&request);
+        let spec = host_process_spec(&request, "sha256:fixture");
         assert!(
             !spec
                 .env
@@ -1914,7 +2028,7 @@ mod tests {
             config: &config,
             ..request
         };
-        let spec = host_process_spec(&request);
+        let spec = host_process_spec(&request, "sha256:fixture");
         assert!(
             spec.env
                 .iter()
@@ -2028,7 +2142,12 @@ mod tests {
         )
         .unwrap();
         std::fs::remove_file(&source).unwrap();
-        let spec = host_process_spec(&request);
+        let trusted_digest = staged_http_digest(&request).unwrap();
+        assert_eq!(
+            trusted_digest,
+            wamn_engine::component_admission::component_digest(&component_bytes)
+        );
+        let spec = host_process_spec(&request, &trusted_digest);
         assert!(
             spec.args
                 .iter()
@@ -2064,8 +2183,23 @@ mod tests {
             ],
             [],
         );
-        let active = activate_backend(request, backend).await.unwrap();
+        let active = activate_backend(request, backend, &trusted_digest)
+            .await
+            .unwrap();
         assert_eq!(&*active.host_id, "local-host");
+        assert!(
+            shared
+                .spec
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .env
+                .iter()
+                .any(|(key, value)| key == "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS"
+                    && value
+                        == &wamn_engine::component_admission::component_digest(&component_bytes))
+        );
         assert_eq!(
             std::fs::read(directory.join("flow-http.json")).unwrap(),
             staged_workload
@@ -2127,7 +2261,7 @@ mod tests {
         );
         let workload = flow_http_request(&request);
 
-        let mut active = activate_backend(request, backend)
+        let mut active = activate_backend(request, backend, "sha256:fixture")
             .await
             .expect("the exact local host activates");
         assert_eq!(&*active.host_id, "selected-host-id");
@@ -2183,6 +2317,12 @@ mod tests {
             "inventory",
             "--drain-bound-seconds",
             "70",
+            "--drain-delay",
+            "5s",
+            "--nats-connect-timeout",
+            "60s",
+            "--probe-addr",
+            "127.0.0.1:0",
         ]
         .map(str::to_owned);
         assert_eq!(&*spec.args, &expected_args);
@@ -2243,6 +2383,23 @@ mod tests {
                 ("OTEL_EXPORTER_OTLP_PROTOCOL".to_owned(), "grpc".to_owned(),),
                 ("OTEL_BSP_SCHEDULE_DELAY".to_owned(), "1".to_owned()),
                 ("OTEL_BSP_MAX_EXPORT_BATCH_SIZE".to_owned(), "1".to_owned(),),
+                ("HOME".to_owned(), "/tmp".to_owned()),
+                ("WAMN_COMPONENT_POOL_SIZE".to_owned(), "16".to_owned()),
+                ("WAMN_PG_GUEST_POOL_MAX".to_owned(), "16".to_owned()),
+                ("WAMN_PG_PLATFORM_POOL_MAX".to_owned(), "8".to_owned()),
+                (
+                    "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT".to_owned(),
+                    "64".to_owned()
+                ),
+                ("WASH_HOST_MAX_GUEST_MEMORY".to_owned(), "4Gi".to_owned()),
+                ("WASH_DEFAULT_HEAP_MEMORY".to_owned(), "256MiB".to_owned()),
+                ("WASH_CORE_INSTANCES".to_owned(), "512".to_owned()),
+                ("WASH_GUEST_MEMORY_MODE".to_owned(), "count".to_owned()),
+                ("WASH_MAX_CONCURRENT_STARTS".to_owned(), "4".to_owned()),
+                (
+                    "WAMN_TRUSTED_WARM_COMPONENT_DIGESTS".to_owned(),
+                    "sha256:fixture".to_owned()
+                ),
             ]
         );
 
@@ -2385,7 +2542,7 @@ mod tests {
         let shared = Arc::new(Shared::default());
         let backend = FakeBackend::new(Arc::clone(&shared), [], [], []);
 
-        let Err(error) = activate_backend(request, backend).await else {
+        let Err(error) = activate_backend(request, backend, "sha256:fixture").await else {
             panic!("missing exact identity must refuse")
         };
 

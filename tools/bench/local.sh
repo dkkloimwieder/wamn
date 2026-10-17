@@ -204,21 +204,13 @@ if ! $ready; then
   exit 1
 fi
 
-# Activation clears its environment. Export limits inside the host wrapper,
-# reading their values from the deployment that owns them.
+# Keep CPU pinning here; activation owns host settings.
 python3 - "$bin/wamn-host" "$work/host.pid" >"$work/host" <<'PY'
-import pathlib
-import re
 import shlex
 import sys
 
-deployment = pathlib.Path("deploy/gcp/host-group-receiving.yaml").read_text()
 print("#!/bin/bash")
 print("set -euo pipefail")
-for name in ("WAMN_COMPONENT_POOL_SIZE", "WAMN_PG_GUEST_POOL_MAX",
-             "WAMN_PG_PLATFORM_POOL_MAX", "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT"):
-    value, = re.findall(r"^- name: " + name + r"\n  value: '([0-9]+)'$", deployment, re.M)
-    print(f"export {name}={value}")
 print(f'echo "$$" > {shlex.quote(sys.argv[2])}')
 print(f'exec /usr/bin/taskset -c 0-3 {shlex.quote(sys.argv[1])} "$@"')
 PY

@@ -30,7 +30,8 @@ Without this stream, pending previews can exhaust the publisher queue and stall 
 
 It starts Receiving through `wamn dev up` and `wamn dev --hold`, with an operator PAT issued by `wamn-identity`.
 It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to cores 6–7.
-The host wrapper reads the component pool, database pools, and request limit from `deploy/gcp/host-group-receiving.yaml`.
+Activation supplies the shared host settings described in [development loop](development-loop.md).
+The wrapper only records the process ID and pins the host CPU cores.
 The local path has no edge or load balancer, so compare host-side numbers.
 
 The script loads the 1000-order seed and runs get and update for 60 seconds each at concurrency 16.

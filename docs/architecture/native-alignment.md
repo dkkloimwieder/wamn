@@ -9,7 +9,7 @@ This page owns those reasons. Other architecture pages own the behavior itself.
 
 The root [Cargo manifest](../../Cargo.toml) pins direct wasmCloud `v2.10.3` source at `548bb21b65ac8cc03776f73656c4bf7be2f96992`.
 The resolved Wasmtime family is `48.0.5`.
-There are no carried wasmCloud patches, and upstream default providers remain disabled.
+The Cargo dependency carries no wasmCloud patches, and upstream default providers remain disabled.
 The existing owner rule forbids restoring the retired fork patches.
 
 Native loading and dispatch own compilation, linking, fresh and warm stores, epoch interruption, and guest cancellation.
@@ -28,6 +28,7 @@ These choices make no general performance claim.
 | [Invocation authority](execution.md#native-dispatch) | Deployment-trusted code can reuse native instances. Host authority remains per invocation. Guest data and task cleanup depend on reviewed component correctness. | Native dispatch owns store boundaries, overflow, and retirement. Unreviewed units remain fresh. |
 | [Guest normalization](components.md#guest-build-identity) | Standard-library imports must satisfy the closed tenant capability set. | A replacement build must preserve that actual import boundary. |
 | [`wamn build`](../operations/building.md#native-programs-and-app-components) | Per-guest builds preserve digest identity and admission integration. | Native build and OCI publication must supply the same declared selection and admission requirements. |
+| [Host HOME](../operations/development-loop.md) | The bundled chart omits its hard-coded HOME so release YAML supplies one value to deployed and local hosts through native `runtime.env`. | Remove this template patch when upstream stops inserting HOME. |
 | Operator Event permissions | Chart `2.10.3` lacks the modern `events.k8s.io` permission in watched namespaces. | Remove the scoped `create,patch` Role only when the pinned chart grants it. |
 | [Object storage](capabilities.md#object-storage) | Binding ownership requires bucket and prefix confinement plus complete-body writes. | Adopt stable `wasi:blobstore` when upstream supplies the required binding behavior by default. |
 | Platform extensions | Extension installation changes the whole database and needs administrator authority. | A package-scoped mechanism must prevent effects on neighboring packages. |
