@@ -81,6 +81,34 @@ Compare select-only and simple-update with the [GCP floor](#postgres-floor) to l
 Compare the replays with full local get and update to distinguish database work from request-path work.
 These timings use different clients, so subtracting their percentiles does not measure host overhead.
 
+Run `tools/bench/local.sh --app-path` to measure the real host and guest path with a fixed, warm database lookup.
+This mode loads the size-1 Receiving fixture and seeds one receipt before timing.
+It warms the existing `receipt/get` route and repeatedly reads that receipt.
+It uses design (a), because the existing route needs less code than an engine benchmark with a substitute PostgreSQL plugin.
+
+It preserves route matching, authentication from memory, component invocation, guest execution, and response handling.
+It calls the host directly, with the deployed collector active, for 60 seconds at concurrency 16.
+The database still participates, and the result reports the time in its related spans as `postgres_mean_ms`.
+
+The application result is `tests/bench/local-app-<CHART_VERSION>.json`.
+It includes throughput, p50, p99, maximum latency, guest digests, and host span parts from the collector's local trace file.
+The deployed collector samples 10 percent of traces.
+The result records that percentage and `sampled_trace_count` for requests inside the measured interval.
+The runner stops the host and collector cleanly before it reads the file, so the collector flushes its buffered traces.
+It refuses an existing result, and either smoke override moves the result under `$TMPDIR`.
+
+Each span part excludes the union of its direct children's time intervals.
+`span_parts` groups these own times by span name, as [Named parts](#named-parts) does.
+`mean_ms` is the sum divided by the sampled request count, so repeated spans contribute their combined time per request.
+`per_span_mean_ms` is the mean for one occurrence, and `span_count` records its sample size.
+The reader uses sampled traces directly and does not multiply their times by ten.
+
+Compare this mode with full local get and update to locate changes in the host and guest path.
+Use the full run's `--no-edge` variant when comparing direct host latency.
+If the Postgres floor changes while the application span parts stay stable, investigate the database layer.
+If application span parts change while the floor stays stable, investigate those host or guest parts.
+If only the full run changes, inspect its application SQL, payload, and edge behavior.
+
 Add `--profile` to record the host during get with `perf record -F 99 --call-graph dwarf` for the requested duration.
 Install `perf`, with `inferno-collapse-perf` and `inferno-flamegraph` in `~/.cargo/bin`.
 The default run writes `tests/bench/flamegraph-local-get-c16-<CHART_VERSION>.svg` and refuses an existing file.

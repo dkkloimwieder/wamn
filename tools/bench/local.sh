@@ -9,8 +9,10 @@ smoke=false
 profile=false
 edge=true
 pg_floor=false
+app_path=false
 while (($#)); do
   case "$1" in
+    --app-path) app_path=true; shift ;;
     --pg-floor) pg_floor=true; shift ;;
     --profile) profile=true; shift ;;
     --no-edge) edge=false; shift ;;
@@ -23,6 +25,13 @@ while (($#)); do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if $app_path; then
+  if $pg_floor || $profile; then
+    echo "--app-path cannot use --pg-floor or --profile" >&2
+    exit 2
+  fi
+  edge=false
+fi
 if $pg_floor && $profile; then
   echo "--pg-floor cannot use --profile" >&2
   exit 2
@@ -41,6 +50,7 @@ version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/c
 test -n "$version"
 result_name="local-$version.json"
 if $pg_floor; then result_name="local-pg-$version.json"; fi
+if $app_path; then result_name="local-app-$version.json"; fi
 output="tests/bench/$result_name"
 flamegraph="tests/bench/flamegraph-local-get-c$concurrency-$version.svg"
 if ! $smoke && [[ -e $output ]]; then
@@ -65,6 +75,19 @@ bin="$CARGO_TARGET_DIR/release"
 containers=()
 dev_pid=
 perf_pid=
+stop_dev() {
+  if [[ -n $dev_pid ]]; then
+    kill -TERM "$dev_pid" 2>/dev/null || true
+    wait "$dev_pid" || true
+    dev_pid=
+  fi
+  if [[ -f $root/identity-process.json ]]; then
+    "$bin/wamn" dev down --root "$root" >>"$work/down.log" 2>&1 || {
+      cat "$work/down.log" >&2
+      return 1
+    }
+  fi
+}
 cleanup() {
   local status=$?
   trap - EXIT
@@ -72,16 +95,7 @@ cleanup() {
     kill -INT "$perf_pid" 2>/dev/null || true
     wait "$perf_pid" || true
   fi
-  if [[ -n $dev_pid ]]; then
-    kill -TERM "$dev_pid" 2>/dev/null || true
-    wait "$dev_pid" || true
-  fi
-  if [[ -f $root/identity-process.json ]]; then
-    "$bin/wamn" dev down --root "$root" >>"$work/down.log" 2>&1 || {
-      cat "$work/down.log" >&2
-      status=1
-    }
-  fi
+  stop_dev || status=1
   if ((${#containers[@]})); then
     docker rm -fv "${containers[@]}" >/dev/null || status=1
   fi
@@ -354,10 +368,14 @@ print(json.load(open(sys.argv[1]))["target_database_url"])
 PY
 )
 sql() { psql "$database_url" -XAt -v ON_ERROR_STOP=1 -c "$1"; }
-psql "$database_url" -X -v ON_ERROR_STOP=1 -v scale=1000 \
+seed_scale=1000
+if $app_path; then seed_scale=1; fi
+psql "$database_url" -X -v ON_ERROR_STOP=1 -v scale="$seed_scale" \
   -f apps/wamn_receiving/tests/fixtures/receiving-seed.sql >"$work/seed.log" 2>&1
 sql 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >/dev/null
-for call in get update; do
+calls=(get update)
+if $app_path; then calls=(app-path); fi
+for call in "${calls[@]}"; do
   sql 'SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))' >/dev/null
   if $profile && [[ $call == get ]]; then
     host_pid=$(<"$work/host.pid")
@@ -383,6 +401,14 @@ for call in get update; do
     >"$work/$call.pgss"
   psql "$database_url" -X --csv -v ON_ERROR_STOP=1 -c 'SELECT query, calls, rows, total_exec_time FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' >"$work/$call.statements.csv"
 done
+if $app_path; then
+  # The host flushes its exporter on shutdown. Then flush the collector's batch.
+  stop_dev
+  docker stop "$prefix-collector" >"$work/collector-stop.log"
+  python3 tools/bench/app-result.py "$work" "$output" \
+    "$http_route_sha256" "$materializer_sha256" "$edge" "$seed_scale"
+  exit
+fi
 python3 - "$work" "$output" "$concurrency" "$http_route_sha256" "$materializer_sha256" "$edge" <<'PY'
 import json
 import pathlib

@@ -15,6 +15,10 @@
 //! conflict included. After a failed write, the worker reads the row again,
 //! outside the timing, and goes on.
 //!
+//! `app-path` seeds one receipt through `--db-url`, warms `receipt/get`, then
+//! repeatedly reads that row through the host. Its wall-clock timing bounds
+//! select the corresponding sampled requests from the local collector file.
+//!
 //! `acme_record_receipt` posts Acme's `acme.record_receipt` in the approved
 //! case: a purchase order that needs inspection and has an approved quality
 //! status, so the call writes a receipt and an inspection row. A purchase
@@ -94,6 +98,9 @@ enum Call {
     Get,
     Update,
     Query,
+    /// Read one warm receipt through the real host.
+    #[serde(rename = "app-path")]
+    AppPath,
     #[value(name = "acme_record_receipt")]
     #[serde(rename = "acme_record_receipt")]
     AcmeRecordReceipt,
@@ -166,6 +173,8 @@ struct Summary {
     concurrency: usize,
     duration_secs: f64,
     started_at_unix: u64,
+    started_at_unix_nanos: u128,
+    ended_at_unix_nanos: u128,
     orders: usize,
     calls: usize,
     errors: u64,
@@ -253,6 +262,17 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
     let started_at_unix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+
+    let app_path_id = if matches!(args.call, Call::AppPath) {
+        seed_app_path(
+            database
+                .as_ref()
+                .context("--call app-path needs --db-url")?,
+        )
+        .await?
+    } else {
+        String::new()
+    };
     let (orders, suppliers, receipts) = if matches!(args.call, Call::AcmeRecordReceipt) {
         let database = database
             .as_ref()
@@ -261,13 +281,16 @@ async fn main() -> anyhow::Result<()> {
             u64::try_from(args.concurrency)? * args.duration_secs * RECEIPTS_PER_WORKER_SECOND;
         let receipts = seed_receipts(database, &format!("BENCH-{started_at_unix}-"), count).await?;
         (Vec::new(), Vec::new(), receipts)
+    } else if matches!(args.call, Call::AppPath) {
+        read(&target, "receipt/get", &json!({"id": app_path_id})).await?;
+        (Vec::new(), Vec::new(), Vec::new())
     } else {
         let (orders, suppliers) = list_orders(&target).await?;
         (orders, suppliers, Vec::new())
     };
     let units = orders.len().max(receipts.len());
     ensure!(
-        units >= args.concurrency,
+        matches!(args.call, Call::AppPath) || units >= args.concurrency,
         "{units} orders cannot give {} workers one each",
         args.concurrency
     );
@@ -277,13 +300,19 @@ async fn main() -> anyhow::Result<()> {
     };
     let suppliers = Arc::new(suppliers);
     let slice = units / args.concurrency;
+    let started_at_unix_nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let started = Instant::now();
     let deadline = started + Duration::from_secs(args.duration_secs);
     let mut workers = Vec::with_capacity(args.concurrency);
     for worker in 0..args.concurrency {
         let target = Arc::clone(&target);
         let call = args.call;
-        if matches!(call, Call::AcmeRecordReceipt) {
+        if matches!(call, Call::AppPath) {
+            let id = app_path_id.clone();
+            workers.push(tokio::spawn(async move {
+                run_app_path(&target, &id, started..deadline).await
+            }));
+        } else if matches!(call, Call::AcmeRecordReceipt) {
             let own = receipts[worker * slice..(worker + 1) * slice].to_vec();
             let run = started_at_unix;
             workers.push(tokio::spawn(async move {
@@ -321,6 +350,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     let elapsed = started.elapsed().as_secs_f64();
+    let ended_at_unix_nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let postgres = match (&database, before) {
         (Some(database), Some(before)) => Some(Samples {
             before,
@@ -339,6 +369,8 @@ async fn main() -> anyhow::Result<()> {
         concurrency: args.concurrency,
         duration_secs: elapsed,
         started_at_unix,
+        started_at_unix_nanos,
+        ended_at_unix_nanos,
         orders: units,
         calls,
         errors,
@@ -360,6 +392,37 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Seed the one-row table used by the application-path benchmark.
+async fn seed_app_path(database: &tokio_postgres::Client) -> anyhow::Result<String> {
+    let row = database
+        .query_one(
+            "WITH claims AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
+             set_config('app.operation', 'admin:benchmark-app-path', true)) \
+             INSERT INTO receiving.receipt (purchase_order_id, receipt_reference, occurred_at) \
+             SELECT purchase_order.id, gen_random_uuid()::text, now() \
+             FROM receiving.purchase_order CROSS JOIN claims ORDER BY purchase_order.id LIMIT 1 \
+             RETURNING id::text",
+            &[&SEED_PRINCIPAL],
+        )
+        .await
+        .context("seed the application-path receipt")?;
+    Ok(row.get(0))
+}
+
+/// Time the existing receipt get route after its warm-up request.
+async fn run_app_path(target: &Target, id: &str, window: std::ops::Range<Instant>) -> Measured {
+    let mut measured = Measured::default();
+    while Instant::now() < window.end {
+        let begun = Instant::now();
+        let outcome = read(target, "receipt/get", &json!({"id": id})).await;
+        measured.record(window.start, begun);
+        if let Err(error) = outcome {
+            measured.error(&error);
+        }
+    }
+    measured
+}
+
 async fn run_worker(
     target: &Target,
     call: Call,
@@ -377,8 +440,18 @@ async fn run_worker(
         next += 1;
         let begun = Instant::now();
         let outcome = match call {
-            Call::Get => read(target, "get", &json!({ "id": own[index].id })).await,
-            Call::Query | Call::AcmeRecordReceipt => read(target, "query", &json!({})).await,
+            Call::Get => {
+                read(
+                    target,
+                    "purchase_order/get",
+                    &json!({ "id": own[index].id }),
+                )
+                .await
+            }
+            Call::AppPath => unreachable!("app-path uses its own worker"),
+            Call::Query | Call::AcmeRecordReceipt => {
+                read(target, "purchase_order/query", &json!({})).await
+            }
             Call::Update => {
                 sequence += 1;
                 let order = &own[index];
@@ -403,7 +476,12 @@ async fn run_worker(
         if let Err(error) = &outcome {
             measured.error(error);
             if matches!(call, Call::Update)
-                && let Ok(value) = read(target, "get", &json!({ "id": own[index].id })).await
+                && let Ok(value) = read(
+                    target,
+                    "purchase_order/get",
+                    &json!({ "id": own[index].id }),
+                )
+                .await
             {
                 own[index].row_version = value
                     .get("row_version")
@@ -454,14 +532,14 @@ async fn run_receipts(
     measured
 }
 
-/// One read route, `/purchase_order/<name>`, with its item in the query string.
+/// One read route, with its item in the query string.
 async fn read(target: &Target, name: &str, item: &Value) -> anyhow::Result<Value> {
     let item: &Map<String, Value> = item.as_object().context("a read item is an object")?;
     let query = encode_read_query(item);
     let url = if query.is_empty() {
-        format!("{}/purchase_order/{name}", target.base)
+        format!("{}/{name}", target.base)
     } else {
-        format!("{}/purchase_order/{name}?{query}", target.base)
+        format!("{}/{name}?{query}", target.base)
     };
     let response = target
         .client
@@ -519,7 +597,7 @@ async fn list_orders(target: &Target) -> anyhow::Result<(Vec<Order>, Vec<String>
         if let Some(cursor) = &cursor {
             item["cursor"] = json!(cursor);
         }
-        let page = read(target, "query", &item)
+        let page = read(target, "purchase_order/query", &item)
             .await
             .context("list the orders")?;
         rows.extend(
