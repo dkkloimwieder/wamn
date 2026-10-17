@@ -63,6 +63,9 @@ struct Args {
     /// The host name of the application, such as `receiving.wamn.dev`.
     #[arg(long)]
     host: String,
+    /// Override the API base URL and send `--host` as the Host header.
+    #[arg(long)]
+    base_url: Option<String>,
     /// The PAT Secret JSON that `provision-project-env` wrote, with the token
     /// at `.stringData.token`.
     #[arg(long)]
@@ -208,12 +211,19 @@ async fn main() -> anyhow::Result<()> {
         .pointer("/stringData/token")
         .and_then(Value::as_str)
         .context("the PAT file holds .stringData.token")?;
+    let mut headers = reqwest::header::HeaderMap::new();
+    if args.base_url.is_some() {
+        headers.insert(reqwest::header::HOST, args.host.parse()?);
+    }
     let target = Arc::new(Target {
         client: reqwest::Client::builder()
+            .default_headers(headers)
             .pool_max_idle_per_host(args.concurrency)
             .timeout(Duration::from_secs(30))
             .build()?,
-        base: format!("https://{}/api", args.host),
+        base: args
+            .base_url
+            .unwrap_or_else(|| format!("https://{}/api", args.host)),
         authorization: format!("Bearer {token}"),
     });
 
