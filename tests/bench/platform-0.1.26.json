@@ -1,0 +1,21 @@
+{
+  "concurrency": 16,
+  "get": {
+    "throughput_per_sec": 838.0448023417189,
+    "p50_ms": 17.267,
+    "p95_ms": 28.063,
+    "p99_ms": 43.068,
+    "calls": 50295,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 1
+  },
+  "update": {
+    "throughput_per_sec": 494.5582501307017,
+    "p50_ms": 28.906,
+    "p95_ms": 46.597,
+    "p99_ms": 65.583,
+    "calls": 30095,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 5
+  }
+}
