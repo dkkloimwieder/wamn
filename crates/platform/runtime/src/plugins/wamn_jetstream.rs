@@ -20,6 +20,7 @@ use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::context::{GetStreamError, GetStreamErrorKind};
 #[cfg(test)]
 use futures_util::StreamExt as _;
+use futures_util::future::poll_immediate;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
@@ -1203,23 +1204,19 @@ impl WamnJetstream {
     /// Publish one ephemeral, redacted preview of a delivery boundary onto the
     /// reserved [`ROUTER_TAP_PREFIX`] namespace.
     ///
-    /// BEST-EFFORT BY CONTRACT, and that is why it returns nothing. A live view
-    /// is a debugging surface; a delivery must not fail, slow, or change shape
-    /// because an operator is watching. So this
+    /// This is best effort: a delivery must not fail, slow, or change shape
+    /// because an operator is watching. It uses the connection opened by
+    /// [`WamnJetstream::activate_events`] and skips an absent or busy context
+    /// before it clones or scrubs the payload.
     ///
-    /// - skips entirely on a host with no data-plane NATS, before it clones or
-    ///   scrubs anything — which also makes the tap free in every test and bench
-    ///   that runs without one;
-    /// - does NOT await the JetStream server ack, unlike
-    ///   [`WamnJetstream::publish_derived`], where the ack is the delivery truth.
-    ///   Here it would only put a debugging tap on a delivery's critical path;
-    /// - logs a failure at debug rather than raising it.
+    /// Core NATS publication carries no reply subject and tracks no JetStream
+    /// acknowledgements. Core subscribers receive the same preview, and the
+    /// `WAMN_TAP` stream captures it when present. The send future is polled
+    /// once: if the client cannot enqueue immediately, the preview is dropped.
+    /// This never waits for a connection, queue capacity, or broker response.
+    /// Failures are logged at debug level, never returned to the delivery.
     ///
-    /// COST, named rather than hidden: on a host that HAS a data-plane NATS this
-    /// deep-clones the previewed payload once (the redaction policy scrubs in
-    /// place, so a copy is unavoidable) and sends once, per boundary. If that
-    /// shows up in a bench, the next lever is demand-gating the tap on a bound
-    /// consumer, not thinning what the preview says.
+    /// Preparing a preview still clones and redacts the payload once per boundary.
     ///
     /// `component_id` names whose claim mints the subject; the caller cannot
     /// supply a subject, which is what keeps this the only writer.
@@ -1227,6 +1224,14 @@ impl WamnJetstream {
         if self.nats_url.is_none() {
             return;
         }
+        let Some(client) = self
+            .ctx
+            .try_lock()
+            .ok()
+            .and_then(|ctx| ctx.as_ref().map(Context::client))
+        else {
+            return;
+        };
         let Ok(claim) = self.required_derived_claim(component_id) else {
             tracing::debug!(
                 target: "wamn::jetstream",
@@ -1244,20 +1249,20 @@ impl WamnJetstream {
             return;
         };
         let span = js_span(&claim, component_id, "router-tap", None);
-        let outcome = async {
-            let ctx = self
-                .ensure_ctx()
-                .await
-                .map_err(|error| format!("data-plane NATS unavailable: {error:?}"))?;
-            ctx.publish(prepared.subject, prepared.body.into())
-                .await
-                .map_err(|error| format!("send router tap preview: {error}"))?;
-            Ok::<(), String>(())
-        }
-        .instrument(span)
-        .await;
-        if let Err(error) = outcome {
-            tracing::debug!(target: "wamn::jetstream", error, "router tap preview not published");
+        match poll_immediate(
+            client
+                .publish(prepared.subject, prepared.body.into())
+                .instrument(span),
+        )
+        .await
+        {
+            Some(Ok(())) => {}
+            Some(Err(error)) => {
+                tracing::debug!(target: "wamn::jetstream", %error, "router tap preview not published");
+            }
+            None => {
+                tracing::debug!(target: "wamn::jetstream", "router tap skipped: client send queue is not ready");
+            }
         }
     }
 }
@@ -2352,11 +2357,6 @@ mod tests {
         impossible.over_ceiling_bytes = Some((OUTPUT_CAPTURE_CEILING_BYTES + 1) as u64);
         assert!(impossible.validate().is_err());
     }
-
-    // NOT ASSERTED HERE, and deliberately: `publish_router_tap`'s early return
-    // on an unconfigured host is indistinguishable from letting it fall through
-    // to `ensure_ctx`, because both end in nothing published. It is a cost
-    // decision, not a behavioural one, so there is no honest unit test for it.
 
     #[test]
     fn registration_consumer_refuses_changed_broker_bounds() {
