@@ -1,4 +1,4 @@
-# wamn web operator client
+# wamn web operator client — initial spec
 
 2026-09-20 · @Someone
 

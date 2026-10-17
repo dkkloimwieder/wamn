@@ -15,9 +15,8 @@
 //! No classification of a response. The four outcomes of one intent come from
 //! the response status, the raw body, the result class, the result fields and
 //! the partial completion contract together. The web runtime owns these rules.
-//! A transport
-//! returns an [`Outcome`](self) that it classified, so the bindings hold no
-//! second copy of that reducer.
+//! A transport returns an [`Outcome`](self) that it classified, so the bindings
+//! hold no second copy of that reducer.
 //!
 //! # Names
 //!

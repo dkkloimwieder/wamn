@@ -195,6 +195,7 @@ Set `operatorCaSecret` to permit operator invitation requests.
 Set `inviteUrl` to the web client base, for example `https://receiving.wamn.dev`.
 The invitation mail links to `<inviteUrl>/invite#<code>`.
 The reset mail links to `<inviteUrl>/reset#<secret>`.
+If `inviteUrl` is empty, each mail shows the code.
 An operator invites a user to an org with `wamn-ctl invite`, which uses the operator certificate flags of the PAT mint.
 The command runs three steps:
 

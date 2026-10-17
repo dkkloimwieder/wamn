@@ -97,8 +97,7 @@ fn every_public_operation_gets_its_interfaces_and_one_function() {
 }
 
 /// Defect 1 of the Epic 2 review. A bounded list and a page return an
-/// envelope, and the row sits inside it. `validate_value` in
-/// The web runtime classifies responses using that rule.
+/// envelope, and the row sits inside it.
 #[test]
 fn a_collection_result_is_typed_as_the_envelope_the_release_serves() {
     let ir = release();
