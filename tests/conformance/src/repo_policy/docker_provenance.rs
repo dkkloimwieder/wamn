@@ -88,7 +88,7 @@ fn embedded_components_come_from_the_locked_builder(
     dockerignore: &str,
     problems: &mut Problems,
 ) {
-    let mut expected = vec![
+    let gates = [
         ("/component-output/busyloop.wasm", "/bench/busyloop.wasm"),
         (
             "/component-output/connection_http_standard.wasm",
@@ -104,6 +104,11 @@ fn embedded_components_come_from_the_locked_builder(
         ),
         ("/component-output/sockprobe.wasm", "/bench/sockprobe.wasm"),
     ];
+    let roles = [
+        ("/component-output/http_route.wasm", "/http_route.wasm"),
+        ("/component-output/materializer.wasm", "/materializer.wasm"),
+    ];
+    let mut expected: Vec<_> = gates.iter().chain(&roles).copied().collect();
 
     let mut actual = Vec::new();
     for line in dockerfile.lines().map(str::trim) {
@@ -129,9 +134,9 @@ fn embedded_components_come_from_the_locked_builder(
     });
 
     // ea71c1c4 (wamn-0h0g.26.7.2) deleted the last embedded execution guest, so
-    // every remaining component ships to the gates image alone. The service
-    // images carry native binaries only; a component COPY appearing in one is a
-    // regression, and `stage` reports a stage name that disappears.
+    // service images carry native binaries only. Gates embed test fixtures,
+    // and the roles stage exports the platform role components (53e4214c2).
+    // `stage` reports a stage name that disappears.
     for image_stage in ["host", "identity", "ctl", "scenario-worker", "cdc-reader"] {
         if let Some(contents) = stage(dockerfile, image_stage, problems) {
             problems.require(!contents.contains(".wasm"), || {
@@ -139,14 +144,16 @@ fn embedded_components_come_from_the_locked_builder(
             });
         }
     }
-    if let Some(gates_stage) = stage(dockerfile, "gates", problems) {
-        for (source, destination) in &expected {
-            problems.require(
-                gates_stage.contains(&format!(
-                    "COPY --from=component-builder {source} {destination}"
-                )),
-                || format!("gates image lost embedded component {destination}"),
-            );
+    for (name, components) in [("gates", gates.as_slice()), ("roles", roles.as_slice())] {
+        if let Some(contents) = stage(dockerfile, name, problems) {
+            for (source, destination) in components {
+                problems.require(
+                    contents.contains(&format!(
+                        "COPY --from=component-builder {source} {destination}"
+                    )),
+                    || format!("{name} image lost embedded component {destination}"),
+                );
+            }
         }
     }
 
