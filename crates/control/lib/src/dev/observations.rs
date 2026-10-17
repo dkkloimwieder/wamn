@@ -611,6 +611,57 @@ mod tests {
         assert_eq!(observations[0].duration(), Duration::from_nanos(400));
     }
 
+    #[test]
+    fn collector_summaries_publish_oldest_first_with_exact_ids_and_durations() {
+        let mut reader = reader(std::path::PathBuf::new());
+        for (id, start, end) in [
+            (
+                "11111111111111111111111111111111",
+                2_000_000_000,
+                2_002_500_000,
+            ),
+            (
+                "22222222222222222222222222222222",
+                1_000_000_000,
+                1_001_000_000,
+            ),
+        ] {
+            let record = export(&reader, id, "request", start, end, false);
+            reader.merge(&serde_json::to_vec(&record).unwrap()).unwrap();
+        }
+        let (publisher, handle) = super::super::read::dev_read_channel();
+        publisher.merge_traces(reader.observations());
+        let snapshot = handle.snapshot();
+        assert_eq!(
+            snapshot.traces()[0].trace_id(),
+            "22222222222222222222222222222222"
+        );
+        assert_eq!(
+            snapshot.traces()[1].trace_id(),
+            "11111111111111111111111111111111"
+        );
+        assert_eq!(snapshot.traces()[0].duration(), Duration::from_millis(1));
+        assert_eq!(
+            snapshot.traces()[1].duration(),
+            Duration::from_micros(2_500)
+        );
+        let mut overflow = export(
+            &reader,
+            "33333333333333333333333333333333",
+            "request",
+            1,
+            2,
+            false,
+        );
+        overflow["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["endTimeUnixNano"] =
+            json!("18446744073709551616");
+        assert!(
+            reader
+                .merge(&serde_json::to_vec(&overflow).unwrap())
+                .is_err()
+        );
+    }
+
     #[tokio::test]
     async fn file_reader_waits_for_complete_lines_and_resumes_after_truncation() {
         use std::io::Write as _;

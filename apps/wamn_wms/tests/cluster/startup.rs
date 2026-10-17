@@ -7,6 +7,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_gate_harness::case_release::NAMESPACE;
 use wamn_gate_harness::journey::JourneyDocument;
+use wamn_test_infrastructure::telemetry::SAMPLED_TRACE_IDS;
 use wamn_test_infrastructure::workload::HTTP_PROBE_IMAGE;
 
 use super::deployment::{checked, kubectl};
@@ -93,6 +94,7 @@ pub(super) async fn requests(
     cold: &ColdHost,
     evidence: &Path,
 ) -> anyhow::Result<()> {
+    // The shared IDs pass the deployed 10% trace-ID hash sampler.
     request(
         cluster,
         work,
@@ -100,7 +102,7 @@ pub(super) async fn requests(
         inputs,
         &RequestTrace {
             name: "cold",
-            trace_id: "11111111111111111111111111111111",
+            trace_id: SAMPLED_TRACE_IDS[0],
             parent_span: "1111111111111111",
         },
         evidence,
@@ -161,27 +163,27 @@ pub(super) async fn requests(
         .await?,
     )?;
     route_after_restart(cluster, work, &cold.service, evidence).await?;
-    request(
+    let restart = request(
         cluster,
         work,
         &cold.service,
         inputs,
         &RequestTrace {
             name: "restart-first",
-            trace_id: "22222222222222222222222222222222",
+            trace_id: SAMPLED_TRACE_IDS[1],
             parent_span: "2222222222222222",
         },
         evidence,
     )
     .await?;
-    request(
+    let steady = request(
         cluster,
         work,
         &cold.service,
         inputs,
         &RequestTrace {
             name: "steady",
-            trace_id: "33333333333333333333333333333333",
+            trace_id: SAMPLED_TRACE_IDS[2],
             parent_span: "3333333333333333",
         },
         evidence,
@@ -192,6 +194,24 @@ pub(super) async fn requests(
         cache == warm_cache,
         "the restarted host changed compiled cache bytes, inodes, times, sizes, or paths"
     );
+    trace(
+        cluster,
+        work,
+        "restart-first",
+        SAMPLED_TRACE_IDS[1],
+        restart,
+        evidence,
+    )
+    .await?;
+    trace(
+        cluster,
+        work,
+        "steady",
+        SAMPLED_TRACE_IDS[2],
+        steady,
+        evidence,
+    )
+    .await?;
     write_result(
         evidence,
         "runtime-startup.json",
@@ -544,6 +564,119 @@ async fn cache_files(
     Ok((metadata, hashes))
 }
 
+async fn trace(
+    cluster: &str,
+    work: &Path,
+    name: &str,
+    id: &str,
+    total_ms: f64,
+    evidence: &Path,
+) -> anyhow::Result<()> {
+    let value = wamn_test_infrastructure::telemetry::read_trace(
+        cluster,
+        work,
+        id,
+        evidence,
+        restart_trace_is_complete,
+    )
+    .await?;
+    let bytes = serde_json::to_vec_pretty(&value)?;
+    fs::write(evidence.join(format!("trace-{name}.json")), &bytes)?;
+    ensure!(
+        restart_trace_is_complete(&value),
+        "{name} trace must have one WMS invocation and statement without component loading or compilation"
+    );
+    let breakdown = trace_breakdown(&value, name, total_ms)?;
+    write_result(
+        evidence,
+        &format!("trace-breakdown-{name}.json"),
+        &breakdown,
+    )
+}
+
+fn restart_trace_is_complete(document: &Value) -> bool {
+    let spans = document["resourceSpans"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|batch| batch["scopeSpans"].as_array().into_iter().flatten())
+        .flat_map(|scope| scope["spans"].as_array().into_iter().flatten())
+        .collect::<Vec<_>>();
+    let count = |name: &str| spans.iter().filter(|span| span["name"] == name).count();
+    count("wamn.component.invoke") == 1
+        && count("wamn.postgres.statement") == 1
+        && [
+            "wamn.component.pull",
+            "wamn.component.compile",
+            "wamn.component.linker_setup",
+            "wamn.component.link",
+            "load_component_bytes",
+            "resolve_workload",
+            "link_components",
+        ]
+        .iter()
+        .all(|name| count(name) == 0)
+}
+
+fn trace_breakdown(document: &Value, name: &str, total_ms: f64) -> anyhow::Result<Value> {
+    let mut spans = Vec::new();
+    for batch in document["resourceSpans"]
+        .as_array()
+        .context("trace has resource spans")?
+    {
+        for scope in batch["scopeSpans"]
+            .as_array()
+            .context("trace has span scopes")?
+        {
+            spans.extend(scope["spans"].as_array().context("trace has spans")?);
+        }
+    }
+    let sum = |name: &str, authority: Option<&str>| -> anyhow::Result<f64> {
+        let mut total = 0.0;
+        for span in &spans {
+            if span["name"] != name
+                || authority.is_some_and(|authority| {
+                    !span["attributes"].as_array().is_some_and(|attributes| {
+                        attributes.iter().any(|attribute| {
+                            attribute["key"] == "wamn.authority_class"
+                                && attribute["value"]["stringValue"] == authority
+                        })
+                    })
+                })
+            {
+                continue;
+            }
+            let nanos = |field: &str| -> anyhow::Result<u64> {
+                match &span[field] {
+                    Value::String(value) => Ok(value.parse()?),
+                    Value::Number(value) => value
+                        .as_u64()
+                        .context("span timestamp is a nonnegative integer"),
+                    _ => anyhow::bail!("span timestamp is absent"),
+                }
+            };
+            let start = nanos("startTimeUnixNano")?;
+            let end = nanos("endTimeUnixNano")?;
+            total += std::time::Duration::from_nanos(
+                end.checked_sub(start)
+                    .context("span ends before it starts")?,
+            )
+            .as_secs_f64()
+                * 1_000.0;
+        }
+        Ok(total)
+    };
+    let sql = sum("wamn.postgres.statement", None)?;
+    let root = sum("handle_http_request", None)?;
+    Ok(json!({"passed":true,"phase":name,"http_total_ms":total_ms,
+        "authentication_ms":sum("wamn.route.authenticate",None)?,"resolution_ms":sum("wamn.router.resolve",None)?,
+        "artifact_pull_ms":sum("wamn.component.pull",None)?,"compile_ms":sum("wamn.component.compile",None)?,
+        "linker_setup_ms":sum("wamn.component.linker_setup",None)?,"link_ms":sum("wamn.component.link",None)?,
+        "executor_platform_acquire_ms":sum("wamn.postgres.acquire",Some("executor-platform"))?,
+        "callable_http_acquire_ms":sum("wamn.postgres.acquire",Some("callable-http"))?,"guest_sql_acquire_ms":sum("wamn.postgres.acquire",Some("guest-sql"))?,
+        "sql_ms":sql,"guest_db_call_ms":sum("wamn.postgres",None)?,"root_ms":root}))
+}
+
 async fn startup_time(
     cluster: &str,
     work: &Path,
@@ -634,6 +767,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restart_trace_accepts_repeated_acquisitions_but_not_repeated_work_or_loading() {
+        let mut spans = vec![
+            json!({"name":"wamn.component.invoke"}),
+            json!({"name":"wamn.postgres.statement"}),
+        ];
+        for class in ["callable-http", "guest-sql", "callable-http", "guest-sql"] {
+            spans.push(json!({"name":"wamn.postgres.acquire", "attributes":[{"key":"wamn.authority_class", "value":{"stringValue":class}}]}));
+        }
+        let trace = json!({"resourceSpans":[{"scopeSpans":[{"spans":spans}]}]});
+        assert!(restart_trace_is_complete(&trace));
+        for name in [
+            "wamn.component.invoke",
+            "wamn.postgres.statement",
+            "wamn.component.compile",
+            "load_component_bytes",
+            "link_components",
+        ] {
+            let mut invalid = trace.clone();
+            invalid["resourceSpans"][0]["scopeSpans"][0]["spans"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"name":name}));
+            assert!(!restart_trace_is_complete(&invalid), "{name}");
+        }
+        assert!(!restart_trace_is_complete(&json!({})));
+    }
+
+    #[test]
     fn startup_job_reports_immediate_delayed_and_failed_responses() {
         use std::os::unix::fs::PermissionsExt as _;
         let query = "id=%22selected-packaging%22&note=%22it%27s%20quoted%22";
@@ -643,7 +804,7 @@ mod tests {
             "selected.example",
             "selected-pat",
             "selected-job",
-            ("11111111111111111111111111111111", "1111111111111111"),
+            ("00000000000000000000000000000014", "1111111111111111"),
             query,
         );
         assert_eq!(
@@ -672,7 +833,7 @@ mod tests {
         );
         assert_eq!(
             env[2],
-            json!({"name":"TRACEPARENT","value":"00-11111111111111111111111111111111-1111111111111111-01"})
+            json!({"name":"TRACEPARENT","value":"00-00000000000000000000000000000014-1111111111111111-01"})
         );
         assert_eq!(
             env[3],

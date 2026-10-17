@@ -192,9 +192,11 @@ pub(super) async fn trigger(
     database_url: &str,
     endpoint: &str,
     order: &TriggerOrder,
-) -> anyhow::Result<MaterializerPhase> {
-    let update_trace = uuid::Uuid::new_v4().simple().to_string();
-    let receipt_trace = uuid::Uuid::new_v4().simple().to_string();
+) -> anyhow::Result<(MaterializerPhase, String, String)> {
+    // These fixed IDs pass the deployed 10% trace-ID hash sampler.
+    let ids = wamn_test_infrastructure::telemetry::SAMPLED_TRACE_IDS;
+    let update_trace = ids[3].to_owned();
+    let receipt_trace = ids[4].to_owned();
     fs::write(
         cluster
             .resources
@@ -274,6 +276,7 @@ pub(super) async fn trigger(
             project_pg_url: database_url.to_owned(), nats_url: cluster.nats_url.clone(), receipt_id: receipt_id.to_owned(),
         })
     }).await.context("the materializer HTTP commands exceeded 90 seconds")?
+        .map(|phase| (phase, update_trace, receipt_trace))
 }
 
 #[cfg(test)]

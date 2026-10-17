@@ -35,8 +35,12 @@ With the variable set, the case keeps its route NodePort Service and serves `htt
 After the case finishes, it holds the cluster for that many seconds or until interrupted.
 A passing case first prints the route and the caller token file.
 Without the variable, the case does not hold.
-The startup case records requests, recovery, and cache identity without asserting an overhead ratio.
-The legacy metric collector remains a test fixture. It does not store request traces.
+The startup case requires one invocation and statement after restart and in steady state, without component loading or compilation.
+It retains each trace and its per-span timing breakdown beside request, recovery, and cache evidence.
+The cluster fixture renders the deployed collector configuration with file exporters and retains its 10% trace sampler and 60-second batch timeout.
+The tests use fixed trace IDs that the sampler retains.
+The shared reader uses `kubectl exec` through a read-only sidecar to read complete OTLP JSON lines across batches.
+Receiving retains its invocation identity, PostgreSQL ancestry, and scoped metric assertions.
 
 ### Environment apply on kind
 

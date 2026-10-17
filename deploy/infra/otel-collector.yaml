@@ -1,9 +1,6 @@
-# Metrics-only collector for the retained metric tests. The MVP
-# treats an OTLP collector as an optional external prerequisite; this manifest
-# is not part of the product bill of materials.
-#
-#   kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
-#   kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
+# Cluster test collector template. platform::install renders the deployed
+# receivers, processors, trace and log pipelines with file exporters at runtime.
+# The retained Prometheus pipeline below serves the metric assertions.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,13 +8,8 @@ metadata:
   namespace: wamn-system
 data:
   config.yaml: |
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
     processors:
-      batch:
+      batch/metrics:
         send_batch_size: 8192
         send_batch_max_size: 16384
         timeout: 200ms
@@ -44,7 +36,7 @@ data:
         # [9.8] host/service app metrics → Prometheus text on :8889.
         metrics:
           receivers: [otlp]
-          processors: [batch]
+          processors: [batch/metrics]
           exporters: [prometheus]
 ---
 apiVersion: apps/v1
@@ -60,10 +52,15 @@ spec:
     metadata:
       labels: { app: otel-collector }
     spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
       containers:
         - name: otel-collector
-          image: otel/opentelemetry-collector-contrib:0.115.1
           args: ["--config=/etc/otelcol/config.yaml"]
+          env:
+            - { name: CLUSTER, value: kind }
           ports:
             - { name: otlp-grpc, containerPort: 4317 }
             - { name: metrics, containerPort: 8888 }
@@ -71,11 +68,23 @@ spec:
             - { name: app-metrics, containerPort: 8889 }
           volumeMounts:
             - { name: config, mountPath: /etc/otelcol }
+            - { name: output, mountPath: /var/lib/otelcol }
           resources:
             # No CPU limit (CFS-quota tail artifact — the S2 lesson).
             requests: { cpu: "1", memory: "256Mi" }
-            limits: { memory: "1Gi" }
+            limits: { memory: "2Gi" }
+        # The collector image has no shell. kubectl exec reads through this
+        # existing probe image, with the output volume mounted read-only.
+        - name: trace-reader
+          command: ["/bin/sh", "-c", "while :; do sleep 3600; done"]
+          volumeMounts:
+            - { name: output, mountPath: /var/lib/otelcol, readOnly: true }
+          resources:
+            requests: { cpu: 1m, memory: 8Mi }
+            limits: { memory: 32Mi }
       volumes:
+        - name: output
+          emptyDir: {}
         - name: config
           configMap: { name: otel-collector-config }
 ---

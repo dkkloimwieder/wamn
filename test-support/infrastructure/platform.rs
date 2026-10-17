@@ -125,10 +125,11 @@ pub async fn install(
     )
     .await?;
 
+    let collector = crate::telemetry::render_collector(repository, work)?;
     checked(
         kubectl(&kubeconfig, &context)
             .args(["apply", "-f"])
-            .arg(repository.join("deploy/infra/otel-collector.yaml")),
+            .arg(&collector),
     )
     .await?;
     checked(kubectl(&kubeconfig, &context).args([
