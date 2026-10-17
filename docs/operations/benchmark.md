@@ -56,6 +56,31 @@ It prints the private temporary directory that holds logs and raw results.
 For a smoke run, use `tools/bench/local.sh --concurrency 4 --duration-secs 10`.
 Either override puts the result in a private directory under `$TMPDIR`, which defaults to `/var/tmp`.
 
+Run `tools/bench/local.sh --pg-floor` to measure PostgreSQL without a host, edge, broker, or collector.
+It uses the same PostgreSQL image, deployed parameters, and CPU assignments as the full local run.
+The existing package applier installs Receiving, including its history triggers and generated grants.
+The run loads the 1000-order seed and initializes pgbench at scale 10.
+
+The floor requires PostgreSQL 18 `pgbench` and uses its prepared protocol.
+It runs select-only, simple-update, get replay, and update replay at concurrency 16 for 60 seconds each.
+The replay scripts live in `tools/bench/pg-floor/`.
+Their comments describe the captured SQL and parameter choices.
+The update replay retains the host transaction, including the write log and logical message.
+
+Each replay includes one extra parameter query before the host statements.
+Update clients use separate order slices, so no two clients update the same order.
+The finish payload uses a representative row value with its pre-update audit timestamps.
+The runner requires one changed row and one finished claim for every completed update.
+
+The floor result is `tests/bench/local-pg-<CHART_VERSION>.json`.
+It refuses an existing file, and either smoke override moves the result under `$TMPDIR`.
+TPS means completed transactions per second.
+The p50 and p99 values come from [pgbench's completed-transaction logs](https://www.postgresql.org/docs/18/pgbench.html), in milliseconds.
+
+Compare select-only and simple-update with the [GCP floor](#postgres-floor) to locate database or storage differences.
+Compare the replays with full local get and update to distinguish database work from request-path work.
+These timings use different clients, so subtracting their percentiles does not measure host overhead.
+
 Add `--profile` to record the host during get with `perf record -F 99 --call-graph dwarf` for the requested duration.
 Install `perf`, with `inferno-collapse-perf` and `inferno-flamegraph` in `~/.cargo/bin`.
 The default run writes `tests/bench/flamegraph-local-get-c16-<CHART_VERSION>.svg` and refuses an existing file.

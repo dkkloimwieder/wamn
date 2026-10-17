@@ -8,8 +8,10 @@ concurrency=16
 smoke=false
 profile=false
 edge=true
+pg_floor=false
 while (($#)); do
   case "$1" in
+    --pg-floor) pg_floor=true; shift ;;
     --profile) profile=true; shift ;;
     --no-edge) edge=false; shift ;;
     --duration-secs|--concurrency)
@@ -21,6 +23,10 @@ while (($#)); do
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+if $pg_floor && $profile; then
+  echo "--pg-floor cannot use --profile" >&2
+  exit 2
+fi
 if $profile; then
   if (( $(</proc/sys/kernel/perf_event_paranoid) > 1 )); then
     echo 'run `sudo sysctl kernel.perf_event_paranoid=1` first' >&2
@@ -33,7 +39,9 @@ if $profile; then
 fi
 version=$(sed -n 's/^pub const CHART_VERSION: &str = "\([^"]*\)";/\1/p' crates/control/lib/src/release_chart.rs)
 test -n "$version"
-output="tests/bench/local-$version.json"
+result_name="local-$version.json"
+if $pg_floor; then result_name="local-pg-$version.json"; fi
+output="tests/bench/$result_name"
 flamegraph="tests/bench/flamegraph-local-get-c$concurrency-$version.svg"
 if ! $smoke && [[ -e $output ]]; then
   echo "Refusing to overwrite $output" >&2
@@ -50,7 +58,7 @@ work=$(mktemp -d "$TMPDIR/wamn-lbench.XXXXXXXX")
 root="$work/env"
 mkdir "$root"
 if $smoke; then
-  output="$work/local-$version.json"
+  output="$work/$result_name"
   flamegraph="$work/flamegraph-local-get-c$concurrency-$version.svg"
 fi
 bin="$CARGO_TARGET_DIR/release"
@@ -84,6 +92,57 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# Choose distinct free loopback ports before publishing each explicit mapping.
+read -r pg_port scheduler_port event_port otlp_port < <(python3 - <<'PY'
+import socket
+sockets = [socket.socket() for _ in range(4)]
+for sock in sockets:
+    sock.bind(("127.0.0.1", 0))
+print(*(sock.getsockname()[1] for sock in sockets))
+PY
+)
+prefix="wamn-lbench-${work##*.}"
+start_container() {
+  local id
+  id=$(docker run --pull=never -d "$@")
+  containers+=("$id")
+}
+docker image inspect postgres:18 >/dev/null
+python3 - "$work" <<'PARAMETERS'
+import pathlib
+import re
+import sys
+work = pathlib.Path(sys.argv[1])
+postgres = pathlib.Path("deploy/gcp/cnpg-cluster.yaml").read_text()
+parameters = []
+for name in ("max_slot_wal_keep_size", "pg_stat_statements.max", "pg_stat_statements.track"):
+    value, = re.findall(r'^      ' + re.escape(name) + r': "([^"]+)"$', postgres, re.M)
+    parameters.extend(("-c", f"{name}={value}"))
+(work / "postgres-parameters").write_text("\n".join(parameters) + "\n")
+PARAMETERS
+mapfile -t postgres_parameters <"$work/postgres-parameters"
+start_container --name "$prefix-postgres" --cpuset-cpus 4-5 \
+  -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=wamn_system \
+  -p "127.0.0.1:$pg_port:5432" postgres:18 \
+  -c wal_level=logical -c shared_preload_libraries=pg_stat_statements "${postgres_parameters[@]}"
+ready=false
+for ((attempt=0; attempt<60; attempt++)); do
+  if docker exec "$prefix-postgres" sh -c \
+      'test "$(cat /proc/1/comm)" = postgres && pg_isready -h 127.0.0.1 -U postgres -d wamn_system' >/dev/null 2>&1; then
+    ready=true
+    break
+  fi
+  sleep 1
+done
+if ! $ready; then
+  docker logs "$prefix-postgres" >&2
+  exit 1
+fi
+if $pg_floor; then
+  source tools/bench/pg-floor/run.sh
+  exit
+fi
+
 # Use only cached images. Never contact a registry.
 if $edge; then
   command -v helm >/dev/null
@@ -109,21 +168,6 @@ materializer_sha256=$(sha256sum "$CARGO_TARGET_DIR/wasm32-wasip2/release/materia
 echo "http_route_sha256=$http_route_sha256"
 echo "materializer_sha256=$materializer_sha256"
 
-# Choose distinct free loopback ports before publishing each explicit mapping.
-read -r pg_port scheduler_port event_port otlp_port < <(python3 - <<'PY'
-import socket
-sockets = [socket.socket() for _ in range(4)]
-for sock in sockets:
-    sock.bind(("127.0.0.1", 0))
-print(*(sock.getsockname()[1] for sock in sockets))
-PY
-)
-prefix="wamn-lbench-${work##*.}"
-start_container() {
-  local id
-  id=$(docker run --pull=never -d "$@")
-  containers+=("$id")
-}
 # Use the deployed permission generator with the development identity's owner.
 read -r org project environment tenant < <(python3 - <<'IDENTITY'
 import pathlib
@@ -166,23 +210,12 @@ provisioner["permissions"]["publish"]["allow"].extend(
 authorization["users"].remove(tap_admin)
 authorization_path.write_text("authorization: " + json.dumps(authorization) + "\n")
 
-postgres = pathlib.Path("deploy/gcp/cnpg-cluster.yaml").read_text()
-parameters = []
-for name in ("max_slot_wal_keep_size", "pg_stat_statements.max", "pg_stat_statements.track"):
-    value, = re.findall(r'^      ' + re.escape(name) + r': "([^"]+)"$', postgres, re.M)
-    parameters.extend(("-c", f"{name}={value}"))
-(work / "postgres-parameters").write_text("\n".join(parameters) + "\n")
 broker, = (document for document in deployment.split("\n---\n") if "\nkind: StatefulSet\n" in document)
 memory, = re.findall(r'^            limits: \{ memory: "([^"]+)" \}$', broker, re.M)
 amount, unit = re.fullmatch(r"([0-9]+)(Ki|Mi|Gi)", memory).groups()
 print(int(amount) * {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}[unit])
 CONFIGURATION
 )
-mapfile -t postgres_parameters <"$work/postgres-parameters"
-start_container --name "$prefix-postgres" --cpuset-cpus 4-5 \
-  -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=wamn_system \
-  -p "127.0.0.1:$pg_port:5432" postgres:18 \
-  -c wal_level=logical -c shared_preload_libraries=pg_stat_statements "${postgres_parameters[@]}"
 start_container --name "$prefix-scheduler" -p "127.0.0.1:$scheduler_port:4222" \
   nats:2.10-alpine --jetstream --store_dir=/data --http_port=8222
 start_container --name "$prefix-events" --memory "$event_memory" -p "127.0.0.1:$event_port:4222" \
@@ -348,6 +381,7 @@ for call in get update; do
   fi
   sql 'SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' \
     >"$work/$call.pgss"
+  psql "$database_url" -X --csv -v ON_ERROR_STOP=1 -c 'SELECT query, calls, rows, total_exec_time FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' >"$work/$call.statements.csv"
 done
 python3 - "$work" "$output" "$concurrency" "$http_route_sha256" "$materializer_sha256" "$edge" <<'PY'
 import json
