@@ -34,6 +34,7 @@ const LABELS_CREDENTIAL: &str = "labels-store";
 struct Compose {
     repository: PathBuf,
     directory: PathBuf,
+    environment: PathBuf,
     project: String,
     minio_password: String,
 }
@@ -56,10 +57,11 @@ impl Compose {
             )
             .arg("-f")
             .arg(self.directory.join("compose.json"))
+            .arg("-f")
+            .arg(self.environment.join("local-artifacts/otel/compose.json"))
             .env("WAMN_STD_VIRT_PG_PORT", "0")
             .env("WAMN_STD_VIRT_REGISTRY_PORT", "0")
             .env("WAMN_RECEIVING_DEV_NATS_PORT", "0")
-            .env("WAMN_RECEIVING_DEV_TEMPO_PORT", "0")
             .env("WAMN_RECEIVING_DEV_OTLP_PORT", "0")
             .env("WAMN_RECEIVING_DEV_MINIO_PORT", "0")
             .env("WAMN_RECEIVING_DEV_MINIO_USER", MINIO_USER)
@@ -261,6 +263,7 @@ async fn main() -> anyhow::Result<()> {
     let compose = Compose {
         repository: repository.clone(),
         directory: directory.clone(),
+        environment: target.join("delivery-timings/env"),
         project: format!("wamn-delivery-timings-{}", hex::encode(&nonce[..8])),
         minio_password: hex::encode(&nonce[8..24]),
     };
@@ -289,6 +292,7 @@ async fn main() -> anyhow::Result<()> {
             "healthcheck":{"test":["CMD-SHELL","wget -qO- http://127.0.0.1:8222/healthz | grep -q ok"],"interval":"1s","timeout":"2s","retries":60}
         }}}))?,
     )?;
+    checked(Command::new(repository.join("tools/dev-collector")).arg(&compose.environment)).await?;
     ensure!(
         checked(compose.command().args(["ps", "--all", "--quiet"]))
             .await?
@@ -297,7 +301,7 @@ async fn main() -> anyhow::Result<()> {
     );
     let mut services = vec![
         "receiving-dev-nats",
-        "receiving-dev-tempo",
+        "receiving-dev-collector",
         "delivery-events",
     ];
     if wms {
@@ -312,34 +316,19 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     let scheduler = compose.port("receiving-dev-nats", "4222").await?;
     let events = compose.port("delivery-events", "4222").await?;
-    let tempo = compose.port("receiving-dev-tempo", "3200").await?;
-    let otlp = compose.port("receiving-dev-tempo", "4317").await?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
+    let otlp = compose.port("receiving-dev-collector", "4317").await?;
     tokio::time::timeout(Duration::from_secs(60), async {
-        loop {
-            if client
-                .get(format!("http://{tempo}/ready"))
-                .send()
-                .await
-                .is_ok_and(|response| response.status().is_success())
-            {
-                break;
-            }
+        while tokio::net::TcpStream::connect(&otlp).await.is_err() {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     })
     .await
-    .context("owned Tempo readiness")?;
+    .context("owned collector readiness")?;
     // The environment root lives in the target directory and survives runs,
     // so its compile cache does. The result records the cache state first, so
     // that a cold number reads as cold.
-    let root = target.join("delivery-timings/env");
-    DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(&root)?;
+    let root = &compose.environment;
+    DirBuilder::new().recursive(true).mode(0o700).create(root)?;
     let cache_entries = cache_entries(&root.join("dev-wasmtime-cache/modules"))?;
     private(
         &results.join("cache-state.json"),
@@ -404,7 +393,7 @@ async fn main() -> anyhow::Result<()> {
         ("WAMN_EVT_DUP_WINDOW_SECS", "120".to_owned()),
         (
             "WAMN_RECEIVING_DEV_TEMPO_QUERY_URL",
-            format!("http://{tempo}"),
+            "http://127.0.0.1:3201".to_owned(),
         ),
         (
             "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",

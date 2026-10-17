@@ -24,6 +24,22 @@ Read the current required arguments from the existing command:
 ```
 
 Supply an explicit environment directory, package roots, built binaries, and service endpoints.
+
+Render the local collector before starting the session:
+
+```bash
+tools/dev-collector "$WAMN_DEV_ENV_DIR"
+docker compose -f "$WAMN_DEV_ENV_DIR/local-artifacts/otel/compose.json" up --pull never --detach
+```
+
+The renderer reads `deploy/platform/otel-collector.yaml` and its GCP values at run time.
+It preserves the receivers, processors, image digest, and 10% trace sampling.
+It replaces the GCS exporters with OTLP JSON file exporters under `<dev-root>/local-artifacts/otel/`.
+The collector keeps the deployed batch timeout, so small batches take up to 60 seconds to arrive.
+An individual request can have no sampled trace. Router taps remain a separate, unsampled observation source.
+Supply the published collector address through `--otel-exporter-otlp-endpoint`.
+The benchmark and pilot render and start this collector themselves.
+
 Supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
 Supply `--materializer-component` with the absolute path to a `materializer.wasm` built with the guest RUSTFLAGS of [building](building.md#native-programs-and-app-components).
 The emitted `local_artifacts` configuration names the local output directory and these components.

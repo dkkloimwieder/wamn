@@ -34,7 +34,6 @@ impl Run {
             .env("WAMN_STD_VIRT_PG_PORT", "54332")
             .env("WAMN_STD_VIRT_REGISTRY_PORT", "5003")
             .env("WAMN_RECEIVING_DEV_NATS_PORT", "4224")
-            .env("WAMN_RECEIVING_DEV_TEMPO_PORT", "3201")
             .env("WAMN_RECEIVING_DEV_OTLP_PORT", "4319");
         command
     }
@@ -84,23 +83,16 @@ impl Run {
         );
         let port: u16 = port.parse()?;
         let server = format!("nats://127.0.0.1:{port}");
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()?;
-        let mut ready = false;
-        for _ in 0..60 {
-            if client
-                .get("http://127.0.0.1:3201/ready")
-                .send()
+        tokio::time::timeout(Duration::from_secs(60), async {
+            while tokio::net::TcpStream::connect("127.0.0.1:4319")
                 .await
-                .is_ok_and(|response| response.status().is_success())
+                .is_err()
             {
-                ready = true;
-                break;
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-        anyhow::ensure!(ready, "Tempo never became ready");
+        })
+        .await
+        .context("collector never became ready")?;
         let (postgres, connection) = tokio_postgres::connect(
             "postgresql://postgres:probe@127.0.0.1:54332/postgres",
             tokio_postgres::NoTls,

@@ -89,7 +89,8 @@ if $edge; then
   command -v helm >/dev/null
   docker image inspect nginx:1.27-alpine >/dev/null
 fi
-for image in postgres:18 nats:2.10-alpine grafana/tempo:2.6.1; do
+collector_image=$(tools/dev-collector "$root")
+for image in postgres:18 nats:2.10-alpine "$collector_image"; do
   docker image inspect "$image" >/dev/null
 done
 # Match the Dockerfile host build without unifying control-tool features.
@@ -188,17 +189,19 @@ start_container --name "$prefix-events" --memory "$event_memory" -p "127.0.0.1:$
   --mount "type=bind,src=$work/events.conf,dst=/etc/nats-config/nats.conf,readonly" \
   --mount "type=bind,src=$work/event-nats/authorization.conf,dst=/etc/nats-authorization/authorization.conf,readonly" \
   nats:2.10-alpine --config=/etc/nats-config/nats.conf
-start_container --name "$prefix-tempo" \
-  -p "127.0.0.1:$tempo_port:3200" -p "127.0.0.1:$otlp_port:4317" \
-  --mount "type=bind,src=$repository/test-support/infrastructure/tempo-dev.yaml,dst=/etc/tempo/tempo.yaml,readonly" \
-  grafana/tempo:2.6.1 -config.file=/etc/tempo/tempo.yaml
+start_container --name "$prefix-collector" \
+  --user "$(id -u):$(id -g)" \
+  -p "127.0.0.1:$otlp_port:4317" \
+  --env "CLUSTER=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["services"]["receiving-dev-collector"]["environment"]["CLUSTER"])' "$root/local-artifacts/otel/compose.json")" \
+  --mount "type=bind,src=$root/local-artifacts/otel,dst=/var/lib/otelcol" \
+  "$collector_image" --config=/var/lib/otelcol/config.yaml
 ready=false
 for ((attempt=0; attempt<60; attempt++)); do
   if docker exec "$prefix-postgres" sh -c \
       'test "$(cat /proc/1/comm)" = postgres && pg_isready -h 127.0.0.1 -U postgres -d wamn_system' >/dev/null 2>&1 \
     && docker exec "$prefix-scheduler" wget -qO- http://127.0.0.1:8222/healthz >/dev/null 2>&1 \
     && docker exec "$prefix-events" wget -qO- http://127.0.0.1:8222/healthz >/dev/null 2>&1 \
-    && curl -fsS "http://127.0.0.1:$tempo_port/ready" >/dev/null 2>&1; then
+    && (echo >"/dev/tcp/127.0.0.1/$otlp_port") 2>/dev/null; then
     ready=true
     break
   fi

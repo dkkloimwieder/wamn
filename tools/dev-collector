@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Render the deployed collector with local file exporters into a dev root."""
+import json
+import os
+from pathlib import Path
+import re
+import sys
+import textwrap
+
+repository = Path(__file__).resolve().parent.parent
+root = Path(sys.argv[1]).resolve() / "local-artifacts" / "otel"
+root.mkdir(parents=True, exist_ok=True, mode=0o700)
+deployment = (repository / "deploy/platform/otel-collector.yaml").read_text()
+configuration, = re.findall(r"^  config.yaml: \|\n(.*?)(?=^---$)", deployment, re.M | re.S)
+configuration = textwrap.dedent(configuration)
+exporters = "exporters:\n"
+for signal in ("traces", "logs"):
+    exporters += f"  file/{signal}:\n    path: /var/lib/otelcol/{signal}.jsonl\n    format: json\n"
+exporters += "  nop: {}\n"
+configuration, count = re.subn(r"^exporters:\n.*?(?=^extensions:)", exporters, configuration, flags=re.M | re.S)
+assert count == 1, "deployed exporter section must occur once"
+for signal in ("traces", "logs"):
+    configuration = configuration.replace(f"[google_cloud_storage/{signal}]", f"[file/{signal}]")
+(root / "config.yaml").write_text(configuration)
+image, = re.findall(r"^          image: (.+)$", deployment, re.M)
+values = (repository / "deploy/gcp/otel-collector-values.yaml").read_text()
+cluster, = re.findall(r"^  CLUSTER: (.+)$", values, re.M)
+service = {
+    "image": image,
+    "pull_policy": "never",
+    "user": f"{os.getuid()}:{os.getgid()}",
+    "command": ["--config=/var/lib/otelcol/config.yaml"],
+    "environment": {"CLUSTER": cluster},
+    "volumes": [{"type": "bind", "source": str(root), "target": "/var/lib/otelcol"}],
+    "ports": ["127.0.0.1:${WAMN_RECEIVING_DEV_OTLP_PORT:-4319}:4317"],
+}
+(root / "compose.json").write_text(json.dumps({"services": {"receiving-dev-collector": service}}, indent=2) + "\n")
+print(image)
