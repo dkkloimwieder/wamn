@@ -15,10 +15,10 @@ It builds the host in a separate Cargo call with the Dockerfile's packages and b
 
 It requires Docker, Helm, Python 3, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
 Prepare SQLx and web dependencies as described in [running tests](running-tests.md#application-generation-and-sqlx).
-The Docker images `postgres:18`, `nats:2.10-alpine`, `grafana/tempo:2.6.1`, and `nginx:1.27-alpine` must already exist locally.
+The Docker images `postgres:18`, `nats:2.10-alpine`, the collector image pinned in `deploy/platform/otel-collector.yaml`, and `nginx:1.27-alpine` must already exist locally.
 The script does not pull images.
 
-The script starts its own PostgreSQL, scheduler NATS, event NATS, and Tempo containers on free loopback ports.
+The script starts its own PostgreSQL, scheduler NATS, event NATS, and collector containers on free loopback ports.
 
 At run time, it reads the event broker configuration and memory limit from `deploy/gcp/nats-jetstream.yaml`.
 It reads `max_slot_wal_keep_size`, `pg_stat_statements.max`, and `pg_stat_statements.track` from `deploy/gcp/cnpg-cluster.yaml`.

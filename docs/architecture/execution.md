@@ -872,7 +872,7 @@ After the lease expires, recovery takes a new lease generation. The old generati
 The [runtime tests](../operations/running-tests.md#host-and-package-runtime) cover the retained host and package paths.
 
 OpenTelemetry records invocation and effect spans, request timing, and delivery outcomes.
-Operational logs use INFO, and detailed request traces go to Tempo.
+Operational logs use INFO. Hosts send request traces to the platform OpenTelemetry collector.
 The bounded router tap supplies the live view without durable node histories.
 Each tap record names a route or a wiring. The host writes only version 3 of the record, and readers refuse versions 1 and 2.
 

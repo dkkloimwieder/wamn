@@ -1,6 +1,5 @@
 //! Live, read-only adapters for the development loop's tap and trace views.
 
-use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -8,7 +7,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::StreamExt as _;
 use serde::Deserialize;
 use tokio::task::JoinHandle;
-use url::Url;
 use wamn_runtime::plugins::wamn_jetstream::{
     RouterTapRecord, router_tap_environment_filter, router_tap_record_subject,
 };
@@ -18,10 +16,7 @@ use super::read::{
     DEV_OBSERVATION_LIMIT, DevReadPublisher, DevTapObservation, DevTraceObservation,
 };
 
-const TEMPO_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const TEMPO_FETCH_LIMIT: usize = DEV_OBSERVATION_LIMIT + 1;
-const TEMPO_MAX_QUERY_PAGES: usize = 64;
-const TEMPO_SETTLE_DELAY_SECONDS: u64 = 15;
+const TRACE_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const OBSERVATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Failure to start or decode one development observation source.
@@ -70,7 +65,7 @@ impl Error for DevObservationError {
 #[derive(Debug)]
 pub(crate) struct DevObservationReaders {
     tap: JoinHandle<()>,
-    tempo: JoinHandle<()>,
+    traces: JoinHandle<()>,
 }
 
 impl DevObservationReaders {
@@ -147,27 +142,40 @@ impl DevObservationReaders {
             )
         })?;
 
-        let tempo_endpoint = tempo_search_endpoint(config.tempo_query_url())?;
-        let tempo_query = tempo_query(config);
-        let started_at = unix_seconds("start Tempo reader")?;
-        let http = reqwest::Client::builder()
-            .timeout(OBSERVATION_REQUEST_TIMEOUT)
-            .build()
+        let path = config.local_artifacts().directory.join("otel/traces.jsonl");
+        let offset = match tokio::fs::metadata(&path).await {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => {
+                return Err(DevObservationError::with_source(
+                    "open collector traces",
+                    path.display().to_string(),
+                    error,
+                ));
+            }
+        };
+        let started_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map_err(|source| {
                 DevObservationError::with_source(
-                    "construct Tempo reader",
-                    "build the bounded HTTP client",
+                    "start collector reader",
+                    "the system clock precedes the Unix epoch",
                     source,
                 )
             })?;
-        fetch_tempo_page(
-            &http,
-            &tempo_endpoint,
-            &tempo_query,
-            started_at.saturating_sub(1),
-            started_at,
-        )
-        .await?;
+        let mut reader = TraceReader {
+            path,
+            offset,
+            started_at: u64::try_from(started_at.as_nanos()).map_err(|source| {
+                DevObservationError::with_source(
+                    "start collector reader",
+                    "the system clock exceeds OTLP timestamp range",
+                    source,
+                )
+            })?,
+            identity: config.activation_identity().clone(),
+            traces: std::collections::BTreeMap::new(),
+        };
 
         let tap_identity = config.activation_identity().clone();
         let tap_publisher = publisher.clone();
@@ -187,244 +195,252 @@ impl DevObservationReaders {
             }
         });
 
-        let tempo_publisher = publisher;
-        let tempo = tokio::spawn(async move {
-            let mut window_start = started_at;
-            let mut interval = tokio::time::interval(TEMPO_POLL_INTERVAL);
+        let traces = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(TRACE_POLL_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            // The initial read above owns the immediate tick.
-            interval.tick().await;
             loop {
                 interval.tick().await;
-                match fetch_tempo(&http, &tempo_endpoint, &tempo_query, window_start).await {
-                    Ok((ended_at, traces)) => {
-                        tempo_publisher.merge_traces(traces);
-                        window_start = next_tempo_window_start(started_at, ended_at);
-                    }
-                    Err(error) => tracing::warn!(error = %error, "Tempo observation read failed"),
+                if let Err(error) = reader.read().await {
+                    tracing::warn!(error = %error, "collector observation read failed");
                 }
+                publisher.merge_traces(reader.observations());
             }
         });
 
-        Ok(Self { tap, tempo })
+        Ok(Self { tap, traces })
     }
 }
 
 impl Drop for DevObservationReaders {
     fn drop(&mut self) {
         self.tap.abort();
-        self.tempo.abort();
+        self.traces.abort();
     }
 }
 
-fn tempo_search_endpoint(base: &str) -> Result<Url, DevObservationError> {
-    let mut endpoint = Url::parse(base).map_err(|source| {
+// The collector file exporter writes one OTLP JSON object per line. A read
+// stops at an incomplete line and retries it after the next exporter flush.
+#[derive(Debug)]
+struct TraceReader {
+    path: std::path::PathBuf,
+    offset: u64,
+    started_at: u64,
+    identity: super::activation::DevActivationIdentity,
+    traces: std::collections::BTreeMap<String, TraceSummary>,
+}
+
+#[derive(Debug)]
+struct TraceSummary {
+    observation: DevTraceObservation,
+    end: u64,
+    scoped: bool,
+    has_root: bool,
+}
+
+impl TraceReader {
+    async fn read(&mut self) -> Result<(), DevObservationError> {
+        use tokio::io::{AsyncBufReadExt as _, AsyncSeekExt as _, BufReader};
+        let file = match tokio::fs::File::open(&self.path).await {
+            Ok(file) => file,
+            // The exporter creates the file on the first sampled batch.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(self.file_error(error)),
+        };
+        let length = file
+            .metadata()
+            .await
+            .map_err(|error| self.file_error(error))?
+            .len();
+        if length < self.offset {
+            self.offset = 0;
+        }
+        let mut reader = BufReader::new(file);
+        reader
+            .seek(std::io::SeekFrom::Start(self.offset))
+            .await
+            .map_err(|error| self.file_error(error))?;
+        let mut line = Vec::new();
+        // Yield between groups of exporter batches even under sustained load.
+        for _ in 0..64 {
+            line.clear();
+            let count = reader
+                .read_until(b'\n', &mut line)
+                .await
+                .map_err(|error| self.file_error(error))?;
+            if count == 0 || line.last() != Some(&b'\n') {
+                break;
+            }
+            self.offset += count as u64;
+            if let Err(error) = self.merge(&line) {
+                tracing::warn!(error = %error, "collector trace record refused");
+            }
+        }
+        Ok(())
+    }
+
+    fn file_error(&self, source: std::io::Error) -> DevObservationError {
         DevObservationError::with_source(
-            "construct Tempo search endpoint",
-            "tempo_query_url is not an HTTP URL",
+            "read collector traces",
+            self.path.display().to_string(),
             source,
         )
-    })?;
-    let path = format!("{}/api/search", endpoint.path().trim_end_matches('/'));
-    endpoint.set_path(&path);
-    endpoint.set_query(None);
-    endpoint.set_fragment(None);
-    Ok(endpoint)
-}
-
-fn tempo_query(config: &DevConfig) -> String {
-    let identity = config.activation_identity();
-    let tenant = serde_json::to_string(&identity.tenant)
-        .expect("a Rust string always has a JSON string spelling");
-    let project = serde_json::to_string(&identity.project)
-        .expect("a Rust string always has a JSON string spelling");
-    let environment = serde_json::to_string(&identity.environment)
-        .expect("a Rust string always has a JSON string spelling");
-    format!(
-        "{{ span.\"wamn.tenant\" = {tenant} && span.\"wamn.project\" = {project} && span.\"wamn.environment\" = {environment} }}"
-    )
-}
-
-async fn fetch_tempo(
-    http: &reqwest::Client,
-    endpoint: &Url,
-    query: &str,
-    window_start: u64,
-) -> Result<(u64, Vec<DevTraceObservation>), DevObservationError> {
-    let ended_at = unix_seconds("query Tempo")?.max(window_start);
-    let traces = fetch_tempo_interval(http, endpoint, query, window_start, ended_at).await?;
-    Ok((ended_at, traces))
-}
-
-async fn fetch_tempo_interval(
-    http: &reqwest::Client,
-    endpoint: &Url,
-    query: &str,
-    started_at: u64,
-    ended_at: u64,
-) -> Result<Vec<DevTraceObservation>, DevObservationError> {
-    let mut intervals = VecDeque::from([(started_at, ended_at)]);
-    let mut pages = 0_usize;
-    let mut traces = Vec::new();
-    while let Some((page_start, page_end)) = intervals.pop_front() {
-        pages += 1;
-        if pages > TEMPO_MAX_QUERY_PAGES {
-            tracing::warn!(
-                limit = TEMPO_MAX_QUERY_PAGES,
-                "Tempo observation interval exceeded the bounded query budget; the client view retains the observations already read"
-            );
-            break;
-        }
-        let page = fetch_tempo_page(http, endpoint, query, page_start, page_end).await?;
-        if page.len() < TEMPO_FETCH_LIMIT {
-            traces.extend(page);
-            continue;
-        }
-        if page_start == page_end {
-            tracing::warn!(
-                second = page_start,
-                limit = TEMPO_FETCH_LIMIT,
-                "Tempo observation second saturated; the client view retains the bounded observations returned"
-            );
-            traces.extend(page);
-            continue;
-        }
-        let midpoint = page_start + (page_end - page_start) / 2;
-        intervals.push_front((midpoint + 1, page_end));
-        intervals.push_front((page_start, midpoint));
     }
-    Ok(traces)
-}
 
-async fn fetch_tempo_page(
-    http: &reqwest::Client,
-    endpoint: &Url,
-    query: &str,
-    started_at: u64,
-    ended_at: u64,
-) -> Result<Vec<DevTraceObservation>, DevObservationError> {
-    let response = http
-        .get(endpoint.clone())
-        .query(&[
-            ("q", query.to_owned()),
-            ("start", started_at.to_string()),
-            ("end", ended_at.to_string()),
-            ("limit", TEMPO_FETCH_LIMIT.to_string()),
-        ])
-        .send()
-        .await
-        .map_err(|source| {
+    fn merge(&mut self, bytes: &[u8]) -> Result<(), DevObservationError> {
+        let record: TraceExport = serde_json::from_slice(bytes).map_err(|source| {
             DevObservationError::with_source(
-                "query Tempo",
-                "tempo_query_url did not answer within the observation budget",
+                "decode collector traces",
+                "expected an OTLP JSON trace export",
                 source,
             )
         })?;
-    if !response.status().is_success() {
-        return Err(DevObservationError::new(
-            "query Tempo",
-            format!("tempo_query_url returned HTTP {}", response.status()),
-        ));
-    }
-    let bytes = response.bytes().await.map_err(|source| {
-        DevObservationError::with_source(
-            "read Tempo response",
-            "tempo_query_url returned an unreadable body",
-            source,
-        )
-    })?;
-    parse_tempo_search(&bytes)
-}
-
-fn next_tempo_window_start(session_start: u64, ended_at: u64) -> u64 {
-    ended_at
-        .saturating_sub(TEMPO_SETTLE_DELAY_SECONDS)
-        .saturating_add(1)
-        .max(session_start)
-}
-
-fn unix_seconds(operation: &'static str) -> Result<u64, DevObservationError> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .map_err(|source| {
-            DevObservationError::with_source(
-                operation,
-                "the system clock precedes the Unix epoch",
-                source,
-            )
-        })
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TempoSearchResponse {
-    traces: Vec<TempoTrace>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TempoTrace {
-    #[serde(rename = "traceID")]
-    trace_id: String,
-    root_service_name: String,
-    root_trace_name: String,
-    start_time_unix_nano: String,
-    duration_ms: f64,
-}
-
-fn parse_tempo_search(bytes: &[u8]) -> Result<Vec<DevTraceObservation>, DevObservationError> {
-    let response: TempoSearchResponse = serde_json::from_slice(bytes).map_err(|source| {
-        DevObservationError::with_source(
-            "decode Tempo response",
-            "tempo_query_url returned a malformed search result",
-            source,
-        )
-    })?;
-    if response.traces.len() > TEMPO_FETCH_LIMIT {
-        return Err(DevObservationError::new(
-            "decode Tempo response",
-            format!(
-                "tempo_query_url returned {} traces above the declared limit {}",
-                response.traces.len(),
-                TEMPO_FETCH_LIMIT
-            ),
-        ));
-    }
-    let mut observations = response
-        .traces
-        .into_iter()
-        .map(|trace| {
-            let start_time_unix_nanos =
-                trace
-                    .start_time_unix_nano
-                    .parse::<u64>()
-                    .map_err(|source| {
+        for resource in record.resource_spans {
+            let service =
+                attribute(&resource.resource.attributes, "service.name").unwrap_or_default();
+            for scope in resource.scope_spans {
+                for span in scope.spans {
+                    let start = span.start_time_unix_nano.parse::<u64>().map_err(|source| {
                         DevObservationError::with_source(
-                            "decode Tempo response",
-                            format!("trace {} has an invalid start time", trace.trace_id),
+                            "decode collector traces",
+                            "invalid span start time",
                             source,
                         )
                     })?;
-            let duration =
-                Duration::try_from_secs_f64(trace.duration_ms / 1_000.0).map_err(|source| {
-                    DevObservationError::with_source(
-                        "decode Tempo response",
-                        format!("trace {} has an invalid duration", trace.trace_id),
-                        source,
-                    )
-                })?;
-            Ok(DevTraceObservation {
-                trace_id: trace.trace_id,
-                root_service_name: trace.root_service_name,
-                root_trace_name: trace.root_trace_name,
-                start_time_unix_nanos,
-                duration,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    observations.sort_by_key(DevTraceObservation::start_time_unix_nanos);
-    Ok(observations)
+                    let end = span.end_time_unix_nano.parse::<u64>().map_err(|source| {
+                        DevObservationError::with_source(
+                            "decode collector traces",
+                            "invalid span end time",
+                            source,
+                        )
+                    })?;
+                    if end < start {
+                        return Err(DevObservationError::new(
+                            "decode collector traces",
+                            "span ends before it starts",
+                        ));
+                    }
+                    if start < self.started_at {
+                        continue;
+                    }
+                    if span.trace_id.len() != 32
+                        || !span.trace_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                    {
+                        return Err(DevObservationError::new(
+                            "decode collector traces",
+                            "invalid OTLP trace identity",
+                        ));
+                    }
+                    let id = span.trace_id.to_ascii_lowercase();
+                    let scoped = attribute(&span.attributes, "wamn.tenant")
+                        == Some(self.identity.tenant.as_str())
+                        && attribute(&span.attributes, "wamn.project")
+                            == Some(self.identity.project.as_str())
+                        && attribute(&span.attributes, "wamn.environment")
+                            == Some(self.identity.environment.as_str());
+                    let is_root = span.parent_span_id.bytes().all(|byte| byte == b'0');
+                    let summary = self
+                        .traces
+                        .entry(id.clone())
+                        .or_insert_with(|| TraceSummary {
+                            observation: DevTraceObservation {
+                                trace_id: id,
+                                root_service_name: service.to_owned(),
+                                root_trace_name: span.name.clone(),
+                                start_time_unix_nanos: start,
+                                duration: Duration::ZERO,
+                            },
+                            end,
+                            scoped: false,
+                            has_root: false,
+                        });
+                    if !summary.has_root
+                        && (is_root || start < summary.observation.start_time_unix_nanos)
+                    {
+                        service.clone_into(&mut summary.observation.root_service_name);
+                        summary.observation.root_trace_name = span.name;
+                    }
+                    summary.has_root |= is_root;
+                    summary.scoped |= scoped;
+                    summary.end = summary.end.max(end);
+                    summary.observation.start_time_unix_nanos =
+                        summary.observation.start_time_unix_nanos.min(start);
+                    summary.observation.duration = Duration::from_nanos(
+                        summary.end - summary.observation.start_time_unix_nanos,
+                    );
+                    if self.traces.len() > DEV_OBSERVATION_LIMIT {
+                        let oldest = self
+                            .traces
+                            .iter()
+                            .min_by_key(|(_, summary)| summary.observation.start_time_unix_nanos)
+                            .map(|(id, _)| id.clone())
+                            .expect("the cache exceeds its nonzero bound");
+                        self.traces.remove(&oldest);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn observations(&self) -> Vec<DevTraceObservation> {
+        self.traces
+            .values()
+            .filter(|summary| summary.scoped)
+            .map(|summary| summary.observation.clone())
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TraceExport {
+    resource_spans: Vec<ResourceSpans>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceSpans {
+    #[serde(default)]
+    resource: TraceResource,
+    scope_spans: Vec<ScopeSpans>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TraceResource {
+    #[serde(default)]
+    attributes: Vec<TraceAttribute>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ScopeSpans {
+    spans: Vec<TraceSpan>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TraceSpan {
+    trace_id: String,
+    #[serde(default)]
+    parent_span_id: String,
+    name: String,
+    start_time_unix_nano: String,
+    end_time_unix_nano: String,
+    #[serde(default)]
+    attributes: Vec<TraceAttribute>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TraceAttribute {
+    key: String,
+    value: serde_json::Value,
+}
+
+fn attribute<'a>(attributes: &'a [TraceAttribute], key: &str) -> Option<&'a str> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.key == key)?
+        .value["stringValue"]
+        .as_str()
 }
 
 fn decode_tap(
@@ -521,68 +537,161 @@ mod tests {
         assert_eq!(error.operation, "decode router tap");
     }
 
-    #[test]
-    fn tempo_reader_returns_oldest_first_typed_summaries() {
-        let response = json!({
-            "traces": [
-                {
-                    "traceID": "trace-2",
-                    "rootServiceName": "wash-runtime",
-                    "rootTraceName": "request",
-                    "startTimeUnixNano": "2000000000",
-                    "durationMs": 2.5,
-                    "spanSet": {"spans": []}
-                },
-                {
-                    "traceID": "trace-1",
-                    "rootServiceName": "wash-runtime",
-                    "rootTraceName": "request",
-                    "startTimeUnixNano": "1000000000",
-                    "durationMs": 1.0
-                }
-            ],
-            "metrics": {"inspectedTraces": 2}
-        });
-        let observations =
-            parse_tempo_search(&serde_json::to_vec(&response).expect("serialize Tempo fixture"))
-                .expect("decode external Tempo fields into owned summaries");
+    fn reader(path: std::path::PathBuf) -> TraceReader {
+        let addresses = ["127.0.0.1:41000".parse().unwrap(); 11];
+        let config = super::super::config::parse_config(
+            &serde_json::to_vec(&super::super::config::tests::complete_document(&addresses))
+                .unwrap(),
+        )
+        .unwrap();
+        TraceReader {
+            path,
+            offset: 0,
+            started_at: 0,
+            identity: config.activation_identity().clone(),
+            traces: std::collections::BTreeMap::new(),
+        }
+    }
 
-        assert_eq!(observations.len(), 2);
-        assert_eq!(observations[0].trace_id(), "trace-1");
-        assert_eq!(observations[1].duration(), Duration::from_micros(2_500));
+    fn export(
+        reader: &TraceReader,
+        id: &str,
+        name: &str,
+        start: u64,
+        end: u64,
+        root: bool,
+    ) -> serde_json::Value {
+        let attributes = if root {
+            vec![]
+        } else {
+            vec![
+                json!({"key":"wamn.tenant", "value":{"stringValue":reader.identity.tenant}}),
+                json!({"key":"wamn.project", "value":{"stringValue":reader.identity.project}}),
+                json!({"key":"wamn.environment", "value":{"stringValue":reader.identity.environment}}),
+            ]
+        };
+        json!({"resourceSpans":[{
+            "resource":{"attributes":[{"key":"service.name", "value":{"stringValue":"wamn-host"}}]},
+            "scopeSpans":[{"spans":[{
+                "traceId":id, "parentSpanId":if root {""} else {"0000000000000001"},
+                "name":name, "startTimeUnixNano":start.to_string(), "endTimeUnixNano":end.to_string(),
+                "attributes":attributes
+            }]}]
+        }]})
     }
 
     #[test]
-    fn tempo_cursor_retains_the_declared_settlement_window() {
-        let started_at = 1_000;
+    fn sampled_trace_joins_batches_and_filters_the_environment() {
+        let mut reader = reader(std::path::PathBuf::new());
+        let id = "11111111111111111111111111111111";
+        let child = export(&reader, id, "wamn.component.invoke", 200, 300, false);
+        reader.merge(&serde_json::to_vec(&child).unwrap()).unwrap();
+        let root = export(&reader, id, "request", 100, 500, true);
+        reader.merge(&serde_json::to_vec(&root).unwrap()).unwrap();
+        // A later duplicate child must not replace the root or narrow duration.
+        reader.merge(&serde_json::to_vec(&child).unwrap()).unwrap();
+        let mut foreign = export(
+            &reader,
+            "22222222222222222222222222222222",
+            "foreign",
+            600,
+            700,
+            false,
+        );
+        foreign["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["attributes"][2]["value"]["stringValue"] =
+            json!("another-environment");
+        reader
+            .merge(&serde_json::to_vec(&foreign).unwrap())
+            .unwrap();
+        let observations = reader.observations();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].root_service_name(), "wamn-host");
+        assert_eq!(observations[0].root_trace_name(), "request");
+        assert_eq!(observations[0].start_time_unix_nanos(), 100);
+        assert_eq!(observations[0].duration(), Duration::from_nanos(400));
+    }
 
-        assert_eq!(
-            next_tempo_window_start(started_at, started_at + 10),
-            started_at
-        );
-        assert_eq!(
-            next_tempo_window_start(started_at, started_at + 20),
-            started_at + 6
-        );
+    #[tokio::test]
+    async fn file_reader_waits_for_complete_lines_and_resumes_after_truncation() {
+        use std::io::Write as _;
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let path = scratch.path().join("traces.jsonl");
+        let mut reader = reader(path.clone());
+        reader.read().await.unwrap();
+        assert!(reader.observations().is_empty());
+        let record = serde_json::to_vec(&export(
+            &reader,
+            "11111111111111111111111111111111",
+            "request",
+            100,
+            200,
+            false,
+        ))
+        .unwrap();
+        std::fs::write(&path, &record[..record.len() / 2]).unwrap();
+        reader.read().await.unwrap();
+        assert_eq!(reader.offset, 0);
+        assert!(reader.observations().is_empty());
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(&record[record.len() / 2..]).unwrap();
+        file.write_all(b"\n").unwrap();
+        reader.read().await.unwrap();
+        assert_eq!(reader.observations().len(), 1);
+        let offset = reader.offset;
+        reader.read().await.unwrap();
+        assert_eq!(reader.offset, offset);
+        // The exporter can truncate its file when it restarts.
+        std::fs::write(&path, b"{\"resourceSpans\":[]}\n").unwrap();
+        reader.read().await.unwrap();
+        assert!(reader.offset < offset);
+        file.write_all(&record).unwrap();
+        file.write_all(b"\n").unwrap();
+        reader.read().await.unwrap();
+        assert_eq!(reader.observations().len(), 1);
     }
 
     #[test]
-    fn tempo_reader_refuses_unrepresentable_durations() {
-        let response = json!({
-            "traces": [{
-                "traceID": "trace-overflow",
-                "rootServiceName": "wamn-host",
-                "rootTraceName": "request",
-                "startTimeUnixNano": "1000000000",
-                "durationMs": 1e300
-            }]
-        });
-
-        let error =
-            parse_tempo_search(&serde_json::to_vec(&response).expect("serialize Tempo fixture"))
-                .expect_err("an unrepresentable external duration must be refused");
-
-        assert_eq!(error.operation, "decode Tempo response");
-        assert!(error.detail.contains("trace-overflow"));
+    fn trace_reader_refuses_invalid_times_and_bounds_its_cache() {
+        let mut reader = reader(std::path::PathBuf::new());
+        let bad = export(
+            &reader,
+            "11111111111111111111111111111111",
+            "request",
+            200,
+            100,
+            false,
+        );
+        assert!(reader.merge(&serde_json::to_vec(&bad).unwrap()).is_err());
+        reader.started_at = 100;
+        let old = export(
+            &reader,
+            "11111111111111111111111111111111",
+            "old",
+            1,
+            2,
+            false,
+        );
+        reader.merge(&serde_json::to_vec(&old).unwrap()).unwrap();
+        assert!(reader.observations().is_empty());
+        for index in 1..=DEV_OBSERVATION_LIMIT + 1 {
+            let record = export(
+                &reader,
+                &format!("{index:032x}"),
+                "request",
+                100 + index as u64,
+                200 + index as u64,
+                false,
+            );
+            reader.merge(&serde_json::to_vec(&record).unwrap()).unwrap();
+        }
+        assert_eq!(reader.traces.len(), DEV_OBSERVATION_LIMIT);
+        assert!(
+            !reader
+                .traces
+                .contains_key("00000000000000000000000000000001")
+        );
     }
 }

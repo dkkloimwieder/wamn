@@ -40,7 +40,7 @@ serde_json = { workspace = true }
 # The loop reads the rendered materializer workload.
 serde_yaml = { workspace = true }
 tar = { workspace = true }
-tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "signal", "sync", "time"] }
+tokio = { workspace = true, features = ["fs", "io-util", "macros", "process", "rt", "signal", "sync", "time"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
 tracing = { workspace = true }
 url = { workspace = true }

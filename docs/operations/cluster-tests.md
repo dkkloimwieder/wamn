@@ -35,7 +35,8 @@ With the variable set, the case keeps its route NodePort Service and serves `htt
 After the case finishes, it holds the cluster for that many seconds or until interrupted.
 A passing case first prints the route and the caller token file.
 Without the variable, the case does not hold.
-The startup case records requests, traces, recovery, and cache identity without asserting an overhead ratio.
+The startup case records requests, recovery, and cache identity without asserting an overhead ratio.
+The legacy metric collector remains a test fixture. It does not store request traces.
 
 ### Environment apply on kind
 

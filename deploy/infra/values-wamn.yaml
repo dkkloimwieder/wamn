@@ -152,7 +152,7 @@ gateway:
   enabled: false
 
 operator:
-  # The operator records INFO and higher. Tempo stores request traces.
+  # The operator records INFO and higher. The platform collector receives request traces.
   extraArgs:
     - "-zap-log-level=info"
   # -- The environment namespaces whose WorkloadDeployments this operator

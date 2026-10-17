@@ -164,12 +164,7 @@ impl Run {
             .arg(broker.replicas.to_string())
             .arg("--dup-window-secs")
             .arg(broker.duplicate_window.to_string())
-            .args([
-                "--tempo-query-url",
-                "http://127.0.0.1:3201",
-                "--otel-exporter-otlp-endpoint",
-                "http://127.0.0.1:4319",
-            ])
+            .args(["--otel-exporter-otlp-endpoint", "http://127.0.0.1:4319"])
             .arg("--route-host")
             .arg(text(&self.task["identity"]["route_host"]))
             .args([

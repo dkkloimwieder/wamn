@@ -154,7 +154,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     assert_unknown_route(cluster, &endpoint).await?;
     release_chart::role_placed(&release, "materializer", &hosts).await?;
     let baseline = super::super::materializer::materializer_baseline(observer.clone()).await?;
-    let (phase, update_trace, receipt_trace) = materializer_case::trigger(
+    let phase = materializer_case::trigger(
         cluster,
         &route.database_url,
         &endpoint,
@@ -165,16 +165,13 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         .await?;
     cluster.inputs.materializer = Some(phase);
     assert_materializer_logs(cluster, NAMESPACE, &hosts.pods).await?;
-    wamn_test_infrastructure::traces::telemetry::collect(
-        &wamn_test_infrastructure::traces::telemetry::TelemetryInput {
+    wamn_test_infrastructure::telemetry::collect(
+        &wamn_test_infrastructure::telemetry::TelemetryInput {
             cluster: &resources.name,
             work: &resources.work,
             namespace: NAMESPACE,
 
-            tenant: super::super::identity().tenant.as_str(),
             project: super::super::identity().project.as_str(),
-            environment: super::super::identity().environment.as_str(),
-            requests: [("update", &update_trace), ("receipt", &receipt_trace)],
             evidence: &resources.evidence.join("telemetry"),
         },
     )

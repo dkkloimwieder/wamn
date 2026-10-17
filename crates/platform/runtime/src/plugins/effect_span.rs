@@ -11,7 +11,7 @@
 //! What every one of those spans should agree on is the ENRICHMENT: which
 //! tenant, project and component, resolved host-side and unspoofable. What they
 //! must NOT share is the name — `wamn.postgres` is a published identifier that
-//! deployed Grafana/Tempo panels and `tests/integration/src/metricbench.rs`
+//! trace consumers and `tests/integration/src/metricbench.rs`
 //! match on, and the other surfaces need names of their own.
 //!
 //! A shared *function* cannot do that. `tracing::info_span!` puts the span name

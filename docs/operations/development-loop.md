@@ -37,6 +37,9 @@ It preserves the receivers, processors, image digest, and 10% trace sampling.
 It replaces the GCS exporters with OTLP JSON file exporters under `<dev-root>/local-artifacts/otel/`.
 The collector keeps the deployed batch timeout, so small batches take up to 60 seconds to arrive.
 An individual request can have no sampled trace. Router taps remain a separate, unsampled observation source.
+The observation reader follows complete records in `<local_artifacts.directory>/otel/traces.jsonl` once per second.
+It groups spans by trace ID and filters them by tenant, project, and environment.
+It keeps bounded summaries and accepts an empty sample without blocking activation.
 Supply the published collector address through `--otel-exporter-otlp-endpoint`.
 The benchmark and pilot render and start this collector themselves.
 
@@ -270,7 +273,7 @@ tools/agent-pilot-run all --run 001 --agent claude \
 ```
 
 Choose an unused run identifier. Run only one pilot at a time, separately from cluster tests.
-The runner refuses occupied ports `54332`, `4224`, `3201`, and `4319`.
+The runner refuses occupied ports `54332`, `4224`, and `4319`.
 `CARGO_TARGET_DIR` selects the built native entrypoint, with `target/debug/wamn-gates` as the fallback.
 The separate actions are `up`, `launch`, `grade`, and `down`.
 `--agent stub` selects the local driver, without completing or grading a Dock implementation.

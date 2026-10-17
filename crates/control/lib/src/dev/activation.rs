@@ -1782,7 +1782,6 @@ mod tests {
             "event_nats_password_file": "/run/secrets/event-nats-password",
             "stream_replicas": 1,
             "dup_window_secs": 120,
-            "tempo_query_url": "http://127.0.0.1:41015",
             "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
             "gate_bearer_token": "gate-secret",
             "route_host": "fixture.localhost",

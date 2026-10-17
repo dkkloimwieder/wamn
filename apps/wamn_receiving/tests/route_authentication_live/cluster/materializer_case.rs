@@ -192,7 +192,7 @@ pub(super) async fn trigger(
     database_url: &str,
     endpoint: &str,
     order: &TriggerOrder,
-) -> anyhow::Result<(MaterializerPhase, String, String)> {
+) -> anyhow::Result<MaterializerPhase> {
     let update_trace = uuid::Uuid::new_v4().simple().to_string();
     let receipt_trace = uuid::Uuid::new_v4().simple().to_string();
     fs::write(
@@ -274,7 +274,6 @@ pub(super) async fn trigger(
             project_pg_url: database_url.to_owned(), nats_url: cluster.nats_url.clone(), receipt_id: receipt_id.to_owned(),
         })
     }).await.context("the materializer HTTP commands exceeded 90 seconds")?
-        .map(|phase| (phase, update_trace, receipt_trace))
 }
 
 #[cfg(test)]

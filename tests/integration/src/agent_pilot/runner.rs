@@ -23,7 +23,7 @@ use wamn_control::dev::DEV_STAGE_ORDER;
 
 use super::{GradeArgs, GradeFailure, failure, home, read_json, text, write, write_json};
 
-const PORTS: [u16; 4] = [54332, 4224, 3201, 4319];
+const PORTS: [u16; 3] = [54332, 4224, 4319];
 const GATE_DOCUMENT: &str = "docs/operations/development-loop.md";
 const PILOT_SECTION: &str = "[AGENT-PILOT]";
 const REPLAY_RESULTS: &str = "evidence/perf/2026.09/consolidation-step3/pilot-recorded-replay-001";

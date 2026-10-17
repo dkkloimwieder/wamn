@@ -62,8 +62,7 @@ const SPAN_CONSTRUCTOR: &str = "effect_span";
 const SPAN_MODULE: &str = "crates/platform/runtime/src/plugins/effect_span.rs";
 const RUNTIME_SOURCE: &str = "crates/platform/runtime/src";
 
-/// The span name each surface opens. Published identifiers: a Tempo panel in
-/// `docs/archive/observability/dashboards.md` slices traces by them.
+/// The published span name that trace consumers use for each surface.
 const SPAN_NAMES: &[(&str, &[&str])] = &[
     (POSTGRES, &["\"wamn.postgres\""]),
     (HTTP, &["\"wamn.connection_http\""]),
@@ -607,8 +606,7 @@ fn every_surface_uses_its_own_declared_span_name() {
         let expected: BTreeSet<String> = expected.iter().map(|n| (*n).to_string()).collect();
         assert_eq!(
             found[file], expected,
-            "{file}: the span names it opens changed. These are published identifiers — a Tempo \
-             panel in docs/archive/observability/dashboards.md slices traces by span name."
+            "{file}: the span names it opens changed. These are published trace identifiers."
         );
     }
 }
@@ -624,10 +622,7 @@ fn every_surface_uses_its_own_declared_span_name() {
 fn the_published_postgres_identifiers_are_frozen() {
     let source = read(POSTGRES);
     for (fragment, consumer) in [
-        (
-            r#""wamn.postgres","#,
-            "docs/archive/observability/dashboards.md:86 — Tempo TraceQL panel sliced by span name",
-        ),
+        (r#""wamn.postgres","#, "published PostgreSQL span identity"),
         (
             r#"db.system = "postgresql","#,
             "OTel DB semantic convention carried by the published span",

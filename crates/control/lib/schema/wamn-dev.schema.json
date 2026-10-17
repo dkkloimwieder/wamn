@@ -227,9 +227,6 @@
     "target_template_database": {
       "type": "string"
     },
-    "tempo_query_url": {
-      "type": "string"
-    },
     "wasmtime_cache_dir": {
       "type": "string"
     }
@@ -268,7 +265,6 @@
     "target_database_url",
     "target_privileges_file",
     "target_template_database",
-    "tempo_query_url",
     "wasmtime_cache_dir"
   ],
   "title": "DevConfigDocument",

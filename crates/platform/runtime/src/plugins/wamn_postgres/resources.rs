@@ -388,8 +388,7 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
 /// the executing component's tenant/project (the same claim maps that inject
 /// `app.tenant`; the guest cannot spoof them). The name and the `db.*` fields are
-/// this surface's own — a Tempo panel in `dashboards.md` slices traces by the
-/// span name — while the `wamn.*` identity block is [`effect_span`]'s, shared with
+/// this surface's own, while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///
 /// The run and the wiring position come from the two claim registries the

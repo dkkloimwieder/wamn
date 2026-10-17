@@ -1,4 +1,4 @@
-# Development OTLP collector for the retained trace and metric paths. The MVP
+# Metrics-only collector for the retained metric tests. The MVP
 # treats an OTLP collector as an optional external prerequisite; this manifest
 # is not part of the product bill of materials.
 #
@@ -22,16 +22,6 @@ data:
         send_batch_max_size: 16384
         timeout: 200ms
     exporters:
-      # [9.1] traces → Tempo's OTLP-gRPC distributor (deploy/infra/tempo.yaml).
-      otlp/tempo:
-        endpoint: tempo:4317
-        tls:
-          insecure: true
-        sending_queue:
-          enabled: true
-          queue_size: 10000
-        retry_on_failure:
-          enabled: true
       # [9.8] RECEIVED OTLP app metrics (wamn.*) re-exposed as Prometheus text on
       # :8889 for metricbench to scrape. add_metric_suffixes:false keeps the OTel
       # names verbatim (dots→underscores only: wamn.run.executions →
@@ -51,11 +41,6 @@ data:
                     host: 0.0.0.0
                     port: 8888
       pipelines:
-        # [9.1] host spans → Tempo.
-        traces:
-          receivers: [otlp]
-          processors: [batch]
-          exporters: [otlp/tempo]
         # [9.8] host/service app metrics → Prometheus text on :8889.
         metrics:
           receivers: [otlp]

@@ -44,18 +44,6 @@ pub fn span_attribute<'a>(span: &'a Value, name: &str) -> Option<&'a str> {
         .as_str()
 }
 
-/// Validate and normalize a Tempo trace identity to 32 lowercase hex digits.
-pub fn normalize_tempo_trace_id(value: &str) -> Result<String> {
-    ensure!(
-        !value.is_empty()
-            && value.len() <= 32
-            && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-            && value.bytes().any(|byte| byte != b'0'),
-        "Tempo returned an invalid trace identity"
-    );
-    Ok(format!("{:0>32}", value.to_ascii_lowercase()))
-}
-
 /// Reduce startup protocol observations and matching spans into phase evidence.
 pub fn reduce_startup_phases(
     protocol: &Value,
@@ -830,16 +818,5 @@ mod tests {
         assert!(reduce_startup_phases(&protocol, &spans, 2).is_err());
         protocol["warm"]["observations"][0]["application"]["status"] = json!(503);
         assert!(reduce_startup_phases(&protocol, &spans, 1).is_err());
-    }
-
-    #[test]
-    fn preserves_tempo_trace_id_normalization_and_refusals() {
-        assert_eq!(
-            normalize_tempo_trace_id("aB").unwrap(),
-            "000000000000000000000000000000ab"
-        );
-        for invalid in ["", "0", "000000", "g", "000000000000000000000000000000001"] {
-            assert!(normalize_tempo_trace_id(invalid).is_err());
-        }
     }
 }

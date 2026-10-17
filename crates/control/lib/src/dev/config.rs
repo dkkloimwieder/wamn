@@ -43,7 +43,6 @@ const EVENT_NATS_USERNAME: &str = "event_nats_username";
 const EVENT_NATS_PASSWORD_FILE: &str = "event_nats_password_file";
 const STREAM_REPLICAS: &str = "stream_replicas";
 const DUP_WINDOW_SECS: &str = "dup_window_secs";
-const TEMPO_QUERY_URL: &str = "tempo_query_url";
 const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "otel_exporter_otlp_endpoint";
 const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
 const ROUTE_HOST: &str = "route_host";
@@ -146,7 +145,6 @@ struct DevConfigDocument {
     event_nats_password_file: PathBuf,
     stream_replicas: usize,
     dup_window_secs: u64,
-    tempo_query_url: String,
     otel_exporter_otlp_endpoint: String,
     gate_bearer_token: String,
     route_host: String,
@@ -578,7 +576,6 @@ pub struct DevConfig {
     event_nats_password_file: PathBuf,
     stream_replicas: usize,
     dup_window_secs: u64,
-    tempo_query_url: Box<str>,
     otel_exporter_otlp_endpoint: Box<str>,
     local_artifacts: LocalArtifacts,
     gate_bearer_token: Box<str>,
@@ -642,7 +639,6 @@ impl fmt::Debug for DevConfig {
             .field(EVENT_NATS_PASSWORD_FILE, &self.event_nats_password_file)
             .field(STREAM_REPLICAS, &self.stream_replicas)
             .field(DUP_WINDOW_SECS, &self.dup_window_secs)
-            .field(TEMPO_QUERY_URL, &self.sanitized_endpoint(TEMPO_QUERY_URL))
             .field(
                 OTEL_EXPORTER_OTLP_ENDPOINT,
                 &self.sanitized_endpoint(OTEL_EXPORTER_OTLP_ENDPOINT),
@@ -783,11 +779,6 @@ impl DevConfig {
         self.dup_window_secs
     }
 
-    /// Tempo HTTP query endpoint used by the development read seam.
-    pub fn tempo_query_url(&self) -> &str {
-        &self.tempo_query_url
-    }
-
     /// OTLP gRPC exporter endpoint passed to the local serving host.
     pub fn otel_exporter_otlp_endpoint(&self) -> &str {
         &self.otel_exporter_otlp_endpoint
@@ -908,7 +899,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_nats_password_file,
         stream_replicas,
         dup_window_secs,
-        tempo_query_url,
         otel_exporter_otlp_endpoint,
         local_artifacts,
         gate_bearer_token,
@@ -975,7 +965,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             "source-stream duplicate window must be positive",
         ));
     }
-    let tempo_query_url = nonempty_string(tempo_query_url, TEMPO_QUERY_URL)?;
     let otel_exporter_otlp_endpoint =
         nonempty_string(otel_exporter_otlp_endpoint, OTEL_EXPORTER_OTLP_ENDPOINT)?;
     for path in [
@@ -1125,13 +1114,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         false,
     )?;
     let event_probe = url_probe(EVENT_NATS_URL, &event_nats_url, &["nats"], 4222, false)?;
-    let tempo_probe = url_probe(
-        TEMPO_QUERY_URL,
-        &tempo_query_url,
-        &["http", "https"],
-        3200,
-        true,
-    )?;
     let otel_exporter_probe = url_probe(
         OTEL_EXPORTER_OTLP_ENDPOINT,
         &otel_exporter_otlp_endpoint,
@@ -1150,7 +1132,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         administration_probe,
         scheduler_probe,
         event_probe,
-        tempo_probe,
         otel_exporter_probe,
     ];
 
@@ -1195,7 +1176,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_nats_password_file,
         stream_replicas,
         dup_window_secs,
-        tempo_query_url,
         otel_exporter_otlp_endpoint,
         local_artifacts,
         gate_bearer_token,
@@ -1712,7 +1692,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use tokio::net::TcpListener;
 
-    const ENDPOINT_COUNT: usize = 12;
+    const ENDPOINT_COUNT: usize = 11;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
@@ -1770,15 +1750,14 @@ pub(crate) mod tests {
             (EXECUTOR_PLATFORM_DATABASE_URL): format!("postgresql://platform:platform-secret@{}/target", addresses[4]),
             (HTTP_ADMITTER_DATABASE_URL): format!("postgresql://admitter:admitter-secret@{}/target", addresses[5]),
             (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[6]),
-            (ADMINISTRATION_DATABASE_URL): format!("postgresql://administration:administration-secret@{}/target", addresses[11]),
+            (ADMINISTRATION_DATABASE_URL): format!("postgresql://administration:administration-secret@{}/target", addresses[10]),
             (SCHEDULER_NATS_URL): format!("nats://{}", addresses[7]),
             (EVENT_NATS_URL): format!("nats://{}", addresses[8]),
             (EVENT_NATS_USERNAME): "dev_runtime",
             (EVENT_NATS_PASSWORD_FILE): "/run/secrets/event-nats-password",
             (STREAM_REPLICAS): 1,
             (DUP_WINDOW_SECS): 120,
-            (TEMPO_QUERY_URL): format!("http://{}", addresses[9]),
-            (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[10]),
+            (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[9]),
             (GATE_BEARER_TOKEN): "gate-super-secret",
             (ROUTE_HOST): "fixture.localhost",
             (PLATFORM_DOMAIN): "example.invalid",
@@ -1906,11 +1885,7 @@ pub(crate) mod tests {
             "string"
         );
         let required = schema["required"].as_array().expect("schema required set");
-        for expected in [
-            PACKAGE_SOURCES,
-            TEMPO_QUERY_URL,
-            OTEL_EXPORTER_OTLP_ENDPOINT,
-        ] {
+        for expected in [PACKAGE_SOURCES, OTEL_EXPORTER_OTLP_ENDPOINT] {
             assert!(required.iter().any(|key| key == expected));
         }
 
@@ -1948,10 +1923,9 @@ pub(crate) mod tests {
             Path::new("/tmp/wamn-dev-cache")
         );
         assert_eq!(config.platform_domain(), "example.invalid");
-        assert_eq!(config.tempo_query_url(), format!("http://{}", addresses[9]));
         assert_eq!(
             config.otel_exporter_otlp_endpoint(),
-            format!("http://{}", addresses[10])
+            format!("http://{}", addresses[9])
         );
 
         for key in [PLATFORM_DOMAIN, HOST_BINARY, WASMTIME_CACHE_DIR] {
@@ -2225,7 +2199,8 @@ pub(crate) mod tests {
         assert_eq!(error.error_type(), DevConfigErrorType::MissingKey);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
 
-        for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
+        {
+            let key = OTEL_EXPORTER_OTLP_ENDPOINT;
             let mut missing_observability_endpoint = complete_document(&addresses);
             missing_observability_endpoint
                 .as_object_mut()
@@ -2273,7 +2248,8 @@ pub(crate) mod tests {
         assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), SCHEDULER_NATS_URL);
 
-        for key in [TEMPO_QUERY_URL, OTEL_EXPORTER_OTLP_ENDPOINT] {
+        {
+            let key = OTEL_EXPORTER_OTLP_ENDPOINT;
             let mut unsupported_observability_endpoint = complete_document(&addresses);
             unsupported_observability_endpoint[key] = json!("nats://127.0.0.1:41000");
             let error = parse_config(

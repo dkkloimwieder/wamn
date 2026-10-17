@@ -110,9 +110,9 @@ echo "http_route_sha256=$http_route_sha256"
 echo "materializer_sha256=$materializer_sha256"
 
 # Choose distinct free loopback ports before publishing each explicit mapping.
-read -r pg_port scheduler_port event_port tempo_port otlp_port < <(python3 - <<'PY'
+read -r pg_port scheduler_port event_port otlp_port < <(python3 - <<'PY'
 import socket
-sockets = [socket.socket() for _ in range(5)]
+sockets = [socket.socket() for _ in range(4)]
 for sock in sockets:
     sock.bind(("127.0.0.1", 0))
 print(*(sock.getsockname()[1] for sock in sockets))
@@ -233,7 +233,6 @@ chmod +x "$work/host"
   --event-publisher-username "$(<"$work/event-nats/publisher-username")" --event-publisher-password-file "$work/event-nats/publisher-password" \
   --event-materializer-username "$(<"$work/event-nats/materializer-username")" --event-materializer-password-file "$work/event-nats/materializer-password" \
   --stream-replicas 1 --dup-window-secs 120 \
-  --tempo-query-url "http://127.0.0.1:$tempo_port" \
   --otel-exporter-otlp-endpoint "http://127.0.0.1:$otlp_port" \
   --route-host receiving.localhost --platform-domain example.invalid \
   --host-binary "$work/host" --cdc-reader-binary "$bin/wamn-cdc-reader" \

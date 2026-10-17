@@ -16,6 +16,6 @@ pub mod release_chart;
 pub mod rendering;
 pub mod scratch;
 pub mod secrets;
-pub mod traces;
+pub mod telemetry;
 
 pub mod workload;

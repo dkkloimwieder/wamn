@@ -1,5 +1,7 @@
 # Receiving change walkthrough
 
+This page records past runs. Use the current [development loop](../../../docs/operations/development-loop.md) commands for new sessions.
+
 This file holds two records of Receiving changes through `wamn dev`.
 The first record measures one Rust-only change.
 It follows owner rulings 1, 4, and 6 of Beads `wamn-llst`.

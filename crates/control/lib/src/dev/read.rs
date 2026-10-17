@@ -192,7 +192,7 @@ impl DevTapObservation {
     }
 }
 
-/// One typed trace summary returned by the configured Tempo endpoint.
+/// One trace summary from sampled collector output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DevTraceObservation {
     pub(crate) trace_id: String,
@@ -241,12 +241,12 @@ impl DevTraceObservation {
         &self.trace_id
     }
 
-    /// Root service reported by Tempo.
+    /// Service of the root span, or the earliest observed span.
     pub fn root_service_name(&self) -> &str {
         &self.root_service_name
     }
 
-    /// Root span name reported by Tempo.
+    /// Name of the root span, or the earliest observed span.
     pub fn root_trace_name(&self) -> &str {
         &self.root_trace_name
     }
@@ -256,7 +256,7 @@ impl DevTraceObservation {
         self.start_time_unix_nanos
     }
 
-    /// Trace duration reported by Tempo.
+    /// Elapsed interval covered by the observed spans.
     pub const fn duration(&self) -> Duration {
         self.duration
     }
@@ -510,7 +510,7 @@ mod publisher {
             self.update(|snapshot| snapshot.runtime_endpoint = None);
         }
 
-        /// Merge one Tempo page while retaining the bounded newest distinct traces.
+        /// Merge sampled collector traces while retaining the bounded newest distinct traces.
         pub fn merge_traces(&self, observations: Vec<DevTraceObservation>) {
             self.sender.send_if_modified(|current| {
                 let mut merged = current.traces.clone();

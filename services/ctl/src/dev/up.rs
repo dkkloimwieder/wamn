@@ -62,9 +62,6 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_EVT_DUP_WINDOW_SECS")]
     dup_window_secs: u64,
 
-    #[arg(long, env = "WAMN_DEV_ENV_TEMPO_QUERY_URL")]
-    tempo_query_url: String,
-
     #[arg(long, env = "WAMN_DEV_ENV_OTEL_EXPORTER_OTLP_ENDPOINT")]
     otel_exporter_otlp_endpoint: String,
 
@@ -137,7 +134,6 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         event_provisioning_password_file: args.event_provisioning_password_file,
         stream_replicas: args.stream_replicas,
         dup_window_secs: args.dup_window_secs,
-        tempo_query_url: args.tempo_query_url,
         otel_exporter_otlp_endpoint: args.otel_exporter_otlp_endpoint,
         route_host: args.route_host,
         platform_domain: args.platform_domain,

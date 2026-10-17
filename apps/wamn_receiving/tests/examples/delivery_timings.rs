@@ -392,10 +392,6 @@ async fn main() -> anyhow::Result<()> {
         ("WAMN_EVT_STREAM_REPLICAS", "1".to_owned()),
         ("WAMN_EVT_DUP_WINDOW_SECS", "120".to_owned()),
         (
-            "WAMN_RECEIVING_DEV_TEMPO_QUERY_URL",
-            "http://127.0.0.1:3201".to_owned(),
-        ),
-        (
             "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
             format!("http://{otlp}"),
         ),

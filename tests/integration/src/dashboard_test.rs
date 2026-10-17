@@ -4,11 +4,11 @@
 //! running Grafana's HTTP API, not scaffolding. It shows, each a NAMED failure:
 //!
 //!   1. `GET /api/health` -> `database: ok` (Grafana + its DB are up);
-//!   2. `GET /api/datasources` -> Prometheus + Tempo + Loki all present under
+//!   2. `GET /api/datasources` -> Prometheus + Loki all present under
 //!      the test's fixed datasource uids, and each datasource's
 //!      `GET /api/datasources/uid/<uid>/health` is OK. Honest-skip policy
 //!      (metricbench phase-6 precedent): Prometheus health is HARD (cheap to
-//!      stand up locally); Tempo/Loki health is soft in `--local` (their
+//!      stand up locally); Loki health is soft in `--local` (their
 //!      containers may be absent), HARD in-cluster where they exist;
 //!   3. `GET /api/search?type=dash-db` + `GET /api/folders` -> the STATIC SRE
 //!      dashboard + its folder are file-provisioned and present;
@@ -30,7 +30,6 @@ use serde_json::Value;
 use tokio_postgres::NoTls;
 
 const DS_PROM: &str = "wamn-prometheus";
-const DS_TEMPO: &str = "wamn-tempo";
 const DS_LOKI: &str = "wamn-loki";
 const SRE_DASHBOARD_UID: &str = "wamn-sre-overview";
 const SRE_DASHBOARD_TITLE: &str = "wamn SRE overview";
@@ -50,8 +49,8 @@ pub struct DashboardTestArgs {
     #[arg(long, env = "GF_SECURITY_ADMIN_PASSWORD", default_value = "admin")]
     pub password: String,
 
-    /// Soft-skip Tempo/Loki datasource health (their backends may be absent in a
-    /// local docker run). Default OFF — in-cluster all three are HARD.
+    /// Soft-skip Loki datasource health (their backends may be absent in a
+    /// local docker run). Default OFF — in-cluster both are HARD.
     #[arg(long)]
     pub local: bool,
 
@@ -107,11 +106,7 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
             .iter()
             .any(|d| d.get("uid").and_then(Value::as_str) == Some(uid))
     };
-    for (label, uid) in [
-        ("prometheus", DS_PROM),
-        ("tempo", DS_TEMPO),
-        ("loki", DS_LOKI),
-    ] {
+    for (label, uid) in [("prometheus", DS_PROM), ("loki", DS_LOKI)] {
         check(
             &mut pass,
             &format!("(2a) datasource {label} present (uid {uid})"),
@@ -120,10 +115,9 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
         );
     }
 
-    // Datasource reachability: Prometheus HARD; Tempo/Loki soft in --local.
+    // Datasource reachability: Prometheus HARD; Loki soft in --local.
     for (label, uid, hard) in [
         ("prometheus", DS_PROM, true),
-        ("tempo", DS_TEMPO, !args.local),
         ("loki", DS_LOKI, !args.local),
     ] {
         let healthy = datasource_healthy(base, auth, uid).await;
@@ -223,12 +217,7 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `GET /api/datasources/uid/<uid>/health` -> `status: OK` (the datasource can
-/// reach its backend). Any transport error or non-OK reads as unhealthy — except
-/// a 404: a frontend-only plugin (Tempo in Grafana 11) registers no backend
-/// health resource on this route, so fall back to the datasource PROXY echo
-/// (`/api/datasources/proxy/uid/<uid>/api/echo`), which shows the same
-/// property: Grafana can reach the backend and the backend answers.
+/// Require a datasource health response that reports an available backend.
 async fn datasource_healthy(base: &str, auth: (&str, &str), uid: &str) -> bool {
     let path = format!("/api/datasources/uid/{uid}/health");
     match http_json(base, &path, Some(auth)).await {
@@ -242,10 +231,6 @@ async fn datasource_healthy(base: &str, auth: (&str, &str), uid: &str) -> bool {
                 })
                 .as_deref()
                 == Some("OK")
-        }
-        Ok((404, _)) => {
-            let proxy = format!("/api/datasources/proxy/uid/{uid}/api/echo");
-            matches!(http_json(base, &proxy, Some(auth)).await, Ok((200, _)))
         }
         _ => false,
     }

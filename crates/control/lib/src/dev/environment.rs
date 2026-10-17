@@ -54,7 +54,6 @@ pub struct DevEnvironmentInputs {
     pub event_nats_password_file: PathBuf,
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
-    pub tempo_query_url: String,
     pub otel_exporter_otlp_endpoint: String,
     pub route_host: String,
     /// Domain of the platform principal emails, `<component>@<platform-domain>`.
@@ -1096,7 +1095,6 @@ pub fn write_dev_config(
         "event_nats_password_file": &inputs.event_nats_password_file,
         "stream_replicas": inputs.stream_replicas,
         "dup_window_secs": inputs.dup_window_secs,
-        "tempo_query_url": inputs.tempo_query_url.as_str(),
         "otel_exporter_otlp_endpoint": inputs.otel_exporter_otlp_endpoint.as_str(),
         "gate_bearer_token": route
             .management_token

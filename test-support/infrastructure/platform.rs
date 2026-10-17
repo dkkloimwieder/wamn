@@ -128,12 +128,6 @@ pub async fn install(
     checked(
         kubectl(&kubeconfig, &context)
             .args(["apply", "-f"])
-            .arg(repository.join("deploy/infra/tempo.yaml")),
-    )
-    .await?;
-    checked(
-        kubectl(&kubeconfig, &context)
-            .args(["apply", "-f"])
             .arg(repository.join("deploy/infra/otel-collector.yaml")),
     )
     .await?;
@@ -142,7 +136,6 @@ pub async fn install(
         SYSTEM_NAMESPACE,
         "wait",
         "--for=condition=Available",
-        "deployment/tempo",
         "deployment/otel-collector",
         "--timeout=120s",
     ]))
