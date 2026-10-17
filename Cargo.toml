@@ -1,12 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "apps/wamn_receiving/tests", "apps/client_acme_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state"]
+members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "test-support/simulator", "crates/client/core", "apps/wamn_receiving/tests", "apps/client_acme_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
   "crates/client/core",
-  "crates/client/terminal",
-  "crates/client/tui",
   "crates/execution/host",
   "crates/execution/workflow/router",
   "crates/execution/run-state",
@@ -90,9 +88,6 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 assert_is_empty = "allow"
 
 [workspace.dependencies]
-ratatui-core = { version = "0.1.2", default-features = false, features = ["std"] }
-ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
-crossterm = { version = "0.29", default-features = false, features = ["event-stream", "events"] }
 # Direct upstream v2.10.3, with zero patches. Source identity and evidence
 # are recorded in docs/architecture/native-alignment.md.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
@@ -212,8 +207,6 @@ wamn-authoring-model = { path = "crates/authoring/model", version = "0.1.0" }
 wamn-catalog = { path = "crates/catalog/model", version = "0.1.0" }
 wamn-package-artifact = { path = "crates/catalog/package-artifact", version = "0.1.0" }
 wamn-client = { path = "crates/client/core", version = "0.1.0" }
-wamn-client-terminal = { path = "crates/client/terminal", version = "0.1.0" }
-wamn-client-tui = { path = "crates/client/tui", version = "0.1.0" }
 wamn-fixture-package = { path = "test-support/fixture-package", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }

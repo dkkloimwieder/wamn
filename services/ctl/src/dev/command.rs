@@ -27,16 +27,9 @@ pub struct DevCommandArgs {
 
     /// Keep the activated release reachable until this process is interrupted.
     ///
-    /// Session mode and renderer are independent axes. This is the session
-    /// mode the interactive client already uses, offered to the plain
-    /// renderer: redundant under --tui, and a no-op under --watch, which
-    /// holds by its own nature.
+    /// This has no effect under --watch, which keeps the session open.
     #[arg(long)]
     hold: bool,
-
-    /// Open the developer console.
-    #[arg(long)]
-    tui: bool,
 }
 
 impl DevCommandArgs {
@@ -47,7 +40,6 @@ impl DevCommandArgs {
             overlay_root,
             watch,
             hold: false,
-            tui: false,
         }
     }
 
@@ -58,19 +50,8 @@ impl DevCommandArgs {
         self
     }
 
-    /// Select the interactive terminal client.
-    #[must_use]
-    pub const fn with_tui(mut self, tui: bool) -> Self {
-        self.tui = tui;
-        self
-    }
-
     const fn hold(&self) -> bool {
         self.hold
-    }
-
-    const fn tui(&self) -> bool {
-        self.tui
     }
 }
 
@@ -160,11 +141,6 @@ pub(super) async fn prepare(args: DevCommandArgs) -> anyhow::Result<(DevSession,
 
 /// Execute the product development command through the shared stage engine.
 pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
-    if args.tui() {
-        // The interactive client holds a whole session future; box it so the
-        // one-shot caller does not carry it on the stack.
-        return Box::pin(super::tui::run(args)).await;
-    }
     let hold = args.hold();
     let (mut session, _signals) = prepare(args).await?;
     let mut observer = CommandObserver {
@@ -182,10 +158,7 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
 
 /// Report where the completed run served the activated release.
 ///
-/// Read off the same seam the interactive client reads, so the two cannot
-/// disagree about which endpoint the release was reachable on. Past tense on
-/// purpose: the one-shot loop has already stopped the application by the time
-/// this prints, while --tui holds it and shows the same fact live.
+/// The one-shot session stops the application before this prints.
 fn print_serving(session: &DevSession) {
     if let Some(endpoint) = session.last_served() {
         print_served(endpoint);
@@ -266,7 +239,6 @@ mod tests {
             PathBuf::from("apps/platform_fixture_overlay")
         );
         assert!(parsed.args.watch);
-        assert!(!parsed.args.tui);
         assert!(!parsed.args.hold);
 
         let one_shot = TestCli::try_parse_from([
@@ -278,19 +250,7 @@ mod tests {
         ])
         .expect("parse the default one-shot command");
         assert!(!one_shot.args.watch);
-        assert!(!one_shot.args.tui);
         assert!(!one_shot.args.hold);
-
-        let tui = TestCli::try_parse_from([
-            "wamn-dev",
-            "--config",
-            "dev.json",
-            "--overlay-root",
-            "apps/platform_fixture_overlay",
-            "--tui",
-        ])
-        .expect("parse the interactive terminal client");
-        assert!(tui.args.tui());
 
         let missing = TestCli::try_parse_from(["wamn-dev", "--config", "dev.json"])
             .expect_err("an omitted overlay root must refuse");
@@ -301,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn hold_is_a_session_mode_that_neither_renderer_flag_conflicts_with() {
+    fn hold_accepts_one_shot_and_watch_sessions() {
         #[derive(Debug, clap::Parser)]
         struct TestCli {
             #[command(flatten)]
@@ -324,15 +284,6 @@ mod tests {
         let hold = parse(&["--hold"]).expect("parse the held one-shot session");
         assert!(hold.hold);
         assert!(!hold.watch);
-        assert!(!hold.tui);
-
-        // Session mode and renderer are independent axes, so clap must accept
-        // both pairings rather than declare a conflict. --hold is redundant
-        // under --tui, which already holds, and inert under --watch, which
-        // never reaches the one-shot hold at all.
-        let with_tui = parse(&["--hold", "--tui"]).expect("parse hold beside the terminal client");
-        assert!(with_tui.hold);
-        assert!(with_tui.tui());
 
         let with_watch = parse(&["--hold", "--watch"]).expect("parse hold beside watch");
         assert!(with_watch.hold);

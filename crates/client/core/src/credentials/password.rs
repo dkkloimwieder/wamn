@@ -103,76 +103,6 @@ impl PasswordCredentials {
             cached: Mutex::new(None),
         }
     }
-    /// The selected environment, for the login prompt.
-    #[must_use]
-    pub fn audience(&self) -> &str {
-        &self.target.audience
-    }
-
-    /// Establish the first password with a principal-bound invitation.
-    ///
-    /// # Errors
-    /// Refuses invalid, expired, or consumed invitations without retaining input.
-    pub async fn enroll(
-        &self,
-        principal_id: &str,
-        invitation: SecretInput,
-        password: SecretInput,
-    ) -> Result<(), CredentialError> {
-        #[derive(Serialize)]
-        struct Enrollment<'a> {
-            principal_id: &'a str,
-            invitation: &'a str,
-            password: &'a str,
-        }
-        let body = serde_json::to_vec(&Enrollment {
-            principal_id,
-            invitation: invitation.expose(),
-            password: password.expose(),
-        })
-        .map_err(|_| CredentialError::new("enrollment input refused"))?;
-        drop(invitation);
-        drop(password);
-        self.request("enroll", body, 204).await.map(|_| ())
-    }
-
-    /// List authorized audiences without issuing or retaining a credential.
-    ///
-    /// # Errors
-    /// Refuses failed authentication and malformed discovery responses.
-    pub async fn environments(
-        &self,
-        email: &str,
-        password: &SecretInput,
-    ) -> Result<Vec<String>, CredentialError> {
-        #[derive(Serialize)]
-        struct Discovery<'a> {
-            email: &'a str,
-            password: &'a str,
-        }
-        #[derive(Deserialize)]
-        struct Environment {
-            aud: String,
-        }
-        #[derive(Deserialize)]
-        struct Response {
-            environments: Vec<Environment>,
-        }
-        let body = serde_json::to_vec(&Discovery {
-            email,
-            password: password.expose(),
-        })
-        .map_err(|_| CredentialError::new("login input refused"))?;
-        let response = self.request("environments", body, 200).await?;
-        let response: Response = serde_json::from_str(&response)
-            .map_err(|_| CredentialError::new("environment response refused"))?;
-        Ok(response
-            .environments
-            .into_iter()
-            .map(|environment| environment.aud)
-            .collect())
-    }
-
     /// Authenticate explicitly and replace the local session only on success.
     ///
     /// # Errors
@@ -218,43 +148,6 @@ impl PasswordCredentials {
                     "Local credentials cleared. Server logout could not be confirmed.",
                 )
             })
-    }
-
-    /// Request an email without revealing whether the account exists.
-    ///
-    /// # Errors
-    /// Reports throttling or transport failure without retrying.
-    pub async fn recover(&self, email: &str) -> Result<(), CredentialError> {
-        let body = serde_json::to_vec(&serde_json::json!({"email":email})).expect("string JSON");
-        self.request("recover", body, 202).await.map(|_| ())
-    }
-
-    /// Reset a password without automatically logging in. Returns notification acceptance.
-    ///
-    /// # Errors
-    /// Refuses invalid secrets and failed requests without retrying.
-    pub async fn reset(
-        &self,
-        email: &str,
-        secret: SecretInput,
-        password: SecretInput,
-    ) -> Result<bool, CredentialError> {
-        #[derive(Deserialize)]
-        struct Reset {
-            status: String,
-            notification: String,
-        }
-        *self.cached.lock().await = None;
-        let body = serde_json::to_vec(&serde_json::json!({"email":email,"secret":secret.expose(),"password":password.expose()})).expect("string JSON");
-        let response = self.request("reset", body, 200).await?;
-        let response: Reset = serde_json::from_str(&response)
-            .map_err(|_| CredentialError::new("reset response refused; try normal login"))?;
-        if response.status != "password_reset" {
-            return Err(CredentialError::new(
-                "reset response refused; try normal login",
-            ));
-        }
-        Ok(response.notification == "accepted_for_delivery")
     }
 
     fn renewal_body(&self, session: &PasswordSession) -> Result<Vec<u8>, CredentialError> {

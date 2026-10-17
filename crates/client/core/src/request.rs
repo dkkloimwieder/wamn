@@ -60,10 +60,6 @@ impl RequestError {
     pub fn path(&self) -> &str {
         &self.path
     }
-
-    pub fn detail(&self) -> &str {
-        &self.detail
-    }
 }
 
 impl fmt::Display for RequestError {

@@ -32,12 +32,6 @@ pub struct FieldDescriptor {
 }
 
 impl FieldDescriptor {
-    /// Whether the contract closes this field to a known set of values.
-    #[must_use]
-    pub const fn is_closed(&self) -> bool {
-        !self.values.is_empty()
-    }
-
     /// The field's own name — the last segment of its path.
     ///
     /// Array segments keep their marker in the path (`value.line[].quantity`)
@@ -81,14 +75,6 @@ mod tests {
         nullable: true,
         values: &[],
     };
-
-    /// Empty means OPEN, not "nothing allowed" — the distinction decides
-    /// whether a control is a selector or a free input.
-    #[test]
-    fn an_empty_domain_is_open_and_a_populated_one_is_closed() {
-        assert!(STATUS.is_closed());
-        assert!(!QUANTITY.is_closed());
-    }
 
     #[test]
     fn a_leaf_is_the_last_path_segment() {

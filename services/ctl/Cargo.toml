@@ -53,12 +53,7 @@ tracing = { workspace = true }
 # keeps its meaning (dep diagnostics to stderr), matching the pre-split
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-futures-util = { workspace = true }
-crossterm = { workspace = true }
-ratatui = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
-# The shared terminal driver behind `wamn dev --tui` (wamn-10yt.5.9).
-wamn-client-terminal = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }

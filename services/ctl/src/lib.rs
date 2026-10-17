@@ -7,7 +7,7 @@
 //! arguments, makes one library call, and prints the result. The user-creation,
 //! broker-advisory reporting, and history-pruning verbs require the `ops`
 //! feature and ship in the separate `wamn-ctl-ops` binary. The clients in `dev/` retain argument parsing,
-//! terminal rendering, and process signals for `wamn-control::dev` sessions.
+//! output, and process signals for `wamn-control::dev` sessions.
 
 pub mod artifact_verbs;
 pub mod build_verbs;
