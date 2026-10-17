@@ -34,7 +34,7 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-package-artifact` | Reading package artifacts from the registry and their component descriptors |
 | `wamn-control` | Control operations, delivery, development orchestration, and process supervision |
-| `wamn-ctl` | Command-line and terminal clients of `wamn-control` |
+| `wamn-ctl` | Command-line client of `wamn-control` |
 | `wamn-scenario-worker` | The authoring admission API |
 
 The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control` calls the lower libraries.
@@ -53,7 +53,7 @@ The `ops` feature adds the user-creation, broker-advisory reporting, and history
 It holds the clap argument definitions, the printed output, and the exit codes.
 Each verb parses its arguments, makes one library call, and prints the result.
 The `<area>_verbs.rs` modules hold that surface.
-The development clients in `services/ctl/src/dev/` own argument parsing, terminal rendering, output, and process-wide signals.
+The development commands in `services/ctl/src/dev/` own argument parsing, output, and process signals.
 `wamn-control::dev` owns the watcher, session orchestration, environment setup, target reset, and child-process supervision.
 Clients request cooperative shutdown through the session control handle.
 The engine finishes active work and cleans up its owned processes.

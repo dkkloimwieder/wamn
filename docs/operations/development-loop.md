@@ -98,7 +98,7 @@ Then run the loop with Receiving as the overlay:
 
 This loop migrates, generates, builds, and releases only the Receiving package.
 
-Add `--tui` to open the developer console. Without a terminal, `--hold` keeps the activation alive until interruption.
+Add `--hold` to keep the activation alive until interruption.
 
 The loop runs from a Git worktree.
 After changing generator code, rebuild `wamn` and restart the developer process.

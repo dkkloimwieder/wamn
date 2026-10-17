@@ -1,4 +1,4 @@
-# wamn web operator client — initial spec
+# wamn web operator client
 
 2026-09-20 · @Someone
 
@@ -25,8 +25,7 @@ Out, until an epic brings it in:
 | Topic | Decision |
 | --- | --- |
 | UI at run time | None. Every emitter writes screen code from a shared plan. No UI is built from data at run time. |
-| Generator base | One UI-neutral screen plan in the generator. Web now; TUI, gpui, native build on it later. |
-| TUI | Will match in method and meaning: generated screens from the same plan. Layout may differ. Work deferred. Output unchanged until then. |
+| Generator base | One screen plan in the generator for the web client. |
 | Generated output | TS bindings, plus one SolidJS component per operation, chosen by the plan's role. An operation whose shape has no supported role gets no component, and the generator reports it by name. |
 | Screens | Owned by the agent. After a regeneration the agent adapts or replaces them. |
 | Generated files | Not edited, for now. Customizing later, possibly as a generator output. |
@@ -46,7 +45,6 @@ Out, until an epic brings it in:
 flowchart LR
   C[release contracts] --> IR[client IR]
   IR --> PL[screen plan<br/>UI-neutral]
-  PL --> T[TUI emitter]
   PL --> W[web emitter]
   W --> B[TS bindings]
   W --> S[SolidJS components<br/>tables, forms]
@@ -64,20 +62,19 @@ flowchart LR
 
 Facts from the code at `cdb6dd1e`, after Epics 1, 2, 3A, and 3B.
 
-- `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (Rust bindings), `client_ts.rs` (TypeScript bindings), `client_component.rs` (SolidJS components), `client_route.rs`, `client_tui.rs`.
+- `client_ir.rs` (IR v3), `client_plan.rs` (screen plan), `client_rust.rs` (Rust bindings), `client_ts.rs` (TypeScript bindings), `client_component.rs` (SolidJS components), `client_route.rs`.
 - A package opts in with `client_package` in its manifest. Receiving declares `@wamn/receiving-client`. WMS and Acme declare none and generate no TypeScript.
 - `generated/client-ts/` holds one module per model, an index, and a `package.json`. Its `components/` directory holds one component module per model and its own index.
 - The wire contract and the transport are hand-written in `web/runtime`, as the package `@wamn/web-runtime`. Every generated module imports it by name. The emitted `package.json` declares it and `@wamn/ui`, the package in `web/ui` that the components render through.
 - The runtime classifies one reply into the four outcomes. It supplies the request identity, the idempotency key and the start time. It also holds the page state, the draft members and the cell text.
-- One case table at `crates/client/tui/tests/data/classification-cases.json` holds both clients to one rule. A Rust test and the runtime's own tests read it.
-- The browser trusts the platform for the values inside a reply. A reply whose value violates its own field contract reads as completed there and as uncertain in the terminal.
+- The runtime tests read the response cases in `web/runtime/test/classification-cases.json`.
+- The browser trusts the platform to enforce field contracts inside replies.
 - Components take the plan role: table, detail, form, delete. A shape with no role gets no component, and the index names it with the reason.
 - A form checks what the operator types with an emitted `zod` schema. It writes the reserved inputs from the runtime, and it marks the member that a refusal names. A repeated input group renders as a list.
 - A form whose plan binds a revision reads the record when it opens and sends the revision of that read, never one read at submit. A delete sends the key and the revision of the record that the page displayed, and reads nothing. A revision that names an input comes from the row that the operator chose for that input. No page supplies a revision: generation refuses a form whose revision has no binding and names no input (`unsupplied_revision`).
 - Names: the generator decides every member name and emits a field map beside each operation, so no name rule exists at run time. A contract name that does not reverse is refused at emit.
 - A bounded list returns `{ rows }`, and a page returns `{ item, nextCursor }`. A declared value domain types as a union. A request declares writable members, and a result keeps read only members.
 - `client_plan.rs` holds the screen rules: role, effective result class, columns, inputs, rows, paging, row links, supplied fields, record link, revision binding. Paging names the input path of every page control.
-- `client_tui.rs` `emit_model` writes one `ScreenSpec` constant per operation from the plan. The TUI renders from that data at run time. It still holds its own copy of the rules the plan states.
 - The checks are local commands: `check_client_ts` for the bindings, and `check_client_components` for the components. `web/runtime` runs `npm run check` and `npm test`. No test and no build needs Node.
 - No application shell, no demo page, no CORS, no cookie session, and no static hosting.
 - No labels or descriptions in `wamn.json` or the IR. A component derives a label from the field path.
@@ -103,8 +100,8 @@ Each epic below gives a goal, a done-when, and what stays out. The epic spec fil
 ### Epic 1: screen plan
 
 - **Goal.** One UI-neutral plan type in the generator, built from the client IR. It holds the rules that are scattered today (section 4).
-- **Done when.** The TUI emitter prints `ScreenSpec` from the plan with unchanged output (one-time check for this refactor). Plan rules have generator tests on a platform fixture.
-- **Out.** Any change to TUI run-time code. Any web output.
+- **Done when.** Plan rules have generator tests on a platform fixture.
+- **Out.** Any web output.
 
 ### Epic 2: TS bindings
 
@@ -119,7 +116,7 @@ The epic split in two at its scope. The runtime came first, and the component em
 **Epic 3A: Epic 2 fixes and the hand-written web runtime.** Done.
 
 - **Goal.** The three fixes the Epic 2 review named, one screen plan change, and the hand-written runtime that implements the transport.
-- **Done when.** The fixes have generator tests, the runtime classifies the four outcomes the same as `classify()`, and one case table holds both clients.
+- **Done when.** The fixes have generator tests, the runtime classifies the four outcomes, and its case table states the expected results.
 - **Out.** The component emitter. Cookie login. Customizing.
 
 **Epic 3B: generated SolidJS components.** Done.
@@ -161,7 +158,6 @@ Epic 16, Beads `wamn-rst8`, made every generated read an HTTP GET with cache hea
 7. **CDN bucket, edge proxy, first real deployment.** On GCP this is a load balancer URL map with a storage bucket and Cloud CDN (assumed, not tested).
 Since Epic 16, every authenticated read is `private`, and only a route whose auth policy is `none` is `public`. A shared cache does not run the router, so it cannot check the grant of each caller. This epic decides whether a shared cache serves authenticated reads. That needs a cache key that includes the grant, or a platform cache behind the permission check. It also revisits the provisional list values `max-age=10, stale-while-revalidate=60`.
 Epic 20, Beads `wamn-xyxj`, built this item in kind and rendered it for Google Cloud, as [web deployment](web-deployment.md) records. CLOSED on 2026-09-25. The owner ruled one public host for every application and no shared cache for authenticated reads, and kept the list values. `wamn web upload` builds a client and writes it to a bucket path named by its release, and each object carries its Cache-Control: `assets/` is `public, max-age=31536000, immutable`, and `index.html` is `no-cache`. The nginx edge in `deploy/platform/edge` serves that path, removes `/api` on the way to the route ingress, and sends `/password` to identity over verified HTTPS. Measured in a browser through the kind edge on 2026-09-25: a cookie sign-in, a purchase order list that answered 304 after its `max-age`, a purchase order get that answered 304, and a supplier change, with the session renewed after a reload. The same chart renders the Google Cloud load balancer from one values file that names the project, the domain and the issuer, and only a rendering checks that part. `wamn-ghx2` holds the first real deployment, which waits for those three names. The workspace test log at `tests/sweeps/wamn-xyxj-05d277acd.log` has 2519 passed and 40 failed. Six of the failures came from the epic and are fixed, and the others are tests without their inputs. The kind edge case passed on its first run on the closeout commit, in 19 minutes with an image build, while a second cluster ran on the machine. Its four earlier failures during `wamn-xyxj.1` were a stale fixture check, a node port that the test called before kube-proxy served it, a short invitation secret, and machine load; the test fixes the first three.
-8. **TUI matches:** generated screens from the plan, and `crates/client/tui` shrinks to helpers.
 9. **Authoring support:** generated docs, skills for agent and human authors, the app spec format.
 
 ## 8. The Epic 4 verdict

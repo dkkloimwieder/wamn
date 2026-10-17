@@ -1,8 +1,7 @@
+The terminal client was deleted on 2026-10-16 by owner ruling; the web client is the only operator client plan.
+
 # Deferred operator client work
 
-The generated Rust operator screens and shared request layer are implemented.
-Their current rules belong in [operator clients](../architecture/execution.md#operator-clients).
-Their required observations belong in [operator tests](../testing/application-tests.md#operator-outcomes).
 This page retains only deferred extensions from the approved client designs.
 
 ## Web client
@@ -21,13 +20,11 @@ Each invocation must resolve to the exact canonical operation identity selected 
 
 Framework-specific UI code remains separate from generated bindings.
 A web application must keep server authorization authoritative and preserve the shared meaning of refusal, completion, partial completion, and uncertainty.
-A browser adapter does not inherit Ratatui implementation details.
 A real consumer must establish the required web artifact and distribution path before that path is built.
 
 ## Multiple input items
 
-The generated terminal currently submits one outer envelope item for each submission.
-Repeated fields inside that item, such as receipt lines, remain supported.
+Repeated fields inside an input item, such as receipt lines, remain supported.
 Submitting multiple outer items requires a separate behavior decision.
 
 That decision must define how the UI displays independent item outcomes.
@@ -40,7 +37,6 @@ Automatic population of repeated inputs from projection rows needs an explicit d
 The same requirement applies when a list supplies a selector's values.
 The current contract declares no general mapping for those cases.
 
-Until a named consumer supplies that requirement, applications compose generated screens with ordinary Rust.
 No field-name heuristic can supply a record, revision, route, or repeated input.
 An eventual declaration must preserve typed input bounds and refuse incompatible mappings.
 The existing generated form remains a typed editor without inferred prefilled values.

@@ -97,12 +97,11 @@ See [database tests](database-tests.md#record-history) for the fixture rules and
 ## Operator outcomes
 
 Use the [projection tests](../../crates/schema/generator/tests/client_projection.rs) for declared bindings and screen coverage.
-The [request tests](../../crates/client/core/tests/request.rs) and [draft tests](../../crates/client/tui/tests/draft.rs) inspect typed inputs and outgoing bytes.
-The [submission tests](../../crates/client/tui/tests/submission.rs) and [screen tests](../../crates/client/tui/tests/screen.rs) own shared outcome behavior.
+The [request tests](../../crates/client/core/tests/request.rs) inspect typed inputs and outgoing bytes.
+The [web runtime tests](../../web/runtime/test/classification.test.ts) test response outcomes.
 
 The local component and PostgreSQL journey sends Acme receipts through the published route.
 It uses the backend fixture and its QC, rollback, and replay assertions.
-Process tests retain terminal restoration, signals, and password masking.
 
 Retain these observations through generated and application-owned operator code:
 

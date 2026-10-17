@@ -670,7 +670,6 @@ The [screen plan](../../crates/schema/generator/src/client_plan.rs) holds the sc
 It gives each callable operation one role: table, detail, form, delete, or none with a reason.
 It also states the columns, the operator inputs, the row source, the paging, and the screens that one row opens.
 It carries interaction meaning only, so no layout, styling, or framework concept enters it.
-The terminal run time in `crates/client/tui` keeps its own copy of the same rules until a later epic moves it onto the plan.
 
 A package can also generate [TypeScript bindings](../../crates/schema/generator/src/client_ts.rs) for a browser.
 It opts in with a `client_package` name in its manifest, and a package that declares none generates no TypeScript. Nothing is published to a registry, and the name is what a workspace imports.
@@ -820,7 +819,6 @@ The invocation layer canonicalizes bytes and does not reinterpret field types.
 The current client submits one outer envelope item, while nested repeated fields remain supported.
 Cursors remain opaque and reset when filters or sorting change.
 
-The [submission reducer](../../crates/client/tui/src/submission.rs) owns `Editable`, `Pending`, `Succeeded`, `Refused`, `PartiallyCompleted`, and `Uncertain`.
 A pending command blocks a second submission.
 A confirmed refusal without completion keeps the draft editable.
 Success and confirmed partial completion spend the submission.
