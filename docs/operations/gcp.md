@@ -905,6 +905,8 @@ target/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 
 ### 5.8 Benchmark
 
+For a local host benchmark, use the [local run](benchmark.md#local-run).
+
 The tier 2 benchmark runs from `wamn-bench-client` in project `wamn-dev`, zone `us-central1-a`.
 The Receiving host runs alone on pool `bench`, and PostgreSQL runs alone on pool `pg`.
 Every other pod runs on pool `main`.

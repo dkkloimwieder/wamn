@@ -7,6 +7,31 @@ The [0.1.25 result](../../tests/bench/platform-0.1.25.json) supplies the first b
 Git retains earlier per-run files.
 Latency is in milliseconds.
 
+## Local run
+
+Run `tools/bench/local.sh` from this checkout on an eight-core Linux machine.
+It builds release binaries and guests because debug builds do not represent host timing.
+It requires Docker, Python 3, `psql`, `curl`, `taskset`, and the build prerequisites in [building](building.md).
+Prepare SQLx and web dependencies as described in [running tests](running-tests.md#application-generation-and-sqlx).
+The Docker images `postgres:18`, `nats:2.10-alpine`, and `grafana/tempo:2.6.1` must already exist locally.
+The script does not pull images.
+
+The script starts its own PostgreSQL, scheduler NATS, event NATS, and Tempo containers on free loopback ports.
+It starts Receiving through `wamn dev up` and `wamn dev --hold`, with an operator PAT issued by `wamn-identity`.
+It pins the host to cores 0–3, PostgreSQL to cores 4–5, and the client to cores 6–7.
+The host wrapper reads the component pool, database pools, and request limit from `deploy/gcp/host-group-receiving.yaml`.
+The local path has no edge or load balancer, so compare host-side numbers.
+
+The script loads the 1000-order seed and runs get and update for 60 seconds each at concurrency 16.
+It resets `pg_stat_statements` before each run and uses the same statement-count calculation and JSON shape as `tier.sh`.
+It writes `tests/bench/local-<CHART_VERSION>.json` and refuses an existing file.
+The platform regression gate does not read local results.
+On exit, the script stops its development processes and removes only its own containers and their volumes.
+It prints the private temporary directory that holds logs and raw results.
+
+For a smoke run, use `tools/bench/local.sh --concurrency 4 --duration-secs 10`.
+Either override puts the result in a private directory under `$TMPDIR`, which defaults to `/var/tmp`.
+
 ## Setup
 
 The runs of 2026-10-16 used Receiving release `sha256:b3813ee613efb0caae4f15685b86438e7108587bcfbf46fc3034b0cdc2dd1cba`. The platform was 0.1.18 (`bd08a13b4`), and the bench was commit `7189b3020`. The pool `main` had 2 x `e2-standard-2` Spot nodes, which is tier 2. The client was the VM `wamn-bench-client`, an `e2-small` in `us-central1-a`. The database held the 1000 seed: 1000 purchase orders and 500500 lines. Each run lasted 60 seconds and had 0 errors.
