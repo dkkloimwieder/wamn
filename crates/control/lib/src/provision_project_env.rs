@@ -263,8 +263,8 @@ pub struct WorkloadActionRequest {
     /// emitted.
     pub target_admin_database_url: Option<String>,
 
-    /// Target CNPG `Cluster` name. When omitted, it is read from the org's
-    /// placement in the registry.
+    /// Target CNPG `Cluster` name. When omitted, derive it from the org's
+    /// placement and the recorded project-env policy in the registry.
     pub cluster: Option<String>,
 
     /// Host every emitted credential URL names. Defaults to `<cluster>-rw`,

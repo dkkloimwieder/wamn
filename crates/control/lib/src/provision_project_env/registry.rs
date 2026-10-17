@@ -49,11 +49,10 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<String> {
     Ok(suffix)
 }
 
-/// Read the org's placement + the env's policy from the registry and **derive**
-/// the target cluster via [`cluster_of`] (D18): a pooled org collapses onto its
-/// pool; a dedicated org owns `<org>-<owner(env)>`. Connects as the `wamn_system`
-/// owner (`SET ROLE`). Shared with the `enable-cdc-project-env` overlay
-/// (wamn-l5i9.9), which targets the same derived cluster.
+/// Derive the target cluster from the org's placement and the named policy.
+/// The `env` argument names a policy, which can differ from the environment slug.
+/// A pooled org uses its pool. A dedicated org uses the policy's recovery domain
+/// through [`cluster_of`]. Connect as the `wamn_system` owner (`SET ROLE`).
 pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await

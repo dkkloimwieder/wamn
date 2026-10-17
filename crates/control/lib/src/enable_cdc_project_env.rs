@@ -20,7 +20,8 @@
 //! Existing broker objects must match the fields their declarations own.
 //!
 //! What this tool does directly (given `--system-database-url`): derive the
-//! target cluster from the org's placement. [`record_event_reader`] records the
+//! target cluster from the org's placement and the recorded project-env policy.
+//! [`record_event_reader`] records the
 //! `registry.event_readers` registration (as the `wamn_system` owner) once the
 //! files are applied. The registration's project-env FK makes the overlay
 //! ordering structural: an unprovisioned env is rejected.
@@ -76,7 +77,7 @@ pub struct EnableCdcProjectEnvRequest {
     pub system_database_url: Option<String>,
 
     /// Target CNPG `Cluster` name. When absent, it is derived from the org's
-    /// placement in the registry.
+    /// placement and the recorded project-env policy in the registry.
     pub cluster: Option<String>,
 
     /// Password for the per-project-env replication role (embedded in the
@@ -203,14 +204,13 @@ pub async fn enable_cdc_project_env(
         crate::provision_project_env::read_project_env_instance(system_url, &triple).await?;
 
     // Pick the target cluster: an explicit `--cluster` wins; otherwise derive it
-    // from the org's placement (`cluster_of`).
+    // from the org's placement and the recorded project-env policy (`cluster_of`).
     let cluster = if let Some(cluster) = &args.cluster {
         cluster.clone()
     } else {
-        let url = args.system_database_url.as_deref().context(
-            "pass --cluster, or --system-database-url to resolve the target cluster from the registry",
-        )?;
-        crate::provision_project_env::resolve_cluster(url, &args.org, &args.env).await?
+        let policy =
+            crate::provision_project_env::read_project_env_policy(system_url, &triple).await?;
+        crate::provision_project_env::resolve_cluster(system_url, &args.org, &policy).await?
     };
 
     let db_name = project_env_database_name(&args.org, &args.project, &args.env, &instance);
