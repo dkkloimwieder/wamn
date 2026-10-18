@@ -26,8 +26,8 @@ while (($#)); do
   esac
 done
 if $app_path; then
-  if $pg_floor || $profile; then
-    echo "--app-path cannot use --pg-floor or --profile" >&2
+  if $pg_floor; then
+    echo "--app-path cannot use --pg-floor" >&2
     exit 2
   fi
   edge=false
@@ -52,7 +52,9 @@ result_name="local-$version.json"
 if $pg_floor; then result_name="local-pg-$version.json"; fi
 if $app_path; then result_name="local-app-$version.json"; fi
 output="tests/bench/$result_name"
-flamegraph="tests/bench/flamegraph-local-get-c$concurrency-$version.svg"
+profile_call=get
+if $app_path; then profile_call=app-path; fi
+flamegraph="tests/bench/flamegraph-local-$profile_call-c$concurrency-$version.svg"
 if ! $smoke && [[ -e $output ]]; then
   echo "Refusing to overwrite $output" >&2
   exit 1
@@ -69,7 +71,7 @@ root="$work/env"
 mkdir "$root"
 if $smoke; then
   output="$work/$result_name"
-  flamegraph="$work/flamegraph-local-get-c$concurrency-$version.svg"
+  flamegraph="$work/flamegraph-local-$profile_call-c$concurrency-$version.svg"
 fi
 bin="$CARGO_TARGET_DIR/release"
 containers=()
@@ -377,10 +379,10 @@ calls=(get update)
 if $app_path; then calls=(app-path); fi
 for call in "${calls[@]}"; do
   sql 'SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))' >/dev/null
-  if $profile && [[ $call == get ]]; then
+  if $profile && [[ $call == "$profile_call" ]]; then
     host_pid=$(<"$work/host.pid")
-    perf record -F 99 --call-graph dwarf -p "$host_pid" \
-      -o "$work/get.perf.data" -- sleep "$duration" >"$work/perf.log" 2>&1 &
+    perf record -F 999 --call-graph dwarf -p "$host_pid" \
+      -o "$work/$call.perf.data" -- sleep "$duration" >"$work/perf.log" 2>&1 &
     perf_pid=$!
   fi
   taskset -c 6-7 "$bin/wamn-bench" --base-url "$bench_url" --host "$route_host" \
@@ -392,9 +394,13 @@ for call in "${calls[@]}"; do
     perf_pid=
     (
       set -o noclobber
-      perf script -i "$work/get.perf.data" | "$HOME/.cargo/bin/inferno-collapse-perf" \
+      # Use local symbols instead of inherited remote debuginfod lookups.
+      env -u DEBUGINFOD_URLS perf script -i "$work/$call.perf.data" | "$HOME/.cargo/bin/inferno-collapse-perf" \
         | "$HOME/.cargo/bin/inferno-flamegraph" >"$flamegraph"
     )
+    env -u DEBUGINFOD_URLS perf report --stdio --no-children --call-graph none \
+      --percent-limit 0.5 -i "$work/$call.perf.data" \
+      >"$work/$call.perf-report.txt"
     echo "$flamegraph"
   fi
   sql 'SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' \
