@@ -31,6 +31,9 @@ CREATE TABLE receiving.purchase_order (
         CHECK (status IN ('open', 'complete', 'cancelled'))
 );
 
+CREATE INDEX purchase_order_id_created_at_idx
+    ON receiving.purchase_order (created_at, id);
+
 CREATE TABLE receiving.purchase_order_line (
     id uuid CONSTRAINT purchase_order_line_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     purchase_order_id uuid NOT NULL
@@ -65,6 +68,9 @@ CREATE TABLE receiving.receipt (
     CONSTRAINT receipt_purchase_order_id_receipt_reference_key
         UNIQUE (purchase_order_id, receipt_reference)
 );
+
+CREATE INDEX receipt_id_created_at_idx
+    ON receiving.receipt (created_at, id);
 
 CREATE TABLE receiving.receipt_line (
     id uuid CONSTRAINT receipt_line_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),

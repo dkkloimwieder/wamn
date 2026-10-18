@@ -7,7 +7,8 @@
 //! and guests name relations unqualified.
 //!
 //! The validator admits only additive DDL: schema-qualified ordinary
-//! `CREATE TABLE`, one additive client column, or one named client check
+//! `CREATE TABLE`, plain indexes on tables created earlier in the same artifact,
+//! one additive client column, or one named client check
 //! constraint. An added column is either nullable with a modeled type and no
 //! default, or one of the two demanded non-null default forms; every shape that
 //! rewrites existing rows stays refused. PostgreSQL remains responsible
@@ -212,7 +213,13 @@ pub fn validate_migration_bytes_for_schemas(
     let statements = artifact_statements(path, bytes, configured_schemas)?;
 
     for (index, tokens) in statements.iter().enumerate() {
-        validate_statement(tokens, configured_schemas, path, index + 1)?;
+        validate_statement(
+            tokens,
+            &statements[..index],
+            configured_schemas,
+            path,
+            index + 1,
+        )?;
     }
     Ok(())
 }
@@ -233,7 +240,13 @@ pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
 
     for (index, tokens) in statements.iter().enumerate() {
         let statement_index = index + 1;
-        validate_statement(tokens, configured_schemas, path, statement_index)?;
+        validate_statement(
+            tokens,
+            &statements[..index],
+            configured_schemas,
+            path,
+            statement_index,
+        )?;
         let mutation = definition_mutation(tokens, configured_schemas, path, statement_index)?;
         if !matches!(
             mutation
@@ -475,6 +488,7 @@ fn policy_error(
 
 fn validate_statement(
     tokens: &[Token<'_>],
+    previous: &[Vec<Token<'_>>],
     configured_schemas: &[&str],
     path: &Path,
     statement_index: usize,
@@ -537,11 +551,57 @@ fn validate_statement(
     if words(tokens, 0, &["alter", "table"]) {
         return validate_alter_table(tokens, configured_schemas, path, statement_index);
     }
+    if words(tokens, 0, &["create", "index"]) {
+        return validate_create_index(tokens, previous, path, statement_index);
+    }
     refuse_statement(
         MigrationPolicyErrorType::UnsupportedStatement,
         path,
         statement_index,
         "only demanded schema-qualified additive table DDL is admitted",
+    )
+}
+
+fn validate_create_index(
+    tokens: &[Token<'_>],
+    previous: &[Vec<Token<'_>>],
+    path: &Path,
+    statement_index: usize,
+) -> Result<(), MigrationPolicyError> {
+    if let [
+        Token::Word(_),
+        Token::Word(_),
+        Token::Word(_),
+        Token::Word(on),
+        Token::Word(schema),
+        Token::Symbol(b'.'),
+        Token::Word(table),
+        Token::Symbol(b'('),
+        columns @ ..,
+        Token::Symbol(b')'),
+    ] = tokens
+        && on.eq_ignore_ascii_case("on")
+        && columns.len() % 2 == 1
+        && columns.iter().enumerate().all(|(index, token)| {
+            if index % 2 == 0 {
+                matches!(token, Token::Word(_))
+            } else {
+                matches!(token, Token::Symbol(b','))
+            }
+        })
+        && previous.iter().any(|statement| {
+            words(statement, 0, &["create", "table", schema]) && word(statement, 4, table)
+        })
+    {
+        // The earlier CREATE TABLE carries the package's ownership check.
+        // Catalog introspection owns index names, columns, and key ordering.
+        return Ok(());
+    }
+    refuse_statement(
+        MigrationPolicyErrorType::UnsupportedStatement,
+        path,
+        statement_index,
+        "CREATE INDEX requires plain columns on a table created earlier in the same migration",
     )
 }
 
@@ -1267,4 +1327,49 @@ fn is_word_start(byte: u8) -> bool {
 
 fn is_word_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_migration_bytes;
+
+    #[test]
+    fn plain_index_uses_the_table_created_in_the_same_migration() {
+        validate_migration_bytes(
+            "0001_initial.sql",
+            b"CREATE TABLE receiving.receipt (id uuid, created_at timestamptz);
+              CREATE INDEX receipt_id_created_at_idx ON receiving.receipt (created_at, id);",
+            "receiving",
+        )
+        .expect("the new table owns its plain index");
+    }
+
+    #[test]
+    fn indexes_cannot_escape_the_new_table_or_run_expressions() {
+        for index in [
+            "CREATE INDEX receipt_id_idx ON receiving.existing (id);",
+            "CREATE INDEX receipt_id_idx ON other.receipt (id);",
+            "CREATE INDEX receipt_id_idx ON receipt (id);",
+            "CREATE INDEX receipt_id_idx ON receiving.receipt ((id));",
+            "CREATE INDEX receipt_id_idx ON receiving.receipt (lower(id));",
+            "CREATE INDEX receipt_id_idx ON receiving.receipt (id) WHERE id IS NOT NULL;",
+            "CREATE UNIQUE INDEX receipt_id_idx ON receiving.receipt (id);",
+            "CREATE INDEX CONCURRENTLY receipt_id_idx ON receiving.receipt (id);",
+        ] {
+            let sql = format!("CREATE TABLE receiving.receipt (id uuid); {index}");
+            assert!(
+                validate_migration_bytes("0001_initial.sql", sql.as_bytes(), "receiving").is_err(),
+                "{index}"
+            );
+        }
+        for sql in [
+            "CREATE INDEX receipt_id_idx ON receiving.receipt (id);",
+            "CREATE INDEX receipt_id_idx ON receiving.receipt (id); CREATE TABLE receiving.receipt (id uuid);",
+        ] {
+            assert!(
+                validate_migration_bytes("0001_initial.sql", sql.as_bytes(), "receiving").is_err(),
+                "{sql}"
+            );
+        }
+    }
 }
