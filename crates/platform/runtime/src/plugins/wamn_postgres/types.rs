@@ -166,24 +166,19 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
                 SqlValue::Json(std::str::from_utf8(body)?.to_string())
             }
             "uuid" => {
+                const HEX: &[u8; 16] = b"0123456789abcdef";
                 if raw.len() != 16 {
                     return Err("uuid value is not 16 bytes".into());
                 }
-                let h = |r: &[u8]| {
-                    r.iter().fold(String::new(), |mut s, b| {
-                        use std::fmt::Write as _;
-                        let _ = write!(s, "{b:02x}");
-                        s
-                    })
-                };
-                SqlValue::Uuid(format!(
-                    "{}-{}-{}-{}-{}",
-                    h(&raw[0..4]),
-                    h(&raw[4..6]),
-                    h(&raw[6..8]),
-                    h(&raw[8..10]),
-                    h(&raw[10..16]),
-                ))
+                let mut value = String::with_capacity(36);
+                for (index, byte) in raw.iter().enumerate() {
+                    if matches!(index, 4 | 6 | 8 | 10) {
+                        value.push('-');
+                    }
+                    value.push(char::from(HEX[usize::from(byte >> 4)]));
+                    value.push(char::from(HEX[usize::from(byte & 0x0f)]));
+                }
+                SqlValue::Uuid(value)
             }
             other => return Err(format!("unsupported column type {other}").into()),
         };
@@ -277,6 +272,8 @@ fn decode_binary_numeric(raw: &[u8]) -> Result<String, Box<dyn std::error::Error
 
 #[cfg(test)]
 mod tests {
+    use tokio_postgres::types::FromSql as _;
+
     use super::*;
 
     fn enc(ndigits: i16, weight: i16, sign: u16, dscale: u16, digits: &[u16]) -> Vec<u8> {
@@ -289,6 +286,34 @@ mod tests {
             raw.extend_from_slice(&d.to_be_bytes());
         }
         raw
+    }
+
+    #[test]
+    fn uuid_decode_preserves_hex_spelling_and_rejects_wrong_lengths() {
+        for (bytes, expected) in [
+            ([0; 16], "00000000-0000-0000-0000-000000000000"),
+            ([255; 16], "ffffffff-ffff-ffff-ffff-ffffffffffff"),
+            (
+                [
+                    0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76,
+                    0x54, 0x32, 0x10,
+                ],
+                "01234567-89ab-cdef-fedc-ba9876543210",
+            ),
+        ] {
+            let SqlCell(SqlValue::Uuid(value)) =
+                SqlCell::from_sql(&Type::UUID, &bytes).expect("sixteen bytes encode a UUID")
+            else {
+                panic!("a UUID column decodes as a UUID");
+            };
+            assert_eq!(value, expected);
+        }
+        for length in [0, 15, 17] {
+            let error = SqlCell::from_sql(&Type::UUID, &vec![0; length])
+                .err()
+                .expect("a UUID must have sixteen bytes");
+            assert_eq!(error.to_string(), "uuid value is not 16 bytes");
+        }
     }
 
     #[test]
