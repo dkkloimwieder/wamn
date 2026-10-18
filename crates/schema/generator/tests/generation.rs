@@ -1056,7 +1056,7 @@ fn prefix_range_and_is_null_filters_match_their_fields() {
         ),
         "($3::jsonb->>'min' IS NULL OR model.weight >= ($3::jsonb->>'min')::numeric)",
         "    ($4::jsonb IS NULL OR (model.note IS NULL) = ($4::jsonb)::boolean)",
-        "    ($5::timestamptz IS NULL OR model.created_at > $5::timestamptz",
+        "    ($5::timestamptz IS NULL OR ",
     ] {
         assert!(sql.contains(predicate), "{predicate}\n{sql}");
     }
@@ -1149,7 +1149,7 @@ fn a_query_searches_its_declared_text_fields() {
             "    ($2::text IS NULL OR strpos(lower(model.part_code), lower($2::text)) > 0\n",
             "        OR strpos(lower(model.note), lower($2::text)) > 0)",
         ),
-        "    ($3::timestamptz IS NULL OR model.created_at > $3::timestamptz",
+        "    ($3::timestamptz IS NULL OR ",
         "LIMIT $5::int8;",
     ] {
         assert!(sql.contains(predicate), "{predicate}\n{sql}");

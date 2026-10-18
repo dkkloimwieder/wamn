@@ -232,7 +232,7 @@ pub(crate) fn query(
         CursorDirection::Descending => "<",
     };
     predicates.push(format!(
-        "    (${cursor_value_bind}::{sort_type} IS NULL OR model.{sort_field} {comparison} ${cursor_value_bind}::{sort_type}\n        OR (model.{sort_field} = ${cursor_value_bind}::{sort_type} AND model.id {comparison} ${cursor_id_bind}::uuid))"
+        "    (${cursor_value_bind}::{sort_type} IS NULL OR (model.{sort_field}, model.id) {comparison} (${cursor_value_bind}::{sort_type}, ${cursor_id_bind}::uuid))"
     ));
     format!(
         "SELECT\n    {}\nFROM {} AS model\nWHERE\n{}\nORDER BY model.{sort_field} {direction}, model.id {direction}\nLIMIT ${limit_bind}::int8;\n",
@@ -303,5 +303,104 @@ const fn sql_direction(direction: CursorDirection) -> &'static str {
     match direction {
         CursorDirection::Ascending => "ASC",
         CursorDirection::Descending => "DESC",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::query;
+    use crate::{CursorDirection, OperationDeclaration};
+    use tokio_postgres::{NoTls, SimpleQueryMessage};
+    use wamn_schema_introspection::ir::{Column, ColumnType, Table};
+
+    #[tokio::test]
+    async fn query_seeks_and_pages_tied_values_in_both_directions() {
+        let database = wamn_test_postgres::database();
+        let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
+            .await
+            .expect("connect to the query test database");
+        let connection = tokio::spawn(connection);
+        client
+            .batch_execute(
+                "CREATE TABLE page_row (id uuid PRIMARY KEY, rank bigint NOT NULL);
+                 CREATE INDEX page_row_rank_id ON page_row (rank, id);
+                 INSERT INTO page_row SELECT lpad(n::text, 32, '0')::uuid, n / 100
+                 FROM generate_series(1, 4000) AS n;
+                 ANALYZE page_row;",
+            )
+            .await
+            .expect("seed ordered rows with tied sort values");
+        let table = Table::new(
+            "public",
+            "page_row",
+            vec![
+                Column::new("id", ColumnType::Uuid, false, None, None),
+                Column::new("rank", ColumnType::Int64, false, None, None),
+            ],
+            Vec::new(),
+            Vec::new(),
+        );
+        let operation: OperationDeclaration =
+            serde_json::from_value(serde_json::json!({"permission": "read", "result": "page"}))
+                .expect("declare a paged query");
+        for direction in [CursorDirection::Ascending, CursorDirection::Descending] {
+            let ascending = matches!(direction, CursorDirection::Ascending);
+            let sql = query(&table, &operation, "rank", direction, false);
+            client
+                .batch_execute(&format!("PREPARE page AS {sql}"))
+                .await
+                .expect("prepare the generated query");
+            let mut cursor = "NULL, NULL".to_owned();
+            for offset in (0_u32..126).step_by(21) {
+                let messages = client
+                    .simple_query(&format!("EXECUTE page({cursor}, 21)"))
+                    .await
+                    .expect("read a generated page");
+                let rows = messages
+                    .iter()
+                    .filter_map(|message| match message {
+                        SimpleQueryMessage::Row(row) => Some(row),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                let ids = rows
+                    .iter()
+                    .map(|row| row.get(0).unwrap().replace('-', "").parse::<u32>().unwrap())
+                    .collect::<Vec<_>>();
+                let expected = if ascending {
+                    (offset + 1..=offset + 21).collect::<Vec<_>>()
+                } else {
+                    (4000 - offset - 20..=4000 - offset).rev().collect()
+                };
+                assert_eq!(
+                    ids, expected,
+                    "pages must neither skip nor repeat tied rows"
+                );
+                let last = rows.last().expect("a full page");
+                cursor = format!("{}, '{}'", last.get(1).unwrap(), last.get(0).unwrap());
+            }
+            let plan: serde_json::Value = client
+                .query_one(
+                    "EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE page(20, '00000000-0000-0000-0000-000000002000', 21)",
+                    &[],
+                )
+                .await
+                .expect("measure a page that starts inside the index")
+                .get(0);
+            assert!(scanned_rows(&plan[0]["Plan"]) <= 21.0, "{plan}");
+            client.batch_execute("DEALLOCATE page").await.unwrap();
+        }
+        drop(client);
+        connection.await.unwrap().unwrap();
+    }
+
+    fn scanned_rows(plan: &serde_json::Value) -> f64 {
+        if plan["Relation Name"] == "page_row" {
+            return plan["Actual Rows"].as_f64().unwrap()
+                + plan["Rows Removed by Filter"].as_f64().unwrap_or(0.0);
+        }
+        plan["Plans"]
+            .as_array()
+            .map_or(0.0, |plans| plans.iter().map(scanned_rows).sum())
     }
 }
