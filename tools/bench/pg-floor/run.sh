@@ -38,4 +38,4 @@ done
 psql "$database_url" -XAt -v ON_ERROR_STOP=1 -c \
   'SELECT sum(row_version - 1), (SELECT count(*) FROM app_system.write_log WHERE result IS NOT NULL) FROM receiving.purchase_order' \
   >"$work/update-counts"
-python3 tools/bench/pg-floor/result.py "$work" "$output" "$concurrency" "$duration"
+python3 -B tools/bench/pg-floor/result.py "$work" "$output" "$concurrency"

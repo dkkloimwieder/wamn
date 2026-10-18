@@ -1,11 +1,14 @@
 """Summarize pgbench's completed-transaction logs, whose latency unit is us."""
-import json
+import csv
 from pathlib import Path
 import re
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from result import write_result
+
 work, output = map(Path, sys.argv[1:3])
-result = {"concurrency": int(sys.argv[3]), "duration_secs": int(sys.argv[4]), "scale": 10, "query_mode": "prepared"}
+result = {}
 for call in ("select-only", "simple-update", "get", "update"):
     log = (work / f"{call}.log").read_text()
     tps, = re.findall(r"^tps = ([0-9.]+)", log, re.M)
@@ -20,20 +23,18 @@ for call in ("select-only", "simple-update", "get", "update"):
     if not latencies:
         raise SystemExit(f"{call}: no completed transactions")
     result[call] = {
-        "tps": float(tps),
-        "mean_ms": sum(latencies) / len(latencies) / 1000,
-        "max_ms": latencies[-1] / 1000,
+        "throughput_per_sec": float(tps),
         "p50_ms": latencies[(len(latencies) * 50 + 99) // 100 - 1] / 1000,
+        "p95_ms": latencies[(len(latencies) * 95 + 99) // 100 - 1] / 1000,
         "p99_ms": latencies[(len(latencies) * 99 + 99) // 100 - 1] / 1000,
-        "transactions": len(latencies),
+        "calls": len(latencies),
         "errors": int(failures),
+        "pg_stat_statements_calls_per_request": sum(
+            round(int(row["calls"]) / len(latencies))
+            for row in csv.DictReader((work / f"{call}.statements.csv").read_text().splitlines())
+        ),
     }
 updates, finished = map(int, (work / "update-counts").read_text().strip().split("|"))
-if updates != result["update"]["transactions"] or finished != updates:
+if updates != result["update"]["calls"] or finished != updates:
     raise SystemExit(f"Update replay mismatch: {updates} changed rows, {finished} finished claims")
-result["replay_parameter_queries_per_transaction"] = 1
-with output.open("x") as destination:
-    json.dump(result, destination, indent=2)
-    destination.write("\n")
-print(json.dumps(result, indent=2))
-print(output)
+write_result(output, int(sys.argv[3]), result)

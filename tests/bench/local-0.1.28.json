@@ -1,0 +1,48 @@
+{
+  "concurrency": 16,
+  "get": {
+    "throughput_per_sec": 1558.5753340352685,
+    "p50_ms": 9.425,
+    "p95_ms": 19.033,
+    "p99_ms": 26.186,
+    "calls": 93531,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 1.0
+  },
+  "update": {
+    "throughput_per_sec": 575.7420058870119,
+    "p50_ms": 26.507,
+    "p95_ms": 41.134,
+    "p99_ms": 57.466,
+    "calls": 34555,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 7.0
+  },
+  "query": {
+    "throughput_per_sec": 700.1991562172801,
+    "p50_ms": 21.867,
+    "p95_ms": 34.531,
+    "p99_ms": 43.281,
+    "calls": 42025,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 5.2
+  },
+  "record_receipt": {
+    "throughput_per_sec": 334.2207569291696,
+    "p50_ms": 46.569,
+    "p95_ms": 72.796,
+    "p99_ms": 87.109,
+    "calls": 20059,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 6.0
+  },
+  "mix": {
+    "throughput_per_sec": 1023.4237626731332,
+    "p50_ms": 15.249,
+    "p95_ms": 31.689,
+    "p99_ms": 42.052,
+    "calls": 61444,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 3.450247379727882
+  }
+}

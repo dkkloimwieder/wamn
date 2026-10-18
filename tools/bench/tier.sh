@@ -34,25 +34,4 @@ for call in get update; do
     >"$work/$call.pgss"
 done
 
-python3 - "$work" "$output" <<'PY'
-import json
-import pathlib
-import sys
-
-work = pathlib.Path(sys.argv[1])
-result = {"concurrency": 16}
-for call in ("get", "update"):
-    run = json.loads((work / f"{call}.json").read_text())
-    result[call] = {key: run[key] for key in (
-        "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "calls", "errors"
-    )}
-    # Round each statement's ratio to exclude setup and background polling.
-    result[call]["pg_stat_statements_calls_per_request"] = sum(
-        round(int(calls) / run["calls"])
-        for calls in (work / f"{call}.pgss").read_text().splitlines()
-    )
-with open(sys.argv[2], "x") as output:
-    json.dump(result, output, indent=2)
-    output.write("\n")
-print(sys.argv[2])
-PY
+python3 tools/bench/result.py "$work" "$output" 16

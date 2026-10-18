@@ -1,0 +1,39 @@
+{
+  "concurrency": 16,
+  "select-only": {
+    "throughput_per_sec": 38602.763799,
+    "p50_ms": 0.384,
+    "p95_ms": 0.687,
+    "p99_ms": 1.002,
+    "calls": 2314720,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 1
+  },
+  "simple-update": {
+    "throughput_per_sec": 2489.191331,
+    "p50_ms": 6.195,
+    "p95_ms": 7.796,
+    "p99_ms": 10.689,
+    "calls": 149272,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 3
+  },
+  "get": {
+    "throughput_per_sec": 19468.996617,
+    "p50_ms": 0.781,
+    "p95_ms": 1.221,
+    "p99_ms": 1.671,
+    "calls": 1167347,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 2
+  },
+  "update": {
+    "throughput_per_sec": 1386.183587,
+    "p50_ms": 11.582,
+    "p95_ms": 16.112,
+    "p99_ms": 19.013,
+    "calls": 83129,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 16
+  }
+}

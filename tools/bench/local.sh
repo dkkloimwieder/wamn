@@ -68,7 +68,15 @@ mkdir -p "$TMPDIR"
 work=$(mktemp -d "$TMPDIR/local.XXXXXXXX")
 root="$work/env"
 mkdir "$root"
-output="$work/$result_name"
+output="$repository/tests/bench/$result_name"
+if $app_path || $profile || $mix || $contention || ! $edge \
+  || ((${#selected_calls[@]} || concurrency != 16 || duration != 60)); then
+  output="$work/$result_name"
+fi
+if [[ -e "$output" ]]; then
+  echo "Refusing to overwrite $output" >&2
+  exit 1
+fi
 bin="$CARGO_TARGET_DIR/release"
 containers=()
 dev_pid=
@@ -422,7 +430,7 @@ seed_scale=1000
 if $app_path; then seed_scale=1; fi
 seed_receiving "$seed_scale"
 sql 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >/dev/null
-calls=(get update)
+calls=(get update query record_receipt mix)
 if $app_path; then calls=(app-path); fi
 if ((${#selected_calls[@]})); then calls=("${selected_calls[@]}"); fi
 bench_args=()
@@ -430,7 +438,7 @@ if $contention; then
   if ((${#selected_calls[@]} == 0)); then calls=(update); fi
   bench_args+=(--contention)
 fi
-if $mix; then calls=(mix); bench_args+=(--mix); fi
+if $mix; then calls=(mix); fi
 for call in "${calls[@]}"; do
   graphs=(none)
   if $profile; then graphs=(fp dwarf); fi
@@ -447,9 +455,10 @@ UNWIND
       label="$call-dwarf"
     fi
     bench_call=$call
-    if [[ $call == mix ]]; then bench_call=get; fi
+    call_args=("${bench_args[@]}")
+    if [[ $call == mix ]]; then bench_call=get; call_args+=(--mix); fi
     taskset -c 6-7 "$bin/wamn-bench" --base-url "$bench_url" --host "$route_host" \
-      --pat-file "$root/operator-pat.json" --call "$bench_call" "${bench_args[@]}" --concurrency "$concurrency" \
+      --pat-file "$root/operator-pat.json" --call "$bench_call" "${call_args[@]}" --concurrency "$concurrency" \
       --duration-secs "$duration" --tier local --db-url "$database_url" \
       --output "$work/$label.json" >"$work/$label.log" 2>&1 &
     bench_pid=$!
@@ -505,33 +514,17 @@ if $app_path && ! $mix; then
     "$http_route_sha256" "$materializer_sha256" "$edge" "$seed_scale"
   exit
 fi
-python3 - "$work" "$output" "$concurrency" "$http_route_sha256" "$materializer_sha256" "$edge" <<'PY'
+python3 - "$work/metadata.json" "$concurrency" "$http_route_sha256" "$materializer_sha256" "$edge" <<'PY'
 import json
-import pathlib
 import sys
 
-work = pathlib.Path(sys.argv[1])
-result = {
-    "concurrency": int(sys.argv[3]),
-    "edge": sys.argv[6] == "true",
-    "http_route_sha256": sys.argv[4],
-    "materializer_sha256": sys.argv[5],
-}
-for path in sorted(work.glob("*.json")):
-    call = path.stem
-    if call not in ("get", "update", "query", "receipt-query", "create", "record_receipt", "mix", "app-path"):
-        continue
-    run = json.loads((work / f"{call}.json").read_text())
-    result[call] = {key: run[key] for key in (
-        "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "max_ms", "slow", "calls", "errors", "conflicts", "per_call", "statements_per_request", "contention_orders"
-    )}
-with open(sys.argv[2], "x") as output:
-    json.dump(result, output, indent=2)
+with open(sys.argv[1], "x") as output:
+    json.dump({
+        "concurrency": int(sys.argv[2]),
+        "http_route_sha256": sys.argv[3],
+        "materializer_sha256": sys.argv[4],
+        "edge": sys.argv[5] == "true",
+    }, output, indent=2)
     output.write("\n")
-print("local: " + "; ".join(
-    f"{call} {run['throughput_per_sec']:.1f}/s p50={run['p50_ms']:.3f}ms "
-    f"p99={run['p99_ms']:.3f}ms max={run['max_ms']:.3f}ms slow={len(run['slow'])} "
-    f"errors={run['errors']} statements/request={run['statements_per_request']}"
-    for call, run in result.items() if isinstance(run, dict)
-) + f"; {sys.argv[2]}")
 PY
+python3 tools/bench/result.py "$work" "$output" "$concurrency"

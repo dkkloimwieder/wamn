@@ -42,12 +42,26 @@ There is no load balancer in this local run.
 For a direct comparison, run `tools/bench/local.sh --no-edge --concurrency 16 --duration-secs 60`.
 `--no-edge` bypasses nginx and does not require Helm or the nginx image.
 
-The script loads the 1000-order seed and runs get and update for 60 seconds each at concurrency 16.
-All local results and logs stay in a private directory under `TMPDIR`.
+The script loads the 1000-order seed and runs get, update, query, record_receipt, and the mix for 60 seconds each at concurrency 16.
+The default run writes `tests/bench/local-<CHART_VERSION>.json` in the same format as the platform results.
+Other run modes keep their summaries in the private run directory.
+The raw results and logs stay in a private directory under `TMPDIR`.
 If `TMPDIR` is unset, the script uses `/var/tmp`.
 On exit, the script stops its development processes and removes only its own containers and volumes.
-Each result includes the guest digests, edge selection, throughput, p50, p99, maximum latency, errors, and version conflicts.
+Each baseline includes throughput, p50, p95, p99, completed calls, errors, and PostgreSQL statement counts per request.
+The raw results retain guest digests, edge selection, maximum latency, and version conflicts.
 Throughput counts all completed attempts, including errors and conflicts.
+
+Run the local regression gate after the benchmarks:
+
+```bash
+cargo run --offline -p wamn-conformance-tests --bin wamn-benchmark-gate -- --local
+```
+
+The gate compares the newest two local application results and the newest two local PostgreSQL results separately.
+It requires concurrency 16 and refuses a throughput drop greater than 20% for any call in the previous result.
+Without `--local`, the command compares platform results with the same rules.
+Local timings inform design decisions but do not decide them.
 
 Use `--call get`, `--call update`, `--call query`, `--call receipt-query`, `--call create`, or `--call record_receipt` for one call type.
 Use `--call app-path` for receipt get with the full fixture and the default edge path.
@@ -132,7 +146,7 @@ Update clients use separate order slices, so no two clients update the same orde
 The finish payload uses a representative row value with its pre-update audit timestamps.
 The runner requires one changed row and one finished claim for every completed update.
 
-The floor result is `local-pg-<CHART_VERSION>.json` in the private run directory.
+The floor result is `tests/bench/local-pg-<CHART_VERSION>.json`, in the same format as the platform results.
 TPS means completed transactions per second.
 The p50 and p99 values come from [pgbench's completed-transaction logs](https://www.postgresql.org/docs/18/pgbench.html), in milliseconds.
 
