@@ -187,6 +187,18 @@ fn build_engine_inner(
         "core instances must be greater than zero"
     );
 
+    // The local profiling build sets this existing Cargo knob only for its
+    // isolated host target. Ordinary builds keep Wasmtime's default profiler.
+    let config = if option_env!("CARGO_PROFILE_RELEASE_DEBUG")
+        .is_some_and(|level| !matches!(level, "0" | "none" | "false"))
+    {
+        let mut config = config.unwrap_or_default();
+        config.profiler(wasmtime::ProfilingStrategy::PerfMap);
+        Some(config)
+    } else {
+        config
+    };
+
     let mut builder = Engine::builder()
         .with_host_memory(host_memory)
         .with_guest_memory_mode(GuestMemoryMode::Count)

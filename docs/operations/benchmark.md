@@ -125,12 +125,43 @@ If the Postgres floor changes while the application span parts stay stable, inve
 If application span parts change while the floor stays stable, investigate those host or guest parts.
 If only the full run changes, inspect its application SQL, payload, and edge behavior.
 
-Add `--profile` to record the host during get with `perf record -F 99 --call-graph dwarf` for the requested duration.
-Install `perf`, with `inferno-collapse-perf` and `inferno-flamegraph` in `~/.cargo/bin`.
-The default run writes `tests/bench/flamegraph-local-get-c16-<CHART_VERSION>.svg` and refuses an existing file.
-Smoke overrides also put the profile in the temporary directory, with the requested concurrency in its name.
-If `/proc/sys/kernel/perf_event_paranoid` is above 1, the script refuses before builds or services start.
-Run `sudo sysctl kernel.perf_event_paranoid=1` before profiling.
+Run `tools/bench/local.sh --mix --profile` and `tools/bench/local.sh --call update --profile` for function profiles.
+The profiling host uses the Dockerfile's packages and features, release optimization, line-table debug information, and frame pointers.
+Its Cargo target directory is `/var/tmp/wamn-h2r2l/host-target`, separate from the normal release build.
+The script records the binary hash, source revision, working diff, and build duration.
+Profiling guests keep function names through `RUSTFLAGS=-C strip=none` and use a separate `host-target/guests` directory.
+Their release optimization and features stay unchanged. Their recorded digests differ because their symbol sections remain.
+
+The profiling build sets `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`.
+Wamn's engine uses this existing Cargo setting to select Wasmtime's `PerfMap` profiler.
+The pinned wash-runtime has no profiling environment switch, so Wamn supplies its existing Wasmtime configuration hook.
+Ordinary builds keep the default profiler. The change does not modify upstream source.
+The required `/tmp/perf-<pid>.map` is a temporary link to `guest.map` in the private run directory.
+The script removes its own link at shutdown.
+Later raw-data decoding needs that link again. The saved text reports already contain the guest symbols.
+
+Wasmtime truncates guest names at 96 characters.
+The name resolver matches each function index and exact truncated name against the compiled guests, then demangles the full name.
+Ambiguous and unmatched names remain unchanged. The resolver records those counts and retains the raw stacks.
+
+Recording starts after seed and calibration work, at the benchmark's start marker.
+The script samples user CPU at 99 Hz with `perf record --call-graph fp`.
+If more than 10% of stacks are short or contain an unknown frame, it repeats the call with `--call-graph dwarf,16384`.
+The repeat has its own timing result. Receipt commands seed new orders for each run.
+
+Self time is CPU time spent inside a function. Inclusive time also includes called functions.
+Each profile retains raw data, decoded stacks, a flamegraph, and self-time and inclusive-time reports.
+Decoding uses `--no-inline` to retain physical call frames and avoid the local `addr2line` failures during inline expansion.
+Its summary lists the top 30 functions, host and guest shares, unresolved samples, and allocation callers.
+Generated transition functions count with guest code. CPU percentages use the recorded sample periods.
+Inclusive time counts each function once per stack, so inclusive percentages overlap.
+Allocation attribution uses CPU samples inside recognized allocation and free functions, then selects the first caller outside those functions.
+It measures CPU cost, not allocation counts or bytes, and needs no root probes or extra allocator.
+
+The machine needs `perf`, `wasm-tools`, and `rustfilt` on `PATH`.
+It needs `inferno-collapse-perf` and `inferno-flamegraph` in `~/.cargo/bin`.
+The script refuses profiling when `/proc/sys/kernel/perf_event_paranoid` exceeds 1.
+All profile files stay in the private run directory under `/var/tmp/wamn-h2r2l/`.
 
 ## Setup
 

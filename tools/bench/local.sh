@@ -46,10 +46,12 @@ if $pg_floor && $profile; then
 fi
 if $profile; then
   if (( $(</proc/sys/kernel/perf_event_paranoid) > 1 )); then
-    echo 'run `sudo sysctl kernel.perf_event_paranoid=1` first' >&2
+    echo 'Profiling requires kernel.perf_event_paranoid <= 1' >&2
     exit 1
   fi
   command -v perf >/dev/null
+  command -v wasm-tools >/dev/null
+  command -v rustfilt >/dev/null
   for tool in "$HOME/.cargo/bin/inferno-collapse-perf" "$HOME/.cargo/bin/inferno-flamegraph"; do
     [[ -x $tool ]] || { echo "Missing executable: $tool" >&2; exit 1; }
   done
@@ -67,13 +69,11 @@ work=$(mktemp -d /var/tmp/wamn-h2r2l/local.XXXXXXXX)
 root="$work/env"
 mkdir "$root"
 output="$work/$result_name"
-profile_call=get
-if $app_path; then profile_call=app-path; fi
-flamegraph="$work/flamegraph.svg"
 bin="$CARGO_TARGET_DIR/release"
 containers=()
 dev_pid=
 perf_pid=
+bench_pid=
 stop_dev() {
   if [[ -n $dev_pid ]]; then
     kill -TERM "$dev_pid" 2>/dev/null || true
@@ -94,7 +94,17 @@ cleanup() {
     kill -INT "$perf_pid" 2>/dev/null || true
     wait "$perf_pid" || true
   fi
+  if [[ -n $bench_pid ]]; then
+    kill -TERM "$bench_pid" 2>/dev/null || true
+    wait "$bench_pid" || true
+  fi
   stop_dev || status=1
+  if $profile && [[ -f $work/host.pid ]]; then
+    host_pid=$(<"$work/host.pid")
+    if [[ $(readlink "/tmp/perf-$host_pid.map") == "$work/guest.map" ]]; then
+      rm -- "/tmp/perf-$host_pid.map"
+    fi
+  fi
   if ((${#containers[@]})); then
     docker rm -fv "${containers[@]}" >/dev/null || status=1
   fi
@@ -165,19 +175,40 @@ collector_image=$(tools/dev-collector "$root")
 for image in postgres:18 nats:2.10-alpine "$collector_image"; do
   docker image inspect "$image" >/dev/null
 done
-# Match the Dockerfile host build without unifying control-tool features.
-cargo build --offline --locked --release -p wamn-host -p wamn-runtime \
-  --bin wamn-host --bin docker-credential-wamn
+# Match the Dockerfile packages and features. Keep the profiling artifacts
+# separate, and retain frame pointers without changing release optimization.
+host_bin="$bin/wamn-host"
+if $profile; then
+  profile_target=/var/tmp/wamn-h2r2l/host-target
+  CARGO_TARGET_DIR="$profile_target" CARGO_PROFILE_RELEASE_DEBUG=line-tables-only \
+    RUSTFLAGS="-C force-frame-pointers=yes -C link-arg=-fuse-ld=mold" \
+    /usr/bin/time -f '%e' -o "$work/host-build.seconds" \
+    cargo build --offline --locked --release -p wamn-host -p wamn-runtime \
+      --bin wamn-host --bin docker-credential-wamn
+  host_bin="$profile_target/release/wamn-host"
+else
+  cargo build --offline --locked --release -p wamn-host -p wamn-runtime \
+    --bin wamn-host --bin docker-credential-wamn
+fi
+sha256sum "$host_bin" >"$work/host.sha256"
+git rev-parse HEAD >"$work/revision"
+git diff -- tools/bench crates/platform/engine/src/engine.rs >"$work/source.diff"
 cargo build --offline --release -p wamn-ctl --bin wamn \
   -p wamn-identity --bin wamn-identity \
   -p wamn-cdc-reader --bin wamn-cdc-reader -p wamn-bench --bin wamn-bench
 cargo build --offline --release -p wamn-test-infrastructure --example event_broker_files
+guest_target=$CARGO_TARGET_DIR
+guest_flags=${RUSTFLAGS:-}
+if $profile; then
+  guest_target="$profile_target/guests"
+  guest_flags+=" -C strip=none"
+fi
 for guest in http-route materializer; do
-  RUSTFLAGS="$(tools/guest-rustflags)" cargo build --offline --release \
+  CARGO_TARGET_DIR="$guest_target" RUSTFLAGS="$(RUSTFLAGS="$guest_flags" tools/guest-rustflags)" cargo build --offline --release \
     --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p "$guest"
 done
-http_route_sha256=$(sha256sum "$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" | cut -d ' ' -f 1)
-materializer_sha256=$(sha256sum "$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm" | cut -d ' ' -f 1)
+http_route_sha256=$(sha256sum "$guest_target/wasm32-wasip2/release/http_route.wasm" | cut -d ' ' -f 1)
+materializer_sha256=$(sha256sum "$guest_target/wasm32-wasip2/release/materializer.wasm" | cut -d ' ' -f 1)
 echo "http_route_sha256=$http_route_sha256"
 echo "materializer_sha256=$materializer_sha256"
 
@@ -260,13 +291,15 @@ if ! $ready; then
 fi
 
 # Keep CPU pinning here; activation owns host settings.
-python3 - "$bin/wamn-host" "$work/host.pid" >"$work/host" <<'PY'
+python3 - "$host_bin" "$work/host.pid" "$profile" "$work/guest.map" >"$work/host" <<'PY'
 import shlex
 import sys
 
 print("#!/bin/bash")
 print("set -euo pipefail")
 print(f'echo "$$" > {shlex.quote(sys.argv[2])}')
+if sys.argv[3] == "true":
+    print(f'ln -s {shlex.quote(sys.argv[4])} "/tmp/perf-$$.map"')
 print(f'exec /usr/bin/taskset -c 0-3 {shlex.quote(sys.argv[1])} "$@"')
 PY
 chmod +x "$work/host"
@@ -282,10 +315,10 @@ chmod +x "$work/host"
   --otel-exporter-otlp-endpoint "http://127.0.0.1:$otlp_port" \
   --route-host receiving.localhost --platform-domain example.invalid \
   --host-binary "$work/host" --cdc-reader-binary "$bin/wamn-cdc-reader" \
-  --flow-http-component "$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
-  --materializer-component "$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm" \
+  --flow-http-component "$guest_target/wasm32-wasip2/release/http_route.wasm" \
+  --materializer-component "$guest_target/wasm32-wasip2/release/materializer.wasm" \
   >"$work/up.log" 2>&1 || { cat "$work/up.log" >&2; exit 1; }
-"$bin/wamn" dev --config "$root/dev.json" \
+CARGO_TARGET_DIR="$guest_target" RUSTFLAGS="$guest_flags" "$bin/wamn" dev --config "$root/dev.json" \
   --overlay-root "$repository/apps/wamn_receiving" --hold >"$work/dev.log" 2>&1 &
 dev_pid=$!
 served=
@@ -379,33 +412,67 @@ bench_args=()
 if $contention; then calls=(update); bench_args+=(--contention); fi
 if $mix; then calls=(mix); bench_args+=(--mix); fi
 for call in "${calls[@]}"; do
-  sql 'SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))' >/dev/null
-  if $profile && [[ $call == "$profile_call" ]]; then
-    host_pid=$(<"$work/host.pid")
-    perf record -F 999 --call-graph dwarf -p "$host_pid" \
-      -o "$work/$call.perf.data" -- sleep "$duration" >"$work/perf.log" 2>&1 &
-    perf_pid=$!
-  fi
-  bench_call=$call
-  if [[ $call == mix ]]; then bench_call=get; fi
-  taskset -c 6-7 "$bin/wamn-bench" --base-url "$bench_url" --host "$route_host" \
-    --pat-file "$root/operator-pat.json" --call "$bench_call" "${bench_args[@]}" --concurrency "$concurrency" \
-    --duration-secs "$duration" --tier local --db-url "$database_url" \
-    --output "$work/$call.json" >"$work/$call.log" 2>&1 || { cat "$work/$call.log" >&2; exit 1; }
-  if [[ -n $perf_pid ]]; then
-    wait "$perf_pid" || { cat "$work/perf.log" >&2; exit 1; }
-    perf_pid=
-    (
-      set -o noclobber
-      # Use local symbols instead of inherited remote debuginfod lookups.
-      env -u DEBUGINFOD_URLS perf script -i "$work/$call.perf.data" | "$HOME/.cargo/bin/inferno-collapse-perf" \
-        | "$HOME/.cargo/bin/inferno-flamegraph" >"$flamegraph"
-    )
-    env -u DEBUGINFOD_URLS perf report --stdio --no-children --call-graph none \
-      --percent-limit 0.5 -i "$work/$call.perf.data" \
-      >"$work/$call.perf-report.txt"
-    echo "$flamegraph"
-  fi
+  graphs=(none)
+  if $profile; then graphs=(fp dwarf); fi
+  for graph in "${graphs[@]}"; do
+    label=$call
+    if [[ $graph == dwarf ]]; then
+      # A missing or short stack makes caller attribution incomplete.
+      if ! python3 - "$work/$call.fp.summary.json" <<'UNWIND'
+import json, sys
+result = json.load(open(sys.argv[1]))
+sys.exit(0 if max(result["shallow_percent"], result["stacks_with_unknown_percent"]) > 10 else 1)
+UNWIND
+      then break; fi
+      label="$call-dwarf"
+    fi
+    sql 'SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))' >/dev/null
+    bench_call=$call
+    if [[ $call == mix ]]; then bench_call=get; fi
+    taskset -c 6-7 "$bin/wamn-bench" --base-url "$bench_url" --host "$route_host" \
+      --pat-file "$root/operator-pat.json" --call "$bench_call" "${bench_args[@]}" --concurrency "$concurrency" \
+      --duration-secs "$duration" --tier local --db-url "$database_url" \
+      --output "$work/$label.json" >"$work/$label.log" 2>&1 &
+    bench_pid=$!
+    if $profile; then
+      until grep -q '^benchmark-start ' "$work/$label.log"; do
+        if ! kill -0 "$bench_pid" 2>/dev/null; then
+          wait "$bench_pid" || true
+          bench_pid=
+          cat "$work/$label.log" >&2
+          exit 1
+        fi
+        sleep 0.05
+      done
+      host_pid=$(<"$work/host.pid")
+      call_graph=$graph
+      if [[ $graph == dwarf ]]; then call_graph=dwarf,16384; fi
+      perf record --no-buildid-cache -e cpu-clock:u -F 99 --call-graph "$call_graph" -p "$host_pid" \
+        -o "$work/$call.$graph.perf.data" >"$work/$call.$graph.perf.log" 2>&1 &
+      perf_pid=$!
+    fi
+    wait "$bench_pid" || { cat "$work/$label.log" >&2; exit 1; }
+    bench_pid=
+    if [[ -n $perf_pid ]]; then
+      kill -INT "$perf_pid" 2>/dev/null || true
+      record_status=0
+      wait "$perf_pid" || record_status=$?
+      if (( record_status != 0 && record_status != 130 )); then
+        cat "$work/$call.$graph.perf.log" >&2
+        exit "$record_status"
+      fi
+      perf_pid=
+      env -u DEBUGINFOD_URLS perf script --no-inline -F +period -i "$work/$call.$graph.perf.data" >"$work/$call.$graph.stacks"
+      python3 tools/bench/name-guests.py "$guest_target/wasm32-wasip2/release" "$work/$call.$graph.stacks"
+      "$HOME/.cargo/bin/inferno-collapse-perf" <"$work/$call.$graph.stacks" \
+        | "$HOME/.cargo/bin/inferno-flamegraph" >"$work/$call.$graph.svg"
+      env -u DEBUGINFOD_URLS perf report --stdio --no-inline --no-children --call-graph none \
+        --percent-limit 0 -i "$work/$call.$graph.perf.data" >"$work/$call.$graph.self.txt"
+      env -u DEBUGINFOD_URLS perf report --stdio --no-inline --children --call-graph none \
+        --percent-limit 0 -i "$work/$call.$graph.perf.data" >"$work/$call.$graph.inclusive.txt"
+      python3 tools/bench/profile-summary.py "$work/$call.$graph.stacks" "$work/$call.$graph.summary.json"
+    fi
+  done
   sql 'SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' \
     >"$work/$call.pgss"
   psql "$database_url" -X --csv -v ON_ERROR_STOP=1 -c 'SELECT query, calls, rows, total_exec_time FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' >"$work/$call.statements.csv"

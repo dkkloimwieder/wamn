@@ -389,6 +389,7 @@ async fn main() -> anyhow::Result<()> {
         None => None,
     };
     let started_at_unix_nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    eprintln!("benchmark-start {started_at_unix_nanos}");
     let started = Instant::now();
     let deadline = started + Duration::from_secs(args.duration_secs);
     let mut workers = Vec::with_capacity(args.concurrency);
