@@ -5,13 +5,22 @@ cd "$(dirname "$0")/../.."
 repository=$PWD
 duration=60
 concurrency=16
-smoke=false
 profile=false
 edge=true
 pg_floor=false
 app_path=false
+mix=false
+contention=false
+selected_call=
 while (($#)); do
   case "$1" in
+    --mix) mix=true; shift ;;
+    --contention) contention=true; shift ;;
+    --call)
+      case "${2:-}" in get|update|query|receipt-query|create|record_receipt|app-path) selected_call=$2 ;;
+        *) echo 'Unknown --call' >&2; exit 2 ;;
+      esac
+      shift 2 ;;
     --app-path) app_path=true; shift ;;
     --pg-floor) pg_floor=true; shift ;;
     --profile) profile=true; shift ;;
@@ -19,7 +28,6 @@ while (($#)); do
     --duration-secs|--concurrency)
       [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || { echo "$1 needs a positive integer" >&2; exit 2; }
       if [[ $1 == --duration-secs ]]; then duration=$2; else concurrency=$2; fi
-      smoke=true
       shift 2
       ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
@@ -51,28 +59,17 @@ test -n "$version"
 result_name="local-$version.json"
 if $pg_floor; then result_name="local-pg-$version.json"; fi
 if $app_path; then result_name="local-app-$version.json"; fi
-output="tests/bench/$result_name"
-profile_call=get
-if $app_path; then profile_call=app-path; fi
-flamegraph="tests/bench/flamegraph-local-$profile_call-c$concurrency-$version.svg"
-if ! $smoke && [[ -e $output ]]; then
-  echo "Refusing to overwrite $output" >&2
-  exit 1
-fi
-if ! $smoke && $profile && [[ -e $flamegraph ]]; then
-  echo "Refusing to overwrite $flamegraph" >&2
-  exit 1
-fi
 export CARGO_TARGET_DIR="$repository/target"
-export TMPDIR=${TMPDIR:-/var/tmp}
+export TMPDIR=/var/tmp
 umask 077
-work=$(mktemp -d "$TMPDIR/wamn-lbench.XXXXXXXX")
+mkdir -p /var/tmp/wamn-h2r2l
+work=$(mktemp -d /var/tmp/wamn-h2r2l/local.XXXXXXXX)
 root="$work/env"
 mkdir "$root"
-if $smoke; then
-  output="$work/$result_name"
-  flamegraph="$work/flamegraph-local-$profile_call-c$concurrency-$version.svg"
-fi
+output="$work/$result_name"
+profile_call=get
+if $app_path; then profile_call=app-path; fi
+flamegraph="$work/flamegraph.svg"
 bin="$CARGO_TARGET_DIR/release"
 containers=()
 dev_pid=
@@ -377,6 +374,10 @@ psql "$database_url" -X -v ON_ERROR_STOP=1 -v scale="$seed_scale" \
 sql 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >/dev/null
 calls=(get update)
 if $app_path; then calls=(app-path); fi
+if [[ -n $selected_call ]]; then calls=("$selected_call"); fi
+bench_args=()
+if $contention; then calls=(update); bench_args+=(--contention); fi
+if $mix; then calls=(mix); bench_args+=(--mix); fi
 for call in "${calls[@]}"; do
   sql 'SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))' >/dev/null
   if $profile && [[ $call == "$profile_call" ]]; then
@@ -385,8 +386,10 @@ for call in "${calls[@]}"; do
       -o "$work/$call.perf.data" -- sleep "$duration" >"$work/perf.log" 2>&1 &
     perf_pid=$!
   fi
+  bench_call=$call
+  if [[ $call == mix ]]; then bench_call=get; fi
   taskset -c 6-7 "$bin/wamn-bench" --base-url "$bench_url" --host "$route_host" \
-    --pat-file "$root/operator-pat.json" --call "$call" --concurrency "$concurrency" \
+    --pat-file "$root/operator-pat.json" --call "$bench_call" "${bench_args[@]}" --concurrency "$concurrency" \
     --duration-secs "$duration" --tier local --db-url "$database_url" \
     --output "$work/$call.json" >"$work/$call.log" 2>&1 || { cat "$work/$call.log" >&2; exit 1; }
   if [[ -n $perf_pid ]]; then
@@ -407,7 +410,7 @@ for call in "${calls[@]}"; do
     >"$work/$call.pgss"
   psql "$database_url" -X --csv -v ON_ERROR_STOP=1 -c 'SELECT query, calls, rows, total_exec_time FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' >"$work/$call.statements.csv"
 done
-if $app_path; then
+if $app_path && ! $mix; then
   # The host flushes its exporter on shutdown. Then flush the collector's batch.
   stop_dev
   docker stop "$prefix-collector" >"$work/collector-stop.log"
@@ -427,23 +430,21 @@ result = {
     "http_route_sha256": sys.argv[4],
     "materializer_sha256": sys.argv[5],
 }
-for call in ("get", "update"):
+for path in sorted(work.glob("*.json")):
+    call = path.stem
+    if call not in ("get", "update", "query", "receipt-query", "create", "record_receipt", "mix", "app-path"):
+        continue
     run = json.loads((work / f"{call}.json").read_text())
     result[call] = {key: run[key] for key in (
-        "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "max_ms", "slow", "calls", "errors"
+        "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "max_ms", "slow", "calls", "errors", "conflicts", "per_call", "statements_per_request", "contention_orders"
     )}
-    # Match tier.sh: round each ratio to exclude setup and background polling.
-    result[call]["pg_stat_statements_calls_per_request"] = sum(
-        round(int(calls) / run["calls"])
-        for calls in (work / f"{call}.pgss").read_text().splitlines()
-    )
 with open(sys.argv[2], "x") as output:
     json.dump(result, output, indent=2)
     output.write("\n")
 print("local: " + "; ".join(
     f"{call} {run['throughput_per_sec']:.1f}/s p50={run['p50_ms']:.3f}ms "
     f"p99={run['p99_ms']:.3f}ms max={run['max_ms']:.3f}ms slow={len(run['slow'])} "
-    f"errors={run['errors']} statements/request={run['pg_stat_statements_calls_per_request']}"
-    for call, run in result.items() if call in ("get", "update")
+    f"errors={run['errors']} statements/request={run['statements_per_request']}"
+    for call, run in result.items() if isinstance(run, dict)
 ) + f"; {sys.argv[2]}")
 PY

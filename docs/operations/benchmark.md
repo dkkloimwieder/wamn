@@ -42,19 +42,36 @@ For a direct comparison, run `tools/bench/local.sh --no-edge --concurrency 16 --
 `--no-edge` bypasses nginx and does not require Helm or the nginx image.
 
 The script loads the 1000-order seed and runs get and update for 60 seconds each at concurrency 16.
-It resets `pg_stat_statements` before each run and uses the same statement-count calculation as `tier.sh`.
-Each result records whether `edge` was enabled.
-Each result includes `max_ms` and a `slow` list for requests above one second.
-The list holds the first 100 requests by start time, with `start_ms` from the timed run start and `latency_ms`.
+All local results and logs stay in a private directory under `/var/tmp/wamn-h2r2l/`.
+On exit, the script stops its development processes and removes only its own containers and volumes.
+Each result includes the guest digests, edge selection, throughput, p50, p99, maximum latency, errors, and version conflicts.
+Throughput counts all completed attempts, including errors and conflicts.
 
-It writes `tests/bench/local-<CHART_VERSION>.json` and refuses an existing file.
-It prints guest SHA-256 digests and stores them as `http_route_sha256` and `materializer_sha256` in the result.
-The platform regression gate does not read local results.
-On exit, the script stops its development processes and removes only its own containers and their volumes.
-It prints the private temporary directory that holds logs and raw results.
+Use `--call get`, `--call update`, `--call query`, `--call receipt-query`, `--call create`, or `--call record_receipt` for one call type.
+`create` calls `supplier/create` with a unique name and key.
+`record_receipt` calls the base `/receiving/record_receipt` route with one line on a separate seeded order.
+Command runs reserve 50 one-line orders per worker per second before timing. The default mix reserves 48,000 additional orders.
+Each command consumes one order, and the run fails if its seed runs out before the deadline.
+`query` filters purchase orders to open status and follows pages of 20 rows.
+`receipt-query` follows pages of 20 receipts. The receipt query contract has no filter field.
 
-For a smoke run, use `tools/bench/local.sh --concurrency 4 --duration-secs 10`.
-Either override puts the result in a private directory under `$TMPDIR`, which defaults to `/var/tmp`.
+Use `--mix` for 70% reads, 20% updates, and 10% creates and commands in one run.
+Each worker cycles through 20 calls with a different starting offset.
+The read weights are 20% purchase-order get, 20% receipt get, 15% purchase-order query, and 15% receipt query.
+Supplier create and record receipt each receive 5%.
+The result reports every call type and the total.
+
+Use `--contention` to update four shared orders, or combine it with `--mix`.
+Workers keep independent expected versions, so conflicts trigger recovery reads.
+The result counts recovery reads as get calls and reports version conflicts apart from errors.
+Recovery reads add traffic beyond the requested mix weights.
+
+Before timing, isolated warm calls measure statements per request from `pg_stat_statements` deltas.
+Contention also calibrates a refused update and weights both statement paths by their observed counts.
+Mixed results weight these counts by actual calls. Calibration includes only application roles and excludes nested statements.
+These are `pg_stat_statements` counts. PostgreSQL does not count each execution of prepared transaction controls. Unexpected errors can affect these estimates.
+The result also retains database samples before and after the timed interval.
+For a short run, use `--concurrency 4 --duration-secs 10`.
 
 Run `tools/bench/local.sh --pg-floor` to measure PostgreSQL without a host, edge, broker, or collector.
 It uses the same PostgreSQL image, deployed parameters, and CPU assignments as the full local run.
@@ -72,8 +89,7 @@ Update clients use separate order slices, so no two clients update the same orde
 The finish payload uses a representative row value with its pre-update audit timestamps.
 The runner requires one changed row and one finished claim for every completed update.
 
-The floor result is `tests/bench/local-pg-<CHART_VERSION>.json`.
-It refuses an existing file, and either smoke override moves the result under `$TMPDIR`.
+The floor result is `local-pg-<CHART_VERSION>.json` in the private run directory.
 TPS means completed transactions per second.
 The p50 and p99 values come from [pgbench's completed-transaction logs](https://www.postgresql.org/docs/18/pgbench.html), in milliseconds.
 
@@ -90,12 +106,12 @@ It preserves route matching, authentication from memory, component invocation, g
 It calls the host directly, with the deployed collector active, for 60 seconds at concurrency 16.
 The database still participates, and the result reports the time in its related spans as `postgres_mean_ms`.
 
-The application result is `tests/bench/local-app-<CHART_VERSION>.json`.
+The application result is `local-app-<CHART_VERSION>.json` in the private run directory.
 It includes throughput, p50, p99, maximum latency, guest digests, and host span parts from the collector's local trace file.
 The deployed collector samples 10 percent of traces.
 The result records that percentage and `sampled_trace_count` for requests inside the measured interval.
 The runner stops the host and collector cleanly before it reads the file, so the collector flushes its buffered traces.
-It refuses an existing result, and either smoke override moves the result under `$TMPDIR`.
+
 
 Each span part excludes the union of its direct children's time intervals.
 `span_parts` groups these own times by span name, as [Named parts](#named-parts) does.
