@@ -48,6 +48,10 @@ It claims the idempotency key, locks the purchase order and lines, and compares 
 It inserts the receipt and lines, updates received quantities and order status, and stores the original result before commit.
 A refusal or failure before commit rolls back that item's business changes.
 
+The command locks the purchase order in its first statement.
+Its second statement validates the lines and performs the writes.
+This order lets validation see rows committed during the lock wait.
+
 The command accepts 1 through 100 outer items.
 Each item contains 1 through 100 receipt lines with distinct `purchase_order_line_id` values.
 The ingress body limit is 1 MiB.

@@ -209,34 +209,23 @@ manifest.Package {
                     parameters = [manifest.uuid("purchase_order_id")]
                     row = [manifest.text("status")]
                 }
-                validate_receipt_line = manifest.Statement("command/record_receipt", "validate_receipt_line") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("purchase_order_id"), manifest.json("line")]
-                    row = [manifest.nullable(manifest.text("outcome")), manifest.nullable(manifest.uuid("id"))]
-                }
-                insert_receipt = manifest.Statement("command/record_receipt", "insert_receipt") {
+                record_receipt = manifest.Statement("command/record_receipt", "record_receipt") {
                     fetch = "one"
                     parameters = [
                         manifest.uuid("purchase_order_id")
+                        manifest.json("line")
                         manifest.text("receipt_reference")
                         manifest.timestamptz("occurred_at")
                     ]
-                    row = [manifest.uuid("id")]
-                }
-                insert_receipt_line = manifest.Statement("command/record_receipt", "insert_receipt_line") {
-                    fetch = "bounded_list"
-                    parameters = [manifest.uuid("receipt_id"), manifest.json("line")]
-                    row = [manifest.uuid("id")]
-                }
-                update_purchase_order_line = manifest.Statement("command/record_receipt", "update_purchase_order_line") {
-                    fetch = "bounded_list"
-                    parameters = [manifest.uuid("purchase_order_id"), manifest.json("line")]
-                    row = [manifest.uuid("id")]
-                }
-                finish_purchase_order = manifest.Statement("command/record_receipt", "finish_purchase_order") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("purchase_order_id")]
-                    row = [manifest.text("status"), manifest.int32("row_version")]
+                    row = [
+                        manifest.text("outcome")
+                        manifest.nullable(manifest.uuid("id"))
+                        manifest.nullable(manifest.uuid("receipt_id"))
+                        manifest.nullable(manifest.text("status"))
+                        manifest.nullable(manifest.int32("row_version"))
+                        manifest.int64("inserted_line_count")
+                        manifest.int64("updated_line_count")
+                    ]
                 }
             }
         }

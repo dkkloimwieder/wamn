@@ -427,37 +427,22 @@ async fn record_receipt_in(
         ));
     }
 
-    let validation = generated::validate_receipt_line(
-        transaction,
-        WamnUuid(command.purchase_order_id.clone()),
-        Json(command.line_json.clone()),
-    )
-    .await
-    .map_err(|source| sql_error("validate record_receipt lines", source))?;
-    refuse_line_outcome(
-        validation.outcome.as_deref().ok_or_else(|| {
-            RecordReceiptError::internal(
-                "receiving.record_receipt line validator returned a null outcome",
-            )
-        })?,
-        validation.id,
-    )?;
-
     let receipt_constraints = AllowedConstraints::new(
         &["receipt_purchase_order_id_receipt_reference_key"],
         &[],
         &[],
         &[],
     );
-    let receipt_id = generated::insert_receipt(
+    let recorded = generated::record_receipt(
         transaction,
         WamnUuid(command.purchase_order_id.clone()),
+        Json(command.line_json),
         command.receipt_reference,
         TimestampTz(command.occurred_at),
     )
     .await
     .map_err(|source| {
-        let error = AccessError::from_statement("insert receipt", &source, receipt_constraints);
+        let error = AccessError::from_statement("record receipt", &source, receipt_constraints);
         if error.error_type() == AccessErrorType::UniqueViolation
             && error.constraint() == Some("receipt_purchase_order_id_receipt_reference_key")
         {
@@ -470,50 +455,43 @@ async fn record_receipt_in(
         } else {
             RecordReceiptError::from_classified_statement(
                 error.error_type(),
-                "insert receipt",
+                "record receipt",
                 source,
             )
         }
-    })?
-    .id
-    .0;
-
-    let inserted = generated::insert_receipt_line(
-        transaction,
-        WamnUuid(receipt_id.clone()),
-        Json(command.line_json.clone()),
-    )
-    .await
-    .map_err(|source| sql_error("insert receipt_line", source))?;
-    require_distinct_ids(
+    })?;
+    refuse_line_outcome(
+        recorded.outcome.as_deref().ok_or_else(|| {
+            RecordReceiptError::internal(
+                "receiving.record_receipt line validator returned a null outcome",
+            )
+        })?,
+        recorded.id,
+    )?;
+    require_row_count(
         "insert receipt_line",
-        inserted.iter().map(|row| row.id.0.as_str()),
+        recorded.inserted_line_count,
         command.line_count,
     )?;
-
-    let updated = generated::update_purchase_order_line(
-        transaction,
-        WamnUuid(command.purchase_order_id.clone()),
-        Json(command.line_json),
-    )
-    .await
-    .map_err(|source| sql_error("update purchase_order_line", source))?;
-    require_distinct_ids(
+    require_row_count(
         "update purchase_order_line",
-        updated.iter().map(|row| row.id.0.as_str()),
+        recorded.updated_line_count,
         command.line_count,
     )?;
-
-    let finished =
-        generated::finish_purchase_order(transaction, WamnUuid(command.purchase_order_id.clone()))
-            .await
-            .map_err(|source| sql_error("finish purchase_order", source))?;
-    let status = PurchaseOrderStatus::parse(&finished.status)?;
+    let receipt_id = recorded
+        .receipt_id
+        .ok_or_else(|| RecordReceiptError::internal("record_receipt omitted its receipt id"))?;
+    let status = PurchaseOrderStatus::parse(recorded.status.as_deref().ok_or_else(|| {
+        RecordReceiptError::internal("record_receipt omitted its purchase order status")
+    })?)?;
+    let row_version = recorded.row_version.ok_or_else(|| {
+        RecordReceiptError::internal("record_receipt omitted its purchase order revision")
+    })?;
     Ok(RecordReceiptResult {
-        receipt_id: receipt_id.into_boxed_str(),
+        receipt_id: receipt_id.0.into_boxed_str(),
         purchase_order_id: command.purchase_order_id.into_boxed_str(),
         purchase_order_status: status,
-        row_version: finished.row_version,
+        row_version,
     })
 }
 
@@ -552,14 +530,15 @@ fn sql_error(context: &'static str, source: StatementError) -> RecordReceiptErro
     RecordReceiptError::from_statement(context, source, AllowedConstraints::NONE)
 }
 
-fn require_distinct_ids<'a>(
+fn require_row_count(
     operation: &str,
-    ids: impl IntoIterator<Item = &'a str>,
+    actual: Option<i64>,
     expected: usize,
 ) -> Result<(), RecordReceiptError> {
-    let ids = ids.into_iter().collect::<BTreeSet<_>>();
-    let actual = ids.len();
-    if actual == expected {
+    let actual = actual.ok_or_else(|| {
+        RecordReceiptError::internal(format!("{operation} omitted its affected row count"))
+    })?;
+    if usize::try_from(actual).ok() == Some(expected) {
         Ok(())
     } else {
         Err(RecordReceiptError::internal(format!(

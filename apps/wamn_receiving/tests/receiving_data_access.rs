@@ -34,21 +34,10 @@ mod tests {
     const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
     /// The write log operation of `receiving.record_receipt`, without its version.
     const RECORD_RECEIPT_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
-    const FINISH_PURCHASE_ORDER_SQL: &str = include_str!(
-        "../../../apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql"
-    );
-    const INSERT_RECEIPT_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/record_receipt/insert_receipt.sql");
-    const INSERT_RECEIPT_LINE_SQL: &str =
-        include_str!("../../../apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql");
     const LOCK_PURCHASE_ORDER_SQL: &str =
         include_str!("../../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql");
-    const UPDATE_PURCHASE_ORDER_LINE_SQL: &str = include_str!(
-        "../../../apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql"
-    );
-    const VALIDATE_RECEIPT_LINE_SQL: &str = include_str!(
-        "../../../apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql"
-    );
+    const RECORD_RECEIPT_SQL: &str =
+        include_str!("../../../apps/wamn_receiving/command/record_receipt/record_receipt.sql");
     const OVERLAY_FIELDS_MIGRATION: &str = include_str!(
         "../../../apps/client_acme_receiving/migrations/0001_add_inspection_required.sql"
     );
@@ -1342,8 +1331,14 @@ mod tests {
             "quantity": "1.0",
             "location_id": location_id.hyphenated().to_string(),
         }]);
+        transaction
+            .query_one(LOCK_PURCHASE_ORDER_SQL, &[&purchase_order_id])
+            .await?;
         let validation = transaction
-            .query_one(VALIDATE_RECEIPT_LINE_SQL, &[&purchase_order_id, &line])
+            .query_one(
+                RECORD_RECEIPT_SQL,
+                &[&purchase_order_id, &line, &"location-lock", &Utc::now()],
+            )
             .await
             .context("validate lines while holding referenced location locks")?;
         ensure!(
@@ -1569,50 +1564,22 @@ mod tests {
                 "purchase_order_not_open",
             )));
         }
-        let validation = transaction
-            .query_one(
-                VALIDATE_RECEIPT_LINE_SQL,
-                &[&command.purchase_order_id, &line_json],
-            )
-            .await
-            .map_err(CommandAttemptError::Database)?;
-        let outcome = validation
-            .get::<_, Option<String>>("outcome")
-            .ok_or_else(|| {
-                CommandAttemptError::Internal("line validator returned null".to_owned())
-            })?;
-        if outcome != "ready" {
-            let code = match outcome.as_str() {
-                "purchase_order_line_not_found" => "purchase_order_line_not_found",
-                "purchase_order_line_mismatch" => "purchase_order_line_mismatch",
-                "location_not_found" => "location_not_found",
-                "quantity_exceeds_remaining" => "quantity_exceeds_remaining",
-                _ => {
-                    return Err(CommandAttemptError::Internal(format!(
-                        "undeclared line validation outcome {outcome}"
-                    )));
-                }
-            };
-            return Err(CommandAttemptError::Domain(DomainRefusal::with_id(
-                code,
-                validation.get("id"),
-            )));
-        }
         let occurred_at = DateTime::parse_from_rfc3339(&command.occurred_at)
             .map_err(|error| CommandAttemptError::Internal(error.to_string()))?
             .to_utc();
-        let receipt_id = match transaction
+        let recorded = match transaction
             .query_one(
-                INSERT_RECEIPT_SQL,
+                RECORD_RECEIPT_SQL,
                 &[
                     &command.purchase_order_id,
+                    &line_json,
                     &command.receipt_reference,
                     &occurred_at,
                 ],
             )
             .await
         {
-            Ok(row) => row.get::<_, Uuid>("id"),
+            Ok(row) => row,
             Err(source) => {
                 let database = source.as_db_error();
                 if database.is_some_and(|database| {
@@ -1627,41 +1594,42 @@ mod tests {
                 return Err(CommandAttemptError::Database(source));
             }
         };
-        let inserted = transaction
-            .query(INSERT_RECEIPT_LINE_SQL, &[&receipt_id, &line_json])
-            .await
-            .map_err(CommandAttemptError::Database)?
-            .len();
-        let updated = transaction
-            .query(
-                UPDATE_PURCHASE_ORDER_LINE_SQL,
-                &[&command.purchase_order_id, &line_json],
-            )
-            .await
-            .map_err(CommandAttemptError::Database)?
-            .len();
+        let outcome = recorded.get::<_, String>("outcome");
+        if outcome != "ready" {
+            let code = match outcome.as_str() {
+                "purchase_order_line_not_found" => "purchase_order_line_not_found",
+                "purchase_order_line_mismatch" => "purchase_order_line_mismatch",
+                "location_not_found" => "location_not_found",
+                "quantity_exceeds_remaining" => "quantity_exceeds_remaining",
+                _ => {
+                    return Err(CommandAttemptError::Internal(format!(
+                        "undeclared line validation outcome {outcome}"
+                    )));
+                }
+            };
+            return Err(CommandAttemptError::Domain(DomainRefusal::with_id(
+                code,
+                recorded.get("id"),
+            )));
+        }
+        let inserted = recorded.get::<_, i64>("inserted_line_count");
+        let updated = recorded.get::<_, i64>("updated_line_count");
         let expected = command.line.len();
-        if inserted != expected || updated != expected {
+        if usize::try_from(inserted).ok() != Some(expected)
+            || usize::try_from(updated).ok() != Some(expected)
+        {
             return Err(CommandAttemptError::Internal(format!(
                 "record_receipt affected inserted={inserted}, updated={updated}, expected={expected}"
             )));
         }
-        let finished = transaction
-            .query_one(FINISH_PURCHASE_ORDER_SQL, &[&command.purchase_order_id])
-            .await
-            .map_err(CommandAttemptError::Database)?;
-        let purchase_order_status = finished.get::<_, String>("status");
-        let row_version = finished.get::<_, i32>("row_version");
         Ok(ReceiptCommandResult {
-            receipt_id,
+            receipt_id: recorded.get("receipt_id"),
             purchase_order_id: command.purchase_order_id,
-            purchase_order_status,
-            row_version,
+            purchase_order_status: recorded.get("status"),
+            row_version: recorded.get("row_version"),
         })
     }
 
-    /// What a committed claim answers: its stored result for the same request
-    /// bytes, and `idempotency_conflict` for others.
     fn replay_result(
         row: &Row,
         request: &[u8],

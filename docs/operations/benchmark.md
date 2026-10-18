@@ -19,6 +19,7 @@ The Docker images `postgres:18`, `nats:2.10-alpine`, the collector image pinned 
 The script does not pull images.
 
 The script starts its own PostgreSQL, scheduler NATS, event NATS, and collector containers on free loopback ports.
+It runs `wamn build` for Receiving before it renders the broker permissions.
 
 At run time, it reads the event broker configuration and memory limit from `deploy/gcp/nats-jetstream.yaml`.
 It reads `max_slot_wal_keep_size`, `pg_stat_statements.max`, and `pg_stat_statements.track` from `deploy/gcp/cnpg-cluster.yaml`.
@@ -42,7 +43,8 @@ For a direct comparison, run `tools/bench/local.sh --no-edge --concurrency 16 --
 `--no-edge` bypasses nginx and does not require Helm or the nginx image.
 
 The script loads the 1000-order seed and runs get and update for 60 seconds each at concurrency 16.
-All local results and logs stay in a private directory under `/var/tmp/wamn-h2r2l/`.
+All local results and logs stay in a private directory under `TMPDIR`.
+If `TMPDIR` is unset, the script uses `/var/tmp`.
 On exit, the script stops its development processes and removes only its own containers and volumes.
 Each result includes the guest digests, edge selection, throughput, p50, p99, maximum latency, errors, and version conflicts.
 Throughput counts all completed attempts, including errors and conflicts.
@@ -63,12 +65,14 @@ Supplier create and record receipt each receive 5%.
 The result reports every call type and the total.
 
 Use `--contention` to update four shared orders, or combine it with `--mix`.
+Use `--call record_receipt --contention` to record receipts against four shared orders.
+Each shared receipt order has one line whose quantity covers the full run.
 Workers keep independent expected versions, so conflicts trigger recovery reads.
 The result counts recovery reads as get calls and reports version conflicts apart from errors.
 Recovery reads add traffic beyond the requested mix weights.
 
 Before timing, isolated warm calls measure statements per request from `pg_stat_statements` deltas.
-Contention also calibrates a refused update and weights both statement paths by their observed counts.
+Update contention also calibrates a refused update and weights both statement paths by their observed counts.
 Mixed results weight these counts by actual calls.
 Calibration includes application and HTTP-admitter roles, with `toplevel=true`.
 This includes the WAL-position query used for list ETags.

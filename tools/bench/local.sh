@@ -62,10 +62,10 @@ result_name="local-$version.json"
 if $pg_floor; then result_name="local-pg-$version.json"; fi
 if $app_path; then result_name="local-app-$version.json"; fi
 export CARGO_TARGET_DIR="$repository/target"
-export TMPDIR=/var/tmp
+export TMPDIR=${TMPDIR:-/var/tmp}
 umask 077
-mkdir -p /var/tmp/wamn-h2r2l
-work=$(mktemp -d /var/tmp/wamn-h2r2l/local.XXXXXXXX)
+mkdir -p "$TMPDIR"
+work=$(mktemp -d "$TMPDIR/local.XXXXXXXX")
 root="$work/env"
 mkdir "$root"
 output="$work/$result_name"
@@ -205,7 +205,7 @@ else
 fi
 sha256sum "$host_bin" >"$work/host.sha256"
 git rev-parse HEAD >"$work/revision"
-git diff -- tools/bench crates/platform/engine/src/engine.rs >"$work/source.diff"
+git diff -- tools/bench apps/wamn_receiving crates/platform/engine/src/engine.rs >"$work/source.diff"
 cargo build --offline --release -p wamn-ctl --bin wamn \
   -p wamn-identity --bin wamn-identity \
   -p wamn-cdc-reader --bin wamn-cdc-reader -p wamn-bench --bin wamn-bench
@@ -238,6 +238,11 @@ for name in ("ORG", "PROJECT", "ENVIRONMENT", "TENANT"):
 print(*values)
 IDENTITY
 )
+DATABASE_URL="postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
+  "$bin/wamn" build "$repository/apps/wamn_receiving" >"$work/build.log" 2>&1 || {
+    cat "$work/build.log" >&2
+    exit 1
+  }
 "$bin/examples/event_broker_files" "$work" "nats://127.0.0.1:$event_port" \
   "$org" "$project" "$environment" "$tenant" 1 \
   "$repository/apps/target/wamn/wamn_receiving/wamn.json" >"$work/event-broker.log"
@@ -421,7 +426,10 @@ calls=(get update)
 if $app_path; then calls=(app-path); fi
 if ((${#selected_calls[@]})); then calls=("${selected_calls[@]}"); fi
 bench_args=()
-if $contention; then calls=(update); bench_args+=(--contention); fi
+if $contention; then
+  if ((${#selected_calls[@]} == 0)); then calls=(update); fi
+  bench_args+=(--contention)
+fi
 if $mix; then calls=(mix); bench_args+=(--mix); fi
 for call in "${calls[@]}"; do
   graphs=(none)

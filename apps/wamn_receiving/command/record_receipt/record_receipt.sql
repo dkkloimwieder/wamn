@@ -86,9 +86,67 @@ violation AS (
         END,
         id
     LIMIT 1
+),
+validation AS MATERIALIZED (
+    SELECT
+        COALESCE(violation.outcome, 'ready') AS outcome,
+        violation.id
+    FROM (SELECT 1) AS singleton
+    LEFT JOIN violation ON TRUE
+),
+inserted_receipt AS (
+    INSERT INTO receipt (purchase_order_id, receipt_reference, occurred_at)
+    SELECT $1, $3, $4
+    FROM validation
+    WHERE validation.outcome = 'ready'
+    RETURNING id
+),
+inserted_line AS (
+    INSERT INTO receipt_line (receipt_id, purchase_order_line_id, quantity, location_id)
+    SELECT inserted_receipt.id, requested.purchase_order_line_id, requested.quantity, requested.location_id
+    FROM requested
+    CROSS JOIN inserted_receipt
+    RETURNING id
+),
+updated_line AS (
+    UPDATE purchase_order_line
+    SET received_quantity = purchase_order_line.received_quantity + requested.quantity
+    FROM requested
+    CROSS JOIN inserted_receipt
+    CROSS JOIN (SELECT count(*) FROM inserted_line) AS written
+    WHERE purchase_order_line.id = requested.purchase_order_line_id
+        AND purchase_order_line.purchase_order_id = $1
+        AND written.count = (SELECT count(*) FROM requested)
+    RETURNING purchase_order_line.id, purchase_order_line.received_quantity
+),
+final_state AS (
+    SELECT bool_and(
+        COALESCE(updated_line.received_quantity, purchase_order_line.received_quantity)
+            = purchase_order_line.ordered_quantity
+    ) AS complete
+    FROM purchase_order_line
+    LEFT JOIN updated_line ON updated_line.id = purchase_order_line.id
+    WHERE purchase_order_line.purchase_order_id = $1
+),
+finished AS (
+    UPDATE purchase_order
+    SET
+        status = CASE WHEN COALESCE(final_state.complete, false) THEN 'complete' ELSE 'open' END,
+        row_version = purchase_order.row_version + 1
+    FROM final_state
+    CROSS JOIN inserted_receipt
+    WHERE purchase_order.id = $1
+        AND purchase_order.status = 'open'
+    RETURNING purchase_order.status, purchase_order.row_version
 )
 SELECT
-    COALESCE(violation.outcome, 'ready') AS outcome,
-    violation.id
-FROM (SELECT 1) AS singleton
-LEFT JOIN violation ON TRUE;
+    validation.outcome,
+    validation.id,
+    inserted_receipt.id AS receipt_id,
+    finished.status,
+    finished.row_version,
+    (SELECT count(*) FROM inserted_line) AS inserted_line_count,
+    (SELECT count(*) FROM updated_line) AS updated_line_count
+FROM validation
+LEFT JOIN inserted_receipt ON TRUE
+LEFT JOIN finished ON TRUE;

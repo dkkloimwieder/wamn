@@ -38,7 +38,7 @@ struct Args {
     pat_file: PathBuf,
     #[arg(long, value_enum)]
     call: Call,
-    /// Share four orders between all update workers.
+    /// Share four orders between all update or receipt workers.
     #[arg(long)]
     contention: bool,
     /// Interleave 70% reads, 20% updates, and 10% creates and commands.
@@ -294,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
             &format!("BENCH-{started_at_unix}-"),
             count,
             args.call == Call::AcmeRecordReceipt,
+            args.contention,
         )
         .await?
     } else {
@@ -326,7 +327,7 @@ async fn main() -> anyhow::Result<()> {
     // SQL in a concurrent mix to an invented route. Raw deltas remain in postgres.
     let kinds = if args.mix {
         MIX_CALLS.to_vec()
-    } else if args.contention {
+    } else if args.contention && args.call == Call::Update {
         vec![Call::Get, args.call]
     } else {
         vec![args.call]
@@ -350,6 +351,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     if args.contention
+        && (args.mix || args.call == Call::Update)
         && let Some(database) = &database
     {
         // Measure the refused update path too: it rolls back instead of
@@ -831,6 +833,7 @@ async fn seed_receipts(
     prefix: &str,
     count: u64,
     acme: bool,
+    contention: bool,
 ) -> anyhow::Result<Vec<Receipt>> {
     database
         .batch_execute(&format!(
@@ -847,6 +850,8 @@ async fn seed_receipts(
         .await
         .context("seed the item, location and supplier")?;
     let count = i32::try_from(count).context("the seed count fits an int4")?;
+    let orders = if contention { 4 } else { count };
+    let quantity = if contention { count } else { 1 };
     let extra_columns = if acme {
         ", acme_inspection_required, acme_quality_status"
     } else {
@@ -864,10 +869,10 @@ async fn seed_receipts(
                    RETURNING id) \
                  INSERT INTO receiving.purchase_order_line (id, purchase_order_id, line_number, \
                    item_id, ordered_quantity, received_quantity) \
-                 SELECT gen_random_uuid(), id, 1, '{SEED_ITEM}', 1, 0 FROM orders \
+                 SELECT gen_random_uuid(), id, 1, '{SEED_ITEM}', $3::int4, 0 FROM orders \
                  RETURNING purchase_order_id::text, id::text"
             ),
-            &[&prefix, &count],
+            &[&prefix, &orders, &quantity],
         )
         .await
         .context("seed the purchase orders")?;
@@ -877,6 +882,8 @@ async fn seed_receipts(
         .context("commit the receipt seed")?;
     Ok(rows
         .iter()
+        .cycle()
+        .take(usize::try_from(count)?)
         .map(|row| Receipt {
             purchase_order_id: row.get(0),
             line_id: row.get(1),
