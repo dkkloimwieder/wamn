@@ -30,7 +30,7 @@ type WasmResult<T> = wash_runtime::wasmtime::Result<T>;
 
 /// Rows one fetch reads from the stream's cursor. The host holds at most one
 /// fetched batch and one batch in flight to the guest.
-const STREAM_BATCH_ROWS: u32 = 500;
+const STREAM_BATCH_ROWS: usize = 500;
 
 /// The cursor of a stream. Each stream has its own transaction, so one name
 /// is enough.
@@ -145,7 +145,7 @@ pub(super) async fn run_stream<T: 'static + Send>(
 
 /// How a stream's reads ended when no error stopped them.
 enum Pumped {
-    /// The cursor returned an empty batch: every row reached the reader.
+    /// The cursor returned a partial batch: every row reached the reader.
     Ended,
     /// The reader dropped the stream before the last row.
     Left,
@@ -246,7 +246,14 @@ async fn pump(
             },
         )?;
         permit.send(batch.rows);
+        if is_last_batch(fetched.len()) {
+            return Ok(Pumped::Ended);
+        }
     }
+}
+
+fn is_last_batch(row_count: usize) -> bool {
+    row_count < STREAM_BATCH_ROWS
 }
 
 /// The guest's read end of a stream: each fetched batch, in order.
@@ -279,5 +286,19 @@ impl<D> StreamProducer<D> for RowBatches {
             Poll::Pending if finish => Poll::Ready(Ok(StreamResult::Cancelled)),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_last_batch;
+
+    #[test]
+    fn empty_and_partial_batches_end_but_full_batches_need_another_fetch() {
+        assert!(is_last_batch(0));
+        assert!(is_last_batch(1));
+        assert!(is_last_batch(21));
+        assert!(is_last_batch(499));
+        assert!(!is_last_batch(500));
     }
 }
