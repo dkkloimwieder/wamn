@@ -1080,6 +1080,28 @@ mod tests {
             ],
         };
 
+        for quantities in [["2.00", "3.00"], ["6.00", "5.00"]] {
+            expect_domain_refusal(
+                client,
+                ReceiptCommand {
+                    idempotency_key: format!("duplicate-line-{}", quantities[0]),
+                    line: quantities
+                        .into_iter()
+                        .map(|quantity| ReceiptCommandLine {
+                            purchase_order_line_id: first_line_id,
+                            quantity: quantity.to_owned(),
+                            location_id,
+                        })
+                        .collect(),
+                    ..base.clone()
+                },
+                "duplicate_line",
+                first_line_id,
+                second_line_id,
+            )
+            .await?;
+        }
+
         assert_location_delete_is_blocked(
             url,
             client,
@@ -1601,6 +1623,7 @@ mod tests {
                 "purchase_order_line_mismatch" => "purchase_order_line_mismatch",
                 "location_not_found" => "location_not_found",
                 "quantity_exceeds_remaining" => "quantity_exceeds_remaining",
+                "duplicate_line" => "duplicate_line",
                 _ => {
                     return Err(CommandAttemptError::Internal(format!(
                         "undeclared line validation outcome {outcome}"
@@ -1710,6 +1733,7 @@ mod tests {
         let expected_id = match expected {
             "purchase_order_line_not_found"
             | "purchase_order_line_mismatch"
+            | "duplicate_line"
             | "quantity_exceeds_remaining" => {
                 command.line.first().map(|line| line.purchase_order_line_id)
             }

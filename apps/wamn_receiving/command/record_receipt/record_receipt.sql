@@ -2,7 +2,8 @@ WITH requested AS (
     SELECT
         purchase_order_line_id,
         quantity::numeric AS quantity,
-        location_id
+        location_id,
+        count(*) OVER (PARTITION BY purchase_order_line_id) AS line_count
     FROM jsonb_to_recordset($2::jsonb) AS input (
         purchase_order_line_id uuid,
         quantity text,
@@ -35,6 +36,7 @@ fact AS (
     SELECT
         requested.purchase_order_line_id,
         requested.quantity,
+        requested.line_count,
         locked.id AS locked_id,
         locked.purchase_order_id AS line_purchase_order_id,
         locked.ordered_quantity,
@@ -56,6 +58,8 @@ classified AS (
                 THEN 'purchase_order_line_mismatch'
             WHEN locked_location_id IS NULL
                 THEN 'location_not_found'
+            WHEN line_count > 1
+                THEN 'duplicate_line'
             WHEN quantity > ordered_quantity - received_quantity
                 THEN 'quantity_exceeds_remaining'
             ELSE NULL
@@ -67,6 +71,8 @@ classified AS (
                 THEN purchase_order_line_id
             WHEN locked_location_id IS NULL
                 THEN requested_location_id
+            WHEN line_count > 1
+                THEN purchase_order_line_id
             WHEN quantity > ordered_quantity - received_quantity
                 THEN purchase_order_line_id
             ELSE NULL
@@ -82,7 +88,8 @@ violation AS (
             WHEN 'purchase_order_line_not_found' THEN 1
             WHEN 'purchase_order_line_mismatch' THEN 2
             WHEN 'location_not_found' THEN 3
-            WHEN 'quantity_exceeds_remaining' THEN 4
+            WHEN 'duplicate_line' THEN 4
+            WHEN 'quantity_exceeds_remaining' THEN 5
         END,
         id
     LIMIT 1

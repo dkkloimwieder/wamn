@@ -4,7 +4,6 @@
 //! transaction. The command inserts the receipt first, takes its id from
 //! `RETURNING`, and binds it into the receipt lines.
 
-use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -365,19 +364,12 @@ fn prepare(command: &RecordReceiptValue) -> Result<PreparedCommand, RecordReceip
     let purchase_order_id = canonical_uuid(&command.purchase_order_id, "value.purchase_order_id")?;
     let occurred_at = canonical_timestamp(&command.occurred_at)?;
 
-    let mut seen = BTreeSet::new();
     let mut lines = Vec::with_capacity(command.line.len());
     for line in &command.line {
         let purchase_order_line_id = canonical_uuid(
             &line.purchase_order_line_id,
             "value.line[].purchase_order_line_id",
         )?;
-        if !seen.insert(purchase_order_line_id) {
-            return Err(RecordReceiptError::invalid(
-                format!("duplicate purchase_order_line_id {purchase_order_line_id}"),
-                "value.line[].purchase_order_line_id",
-            ));
-        }
         let location_id = canonical_uuid(&line.location_id, "value.line[].location_id")?;
         let quantity = canonical_positive_numeric(&line.quantity)?;
         lines.push((purchase_order_line_id, quantity, location_id));
@@ -509,6 +501,10 @@ fn refuse_line_outcome(outcome: &str, id: Option<WamnUuid>) -> Result<(), Record
         "location_not_found" => (
             RecordReceiptErrorType::LocationNotFound,
             "value.line[].location_id",
+        ),
+        "duplicate_line" => (
+            RecordReceiptErrorType::InvalidInput,
+            "value.line[].purchase_order_line_id",
         ),
         "quantity_exceeds_remaining" => (
             RecordReceiptErrorType::QuantityExceedsRemaining,
@@ -773,11 +769,6 @@ mod tests {
                 RecordReceiptErrorType::InvalidInput
             );
         }
-        let duplicate = command(vec![line(FIRST_LINE_ID, "1.0"), line(FIRST_LINE_ID, "2.0")]);
-        assert_eq!(
-            prepare(&duplicate).unwrap_err().error_type(),
-            RecordReceiptErrorType::InvalidInput
-        );
         for quantity in ["", ".", "0", "0.0000", "-1", "1e2", "1,5"] {
             assert_eq!(
                 prepare(&command(vec![line(FIRST_LINE_ID, quantity)]))
@@ -790,5 +781,14 @@ mod tests {
             prepare(&command(Vec::new())).unwrap_err().error_type(),
             RecordReceiptErrorType::InvalidInput
         );
+    }
+
+    #[test]
+    fn duplicate_line_maps_to_typed_invalid_input() {
+        let error = refuse_line_outcome("duplicate_line", Some(WamnUuid(FIRST_LINE_ID.into())))
+            .unwrap_err();
+        assert_eq!(error.error_type(), RecordReceiptErrorType::InvalidInput);
+        assert_eq!(error.field(), Some("value.line[].purchase_order_line_id"));
+        assert_eq!(error.id(), Some(FIRST_LINE_ID));
     }
 }
