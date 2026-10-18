@@ -106,7 +106,7 @@ pub trait ApplicationHost {
     /// The loaded application of the carried release, over its complete component list.
     fn released_application(
         &self,
-        components: &[AdmittedComponent],
+        components: &Arc<[AdmittedComponent]>,
     ) -> impl Future<Output = anyhow::Result<Arc<NativeApplication<Self::Policy>>>> + Send;
 }
 

@@ -1516,3 +1516,91 @@ fn named_instances_without_released_sets_are_refused() {
         "{error:#}"
     );
 }
+
+#[test]
+fn released_component_validation_reuses_only_the_immutable_list() {
+    let bytes = component_bytes(ROOT, Case::Success);
+    let mut component = fact(ROOT, &bytes, true);
+    component
+        .operations
+        .get_mut(ROOT)
+        .unwrap()
+        .committed_result_schema = Some(wamn_catalog::ComponentSchema {
+        schema: serde_json::json!({"type": "number", "minimum": -0.0}),
+    });
+    let served = ServingComponent::project(&component, Vec::new()).unwrap();
+    let manifest = ServingManifest {
+        format_version: SERVING_MANIFEST_FORMAT_VERSION,
+        release: ServingRelease {
+            packages: BTreeSet::from([PackageCoordinate::new("root", "1.0.0").unwrap()]),
+        },
+        components: BTreeSet::from([served]),
+        routes: BTreeSet::new(),
+        attachments: BTreeMap::new(),
+        workflow: wamn_catalog::WorkflowSection::default(),
+        host_routes: BTreeSet::new(),
+    };
+    let release = Arc::new(
+        LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "validation fixture",
+            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test"),
+        )
+        .unwrap(),
+    );
+    let components: Arc<[AdmittedComponent]> = Arc::from([component]);
+    let validate = super::super::validate_released_components;
+    validate(&release, &components, None).unwrap();
+    let retained = Arc::clone(&components);
+    validate(&release, &components, Some((&release, &retained))).unwrap();
+    let mut changed = Arc::clone(&components);
+    Arc::make_mut(&mut changed)[0].component_digest = format!("sha256:{}", "b".repeat(64));
+    assert_eq!(
+        validate(&release, &changed, Some((&release, &retained)))
+            .unwrap_err()
+            .to_string(),
+        "component-not-in-carried-release"
+    );
+    let mut changed = Arc::clone(&components);
+    Arc::make_mut(&mut changed)[0]
+        .operations
+        .get_mut(ROOT)
+        .unwrap()
+        .committed_result_schema = Some(wamn_catalog::ComponentSchema {
+        schema: serde_json::json!({"type": "number", "minimum": 0.0}),
+    });
+    assert_eq!(
+        validate(&release, &changed, Some((&release, &retained)))
+            .unwrap_err()
+            .to_string(),
+        "component-not-in-carried-release"
+    );
+    let equal = Arc::from(components.to_vec());
+    validate(&release, &equal, Some((&release, &retained))).unwrap();
+    let mut changed = Arc::clone(&components);
+    Arc::make_mut(&mut changed)[0]
+        .imports
+        .push("other:import/api@1.0.0".into());
+    assert_eq!(
+        validate(&release, &changed, Some((&release, &retained)))
+            .unwrap_err()
+            .to_string(),
+        "native-release-component-closure-mismatch"
+    );
+    let mut next_manifest = manifest;
+    next_manifest.components.clear();
+    let other_release = Arc::new(
+        LoadedRelease::load_canonical_bytes(
+            &next_manifest.canonical_bytes(),
+            "another release",
+            wamn_engine::release_manifest::ReleaseScope::new("tenant-a", "test"),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        validate(&other_release, &components, Some((&release, &retained)))
+            .unwrap_err()
+            .to_string(),
+        "component-not-in-carried-release"
+    );
+}

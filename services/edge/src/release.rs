@@ -38,7 +38,7 @@ use crate::grants::Grants;
 pub struct EdgeRelease {
     bundle_digest: String,
     release: Arc<LoadedRelease>,
-    components: Vec<AdmittedComponent>,
+    components: Arc<[AdmittedComponent]>,
     /// The verified bytes of each component, in the order of `components`.
     bodies: Vec<Vec<u8>>,
     grants: Grants,
@@ -110,7 +110,7 @@ impl EdgeRelease {
         Ok(Self {
             bundle_digest: bundle_digest.to_owned(),
             release: Arc::new(release),
-            components,
+            components: components.into(),
             bodies,
             grants,
             ingress,
@@ -128,7 +128,7 @@ impl EdgeRelease {
     }
 
     /// The admitted component facts, one per manifest component.
-    pub fn components(&self) -> &[AdmittedComponent] {
+    pub fn components(&self) -> &Arc<[AdmittedComponent]> {
         &self.components
     }
 

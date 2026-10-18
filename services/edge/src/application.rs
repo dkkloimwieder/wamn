@@ -68,7 +68,7 @@ impl ApplicationHost for EdgeApplication {
     /// The application loaded at start, when `components` is its closure.
     fn released_application(
         &self,
-        components: &[AdmittedComponent],
+        components: &Arc<[AdmittedComponent]>,
     ) -> impl Future<Output = anyhow::Result<Arc<NativeApplication<EdgePolicy>>>> + Send {
         let loaded = &self.application.workload.facts_by_component_id;
         let closure = components.len() == loaded.len()

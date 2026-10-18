@@ -153,7 +153,7 @@ async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
         release.release().release().manifest_digest,
         release.release().manifest().digest()
     );
-    assert_eq!(release.components(), [fact()]);
+    assert_eq!(release.components().as_ref(), [fact()]);
     assert_eq!(release.ingress(), INGRESS);
     assert_eq!(
         release

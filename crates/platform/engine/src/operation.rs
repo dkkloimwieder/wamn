@@ -41,7 +41,7 @@ pub use bindings::wamn::node::types as node_types;
 /// The application that one operation call runs in.
 pub enum OperationClosure<'a, P: InvocationPolicy> {
     /// The carried release, loaded once from its complete component list.
-    Released(&'a [AdmittedComponent]),
+    Released(&'a Arc<[AdmittedComponent]>),
     /// A candidate application that the caller loaded and unbinds.
     Candidate(&'a Arc<NativeApplication<P>>),
 }

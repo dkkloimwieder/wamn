@@ -264,9 +264,43 @@ pub struct OperationHost {
     schema: Option<String>,
     owner_prefix: String,
     warm_reuse: WarmReuse,
-    native: tokio::sync::OnceCell<Arc<NativeApplication<NativePolicy>>>,
-    /// The complete release component list a route loads, read once.
-    components: tokio::sync::OnceCell<Arc<[AdmittedComponent]>>,
+    native: tokio::sync::OnceCell<ReleasedApplication>,
+}
+
+/// Keep the validated input alive so pointer identity proves immutable reuse.
+struct ReleasedApplication {
+    release: Arc<LoadedRelease>,
+    components: Arc<[AdmittedComponent]>,
+    application: Arc<NativeApplication<NativePolicy>>,
+}
+
+fn validate_released_components(
+    release: &Arc<LoadedRelease>,
+    components: &Arc<[AdmittedComponent]>,
+    loaded: Option<(&Arc<LoadedRelease>, &Arc<[AdmittedComponent]>)>,
+) -> anyhow::Result<()> {
+    if loaded.is_some_and(|(loaded_release, loaded)| {
+        Arc::ptr_eq(loaded_release, release) && Arc::ptr_eq(loaded, components)
+    }) {
+        return Ok(());
+    }
+    for component in components.iter() {
+        validate_component_in_release(release, component)?;
+    }
+    if let Some((loaded_release, loaded)) = loaded {
+        anyhow::ensure!(
+            Arc::ptr_eq(loaded_release, release),
+            "native-release-identity-mismatch"
+        );
+        anyhow::ensure!(
+            components.len() == loaded.len()
+                && components
+                    .iter()
+                    .all(|fact| loaded.iter().any(|loaded| loaded == fact)),
+            "native-release-component-closure-mismatch"
+        );
+    }
+    Ok(())
 }
 
 impl fmt::Debug for OperationHost {
@@ -326,7 +360,6 @@ impl OperationHost {
             owner_prefix: scope.owner_prefix,
             warm_reuse: scope.warm_reuse,
             native: tokio::sync::OnceCell::new(),
-            components: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -388,25 +421,34 @@ impl OperationHost {
     }
 
     pub async fn release_components(&self) -> anyhow::Result<Arc<[AdmittedComponent]>> {
-        self.components
+        let loaded = self
+            .native
             .get_or_try_init(|| async {
-                self.postgres
+                let components = self
+                    .postgres
                     .resolve_release_components(
                         &self.project,
                         &self.release.scope().tenant_id,
                         &self.release.scope().environment,
                         self.release.release().manifest_digest.as_str(),
                     )
-                    .await
-                    .map(Arc::from)
+                    .await?;
+                self.load_released_application(Arc::from(components)).await
             })
-            .await
-            .map(Arc::clone)
+            .await?;
+        anyhow::ensure!(
+            Arc::ptr_eq(&loaded.release, &self.release),
+            "native-release-identity-mismatch"
+        );
+        Ok(Arc::clone(&loaded.components))
     }
 
     /// Load the released application and initialize each component without
     /// invoking its handler, so the first request finds it resident.
-    pub async fn prepare_released(&self, components: &[AdmittedComponent]) -> anyhow::Result<()> {
+    pub async fn prepare_released(
+        &self,
+        components: &Arc<[AdmittedComponent]>,
+    ) -> anyhow::Result<()> {
         let application = self.released_application(components).await?;
         for id in application.workload.facts_by_component_id.keys() {
             let target = application
@@ -425,44 +467,54 @@ impl OperationHost {
 
     pub async fn released_application(
         &self,
-        components: &[AdmittedComponent],
+        components: &Arc<[AdmittedComponent]>,
     ) -> anyhow::Result<Arc<NativeApplication<NativePolicy>>> {
-        for component in components {
-            validate_component_in_release(&self.release, component)?;
-        }
-        let application = self
+        let loaded = self
             .native
-            .get_or_try_init(|| async {
-                let pulls = components.iter().cloned().map(|fact| {
-                    let source = self.source.clone();
-                    async move {
-                        let bytes = source
-                            .pull_verified(&fact)
-                            .instrument(tracing::info_span!(
-                                "wamn.component.pull",
-                                wamn.component_digest = %fact.component_digest,
-                            ))
-                            .await?;
-                        anyhow::Ok(NativeComponent { fact, bytes })
-                    }
-                });
-                let mut pulls = stream::iter(pulls).buffered(COMPONENT_FETCH_CONCURRENCY);
-                let mut native = Vec::with_capacity(components.len());
-                while let Some(component) = pulls.next().await {
-                    native.push(component?);
-                }
-                self.load_application(native).await
-            })
+            .get_or_try_init(|| self.load_released_application(Arc::clone(components)))
             .await?;
-        let loaded = &application.workload.facts_by_component_id;
+        validate_released_components(
+            &self.release,
+            components,
+            Some((&loaded.release, &loaded.components)),
+        )?;
+        Ok(Arc::clone(&loaded.application))
+    }
+
+    async fn load_released_application(
+        &self,
+        components: Arc<[AdmittedComponent]>,
+    ) -> anyhow::Result<ReleasedApplication> {
+        validate_released_components(&self.release, &components, None)?;
+        let pulls = components.iter().cloned().map(|fact| {
+            let source = self.source.clone();
+            async move {
+                let bytes = source
+                    .pull_verified(&fact)
+                    .instrument(tracing::info_span!(
+                        "wamn.component.pull",
+                        wamn.component_digest = %fact.component_digest,
+                    ))
+                    .await?;
+                anyhow::Ok(NativeComponent { fact, bytes })
+            }
+        });
+        let mut pulls = stream::iter(pulls).buffered(COMPONENT_FETCH_CONCURRENCY);
+        let mut native = Vec::with_capacity(components.len());
+        while let Some(component) = pulls.next().await {
+            native.push(component?);
+        }
+        drop(pulls);
+        let application = self.load_application(native).await?;
         anyhow::ensure!(
-            components.len() == loaded.len()
-                && components
-                    .iter()
-                    .all(|fact| loaded.values().any(|loaded| loaded == fact)),
+            components.len() == application.workload.facts_by_component_id.len(),
             "native-release-component-closure-mismatch"
         );
-        Ok(Arc::clone(application))
+        Ok(ReleasedApplication {
+            release: Arc::clone(&self.release),
+            components,
+            application,
+        })
     }
 
     pub async fn load_application(
@@ -534,7 +586,7 @@ impl ApplicationHost for OperationHost {
 
     fn released_application(
         &self,
-        components: &[AdmittedComponent],
+        components: &Arc<[AdmittedComponent]>,
     ) -> impl Future<Output = anyhow::Result<Arc<NativeApplication<NativePolicy>>>> + Send {
         OperationHost::released_application(self, components)
     }
