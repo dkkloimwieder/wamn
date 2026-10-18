@@ -216,9 +216,10 @@ struct Samples {
 #[derive(Debug, Serialize)]
 struct Sample {
     database: DatabaseStats,
-    /// The ten statements with the most total time, or `None` when
-    /// `pg_stat_statements` cannot be read.
-    statements: Option<Vec<StatementStats>>,
+    /// Full statement rows, including nested statements and their role.
+    statements: Option<Vec<Value>>,
+    /// Cluster-wide WAL, checkpointer, and WAL I/O counters.
+    cluster: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     statements_error: Option<String>,
 }
@@ -230,16 +231,6 @@ struct DatabaseStats {
     blks_hit: i64,
     blks_read: i64,
     numbackends: i32,
-}
-
-/// One row of `pg_stat_statements`.
-#[derive(Debug, Serialize)]
-struct StatementStats {
-    query: String,
-    calls: i64,
-    total_exec_time_ms: f64,
-    mean_exec_time_ms: f64,
-    rows: i64,
 }
 
 #[tokio::main]
@@ -385,7 +376,10 @@ async fn main() -> anyhow::Result<()> {
         *order = warmed.clone();
     }
     let before = match &database {
-        Some(database) => Some(sample(database).await?),
+        Some(database) => {
+            database.simple_query("SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))").await?;
+            Some(sample(database).await?)
+        }
         None => None,
     };
     let started_at_unix_nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -699,7 +693,7 @@ async fn run_worker(
 
 async fn statement_calls(database: &tokio_postgres::Client) -> anyhow::Result<i64> {
     Ok(database.query_one(
-        "SELECT coalesce(sum(s.calls), 0)::bigint FROM pg_stat_statements s JOIN pg_roles r ON r.oid = s.userid WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND s.toplevel AND NOT r.rolsuper AND pg_has_role(r.oid, 'wamn_app', 'MEMBER')",
+        "SELECT coalesce(sum(s.calls), 0)::bigint FROM pg_stat_statements s JOIN pg_roles r ON r.oid = s.userid WHERE s.dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) AND s.toplevel AND NOT r.rolsuper AND (pg_has_role(r.oid, 'wamn_app', 'MEMBER') OR pg_has_role(r.oid, 'wamn_http_admitter', 'MEMBER'))",
         &[],
     ).await?.get(0))
 }
@@ -826,6 +820,8 @@ async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
         .await
         .context("connect to --db-url")?;
     tokio::spawn(connection);
+    // This connection observes and seeds. Application connections keep sampling.
+    client.batch_execute("SET auto_explain.sample_rate=0; SET log_transaction_sample_rate=0; SET log_statement_sample_rate=0").await?;
     Ok(client)
 }
 
@@ -900,9 +896,10 @@ async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
         .context("read pg_stat_database")?;
     let statements = database
         .query(
-            "SELECT query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements \
+            "SELECT (to_jsonb(s) || jsonb_build_object('role', r.rolname))::text \
+             FROM pg_stat_statements s JOIN pg_roles r ON r.oid = s.userid \
              WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
-             ORDER BY total_exec_time DESC LIMIT 10",
+             ORDER BY total_exec_time DESC",
             &[],
         )
         .await;
@@ -910,14 +907,8 @@ async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
         Ok(rows) => (
             Some(
                 rows.iter()
-                    .map(|row| StatementStats {
-                        query: row.get(0),
-                        calls: row.get(1),
-                        total_exec_time_ms: row.get(2),
-                        mean_exec_time_ms: row.get(3),
-                        rows: row.get(4),
-                    })
-                    .collect(),
+                    .map(|row| serde_json::from_str::<Value>(row.get::<_, &str>(0)))
+                    .collect::<Result<Vec<_>, _>>()?,
             ),
             None,
         ),
@@ -930,7 +921,12 @@ async fn sample(database: &tokio_postgres::Client) -> anyhow::Result<Sample> {
             ),
         ),
     };
+    let cluster = database
+        .query_one(include_str!("../database-snapshot.sql"), &[])
+        .await
+        .context("read cluster counters")?;
     Ok(Sample {
+        cluster: serde_json::from_str(cluster.get::<_, &str>(0))?,
         database: DatabaseStats {
             xact_commit: row.get(0),
             blks_hit: row.get(1),
@@ -987,9 +983,7 @@ fn ratio(errors: u64, calls: usize) -> f64 {
 mod tests {
     use serde_json::json;
 
-    use super::{
-        Call, DatabaseStats, Measured, Sample, Samples, StatementStats, mix_call, percentile,
-    };
+    use super::{Call, DatabaseStats, Measured, Sample, Samples, mix_call, percentile};
 
     #[test]
     fn mix_weights_hold_for_every_worker_offset() {
@@ -1045,18 +1039,17 @@ mod tests {
         let samples = Samples {
             before: Sample {
                 database: database(),
-                statements: Some(vec![StatementStats {
-                    query: "SELECT 1".to_owned(),
-                    calls: 2,
-                    total_exec_time_ms: 1.5,
-                    mean_exec_time_ms: 0.75,
-                    rows: 2,
-                }]),
+                cluster: json!({"wal": {"wal_bytes": 42}}),
+                statements: Some(vec![
+                    json!({"query": "SELECT 1", "calls": 2, "total_exec_time": 1.5,
+                    "mean_exec_time": 0.75, "rows": 2, "wal_bytes": 42}),
+                ]),
                 statements_error: None,
             },
             after: Sample {
                 database: database(),
                 statements: None,
+                cluster: json!({}),
                 statements_error: Some("relation does not exist".to_owned()),
             },
         };
@@ -1065,12 +1058,14 @@ mod tests {
             json!({
                 "before": {
                     "database": {"xact_commit": 10, "blks_hit": 20, "blks_read": 3, "numbackends": 4},
-                    "statements": [{"query": "SELECT 1", "calls": 2, "total_exec_time_ms": 1.5,
-                                    "mean_exec_time_ms": 0.75, "rows": 2}],
+                    "cluster": {"wal": {"wal_bytes": 42}},
+                    "statements": [{"query": "SELECT 1", "calls": 2, "total_exec_time": 1.5,
+                                    "mean_exec_time": 0.75, "rows": 2, "wal_bytes": 42}],
                 },
                 "after": {
                     "database": {"xact_commit": 10, "blks_hit": 20, "blks_read": 3, "numbackends": 4},
                     "statements": null,
+                    "cluster": {},
                     "statements_error": "relation does not exist",
                 },
             })

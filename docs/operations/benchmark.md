@@ -48,6 +48,7 @@ Each result includes the guest digests, edge selection, throughput, p50, p99, ma
 Throughput counts all completed attempts, including errors and conflicts.
 
 Use `--call get`, `--call update`, `--call query`, `--call receipt-query`, `--call create`, or `--call record_receipt` for one call type.
+Use `--call app-path` for receipt get with the full fixture and the default edge path.
 `create` calls `supplier/create` with a unique name and key.
 `record_receipt` calls the base `/receiving/record_receipt` route with one line on a separate seeded order.
 Command runs reserve 50 one-line orders per worker per second before timing. The default mix reserves 48,000 additional orders.
@@ -68,13 +69,51 @@ Recovery reads add traffic beyond the requested mix weights.
 
 Before timing, isolated warm calls measure statements per request from `pg_stat_statements` deltas.
 Contention also calibrates a refused update and weights both statement paths by their observed counts.
-Mixed results weight these counts by actual calls. Calibration includes only application roles and excludes nested statements.
+Mixed results weight these counts by actual calls.
+Calibration includes application and HTTP-admitter roles, with `toplevel=true`.
+This includes the WAL-position query used for list ETags.
 These are `pg_stat_statements` counts. PostgreSQL does not count each execution of prepared transaction controls. Unexpected errors can affect these estimates.
+Connection initialization and cursor cancellation can also affect these estimates.
 The result also retains database samples before and after the timed interval.
 For a short run, use `--concurrency 4 --duration-secs 10`.
 
+Repeat `--call` to measure several call types on one local database, for example `--call get --call update --call query`.
+Each call produces separate statistics. Data persists between calls, so creates and commands increase later list sizes.
+Use separate invocations when each call needs a fresh fixture.
+
+Every local run enables statement planning statistics, nested SQL statistics, and PostgreSQL I/O timing.
+The benchmark resets `pg_stat_statements` after its seed and calibration calls, immediately before the timed interval.
+Each result retains all statement rows before and after that interval, including role, query ID, and top-level status.
+The rows include calls, execution and planning times, rows, shared buffers, WAL records, full-page images, and WAL bytes.
+The CSV files also retain every column from `pg_stat_statements`.
+Do not add nested statement totals to their parent totals. The parent already includes that work.
+PostgreSQL also records cursor work under both `FETCH` and its underlying `SELECT`, even when both rows say `toplevel=true`.
+Those times overlap. Recorded statement counts describe statistics entries, not physical protocol commands.
+
+The result records `pg_stat_wal`, `pg_stat_checkpointer`, and WAL rows from `pg_stat_io` at both boundaries.
+`<call>.database-delta.json` contains the changes. The calculation refuses counters that reset during the run.
+These cluster-wide counters include platform background work. PostgreSQL can publish backend counters after a short delay.
+PostgreSQL 18 reports WAL write and synchronization times through `pg_stat_io`.
+
+A persistent observer samples `pg_stat_activity` every 100 ms into `<call>.wait-events.log`.
+Each sample records the session, role, state, wait event, and query ID.
+Use the result's nanosecond timestamps to select samples from the timed interval.
+Separate active sessions from idle client waits when calculating wait shares.
+
+`auto_explain` considers all executable statement classes, including nested SQL, with a 1% sample rate.
+Seed connections and the benchmark database connection disable sampled plan and duration logging.
+The application records analyzed plans, buffers, and WAL at a zero duration threshold. Per-node timing stays off to limit collection cost.
+PostgreSQL also samples 1% of transactions and 1% of individual statement durations.
+These duration logs cover transaction controls such as `COMMIT`, which have no execution plan.
+The runner captures the PostgreSQL container logs in `postgres.log` before removing its own container.
+
+The PostgreSQL floor records the same statistics for each replay and built-in workload.
+It also records `pgbench -r` command timings and transaction mean and maximum latency.
+Pipeline command timings overlap. Do not add them as independent statement costs.
+Use server statement times and sampled commit durations to explain the replay gap. Compare means, not sums of percentiles.
+
 Run `tools/bench/local.sh --pg-floor` to measure PostgreSQL without a host, edge, broker, or collector.
-It uses the same PostgreSQL image, deployed parameters, and CPU assignments as the full local run.
+It uses the same PostgreSQL image, base parameters, instrumentation, and CPU assignments as the full local run.
 The existing package applier installs Receiving, including its history triggers and generated grants.
 The run loads the 1000-order seed and initializes pgbench at scale 10.
 

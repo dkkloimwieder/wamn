@@ -21,6 +21,8 @@ for call in ("select-only", "simple-update", "get", "update"):
         raise SystemExit(f"{call}: no completed transactions")
     result[call] = {
         "tps": float(tps),
+        "mean_ms": sum(latencies) / len(latencies) / 1000,
+        "max_ms": latencies[-1] / 1000,
         "p50_ms": latencies[(len(latencies) * 50 + 99) // 100 - 1] / 1000,
         "p99_ms": latencies[(len(latencies) * 99 + 99) // 100 - 1] / 1000,
         "transactions": len(latencies),

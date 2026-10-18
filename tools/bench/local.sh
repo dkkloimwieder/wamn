@@ -11,13 +11,13 @@ pg_floor=false
 app_path=false
 mix=false
 contention=false
-selected_call=
+selected_calls=()
 while (($#)); do
   case "$1" in
     --mix) mix=true; shift ;;
     --contention) contention=true; shift ;;
     --call)
-      case "${2:-}" in get|update|query|receipt-query|create|record_receipt|app-path) selected_call=$2 ;;
+      case "${2:-}" in get|update|query|receipt-query|create|record_receipt|app-path) selected_calls+=("$2") ;;
         *) echo 'Unknown --call' >&2; exit 2 ;;
       esac
       shift 2 ;;
@@ -74,6 +74,7 @@ containers=()
 dev_pid=
 perf_pid=
 bench_pid=
+source tools/bench/db-profile.sh
 stop_dev() {
   if [[ -n $dev_pid ]]; then
     kill -TERM "$dev_pid" 2>/dev/null || true
@@ -97,6 +98,10 @@ cleanup() {
   if [[ -n $bench_pid ]]; then
     kill -TERM "$bench_pid" 2>/dev/null || true
     wait "$bench_pid" || true
+  fi
+  stop_wait_sampler
+  if docker inspect "$prefix-postgres" >/dev/null 2>&1; then
+    docker logs --timestamps "$prefix-postgres" >"$work/postgres.log" 2>&1 || status=1
   fi
   stop_dev || status=1
   if $profile && [[ -f $work/host.pid ]]; then
@@ -147,7 +152,15 @@ mapfile -t postgres_parameters <"$work/postgres-parameters"
 start_container --name "$prefix-postgres" --cpuset-cpus 4-5 \
   -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=wamn_system \
   -p "127.0.0.1:$pg_port:5432" postgres:18 \
-  -c wal_level=logical -c shared_preload_libraries=pg_stat_statements "${postgres_parameters[@]}"
+  -c wal_level=logical -c shared_preload_libraries=pg_stat_statements,auto_explain "${postgres_parameters[@]}" \
+  -c pg_stat_statements.track=all -c pg_stat_statements.track_planning=on \
+  -c track_io_timing=on -c track_wal_io_timing=on \
+  -c auto_explain.log_min_duration=0 -c auto_explain.log_analyze=on \
+  -c auto_explain.log_buffers=on -c auto_explain.log_wal=on \
+  -c auto_explain.log_nested_statements=on -c auto_explain.log_timing=off \
+  -c auto_explain.sample_rate=0.01 -c auto_explain.log_format=json \
+  -c log_transaction_sample_rate=0.01 -c log_min_duration_sample=0 -c log_statement_sample_rate=0.01 \
+  -c 'log_line_prefix=%m [%p] user=%u db=%d xid=%v '
 ready=false
 for ((attempt=0; attempt<60; attempt++)); do
   if docker exec "$prefix-postgres" sh -c \
@@ -402,12 +415,11 @@ PY
 sql() { psql "$database_url" -XAt -v ON_ERROR_STOP=1 -c "$1"; }
 seed_scale=1000
 if $app_path; then seed_scale=1; fi
-psql "$database_url" -X -v ON_ERROR_STOP=1 -v scale="$seed_scale" \
-  -f apps/wamn_receiving/tests/fixtures/receiving-seed.sql >"$work/seed.log" 2>&1
+seed_receiving "$seed_scale"
 sql 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >/dev/null
 calls=(get update)
 if $app_path; then calls=(app-path); fi
-if [[ -n $selected_call ]]; then calls=("$selected_call"); fi
+if ((${#selected_calls[@]})); then calls=("${selected_calls[@]}"); fi
 bench_args=()
 if $contention; then calls=(update); bench_args+=(--contention); fi
 if $mix; then calls=(mix); bench_args+=(--mix); fi
@@ -426,7 +438,6 @@ UNWIND
       then break; fi
       label="$call-dwarf"
     fi
-    sql 'SELECT pg_stat_statements_reset(0, (SELECT oid FROM pg_database WHERE datname = current_database()))' >/dev/null
     bench_call=$call
     if [[ $call == mix ]]; then bench_call=get; fi
     taskset -c 6-7 "$bin/wamn-bench" --base-url "$bench_url" --host "$route_host" \
@@ -434,16 +445,17 @@ UNWIND
       --duration-secs "$duration" --tier local --db-url "$database_url" \
       --output "$work/$label.json" >"$work/$label.log" 2>&1 &
     bench_pid=$!
+    until grep -q '^benchmark-start ' "$work/$label.log"; do
+      if ! kill -0 "$bench_pid" 2>/dev/null; then
+        wait "$bench_pid" || true
+        bench_pid=
+        cat "$work/$label.log" >&2
+        exit 1
+      fi
+      sleep 0.05
+    done
+    start_database_profile "$label"
     if $profile; then
-      until grep -q '^benchmark-start ' "$work/$label.log"; do
-        if ! kill -0 "$bench_pid" 2>/dev/null; then
-          wait "$bench_pid" || true
-          bench_pid=
-          cat "$work/$label.log" >&2
-          exit 1
-        fi
-        sleep 0.05
-      done
       host_pid=$(<"$work/host.pid")
       call_graph=$graph
       if [[ $graph == dwarf ]]; then call_graph=dwarf,16384; fi
@@ -462,6 +474,9 @@ UNWIND
         exit "$record_status"
       fi
       perf_pid=
+    fi
+    stop_database_profile "$label"
+    if $profile; then
       env -u DEBUGINFOD_URLS perf script --no-inline -F +period -i "$work/$call.$graph.perf.data" >"$work/$call.$graph.stacks"
       python3 tools/bench/name-guests.py "$guest_target/wasm32-wasip2/release" "$work/$call.$graph.stacks"
       "$HOME/.cargo/bin/inferno-collapse-perf" <"$work/$call.$graph.stacks" \
@@ -473,9 +488,6 @@ UNWIND
       python3 tools/bench/profile-summary.py "$work/$call.$graph.stacks" "$work/$call.$graph.summary.json"
     fi
   done
-  sql 'SELECT calls FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' \
-    >"$work/$call.pgss"
-  psql "$database_url" -X --csv -v ON_ERROR_STOP=1 -c 'SELECT query, calls, rows, total_exec_time FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database())' >"$work/$call.statements.csv"
 done
 if $app_path && ! $mix; then
   # The host flushes its exporter on shutdown. Then flush the collector's batch.
