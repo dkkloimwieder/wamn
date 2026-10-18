@@ -5,6 +5,7 @@
 //! checks, and host-only derived-event and router-tap publication. Broker
 //! advisories replace the payload DLQ.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -419,11 +420,12 @@ pub enum RouterTapPhase {
     Settled(&'static str),
 }
 
-/// One delivery-boundary preview, borrowed from what the bridge already holds.
+/// One delivery-boundary preview, with a borrowed or owned payload.
 ///
-/// Every field is a borrow so constructing one allocates nothing: a host with no
-/// data-plane NATS skips the whole tap without copying a payload.
-#[derive(Debug, Clone, Copy)]
+/// An accepted payload stays borrowed while the caller still needs it. A settled
+/// payload moves into its preview. A host with no data-plane NATS skips the tap
+/// without copying either payload.
+#[derive(Debug, Clone)]
 pub struct RouterTapPreview<'a> {
     pub delivery_id: &'a str,
     /// The route or the wiring that the delivery entered.
@@ -432,7 +434,7 @@ pub struct RouterTapPreview<'a> {
     pub source_type: &'static str,
     pub source_id: &'a str,
     pub phase: RouterTapPhase,
-    pub payload: &'a serde_json::Value,
+    pub payload: Cow<'a, serde_json::Value>,
 }
 
 /// `tap.<org>.<project>.<env>.<target>.<delivery>` — six tokens, the same arity
@@ -519,7 +521,7 @@ struct PreparedRouterTap {
 /// key the guest payload happens to carry.
 fn prepare_router_tap(
     claim: &JetstreamClaim,
-    preview: &RouterTapPreview<'_>,
+    preview: RouterTapPreview<'_>,
 ) -> Option<PreparedRouterTap> {
     let (target, target_token) = match preview.target {
         AttachmentTarget::Route {
@@ -545,7 +547,7 @@ fn prepare_router_tap(
     };
     let subject = router_tap_subject(claim, target_token, preview.delivery_id)?;
     let source_type = RouterTapSourceType::from_preview(preview.source_type)?;
-    let mut payload = preview.payload.clone();
+    let mut payload = preview.payload.into_owned();
     let redacted = scrub(&mut payload);
     let payload_bytes = serde_json::to_vec(&payload)
         .expect("a serde_json::Value tree always serializes")
@@ -1241,7 +1243,7 @@ impl WamnJetstream {
             );
             return;
         };
-        let Some(prepared) = prepare_router_tap(&claim, &preview) else {
+        let Some(prepared) = prepare_router_tap(&claim, preview) else {
             tracing::debug!(
                 target: "wamn::jetstream",
                 component = component_id,
@@ -2070,9 +2072,9 @@ mod tests {
             source_type: "attachment",
             source_id: "orders-http",
             phase: RouterTapPhase::Accepted,
-            payload: &payload,
+            payload: Cow::Borrowed(&payload),
         };
-        let prepared = prepare_router_tap(&claim, &preview).expect("the ids name tokens");
+        let prepared = prepare_router_tap(&claim, preview.clone()).expect("the ids name tokens");
         let record: RouterTapRecord =
             serde_json::from_slice(&prepared.body).expect("the tap body is JSON");
 
@@ -2100,7 +2102,7 @@ mod tests {
         // A settled preview names its outcome; an accepted one has none to name.
         let settled = prepare_router_tap(
             &claim,
-            &RouterTapPreview {
+            RouterTapPreview {
                 phase: RouterTapPhase::Settled("respond"),
                 ..preview
             },
@@ -2116,8 +2118,8 @@ mod tests {
         let oversized = serde_json::json!({"blob": "x".repeat(OUTPUT_CAPTURE_CEILING_BYTES + 1)});
         let bounded = prepare_router_tap(
             &claim,
-            &RouterTapPreview {
-                payload: &oversized,
+            RouterTapPreview {
+                payload: Cow::Borrowed(&oversized),
                 ..preview
             },
         )
@@ -2155,10 +2157,10 @@ mod tests {
             source_type: "attachment",
             source_id: "orders-http",
             phase: RouterTapPhase::Accepted,
-            payload: &payload,
+            payload: Cow::Borrowed(&payload),
         };
 
-        let accepted = prepare_router_tap(&claim, &preview).expect("the ids name tokens");
+        let accepted = prepare_router_tap(&claim, preview.clone()).expect("the ids name tokens");
         let accepted_record: RouterTapRecord =
             serde_json::from_slice(&accepted.body).expect("the tap body is JSON");
         assert_eq!(
@@ -2193,7 +2195,7 @@ mod tests {
         // presence.
         let settled = prepare_router_tap(
             &claim,
-            &RouterTapPreview {
+            RouterTapPreview {
                 phase: RouterTapPhase::Settled("respond"),
                 ..preview
             },
@@ -2241,6 +2243,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn owned_and_borrowed_previews_keep_the_same_redaction_and_ceiling() {
+        let claim = tap_claim();
+        let target = orders_wiring();
+        for payload in [
+            serde_json::json!({"plain": "visible", "nested": [{"token": "secret"}]}),
+            serde_json::json!({"blob": "x".repeat(OUTPUT_CAPTURE_CEILING_BYTES + 1)}),
+        ] {
+            let original = payload.clone();
+            let preview = RouterTapPreview {
+                delivery_id: "d-1",
+                target: &target,
+                source_type: "attachment",
+                source_id: "orders-http",
+                phase: RouterTapPhase::Settled("respond"),
+                payload: Cow::Borrowed(&payload),
+            };
+            let borrowed =
+                prepare_router_tap(&claim, preview.clone()).expect("the borrowed preview is valid");
+            let owned = prepare_router_tap(
+                &claim,
+                RouterTapPreview {
+                    payload: Cow::Owned(payload.clone()),
+                    ..preview
+                },
+            )
+            .expect("the owned preview is valid");
+            assert_eq!(borrowed.subject, owned.subject);
+            assert_eq!(borrowed.body, owned.body);
+            assert_eq!(payload, original, "a borrowed input stays unchanged");
+        }
+    }
+
     /// A route names its component and operation, and its subject token is
     /// the attachment id, because a route has no wiring id.
     #[test]
@@ -2253,13 +2288,13 @@ mod tests {
         };
         let prepared = prepare_router_tap(
             &claim,
-            &RouterTapPreview {
+            RouterTapPreview {
                 delivery_id: "d-1",
                 target: &target,
                 source_type: "attachment",
                 source_id: "orders-get-http",
                 phase: RouterTapPhase::Accepted,
-                payload: &payload,
+                payload: Cow::Borrowed(&payload),
             },
         )
         .expect("the ids name tokens");

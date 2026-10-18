@@ -1,6 +1,7 @@
 //! Guest delivery. A route calls its one operation on the operation host, and
 //! a wiring target goes to the wiring layer through `WiringDelivery`.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
@@ -206,7 +207,7 @@ impl RouterDeliveryBridge {
             &delivery_id,
             &target.target,
             RouterTapPhase::Accepted,
-            &payload,
+            Cow::Borrowed(&payload),
         )
         .await;
         let attributes = match &self.metrics {
@@ -255,7 +256,7 @@ impl RouterDeliveryBridge {
                             &delivery_id,
                             &target.target,
                             RouterTapPhase::Settled(settled.label),
-                            &settled.result,
+                            Cow::Owned(settled.result),
                         )
                         .await;
                         Ok(settled.outcome)
@@ -391,7 +392,7 @@ impl RouterDeliveryBridge {
                     delivery_id,
                     target,
                     RouterTapPhase::Settled(literal),
-                    &serde_json::Value::Null,
+                    Cow::Owned(serde_json::Value::Null),
                 )
                 .await;
                 Err(lower_operation_refusal(&denial))
@@ -403,7 +404,7 @@ impl RouterDeliveryBridge {
                     delivery_id,
                     target,
                     RouterTapPhase::Settled(EXECUTION_FAILED),
-                    &serde_json::Value::Null,
+                    Cow::Owned(serde_json::Value::Null),
                 )
                 .await;
                 // The whole chain, not the top context: `invoke wiring node
@@ -436,7 +437,7 @@ impl RouterDeliveryBridge {
         delivery_id: &str,
         target: &AttachmentTarget,
         phase: RouterTapPhase,
-        payload: &serde_json::Value,
+        payload: Cow<'_, serde_json::Value>,
     ) {
         self.jetstream
             .publish_router_tap(

@@ -1,5 +1,6 @@
 //! Requires WAMN_NATIVE_C_NATS_BIN, outside the lib/bins unit test run.
 
+use std::borrow::Cow;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -99,7 +100,7 @@ async fn router_tap_never_waits_for_broker() -> anyhow::Result<()> {
                 source_type: "attachment",
                 source_id: "get-route",
                 phase: RouterTapPhase::Accepted,
-                payload: &payload,
+                payload: Cow::Borrowed(&payload),
             },
         )
     };

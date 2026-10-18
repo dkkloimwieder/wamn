@@ -104,7 +104,7 @@ impl WiringDelivery for RouterDriver {
                         &delivery_id,
                         target,
                         RouterTapPhase::Settled(outcome),
-                        &result,
+                        result,
                     )
                     .await;
                 publish_emit(
@@ -236,7 +236,7 @@ async fn refuse(
                 delivery_id,
                 target,
                 RouterTapPhase::Settled(EXECUTION_FAILED),
-                &serde_json::Value::Null,
+                Cow::Owned(serde_json::Value::Null),
             )
             .await;
         tracing::warn!(error = %format_args!("{:#}", interrupted.source), "router delivery failed after a declared committed result");
