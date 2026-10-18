@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use wamn_catalog::AdmittedComponent;
-use wash_runtime::plugin::HostPlugin as _;
 
 pub mod intent;
 pub mod invocation_policy;
@@ -142,20 +141,17 @@ async fn call_export<H: ApplicationHost>(
     tokio::time::timeout_at(deadline, async {
         let application = application_of(host, call.closure).await?;
         let id = component_id_of(&application, call.component)?;
-        let target = application
-            .workload
-            .dispatch_target(id, application.policy.id())
-            .await?;
+        let target = application.dispatch_target(id)?;
         let json = serde_json::to_string(call.input).context("encode node input")?;
         invoke_owned(
-            &target,
+            target,
             NativeInvocation {
                 operation: call.operation.to_owned(),
                 context: call.context,
                 input: input(json),
                 deadline,
                 facts: call.facts,
-                application,
+                application: Arc::clone(&application),
             },
         )
         .await

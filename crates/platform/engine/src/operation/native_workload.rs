@@ -123,6 +123,16 @@ pub struct NativeApplication<P: InvocationPolicy> {
     _cleanup: NativePolicyCleanup<P>,
     pub workload: Arc<NativeWorkload>,
     pub policy: Arc<P>,
+    dispatch_targets: BTreeMap<String, DispatchTarget>,
+}
+
+impl<P: InvocationPolicy> NativeApplication<P> {
+    /// The component's prepared links and native pool, retained for this application.
+    pub fn dispatch_target(&self, component_id: &str) -> anyhow::Result<&DispatchTarget> {
+        self.dispatch_targets
+            .get(component_id)
+            .context("native-workload-component-missing")
+    }
 }
 
 #[derive(Debug)]
@@ -153,10 +163,25 @@ pub async fn load_native_application<P: InvocationPolicy>(
     let cleanup = NativePolicyCleanup(Arc::clone(&policy));
     let workload =
         Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);
+    let mut dispatch_targets = BTreeMap::new();
+    for id in workload.facts_by_component_id.keys() {
+        let target = match workload.dispatch_target(id, policy.id()).await {
+            Ok(target) => target,
+            Err(error) => {
+                workload
+                    .unbind_all_plugins()
+                    .await
+                    .context("unbind native workloads after dispatch preparation failed")?;
+                return Err(error);
+            }
+        };
+        dispatch_targets.insert(id.clone(), target);
+    }
     Ok(Arc::new(NativeApplication {
         _cleanup: cleanup,
         workload,
         policy,
+        dispatch_targets,
     }))
 }
 

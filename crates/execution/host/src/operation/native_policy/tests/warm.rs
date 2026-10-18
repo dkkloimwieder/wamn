@@ -38,12 +38,21 @@ pub(super) async fn close(fixture: &Fixture) {
 fn native_warm_reuse_and_idle_reclamation() {
     run_isolated_test("warm::native_warm_reuse_and_idle_reclamation", async {
         let fixture = fixture(Case::Success).await;
-        let target = fixture.target().await;
+        let id = fixture
+            .workload
+            .facts_by_component_id
+            .keys()
+            .next()
+            .unwrap();
+        let target = fixture.application.dispatch_target(id).unwrap();
+        assert!(fixture.application.dispatch_target("missing").is_err());
         for input in ["alice", "bob", "alice"] {
+            let reused = fixture.application.dispatch_target(id).unwrap();
+            assert!(std::ptr::eq(target, reused));
             let mut request = fixture.request(Instant::now() + CLEANUP);
             request.input = input.into();
             assert_eq!(
-                invoke_native(&target, request)
+                invoke_native(reused, request)
                     .await
                     .expect("dispatch")
                     .expect("emission")
@@ -82,7 +91,7 @@ fn native_warm_reuse_and_idle_reclamation() {
         })
         .await
         .expect("idle native pools return guest memory");
-        invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
+        invoke_native(target, fixture.request(Instant::now() + CLEANUP))
             .await
             .expect("dispatch after idle")
             .expect("emission");

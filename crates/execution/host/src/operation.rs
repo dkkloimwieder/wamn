@@ -451,12 +451,9 @@ impl OperationHost {
     ) -> anyhow::Result<()> {
         let application = self.released_application(components).await?;
         for id in application.workload.facts_by_component_id.keys() {
-            let target = application
-                .workload
-                .dispatch_target(id, NATIVE_POLICY_ID)
-                .await?;
+            let target = application.dispatch_target(id)?;
             prepare_native(
-                &target,
+                target,
                 tokio::time::Instant::now() + Duration::from_millis(bounded_node_deadline_ms(None)),
             )
             .await
