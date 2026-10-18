@@ -20,6 +20,9 @@ use clap::{Parser, Subcommand};
 
 mod host;
 
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser)]
 #[command(name = "wamn-host", version, about)]
 struct Cli {
