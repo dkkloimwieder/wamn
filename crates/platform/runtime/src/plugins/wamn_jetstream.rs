@@ -585,7 +585,8 @@ fn prepare_router_tap(
         .expect("a router-tap preview constructs one valid phase and payload state");
     Some(PreparedRouterTap {
         subject,
-        body: serde_json::to_vec(&record).expect("a router-tap record always serializes"),
+        body: serde_json::to_vec(&RouterTapWire::from(record))
+            .expect("a router-tap record always serializes"),
     })
 }
 
