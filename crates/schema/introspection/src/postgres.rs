@@ -1496,6 +1496,15 @@ fn names_for_attributes(
         .collect()
 }
 
+/// Name an authored object from columns in table-definition order.
+pub fn authored_object_name(table: &str, columns: &[String], suffix: &str) -> String {
+    if columns.is_empty() {
+        format!("{table}_{suffix}")
+    } else {
+        format!("{table}_{}_{suffix}", columns.join("_"))
+    }
+}
+
 fn validate_authored_name(
     type_: PostgresIntrospectionErrorType,
     schema: &str,
@@ -1518,11 +1527,7 @@ fn validate_authored_name(
     ordered_numbers.sort_unstable();
     ordered_numbers.dedup();
     let columns = names_for_attributes(type_, schema, table, name, &ordered_numbers, attributes)?;
-    let expected = if columns.is_empty() {
-        format!("{table}_{suffix}")
-    } else {
-        format!("{table}_{}_{suffix}", columns.join("_"))
-    };
+    let expected = authored_object_name(table, &columns, suffix);
 
     // PostgreSQL truncates identifiers at 63 bytes. The pre-apply validator
     // requires an explicit shorter name when the convention cannot fit, but

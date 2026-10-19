@@ -382,6 +382,8 @@ Post-commit work uses the [event path](capabilities.md#events).
 
 A generated query yields its rows as a stream, then one final record with the keyset cursor that continues the read.
 For a cursor, SQL compares the sort field and ID as one row, so a matching index starts at that cursor.
+`wamn build` requires a `(field, id)` index for every allowed sort field, including the default.
+It reads indexes across all package migrations and refuses a missing index with the operation, table, and exact `CREATE INDEX` line.
 The export takes one request and returns a row stream and a future of the final record.
 Its `run-json` entry returns each row as one JSON object and the outcome as one JSON value.
 The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100.

@@ -14,7 +14,7 @@
 //! cluster-wide roles `wamn_app` and `wamn_db_owner` that the build creates
 //! when they are absent.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,6 +24,8 @@ use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::{Map, Value};
 use tokio_postgres::NoTls;
 use wamn_execution_contract::canonical_json_bytes;
+use wamn_schema_introspection::ir::CatalogIr;
+use wamn_schema_introspection::postgres::authored_object_name;
 
 use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest, is_authored};
 pub use crate::components::{build_components, build_guest};
@@ -37,7 +39,7 @@ use crate::materialize::{
 use crate::receipt::{
     BuildReceipt, RECEIPT_FILE, RECEIPT_SCHEMA, ReceiptDependency, ReceiptOutputs, ReceiptPackage,
 };
-use crate::{AuthoredSql, PackageManifest};
+use crate::{AuthoredSql, CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
@@ -173,6 +175,7 @@ async fn pass_one_and_two(
     let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
     let manifest = PackageManifest::from_slice(&typed).context("parse the typed manifest")?;
     let catalog = introspect_with_manifest(database_url, package_root, &manifest).await?;
+    validate_paged_query_indexes(database_url, &catalog, &manifest).await?;
     let authored_sql = sources
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
@@ -213,6 +216,94 @@ async fn pass_one_and_two(
         files.insert(relative.to_owned(), file.bytes().to_vec());
     }
     Ok((canonical, files))
+}
+
+/// The catalog includes indexes from every applied package migration.
+async fn validate_paged_query_indexes(
+    database_url: &str,
+    catalog: &CatalogIr,
+    manifest: &PackageManifest,
+) -> Result<()> {
+    for (model_name, model) in &manifest.models {
+        let Some(query) = model
+            .operations
+            .get(&CrudAction::Query)
+            .filter(|query| query.result == ResultClass::Page)
+        else {
+            continue;
+        };
+        let operation =
+            canonical_operation_identity(&manifest.package, &format!("{model_name}.query"))?;
+        let pagination = query
+            .pagination
+            .as_ref()
+            .with_context(|| format!("{operation} requires keyset pagination"))?;
+        let table = catalog
+            .tables()
+            .iter()
+            .find(|table| table.schema() == model.schema && table.name() == model.table)
+            .with_context(|| {
+                format!(
+                    "{operation} references unknown {}.{}",
+                    model.schema, model.table
+                )
+            })?;
+        let mut fields = BTreeSet::from([pagination.default_sort.field.as_str()]);
+        if let Some(sort) = &query.sort {
+            fields.extend(sort.fields.iter().map(String::as_str));
+        }
+        let tie_breaker = pagination.tie_breaker.field.as_str();
+        for field in fields {
+            if table.indexes().iter().any(|index| {
+                let [first, second] = index.columns() else {
+                    return false;
+                };
+                first.name() == field
+                    && second.name() == tie_breaker
+                    && first.direction() == second.direction()
+            }) {
+                continue;
+            }
+            // The normalized IR sorts columns by name. PostgreSQL retains the
+            // definition order that the authored naming rule requires.
+            let (client, connection) = tokio_postgres::connect(database_url, NoTls)
+                .await
+                .context("connect to name the missing pagination index")?;
+            let task = tokio::spawn(connection);
+            let columns = client
+                .query(
+                    "SELECT attribute.attname::text
+                     FROM pg_catalog.pg_attribute AS attribute
+                     JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
+                     JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                     WHERE namespace.nspname = $1 AND relation.relname = $2
+                       AND attribute.attnum > 0 AND NOT attribute.attisdropped
+                       AND attribute.attname::text = ANY($3::text[])
+                     ORDER BY attribute.attnum",
+                    &[&model.schema, &model.table, &vec![field, tie_breaker]],
+                )
+                .await;
+            drop(client);
+            task.await
+                .context("join the index naming connection")?
+                .context("drive the index naming connection")?;
+            let columns = columns
+                .context("read the pagination index columns in table-definition order")?
+                .iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>();
+            let name = authored_object_name(table.name(), &columns, "idx");
+            bail!(
+                "{operation} on {}.{} requires an index for ORDER BY ({field}, {tie_breaker}). \
+                 Add to the package's migrations: CREATE INDEX {name} ON {}.{} ({field}, {tie_breaker});",
+                table.schema(),
+                table.name(),
+                table.schema(),
+                table.name(),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// The authored manifest bytes: `wamn.k` compiled, or a hand-written `wamn.json`.
@@ -723,6 +814,67 @@ mod tests {
 
     use super::*;
     use crate::describe::DescribedColumn;
+
+    #[tokio::test]
+    async fn paged_query_requires_an_index_for_each_allowed_sort_field() {
+        let database = wamn_test_postgres::database();
+        let root = std::env::temp_dir().join(format!("wamn-paged-index-{}", std::process::id()));
+        fs::create_dir(&root).expect("create the test package");
+        fs::create_dir(root.join("migrations")).expect("create the migrations directory");
+        let manifest = json!({
+            "package": {"id": "sort_fixture", "version": "0.1.0"},
+            "required_platform_policy_contract": {"id": "sort_fixture_data_access", "state": "satisfied"},
+            "connections": ["postgres"],
+            "components": {"fixture": {"connections": ["postgres"]}},
+            "models": {"order_row": {
+                "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
+                "server_owned_fields": ["id"],
+                "audit_log": {"columns": ["created_at"], "retention": "none"},
+                "operations": {"query": {
+                    "permission": "order_row.query", "result": "page",
+                    "sort": {"fields": ["created_at", "status"], "directions": ["ascending", "descending"]},
+                    "pagination": {"default_sort": {"field": "created_at", "direction": "ascending"}, "tie_breaker": {"field": "id"}},
+                    "limit": {"default": 100, "minimum": 1, "maximum": 100}
+                }}
+            }}
+        });
+        fs::write(
+            root.join("wamn.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .expect("write the package manifest");
+        fs::write(
+            root.join("migrations/0001_initial.sql"),
+            "CREATE TABLE receiving.order_row (
+                 id uuid CONSTRAINT order_row_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+                 status text NOT NULL DEFAULT 'open',
+                 created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+             );",
+        )
+        .expect("write the table migration");
+        fs::write(
+            root.join("migrations/0002_default_index.sql"),
+            "CREATE INDEX order_row_id_created_at_idx ON receiving.order_row (created_at, id);",
+        )
+        .expect("index the default sort only");
+        let request = BuildRequest::new(&root, &root.join("target"), database.url());
+        let refused = generate_package(&request).await;
+        fs::write(
+            root.join("migrations/0003_status_index.sql"),
+            "CREATE INDEX order_row_id_status_idx ON receiving.order_row (status, id);",
+        )
+        .expect("index the other allowed sort in a later migration");
+        let accepted = generate_package(&request).await;
+        fs::remove_dir_all(&root).expect("remove the test package");
+        assert_eq!(
+            refused
+                .expect_err("an allowed sort without an index was accepted")
+                .to_string(),
+            "sort-fixture:order-row/query@0.1.0 on receiving.order_row requires an index for ORDER BY (status, id). \
+             Add to the package's migrations: CREATE INDEX order_row_id_status_idx ON receiving.order_row (status, id);"
+        );
+        accepted.expect("the build reads both indexes from later package migrations");
+    }
 
     fn manifest(row_nullable: bool, row_type: Option<&str>) -> Value {
         let mut row = json!({"name": "quantity", "nullable": row_nullable});
