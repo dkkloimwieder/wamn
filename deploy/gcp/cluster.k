@@ -43,7 +43,7 @@ cluster.Cluster {
             taint = "role=postgres:NoSchedule"
         }
     ]
-    platform_version = "0.1.31"
+    platform_version = "0.1.34"
     org = "dkk"
     owner_email = "dkkloimwieder@gmail.com"
     registry = "us-central1-docker.pkg.dev/wamn-dev/wamn"
