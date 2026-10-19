@@ -26,7 +26,6 @@ use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
 
 const TAP_ADMIN: &str = "tap-admin";
-const TAP_STREAM: &str = "WAMN_TAP";
 
 fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -73,12 +72,8 @@ fn main() -> anyhow::Result<()> {
             "user": TAP_ADMIN,
             "password": password,
             "permissions": {
-                "publish": {"allow": [
-                    format!("$JS.API.STREAM.INFO.{TAP_STREAM}"),
-                    format!("$JS.API.STREAM.CREATE.{TAP_STREAM}"),
-                    format!("$JS.API.STREAM.UPDATE.{TAP_STREAM}"),
-                    format!("{inbox}.>"),
-                ]},
+                "publish": {"allow": event_broker::tap_stream_permissions().into_iter()
+                    .chain([format!("{inbox}.>")]).collect::<Vec<_>>()},
                 "subscribe": {"allow": [format!("{inbox}.>")]},
             },
         }));

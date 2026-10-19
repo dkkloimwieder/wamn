@@ -12,6 +12,11 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::Serialize;
 use wamn_control_registry::Triple;
 
+/// Stream operations used by the deployed tap administrator and local provisioning.
+pub fn tap_stream_permissions() -> [String; 3] {
+    ["INFO", "CREATE", "UPDATE"].map(|operation| format!("$JS.API.STREAM.{operation}.WAMN_TAP"))
+}
+
 /// A username and its private password file, without the password in memory.
 #[derive(Debug)]
 pub struct Credentials {

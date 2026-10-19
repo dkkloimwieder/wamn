@@ -284,6 +284,20 @@ async fn main() -> anyhow::Result<()> {
         &application_manifests(&repository, packages)?,
     );
     let broker = event_broker::prepare(&directory, &scope, tenant, &source, &advisory, &consumers)?;
+    // dev up provisions the same tap stream as the deployed bootstrap job.
+    let mut configuration: serde_json::Value =
+        serde_json::from_slice(&fs::read(&broker.configuration)?)?;
+    let provisioning = configuration["authorization"]["users"]
+        .as_array_mut()
+        .context("event broker users")?
+        .iter_mut()
+        .find(|user| user["user"] == broker.provisioning.username)
+        .context("event provisioning user")?;
+    provisioning["permissions"]["publish"]["allow"]
+        .as_array_mut()
+        .context("event provisioning permissions")?
+        .extend(event_broker::tap_stream_permissions().map(serde_json::Value::String));
+    fs::write(&broker.configuration, serde_json::to_vec(&configuration)?)?;
     private(
         &directory.join("compose.json"),
         &serde_json::to_vec(&json!({"services":{"delivery-events":{

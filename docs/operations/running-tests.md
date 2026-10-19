@@ -649,6 +649,48 @@ cd web/ui && pnpm run check
 The stylesheet build writes into `node_modules/.cache/wamn-ui`, and nothing reads that file.
 It shows that the CSS entry compiles.
 
+### Local platform sign-in
+
+`local_sign_in_selects_empty_control_layout` runs the built platform UI in headless Chrome.
+It starts `wamn dev up` on disposable services through the existing `delivery_timings` fixture.
+The test uses platform verbs to enroll the org admin and grant membership in `receiving/dev`.
+It signs in, requires both audiences, chooses Control, and requires the org layout with no sections or not-found message.
+It also requires `data-ui` on the shell root.
+The test prints its elapsed time and fails if it exceeds 15 minutes.
+
+Build the native programs and components described in [the development loop](development-loop.md).
+Build the application bundles with `wamn build apps/wamn_receiving apps/client_acme_receiving`.
+Build the platform UI with `pnpm --filter @wamn/platform-ui build`.
+Build the fixture and test before the timed run:
+
+```bash
+TMPDIR=/var/tmp cargo build --offline -p wamn-receiving-tests --example delivery_timings
+TMPDIR=/var/tmp cargo test --offline -p wamn-ctl --test platform_ui_live --no-run
+```
+
+The fixture needs Docker and its local service images, PostgreSQL 18 binaries, and Chrome.
+It uses the Playwright installation in `web/shell`, so run `pnpm install` at the repository root first.
+Set `CARGO_TARGET_DIR` to the absolute directory of the built native programs.
+Set the two component variables to the corresponding built component files.
+Run this command from the repository root:
+
+```bash
+export TMPDIR=/var/tmp
+export CARGO_TARGET_DIR="$(readlink -f target)"
+export WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm"
+export WAMN_DEV_ENV_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm"
+results="$(mktemp -d /var/tmp/wamn-platform-ui-XXXXXX)/run"
+"$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
+  cargo test --offline -p wamn-ctl --test platform_ui_live \
+  local_sign_in_selects_empty_control_layout -- --ignored --exact --nocapture
+```
+
+The test uses a fixed fixture password and sends no email.
+Its PostgreSQL server and the fixture's containers stop after the test.
+`dev down` stops the owned web server, control host, and identity service.
+The results directory keeps `platform-ui-env/control-web.log` for failure diagnosis.
+A local pass is required before this flow goes to GCP.
+
 ### Generated components
 
 A generated component imports SolidJS, TanStack Table, zod, and `@wamn/ui`.
