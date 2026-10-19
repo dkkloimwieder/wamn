@@ -13,7 +13,7 @@ tlsSecret: identity-tls
 operatorCaSecret: identity-operator-ca
 resendSecret: identity-resend
 resendFrom: noreply@wamn.dev
-inviteUrl: https://receiving.wamn.dev
+inviteUrl: https://control.wamn.dev
 authNats:
   url: nats://nats.platform.svc.cluster.local:4222
   tlsSecret: wasmcloud-runtime-tls
