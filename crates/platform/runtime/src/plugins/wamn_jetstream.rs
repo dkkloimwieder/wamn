@@ -507,6 +507,20 @@ struct PreparedRouterTap {
     body: Vec<u8>,
 }
 
+/// Count the serializer's exact bytes without retaining a discarded payload buffer.
+struct ByteCount(usize);
+
+impl std::io::Write for ByteCount {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Mint the subject and build the bounded, redacted body of one preview.
 ///
 /// Redaction and the ceiling are applied HERE, not by the caller, so the only
@@ -549,9 +563,10 @@ fn prepare_router_tap(
     let source_type = RouterTapSourceType::from_preview(preview.source_type)?;
     let mut payload = preview.payload.into_owned();
     let redacted = scrub(&mut payload);
-    let payload_bytes = serde_json::to_vec(&payload)
-        .expect("a serde_json::Value tree always serializes")
-        .len();
+    let mut payload_bytes = ByteCount(0);
+    serde_json::to_writer(&mut payload_bytes, &payload)
+        .expect("a serde_json::Value tree always serializes");
+    let payload_bytes = payload_bytes.0;
     let (payload, over_ceiling_bytes) = if payload_bytes > OUTPUT_CAPTURE_CEILING_BYTES {
         (
             serde_json::Value::Null,
@@ -2250,6 +2265,9 @@ mod tests {
         for payload in [
             serde_json::json!({"plain": "visible", "nested": [{"token": "secret"}]}),
             serde_json::json!({"blob": "x".repeat(OUTPUT_CAPTURE_CEILING_BYTES + 1)}),
+            serde_json::json!({"blob": "x".repeat(OUTPUT_CAPTURE_CEILING_BYTES - 11)}),
+            serde_json::json!({"blob": "\n".repeat(OUTPUT_CAPTURE_CEILING_BYTES / 2)}),
+            serde_json::json!({"blob": "é".repeat(OUTPUT_CAPTURE_CEILING_BYTES / 2)}),
         ] {
             let original = payload.clone();
             let preview = RouterTapPreview {
@@ -2273,6 +2291,20 @@ mod tests {
             assert_eq!(borrowed.subject, owned.subject);
             assert_eq!(borrowed.body, owned.body);
             assert_eq!(payload, original, "a borrowed input stays unchanged");
+            let record: RouterTapRecord = serde_json::from_slice(&borrowed.body).unwrap();
+            let mut expected = payload.clone();
+            scrub(&mut expected);
+            let bytes = serde_json::to_vec(&expected).unwrap().len();
+            let oversized = bytes > OUTPUT_CAPTURE_CEILING_BYTES;
+            assert_eq!(record.over_ceiling_bytes, oversized.then_some(bytes as u64));
+            assert_eq!(
+                record.payload,
+                if oversized {
+                    serde_json::Value::Null
+                } else {
+                    expected
+                }
+            );
         }
     }
 

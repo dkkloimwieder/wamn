@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::{
-    ContractMismatch, ContractPart, RowSet, SqlValue, StatementError, ValueShape, WamnPostgres,
+    Column, ContractMismatch, ContractPart, SqlValue, StatementError, ValueShape, WamnPostgres,
 };
 
 /// A type in the frozen `wamn:postgres/types.sql-value` vocabulary.
@@ -329,10 +329,28 @@ pub(super) fn resolve_statement(
 pub(super) fn validate_statement_result(
     statement_path: &str,
     statement: &VerifiedStatement,
-    result: RowSet,
-) -> Result<RowSet, StatementError> {
-    let mut observed_types: Vec<String> = result
-        .columns
+    columns: &[Column],
+    rows: &[Vec<SqlValue>],
+) -> Result<(), StatementError> {
+    let columns_match = columns.len() == statement.columns.len()
+        && columns
+            .iter()
+            .zip(&statement.columns)
+            .all(|(column, expected)| {
+                statement_type_for_postgres(&column.type_name) == Some(expected.value_type)
+            });
+    let values_match = rows.iter().all(|row| {
+        row.len() == statement.columns.len()
+            && row
+                .iter()
+                .zip(&statement.columns)
+                .all(|(value, expected)| !matches!(value, SqlValue::Null) || expected.nullable)
+    });
+    if columns_match && values_match {
+        return Ok(());
+    }
+
+    let mut observed_types: Vec<String> = columns
         .iter()
         .map(|column| {
             statement_type_for_postgres(&column.type_name).map_or_else(
@@ -341,26 +359,7 @@ pub(super) fn validate_statement_result(
             )
         })
         .collect();
-    let columns_match = result.columns.len() == statement.columns.len()
-        && result
-            .columns
-            .iter()
-            .zip(&statement.columns)
-            .all(|(column, expected)| {
-                statement_type_for_postgres(&column.type_name) == Some(expected.value_type)
-            });
-    let values_match = result.rows.iter().all(|row| {
-        row.len() == statement.columns.len()
-            && row
-                .iter()
-                .zip(&statement.columns)
-                .all(|(value, expected)| !matches!(value, SqlValue::Null) || expected.nullable)
-    });
-    if columns_match && values_match {
-        return Ok(result);
-    }
-
-    for row in &result.rows {
+    for row in rows {
         for (index, (value, expected)) in row.iter().zip(&statement.columns).enumerate() {
             if matches!(value, SqlValue::Null)
                 && !expected.nullable
@@ -375,7 +374,7 @@ pub(super) fn validate_statement_result(
         ContractPart::Columns,
         expected_shape(&statement.columns),
         ValueShape {
-            count: bounded_count(result.columns.len()),
+            count: bounded_count(columns.len()),
             types: observed_types,
         },
     ))
@@ -386,11 +385,6 @@ pub(super) fn validate_prepared_statement(
     statement: &VerifiedStatement,
     prepared: &tokio_postgres::Statement,
 ) -> Result<(), StatementError> {
-    let bind_types: Vec<String> = prepared
-        .params()
-        .iter()
-        .map(|value_type| normalized_postgres_name(value_type.name()))
-        .collect();
     if !postgres_types_match(
         &statement.binds,
         prepared
@@ -403,17 +397,16 @@ pub(super) fn validate_prepared_statement(
             ContractPart::Binds,
             expected_shape(&statement.binds),
             ValueShape {
-                count: bounded_count(bind_types.len()),
-                types: bind_types,
+                count: bounded_count(prepared.params().len()),
+                types: prepared
+                    .params()
+                    .iter()
+                    .map(|value_type| normalized_postgres_name(value_type.name()))
+                    .collect(),
             },
         ));
     }
 
-    let column_types: Vec<String> = prepared
-        .columns()
-        .iter()
-        .map(|column| normalized_postgres_name(column.type_().name()))
-        .collect();
     if !postgres_types_match(
         &statement.columns,
         prepared
@@ -426,8 +419,12 @@ pub(super) fn validate_prepared_statement(
             ContractPart::Columns,
             expected_shape(&statement.columns),
             ValueShape {
-                count: bounded_count(column_types.len()),
-                types: column_types,
+                count: bounded_count(prepared.columns().len()),
+                types: prepared
+                    .columns()
+                    .iter()
+                    .map(|column| normalized_postgres_name(column.type_().name()))
+                    .collect(),
             },
         ));
     }
@@ -835,14 +832,14 @@ mod tests {
     fn result_mismatch_reports_the_column_contract() {
         let statement = verified("SELECT $1::uuid");
         let path = "sql/statement.sql".to_owned();
-        let result = RowSet {
+        let result = super::super::RowSet {
             columns: vec![super::super::Column {
                 name: "value".into(),
                 type_name: "int8".into(),
             }],
             rows: vec![vec![SqlValue::Int64(1)]],
         };
-        let error = validate_statement_result(&path, &statement, result)
+        let error = validate_statement_result(&path, &statement, &result.columns, &result.rows)
             .expect_err("wrong result type must fail closed");
         let StatementError::StatementContractMismatch(mismatch) = error else {
             panic!("expected statement-contract-mismatch");

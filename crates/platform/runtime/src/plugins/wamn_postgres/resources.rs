@@ -9,7 +9,6 @@ use std::sync::atomic::AtomicU64;
 
 use deadpool_postgres::Object;
 use futures_util::TryStreamExt as _;
-use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx};
 use wash_runtime::wasmtime::component::{Accessor, Resource};
@@ -247,9 +246,8 @@ pub(super) async fn run_query(
             .await
             .map_err(|e| map_pg_error(&e))?;
         let columns = columns_of(&stmt);
-        let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
         let stream = conn
-            .query_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
+            .query_raw(&stmt, params.iter().map(PgParam))
             .await
             .map_err(|e| map_pg_error(&e))?;
         futures_util::pin_mut!(stream);
@@ -288,8 +286,7 @@ pub(super) async fn run_execute(
             .prepare_cached(sql)
             .await
             .map_err(|e| map_pg_error(&e))?;
-        let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
-        conn.execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
+        conn.execute_raw(&stmt, params.iter().map(PgParam))
             .await
             .map_err(|e| map_pg_error(&e))
     }
@@ -316,9 +313,8 @@ pub(super) async fn run_verified_query(
             .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
         validate_prepared_statement(statement_path, statement, &prepared)?;
         let columns = columns_of(&prepared);
-        let wrapped: Vec<PgParam> = binds.iter().map(|value| PgParam(value.clone())).collect();
         let stream = conn
-            .query_raw(&prepared, wrapped.iter().map(|value| value as &dyn ToSql))
+            .query_raw(&prepared, binds.iter().map(PgParam))
             .await
             .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
         futures_util::pin_mut!(stream);
@@ -342,7 +338,8 @@ pub(super) async fn run_verified_query(
         }
         .instrument(tracing::info_span!("wamn.postgres.decode_rows"))
         .await?;
-        validate_statement_result(statement_path, statement, RowSet { columns, rows })
+        validate_statement_result(statement_path, statement, &columns, &rows)?;
+        Ok(RowSet { columns, rows })
     }
     .instrument(tracing::info_span!(
         "wamn.postgres.statement",
@@ -872,10 +869,9 @@ async fn txn_open_cursor<T: 'static>(
             let result = with_txn_conn(&state, &destroyed, |connection| async move {
                 let r = async {
                     let stmt = connection.connection().prepare(&declare).await?;
-                    let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
                     connection
                         .connection()
-                        .execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
+                        .execute_raw(&stmt, params.iter().map(PgParam))
                         .await
                 }
                 .await;

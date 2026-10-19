@@ -71,10 +71,11 @@ pub fn scrub(value: &mut Value) -> bool {
 }
 
 fn key_is_secret(key: &str) -> bool {
-    let lower = key.to_ascii_lowercase();
-    SECRET_KEY_FRAGMENTS
-        .iter()
-        .any(|fragment| lower.contains(fragment))
+    SECRET_KEY_FRAGMENTS.iter().any(|fragment| {
+        key.as_bytes()
+            .windows(fragment.len())
+            .any(|window| window.eq_ignore_ascii_case(fragment.as_bytes()))
+    })
 }
 
 fn value_is_secret(value: &str) -> bool {
@@ -106,6 +107,8 @@ mod tests {
             "access": "AKIAIOSFODNN7EXAMPLE",
             "nested": [{"api_key": "key"}],
             "plain": "visible",
+            "🔑-AuthORIZATION-header": "secret",
+            "tökén": "visible",
         });
         assert!(scrub(&mut value));
         for key in [
@@ -121,10 +124,12 @@ mod tests {
             "header",
             "pem",
             "access",
+            "🔑-AuthORIZATION-header",
         ] {
             assert_eq!(value[key], json!(REDACTED), "{key} survived the scrub");
         }
         assert_eq!(value["nested"][0]["api_key"], json!(REDACTED));
         assert_eq!(value["plain"], json!("visible"));
+        assert_eq!(value["tökén"], json!("visible"));
     }
 }

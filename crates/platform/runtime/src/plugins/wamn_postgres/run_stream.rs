@@ -24,7 +24,7 @@ use super::statements::{
     VerifiedStatement, validate_prepared_statement, validate_statement_result,
 };
 use super::types::{PgParam, columns_of, decode_row, map_pg_error};
-use super::{Column, PgError, RowSet, SqlValue, StatementError, WamnPostgres};
+use super::{Column, PgError, SqlValue, StatementError, WamnPostgres};
 
 type WasmResult<T> = wash_runtime::wasmtime::Result<T>;
 
@@ -202,7 +202,7 @@ pub(super) async fn open_stream(
                         {
                             let _ = queued.send(());
                         }
-                        let stream = conn.query_raw(&prepared, binds.into_iter().map(PgParam)).await.map_err(postgres)?;
+                        let stream = conn.query_raw(&prepared, binds.iter().map(PgParam)).await.map_err(postgres)?;
                         Ok::<_, StatementError>((prepared, stream))
                     };
                     let ((), (prepared, stream)) = tokio::try_join!(biased; bind, execute)?;
@@ -289,15 +289,8 @@ async fn pump(
         if batch.is_empty() {
             return Ok(());
         }
-        let batch = validate_statement_result(
-            statement_path,
-            statement,
-            RowSet {
-                columns: columns.clone(),
-                rows: batch,
-            },
-        )?;
-        permit.send(batch.rows);
+        validate_statement_result(statement_path, statement, &columns, &batch)?;
+        permit.send(batch);
         if ended {
             return Ok(());
         }

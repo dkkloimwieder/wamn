@@ -66,46 +66,42 @@ pub(super) fn map_pg_error(e: &tokio_postgres::Error) -> PgError {
 /// `json`/`uuid` strings stay exact, and there is no client-side type
 /// negotiation to disagree with the server.
 #[derive(Debug)]
-pub(super) struct PgParam(pub(super) SqlValue);
+pub(super) struct PgParam<'a>(pub(super) &'a SqlValue);
 
-impl ToSql for PgParam {
+impl ToSql for PgParam<'_> {
     fn to_sql(
         &self,
         _ty: &Type,
         out: &mut bytes::BytesMut,
     ) -> Result<IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        use std::fmt::Write as _;
-        match &self.0 {
+        use bytes::BufMut as _;
+        use std::io::Write as _;
+        match self.0 {
             SqlValue::Null => return Ok(IsNull::Yes),
             SqlValue::Boolean(b) => out.extend_from_slice(if *b { b"t" } else { b"f" }),
             SqlValue::Int32(v) => {
-                let mut s = String::new();
-                let _ = write!(s, "{v}");
-                out.extend_from_slice(s.as_bytes());
+                let _ = write!(out.writer(), "{v}");
             }
             SqlValue::Int64(v) => {
-                let mut s = String::new();
-                let _ = write!(s, "{v}");
-                out.extend_from_slice(s.as_bytes());
+                let _ = write!(out.writer(), "{v}");
             }
             SqlValue::Float64(v) => {
-                let s = if v.is_nan() {
-                    "NaN".to_string()
+                if v.is_nan() {
+                    out.extend_from_slice(b"NaN");
                 } else if v.is_infinite() {
-                    if *v > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
+                    out.extend_from_slice(if *v > 0.0 { b"Infinity" } else { b"-Infinity" });
                 } else {
                     // {:?} is the shortest round-trip representation.
-                    format!("{v:?}")
-                };
-                out.extend_from_slice(s.as_bytes());
+                    let _ = write!(out.writer(), "{v:?}");
+                }
             }
             SqlValue::Bytes(b) => {
                 out.extend_from_slice(b"\\x");
-                let mut s = String::with_capacity(b.len() * 2);
+                out.reserve(b.len() * 2);
+                let mut writer = out.writer();
                 for byte in b {
-                    let _ = write!(s, "{byte:02x}");
+                    let _ = write!(writer, "{byte:02x}");
                 }
-                out.extend_from_slice(s.as_bytes());
             }
             // Text and the canonical-string types: pass through, server parses
             // per the parameter's declared type.
@@ -387,7 +383,7 @@ mod tests {
     fn param_text_encoding() {
         use tokio_postgres::types::ToSql;
         let mut buf = bytes::BytesMut::new();
-        let p = PgParam(SqlValue::Bytes(vec![0xde, 0xad, 0x01]));
+        let p = PgParam(&SqlValue::Bytes(vec![0xde, 0xad, 0x01]));
         assert!(matches!(
             p.to_sql(&Type::BYTEA, &mut buf).unwrap(),
             IsNull::No
@@ -395,12 +391,12 @@ mod tests {
         assert_eq!(&buf[..], b"\\xdead01");
 
         let mut buf = bytes::BytesMut::new();
-        let p = PgParam(SqlValue::Float64(1.5));
+        let p = PgParam(&SqlValue::Float64(1.5));
         p.to_sql(&Type::FLOAT8, &mut buf).unwrap();
         assert_eq!(&buf[..], b"1.5");
 
         let mut buf = bytes::BytesMut::new();
-        let p = PgParam(SqlValue::Boolean(true));
+        let p = PgParam(&SqlValue::Boolean(true));
         p.to_sql(&Type::BOOL, &mut buf).unwrap();
         assert_eq!(&buf[..], b"t");
     }

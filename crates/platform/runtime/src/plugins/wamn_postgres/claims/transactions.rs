@@ -234,11 +234,6 @@ pub(in super::super) struct BoundClaims {
 
 impl BoundClaims {
     pub(in super::super) async fn bind(&self, conn: &Object) -> Result<(), PgError> {
-        let params: Vec<&(dyn ToSql + Sync)> = self
-            .params
-            .iter()
-            .map(|value| value as &(dyn ToSql + Sync))
-            .collect();
         async {
             let (begin, causation, claims) = tokio::join!(biased;
                 conn.execute(&self.begin, &[]),
@@ -248,7 +243,7 @@ impl BoundClaims {
                     }
                     Ok::<_, tokio_postgres::Error>(())
                 },
-                conn.execute(&self.statement, &params));
+                conn.execute_raw(&self.statement, self.params.iter()));
             begin.map_err(|error| map_pg_error(&error))?;
             causation.map_err(|error| map_pg_error(&error))?;
             claims.map_err(|error| map_pg_error(&error))?;
