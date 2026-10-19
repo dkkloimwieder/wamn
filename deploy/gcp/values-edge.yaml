@@ -11,6 +11,10 @@ identityCaConfigMap: identity-ca
 # names it (wamn-rk9l2).
 # bucketPath is <bucket>/<prefix>/<package>/<release digest hex>, as wamn web
 # upload writes it.
+control:
+  host: control.wamn.dev
+  api: http://c-dkk-http.hosts.svc.cluster.local
+  bucketPath: wamn-dev-web/platform-ui/0.1.31
 applications:
   - host: receiving.wamn.dev
     api: http://r-dev-ee95c37ee965257ff856-http.hosts.svc.cluster.local

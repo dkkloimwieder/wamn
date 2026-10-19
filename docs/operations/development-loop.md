@@ -306,3 +306,17 @@ It writes output under `evidence/experiments/agent-authoring/`.
 For a recorded run, `tools/agent-pilot-grade --replay RUN_DIRECTORY` preserves its original grading files.
 `--placement` and `--contract` also take an explicit recorded run directory.
 Missing request logs cannot establish replayed execution.
+
+## Platform UI build
+
+The platform UI lives in `apps/platform_ui` and reads an org-only `config.json`.
+Run these commands from the repository root:
+
+```bash
+pnpm --filter @wamn/platform-ui check
+pnpm --filter @wamn/platform-ui test
+pnpm --filter @wamn/platform-ui build
+```
+The build writes `apps/platform_ui/dist` without an application package or `wamn.k`.
+[Building](building.md#platform-ui) owns the platform build record.
+[Deployment](deployment.md#platform-ui-files) owns upload and control-host routing.

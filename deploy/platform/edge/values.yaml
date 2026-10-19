@@ -13,6 +13,9 @@ image:
 # the environment's release, plain HTTP, which upgrade-environment writes from
 # release_chart::release_name; the edge removes /api before it forwards. bucketPath is the path that `wamn web upload` wrote, readable
 # without credentials: <bucket>/<prefix>/<package>/<release digest hex>.
+# The optional control root has the same host/api/bucketPath shape.
+# Its bucketPath is <bucket>/platform-ui/<platform version>.
+control: null
 applications: []
 #  - host: receiving.example.com
 #    api: http://r-prod-<hash>-http.wamn-system.svc.cluster.local

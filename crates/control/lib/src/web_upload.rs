@@ -129,6 +129,74 @@ pub async fn upload_release(
     Ok(uploaded)
 }
 
+/// The platform UI has one bucket and one prefix per platform version.
+pub const PLATFORM_UI_BUCKET: &str = "gs://wamn-dev-web";
+
+/// Upload the local platform UI only when its digest matches the stamped chart.
+/// The current directory is the repository whose platform UI was built.
+pub async fn upload_platform_ui(
+    repository: &Path,
+    chart: &Path,
+    org: &str,
+) -> anyhow::Result<String> {
+    let (dist, root) = platform_ui_source(repository, chart)?;
+    let sink = Sink::parse(PLATFORM_UI_BUCKET)?;
+    let store = sink.store()?;
+    write_platform_ui(store.as_ref(), &root, &dist, org).await?;
+    Ok(format!("{PLATFORM_UI_BUCKET}/{root}/"))
+}
+
+fn platform_ui_source(repository: &Path, chart: &Path) -> anyhow::Result<(PathBuf, String)> {
+    use crate::platform_build::{
+        PlatformBuildReceipt, RECEIPT_FILE, platform_ui_digest, platform_ui_dist,
+    };
+    let receipt_path = chart.join(RECEIPT_FILE);
+    let receipt: PlatformBuildReceipt =
+        serde_json::from_slice(&std::fs::read(&receipt_path).with_context(|| {
+            format!(
+                "read {}; run `wamn-ctl build-platform`",
+                receipt_path.display()
+            )
+        })?)?;
+    let metadata: serde_yaml::Value =
+        serde_yaml::from_slice(&std::fs::read(chart.join("Chart.yaml"))?)?;
+    let version = metadata["version"]
+        .as_str()
+        .context("the stamped chart has no version")?;
+    ensure!(
+        version == crate::release_chart::CHART_VERSION,
+        "the stamped chart version {version} differs from platform {}",
+        crate::release_chart::CHART_VERSION
+    );
+    let dist = platform_ui_dist(repository);
+    ensure!(
+        platform_ui_digest(&dist)? == receipt.platform_ui,
+        "the platform UI build {} differs from the platform build receipt {}",
+        dist.display(),
+        receipt_path.display()
+    );
+    Ok((dist, format!("platform-ui/{version}")))
+}
+
+async fn write_platform_ui(
+    store: &dyn ObjectStore,
+    root: &str,
+    dist: &Path,
+    org: &str,
+) -> anyhow::Result<()> {
+    ensure!(!org.is_empty(), "the platform UI requires an org");
+    let mut files = Vec::new();
+    collect(dist, &mut files)?;
+    write_files(
+        store,
+        root,
+        dist,
+        &mut files,
+        &crate::web_scope::platform_scope_file_bytes(org),
+    )
+    .await
+}
+
 /// The hexadecimal digits of a release `sha256:<64 lowercase hex>`.
 pub fn release_hex(release: &str) -> anyhow::Result<&str> {
     release
@@ -386,6 +454,71 @@ mod tests {
             assert_eq!(&stored[..], bytes, "{name}");
         }
         std::fs::remove_dir_all(&dist).unwrap();
+    }
+
+    #[tokio::test]
+    async fn platform_ui_upload_uses_the_receipt_and_a_version_prefix_with_org_only() {
+        use crate::platform_build::{
+            PlatformBuildReceipt, RECEIPT_FILE, platform_ui_digest, platform_ui_dist,
+        };
+        let repository =
+            std::env::temp_dir().join(format!("wamn-platform-upload-{}", std::process::id()));
+        let dist = platform_ui_dist(&repository);
+        let chart = repository.join("chart");
+        std::fs::create_dir_all(dist.join("assets")).unwrap();
+        std::fs::create_dir_all(&chart).unwrap();
+        std::fs::write(dist.join("index.html"), b"platform index").unwrap();
+        std::fs::write(dist.join("assets/ui.js"), b"platform script").unwrap();
+        std::fs::write(
+            chart.join("Chart.yaml"),
+            format!("version: {}", crate::release_chart::CHART_VERSION),
+        )
+        .unwrap();
+        std::fs::write(
+            chart.join(RECEIPT_FILE),
+            serde_json::to_vec(&PlatformBuildReceipt {
+                platform_ui: platform_ui_digest(&dist).unwrap(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let (source, root) = super::platform_ui_source(&repository, &chart).unwrap();
+        assert_eq!(source, dist);
+        assert_eq!(
+            root,
+            format!("platform-ui/{}", crate::release_chart::CHART_VERSION)
+        );
+        assert_eq!(super::PLATFORM_UI_BUCKET, "gs://wamn-dev-web");
+        let store = InMemory::new();
+        super::write_platform_ui(&store, &root, &source, "dkk")
+            .await
+            .unwrap();
+        for (name, bytes) in [
+            ("index.html", &b"platform index"[..]),
+            ("assets/ui.js", &b"platform script"[..]),
+            ("config.json", &br#"{"org":"dkk"}"#[..]),
+        ] {
+            let stored = store
+                .get(&object_store::path::Path::from(format!("{root}/{name}")))
+                .await
+                .unwrap();
+            assert_eq!(stored.bytes().await.unwrap().as_ref(), bytes);
+        }
+        std::fs::write(dist.join("assets/ui.js"), b"changed").unwrap();
+        assert!(
+            super::platform_ui_source(&repository, &chart)
+                .unwrap_err()
+                .to_string()
+                .contains("differs from the platform build receipt")
+        );
+        std::fs::remove_file(chart.join(RECEIPT_FILE)).unwrap();
+        assert!(
+            super::platform_ui_source(&repository, &chart)
+                .unwrap_err()
+                .to_string()
+                .contains("run `wamn-ctl build-platform`")
+        );
+        std::fs::remove_dir_all(repository).unwrap();
     }
 
     #[test]

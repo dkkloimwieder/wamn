@@ -19,6 +19,7 @@ The type check keeps `strict` enabled and omits `exactOptionalPropertyTypes`, wh
 
 From the repository root, run `pnpm --filter @wamn/platform-ui check`, `test`, or `build`.
 The build writes `apps/platform_ui/dist`.
-The page reads the deployment scope from `/config.json` through the same contract as the Solid 1 shell.
-`wamn web upload` currently accepts only web files from package artifacts that the deployed release names.
-The platform UI needs that packaging connection before the command can upload it.
+The page reads only the org from `/config.json` and offers the audiences that identity returns for that org.
+The platform UI is a platform asset with no `wamn.k` or package artifact.
+[Building](../../docs/operations/building.md#platform-ui) owns its build record.
+[Deployment](../../docs/operations/deployment.md#platform-ui-files) owns upload and routing at `control.wamn.dev`.

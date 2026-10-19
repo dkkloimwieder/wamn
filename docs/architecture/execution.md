@@ -794,7 +794,9 @@ A packaging form, such as `inventory.move`, sends the revision of the packaging 
 The first segment of every address is the environment audience, so a reload renews the cookie session with nothing in browser storage.
 A screen address with no session asks for the password on that address, and it shows the screen after sign in.
 The page calls the release under `/api`, and the proxy in front of it strips that prefix, so no page path meets a route template.
-A Control page calls the control host at `/wamn_control` with no prefix. No edge routes that path yet, and `wamn-oeki` holds that change.
+The platform UI calls the control host through `/api/wamn_control` at `control.wamn.dev`.
+Its [deployment](../operations/deployment.md#platform-ui-files) owns the control edge route and the org-only scope.
+The Solid 1 shell still calls Control at `/wamn_control` with no prefix. No application edge routes that path yet, and `wamn-oeki` holds that change.
 
 A revision-bearing operation needs a declared compatible record read and revision mapping.
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.

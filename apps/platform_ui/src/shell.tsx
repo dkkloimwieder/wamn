@@ -18,7 +18,6 @@ import { Page, NotFound } from "./page";
 const Layout = lazy(() => import("./layout"));
 
 export const API_BASE = "/api";
-export const CONTROL_BASE = "";
 
 export interface ScreenProps {
   readonly transport: Transport;
@@ -132,7 +131,7 @@ export function Shell(props: ShellProps): JSX.Element {
                 keyed
                 fallback={
                   <Page title={props.title}>
-                    <p>This address names an environment of another application.</p>
+                    <p>This address names an environment of another org.</p>
                     <a href="/">sign in</a>
                   </Page>
                 }
@@ -158,7 +157,7 @@ function Session(
   const sections = props.kind === "control" ? (props.controlSections ?? []) : props.sections;
   const transport = createTransport({
     ...props.options,
-    baseUrl: props.kind === "control" ? CONTROL_BASE : API_BASE,
+    baseUrl: API_BASE,
     cookie: true,
   });
   let active = true;

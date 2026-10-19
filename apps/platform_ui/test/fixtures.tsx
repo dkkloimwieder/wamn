@@ -182,7 +182,7 @@ export function identity(
       return Promise.resolve(new Response(JSON.stringify([{ value: mine }]), { status: 200 }));
     }
     // A control session calls its host with no prefix.
-    if (path.startsWith("/wamn_control/control/mine")) {
+    if (path.startsWith("/api/wamn_control/control/mine")) {
       return Promise.resolve(new Response(JSON.stringify([{ value: control }]), { status: 200 }));
     }
     switch (path) {
@@ -209,7 +209,6 @@ export function open(path: string, fetch: typeof globalThis.fetch) {
     <Shell
       title="Stub app"
       org="acme"
-      project="widgets"
       sections={[...SECTIONS, ADMINISTRATION]}
       controlSections={CONTROL_SECTIONS}
       fetch={fetch}

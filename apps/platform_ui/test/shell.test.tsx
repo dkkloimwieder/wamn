@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { AUD, CONTROL, ONE, ADMIN, identity, open } from "./fixtures";
 
 describe("the app shell", () => {
-  it("refuses an address that names an environment of another project", async () => {
+  it("refuses an address that names an environment of another org", async () => {
     const { state, fetch } = identity(false);
-    open("/urn:wamn:project-env:acme:gadgets:dev:k3m9x2p7/pallets", fetch);
-    expect(await screen.findByText("This address names an environment of another application.")).toBeDefined();
+    open("/urn:wamn:project-env:other:widgets:dev:k3m9x2p7/pallets", fetch);
+    expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
     expect(state.calls).toEqual([]);
   });
 
@@ -147,7 +147,7 @@ describe("the app shell", () => {
   it("refuses the control audience of another org", async () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:control:other/org", fetch);
-    expect(await screen.findByText("This address names an environment of another application.")).toBeDefined();
+    expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
     expect(state.calls).toEqual([]);
   });
 

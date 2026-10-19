@@ -74,6 +74,22 @@ The router owns `wamn:node`. The runtime owns PostgreSQL, connection, JetStream,
 The execution host owns router delivery. The materializer owns the shared WASI CLI and clock packages.
 Application contracts lie under `wit/` in each package's build output, `apps/target/wamn/<package>/wit`, which `wamn build` writes. Do not copy platform WIT into application directories.
 
+## Platform UI
+
+`wamn-ctl build-platform` builds `apps/platform_ui/dist` with `pnpm --filter @wamn/platform-ui build` before it builds and pushes the platform images.
+The platform UI is a platform asset and has no `wamn.k` or package artifact.
+Install the workspace dependencies with `pnpm install --offline` before the build.
+
+The stamped chart contains `platform-build.json`.
+Its `PlatformBuildReceipt.platform_ui` field records a SHA-256 digest of a canonical JSON map from relative file paths to file digests.
+The map covers `index.html` and every asset in the dist directory.
+The chart version identifies the platform asset version.
+
+`build-platform --stamp-only` hashes the local dist without building or publishing it.
+If the dist is absent, it refuses and names `pnpm --filter @wamn/platform-ui build`.
+It creates no OCI artifact for the static bundle.
+Keep the local dist with the stamped chart until [upload](deployment.md#platform-ui-files).
+
 ## Package manifests
 
 A package that holds `wamn.k` authors its manifest in KCL.

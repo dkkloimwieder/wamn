@@ -8,7 +8,7 @@
 #
 # An unknown host and the bare address get the load balancer's own 404: the
 # default route aborts every request before it reaches the named service, so
-# nothing outside the two host rules reaches the bucket, whose root answers
+# nothing outside the declared host rules reaches the bucket, whose root answers
 # with a listing (finding wamn-uo2p). A backend service with no endpoints
 # answers 503, not 404.
 name: wamn-edge
@@ -27,6 +27,9 @@ hostRules:
   - hosts:
       - wms.wamn.dev
     pathMatcher: wms
+  - hosts:
+      - control.wamn.dev
+    pathMatcher: control
 pathMatchers:
   - name: edge
     defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
@@ -106,3 +109,42 @@ pathMatchers:
         routeAction:
           urlRewrite:
             pathTemplateRewrite: /clients/wamn_wms/d31830b104ace4a09180b63e7dcfe5152a3a59db093553e5bbf67cda65adeec9/index.html
+  - name: control
+    defaultService: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+    routeRules:
+      - priority: 1
+        matchRules:
+          - prefixMatch: /api/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendServices/wamn-edge-platform
+      - priority: 2
+        matchRules:
+          - prefixMatch: /password/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendServices/wamn-edge-platform
+      - priority: 3
+        matchRules:
+          - prefixMatch: /assets/
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathPrefixRewrite: /platform-ui/0.1.31/assets/
+      - priority: 4
+        matchRules:
+          - fullPathMatch: /config.json
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathPrefixRewrite: /platform-ui/0.1.31/config.json
+      - priority: 5
+        matchRules:
+          - fullPathMatch: /
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathPrefixRewrite: /platform-ui/0.1.31/index.html
+      - priority: 6
+        matchRules:
+          - pathTemplateMatch: /{page=**}
+        service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
+        routeAction:
+          urlRewrite:
+            pathTemplateRewrite: /platform-ui/0.1.31/index.html

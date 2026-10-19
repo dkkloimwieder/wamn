@@ -3,9 +3,9 @@ import type { Scope } from "./scope";
 
 export type Kind = "application" | "control";
 
-/** An audience belongs to this deployment's org and project. */
+/** An audience belongs to this deployment's org. */
 export function audienceKind(aud: string, scope: Scope): Kind | undefined {
-  if (aud.startsWith(`urn:wamn:project-env:${scope.org}:${scope.project}:`)) return "application";
+  if (aud.startsWith(`urn:wamn:project-env:${scope.org}:`)) return "application";
   return aud === `urn:wamn:control:${scope.org}` ? "control" : undefined;
 }
 

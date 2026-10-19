@@ -8,14 +8,76 @@
 //!
 //! A reinstall at an unchanged platform version builds nothing: the stamp-only
 //! step reads the digests of the chart version's tags from the registry and
-//! stamps those (owner ruling R15, 2026-10-14).
+//! stamps those (owner ruling R15, 2026-10-14). Both modes record the digest
+//! of the local platform UI in `platform-build.json` beside the chart defaults.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
+use wamn_execution_contract::canonical_json_bytes;
 
 use crate::release_chart::{CHART_VERSION, ImageSet, QualificationImages, stamp};
+
+/// The content of the platform UI produced by one platform build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlatformBuildReceipt {
+    /// SHA-256 of the canonical map of relative file paths to file digests.
+    pub platform_ui: String,
+}
+
+/// The platform build record beside the stamped chart's defaults.
+pub const RECEIPT_FILE: &str = "platform-build.json";
+
+/// The local static bundle, independent of package build output.
+pub fn platform_ui_dist(repository: &Path) -> PathBuf {
+    repository.join("apps/platform_ui/dist")
+}
+
+fn ui_receipt(repository: &Path) -> anyhow::Result<PlatformBuildReceipt> {
+    let dist = platform_ui_dist(repository);
+    ensure!(
+        dist.is_dir(),
+        "the platform UI build {} is absent; run `pnpm --filter @wamn/platform-ui build`",
+        dist.display()
+    );
+    Ok(PlatformBuildReceipt {
+        platform_ui: platform_ui_digest(&dist)?,
+    })
+}
+
+/// Digest the built platform UI, including its index and every asset.
+pub fn platform_ui_digest(dist: &Path) -> anyhow::Result<String> {
+    let mut files = Vec::new();
+    crate::web_upload::collect(dist, &mut files)?;
+    ensure!(
+        files.iter().any(|file| file == &dist.join("index.html")),
+        "the platform UI build {} has no index.html",
+        dist.display()
+    );
+    let mut digests = BTreeMap::new();
+    for file in files {
+        let relative = file
+            .strip_prefix(dist)?
+            .to_str()
+            .context("a platform UI file name is UTF-8")?
+            .to_owned();
+        digests.insert(relative, sha256(&std::fs::read(file)?));
+    }
+    Ok(sha256(&canonical_json_bytes(&serde_json::to_value(
+        digests,
+    )?)))
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    format!(
+        "sha256:{}",
+        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
+    )
+}
 
 /// The inputs of one platform build.
 #[derive(Debug, Clone)]
@@ -48,15 +110,17 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
     let roles = std::env::temp_dir().join(format!("wamn-roles-{}", std::process::id()));
     let pushed = build_then_push(request, &roles, output).await;
     let _ = std::fs::remove_dir_all(&roles);
-    stamp_chart(request, pushed?)
+    let pushed = pushed?;
+    stamp_chart(request, pushed, &ui_receipt(&request.repository)?)
 }
 
 /// Stamp the registry's images and role components of [`CHART_VERSION`] into
 /// a copy of the release chart at `request.out`. It builds and pushes
 /// nothing; when any of the six is missing, it refuses and names them.
 pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
+    let receipt = ui_receipt(&request.repository)?;
     let insecure = loopback(&request.registry);
-    stamp_from_registry(request, output, async |reference: &str| {
+    stamp_from_registry(request, &receipt, output, async |reference: &str| {
         let (_, digest) = wash_runtime::oci::pull_component(
             reference,
             wash_runtime::oci::OciConfig {
@@ -76,6 +140,7 @@ pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBu
 /// which returns the manifest digest. Then stamp them.
 async fn stamp_from_registry(
     request: &BuildPlatformRequest,
+    receipt: &PlatformBuildReceipt,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
     mut pull: impl AsyncFnMut(&str) -> anyhow::Result<String>,
 ) -> anyhow::Result<PathBuf> {
@@ -125,6 +190,7 @@ async fn stamp_from_registry(
     stamp_chart(
         request,
         ([host, runner, gates, identity], (http, materializer)),
+        receipt,
     )
 }
 
@@ -144,8 +210,9 @@ fn manifest_digest(json: &str) -> anyhow::Result<String> {
 fn stamp_chart(
     request: &BuildPlatformRequest,
     ([host, runner, gates, identity], (http, materializer)): ([String; 4], (String, String)),
+    receipt: &PlatformBuildReceipt,
 ) -> anyhow::Result<PathBuf> {
-    stamp(
+    let chart = stamp(
         &request.repository.join("deploy/platform/release"),
         &ImageSet {
             host,
@@ -158,7 +225,12 @@ fn stamp_chart(
             identity,
         }),
         &request.out,
-    )
+    )?;
+    std::fs::write(
+        chart.join(RECEIPT_FILE),
+        canonical_json_bytes(&serde_json::to_value(receipt)?),
+    )?;
+    Ok(chart)
 }
 
 /// A loopback registry is reached over plain HTTP.
@@ -175,6 +247,12 @@ async fn build_then_push(
     roles: &Path,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
 ) -> anyhow::Result<([String; 4], (String, String))> {
+    run(Command::new("pnpm").current_dir(&request.repository).args([
+        "--filter",
+        "@wamn/platform-ui",
+        "build",
+    ]))
+    .await?;
     let head = run(Command::new("git").current_dir(&request.repository).args([
         "rev-parse",
         "--verify",
@@ -313,6 +391,42 @@ async fn output(command: &mut Command) -> anyhow::Result<String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_receipt_digest_covers_paths_and_bytes_of_the_ui() {
+        let dist =
+            std::env::temp_dir().join(format!("wamn-platform-ui-digest-{}", std::process::id()));
+        std::fs::create_dir_all(dist.join("assets")).unwrap();
+        std::fs::write(dist.join("index.html"), b"index").unwrap();
+        std::fs::write(dist.join("assets/app.js"), b"app").unwrap();
+        let receipt = PlatformBuildReceipt {
+            platform_ui: platform_ui_digest(&dist).unwrap(),
+        };
+        assert_eq!(
+            receipt.platform_ui,
+            "sha256:5a8575268118ba787b9258f2e2277418d1139a5cc0ba08f3c7bf5e6b0fd04e45"
+        );
+        let bytes = serde_json::to_vec(&receipt).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<PlatformBuildReceipt>(&bytes).unwrap(),
+            receipt
+        );
+        std::fs::rename(dist.join("assets/app.js"), dist.join("assets/new.js")).unwrap();
+        assert_ne!(platform_ui_digest(&dist).unwrap(), receipt.platform_ui);
+        std::fs::rename(dist.join("assets/new.js"), dist.join("assets/app.js")).unwrap();
+        std::fs::write(dist.join("assets/app.js"), b"changed").unwrap();
+        assert_ne!(platform_ui_digest(&dist).unwrap(), receipt.platform_ui);
+        std::fs::remove_file(dist.join("index.html")).unwrap();
+        assert!(platform_ui_digest(&dist).is_err());
+        std::fs::remove_dir_all(dist).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_ui_build_pushes_nothing() {
+        let (error, calls) = record(Path::new("/nonexistent"), "@wamn/platform-ui").await;
+        assert!(error.to_string().contains("failed"), "{error}");
+        assert_eq!(calls, ["pnpm --filter @wamn/platform-ui build"]);
+    }
+
     #[tokio::test]
     async fn a_checkout_without_package_outputs_is_refused_before_any_build() {
         let repository = std::env::temp_dir().join(format!(
@@ -327,6 +441,26 @@ mod tests {
         .await
         .expect_err("a checkout without apps/target/wamn is refused");
         assert!(error.to_string().contains("run `wamn build`"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn stamp_only_requires_the_local_ui_before_reading_the_registry() {
+        let repository =
+            std::env::temp_dir().join(format!("wamn-stamp-no-ui-{}", std::process::id()));
+        let error = stamp_only(&BuildPlatformRequest {
+            out: repository.join("chart"),
+            repository: repository.clone(),
+            registry: "must-not-be-contacted.invalid".into(),
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "the platform UI build {} is absent; run `pnpm --filter @wamn/platform-ui build`",
+                platform_ui_dist(&repository).display()
+            )
+        );
     }
 
     /// `program args…` of each command `build_then_push` runs; `fail` fails
@@ -368,6 +502,9 @@ mod tests {
                 registry: "localhost:5000".to_owned(),
                 out: out.to_owned(),
             },
+            &PlatformBuildReceipt {
+                platform_ui: digest.clone(),
+            },
             async |command: &mut Command| {
                 let std = command.as_std();
                 let call = std::iter::once(std.get_program())
@@ -392,6 +529,9 @@ mod tests {
     async fn stamp_only_stamps_the_six_registry_digests_and_builds_nothing() {
         let out = std::env::temp_dir().join(format!("wamn-stamp-only-{}", std::process::id()));
         let (stamped, calls) = stamp_recorded("\0", &out).await;
+        let receipt: PlatformBuildReceipt =
+            serde_json::from_slice(&std::fs::read(out.join(RECEIPT_FILE)).unwrap()).unwrap();
+        assert_eq!(receipt.platform_ui, format!("sha256:{}", "a".repeat(64)));
         let values = stamped
             .and_then(|chart| Ok(std::fs::read_to_string(chart.join("values.yaml"))?))
             .map(|text| serde_yaml::from_str::<serde_yaml::Value>(&text));

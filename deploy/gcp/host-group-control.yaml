@@ -1,0 +1,75 @@
+# Install with the stamped release chart, as release c-dkk in namespace hosts.
+# The chart supplies the host image and the platform-owned service account.
+# The control host has an org credential and no application release or project.
+runtime-operator:
+  runtime:
+    terminationGracePeriodSeconds: 70
+    hostGroups:
+      - name: c-dkk
+        namespace: hosts
+        replicas: 1
+        schedulerNatsUrl: nats://nats.platform.svc.cluster.local:4222
+        dataNatsUrl: nats://nats.platform.svc.cluster.local:4222
+        extraArgs:
+          - --control
+          - --org=dkk
+        env:
+          - name: DOCKER_CONFIG
+            value: /etc/wamn/registry
+          - name: WAMN_REGISTRY_TOKEN_METADATA
+            value: 'true'
+          - name: WAMN_CONTROL_URL
+            valueFrom:
+              secretKeyRef:
+                name: wamn-control-dkk
+                key: url
+          - name: WAMN_SESSION_ISSUER
+            value: https://identity.identity.svc.cluster.local
+          - name: WAMN_SESSION_JWKS_CA
+            value: /etc/identity-ca/ca.crt
+          - name: WAMN_PAT_ISSUER
+            value: https://identity.identity.svc.cluster.local
+          - name: WAMN_PAT_CLIENT_CERT
+            value: /etc/identity-operator/tls.crt
+          - name: WAMN_PAT_CLIENT_KEY
+            value: /etc/identity-operator/tls.key
+          - name: WAMN_PAT_SERVER_CA
+            value: /etc/identity-ca/ca.crt
+          - name: WAMN_CONTROL_ADMINISTRATION_DIR
+            value: /etc/wamn/control-administration
+        volumes:
+          - name: registry-pull
+            configMap:
+              name: wamn-registry-helper
+          - name: identity-ca
+            configMap:
+              name: identity-ca
+          - name: identity-operator
+            secret:
+              secretName: operator-dkk
+          - name: control-administration
+            secret:
+              secretName: wamn-control-administration-dkk
+        volumeMounts:
+          - name: registry-pull
+            mountPath: /etc/wamn/registry
+            readOnly: true
+          - name: identity-ca
+            mountPath: /etc/identity-ca
+            readOnly: true
+          - name: identity-operator
+            mountPath: /etc/identity-operator
+            readOnly: true
+          - name: control-administration
+            mountPath: /etc/wamn/control-administration
+            readOnly: true
+        http:
+          enabled: true
+          port: 80
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 500m
+          limits:
+            memory: 4Gi
+            cpu: '2'

@@ -19,6 +19,12 @@ pub fn scope_file_bytes(org: &str, project: &str) -> Vec<u8> {
         .expect("a JSON object of two strings serializes")
 }
 
+/// The platform UI signs in to an org without a project filter.
+pub fn platform_scope_file_bytes(org: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({"org": org}))
+        .expect("a JSON object of one string serializes")
+}
+
 #[cfg(test)]
 mod tests {
     use super::scope_file_bytes;

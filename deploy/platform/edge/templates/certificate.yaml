@@ -10,8 +10,11 @@ metadata:
 spec:
   secretName: {{ required "Set tlsSecret to the serving certificate Secret name." .Values.tlsSecret | quote }}
   dnsNames:
-    {{- range required "Set applications to the list of applications the edge serves." .Values.applications }}
+    {{- range .Values.applications }}
     - {{ required "Set host of each application to its public host name." .host | quote }}
+    {{- end }}
+    {{- with .Values.control }}
+    - {{ required "Set control.host to its public host name." .host | quote }}
     {{- end }}
   issuerRef:
     kind: ClusterIssuer

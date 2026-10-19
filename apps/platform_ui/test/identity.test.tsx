@@ -70,7 +70,7 @@ describe("identity pages", () => {
     ]);
   });
 
-  it("signs in at the root, and the one environment of the project opens the first screen", async () => {
+  it("signs in at the root, and the one environment of the org opens the first screen", async () => {
     const { fetch } = identity(false);
     open("/", fetch);
     await signIn();
@@ -78,7 +78,7 @@ describe("identity pages", () => {
     await waitFor(() => expect(window.location.pathname).toBe(`/${AUD}/pallets`));
   });
 
-  it("asks identity for the environments of its org and project, and offers only the reply", async () => {
+  it("asks identity for the environments of its org, and offers only the reply", async () => {
     const PROD = "urn:wamn:project-env:acme:widgets:prod:q8w4e2r6";
     const { state, fetch } = identity(false, [...ONE, { aud: PROD, org: "acme", project: "widgets", env: "prod" }]);
     open("/", fetch);
@@ -93,7 +93,6 @@ describe("identity pages", () => {
       email: "someone@wamn.dev",
       password: "a long password string",
       org: "acme",
-      project: "widgets",
     });
     flush();
     fireEvent.click(screen.getByText("acme/widgets/prod"));
@@ -160,7 +159,7 @@ describe("identity pages", () => {
     fireEvent.click(await screen.findByText("Control"));
     expect(await screen.findByText("members")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${CONTROL}/org`));
-    expect(state.calls).toContain("/wamn_control/control/mine");
+    expect(state.calls).toContain("/api/wamn_control/control/mine");
     expect(state.calls.some((call) => call.includes("permission/mine"))).toBe(false);
     // No application screen and no Administration section in a control session.
     expect(screen.queryByText("Pallets")).toBeNull();

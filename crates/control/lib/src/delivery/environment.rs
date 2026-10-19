@@ -45,7 +45,8 @@ pub struct SystemDatabase {
     pub database: String,
 }
 
-/// The bucket and prefix that `wamn web upload` writes the client to.
+/// The bucket and prefix for package web uploads. The platform UI uses its
+/// fixed bucket and platform version, independently of this environment.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WebClient {

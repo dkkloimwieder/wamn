@@ -168,6 +168,33 @@ The bucket must allow reads without credentials.
 The edge chart in `deploy/platform/edge` serves a list of `applications`. Each entry names its public `host`, the URL `api` of the `http` Service of its environment's release, and its upload path `bucketPath`. `upgrade-environment` writes `api` from `release_chart::release_name`, and the chart only reads it. The edge passes the headers of each object on.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
+## Platform UI files
+
+Run the platform upload from the repository that holds `apps/platform_ui/dist`.
+Set `WAMN_RELEASE_CHART` to the chart from `build-platform`.
+The command compares the dist digest with `platform-build.json` before it writes any object.
+It needs Google Application Default Credentials, but no environment or release selection.
+
+```bash
+wamn web upload --platform-ui --org dkk
+```
+
+The upload writes to `gs://wamn-dev-web/platform-ui/<platform version>/`.
+It writes the assets first, `config.json` with only `{"org":"dkk"}` next, and `index.html` last.
+Every object is create-only. A repeated upload refuses existing objects.
+Package uploads retain their coordinate, release digest, bucket and prefix.
+
+The control root is `https://control.wamn.dev`.
+Its host group runs `wamn-host host --control --org=dkk` in namespace `hosts`.
+The HTTP transport workload selects that host group and supplies endpoints for the fixed Service `c-dkk-http`.
+[Google Cloud section 4](gcp.md#4191-control-host-and-platform-ui) owns its installation and credentials.
+
+The edge values contain a separate `control` entry with `host`, `api` and `bucketPath`.
+The edge chart forwards `/api/` to the control Service and `/password/` to identity.
+With a bucket endpoint, it serves the control bundle directly.
+On Google Cloud, `deploy/gcp/url-map.yaml` serves `/assets/` and `/config.json` from the platform version prefix.
+Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
+
 ## Google Cloud edge
 
 On Google Cloud, a global load balancer sends `/api/` and `/password/` to the edge and serves every other path from a Cloud CDN backend bucket, as the [web deployment plan](../plan/web-deployment.md) describes.

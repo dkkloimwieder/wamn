@@ -2,7 +2,6 @@ export {
   Shell,
   screen,
   API_BASE,
-  CONTROL_BASE,
   type ScreenProps,
   type ShellAction,
   type ShellRoute,

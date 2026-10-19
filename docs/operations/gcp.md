@@ -246,7 +246,7 @@ DATABASE_URL=postgres://postgres@127.0.0.1:$PORT/postgres target/debug/wamn buil
 docker rm -f wamn-install-build-pg
 ```
 
-`wamn-ctl build-platform` builds the host, runner, gates and identity images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The repository `wamn` has immutable tags, so a version that is already in the registry cannot be built again. A reinstall at an unchanged version uses the registry (`docs/plan/platform-deploy.md` R15). With `--stamp-only`, the command builds nothing. It reads the registry digests of the six images of the version and stamps them into the release chart. It refuses if one of them is missing.
+`wamn-ctl build-platform` builds the host, runner, gates and identity images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The repository `wamn` has immutable tags, so a version that is already in the registry cannot be built again. A reinstall at an unchanged version uses the registry (`docs/plan/platform-deploy.md` R15). With `--stamp-only`, the command builds nothing. It reads the registry digests of the six images of the version and stamps them into the release chart. It refuses if one of them is missing. Both modes record the local platform UI digest beside the stamped chart ([building](building.md#platform-ui)).
 
 The build pushes for longer than one hour, and a `docker login` token expires after one hour. Give Docker a configuration of its own with the gcloud credential helper, which gets a new token for each push. The file holds no credential. Then build if the host image of the version is absent, and stamp only if it is present:
 
@@ -256,6 +256,7 @@ mkdir -m 700 $W/docker
 echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > $W/docker/config.json
 V=$(sed -n 's/^pub const CHART_VERSION: &str = "\(.*\)";/\1/p' crates/control/lib/src/release_chart.rs)
 if gcloud artifacts docker images describe us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:$V >/dev/null 2>&1; then
+  pnpm --filter @wamn/platform-ui build
   STAMP=--stamp-only
 else
   STAMP=
@@ -741,6 +742,50 @@ for project in receiving wms; do
 done
 ```
 
+### 4.19.1 Control host and platform UI
+
+The stamped chart supplies the control host image.
+[host-group-control.yaml](../../deploy/gcp/host-group-control.yaml) runs the org `dkk` control host in `hosts`.
+[control-service.yaml](../../deploy/gcp/control-service.yaml) gives it the fixed Service `c-dkk-http` and its HTTP transport workload.
+The host reads the org control credential, the identity CA, the operator certificate and the administration credentials.
+It uses org scope and carries no application release.
+
+Prepare the org credential and the initial administration Secret with the system database connection from section 4.7:
+
+```bash
+(umask 077; target/debug/wamn-ctl provision-org --org dkk --template trials --pool wamn-pg \
+  --admin dkkloimwieder@gmail.com --prepare-control-generation a --namespace hosts \
+  --db-host wamn-pg-rw.platform.svc.cluster.local --emit-control-secret $W/control-db.json \
+  --emit-control-administration-secret $W/control-administration.json)
+kubectl apply -f $W/control-db.json -f $W/control-administration.json
+kubectl -n identity get secret operator-dkk -o json | \
+  jq 'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.managedFields) | .metadata.namespace="hosts"' | kubectl apply -f -
+helm upgrade --install c-dkk "$W/release-chart" --namespace hosts \
+  -f deploy/gcp/host-group-control.yaml
+HTTP_IMAGE=$(sed -n 's/^      image: \(.*\/wamn\/http@sha256:.*\)$/\1/p' "$W/release-chart/values.yaml")
+test -n "$HTTP_IMAGE"
+sed "s|__HTTP_IMAGE__|$HTTP_IMAGE|" deploy/gcp/control-service.yaml > "$W/control-service.yaml"
+kubectl apply -f "$W/control-service.yaml"
+kubectl -n hosts rollout status deploy/hostgroup-c-dkk --timeout=600s
+```
+
+Create the administration Secret only on the first install.
+Keep each environment's administration credential current through `provision-project-env --emit-control-administration-patch` before control writes.
+The existing runtime TLS Secrets and service account from section 4.9 must exist in `hosts`.
+
+Upload the local bundle whose digest the stamped chart records:
+
+```bash
+WAMN_RELEASE_CHART="$W/release-chart" target/debug/wamn web upload --platform-ui --org dkk
+```
+
+The destination is `gs://wamn-dev-web/platform-ui/<platform version>/` and `config.json` contains only the org.
+Set the control `bucketPath` in `values-edge.yaml` and the control matcher paths in `url-map.yaml` to that platform version.
+The `control.wamn.dev` DNS record must point to the same load balancer as the application hosts.
+The existing wildcard certificate covers this host.
+Section 4.20 installs both routing owners.
+They send `/api/` to `c-dkk-http`, `/password/` to identity, and every shell page to the platform UI index.
+
 ### 4.20 Edge and load balancer
 
 The edge chart annotates its Service with `neg: true`, so GKE makes the network endpoint group `wamn-edge`. The group of the deleted cluster carries the old cluster UID, and the new cluster's controller refuses it (`found conflicting description in neg wamn-edge`). Install the edge, take the old group off the backend service, delete it, wait for the new group, and add it back. The new group exists some seconds before it is ready, and `add-backend` refuses it until then (`is not ready`), so the add repeats:
@@ -772,7 +817,7 @@ kubectl -n edge logs job/edge-cert-1
 Run these from this machine. The load balancer can take some minutes to use a new group and a new URL map:
 
 ```bash
-for h in receiving.wamn.dev wms.wamn.dev; do
+for h in receiving.wamn.dev wms.wamn.dev control.wamn.dev; do
   curl -s -o /dev/null -w "$h / %{http_code}\n" https://$h/
   curl -s -o /dev/null -w "$h /config.json %{http_code}\n" https://$h/config.json
 done
@@ -781,7 +826,7 @@ curl -s -w ' %{http_code}\n' -X POST -H 'content-type: application/json' -d '{}'
 openssl s_client -connect receiving.wamn.dev:443 -servername receiving.wamn.dev </dev/null 2>/dev/null | openssl x509 -noout -serial -enddate
 ```
 
-`/` and `/config.json` answer `200` on both hosts. The two API calls answer `401` with `{"error":{"code":"unauthorized"}}`, because they carry no session. The serial is the serial of the Secret `edge/wamn-edge-tls`. The install is done. To stop the cost of the nodes, run section 5.2.
+`/` and `/config.json` answer `200` on all three hosts. The two API calls answer `401` with `{"error":{"code":"unauthorized"}}`, because they carry no session. The serial is the serial of the Secret `edge/wamn-edge-tls`. The install is done. To stop the cost of the nodes, run section 5.2.
 
 ## 5. Operations
 

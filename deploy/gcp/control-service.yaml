@@ -1,0 +1,51 @@
+# The control API Service and its HTTP transport workload.
+# Fill __HTTP_IMAGE__ from platform.roles.http.image in the stamped chart.
+apiVersion: v1
+kind: Service
+metadata:
+  name: c-dkk-http
+  namespace: hosts
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: c-dkk-http
+  namespace: hosts
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        hostgroup: c-dkk
+      environment: hosts
+      kubernetes:
+        service:
+          name: c-dkk-http
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          version: "0.3.0"
+          interfaces: [handler]
+          config:
+            host: control.wamn.dev
+        - namespace: wamn
+          package: flow-http-routing
+          version: "0.1.0"
+          interfaces: [routing]
+        - namespace: wamn
+          package: router-delivery
+          version: "0.4.0"
+          interfaces: [delivery]
+      components:
+        - name: flow-http
+          image: __HTTP_IMAGE__
+          imagePullPolicy: Always
+          localResources:
+            allowedIpNameLookups: []

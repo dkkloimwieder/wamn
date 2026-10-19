@@ -1,4 +1,8 @@
-{{- $applications := required "Set applications to the list of applications the edge serves." .Values.applications -}}
+{{- $applications := .Values.applications -}}
+{{- with .Values.control -}}
+{{- $applications = append $applications . -}}
+{{- end -}}
+{{- $applications = required "Set applications or control to the hosts the edge serves." $applications -}}
 {{- $identity := required "Set identity to the identity service URL." .Values.identity -}}
 {{- $endpoint := .Values.bucket.endpoint -}}
 {{- if not (or $endpoint .Values.neg) -}}
