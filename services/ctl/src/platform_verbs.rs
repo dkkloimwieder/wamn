@@ -193,10 +193,10 @@ mod tests {
       --dimensions region=us-central1 --preferred-value 200
 
 4.6 Packages and platform build
-  platform_version: 0.1.34
+  platform_version: 0.1.35
   registry: us-central1-docker.pkg.dev/wamn-dev/wamn
   environments: dkk/receiving/dev, dkk/wms/dev
-  platform images: us-central1-docker.pkg.dev/wamn-dev/wamn/{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn/http,wamn/materializer}:0.1.34
+  platform images: us-central1-docker.pkg.dev/wamn-dev/wamn/{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn/http,wamn/materializer}:0.1.35
   release chart: $HOME/.cache/wamn-install/release-chart
   packages: package roots and versions from environment documents
   owner input: Artifact Registry us-central1-docker.pkg.dev/wamn-dev/wamn (immutable tags)
@@ -259,7 +259,7 @@ mod tests {
   org: dkk
   environments: dkk/receiving/dev, dkk/wms/dev
   session target Secrets: identity/wamn-session-role-reader-dkk--receiving--dev, identity/wamn-session-role-reader-dkk--wms--dev
-  identity image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:0.1.34 (digest from 4.6)
+  identity image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:0.1.35 (digest from 4.6)
   resend_from: noreply@wamn.dev
   route hosts: control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
   identity issuer: https://identity.identity.svc.cluster.local
@@ -297,7 +297,7 @@ mod tests {
 
 4.15 Qualification
   environments: dkk/receiving/dev, dkk/wms/dev
-  platform_version: 0.1.34
+  platform_version: 0.1.35
   release artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/releases
   release chart: $HOME/.cache/wamn-install/release-chart
   release digests: from 4.14
@@ -307,9 +307,9 @@ mod tests {
 4.15.1 Benchmark
   project_id: wamn-dev
   zone: us-central1-a
-  platform_version: 0.1.34
+  platform_version: 0.1.35
   environments: dkk/receiving/dev, dkk/wms/dev
-  result: tests/bench/platform-0.1.34.json
+  result: tests/bench/platform-0.1.35.json
   first install prerequisite: complete 4.17 through 4.21; bench VM and binary from section 5.8
   owner inputs: none
 
@@ -325,7 +325,7 @@ mod tests {
   environments: dkk/receiving/dev, dkk/wms/dev
   environment documents: deploy/gcp/environments/dkk--receiving--dev.k, deploy/gcp/environments/dkk--wms--dev.k
   registry: us-central1-docker.pkg.dev/wamn-dev/wamn
-  platform_version: 0.1.34
+  platform_version: 0.1.35
   release namespace: hosts
   releases and host groups: r-dev-ee95c37ee965257ff856, r-dev-8f6b3ee8ac75e40affb1
   release digests: from 4.16
@@ -356,12 +356,12 @@ mod tests {
 4.19.1 Control host and platform UI
   org: dkk
   owner_email: dkkloimwieder@gmail.com
-  platform_version: 0.1.34
+  platform_version: 0.1.35
   registry: us-central1-docker.pkg.dev/wamn-dev/wamn
   route_hosts.control: control.wamn.dev
   control release, Deployment, Service: hosts/c-dkk, hosts/hostgroup-c-dkk, hosts/c-dkk-http
   control Secrets: hosts/wamn-control-dkk, hosts/wamn-control-administration-dkk, hosts/operator-dkk
-  platform UI destination: gs://wamn-dev-web/platform-ui/0.1.34/
+  platform UI destination: gs://wamn-dev-web/platform-ui/0.1.35/
   owner input: web bucket gs://wamn-dev-web and upload IAM
     made by the owner: docs/history/gcp-install-history.md sections 1, 4.3 (docs/operations/gcp.md section 2)
   owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
@@ -372,7 +372,7 @@ mod tests {
   zone: us-central1-a
   route hosts: control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
   buckets.web: wamn-dev-web
-  platform_version: 0.1.34
+  platform_version: 0.1.35
   control Service: hosts/c-dkk-http
   edge release and endpoint group: edge/wamn-edge, wamn-edge
   backend service and URL map: wamn-edge-platform, wamn-edge

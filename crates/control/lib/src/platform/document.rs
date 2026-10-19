@@ -359,7 +359,7 @@ mod tests {
                 {"name": "bench", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "role=bench-host", "taint": "role=bench-host:NoSchedule"},
                 {"name": "pg", "machine_type": "e2-standard-2", "spot": false, "disk_type": "pd-standard", "disk_size": 50, "size": 1, "label": "role=postgres", "taint": "role=postgres:NoSchedule"}
             ],
-            "platform_version": "0.1.34", "org": "dkk", "owner_email": "dkkloimwieder@gmail.com",
+            "platform_version": "0.1.35", "org": "dkk", "owner_email": "dkkloimwieder@gmail.com",
             "registry": "us-central1-docker.pkg.dev/wamn-dev/wamn",
             "buckets": {"web": "wamn-dev-web", "otel": "wamn-dev-otel"},
             "route_hosts": {"control": "control.wamn.dev", "environments": {
