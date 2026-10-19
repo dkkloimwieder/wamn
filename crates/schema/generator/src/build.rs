@@ -34,7 +34,7 @@ use crate::describe::{DescribedStatement, column_type, describe_statements};
 use crate::generate::sha256;
 use crate::materialize::{
     classify_statements, client_bindings, existing_files, expected_files, generate_from_manifest,
-    introspect_with_manifest, load_authored_sql, statement_corpus_from_manifest,
+    introspect_with_manifest, load_authored_sql, statement_corpus_from_manifest, write_files,
 };
 use crate::receipt::{
     BuildReceipt, RECEIPT_FILE, RECEIPT_SCHEMA, ReceiptDependency, ReceiptOutputs, ReceiptPackage,
@@ -49,9 +49,6 @@ const HAND_WRITTEN_MANIFEST: &str = "wamn.json";
 /// The type that stands in for an undeclared statement value type while the
 /// build reads facts that do not depend on it.
 const PLACEHOLDER_TYPE: &str = "text";
-/// The SQLx metadata of the generated verifier. It is prepared into the build
-/// output after the build (§7.1 step 7), so a build keeps it.
-const SQLX_METADATA: &str = ".sqlx";
 /// The web client's source directory, relative to the package root.
 const WEB_SOURCE: &str = "web";
 /// The web client build, relative to the package's build output directory
@@ -731,28 +728,9 @@ fn write_outputs(
         .collect::<BTreeMap<_, _>>();
     outputs.insert(PathBuf::from(COMPILED_MANIFEST_NAME), canonical);
 
-    fs::create_dir_all(package_output)
-        .with_context(|| format!("create {}", package_output.display()))?;
-    let receipt = package_output.join(RECEIPT_FILE);
-    if receipt.exists() {
-        fs::remove_file(&receipt).with_context(|| format!("remove {}", receipt.display()))?;
-    }
-    for stale in existing_files(package_output)? {
-        if !outputs.contains_key(&stale) && !stale.starts_with(SQLX_METADATA) {
-            let path = package_output.join(stale);
-            fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
-        }
-    }
+    write_files(package_output, &outputs)?;
     let mut digests = BTreeMap::new();
     for (relative, bytes) in &outputs {
-        let path = package_output.join(relative);
-        if fs::read(&path).is_ok_and(|actual| actual.as_slice() == *bytes) {
-            // Unchanged: keep the modification time.
-        } else {
-            let parent = path.parent().context("an output path has a parent")?;
-            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-            fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))?;
-        }
         let key = relative
             .to_str()
             .with_context(|| format!("output path is not UTF-8: {}", relative.display()))?

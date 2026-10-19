@@ -13,9 +13,7 @@ use wamn_schema_introspection::postgres::read_catalog_with_synchronizations;
 mod synchronization;
 
 use crate::StatementTransactionality;
-use crate::authoring::{
-    COMPILED_MANIFEST, compile_manifest, compiled_manifest_path, is_authored, package_manifest_path,
-};
+use crate::authoring::{COMPILED_MANIFEST, compile_manifest, is_authored, package_manifest_path};
 use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_plan::ClientPlan;
@@ -344,17 +342,6 @@ pub fn materialize_package_classified(
 ) -> Result<()> {
     let package = generate_package(catalog, package_root, transactional)?;
     let output_root = crate::output_root(package_root);
-    // The route readers below read the compiled manifest from its file, so a
-    // write puts the file in place before them.
-    if is_authored(package_root) {
-        let (bytes, _) = load_compiled_manifest(package_root, catalog)?;
-        let path = compiled_manifest_path(package_root);
-        fs::create_dir_all(&output_root)
-            .with_context(|| format!("create generated directory {}", output_root.display()))?;
-        if fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
-            fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
-        }
-    }
     let (_, manifest) = load_manifest(package_root)?;
     let client = client_bindings(package_root, &manifest, &package)?;
     let mut expected = expected_files(&package)?;
@@ -384,7 +371,7 @@ pub fn materialize_package_classified(
 /// The TypeScript bindings and components that this package declares.
 ///
 /// Materialization owns these files with the rest of the generated output.
-/// It refuses files that it did not produce.
+/// It removes files that it no longer produces.
 /// Contracts and generated routes come from the package still in memory.
 /// Authored routes come from `publication/attachments.json`.
 /// Route templates are release facts, so bindings use them directly.
@@ -834,9 +821,16 @@ fn read_contract_files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
     Ok(files)
 }
 
-/// Write each generated file. The output directory is build output: a file
-/// that this run does not generate, such as `build.json`, stays.
-fn write_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
+/// Replace generated output, retaining SQLx metadata prepared after generation.
+/// An unchanged file keeps its modification time.
+pub(crate) fn write_files(output_root: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> Result<()> {
+    for stale in existing_files(output_root)? {
+        if !expected.contains_key(&stale) && !stale.starts_with(".sqlx") {
+            let path = output_root.join(stale);
+            fs::remove_file(&path)
+                .with_context(|| format!("remove stale generated artifact {}", path.display()))?;
+        }
+    }
     for (relative, bytes) in expected {
         let path = output_root.join(relative);
         // An unchanged file keeps its modification time, so Cargo reuses the
@@ -1012,6 +1006,20 @@ mod tests {
             "generation unexpectedly repeated database introspection"
         );
         assert_eq!(wrapper.generated_snapshot(), split.generated_snapshot());
+    }
+
+    #[test]
+    fn stale_and_clean_materialization_produce_identical_outputs() {
+        let stale = TestPackage::new("stale-output");
+        let clean = TestPackage::new("clean-output");
+        let output = crate::output_root(&stale.root);
+        fs::create_dir_all(output.join("client-ts/components")).expect("create stale output");
+        fs::write(output.join("client-ts/components/obsolete.tsx"), b"stale")
+            .expect("write an obsolete component");
+        fs::write(output.join("build.json"), b"stale").expect("write an obsolete receipt");
+        materialize_package_from_catalog(&catalog(), &stale.root).expect("replace stale output");
+        materialize_package_from_catalog(&catalog(), &clean.root).expect("generate clean output");
+        assert_eq!(stale.generated_snapshot(), clean.generated_snapshot());
     }
 
     #[test]

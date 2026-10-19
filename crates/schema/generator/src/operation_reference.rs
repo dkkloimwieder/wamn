@@ -2,7 +2,7 @@
 //!
 //! An authored route entry, component declaration or wiring names an operation
 //! by its reference, `<package>:<interface>/<operation>`. The version is
-//! authored once, as `package.version` in `wamn.json`. Every reader resolves
+//! authored once, as `package.version` in the package manifest. Every reader resolves
 //! the references of an authored document with this module before it uses the
 //! document, so no reader sees a reference and every reader sees the same
 //! sealed ids (docs/history/operation-ids.md).
@@ -22,8 +22,8 @@ pub const PACKAGE_MANIFEST: &str = "wamn.json";
 const PLATFORM_PREFIX: &str = "wamn:";
 
 /// Read the operation owners of the package that holds an authored document,
-/// from the manifest of the nearest package root among the ancestors of the
-/// document, and that package root.
+/// from the current authored manifest of the nearest package root among the
+/// ancestors of the document, and that package root.
 ///
 /// # Errors
 ///
@@ -45,9 +45,9 @@ pub fn package_owners_of(document: &Path) -> Result<(PathBuf, OperationOwners), 
         })?;
     let path = crate::package_manifest_path(root);
     // `wamn build` reads the publication files before it writes any output, so
-    // a package authored in wamn.k without a compiled manifest reads its owners
-    // from the compile. The owners are authored facts.
-    let bytes = if crate::is_authored(root) && !path.exists() {
+    // an authored package always reads its owners from the current source.
+    // An earlier build can hold a different package version.
+    let bytes = if crate::is_authored(root) {
         crate::authoring::compile_authored_manifest(root).map_err(|error| {
             GenerateError::new(
                 GenerateErrorType::InvalidManifest,
@@ -81,7 +81,7 @@ pub enum AuthoredDocument {
 }
 
 /// Read one authored publication file, with its references resolved against
-/// the `wamn.json` of the package that holds it.
+/// the current authored manifest of the package that holds it.
 ///
 /// # Errors
 ///

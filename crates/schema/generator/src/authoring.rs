@@ -6,8 +6,8 @@
 //! crate. Generation adds the members it derives, such as each custom
 //! operation's relations, and writes the JSON to the package's
 //! [`output_root`]. The
-//! author states none of them. Every other reader reads
-//! that file and never `wamn.k` (docs/plan/manifest-authoring.md §4.3). Every
+//! author states none of them. Consumers read that file, while authored
+//! publication references resolve owners from the current source manifest. Every
 //! package under `apps/` authors `wamn.k`, and the repository policy lint
 //! refuses a root `wamn.json` there. A test fixture keeps its hand-written
 //! `wamn.json`.

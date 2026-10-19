@@ -136,6 +136,8 @@ The build writes each package to `<output root>/<package id>/`.
 The default output root is `apps/target/wamn` for an application, and `--output-root` changes it.
 Below it, the layout keeps the logical `generated/` paths that contracts and releases name, without the `generated/` prefix, plus `build.json`.
 Git holds no build output (platform-deploy.md R10(1)), and the repository policy lint refuses a tracked `generated/` or `.sqlx` file under `apps/`.
+Generation removes obsolete output files and keeps SQLx metadata prepared after generation.
+Authored publication references use the current source manifest, even when an earlier build output exists.
 Build every package before you compile the apps workspace, the app test crates, or an app web: their sources include files from the build output.
 `build.json` is the build receipt, schema `wamn.build/v1`, in canonical JSON.
 It records the input files and their digest, the base packages, the generator identity, and the digest of each output.

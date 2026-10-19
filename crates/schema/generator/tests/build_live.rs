@@ -113,13 +113,41 @@ fn statement<'a>(manifest: &'a Value, operation: &str, name: &str) -> &'a Value 
 /// describes without one; two builds give the same bytes and receipts; the
 /// manifest is canonical and hashed once; an overlay records its base.
 #[tokio::test(flavor = "current_thread")]
-async fn two_builds_give_identical_outputs_and_receipts_without_a_verifier() {
+async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
     let workspace = Workspace::new("identical");
+    workspace.edit_manifest(
+        "manifest.Package {",
+        "manifest.Package {\n    client_package = {name = \"@wamn/platform-fixture-client\"}",
+    );
+    // The fixture normally has no browser client. Its update-only model
+    // needs a read to supply the revision when this test enables components.
+    workspace.edit_manifest(
+        "update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
+        "get: {revision_field = \"edit_version\", result = \"one\"}\n                update: {writable_fields = [\"label\"], revision_field = \"edit_version\", result = \"one\"}",
+    );
     let database = wamn_test_postgres::database();
     assert!(!workspace.package().join("generated").exists());
 
     let first = workspace.root.join("target-first");
     let second = workspace.root.join("target-second");
+    // The default output can hold an older manifest even when the caller
+    // selects a different output root. Authored routes must use current owners.
+    let previous = wamn_schema_generator::output_root(&workspace.package());
+    fs::create_dir_all(&previous).expect("create previous build output");
+    let mut old: Value = serde_json::from_slice(
+        &wamn_schema_generator::compile_manifest(&workspace.package()).unwrap(),
+    )
+    .unwrap();
+    old["package"]["version"] = Value::String("1.0.0".to_owned());
+    fs::write(
+        previous.join("wamn.json"),
+        serde_json::to_vec(&old).unwrap(),
+    )
+    .expect("write the old manifest");
+    let stale = package_output(&first, wamn_fixture_package::PACKAGE_ID)
+        .join("client-ts/components/obsolete.tsx");
+    fs::create_dir_all(stale.parent().unwrap()).expect("create stale client output");
+    fs::write(&stale, b"obsolete").expect("write an obsolete component");
     let receipt_first = build_package(&BuildRequest::new(
         &workspace.package(),
         &first,
@@ -127,6 +155,7 @@ async fn two_builds_give_identical_outputs_and_receipts_without_a_verifier() {
     ))
     .await
     .expect("build the fixture");
+    fs::remove_dir_all(&previous).expect("remove the previous build output");
     let receipt_second = build_package(&BuildRequest::new(
         &workspace.package(),
         &second,
@@ -139,6 +168,11 @@ async fn two_builds_give_identical_outputs_and_receipts_without_a_verifier() {
     let output_second = package_output(&second, wamn_fixture_package::PACKAGE_ID);
     let files = snapshot(&output_first);
     assert_eq!(files, snapshot(&output_second));
+    let bindings = std::str::from_utf8(&files[Path::new("client-ts/widget.ts")]).unwrap();
+    let components =
+        std::str::from_utf8(&files[Path::new("client-ts/components/widget.tsx")]).unwrap();
+    assert!(bindings.contains("export async function archive("));
+    assert!(components.contains("export function WidgetArchiveForm("));
     assert_eq!(receipt_first, receipt_second);
     assert_eq!(receipt_first, receipt::read(&output_first).unwrap());
     assert!(
