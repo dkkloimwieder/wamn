@@ -219,7 +219,7 @@ function Session(
       <Show when={view()}>
         {(shown) => (
           <Layout
-            title={props.kind === "control" ? "Control" : props.title}
+            title={props.kind === "control" ? props.org : props.title}
             aud={props.aud}
             sections={shown().sections}
             address={props.address}
@@ -241,11 +241,11 @@ function Destination(props: {
   view: View;
   transport: Transport;
 }): JSX.Element {
+  const path = () => props.address.url().pathname.split("/").slice(2).join("/");
   const selected = () => {
-    const path = props.address.url().pathname.split("/").slice(2).join("/");
     for (const section of props.sections)
       for (const route of [...section.screens, ...(section.routes ?? [])]) {
-        const params = matchPath(route.path, path);
+        const params = matchPath(route.path, path());
         if (!params || !props.view.holds(route.operation)) continue;
         if (props.kind === "control" && params.project !== undefined && !props.view.projects.includes(params.project))
           continue;
@@ -255,7 +255,15 @@ function Destination(props: {
     return undefined;
   };
   return (
-    <Show when={selected()} keyed fallback={<NotFound />}>
+    <Show
+      when={selected()}
+      keyed
+      fallback={
+        <Show when={path() !== ""}>
+          <NotFound />
+        </Show>
+      }
+    >
       {({ route, home, params }) => {
         const open = (path: string) => props.address.navigate(`/${props.aud}/${path}`, false, true);
         const close = () =>

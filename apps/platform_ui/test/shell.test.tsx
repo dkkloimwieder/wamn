@@ -1,5 +1,6 @@
-import { cleanup, fireEvent, screen, waitFor } from "@solidjs/testing-library";
+import { cleanup, fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it, vi } from "vitest";
+import { Shell } from "../src/shell";
 import { AUD, CONTROL, ONE, ADMIN, identity, open } from "./fixtures";
 
 describe("the app shell", () => {
@@ -15,6 +16,19 @@ describe("the app shell", () => {
       expect(container.firstElementChild?.hasAttribute("data-ui-theme")).toBe(false);
     },
   );
+
+  it.each([CONTROL, AUD])("renders an empty audience layout at %s and refuses unknown paths", async (aud) => {
+    const { fetch } = identity(true);
+    window.history.pushState({}, "", `/${aud}`);
+    const { container } = render(() => <Shell title="Stub app" org="acme" sections={[]} fetch={fetch} />);
+    expect(await screen.findByText(aud === CONTROL ? "acme" : "Stub app")).toBeDefined();
+    expect(await screen.findByText("sign out")).toBeDefined();
+    expect(container.querySelector("nav section")).toBeNull();
+    expect(screen.queryByText("This address names no page.")).toBeNull();
+    window.history.pushState({}, "", `/${aud}/unknown`);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(await screen.findByText("This address names no page.")).toBeDefined();
+  });
 
   it("refuses an address that names an environment of another org", async () => {
     const { state, fetch } = identity(false);
