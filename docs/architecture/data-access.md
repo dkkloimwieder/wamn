@@ -391,10 +391,12 @@ The query's codec fills the default and refuses a limit below 1.
 The host holds the maximum of each reply shape and refuses a larger limit before the query runs.
 The engine gathers the rows and the cursor into one page outcome for a caller that reads one outcome, such as a route or a wiring node.
 A query reads through `statements.run-stream` of `wamn:postgres` 0.4.0.
-The host begins one transaction with the claims of `run`, declares one cursor over the exact statement, and fetches 500 rows at a time.
-Dropping the stream rolls the transaction back, which ends the query.
-The cursor reads the snapshot that the statement took when it started, so a write that commits during a load does not show in it.
-The test `a_streamed_load_reads_one_statement_as_of_its_start` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) holds a load after its first rows, finds its cursor open, commits a write, and reads the rest of the load without it.
+The host executes the exact prepared statement once, with the claims of `run`, and buffers up to 500 rows per batch.
+Caller claims keep their transaction. Reads without caller claims use the connection configuration and one implicit transaction.
+Dropping an unfinished stream closes its session and ends the query.
+The statement reads one snapshot, so a write that commits during a load does not show in it.
+The test `a_streamed_load_reads_one_statement_as_of_its_start` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) holds a load after its first rows and finds its statement open.
+It commits a write and reads the rest of the load without that write.
 The row limit does not apply to a stream, because the host holds one batch at a time.
 A custom projection declares its result class and typed result fields, and no row or byte limit.
 Its authored SQL decides how many rows it returns.

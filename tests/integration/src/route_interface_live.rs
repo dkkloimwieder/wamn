@@ -819,7 +819,7 @@ async fn a_streamed_load_that_stops_ends_its_database_query() -> anyhow::Result<
 }
 
 /// A streamed load reads one statement as it runs: the client has rows while
-/// the statement's cursor is still open, fetched in batches. Every row comes
+/// the statement is still open, with bounded host buffering. Every row comes
 /// from the snapshot the statement started with, so a write that commits
 /// during the load does not show in it (wamn-utci.5).
 #[tokio::test(flavor = "multi_thread")]
@@ -842,7 +842,7 @@ async fn a_streamed_load_reads_one_statement_as_of_its_start() -> anyhow::Result
     let load = json!({"limit": 100_000, "shape": "stream"});
     let query = wamn_execution_contract::encode_read_query(load.as_object().context("an item")?);
 
-    // The client reads the first rows while the statement's cursor is open.
+    // The client reads the first rows while the statement is open.
     let mut response = paths
         .client
         .get(format!(
@@ -865,17 +865,24 @@ async fn a_streamed_load_reads_one_statement_as_of_its_start() -> anyhow::Result
         open >= 1,
         "the statement is still open while the client holds rows"
     );
-    let fetching: i64 = database
-        .query_one(
-            "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() \
-             AND xact_start IS NOT NULL AND query LIKE 'FETCH FORWARD % FROM wamn_stream'",
+    let reading: Vec<String> = database
+        .query(
+            "SELECT query FROM pg_stat_activity WHERE datname = current_database() \
+             AND pid <> pg_backend_pid() AND xact_start IS NOT NULL \
+             AND backend_type = 'client backend'",
             &[],
         )
         .await?
-        .get(0);
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
     anyhow::ensure!(
-        fetching == 1,
-        "the load fetches its statement's rows in batches"
+        reading
+            .iter()
+            .filter(|sql| sql.starts_with("SELECT") && sql.contains("widget_maker"))
+            .count()
+            == 1,
+        "the load reads one prepared statement: {reading:?}"
     );
 
     // A write commits during the load: every maker gets a new name.

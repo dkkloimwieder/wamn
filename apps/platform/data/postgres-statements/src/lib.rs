@@ -255,8 +255,8 @@ impl Connection {
 
     /// Run one admitted statement and read its rows as the server sends them.
     ///
-    /// The host reads the rows in batches from one cursor in one transaction,
-    /// so every row comes from the snapshot the statement started with.
+    /// The host executes one prepared statement and buffers its rows in batches.
+    /// Every row comes from the snapshot the statement started with.
     /// Dropping the returned stream before its end ends the query.
     pub async fn run_stream<T>(
         &mut self,

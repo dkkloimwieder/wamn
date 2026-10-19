@@ -1,13 +1,12 @@
-//! `statements.run-stream` of `wamn:postgres@0.4.0` (owner ruling on
-//! `wamn-utci`): the rows of one statement, as the server sends them.
+//! `statements.run-stream` of `wamn:postgres@0.4.0`: one prepared
+//! statement, with bounded host buffering and PostgreSQL's statement snapshot.
 
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use deadpool_postgres::Object;
+use futures_util::TryStreamExt as _;
 use tokio::sync::{mpsc, oneshot};
-use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::StoreContextMut;
@@ -16,28 +15,29 @@ use wash_runtime::wasmtime::component::{
 };
 
 use super::claims::reject_claim_mutation;
+use super::claims::transactions::{bind_session_settings, prepare_session_settings};
 use super::resources::{
-    StatementConnectionGuard, admit_transaction_statement, begin_statement_transaction,
-    db_span_for_project, plugin_of, record_query_ms, take_conn,
+    StatementConnectionGuard, admit_transaction_statement, db_span_for_project, plugin_of,
+    record_query_ms,
 };
 use super::statements::{
     VerifiedStatement, validate_prepared_statement, validate_statement_result,
 };
 use super::types::{PgParam, columns_of, decode_row, map_pg_error};
-use super::{Column, PgError, PgTransaction, RowSet, SqlValue, StatementError, WamnPostgres};
+use super::{Column, PgError, RowSet, SqlValue, StatementError, WamnPostgres};
 
 type WasmResult<T> = wash_runtime::wasmtime::Result<T>;
 
-/// Rows one fetch reads from the stream's cursor. The host holds at most one
-/// fetched batch and one batch in flight to the guest.
+/// The host holds at most one row batch and one batch in flight to the guest.
 const STREAM_BATCH_ROWS: usize = 500;
 
-/// The cursor of a stream. Each stream has its own transaction, so one name
-/// is enough.
-const STREAM_CURSOR: &str = "wamn_stream";
+pub(super) struct OpenedStream {
+    pub(super) columns: Vec<Column>,
+    pub(super) batches: mpsc::Receiver<Vec<Vec<SqlValue>>>,
+    pub(super) finished: oneshot::Receiver<Result<(), StatementError>>,
+}
 
-/// The rows of one admitted statement: its columns, a stream of row batches,
-/// and a future that resolves after the last row.
+/// The columns, rows, and completion of one admitted statement.
 pub(super) async fn run_stream<T: 'static + Send>(
     accessor: &Accessor<T, SharedCtx>,
     instance: Option<&str>,
@@ -79,59 +79,24 @@ pub(super) async fn run_stream<T: 'static + Send>(
                 &plugin,
                 &component_id,
                 &project,
-                &statement_path,
-                &statement,
-                &binds,
+                statement_path,
+                statement,
+                binds,
             )
-            .instrument(span.clone())
+            .instrument(span)
             .await;
             record_query_ms("statement.stream", &project, started.elapsed());
             opened
-                .map(|(columns, connection)| (columns, connection, statement_path, statement, span))
         })
         .await;
-    let (columns, connection, statement_path, statement, span) = match opened {
+    let OpenedStream {
+        columns,
+        batches,
+        finished,
+    } = match opened {
         Ok(opened) => opened,
         Err(error) => return Ok(Err(error)),
     };
-    let (rows, batches) = mpsc::channel(1);
-    let (outcome, finished) = oneshot::channel();
-    let stream_columns = columns.clone();
-    tokio::spawn(
-        async move {
-            let pumped = pump(
-                &connection,
-                &statement_path,
-                &statement,
-                stream_columns,
-                rows,
-            )
-            .await;
-            // A read that ended, or a reader that left, closes the cursor.
-            // ROLLBACK ends a query the reader no longer wants.
-            let verb = if matches!(pumped, Ok(Pumped::Ended)) {
-                "COMMIT"
-            } else {
-                "ROLLBACK"
-            };
-            let finished = match super::claims::transactions::finish_transaction(
-                connection.connection(),
-                verb,
-            )
-            .await
-            {
-                Ok(()) => {
-                    connection.repool();
-                    pumped.map(drop)
-                }
-                // The guard destroys a connection whose transaction state
-                // is unknown, so the server aborts it.
-                Err(error) => pumped.and(Err(StatementError::Postgres(map_pg_error(&error)))),
-            };
-            let _ = outcome.send(finished);
-        }
-        .instrument(span),
-    );
     accessor.with(|mut access| {
         let stream = StreamReader::new(&mut access, RowBatches { batches })?;
         let finished = FutureReader::new(&mut access, async move {
@@ -143,100 +108,187 @@ pub(super) async fn run_stream<T: 'static + Send>(
     })
 }
 
-/// How a stream's reads ended when no error stopped them.
-enum Pumped {
-    /// The cursor returned a partial batch: every row reached the reader.
-    Ended,
-    /// The reader dropped the stream before the last row.
-    Left,
-}
-
-/// Begin the claim transaction and declare the stream's cursor in it.
-async fn open_stream(
+/// Execute once. Claims keep their transaction when they carry caller authority.
+pub(super) async fn open_stream(
     plugin: &WamnPostgres,
     component_id: &str,
     project: &str,
-    statement_path: &str,
-    statement: &VerifiedStatement,
-    binds: &[SqlValue],
-) -> Result<(Vec<Column>, StatementConnectionGuard), StatementError> {
+    statement_path: String,
+    statement: Arc<VerifiedStatement>,
+    binds: Vec<SqlValue>,
+) -> Result<OpenedStream, StatementError> {
     reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
-    let transaction = begin_statement_transaction(plugin, component_id, project)
+    let tenant = plugin
+        .require_tenant(component_id)
+        .map_err(StatementError::Postgres)?;
+    let schema = plugin.schema_for(component_id);
+    let runner = plugin.runner_for(component_id);
+    let role = plugin.role_for(component_id);
+    let (connection, policy, authority) = plugin
+        .checkout_workload(component_id, project, &tenant)
         .await
         .map_err(StatementError::Postgres)?;
-    let connection = owned_connection(&transaction).map_err(StatementError::Postgres)?;
-    drop(transaction);
+    let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
     let postgres = |error: tokio_postgres::Error| StatementError::Postgres(map_pg_error(&error));
-    let prepared = connection
-        .connection()
-        .prepare_cached(&statement.exact_sql)
+    let mut claims = None;
+    let mut settings = None;
+    let completion = if statement.transactional || role.is_some() {
+        claims = Some(
+            plugin
+                .prepare_claims(
+                    connection.connection(),
+                    authority,
+                    plugin.active_read(component_id),
+                    &tenant,
+                    schema.as_deref(),
+                    runner.as_deref(),
+                    role.as_deref(),
+                    plugin.user_id_for(component_id).as_deref(),
+                    plugin.operation_for(component_id).as_deref(),
+                    plugin.current_run_for(component_id).as_ref(),
+                    policy.statement_timeout_ms,
+                )
+                .await
+                .map_err(StatementError::Postgres)?,
+        );
+        Some(
+            connection
+                .connection()
+                .prepare_cached("COMMIT")
+                .await
+                .map_err(postgres)?,
+        )
+    } else {
+        settings = prepare_session_settings(
+            connection.connection(),
+            &policy,
+            schema.as_deref(),
+            runner.as_deref(),
+        )
         .await
-        .map_err(postgres)?;
-    validate_prepared_statement(statement_path, statement, &prepared)?;
-    let columns = columns_of(&prepared);
-    let declare = format!(
-        "DECLARE {STREAM_CURSOR} NO SCROLL CURSOR FOR {}",
-        statement.exact_sql
-    );
-    let declared = connection
-        .connection()
-        .prepare(&declare)
+        .map_err(StatementError::Postgres)?;
+        None
+    };
+    // A cold Parse follows claims. COMMIT must wait until Execute was queued,
+    // rather than overtaking a Parse that is still waiting for its description.
+    let (mut queued, completion) = match completion {
+        Some(commit) => {
+            let (queued, ready) = oneshot::channel();
+            (Some(queued), Some((commit, ready)))
+        }
+        None => (None, None),
+    };
+    let (opened, started) = oneshot::channel();
+    let (rows, batches) = mpsc::channel(1);
+    let (outcome, finished) = oneshot::channel();
+    tokio::spawn(async move {
+        let conn = connection.connection();
+        let mut opened = Some(opened);
+        let result = {
+            let read = async {
+                let read = async {
+                    let bind = async {
+                        if let Some(claims) = claims {
+                            claims.bind(conn).await
+                        } else {
+                            bind_session_settings(conn, &policy, settings.as_ref(), schema, runner).await
+                        }.map_err(StatementError::Postgres)
+                    };
+                    let execute = async {
+                        let prepared = conn.prepare_cached(&statement.exact_sql).await.map_err(postgres)?;
+                        validate_prepared_statement(&statement_path, &statement, &prepared)?;
+                        if !statement.transactional
+                            && let Some(queued) = queued.take()
+                        {
+                            let _ = queued.send(());
+                        }
+                        let stream = conn.query_raw(&prepared, binds.into_iter().map(PgParam)).await.map_err(postgres)?;
+                        Ok::<_, StatementError>((prepared, stream))
+                    };
+                    let ((), (prepared, stream)) = tokio::try_join!(biased; bind, execute)?;
+                    let columns = columns_of(&prepared);
+                    opened.take().expect("a stream opens once").send(Ok(columns.clone()))
+                        .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
+                    pump(stream, &statement_path, &statement, columns, &rows).await?;
+                    // A writing statement commits only after every row passed its contract.
+                    if let Some(queued) = queued.take() {
+                        let _ = queued.send(());
+                    }
+                    Ok::<_, StatementError>(())
+                };
+                // Receiver ownership also covers cancellation before the first row.
+                // Once the read ends, a pending COMMIT can finish without the reader.
+                tokio::select! {
+                    biased;
+                    result = read => result,
+                    () = rows.closed() => Err(StatementError::Postgres(PgError::ConnectionUnavailable)),
+                }
+            };
+            let finish = async {
+                if let Some((commit, ready)) = completion {
+                    ready.await.map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
+                    conn.execute(&commit, &[]).await.map_err(postgres)?;
+                }
+                Ok::<_, StatementError>(())
+            };
+            tokio::try_join!(biased; read, finish).map(drop)
+        };
+        match result {
+            Ok(()) => {
+                connection.repool();
+                let _ = outcome.send(Ok(()));
+            }
+            Err(error) => {
+                // Destroy the session on cancellation or error. Closing the socket
+                // aborts a query that may still be producing rows on the server.
+                if let Some(opened) = opened {
+                    let _ = opened.send(Err(error));
+                } else {
+                    let _ = outcome.send(Err(error));
+                }
+            }
+        }
+    }.instrument(tracing::Span::current()));
+    let columns = started
         .await
-        .map_err(postgres)?;
-    let values: Vec<PgParam> = binds.iter().map(|value| PgParam(value.clone())).collect();
-    connection
-        .connection()
-        .execute_raw(&declared, values.iter().map(|value| value as &dyn ToSql))
-        .await
-        .map_err(postgres)?;
-    Ok((columns, connection))
+        .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))??;
+    Ok(OpenedStream {
+        columns,
+        batches,
+        finished,
+    })
 }
 
-/// Take the connection out of a begun transaction, which then owns nothing.
-fn owned_connection(transaction: &PgTransaction) -> Result<StatementConnectionGuard, PgError> {
-    let connection = take_conn(&transaction.state)?;
-    if let Ok(mut state) = transaction.state.lock() {
-        state.finished = true;
-    }
-    Ok(StatementConnectionGuard::new(
-        connection,
-        Arc::clone(&transaction.destroyed),
-    ))
-}
-
-/// Fetch batches from the cursor and hand each one to the reader.
+/// Buffer rows from the one Execute, with backpressure from the guest.
 async fn pump(
-    connection: &StatementConnectionGuard,
+    stream: tokio_postgres::RowStream,
     statement_path: &str,
     statement: &VerifiedStatement,
     columns: Vec<Column>,
-    rows: mpsc::Sender<Vec<Vec<SqlValue>>>,
-) -> Result<Pumped, StatementError> {
-    let connection: &Object = connection.connection();
-    let postgres = |error: tokio_postgres::Error| StatementError::Postgres(map_pg_error(&error));
-    // The server describes a FETCH by the cursor it names, and each stream's
-    // cursor has its own columns. A cached FETCH would keep the columns of
-    // the first cursor on this pooled connection, so each stream prepares its
-    // own, once.
-    let fetch = connection
-        .prepare(&format!(
-            "FETCH FORWARD {STREAM_BATCH_ROWS} FROM {STREAM_CURSOR}"
-        ))
-        .await
-        .map_err(postgres)?;
+    rows: &mpsc::Sender<Vec<Vec<SqlValue>>>,
+) -> Result<(), StatementError> {
+    futures_util::pin_mut!(stream);
     loop {
-        let Ok(permit) = rows.reserve().await else {
-            return Ok(Pumped::Left);
-        };
-        let fetched = connection.query(&fetch, &[]).await.map_err(postgres)?;
-        if fetched.is_empty() {
-            return Ok(Pumped::Ended);
+        let permit = rows
+            .reserve()
+            .await
+            .map_err(|_| StatementError::Postgres(PgError::ConnectionUnavailable))?;
+        let mut batch = Vec::new();
+        let mut ended = false;
+        for _ in 0..STREAM_BATCH_ROWS {
+            let Some(row) = stream
+                .try_next()
+                .await
+                .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?
+            else {
+                ended = true;
+                break;
+            };
+            batch.push(decode_row(&row).map_err(StatementError::Postgres)?);
         }
-        let batch = fetched
-            .iter()
-            .map(decode_row)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(StatementError::Postgres)?;
+        if batch.is_empty() {
+            return Ok(());
+        }
         let batch = validate_statement_result(
             statement_path,
             statement,
@@ -246,17 +298,13 @@ async fn pump(
             },
         )?;
         permit.send(batch.rows);
-        if is_last_batch(fetched.len()) {
-            return Ok(Pumped::Ended);
+        if ended {
+            return Ok(());
         }
     }
 }
 
-fn is_last_batch(row_count: usize) -> bool {
-    row_count < STREAM_BATCH_ROWS
-}
-
-/// The guest's read end of a stream: each fetched batch, in order.
+/// The guest's read end of a stream: each row batch, in order.
 struct RowBatches {
     batches: mpsc::Receiver<Vec<Vec<SqlValue>>>,
 }
@@ -286,19 +334,5 @@ impl<D> StreamProducer<D> for RowBatches {
             Poll::Pending if finish => Poll::Ready(Ok(StreamResult::Cancelled)),
             Poll::Pending => Poll::Pending,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_last_batch;
-
-    #[test]
-    fn empty_and_partial_batches_end_but_full_batches_need_another_fetch() {
-        assert!(is_last_batch(0));
-        assert!(is_last_batch(1));
-        assert!(is_last_batch(21));
-        assert!(is_last_batch(499));
-        assert!(!is_last_batch(500));
     }
 }

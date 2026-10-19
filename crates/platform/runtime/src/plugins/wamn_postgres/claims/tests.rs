@@ -2938,3 +2938,215 @@ async fn live_autocommit_settings_are_reused_only_on_their_connection() {
         assert_eq!(calls, 1, "a warm get runs only its application statement");
     }
 }
+/// The server sees one prepared read, with claim statements only when the
+/// caller carries a role. The cold read also proves that Parse follows the
+/// schema configuration. Cancellation closes the session while rows remain.
+#[tokio::test]
+async fn live_stream_reads_once_and_scopes_claims() {
+    use super::super::run_stream::open_stream;
+
+    const TENANT: &str = "stream-sequence";
+    const SQL: &str = "SELECT current_setting('app.role', true), \
+        current_setting('app.runner', true), current_setting('transaction_read_only'), \
+        value FROM stream_probe";
+    let mut server = wamn_test_postgres::start(&[("log_statement", "all")]).unwrap();
+    let database = server.create_database("stream_sequence").unwrap();
+    let admin = connect_raw(database.url()).await;
+    let guest_url = live_guest_url(database.url(), TENANT).await;
+    admin
+        .batch_execute(
+            "CREATE SCHEMA stream_sequence; \
+         CREATE TABLE stream_sequence.stream_probe (value integer NOT NULL); \
+         INSERT INTO stream_sequence.stream_probe VALUES (7); \
+         GRANT USAGE ON SCHEMA stream_sequence TO wamn_app; \
+         GRANT SELECT ON stream_sequence.stream_probe TO wamn_app;",
+        )
+        .await
+        .unwrap();
+    let directory: String = admin
+        .query_one("SHOW data_directory", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let log = std::path::Path::new(&directory)
+        .parent()
+        .unwrap()
+        .join("server.log");
+    for role in [None, Some("viewer")] {
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(guest_url.clone())),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1,
+        })
+        .unwrap();
+        let scope = "stream-sequence";
+        pg.bind_session_claims(
+            scope,
+            &SessionClaims {
+                tenant: TENANT.into(),
+                schema: Some("stream_sequence".into()),
+                runner: Some("stream-test".into()),
+                role: role.map(str::to_owned),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .unwrap();
+        let statement = Arc::new(VerifiedStatement {
+            exact_sql: SQL.into(),
+            binds: Box::new([]),
+            columns: Box::new([
+                StatementField {
+                    value_type: StatementValueType::Text,
+                    nullable: true,
+                },
+                StatementField {
+                    value_type: StatementValueType::Text,
+                    nullable: false,
+                },
+                StatementField {
+                    value_type: StatementValueType::Text,
+                    nullable: false,
+                },
+                StatementField {
+                    value_type: StatementValueType::Int32,
+                    nullable: false,
+                },
+            ]),
+            transactional: false,
+        });
+        let prepared = WamnPostgres::prepare_statement_set(
+            std::collections::BTreeMap::from([("sql/query.sql".into(), (*statement).clone())]),
+            true,
+        );
+        pg.bind_prepared_statement_operation(scope, "probe/query", &prepared)
+            .unwrap();
+        pg.activate_statement_operation(scope, "probe/query")
+            .unwrap();
+        for warm in [false, true] {
+            let offset = std::fs::read_to_string(&log).unwrap().len();
+            let mut opened = open_stream(
+                &pg,
+                scope,
+                DEFAULT_PROJECT,
+                "sql/query.sql".into(),
+                Arc::clone(&statement),
+                Vec::new(),
+            )
+            .await
+            .unwrap();
+            let mut rows = Vec::new();
+            while let Some(batch) = opened.batches.recv().await {
+                rows.extend(batch);
+            }
+            opened.finished.await.unwrap().unwrap();
+            assert_eq!(rows.len(), 1);
+            if let Some(role) = role {
+                assert!(matches!(&rows[0][0], SqlValue::Text(value) if value == role));
+            } else {
+                assert!(
+                    matches!(&rows[0][0], SqlValue::Null)
+                        || matches!(&rows[0][0], SqlValue::Text(value) if value.is_empty())
+                );
+            }
+            assert!(matches!(&rows[0][1], SqlValue::Text(value) if value == "stream-test"));
+            let read_only = if role.is_some() { "on" } else { "off" };
+            assert!(matches!(&rows[0][2], SqlValue::Text(value) if value == read_only));
+            assert!(matches!(&rows[0][3], SqlValue::Int32(7)));
+            if warm {
+                let content = std::fs::read_to_string(&log).unwrap();
+                let sequence: Vec<_> = content[offset..]
+                    .lines()
+                    .filter_map(|line| {
+                        let (_, execution) = line.split_once("execute ")?;
+                        execution.split_once(": ").map(|(_, sql)| sql)
+                    })
+                    .collect();
+                if role.is_some() {
+                    assert_eq!(sequence.len(), 4, "{sequence:?}");
+                    assert_eq!(
+                        sequence[0],
+                        "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                    );
+                    assert!(
+                        sequence[1].starts_with("SELECT set_config("),
+                        "{sequence:?}"
+                    );
+                    assert_eq!(sequence[2], SQL);
+                    assert_eq!(sequence[3], "COMMIT");
+                } else {
+                    assert_eq!(sequence, [SQL]);
+                }
+            }
+        }
+        let (connection, _) = pg.checkout_guest(DEFAULT_PROJECT, TENANT).await.unwrap();
+        let role_after: Option<String> = connection
+            .query_one("SELECT current_setting('app.role', true)", &[])
+            .await
+            .unwrap()
+            .get(0);
+        assert!(role_after.is_none_or(|role| role.is_empty()));
+        drop(connection);
+
+        // A stream exceeds the ordinary row limit without buffering it all.
+        // Its receiver owns cancellation, including during a pending wire read.
+        let statement = Arc::new(VerifiedStatement {
+            exact_sql: "SELECT pg_backend_pid(), repeat('x', 1000) FROM generate_series(1, 150000)"
+                .into(),
+            binds: Box::new([]),
+            columns: Box::new([
+                StatementField {
+                    value_type: StatementValueType::Int32,
+                    nullable: false,
+                },
+                StatementField {
+                    value_type: StatementValueType::Text,
+                    nullable: false,
+                },
+            ]),
+            transactional: false,
+        });
+        let mut opened = open_stream(
+            &pg,
+            scope,
+            DEFAULT_PROJECT,
+            "sql/large.sql".into(),
+            statement,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        let batch = opened.batches.recv().await.unwrap();
+        assert_eq!(batch.len(), 500);
+        let SqlValue::Int32(backend) = batch[0][0] else {
+            panic!("the query returns its backend PID")
+        };
+        drop(opened.batches);
+        assert!(matches!(
+            opened.finished.await.unwrap(),
+            Err(StatementError::Postgres(PgError::ConnectionUnavailable))
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let alive: bool = admin
+                    .query_one(
+                        "SELECT EXISTS(SELECT FROM pg_stat_activity WHERE pid = $1)",
+                        &[&backend],
+                    )
+                    .await
+                    .unwrap()
+                    .get(0);
+                if !alive {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("dropping a stream closes its backend");
+        assert_eq!(pg.destroyed.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+}

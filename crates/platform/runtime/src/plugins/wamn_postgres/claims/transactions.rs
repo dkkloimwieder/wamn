@@ -7,6 +7,7 @@ use tracing::Instrument as _;
 use wamn_event_wire::Causation;
 use wamn_run_state::AuthorityClass;
 
+use super::super::pool::{ProjectPool, SessionSettings};
 use super::super::resources::{
     StatementConnectionGuard, run_execute, run_query, run_verified_query,
 };
@@ -134,6 +135,66 @@ const GUEST_AUTOCOMMIT_SETTINGS_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, false), \
      set_config('search_path', COALESCE($2, (SELECT reset_val FROM pg_settings WHERE name = 'search_path')), false), \
      set_config('app.runner', COALESCE($3, ''), false)";
+
+/// Prepare changed connection configuration before the application Parse is polled.
+pub(in super::super) async fn prepare_session_settings(
+    connection: &Object,
+    policy: &ProjectPool,
+    schema: Option<&str>,
+    runner: Option<&str>,
+) -> Result<Option<tokio_postgres::Statement>, PgError> {
+    let identity = Arc::downgrade(&connection.statement_cache);
+    let unchanged = policy
+        .session_settings
+        .lock()
+        .expect("session settings lock poisoned")
+        .iter()
+        .any(|settings| {
+            settings.connection.ptr_eq(&identity)
+                && settings.schema.as_deref() == schema
+                && settings.runner.as_deref() == runner
+        });
+    if unchanged {
+        return Ok(None);
+    }
+    connection
+        .prepare_cached(GUEST_AUTOCOMMIT_SETTINGS_SQL)
+        .await
+        .map(Some)
+        .map_err(|error| map_pg_error(&error))
+}
+
+/// Install only connection configuration. Caller claims stay transaction-local.
+pub(in super::super) async fn bind_session_settings(
+    connection: &Object,
+    policy: &ProjectPool,
+    prepared: Option<&tokio_postgres::Statement>,
+    schema: Option<String>,
+    runner: Option<String>,
+) -> Result<(), PgError> {
+    let Some(prepared) = prepared else {
+        return Ok(());
+    };
+    let timeout = policy.statement_timeout_ms.to_string();
+    let params: &[&(dyn ToSql + Sync)] = &[&timeout, &schema.as_deref(), &runner.as_deref()];
+    connection
+        .execute(prepared, params)
+        .await
+        .map_err(|error| map_pg_error(&error))?;
+    let identity = Arc::downgrade(&connection.statement_cache);
+    let mut settings = policy
+        .session_settings
+        .lock()
+        .expect("session settings lock poisoned");
+    settings
+        .retain(|entry| entry.connection.strong_count() > 0 && !entry.connection.ptr_eq(&identity));
+    settings.push(SessionSettings {
+        connection: identity,
+        schema,
+        runner,
+    });
+    Ok(())
+}
 
 const GUEST_CLAIM_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, true), \
@@ -447,60 +508,25 @@ impl WamnPostgres {
         // not: the read skips app.user_id and app.operation, which only the
         // record-history triggers read.
         if !statement.transactional && role.is_none() {
-            let identity = Arc::downgrade(&connection.connection().statement_cache);
-            let unchanged = policy
-                .session_settings
-                .lock()
-                .expect("session settings lock poisoned")
-                .iter()
-                .any(|settings| {
-                    settings.connection.ptr_eq(&identity)
-                        && settings.schema == schema
-                        && settings.runner == runner
-                });
-            let rows = if unchanged {
+            let prepared = prepare_session_settings(
+                connection.connection(),
+                &policy,
+                schema.as_deref(),
+                runner.as_deref(),
+            )
+            .await
+            .map_err(StatementError::Postgres)?;
+            let (settings, rows) = tokio::join!(
+                biased;
+                bind_session_settings(
+                    connection.connection(), &policy, prepared.as_ref(), schema, runner,
+                ),
                 run_verified_query(
-                    connection.connection(),
-                    digest,
-                    statement,
-                    binds,
-                    policy.row_limit,
-                )
-                .await?
-            } else {
-                // Warm before polling the query: its Parse must follow settings.
-                let prepared = connection
-                    .connection()
-                    .prepare_cached(GUEST_AUTOCOMMIT_SETTINGS_SQL)
-                    .await
-                    .map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
-                let timeout = policy.statement_timeout_ms.to_string();
-                let params: &[&(dyn ToSql + Sync)] =
-                    &[&timeout, &schema.as_deref(), &runner.as_deref()];
-                let (settings, rows) = tokio::join!(
-                    biased;
-                    connection.connection().execute(&prepared, params),
-                    run_verified_query(
-                        connection.connection(), digest, statement, binds, policy.row_limit,
-                    ),
-                );
-                // Never return rows if settings failed; the guard destroys the session.
-                settings.map_err(|error| StatementError::Postgres(map_pg_error(&error)))?;
-                let rows = rows?;
-                let mut settings = policy
-                    .session_settings
-                    .lock()
-                    .expect("session settings lock poisoned");
-                settings.retain(|entry| {
-                    entry.connection.strong_count() > 0 && !entry.connection.ptr_eq(&identity)
-                });
-                settings.push(super::super::pool::SessionSettings {
-                    connection: identity,
-                    schema,
-                    runner,
-                });
-                rows
-            };
+                    connection.connection(), digest, statement, binds, policy.row_limit,
+                ),
+            );
+            settings.map_err(StatementError::Postgres)?;
+            let rows = rows?;
             connection.repool();
             return Ok(rows);
         }

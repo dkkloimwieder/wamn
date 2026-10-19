@@ -163,15 +163,15 @@ interface statements {
 
   /// Run one admitted statement and return its rows as the server sends them.
   ///
-  /// The host opens one transaction with the same claims as `run`, declares
-  /// one server-side cursor over the exact statement, and fetches its rows in
-  /// batches. Every row therefore reads one snapshot: the one the statement
-  /// took when it started. The result names the columns, then carries each row
+  /// The host executes the exact prepared statement once, with the same claims
+  /// as `run`. Caller claims keep their transaction. Every row reads the
+  /// snapshot the statement took when it started. The result names the columns,
+  /// then carries each row
   /// on the stream. The future resolves after the last row: ok when the
   /// statement read to its end, the error otherwise.
   ///
-  /// Dropping the stream before its end rolls the transaction back, which ends
-  /// the query on the server. The project row limit does not apply, because
+  /// Dropping the stream before its end closes its session, which ends the
+  /// query on the server. The project row limit does not apply, because
   /// the host holds one batch at a time; the statement bounds its own rows.
   run-stream: async func(statement: string, binds: list<sql-value>) -> result<tuple<list<column>, stream<list<sql-value>>, future<result<_, statement-error>>>, statement-error>;
 
