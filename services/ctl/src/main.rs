@@ -2,6 +2,7 @@
 
 use std::str::FromStr as _;
 
+mod platform_verbs;
 mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
@@ -105,6 +106,9 @@ enum Command {
     /// Apply, show and dry-run one environment document.
     #[command(subcommand)]
     Env(env_verbs::EnvCommand),
+    /// Read a cluster document.
+    #[command(subcommand)]
+    Platform(platform_verbs::PlatformCommand),
 }
 
 #[tokio::main]
@@ -161,6 +165,7 @@ async fn main() -> anyhow::Result<()> {
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
         Command::Env(command) => Box::pin(env_verbs::run(command)).await,
+        Command::Platform(command) => platform_verbs::run(command, std::io::stdout().lock()),
     }
 }
 
