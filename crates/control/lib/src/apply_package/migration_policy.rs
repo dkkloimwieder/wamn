@@ -79,11 +79,16 @@ pub(super) fn validate_migration_policy(
         let inspected =
             inspect_migration_definition_mutations(&path, &migration.bytes, &schemas)
                 .with_context(|| format!("inspect {} before apply", migration.relative_path))?;
+        let earlier = mutations
+            .iter()
+            .map(|planned: &PlannedDefinitionMutation| &planned.mutation)
+            .collect::<Vec<_>>();
         let validation =
             wamn_schema_introspection::migration_policy::validate_migration_bytes_for_schemas(
                 &path,
                 &migration.bytes,
                 &schemas,
+                &earlier,
             );
         match validation {
             Ok(()) => {}

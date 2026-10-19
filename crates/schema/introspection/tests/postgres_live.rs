@@ -1686,6 +1686,7 @@ async fn run_exclusion_gate(admin_config: Config, fixture: Fixture) {
         Path::new("0002_dock_appointment.sql"),
         EXCLUSION_MIGRATION_SQL.as_bytes(),
         &[APPLICATION_SCHEMA],
+        &[],
     )
     .expect("Migrate admits a named EXCLUDE USING gist inside CREATE TABLE");
 

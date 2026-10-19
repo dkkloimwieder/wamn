@@ -7,7 +7,7 @@
 //! and guests name relations unqualified.
 //!
 //! The validator admits only additive DDL: schema-qualified ordinary
-//! `CREATE TABLE`, plain indexes on tables created earlier in the same artifact,
+//! `CREATE TABLE`, plain indexes on tables created earlier in the package's migrations,
 //! one additive client column, or one named client check
 //! constraint. An added column is either nullable with a modeled type and no
 //! default, or one of the two demanded non-null default forms; every shape that
@@ -187,7 +187,7 @@ pub fn validate_migration_file_for_schemas(
         detail: "could not read migration SQL".into(),
         source: Some(source),
     })?;
-    validate_migration_bytes_for_schemas(path, &bytes, configured_schemas)
+    validate_migration_bytes_for_schemas(path, &bytes, configured_schemas, &[])
 }
 
 /// Validate the exact migration bytes an effect shell will hash and execute.
@@ -200,14 +200,17 @@ pub fn validate_migration_bytes(
     bytes: &[u8],
     configured_schema: &str,
 ) -> Result<(), MigrationPolicyError> {
-    validate_migration_bytes_for_schemas(path, bytes, &[configured_schema])
+    validate_migration_bytes_for_schemas(path, bytes, &[configured_schema], &[])
 }
 
 /// Validate exact migration bytes against every schema declared by a manifest.
+///
+/// `earlier` contains only definitions from this package's earlier migrations.
 pub fn validate_migration_bytes_for_schemas(
     path: impl AsRef<Path>,
     bytes: &[u8],
     configured_schemas: &[&str],
+    earlier: &[&DefinitionMutation],
 ) -> Result<(), MigrationPolicyError> {
     let path = path.as_ref();
     let statements = artifact_statements(path, bytes, configured_schemas)?;
@@ -216,6 +219,7 @@ pub fn validate_migration_bytes_for_schemas(
         validate_statement(
             tokens,
             &statements[..index],
+            earlier,
             configured_schemas,
             path,
             index + 1,
@@ -243,6 +247,7 @@ pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
         validate_statement(
             tokens,
             &statements[..index],
+            &[],
             configured_schemas,
             path,
             statement_index,
@@ -489,6 +494,7 @@ fn policy_error(
 fn validate_statement(
     tokens: &[Token<'_>],
     previous: &[Vec<Token<'_>>],
+    earlier: &[&DefinitionMutation],
     configured_schemas: &[&str],
     path: &Path,
     statement_index: usize,
@@ -552,7 +558,14 @@ fn validate_statement(
         return validate_alter_table(tokens, configured_schemas, path, statement_index);
     }
     if words(tokens, 0, &["create", "index"]) {
-        return validate_create_index(tokens, previous, path, statement_index);
+        return validate_create_index(
+            tokens,
+            previous,
+            earlier,
+            configured_schemas,
+            path,
+            statement_index,
+        );
     }
     refuse_statement(
         MigrationPolicyErrorType::UnsupportedStatement,
@@ -565,6 +578,8 @@ fn validate_statement(
 fn validate_create_index(
     tokens: &[Token<'_>],
     previous: &[Vec<Token<'_>>],
+    earlier: &[&DefinitionMutation],
+    configured_schemas: &[&str],
     path: &Path,
     statement_index: usize,
 ) -> Result<(), MigrationPolicyError> {
@@ -581,6 +596,7 @@ fn validate_create_index(
         Token::Symbol(b')'),
     ] = tokens
         && on.eq_ignore_ascii_case("on")
+        && configured_schemas.contains(schema)
         && columns.len() % 2 == 1
         && columns.iter().enumerate().all(|(index, token)| {
             if index % 2 == 0 {
@@ -589,9 +605,14 @@ fn validate_create_index(
                 matches!(token, Token::Symbol(b','))
             }
         })
-        && previous.iter().any(|statement| {
+        && (previous.iter().any(|statement| {
             words(statement, 0, &["create", "table", schema]) && word(statement, 4, table)
-        })
+        }) || earlier.iter().any(|definition| {
+            definition.action() == DefinitionAction::Create
+                && definition.definition_type() == DefinitionType::Relation
+                && definition.schema() == *schema
+                && definition.relation() == *table
+        }))
     {
         // The earlier CREATE TABLE carries the package's ownership check.
         // Catalog introspection owns index names, columns, and key ordering.
@@ -601,7 +622,7 @@ fn validate_create_index(
         MigrationPolicyErrorType::UnsupportedStatement,
         path,
         statement_index,
-        "CREATE INDEX requires plain columns on a table created earlier in the same migration",
+        "CREATE INDEX requires plain columns on a table created earlier in this package's migrations",
     )
 }
 
@@ -1331,7 +1352,10 @@ fn is_word_continue(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_migration_bytes;
+    use super::{
+        inspect_migration_definition_mutations, validate_migration_bytes,
+        validate_migration_bytes_for_schemas,
+    };
 
     #[test]
     fn plain_index_uses_the_table_created_in_the_same_migration() {
@@ -1342,6 +1366,38 @@ mod tests {
             "receiving",
         )
         .expect("the new table owns its plain index");
+    }
+
+    #[test]
+    fn later_migration_indexes_only_tables_the_package_created() {
+        let definitions = inspect_migration_definition_mutations(
+            "0001_initial.sql",
+            b"CREATE TABLE receiving.receipt (id uuid, created_at timestamptz);",
+            &["receiving"],
+        )
+        .expect("read the package's earlier table declaration");
+        let earlier = definitions.iter().collect::<Vec<_>>();
+        validate_migration_bytes_for_schemas(
+            "0002_indexes.sql",
+            b"CREATE INDEX receipt_id_created_at_idx ON receiving.receipt (created_at, id);",
+            &["receiving"],
+            &earlier,
+        )
+        .expect("the package owns the table from its earlier migration");
+        for table in ["receiving.not_owned", "other.receipt"] {
+            let sql =
+                format!("CREATE INDEX receipt_id_created_at_idx ON {table} (created_at, id);");
+            assert!(
+                validate_migration_bytes_for_schemas(
+                    "0002_indexes.sql",
+                    sql.as_bytes(),
+                    &["receiving"],
+                    &earlier,
+                )
+                .is_err(),
+                "{table} is not owned by this package",
+            );
+        }
     }
 
     #[test]
