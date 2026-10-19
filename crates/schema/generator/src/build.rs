@@ -175,7 +175,11 @@ async fn pass_one_and_two(
     let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
     let manifest = PackageManifest::from_slice(&typed).context("parse the typed manifest")?;
     let catalog = introspect_with_manifest(database_url, package_root, &manifest).await?;
-    validate_paged_query_indexes(database_url, &catalog, &manifest).await?;
+    // The build refuses correctness only (owner ruling 2026-10-18): a missing
+    // pagination index is a warning.
+    for warning in missing_paged_query_indexes(database_url, &catalog, &manifest).await? {
+        eprintln!("warning: {warning}");
+    }
     let authored_sql = sources
         .iter()
         .map(|source| AuthoredSql::new(&source.path, &source.bytes))
@@ -218,12 +222,15 @@ async fn pass_one_and_two(
     Ok((canonical, files))
 }
 
-/// The catalog includes indexes from every applied package migration.
-async fn validate_paged_query_indexes(
+/// One warning for each allowed sort of a paged query without its
+/// (field, tie-breaker) index. The catalog includes indexes from every applied
+/// package migration.
+async fn missing_paged_query_indexes(
     database_url: &str,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
-) -> Result<()> {
+) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
     for (model_name, model) in &manifest.models {
         let Some(query) = model
             .operations
@@ -293,17 +300,17 @@ async fn validate_paged_query_indexes(
                 .map(|row| row.get::<_, String>(0))
                 .collect::<Vec<_>>();
             let name = authored_object_name(table.name(), &columns, "idx");
-            bail!(
-                "{operation} on {}.{} requires an index for ORDER BY ({field}, {tie_breaker}). \
+            warnings.push(format!(
+                "{operation} on {}.{} has no index for ORDER BY ({field}, {tie_breaker}). \
                  Add to the package's migrations: CREATE INDEX {name} ON {}.{} ({field}, {tie_breaker});",
                 table.schema(),
                 table.name(),
                 table.schema(),
                 table.name(),
-            );
+            ));
         }
     }
-    Ok(())
+    Ok(warnings)
 }
 
 /// The authored manifest bytes: `wamn.k` compiled, or a hand-written `wamn.json`.
@@ -816,7 +823,7 @@ mod tests {
     use crate::describe::DescribedColumn;
 
     #[tokio::test]
-    async fn paged_query_requires_an_index_for_each_allowed_sort_field() {
+    async fn paged_query_warns_for_each_allowed_sort_field_without_an_index() {
         let database = wamn_test_postgres::database();
         let root = std::env::temp_dir().join(format!("wamn-paged-index-{}", std::process::id()));
         fs::create_dir(&root).expect("create the test package");
@@ -858,22 +865,44 @@ mod tests {
         )
         .expect("index the default sort only");
         let request = BuildRequest::new(&root, &root.join("target"), database.url());
-        let refused = generate_package(&request).await;
+        let built = generate_package(&request).await;
+        let parsed = PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
+            .expect("parse the test manifest");
+        let warned = missing_indexes(&root, &parsed).await;
         fs::write(
             root.join("migrations/0003_status_index.sql"),
             "CREATE INDEX order_row_id_status_idx ON receiving.order_row (status, id);",
         )
         .expect("index the other allowed sort in a later migration");
-        let accepted = generate_package(&request).await;
+        let indexed = generate_package(&request).await;
+        let silent = missing_indexes(&root, &parsed).await;
         fs::remove_dir_all(&root).expect("remove the test package");
+        built.expect("a missing pagination index is a warning, not a refusal");
         assert_eq!(
-            refused
-                .expect_err("an allowed sort without an index was accepted")
-                .to_string(),
-            "sort-fixture:order-row/query@0.1.0 on receiving.order_row requires an index for ORDER BY (status, id). \
-             Add to the package's migrations: CREATE INDEX order_row_id_status_idx ON receiving.order_row (status, id);"
+            warned,
+            vec![
+                "sort-fixture:order-row/query@0.1.0 on receiving.order_row has no index for ORDER BY (status, id). \
+                 Add to the package's migrations: CREATE INDEX order_row_id_status_idx ON receiving.order_row (status, id);"
+                    .to_owned()
+            ]
         );
-        accepted.expect("the build reads both indexes from later package migrations");
+        indexed.expect("the build reads both indexes from later package migrations");
+        assert!(silent.is_empty(), "{silent:?}");
+    }
+
+    /// The warnings for the package, on a fresh database migrated with its
+    /// migrations.
+    async fn missing_indexes(root: &Path, manifest: &PackageManifest) -> Vec<String> {
+        let database = wamn_test_postgres::database();
+        migrate(database.url(), root, manifest)
+            .await
+            .expect("migrate the test package");
+        let catalog = introspect_with_manifest(database.url(), root, manifest)
+            .await
+            .expect("introspect the migrated package");
+        missing_paged_query_indexes(database.url(), &catalog, manifest)
+            .await
+            .expect("list the missing indexes")
     }
 
     fn manifest(row_nullable: bool, row_type: Option<&str>) -> Value {
