@@ -40,6 +40,8 @@ const SCHEMA_MODULE: &str = include_str!("../kcl/manifest/manifest.k");
 const SCHEMA_MODULE_DECLARATION: &str = include_str!("../kcl/manifest/kcl.mod");
 const ENVIRONMENT_MODULE: &str = include_str!("../kcl/environment/environment.k");
 const ENVIRONMENT_MODULE_DECLARATION: &str = include_str!("../kcl/environment/kcl.mod");
+const CLUSTER_MODULE: &str = include_str!("../kcl/cluster/cluster.k");
+const CLUSTER_MODULE_DECLARATION: &str = include_str!("../kcl/cluster/kcl.mod");
 
 /// Whether the package authors its manifest in `wamn.k`.
 #[must_use]
@@ -183,16 +185,32 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
 /// and the line: KCL reports the private copy it compiled, and the error maps
 /// that copy's path back to `file`.
 pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
+    compile_schema_file(file, "environment")
+}
+
+/// Compile a file against a named embedded schema module to JSON.
+///
+/// The modules are `manifest`, `environment` and `cluster`. The bytes are
+/// 2-space indented JSON with the keys in schema order.
+///
+/// # Errors
+///
+/// When the module is unknown, no `kcl` runs, or KCL refuses the file.
+/// The error names the original file and line.
+pub fn compile_schema_file(file: &Path, name: &str) -> Result<Vec<u8>> {
     let source = fs::read(file).with_context(|| format!("read {}", file.display()))?;
-    let module = SchemaModule::write(
-        "environment",
-        ENVIRONMENT_MODULE_DECLARATION,
-        ENVIRONMENT_MODULE,
-    )?;
-    // KCL resolves `import environment` in the document's own directory too,
-    // so a document named `environment.k` (R21) or a sibling `environment`
-    // would clash with the schema module. The document compiles from a
-    // directory that holds only it.
+    let module = match name {
+        "manifest" => SchemaModule::write("manifest", SCHEMA_MODULE_DECLARATION, SCHEMA_MODULE),
+        "environment" => SchemaModule::write(
+            "environment",
+            ENVIRONMENT_MODULE_DECLARATION,
+            ENVIRONMENT_MODULE,
+        ),
+        "cluster" => SchemaModule::write("cluster", CLUSTER_MODULE_DECLARATION, CLUSTER_MODULE),
+        _ => bail!("unknown embedded schema module {name:?}"),
+    }?;
+    // KCL also resolves imports in the document's own directory. A document
+    // named after its schema module would clash, so compile a private copy.
     let directory = module.root.join("document");
     fs::create_dir_all(&directory).with_context(|| format!("create {}", directory.display()))?;
     let copy = directory.join("document.k");

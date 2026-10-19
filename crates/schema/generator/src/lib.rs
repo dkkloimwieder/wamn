@@ -49,8 +49,8 @@ mod upgrade_stage;
 
 pub use authoring::{
     AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, compile_environment, compile_manifest,
-    is_authored, is_package_root, manifest_package_root, package_manifest_path,
-    write_compiled_manifest,
+    compile_schema_file, is_authored, is_package_root, manifest_package_root,
+    package_manifest_path, write_compiled_manifest,
 };
 /// The write log's three fixed statements.
 pub use cursor::{
