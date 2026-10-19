@@ -38,6 +38,8 @@ spec:
         - name: flow-http
           image: {{ $.Values.platform.roles.http.image }}
           imagePullPolicy: Always
+          poolSize: {{ $.Values.platform.roles.http.poolSize }}
+          maxConcurrency: {{ $.Values.platform.roles.http.maxConcurrency }}
           localResources:
             allowedIpNameLookups: []
             config:

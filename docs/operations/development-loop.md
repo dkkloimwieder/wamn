@@ -124,6 +124,8 @@ After changing generator code, rebuild `wamn` and restart the developer process.
 
 The host reads platform defaults from `deploy/platform/release/values.yaml` embedded at build time.
 These defaults supply the drain delay, the NATS connection timeout, and probe enablement.
+A Wasmtime store holds a component's execution state.
+The HTTP workload reads its Wasmtime store pool size and concurrency from the same defaults.
 Activation sets HOME to `/tmp`, the same value that the runtime-operator chart template sets.
 The parity test compares HOME directly, so a change on either side fails the test.
 The probe binds to a free loopback port.
@@ -138,6 +140,7 @@ Its `--no-edge` flag uses the direct host URL for comparison.
 The activation unit test `local_host_matches_the_deployed_host_contract` requires Helm.
 It renders the bundled release chart with the host-group and release-value functions used by `env apply`.
 It compares all host arguments and environment variables with local activation after normalizing equivalent flags and environment names.
+It also compares the HTTP workload's store pool, concurrency, and retirement settings.
 The test compares the host telemetry variables with deployment. Only the collector endpoint differs locally.
 A setting on only one side or an unapproved value difference fails the test.
 The test also rejects duplicate environment names and unused exceptions. It contacts no cluster or registry.

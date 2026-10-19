@@ -58,6 +58,8 @@ platform:
   roles:
     http:
       image: ""
+      poolSize: 0
+      maxConcurrency: 1
     materializer:
       image: ""
   # Outside the image set and the qualification key (R12): the images

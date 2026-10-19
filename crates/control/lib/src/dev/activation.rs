@@ -1071,6 +1071,11 @@ pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static
 }
 
 fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartRequest {
+    let platform: serde_yaml::Value = serde_yaml::from_str(include_str!(
+        "../../../../../deploy/platform/release/values.yaml"
+    ))
+    .expect("the platform chart defaults are valid YAML");
+    let http = &platform["platform"]["roles"]["http"];
     let identity = request.identity;
     let config = flow_http_identity_claims(identity)
         .into_iter()
@@ -1097,14 +1102,16 @@ fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartReq
                 components: vec![v2::Component {
                     image: "flow-http.wasm".to_owned(),
                     local_resources: Some(local_resources),
-                    pool_size: 0,
+                    pool_size: serde_yaml::from_value(http["poolSize"].clone())
+                        .expect("the HTTP store pool size is an i32"),
                     reclaim_window_seconds: 0,
                     reclaim_min_instances: 0,
                     max_invocations: 0,
                     image_pull_secret: None,
                     name: FLOW_HTTP_NAME.to_owned(),
                     image_pull_policy: v2::ImagePullPolicy::Always.into(),
-                    max_concurrency: 0,
+                    max_concurrency: serde_yaml::from_value(http["maxConcurrency"].clone())
+                        .expect("the HTTP store concurrency is an i32"),
                 }],
                 host_interfaces: vec![
                     v2::WitInterface {
@@ -2011,7 +2018,14 @@ mod tests {
             manifest_digest: digest.clone(),
             artifact_base: "local/releases".into(),
             route_host: "receiving.localhost".into(),
-            roles: vec![],
+            roles: vec![release_chart::Role {
+                name: release_chart::RoleName::Http,
+                config: serde_yaml::Mapping::from_iter([(
+                    "wamn.tenant".into(),
+                    "parity-test".into(),
+                )]),
+                environment: None,
+            }],
             // The fixture environment policy allows a 70-second drain.
             drain_bound_seconds: 70,
             actor: "parity-test".into(),
@@ -2042,8 +2056,11 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let deployments: Vec<Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
+        let documents: Vec<Value> = serde_yaml::Deserializer::from_slice(&output.stdout)
             .map(|document| Value::deserialize(document).unwrap())
+            .collect();
+        let deployments: Vec<_> = documents
+            .iter()
             .filter(|document| document["kind"].as_str() == Some("Deployment"))
             .collect();
         assert_eq!(deployments.len(), 1);
@@ -2081,16 +2098,35 @@ mod tests {
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
         let identity = config.activation_identity();
         let release = release();
-        let local = host_process_spec(
-            &DevActivationRequest {
-                config: &config,
-                release: &release,
-                identity,
-                host_binary: config.host_binary(),
-                wasmtime_cache_dir: config.wasmtime_cache_dir(),
-            },
-            &digest,
-        );
+        let request = DevActivationRequest {
+            config: &config,
+            release: &release,
+            identity,
+            host_binary: config.host_binary(),
+            wasmtime_cache_dir: config.wasmtime_cache_dir(),
+        };
+        let local = host_process_spec(&request, &digest);
+        let workload = flow_http_request(&request).workload.unwrap();
+        let world = workload.wit_world.unwrap();
+        let component = &world.components[0];
+        let deployed_workload = documents
+            .iter()
+            .find(|document| document["kind"].as_str() == Some("WorkloadDeployment"))
+            .expect("the deployed HTTP workload");
+        let deployed_component = &deployed_workload["spec"]["template"]["spec"]["components"][0];
+        for (field, local) in [
+            ("poolSize", component.pool_size),
+            ("maxConcurrency", component.max_concurrency),
+            ("maxInvocations", component.max_invocations),
+            ("reclaimWindowSeconds", component.reclaim_window_seconds),
+            ("reclaimMinInstances", component.reclaim_min_instances),
+        ] {
+            assert_eq!(
+                deployed_component[field].as_i64().unwrap_or_default(),
+                i64::from(local),
+                "HTTP store setting {field} differs"
+            );
+        }
 
         let mut deployed = settings(&deployed_env, &deployed_args);
         let mut local = settings(&local.env, &local.args);
