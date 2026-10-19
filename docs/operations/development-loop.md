@@ -9,6 +9,9 @@ Local saves do not publish components or release manifests to a registry.
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
 Build `wamn`, `wamn-host`, `wamn-identity`, the flow-http component, and the materializer component before starting a session.
+Build each application with `wamn build` before `dev up`, so its web bundle exists.
+Build the platform UI with `pnpm --filter @wamn/platform-ui build`.
+`--platform-ui` defaults to `apps/platform_ui/dist` and accepts another built directory.
 If you change the manifest vocabulary of `wamn.json` or the KCL schema module, build `wamn` again first.
 The loop runs the binary you built, so an older one refuses the manifest with `unknown field`.
 Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
@@ -83,19 +86,35 @@ The materializer does not enter the local admission facts, the release manifest,
 The host starts it after the flow-http workload runs, and the loop waits until it runs.
 The materializer restarts with the host on each loop change. Its JetStream consumers are durable, so a restart resumes them.
 
-The command starts `wamn-identity`, writes private `dev.json`, prints the next developer command, and exits.
+The command starts identity, the org control host, and a local web server, then writes private `dev.json` and exits.
+The control host uses `wamn-host host --control` and the same org credential operation as `provision-org --prepare-control-generation`.
+It loads the local flow-http bytes with the interfaces from `deploy/gcp/control-service.yaml`.
+The administration directory holds the patch from the normal administration credential operation.
+No application release runs in the control host.
+
+The command prints the platform UI URL and a URL for each built application client.
+`web.json` in the environment directory records those URLs.
+Each URL uses one origin for static files, `/password` requests, and `/api` requests.
+The proxy trusts the local identity certificate authority and preserves session cookies.
+The platform UI receives an org-only `config.json`, as it does after `wamn web upload --platform-ui`.
+Application clients receive the org and project.
+The development loop writes `application-endpoint.json` after activation and removes it before shutdown.
+The proxy reads that file for each application request, so rebuilds can change the host port.
+Before application activation, application API requests return 503.
+Control sign-in works as soon as `dev up` returns.
+Read `control-web.log` in the environment directory if control startup fails.
 The identity process keeps running across application builds.
 Startup creates its signing key once. Application rebuilds preserve that key and the identity database.
 The `session_identity` field supplies the issuer address, certificate authority file, and environment instance to each application host.
 The identity process uses the existing [password configuration](deployment.md#identity-password-configuration), including `.env` in the working directory.
 
-At environment teardown, stop the owned identity process:
+At environment teardown, stop the owned processes:
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" dev down --root "$WAMN_DEV_ENV_DIR"
 ```
 
-This command removes the owned process, its database login authority, and its private certificate directory.
+This command stops the web server and control host, then removes identity, its database login authority, and its private certificate directory.
 It leaves externally supplied PostgreSQL, NATS, and telemetry services running.
 Stop the environment before running `dev up` again against the same directory.
 Local identity certificates last 30 days. A new disposable environment creates new certificates.

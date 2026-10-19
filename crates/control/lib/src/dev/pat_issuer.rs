@@ -13,7 +13,7 @@ use crate::pat_client::PatIssuerConfig;
 use crate::provision_project_env::secret_value;
 use anyhow::Context as _;
 use rcgen::{
-    BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
     KeyUsagePurpose,
 };
 use ring::rand::{SecureRandom as _, SystemRandom};
@@ -322,6 +322,9 @@ fn certificates(
     ca_path_length: Option<u8>,
 ) -> anyhow::Result<()> {
     let mut ca_params = certificate_params(Vec::new(), lifetime)?;
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, format!("wamn development {stem} CA"));
     ca_params.is_ca = IsCa::Ca(ca_path_length.map_or(
         BasicConstraints::Unconstrained,
         BasicConstraints::Constrained,

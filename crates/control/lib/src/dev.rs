@@ -8,6 +8,7 @@ pub mod activation;
 #[cfg(target_os = "linux")]
 mod cdc_reader;
 pub mod config;
+pub mod control;
 #[cfg(target_os = "linux")]
 pub mod coordinator;
 pub mod edge_bundle;

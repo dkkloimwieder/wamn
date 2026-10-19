@@ -295,6 +295,10 @@ pub struct HostArgs {
     #[arg(long, requires = "local_application")]
     pub local_application_digest: Option<String>,
 
+    /// Local flow-http workload bytes for an org control host.
+    #[arg(long, requires = "control", conflicts_with = "local_application")]
+    pub local_control: Option<PathBuf>,
+
     /// Maximum resolved wirings retained by the one production router driver.
     #[arg(
         long = "wiring-cache-capacity",
@@ -941,9 +945,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let local_workload = match args.local_application.as_deref() {
         Some(directory) => Some((
             load_local_workload(directory).await?,
-            load_local_materializer(directory).await?,
+            Some(load_local_materializer(directory).await?),
         )),
-        None => None,
+        None => match args.local_control.as_deref() {
+            Some(directory) => Some((load_local_workload(directory).await?, None)),
+            None => None,
+        },
     };
     // The control serving root authenticates through its own control login,
     // never through the project credentials an application release needs.
@@ -1521,7 +1528,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             // The materializer is a platform workload beside the release, so
             // it starts after the release's flow-http workload runs.
             match start_local(&native_host, workload).await {
-                Ok(()) => start_local(&native_host, materializer).await,
+                Ok(()) => match materializer {
+                    Some(materializer) => start_local(&native_host, materializer).await,
+                    None => Ok(()),
+                },
                 Err(error) => Err(error),
             }
         }
@@ -2785,6 +2795,31 @@ mod tests {
             neither.to_string(),
             "a release-backed host requires --registry-auth-file or --registry-token-metadata"
         );
+    }
+
+    #[test]
+    fn local_control_uses_the_control_authority_without_an_application_release() {
+        assert!(parse(["host", "--local-control", "/local"]).is_err());
+        let parsed = parse([
+            "host",
+            "--control",
+            "--org",
+            "acme",
+            "--session-issuer",
+            "https://identity.invalid",
+            "--session-jwks-ca",
+            "/ca.pem",
+            "--local-control",
+            "/local",
+        ])
+        .expect("local control host arguments");
+        assert!(parsed.args.control);
+        assert_eq!(
+            parsed.args.local_control.as_deref(),
+            Some(Path::new("/local"))
+        );
+        assert!(parsed.args.local_application.is_none());
+        assert!(parsed.args.release_manifest_digest.is_none());
     }
 
     #[test]

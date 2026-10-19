@@ -354,6 +354,16 @@ impl ProductionDevStageRunner {
 
     /// Stop any active workload and local host owned by this runner.
     pub async fn shutdown(&mut self) -> Result<(), ProductionDevStageError> {
+        let endpoint_file = self
+            .config
+            .local_artifacts()
+            .directory
+            .with_file_name("application-endpoint.json");
+        if endpoint_file.exists() {
+            std::fs::remove_file(endpoint_file).map_err(|source| {
+                ProductionDevStageError::owner("remove the local web endpoint", source.into())
+            })?;
+        }
         self.read_publisher.clear_runtime_endpoint();
         // The reader stops first, so that a target replacement finds its
         // slot inactive.
@@ -1041,6 +1051,10 @@ impl ProductionDevStageRunner {
                     })?,
             );
         }
+        crate::provision_project_env::write_secret_json(
+            &self.config.local_artifacts().directory.with_file_name("application-endpoint.json"),
+            &serde_json::json!({"base_url": endpoint.base_url(), "route_host": endpoint.route_host()}),
+        ).map_err(|source| ProductionDevStageError::owner("publish the local web endpoint", source))?;
         self.read_publisher.set_runtime_endpoint(endpoint);
         Ok(())
     }

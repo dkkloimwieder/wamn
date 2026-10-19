@@ -26,6 +26,8 @@ pub struct DevUpRequest {
     pub flow_http_component: PathBuf,
     pub local_bindings: Option<PathBuf>,
     pub host_binary: PathBuf,
+    /// The built platform UI directory served beside application bundles.
+    pub platform_ui: PathBuf,
     pub packages: Vec<PathBuf>,
     /// The host credentials file, `{project: {name: secret}}`. It is copied
     /// into the private root, never referenced where it lies.
@@ -50,6 +52,7 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
     // Settled before a single credential is minted: an environment is
     // expensive to stand up.
     wamn_control_provision::validate_platform_domain(&args.platform_domain)?;
+    super::control::preflight(&args)?;
 
     std::fs::create_dir_all(&args.root)
         .with_context(|| format!("create the environment directory {}", args.root.display()))?;
@@ -143,6 +146,11 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         &environment.identity,
     )?;
 
+    let web = super::control::start(&args, &environment).await;
+    if let Err(error) = web {
+        environment.issuer.stop().await?;
+        return Err(error);
+    }
     environment.issuer.retain(&args.root.canonicalize()?)?;
     admin_task.abort();
     Ok(config)
@@ -152,6 +160,12 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
 fn copy_private(source: &std::path::Path, target: &std::path::Path) -> anyhow::Result<PathBuf> {
     let bytes = std::fs::read(source)
         .with_context(|| format!("read the credentials file {}", source.display()))?;
+    write_private(target, &bytes)?;
+    Ok(target.to_owned())
+}
+
+/// Write private runtime credentials into the environment directory.
+pub(super) fn write_private(target: &std::path::Path, bytes: &[u8]) -> anyhow::Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -161,9 +175,9 @@ fn copy_private(source: &std::path::Path, target: &std::path::Path) -> anyhow::R
         .with_context(|| format!("create {}", target.display()))?;
     // A file left by an earlier run keeps its old mode, so set it again.
     file.set_permissions(Permissions::from_mode(0o600))?;
-    file.write_all(&bytes)
+    file.write_all(bytes)
         .with_context(|| format!("write {}", target.display()))?;
-    Ok(target.to_owned())
+    Ok(())
 }
 
 /// Enable CDC for the environment with the cluster's verb and record what the

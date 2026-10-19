@@ -111,6 +111,10 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_HOST_BIN")]
     host_binary: PathBuf,
 
+    /// Built platform UI served beside the application bundles.
+    #[arg(long, default_value = "apps/platform_ui/dist")]
+    platform_ui: PathBuf,
+
     /// A package source root the loop owns. Repeat for more than one.
     #[arg(long = "package", required = true)]
     packages: Vec<PathBuf>,
@@ -140,6 +144,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         flow_http_component: args.flow_http_component,
         local_bindings: args.local_bindings,
         host_binary: args.host_binary,
+        platform_ui: args.platform_ui,
         packages: args.packages,
         credentials_file: args.credentials_file,
         cdc_reader_binary: args.cdc_reader_binary,
@@ -156,7 +161,12 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         .as_deref()
         .map(|root| format!(" --overlay-root {}", root.display()))
         .unwrap_or_default();
-    println!("environment ready; identity remains running until wamn dev down");
+    println!("environment ready; identity, control and web remain running until wamn dev down");
+    let web = wamn_control::provision_project_env::read_json(&root.join("web.json"))?;
+    println!("  web: {}", web["url"].as_str().unwrap_or_default());
+    for application in web["applications"].as_array().into_iter().flatten() {
+        println!("  {}: {}", application["name"], application["url"]);
+    }
     println!("  config: {}", config.display());
     // The operator token is also in dev.json for generated client launch.
     // The local Gate uses its separate management-author token.
@@ -179,7 +189,9 @@ pub struct DevDownArgs {
 
 /// Leave externally supplied databases and brokers untouched.
 pub async fn down(args: DevDownArgs) -> anyhow::Result<()> {
-    wamn_control::dev::pat_issuer::stop_environment(&args.root.canonicalize()?).await?;
-    println!("development identity stopped");
+    let root = args.root.canonicalize()?;
+    wamn_control::dev::control::stop(&root).await?;
+    wamn_control::dev::pat_issuer::stop_environment(&root).await?;
+    println!("development identity, control and web stopped");
     Ok(())
 }
