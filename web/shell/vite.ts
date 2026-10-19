@@ -146,7 +146,6 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
         { find: options.client.name, replacement: at(options.client.path) },
         { find: /^@wamn\/control-client$/, replacement: `${control}index.ts` },
         { find: /^@wamn\/control-org-client$/, replacement: `${controlOrg}index.ts` },
-        { find: /^solid-js$/, replacement: installed("solid-js") },
         { find: /^@solidjs\/router$/, replacement: installed("@solidjs/router") },
         { find: /^@tanstack\/solid-table$/, replacement: installed("@tanstack/solid-table") },
         { find: /^zod(\/.*)?$/, replacement: `${installed("zod")}$1` },
