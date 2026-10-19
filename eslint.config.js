@@ -14,9 +14,17 @@ export default tseslint.config(
       "web/components/fixture/**",
       "web/components/.vitest/**",
       "web/demo/**",
+      "web/wfe/**",
       "target/**",
       "apps/target/**",
     ],
+  },
+  {
+    files: ["apps/platform_ui/**/*.{ts,tsx}"],
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+    },
   },
   {
     files: ["web/**/*.{ts,tsx}", "apps/*/web/**/*.{ts,tsx}"],

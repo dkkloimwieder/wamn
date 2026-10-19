@@ -771,7 +771,12 @@ A request type declares writable members, because a caller builds a request and 
 Components state no route and no navigation: a row link is a callback, and the application decides what to open.
 
 The [app shell](../../web/shell/README.md) places the components on routes, and the generator does not write it.
-`web/shell` is one platform package that every application shares. The generator emits no navigation list: an application writes its route table by hand from the generated component index.
+Receiving and WMS share the Solid 1 shell in `web/shell`.
+The [platform UI](../../apps/platform_ui/README.md) ports the shell core to Solid 2 with wfe layout components.
+It reuses `web/runtime` for the cookie session and transport.
+Its route, scope, permission, and query rules have separate implementations until M3 removes the Solid 1 shell.
+No bundle includes both Solid versions.
+The generator emits no navigation list: an application writes its route table by hand from the generated component index.
 An application web page in `apps/<app>/web/` gives the shell a hand-written route table of screens, grouped by model.
 The navigation names a model with one screen by the model alone, and it lists the screen labels only below a model with more than one screen.
 A record page carries its key in the address, for example `packagings/<id>`, and a table row opens it through the row callback.

@@ -1,0 +1,3 @@
+[submodule "web/wfe"]
+	path = web/wfe
+	url = https://github.com/dkkloimwieder/wfe.git

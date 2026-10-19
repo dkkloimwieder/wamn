@@ -8,6 +8,9 @@
 !/apps/wamn_receiving/
 /apps/*/*
 !/apps/*/web/
+!/apps/platform_ui/
+!/apps/platform_ui/**
+/web/wfe/
 **/*.md
 **/dist/
 **/__screenshots__/
