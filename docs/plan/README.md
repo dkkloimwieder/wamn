@@ -14,6 +14,7 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Operator UI](operator-ui.md): deferred by owner ruling, `wamn-z7j99`. The [web client](web-operator-client.md) is the only operator client plan.
 - [Package upgrade](package-upgrade.md): live, `wamn-eycl` (Epic 4); Epic 3 `wamn-5ihq` is deferred.
 - [Platform deploy](platform-deploy.md): done, `wamn-jqdja`.
+- [Platform install](platform-install.md): live, `wamn-whdih` (E1).
 - [Platform UI](platform-ui.md): done, `wamn-a40n`.
 - [Platform UI application](platform-ui-app.md): draft, `wamn-n8q9m`.
 - [Request round-trips](request-round-trips.md): live, `wamn-stxy9`.

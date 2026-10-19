@@ -1,0 +1,98 @@
+# Platform install — plan
+
+**Status:** live. Epic E1 is `wamn-whdih`.
+**Baseline:** `main` at the 2026-10-19 greenfield; `docs/operations/gcp.md` §4 (21 steps, ~700 lines).
+
+## How this plan is worked
+
+The rules of `platform-deploy.md` "How this plan is worked" apply unchanged, plus rule 7 (never run `gcloud` or `kubectl` outside `CLOUDSDK_CONFIG=~/.config/gcloud-wamn-agent` and `KUBECONFIG=~/.kube/wamn-dev`).
+
+## 1. Goal
+
+One verb installs the platform layer of a cluster from one document, the same way `env apply` installs an environment:
+
+```
+wamn-ctl platform apply <cluster.k>
+```
+
+`gcp.md` §4 becomes: owner inputs, `platform apply`, done. The runbook keeps §1 (owner inputs), §2 (project resources, owner-only IAM), §3 (teardown) and §5 (operations). Nothing in §4 stays prose.
+
+Why: the 2026-10-19 greenfield stopped seven times. Four were runbook lines that had drifted since the last greenfield. A runbook rots between runs because nothing executes it. A verb cannot drift from itself, and a test runs it.
+
+## 2. Rulings (proposed)
+
+| # | Ruling | Why |
+| --- | --- | --- |
+| P1 | **The cluster is a declared document, `cluster.k`.** It names: provider (`gcp`), project id, zone, cluster name, release channel, network, subnetwork, the pod and service secondary range names, node service account, node pools (name, machine type, spot, disk type, disk size, size, label, taint), platform version, org, owner email, registry, buckets (web, otel), route hosts (control, per environment), and the Resend sender address. Nothing else. A value that §4.2 leaves to a GKE default is not a field. The invite step reads the owner email. Every Kubernetes name, namespace, Service and Secret name derives from it. | Same shape as `environment.k` (R21). `show` reproduces it; `apply` of `show`'s output is a no-op. |
+| P2 | **`platform apply` is the one verb.** It runs §4.2–§4.21 in order under one lock, idempotent: every step checks the live state first and does nothing when it already matches. It stops at the first missing owner input and names it. `--dry-run` prints the plan. | One owner for the install; a rerun after a fix continues where it stopped. |
+| P3 | **Owner inputs are read, never made.** The quota preference, the Resend Secret, the `wamn-blob` Workload Identity binding, DNS records, IAM. The verb reads each at the step that needs it and refuses with the exact command the owner runs. The verb never calls IAM, DNS or billing. | The agent identity has no IAM; a step needing it is a runbook bug (standing rule). |
+| P4 | **No shell inside the verb.** Cluster, pools, Helm releases, CNPG, NATS, Jobs and Secrets go through the GKE API, the Kubernetes API and the Helm SDK (or `helm` as a subprocess with values written by the verb). No `sed`, no `jq`, no here-documents. | The runbook's drift was in shell glue. |
+| P5 | **The control host and the edge are platform objects.** `platform apply` installs one control host per org named in the document and renders the edge values from the document's route hosts and the registry's environments. `host-group-control.yaml`, `values-edge.yaml` and `url-map.yaml` stop being hand-edited files. | Added to the runbook on 2026-10-19 by M1.4; a second org or environment would mean editing three files by hand. |
+| P6 | **Teardown stays owner-run.** `wamn-ctl platform delete <cluster.k>` exists, refuses without `--data`, and the runbook §3 says "the owner runs this". | Data loss is the owner's. |
+| P7 | **The verb is tested by running it.** A system test installs a kind cluster from a `cluster.k` with provider `kind` (no GKE API, no buckets, no DNS; local registry) end to end, then applies one environment. The GKE path is proved by the scheduled greenfield (P8), not by a unit test. | A verb that is never run rots like a runbook. |
+| P9 | **No port-forward.** The verb reaches Postgres and NATS as an in-cluster Job, or through Services the install exposes to the operator identity. Today §4.7–§4.17 run through three background `port-forward`s that drop. | Two "command hangs" in one week. |
+| P10 | **Secrets are objects the verb writes.** `wamn-system-admin`, the session key, the operator PAT: the verb creates them through the API with owner references set in the object, no `jq`, no file. The Resend key stays an owner input, read by name. | The newline bug and the `jq` ownerReference patch are the same class. |
+| P11 | **Qualification runs where the verb runs.** `qualify-release` on kind on the operator's laptop (>1 h per project) is replaced by qualification in the cluster, as a Job on the `main` pool, or is dropped from the greenfield path and kept as a release-time step. Owner decides at E3. | The longest, least reproducible step; platform-deploy never said where it runs. |
+| P8 | **Weekly greenfield.** A scheduled job: teardown wamn-dev, `platform apply`, `env apply` both environments, the check, pools to 0. Its report is one line per step with pass or the refusal. The owner reads it Monday. | Drift is found by the schedule, not by the owner waiting on a deploy. |
+
+## 3. What `platform apply` owns (from gcp.md §4)
+
+| Step | Today | Under the verb |
+| --- | --- | --- |
+| 4.1 binaries | shell | the verb is the binary |
+| 4.2 cluster, pools | gcloud | GKE API from `cluster.k`; idempotent |
+| 4.3 cert-manager, edge certificate | helm, kubectl | Helm SDK; certificate from the wildcard host in the document |
+| 4.4 namespaces, operator, CA, collector | helm, kubectl | Helm SDK; values rendered from the document |
+| 4.5 PostgreSQL | kubectl, CNPG | CNPG CR from the document's policy; pd-balanced |
+| 4.6 packages, platform build | cargo, wamn | unchanged commands, invoked by the verb; `--stamp-only` when the version exists |
+| 4.7 system database, org, issuer | wamn-ctl verbs | same verbs, called in order |
+| 4.8 event NATS | helm, kubectl, Jobs | Helm SDK; the tap Job as a Kubernetes Job object |
+| 4.9–4.11 platform inputs, file, first apply | wamn-ctl | `env apply` for each environment the document names, `release = none` |
+| 4.12 identity, session key | kubectl, Secrets | Secrets written by the verb; Resend Secret read (P3) |
+| 4.13–4.17 packages, releases, qualification, apply | wamn verbs | same verbs; package versions come from the environment files, not from §4.13 |
+| 4.18 CDC readers | kubectl | objects from the document |
+| 4.19 web clients, control host, platform UI | wamn web upload, helm | the verb; P5 |
+| 4.20 edge, load balancer, url-map | helm, gcloud | the verb; DNS stays owner (P3) |
+| 4.21 check | curl, kubectl | the verb's last step; non-zero exit names the failing check |
+
+## 4. What stays out
+
+- IAM, DNS, billing, quotas, API enables: owner, by hand, named in §1.
+- The first org admin's invitation: `platform apply` runs the invite Job for the owner address in the document (today's §5.3), so sign-in works on first install. Other users come from the platform UI.
+- Multi-cluster, multi-region, non-GKE providers beyond `kind`.
+- Backup and point-in-time recovery: unchanged, `backup-and-recovery.md`.
+
+## 5. Epics
+
+One at a time; each ≤3 issues; build+clippy+fmt+unit per issue; the kind test (P7) at the merge of E2 onward.
+
+| # | Epic | Done when |
+| --- | --- | --- |
+| E1 | `cluster.k` schema, `show`, `--dry-run`. The document for wamn-dev is committed. | `platform apply --dry-run` prints every step of §4 with its inputs and the owner inputs it will read. |
+| E2 | Steps 4.2–4.5 and 4.8 (cluster, cert-manager, operator, collector, PostgreSQL, NATS) through the APIs. Provider `kind` for the test. | The kind test reaches a ready PostgreSQL and NATS from `cluster.k`. |
+| E3 | Steps 4.6–4.7, 4.9–4.17 (build, system database, environments, identity, packages, releases, apply). | The kind test applies one environment with a release and passes the check. |
+| E4 | Steps 4.18–4.21, P5 (CDC, web, control host, platform UI, edge, url-map, check). Delete `host-group-control.yaml`, `values-edge.yaml`, `url-map.yaml`. | A GKE greenfield of wamn-dev runs `platform apply` once and the owner signs in at the control host. |
+| E5 | P6 delete; P8 the scheduled greenfield; gcp.md §4 reduced to one command; §1 lists only owner inputs. Plan index updated. | Two consecutive scheduled greenfields pass with no owner intervention. |
+
+## 6. Acceptance
+
+- [ ] `gcp.md` §4 is one command and no shell.
+- [ ] `platform apply` of the committed `cluster.k` on an installed cluster is a no-op.
+- [ ] The kind test runs in the per-epic budget from E2.
+- [ ] Two scheduled greenfields pass.
+- [ ] No file under `deploy/gcp/` is hand-edited for a second environment or org.
+
+## 7. After this plan: the project layer
+
+Not part of this plan. Recorded so P3 is designed for it.
+
+The owner inputs of §1 are project-level resources that need IAM. They leave interactive hands in a later epic, in this order:
+
+1. `deploy/gcp/project.k` declares the project layer: GSAs, Workload Identity bindings, DNS zone and records, buckets and lifecycle, quota preferences, Artifact Registry. The generator renders it to `.tf.json`, which OpenTofu reads natively; nobody writes HCL. OpenTofu is an execution engine here, as Helm is: it holds the state file in a bucket and computes the diff. CI runs `tofu plan` with its own short-lived identity; the owner approves a diff when one exists, not a run.
+2. Secrets from Secret Manager through External Secrets Operator. The Resend key is one Secret Manager secret; rotation is a new version.
+3. DNS from the cluster through external-dns with a DNS-scoped GSA. The edge Service carries the hostname; the record is derived from `cluster.k`.
+4. Teardown by policy: `env_policies.destroy` is `auto` for dev and `never` for prod. Prod data loss stays a human act.
+
+Authored formats stay one: KCL. `wamn.k`, `environment.k`, `cluster.k`, `project.k`. JSON, YAML and `.tf.json` are derived and never committed (platform-deploy R10). Config Connector was considered and set aside: it puts a project-level identity inside the cluster.
+
+After that the human acts are: approve a project-layer diff, and prod-destructive operations. `platform apply` reads these resources by name (P3) whether the owner or OpenTofu made them, so this plan needs no change when they arrive.
