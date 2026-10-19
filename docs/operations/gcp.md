@@ -526,12 +526,12 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
 
 ### 4.13 Packages
 
-The package artifacts `wamn_receiving-2.2.2` and `wamn_wms-2.1.0` are in the registry. If a tag is missing, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
+The package artifacts `wamn_receiving-2.2.2` and `wamn_wms-2.1.2` are in the registry. If a tag is missing, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
-declare -A V=([receiving]=2.2.2 [wms]=2.1.0)
+declare -A V=([receiving]=2.2.2 [wms]=2.1.2)
 for project in receiving wms; do
   gcloud artifacts docker images describe $WAMN_PACKAGE_ARTIFACT_BASE:wamn_$project-${V[$project]} --format="value(image_summary.digest)" \
   || target/debug/wamn-ctl push-package --package apps/wamn_$project --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE \
@@ -544,7 +544,7 @@ Install each package into its environment. `reconcile-replica-identity` runs for
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 R="--artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE"
-declare -A V=([receiving]=2.2.2 [wms]=2.1.0)
+declare -A V=([receiving]=2.2.2 [wms]=2.1.2)
 for project in receiving wms; do
   target/debug/wamn-ctl apply-package --package-artifact wamn_$project-${V[$project]} $R \
     --database-url "$(db_url $project)" --tenant dkk--$project--dev
@@ -621,7 +621,7 @@ WAMN_SYSTEM_URL="$(cat $G/identity-reader.url)" WAMN_CONTROL_AUTHORING_PG_URL="$
 WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
 WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=dkk--wms--dev \
   setsid target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $G/gate.log 2>&1 < /dev/null &
-cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.0 wms dev \
+cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.2 wms dev \
   apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $G/gate-request.json
 for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:18090/ && break; sleep 1; done
 (umask 077; python3 -c 'import json,sys;print("Authorization: Bearer "+json.load(open(sys.argv[1]))["stringData"]["token"])' \
@@ -639,13 +639,13 @@ The outcome has `status` `completed`. Record the wiring and publish WMS:
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
 target/debug/wamn-ctl author-wiring --database-url "$(db_url wms)" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
-  --tenant dkk--wms--dev --package-id wamn_wms --package-version 2.1.0 \
+  --tenant dkk--wms--dev --package-id wamn_wms --package-version 2.1.2 \
   --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
 RELEASE_wms=$(target/debug/wamn-ctl publish-release --database-url "$(db_url wms)" \
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--wms--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--wms--dev \
-  --run-schema wamn_run --package wamn_wms@2.1.0 --wiring "wamn_wms@2.1.0::inventory_move_and_label=2" \
+  --run-schema wamn_run --package wamn_wms@2.1.2 --wiring "wamn_wms@2.1.2::inventory_move_and_label=2" \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
 echo "$RELEASE_wms" > $W/release-wms
 shred -u $G/management-author-pat.json
