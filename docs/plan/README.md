@@ -15,6 +15,7 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Package upgrade](package-upgrade.md): live, `wamn-eycl` (Epic 4); Epic 3 `wamn-5ihq` is deferred.
 - [Platform deploy](platform-deploy.md): done, `wamn-jqdja`.
 - [Platform UI](platform-ui.md): done, `wamn-a40n`.
+- [Platform UI application](platform-ui-app.md): draft, `wamn-n8q9m`.
 - [Request round-trips](request-round-trips.md): live, `wamn-stxy9`.
 - [Routes, workflows, and the router](routes-router.md): done, `wamn-upl3`.
 - [Table data loading](table-adv-data.md): done, `wamn-3nsf`.
