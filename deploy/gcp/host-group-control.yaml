@@ -14,6 +14,10 @@ runtime-operator:
           - --control
           - --org=dkk
         env:
+          # The release chart sets this on application hosts; it equals
+          # terminationGracePeriodSeconds above.
+          - name: WAMN_DRAIN_BOUND_SECONDS
+            value: '70'
           - name: DOCKER_CONFIG
             value: /etc/wamn/registry
           - name: WAMN_REGISTRY_TOKEN_METADATA
@@ -69,7 +73,7 @@ runtime-operator:
         resources:
           requests:
             memory: 256Mi
-            cpu: 500m
+            cpu: 250m
           limits:
             memory: 4Gi
             cpu: '2'
