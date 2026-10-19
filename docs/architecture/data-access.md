@@ -397,7 +397,7 @@ Dropping an unfinished stream closes its session and ends the query.
 The statement reads one snapshot, so a write that commits during a load does not show in it.
 The test `a_streamed_load_reads_one_statement_as_of_its_start` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) holds a load after its first rows and finds its statement open.
 It commits a write and reads the rest of the load without that write.
-The row limit does not apply to a stream, because the host holds one batch at a time.
+The row limit does not apply to a stream, because the statement's declared limit bounds the rows. The connection buffers the result.
 A custom projection declares its result class and typed result fields, and no row or byte limit.
 Its authored SQL decides how many rows it returns.
 A custom projection or command admits the result classes `one`, `optional_one`, and `bounded_list`.

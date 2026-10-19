@@ -172,7 +172,8 @@ interface statements {
   ///
   /// Dropping the stream before its end closes its session, which ends the
   /// query on the server. The project row limit does not apply, because
-  /// the host holds one batch at a time; the statement bounds its own rows.
+  /// the statement's declared limit bounds the rows; the connection buffers
+  /// the result.
   run-stream: async func(statement: string, binds: list<sql-value>) -> result<tuple<list<column>, stream<list<sql-value>>, future<result<_, statement-error>>>, statement-error>;
 
   /// Begin a transaction that the guest commits or rolls back.
