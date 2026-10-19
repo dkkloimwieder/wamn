@@ -8,7 +8,6 @@
     "jsxImportSource": "@solidjs/web",
     "customConditions": ["wfe-source"],
     "strict": true,
-    "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noEmit": true,

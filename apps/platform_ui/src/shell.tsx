@@ -1,7 +1,6 @@
 import { createSignal, For, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button } from "@wfe/components/fields";
-import { Card } from "@wfe/components/display";
 import { permission } from "@wamn/control-client";
 import { control, member, user } from "@wamn/control-org-client";
 import {
@@ -13,6 +12,8 @@ import {
 } from "@wamn/web-runtime";
 import { audienceKind, createAddress, matchPath, queryValues, type Address, type Kind } from "./address";
 import type { Scope } from "./scope";
+import { identityPage, SignInForm } from "./identity";
+import { Page, NotFound } from "./page";
 
 const Layout = lazy(() => import("./layout"));
 
@@ -114,24 +115,6 @@ export function screen<M>(load: () => Promise<M>, pick: (module: M) => Component
   return lazy(async () => ({ default: pick(await load()) }));
 }
 
-export function Page(props: { title: string; children?: JSX.Element }): JSX.Element {
-  return (
-    <Card>
-      <h1>{props.title}</h1>
-      {props.children}
-    </Card>
-  );
-}
-
-export function NotFound(): JSX.Element {
-  return (
-    <Page title="No page here">
-      <p>This address names no page.</p>
-      <a href="/">Go to sign in</a>
-    </Page>
-  );
-}
-
 export function Shell(props: ShellProps): JSX.Element {
   const address = createAddress();
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
@@ -139,27 +122,28 @@ export function Shell(props: ShellProps): JSX.Element {
   return (
     <Loading>
       <Show
-        when={audience()}
+        when={identityPage(address.url().pathname)}
         keyed
         fallback={
-          <Page title={props.title}>
-            <p>Sign in</p>
-          </Page>
+          <Show when={audience()} keyed fallback={<NotFound />}>
+            {(aud) => (
+              <Show
+                when={audienceKind(aud, props)}
+                keyed
+                fallback={
+                  <Page title={props.title}>
+                    <p>This address names an environment of another application.</p>
+                    <a href="/">sign in</a>
+                  </Page>
+                }
+              >
+                {(kind) => <Session {...props} aud={aud} kind={kind} options={options} address={address} />}
+              </Show>
+            )}
+          </Show>
         }
       >
-        {(aud) => (
-          <Show
-            when={audienceKind(aud, props)}
-            fallback={
-              <Page title={props.title}>
-                <p>This address names an environment of another application.</p>
-                <a href="/">sign in</a>
-              </Page>
-            }
-          >
-            {(kind) => <Session {...props} aud={aud} kind={kind()} options={options} address={address} />}
-          </Show>
-        )}
+        {(Identity) => <Identity title={props.title} scope={props} options={options} address={address} />}
       </Show>
     </Loading>
   );
@@ -219,7 +203,13 @@ function Session(
       when={state()?.status === "signedIn"}
       fallback={
         <Page title={props.title}>
-          <p>Sign in</p>
+          <Show when={state() !== null}>
+            <SignInForm
+              address={props.address}
+              trouble={failure(state())}
+              submit={(email, password) => keeper.signIn(email, password)}
+            />
+          </Show>
         </Page>
       }
     >
@@ -298,4 +288,8 @@ function Destination(props: {
       }}
     </Show>
   );
+}
+
+function failure(state: SessionState | null): string | null {
+  return state?.status === "failed" ? `The session could not be renewed: ${state.reason}.` : null;
 }

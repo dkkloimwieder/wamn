@@ -13,7 +13,7 @@ import { afterEach, beforeEach } from "vitest";
 import { member, user } from "@wamn/control-org-client";
 import { permission } from "@wamn/control-client";
 
-import { createSignal } from "solid-js";
+import { createSignal, flush } from "solid-js";
 
 import { Shell, type ScreenProps, type ShellSection } from "../src/index.js";
 
@@ -219,8 +219,9 @@ export function open(path: string, fetch: typeof globalThis.fetch) {
 
 /** Signs in once the form shows, which is after the renewal answers. */
 export async function signIn() {
-  fireEvent.input(await screen.findByLabelText("email"), { target: { value: "someone@wamn.dev" } });
-  fireEvent.input(screen.getByLabelText("password"), { target: { value: "a long password string" } });
+  input(await screen.findByLabelText("email"), "someone@wamn.dev");
+  input(screen.getByLabelText("password"), "a long password string");
+  flush();
   fireEvent.click(screen.getByText("sign in"));
 }
 
@@ -235,3 +236,9 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+/** Browser input events settle before the next user event. */
+export function input(element: HTMLElement, value: string): void {
+  fireEvent.input(element, { target: { value } });
+  flush();
+}
