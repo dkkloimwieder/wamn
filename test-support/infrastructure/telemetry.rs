@@ -11,10 +11,8 @@ use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::time::{Instant, sleep, timeout};
 
-/// Fixed IDs retained by the deployed 10% hash_seed=0 sampler.
-/// Collector v0.161.0 fnvhasher.go and sampler_mode.go hash the LE seed,
-/// then the trace ID with FNV-1a. Low 14 bits: 1241, 838, 435, 32, 1505 < 1638.
-/// https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/v0.161.0/processor/probabilisticsamplerprocessor/sampler_mode.go
+/// Fixed request IDs with sampled parent contexts (`traceparent` ends in `01`).
+/// The host keeps sampled parents. The collector forwards every received trace.
 pub const SAMPLED_TRACE_IDS: [&str; 5] = [
     "00000000000000000000000000000014",
     "00000000000000000000000000000015",
@@ -643,22 +641,18 @@ mod tests {
         let mut expected = deployed["service"]["pipelines"]["traces"].clone();
         expected["exporters"] = json!(["file/traces"]);
         assert_eq!(rendered["service"]["pipelines"]["traces"], expected);
-        assert_eq!(
-            rendered["processors"]["probabilistic_sampler"],
-            json!({"sampling_percentage":10})
+        assert!(
+            rendered["processors"]
+                .get("probabilistic_sampler")
+                .is_none()
         );
-        // Pinned v0.161.0 fnvhasher.go and sampler_mode.go: hash_seed is
-        // the default. FNV-1a hashes the LE seed then the 16 trace ID bytes.
-        // The low 14 bits must be below floor(16384 * 10 / 100) = 1638.
-        for id in SAMPLED_TRACE_IDS {
-            let hash = [0_u8; 4]
-                .into_iter()
-                .chain(hex::decode(id).unwrap())
-                .fold(2_166_136_261_u32, |hash, byte| {
-                    (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
-                });
-            assert!(hash & 0x3fff < 1638, "{id}");
-        }
+        assert!(
+            rendered["service"]["pipelines"]["traces"]["processors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|name| name != "probabilistic_sampler")
+        );
     }
 
     #[test]

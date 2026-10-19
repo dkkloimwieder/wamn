@@ -255,26 +255,30 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
 /// `terminationGracePeriodSeconds` (R20).
 const HOST_VARIABLES: [&str; 3] = ["WAMN_ORG", "WAMN_PROJECT", "WAMN_DRAIN_BOUND_SECONDS"];
 
-/// The host's OTLP export: the cluster's one collector in `platform`
-/// (docs/plan/observability.md R2, R6). The variables are not an application
-/// fact, so the chart sets them on every host it renders.
-pub const TELEMETRY_VARIABLES: [(&str, &str); 2] = [
+/// The host samples traces at their start and exports to the cluster's collector.
+/// The sampler keeps sampled parents and 10% of new traces (R5, R6).
+/// These variables are not application facts. The chart sets them on every host.
+pub const TELEMETRY_VARIABLES: [(&str, &str); 4] = [
     (
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "http://otel-collector.platform.svc.cluster.local:4317",
     ),
     ("OTEL_SERVICE_NAME", "wamn-host"),
+    ("OTEL_TRACES_SAMPLER", "parentbased_traceidratio"),
+    ("OTEL_TRACES_SAMPLER_ARG", "0.1"),
 ];
 
 /// The host variables a host group body must not set: the derived ones, the
 /// telemetry ones, and the chart's environment variable, which the release
 /// replaces by argument.
-const REFUSED_VARIABLES: [&str; 6] = [
+const REFUSED_VARIABLES: [&str; 8] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_SERVICE_NAME",
+    "OTEL_TRACES_SAMPLER",
+    "OTEL_TRACES_SAMPLER_ARG",
     "WASMCLOUD_HOST_ENVIRONMENT",
 ];
 
@@ -618,7 +622,9 @@ mod tests {
                  {name: WAMN_DRAIN_BOUND_SECONDS, value: '300'}, \
                  {name: OTEL_EXPORTER_OTLP_ENDPOINT, \
                   value: 'http://otel-collector.platform.svc.cluster.local:4317'}, \
-                 {name: OTEL_SERVICE_NAME, value: wamn-host}]"
+                 {name: OTEL_SERVICE_NAME, value: wamn-host}, \
+                 {name: OTEL_TRACES_SAMPLER, value: parentbased_traceidratio}, \
+                 {name: OTEL_TRACES_SAMPLER_ARG, value: '0.1'}]"
             )
             .expect("yaml")
         );

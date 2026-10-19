@@ -1,7 +1,6 @@
 """Measure span own times inside sampled receipt requests from local OTLP JSON."""
 from collections import defaultdict
 import json
-import re
 from pathlib import Path
 import sys
 
@@ -9,9 +8,10 @@ work, output = map(Path, sys.argv[1:3])
 run = json.loads((work / "app-path.json").read_text())
 if run["errors"]:
     raise SystemExit(f"Application path returned {run['errors']} errors")
-configuration = (work / "env/local-artifacts/otel/config.yaml").read_text()
-sampling, = re.findall(r"sampling_percentage: ([0-9.]+)", configuration)
-run["sampling_percentage"] = float(sampling)
+configuration = json.loads((work / "host-telemetry.json").read_text())
+if configuration["OTEL_TRACES_SAMPLER"] != "parentbased_traceidratio":
+    raise SystemExit("Application path requires the deployed host sampler")
+run["sampling_percentage"] = 100 * float(configuration["OTEL_TRACES_SAMPLER_ARG"])
 traces = defaultdict(dict)
 for line in (work / "env/local-artifacts/otel/traces.jsonl").open():
     for resource in json.loads(line).get("resourceSpans", []):

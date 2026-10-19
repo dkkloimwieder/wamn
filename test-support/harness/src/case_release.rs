@@ -37,12 +37,14 @@ use wamn_package_artifact::registry_credentials::read_registry_credentials;
 pub const NAMESPACE: &str = "wamn-system";
 /// The host group keys and variables that the release chart derives.
 const DERIVED_KEYS: [&str; 5] = ["name", "namespace", "service", "extraArgs", "image"];
-const DERIVED_VARIABLES: [&str; 6] = [
+const DERIVED_VARIABLES: [&str; 8] = [
     "WAMN_ORG",
     "WAMN_PROJECT",
     "WAMN_DRAIN_BOUND_SECONDS",
     "OTEL_EXPORTER_OTLP_ENDPOINT",
     "OTEL_SERVICE_NAME",
+    "OTEL_TRACES_SAMPLER",
+    "OTEL_TRACES_SAMPLER_ARG",
     "WASMCLOUD_HOST_ENVIRONMENT",
 ];
 /// The collector of a kind cluster (`deploy/infra/otel-collector.yaml`).

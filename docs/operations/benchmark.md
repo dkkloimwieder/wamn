@@ -165,8 +165,8 @@ The database still participates, and the result reports the time in its related 
 
 The application result is `local-app-<CHART_VERSION>.json` in the private run directory.
 It includes throughput, p50, p99, maximum latency, guest digests, and host span parts from the collector's local trace file.
-The deployed collector samples 10 percent of traces.
-The result records that percentage and `sampled_trace_count` for requests inside the measured interval.
+The deployed host keeps sampled parents and samples 10 percent of new traces. The collector does not sample traces.
+The result reads that percentage from the measured host and records `sampled_trace_count` for requests inside the measured interval.
 The runner stops the host and collector cleanly before it reads the file, so the collector flushes its buffered traces.
 
 

@@ -240,13 +240,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // observability.md R6: the host exports to the cluster's collector, each
     // variable once.
     let variables = host["env"].as_sequence().expect("host variables");
-    for (name, value) in [
-        (
-            "OTEL_EXPORTER_OTLP_ENDPOINT",
-            "http://otel-collector.platform.svc.cluster.local:4317",
-        ),
-        ("OTEL_SERVICE_NAME", "wamn-host"),
-    ] {
+    for (name, value) in wamn_control::release_chart::TELEMETRY_VARIABLES {
         let set: Vec<&Value> = variables
             .iter()
             .filter(|variable| variable["name"] == name)

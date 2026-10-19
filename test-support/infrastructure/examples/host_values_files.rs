@@ -384,18 +384,10 @@ fn control_group(application: &Value) -> anyhow::Result<Value> {
         ("name", "WAMN_DRAIN_BOUND_SECONDS"),
         ("value", "70"),
     ]));
-    // The cluster's collector (docs/plan/observability.md R6).
-    env.push(entry(&[
-        ("name", "OTEL_EXPORTER_OTLP_ENDPOINT"),
-        (
-            "value",
-            "http://otel-collector.platform.svc.cluster.local:4317",
-        ),
-    ]));
-    env.push(entry(&[
-        ("name", "OTEL_SERVICE_NAME"),
-        ("value", "wamn-host"),
-    ]));
+    // The deployed owner also supplies the host sampler (R5, R6).
+    for (name, value) in wamn_control::release_chart::TELEMETRY_VARIABLES {
+        env.push(entry(&[("name", name), ("value", value)]));
+    }
     group.insert("env".into(), Value::Sequence(env));
     group.insert(
         "volumes".into(),

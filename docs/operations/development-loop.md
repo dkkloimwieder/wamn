@@ -33,7 +33,8 @@ docker compose -f "$WAMN_DEV_ENV_DIR/local-artifacts/otel/compose.json" up --pul
 ```
 
 The renderer reads `deploy/platform/otel-collector.yaml` and its GCP values at run time.
-It preserves the receivers, processors, image digest, and 10% trace sampling.
+It preserves the receivers, processors, and image digest.
+The host uses the deployed sampler: sampled parents and 10% of new traces. The collector does not sample traces.
 It replaces the GCS exporters with OTLP JSON file exporters under `<dev-root>/local-artifacts/otel/`.
 The collector keeps the deployed batch timeout, so small batches take up to 60 seconds to arrive.
 An individual request can have no sampled trace. Router taps remain a separate, unsampled observation source.

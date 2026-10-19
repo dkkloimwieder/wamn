@@ -507,6 +507,17 @@ UNWIND
   done
 done
 if $app_path && ! $mix; then
+  # Retain only the sampler variables of the host that served this measurement.
+  python3 - "$work" <<'SAMPLER'
+import json
+from pathlib import Path
+import sys
+work = Path(sys.argv[1])
+pid = int((work / "host.pid").read_text())
+environment = dict(entry.split(b"=", 1) for entry in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0") if entry)
+sampler = {name: environment[name.encode()].decode() for name in ("OTEL_TRACES_SAMPLER", "OTEL_TRACES_SAMPLER_ARG")}
+(work / "host-telemetry.json").write_text(json.dumps(sampler) + "\n")
+SAMPLER
   # The host flushes its exporter on shutdown. Then flush the collector's batch.
   stop_dev
   docker stop "$prefix-collector" >"$work/collector-stop.log"

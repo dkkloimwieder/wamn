@@ -193,7 +193,7 @@ pub(super) async fn trigger(
     endpoint: &str,
     order: &TriggerOrder,
 ) -> anyhow::Result<(MaterializerPhase, String, String)> {
-    // These fixed IDs pass the deployed 10% trace-ID hash sampler.
+    // Sampled parent contexts keep these IDs through the host sampler.
     let ids = wamn_test_infrastructure::telemetry::SAMPLED_TRACE_IDS;
     let update_trace = ids[3].to_owned();
     let receipt_trace = ids[4].to_owned();

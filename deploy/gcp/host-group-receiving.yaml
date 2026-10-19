@@ -2,8 +2,8 @@
 # `wamn-ctl env apply` (docs/history/gcp-install-history.md section 11.10). It is hand-written
 # from the group `default` of values-host.yaml. The release chart derives the name,
 # namespace, service, release arguments, WAMN_ORG, WAMN_PROJECT, the drain
-# bound, OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_SERVICE_NAME (the cluster's
-# collector), and `apply` adds the six credential variables, so this file sets
+# bound, and host telemetry (the collector and sampler).
+# `apply` adds the six credential variables, so this file sets
 # none of them. WAMN_SESSION_INSTANCE_SUFFIX is the instance suffix that the first
 # apply recorded; write it again after a new first apply. The 2.10.3 chart has no
 # nodeSelector or tolerations field, so bench-host-placement.yaml places this host.

@@ -30,10 +30,6 @@ data:
           grpc:
             endpoint: 0.0.0.0:4317
     processors:
-      # Head sampling keeps 10% of traces by trace id. Logs and metrics are
-      # not sampled.
-      probabilistic_sampler:
-        sampling_percentage: 10
       memory_limiter:
         check_interval: 1s
         limit_mib: 1500
@@ -88,7 +84,7 @@ data:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, probabilistic_sampler, resource, batch]
+          processors: [memory_limiter, resource, batch]
           exporters: [google_cloud_storage/traces]
         logs:
           receivers: [otlp]

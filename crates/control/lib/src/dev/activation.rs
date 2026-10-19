@@ -2594,6 +2594,11 @@ mod tests {
                     "http://127.0.0.1:41016".to_owned(),
                 ),
                 ("OTEL_SERVICE_NAME".to_owned(), "wamn-host".to_owned()),
+                (
+                    "OTEL_TRACES_SAMPLER".to_owned(),
+                    "parentbased_traceidratio".to_owned()
+                ),
+                ("OTEL_TRACES_SAMPLER_ARG".to_owned(), "0.1".to_owned()),
                 ("HOME".to_owned(), "/tmp".to_owned()),
                 ("WAMN_COMPONENT_POOL_SIZE".to_owned(), "16".to_owned()),
                 ("WAMN_PG_GUEST_POOL_MAX".to_owned(), "16".to_owned()),

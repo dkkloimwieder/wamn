@@ -94,7 +94,7 @@ pub(super) async fn requests(
     cold: &ColdHost,
     evidence: &Path,
 ) -> anyhow::Result<()> {
-    // The shared IDs pass the deployed 10% trace-ID hash sampler.
+    // Sampled parent contexts keep these IDs through the host sampler.
     request(
         cluster,
         work,

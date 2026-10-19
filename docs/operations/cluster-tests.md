@@ -37,8 +37,9 @@ A passing case first prints the route and the caller token file.
 Without the variable, the case does not hold.
 The startup case requires one invocation and statement after restart and in steady state, without component loading or compilation.
 It retains each trace and its per-span timing breakdown beside request, recovery, and cache evidence.
-The cluster fixture renders the deployed collector configuration with file exporters and retains its 10% trace sampler and 60-second batch timeout.
-The tests use fixed trace IDs that the sampler retains.
+The cluster fixture renders the deployed collector configuration with file exporters and retains its 60-second batch timeout.
+The host keeps sampled parents and 10% of new traces. The collector does not sample traces.
+The tests send fixed trace IDs with sampled parent contexts, so the host keeps those traces.
 The shared reader uses `kubectl exec` through a read-only sidecar to read complete OTLP JSON lines across batches.
 Receiving retains its invocation identity, PostgreSQL ancestry, and scoped metric assertions.
 
