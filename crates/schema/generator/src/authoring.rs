@@ -190,7 +190,7 @@ pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
 
 /// Compile a file against a named embedded schema module to JSON.
 ///
-/// The modules are `manifest`, `environment` and `cluster`. The bytes are
+/// The modules are `environment` and `cluster`. The bytes are
 /// 2-space indented JSON with the keys in schema order.
 ///
 /// # Errors
@@ -200,7 +200,6 @@ pub fn compile_environment(file: &Path) -> Result<Vec<u8>> {
 pub fn compile_schema_file(file: &Path, name: &str) -> Result<Vec<u8>> {
     let source = fs::read(file).with_context(|| format!("read {}", file.display()))?;
     let module = match name {
-        "manifest" => SchemaModule::write("manifest", SCHEMA_MODULE_DECLARATION, SCHEMA_MODULE),
         "environment" => SchemaModule::write(
             "environment",
             ENVIRONMENT_MODULE_DECLARATION,
