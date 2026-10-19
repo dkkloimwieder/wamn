@@ -58,7 +58,7 @@ platform:
   roles:
     http:
       image: ""
-      poolSize: 0
+      poolSize: 4
       maxConcurrency: 1
     materializer:
       image: ""
