@@ -1,5 +1,6 @@
 import { createSignal, For, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
+import { uiScope } from "@wfe/components";
 import { Button } from "@wfe/components/fields";
 import { permission } from "@wamn/control-client";
 import { control, member, user } from "@wamn/control-org-client";
@@ -119,32 +120,34 @@ export function Shell(props: ShellProps): JSX.Element {
   const options: SessionOptions = props.fetch === undefined ? {} : { fetch: props.fetch };
   const audience = () => address.url().pathname.split("/")[1] ?? "";
   return (
-    <Loading>
-      <Show
-        when={identityPage(address.url().pathname)}
-        keyed
-        fallback={
-          <Show when={audience()} keyed fallback={<NotFound />}>
-            {(aud) => (
-              <Show
-                when={audienceKind(aud, props)}
-                keyed
-                fallback={
-                  <Page title={props.title}>
-                    <p>This address names an environment of another org.</p>
-                    <a href="/">sign in</a>
-                  </Page>
-                }
-              >
-                {(kind) => <Session {...props} aud={aud} kind={kind} options={options} address={address} />}
-              </Show>
-            )}
-          </Show>
-        }
-      >
-        {(Identity) => <Identity title={props.title} scope={props} options={options} address={address} />}
-      </Show>
-    </Loading>
+    <div {...uiScope()}>
+      <Loading>
+        <Show
+          when={identityPage(address.url().pathname)}
+          keyed
+          fallback={
+            <Show when={audience()} keyed fallback={<NotFound />}>
+              {(aud) => (
+                <Show
+                  when={audienceKind(aud, props)}
+                  keyed
+                  fallback={
+                    <Page title={props.title}>
+                      <p>This address names an environment of another org.</p>
+                      <a href="/">sign in</a>
+                    </Page>
+                  }
+                >
+                  {(kind) => <Session {...props} aud={aud} kind={kind} options={options} address={address} />}
+                </Show>
+              )}
+            </Show>
+          }
+        >
+          {(Identity) => <Identity title={props.title} scope={props} options={options} address={address} />}
+        </Show>
+      </Loading>
+    </div>
   );
 }
 

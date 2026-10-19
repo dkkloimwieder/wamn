@@ -205,7 +205,7 @@ export function identity(
 
 export function open(path: string, fetch: typeof globalThis.fetch) {
   window.history.pushState({}, "", path);
-  render(() => (
+  return render(() => (
     <Shell
       title="Stub app"
       org="acme"

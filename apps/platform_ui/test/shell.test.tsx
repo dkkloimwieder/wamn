@@ -3,6 +3,19 @@ import { describe, expect, it, vi } from "vitest";
 import { AUD, CONTROL, ONE, ADMIN, identity, open } from "./fixtures";
 
 describe("the app shell", () => {
+  it.each(["/", "/invite", "/recover", "/reset", `/${AUD}/pallets`])(
+    "scopes every shell page under one UI root at %s",
+    async (path) => {
+      const { fetch } = identity(true);
+      const { container } = open(path, fetch);
+      await waitFor(() => expect(container.textContent).not.toBe(""));
+      expect(container.firstElementChild?.hasAttribute("data-ui")).toBe(true);
+      expect(container.querySelectorAll(":scope > [data-ui]")).toHaveLength(1);
+      expect(container.firstElementChild?.getAttribute("data-ui-density")).toBe("compact");
+      expect(container.firstElementChild?.hasAttribute("data-ui-theme")).toBe(false);
+    },
+  );
+
   it("refuses an address that names an environment of another org", async () => {
     const { state, fetch } = identity(false);
     open("/urn:wamn:project-env:other:widgets:dev:k3m9x2p7/pallets", fetch);
