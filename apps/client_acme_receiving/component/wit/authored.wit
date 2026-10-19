@@ -5,5 +5,5 @@ package client-acme-receiving:component@4.2.1;
 world client-acme-receiving {
   include client-acme-receiving:generated/generated;
   // Acme's record_receipt calls Receiving's operation.
-  import wamn-receiving:receiving/record-receipt@2.2.2;
+  import wamn-receiving:receiving/record-receipt@2.2.3;
 }
