@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { uiScope } from "@wfe/components";
 import { Button } from "@wfe/components/fields";
 import { permission } from "@wamn/control-client";
-import { control, member, user } from "@wamn/control-org-client";
+import { control, environment, member, project, projectAdmin, user } from "@wamn/control-org-client";
 import {
   createTransport,
   keepSession,
@@ -22,6 +22,8 @@ export const API_BASE = "/api";
 
 export interface ScreenProps {
   readonly transport: Transport;
+  readonly holds: Holds;
+  readonly controlProjects?: readonly string[];
   readonly params: Readonly<Record<string, string | undefined>>;
   readonly search: Readonly<Record<string, string | undefined>>;
   readonly open: (path: string) => void;
@@ -52,11 +54,11 @@ export interface ShellProps extends Scope {
   readonly controlSections?: readonly ShellSection[];
   readonly fetch?: typeof globalThis.fetch;
 }
-type Holds = (operation: string) => boolean;
+type Holds = (operation: string, project?: string) => boolean;
 interface View {
   readonly holds: Holds;
   readonly sections: readonly ShellSection[];
-  readonly projects: readonly string[];
+  readonly controlProjects?: readonly string[];
 }
 
 function reference(operation: string): string {
@@ -71,7 +73,6 @@ async function applicationView(transport: Transport, sections: readonly ShellSec
   const holds: Holds = (operation) => admin || held.has(reference(operation));
   return {
     holds,
-    projects: [],
     sections: sections
       .map((section) => ({
         ...section,
@@ -82,16 +83,42 @@ async function applicationView(transport: Transport, sections: readonly ShellSec
   };
 }
 
+export function controlHolds(mine: control.ControlMineResult): Holds {
+  const projectOperations = new Set([
+    environment.ENVIRONMENT_LIST_ROUTE.operation,
+    member.MEMBER_LIST_ROUTE.operation,
+    member.MEMBER_GRANT_ROUTE.operation,
+    member.MEMBER_REVOKE_ROUTE.operation,
+    projectAdmin.PROJECT_ADMIN_GRANT_ROUTE.operation,
+    projectAdmin.PROJECT_ADMIN_REVOKE_ROUTE.operation,
+  ]);
+  const orgOperations = new Set([
+    user.USER_LIST_ROUTE.operation,
+    project.PROJECT_LIST_ROUTE.operation,
+    project.PROJECT_CREATE_ROUTE.operation,
+    project.PROJECT_ACTIVATE_ROUTE.operation,
+    project.PROJECT_INACTIVATE_ROUTE.operation,
+  ]);
+  return (operation, scope) => {
+    if (operation === control.CONTROL_MINE_ROUTE.operation)
+      return mine.orgAdmin || mine.projects.some((entry) => entry.projectAdmin);
+    if (orgOperations.has(operation)) return mine.orgAdmin;
+    return (
+      projectOperations.has(operation) &&
+      (mine.orgAdmin ||
+        mine.projects.some((entry) => entry.projectAdmin && (scope === undefined || entry.project === scope)))
+    );
+  };
+}
+
 async function controlView(transport: Transport, sections: readonly ShellSection[]): Promise<View> {
   const outcome = await control.mine(transport, [{}]);
-  if (outcome.status !== "completed") return { holds: () => false, sections: [], projects: [] };
+  if (outcome.status !== "completed") return { holds: () => false, sections: [] };
   const projects = outcome.value.projects.filter((entry) => entry.projectAdmin).map((entry) => entry.project);
-  const holds: Holds = (operation) =>
-    (operation === user.USER_LIST_ROUTE.operation && outcome.value.orgAdmin) ||
-    (operation === member.MEMBER_LIST_ROUTE.operation && projects.length > 0);
+  const holds = controlHolds(outcome.value);
   return {
     holds,
-    projects,
+    controlProjects: projects,
     sections: sections
       .map((section) => ({
         ...section,
@@ -246,9 +273,7 @@ function Destination(props: {
     for (const section of props.sections)
       for (const route of [...section.screens, ...(section.routes ?? [])]) {
         const params = matchPath(route.path, path());
-        if (!params || !props.view.holds(route.operation)) continue;
-        if (props.kind === "control" && params.project !== undefined && !props.view.projects.includes(params.project))
-          continue;
+        if (!params || !props.view.holds(route.operation, params.project)) continue;
         params.aud = props.aud;
         return { route, home: section.screens[0], params };
       }
@@ -288,6 +313,8 @@ function Destination(props: {
             </For>
             <route.component
               transport={props.transport}
+              holds={(operation, project) => props.view.holds(operation, project ?? params.project)}
+              controlProjects={props.view.controlProjects}
               params={params}
               search={queryValues(props.address.url().searchParams)}
               open={open}

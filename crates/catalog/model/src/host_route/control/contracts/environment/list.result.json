@@ -2,10 +2,19 @@
   "class": "one",
   "fields": [
     {
-      "path": "environments[]",
+      "path": "environments[].name",
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "environments[].state",
+      "type": "text",
+      "nullable": false,
+      "values": [
+        "active",
+        "inactive"
+      ]
     }
   ]
 }

@@ -89,10 +89,10 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
 | `wamn-control:user/activate@0.9.0` | Takes `principal_id` and makes the org membership active. It restores no access. |
 | `wamn-control:user/deactivate@0.9.0` | Takes `principal_id`, removes the member's environment memberships, project roles and org roles in the org, then makes the membership inactive. |
-| `wamn-control:project/list@0.9.0` | `projects`: every project of the org. |
+| `wamn-control:project/list@0.9.0` | `projects`: every project of the org as `{name, state}`. |
 | `wamn-control:org-admin/grant@0.9.0` | Takes `principal_id` of an active member and writes `org-admin`, `project-admin` in every project of the org and a membership in every environment of the org. |
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
-| `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: every environment of the project. |
+| `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: every environment of the project as `{name, state}`. |
 | `wamn-control:environment/status@0.9.0` | The current state of one environment in its release namespace: the digest, the rollout, the workload conditions and the live set. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the tables it reads, writes, deletes and locks, derived from the release's SQL over the environment's table columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. Writes nothing. |

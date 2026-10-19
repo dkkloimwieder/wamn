@@ -24,7 +24,9 @@ const CONTROL_PROJECTS_SQL: &str = "SELECT r.project FROM identity.project_roles
     AND p.type = 'user' AND p.status = 'active' \
     ORDER BY r.project";
 
-const ORG_PROJECTS_SQL: &str = "SELECT id FROM registry.projects WHERE org = $1 ORDER BY id";
+const ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.project_envs e \
+    WHERE e.org = p.org AND e.project = p.id AND e.status = 'active') \
+    THEN 'active' ELSE 'inactive' END FROM registry.projects p WHERE p.org = $1 ORDER BY p.id";
 
 const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
@@ -150,11 +152,20 @@ pub async fn is_project_admin(
         .map_err(|error| database_error(&error))
 }
 
+/// A project and its current state.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ProjectSummary {
+    /// The project name.
+    pub name: String,
+    /// The state exposed by project.list.
+    pub state: String,
+}
+
 /// Every project of `org`, which an `org-admin` administers.
 pub async fn org_projects(
     client: &(impl GenericClient + Sync),
     org: &str,
-) -> Result<Vec<String>, IdentityError> {
+) -> Result<Vec<ProjectSummary>, IdentityError> {
     if !valid_org(org) {
         return Err(invalid_org());
     }
@@ -163,7 +174,10 @@ pub async fn org_projects(
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| row.get(0))
+        .map(|row| ProjectSummary {
+            name: row.get(0),
+            state: row.get(1),
+        })
         .collect())
 }
 

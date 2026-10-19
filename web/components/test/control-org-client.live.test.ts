@@ -65,7 +65,12 @@ describe.skipIf(baseUrl === undefined)("the generated control org client", () =>
     });
     expect(await project.list(transport, [{}])).toEqual({
       status: "completed",
-      value: { projects: ["billing", "shop"] },
+      value: {
+        projects: [
+          { name: "billing", state: "active" },
+          { name: "shop", state: "active" },
+        ],
+      },
     });
     expect(await user.activate(transport, [{ requestId: requestId(), value: { principalId: annId } }])).toEqual({
       status: "completed",

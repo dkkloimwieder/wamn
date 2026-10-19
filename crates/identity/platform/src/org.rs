@@ -593,6 +593,15 @@ impl EnvironmentStatus {
     }
 }
 
+/// An environment and its registry state.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct EnvironmentSummary {
+    /// The environment name.
+    pub name: String,
+    /// The state from registry.project_envs.status.
+    pub state: String,
+}
+
 /// The environments of one project of `org` that a status route changes:
 /// one environment when `env` names it, or every environment of the project.
 /// A project or an environment outside the org is refused before anything
@@ -618,7 +627,11 @@ pub async fn status_environments(
                 format!("project {project} is not a project of org {org}"),
             ));
         }
-        return project_envs(client, &org, &project).await;
+        return Ok(project_envs(client, &org, &project)
+            .await?
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect());
     };
     let env = checked_scope_segment("env", env)?;
     let found: bool = client
@@ -692,14 +705,14 @@ pub async fn user_contact(
 }
 
 const PROJECT_ENVS_SQL: &str =
-    "SELECT env FROM registry.project_envs WHERE org = $1 AND project = $2 ORDER BY env";
+    "SELECT env, status FROM registry.project_envs WHERE org = $1 AND project = $2 ORDER BY env";
 
 /// The environments of one project of `org`.
 pub async fn project_envs(
     client: &(impl GenericClient + Sync),
     org: &str,
     project: &str,
-) -> Result<Vec<String>, IdentityError> {
+) -> Result<Vec<EnvironmentSummary>, IdentityError> {
     let org = checked_scope_segment("org", org)?;
     let project = checked_scope_segment("project", project)?;
     Ok(client
@@ -707,7 +720,10 @@ pub async fn project_envs(
         .await
         .map_err(|error| database_error(&error))?
         .iter()
-        .map(|row| row.get(0))
+        .map(|row| EnvironmentSummary {
+            name: row.get(0),
+            state: row.get(1),
+        })
         .collect())
 }
 

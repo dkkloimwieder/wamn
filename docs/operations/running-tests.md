@@ -651,11 +651,19 @@ It shows that the CSS entry compiles.
 
 ### Local platform sign-in
 
-`local_sign_in_selects_empty_control_layout` runs the built platform UI in headless Chrome.
+`local_control_projects_and_membership` runs the built platform UI in headless Chrome.
 It starts `wamn dev up` on disposable services through the existing `delivery_timings` fixture.
-The test uses platform verbs to enroll the org admin and grant membership in `receiving/dev`.
-It signs in, requires both audiences, chooses Control, and requires the org layout with no sections or not-found message.
-It also requires `data-ui` on the shell root.
+The test uses platform verbs to enroll the org admin and a second user.
+It grants the admin membership in `receiving/dev`, requires both audiences, and chooses Control.
+Control opens Projects, and the shell root carries `data-ui`.
+The browser creates `browser-project` and opens its Project screen.
+The fixture then calls `provision_project_env` and `reconcile_journey_run_plane` to prepare `browser-project/dev` on the disposable PostgreSQL server.
+It prepares the administration credential through `run_workload_action` and installs its emitted file in the local control host's credential directory.
+The browser grants and revokes membership and project-admin for the second user.
+Each write must update the screen.
+The second user sees only that project, and an address for `receiving` shows no page.
+The project-admin session uses the project names from `control.mine` and never calls `project.list`.
+Project inactivation and activation must each show only the opposite action, including after a page reload.
 The test prints its elapsed time and fails if it exceeds 15 minutes.
 
 Build the native programs and components described in [the development loop](development-loop.md).
@@ -682,7 +690,7 @@ export WAMN_DEV_ENV_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/rele
 results="$(mktemp -d /var/tmp/wamn-platform-ui-XXXXXX)/run"
 "$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
   cargo test --offline -p wamn-ctl --test platform_ui_live \
-  local_sign_in_selects_empty_control_layout -- --ignored --exact --nocapture
+  local_control_projects_and_membership -- --ignored --exact --nocapture
 ```
 
 The test uses a fixed fixture password and sends no email.

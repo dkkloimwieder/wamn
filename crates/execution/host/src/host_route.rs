@@ -140,7 +140,11 @@ impl HostRouteDelivery {
             (HostHandler::ControlMine, HostRouteHandlers::Control { control, org, .. }) => {
                 let org_admin = is_org_admin(control.as_ref(), &principal, org).await?;
                 let projects = if org_admin {
-                    org_projects(control.as_ref(), org).await?
+                    org_projects(control.as_ref(), org)
+                        .await?
+                        .into_iter()
+                        .map(|entry| entry.name)
+                        .collect()
                 } else {
                     control_projects(control.as_ref(), &principal, org).await?
                 };

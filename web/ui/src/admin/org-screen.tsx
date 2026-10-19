@@ -40,9 +40,13 @@ async function projects(transport: Transport): Promise<Project[]> {
     return [];
   }
   const all: Project[] = [];
-  for (const name of listed.value.projects) {
+  for (const { name } of listed.value.projects) {
     const environments = await environment.list(transport, [{ project: name }]);
-    all.push({ name, environments: environments.status === "completed" ? environments.value.environments : [] });
+    all.push({
+      name,
+      environments:
+        environments.status === "completed" ? environments.value.environments.map((entry) => entry.name) : [],
+    });
   }
   return all;
 }

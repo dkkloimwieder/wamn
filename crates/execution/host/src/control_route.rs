@@ -306,7 +306,8 @@ impl ControlRoutes<'_> {
                 let request: EnvironmentRequest = parse(payload)?;
                 if !project_envs(self.control, self.org, &request.project)
                     .await?
-                    .contains(&request.env)
+                    .iter()
+                    .any(|entry| entry.name == request.env)
                 {
                     return Err(Refusal::Declared {
                         code: "environment_not_found",
@@ -322,7 +323,8 @@ impl ControlRoutes<'_> {
                 let request: ReleaseRequest = parse(payload)?;
                 if !project_envs(self.control, self.org, &request.project)
                     .await?
-                    .contains(&request.env)
+                    .iter()
+                    .any(|entry| entry.name == request.env)
                 {
                     return Err(Refusal::Declared {
                         code: "environment_not_found",

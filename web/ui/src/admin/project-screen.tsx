@@ -71,7 +71,7 @@ export function ProjectScreen(props: ProjectScreenProps): JSX.Element {
       return outcome.status === "completed" ? outcome.value : { environments: [] };
     },
   );
-  const environments = () => listed()?.environments;
+  const environments = () => listed()?.environments.map((entry) => entry.name);
   const [statuses] = createResource(environments, (names) =>
     Promise.all(
       names.map(async (env) => {

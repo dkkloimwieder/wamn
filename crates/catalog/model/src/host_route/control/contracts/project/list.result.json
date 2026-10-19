@@ -2,10 +2,19 @@
   "class": "one",
   "fields": [
     {
-      "path": "projects[]",
+      "path": "projects[].name",
       "type": "text",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "projects[].state",
+      "type": "text",
+      "nullable": false,
+      "values": [
+        "active",
+        "inactive"
+      ]
     }
   ]
 }

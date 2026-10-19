@@ -171,9 +171,14 @@ export function controlStub(state: ControlState = controlState()): { transport: 
             })),
         });
       case "wamn-control:project/list":
-        return completed({ projects: Object.keys(PROJECTS) });
+        return completed({
+          projects: Object.entries(PROJECTS).map(([name, envs]) => ({
+            name,
+            state: envs.length ? "active" : "inactive",
+          })),
+        });
       case "wamn-control:environment/list":
-        return completed({ environments: [...(PROJECTS[project] ?? [])] });
+        return completed({ environments: (PROJECTS[project] ?? []).map((name) => ({ name, state: "active" })) });
       case "wamn-control:environment/status":
         if (!(PROJECTS[project] ?? []).includes(String(item["env"]))) {
           return refused(request, "environment_not_found", { field: "env" });

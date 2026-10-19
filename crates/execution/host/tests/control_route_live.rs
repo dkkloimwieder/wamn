@@ -345,7 +345,9 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
 
     assert_eq!(
         call(&delivery, "project/list", boss, json!({})).await,
-        Ok(json!({"projects": ["billing", "shop"]}))
+        Ok(
+            json!({"projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
+        )
     );
 
     // A new user gets the membership and the mail; an enrolled user gets no
@@ -606,7 +608,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
             json!({"project": "billing"})
         )
         .await,
-        Ok(json!({"environments": ["dev"]}))
+        Ok(json!({"environments": [{"name": "dev", "state": "active"}]}))
     );
     // A status read names an environment of the project before it reads
     // Kubernetes.
@@ -1032,6 +1034,16 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
         ]
     );
     assert_eq!(
+        call(&delivery, "project/list", boss, json!({})).await,
+        Ok(
+            json!({"projects": [{"name": "billing", "state": "inactive"}, {"name": "shop", "state": "inactive"}]})
+        )
+    );
+    assert_eq!(
+        call(&delivery, "environment/list", boss, shop_project.clone()).await,
+        Ok(json!({"environments": [{"name": "dev", "state": "inactive"}]}))
+    );
+    assert_eq!(
         call(&delivery, "environment/activate", boss, billing_dev.clone()).await,
         Ok(json!({"project": "billing", "env": "dev", "status": "active"}))
     );
@@ -1093,6 +1105,31 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
             "row shop active"
         ],
         "an inactivation commits the system row after every environment"
+    );
+    admin.execute(
+        "INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name, status) \
+         SELECT org, project, 'other', secret_name, instance_suffix, policy_name, 'inactive' \
+         FROM registry.project_envs WHERE org = $1 AND project = 'billing' AND env = 'dev'",
+        &[&ORG],
+    ).await?;
+    assert_eq!(
+        call(&delivery, "project/list", boss, json!({})).await,
+        Ok(
+            json!({"projects": [{"name": "billing", "state": "active"}, {"name": "shop", "state": "active"}]})
+        ),
+        "an inactive environment does not hide an active environment"
+    );
+    assert_eq!(
+        call(
+            &delivery,
+            "environment/list",
+            boss,
+            json!({"project": "billing"})
+        )
+        .await,
+        Ok(
+            json!({"environments": [{"name": "dev", "state": "active"}, {"name": "other", "state": "inactive"}]})
+        )
     );
     let _ = std::fs::remove_dir_all(&logins);
     Ok(())
@@ -1224,7 +1261,10 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     let projects = call(&delivery, "project/list", dee, json!({}))
         .await
         .expect("an org admin lists the projects");
-    assert_eq!(projects["projects"], json!(["billing", "ledger", "shop"]));
+    assert_eq!(
+        projects["projects"],
+        json!([{"name": "billing", "state": "active"}, {"name": "ledger", "state": "inactive"}, {"name": "shop", "state": "active"}])
+    );
     let listed = call(
         &delivery,
         "environment/list",
