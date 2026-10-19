@@ -8,7 +8,7 @@ _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"
 _claim_errors = ["idempotency_conflict", *_errors_after_input]
 
 manifest.Package {
-    package = {id = "wamn_receiving", version = "2.2.1", predecessor_version = "2.2.0"}
+    package = {id = "wamn_receiving", version = "2.2.2", predecessor_version = "2.2.1"}
     client_package = {name = "@wamn/receiving-client"}
     required_platform_policy_contract = {id = "receiving_data_access", state = "satisfied"}
     models = {

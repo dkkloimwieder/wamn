@@ -526,13 +526,14 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
 
 ### 4.13 Packages
 
-The package artifacts `wamn_receiving-2.1.0` and `wamn_wms-2.1.0` are in the registry. If a tag is missing, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
+The package artifacts `wamn_receiving-2.2.2` and `wamn_wms-2.1.0` are in the registry. If a tag is missing, push that package. The tags are immutable, so a push of other bytes under a present tag fails:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 registry_token
+declare -A V=([receiving]=2.2.2 [wms]=2.1.0)
 for project in receiving wms; do
-  gcloud artifacts docker images describe $WAMN_PACKAGE_ARTIFACT_BASE:wamn_$project-2.1.0 --format="value(image_summary.digest)" \
+  gcloud artifacts docker images describe $WAMN_PACKAGE_ARTIFACT_BASE:wamn_$project-${V[$project]} --format="value(image_summary.digest)" \
   || target/debug/wamn-ctl push-package --package apps/wamn_$project --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE \
        --component-artifact-base us-central1-docker.pkg.dev/wamn-dev/wamn/components --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
 done
@@ -543,10 +544,11 @@ Install each package into its environment. `reconcile-replica-identity` runs for
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 R="--artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE"
+declare -A V=([receiving]=2.2.2 [wms]=2.1.0)
 for project in receiving wms; do
-  target/debug/wamn-ctl apply-package --package-artifact wamn_$project-2.1.0 $R \
+  target/debug/wamn-ctl apply-package --package-artifact wamn_$project-${V[$project]} $R \
     --database-url "$(db_url $project)" --tenant dkk--$project--dev
-  target/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_$project-2.1.0 $R \
+  target/debug/wamn-ctl reconcile-package-data-access --package-artifact wamn_$project-${V[$project]} $R \
     --database-url "$(db_url $project)" --tenant dkk--$project--dev
 done
 target/debug/wamn-ctl reconcile-replica-identity --admin-database-url "$(db_url wms)" --package apps/wamn_wms
@@ -562,7 +564,7 @@ registry_token
 RELEASE_receiving=$(target/debug/wamn-ctl publish-release --database-url "$(db_url receiving)" \
   --control-database-url "$WAMN_SYSTEM_ADMIN_URL" --org dkk --tenant dkk--receiving--dev --environment dev \
   --verified-publisher-principal wamn-management-author-dkk--receiving--dev \
-  --run-schema wamn_run --package wamn_receiving@2.1.0 \
+  --run-schema wamn_run --package wamn_receiving@2.2.2 \
   --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
 echo "$RELEASE_receiving" > $W/release-receiving
 ```
