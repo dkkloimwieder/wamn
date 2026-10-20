@@ -15,7 +15,7 @@ Do not run `gcloud config configurations activate`. Do not read or write `~/.con
 
 The owner supplies these inputs. The install stops at the first step that reads a missing one.
 
-1. The agent identity. `CLOUDSDK_CONFIG` holds the login of `wamn-agent@wamn-dev.iam.gserviceaccount.com` and application default credentials, which `wamn web upload` reads. `KUBECONFIG` names a file of the agent's own. The cluster create of section 4.2 writes the cluster into it.
+1. The agent identity. `CLOUDSDK_CONFIG` holds the login of `wamn-agent@wamn-dev.iam.gserviceaccount.com` and application default credentials, which `wamn web upload` reads. `KUBECONFIG` names a file of the agent's own. The `get-credentials` command of section 4.2 writes the cluster into it.
 2. The SSD quota. The quota preference `wamn-ssd-us-central1` sets `SSD_TOTAL_GB` in `us-central1` to 200, not 0. The PostgreSQL volume is `premium-rwo` (pd-balanced), which counts against it. A teardown keeps the preference, because it is a project quota. If the preference is missing, the owner sets it again:
 
    ```bash
@@ -53,6 +53,21 @@ The owner supplies these inputs. The install stops at the first step that reads 
    ```
 
 6. The approval of the teardown of section 3. The teardown deletes every database.
+
+7. The OpenTofu state bucket `gs://wamn-dev-tofu-state` in `us-central1`. State records the resources that OpenTofu manages. The bucket uses uniform bucket-level access and object versioning. Uniform bucket-level access applies permissions to the whole bucket. Object versioning keeps earlier versions of the state. A teardown keeps it, because it is a bucket.
+
+   If the bucket is missing, the owner creates it:
+
+   ```bash
+   gcloud storage buckets create gs://wamn-dev-tofu-state --project wamn-dev --location us-central1 \
+     --uniform-bucket-level-access
+   ```
+
+   Enable object versioning on the bucket:
+
+   ```bash
+   gcloud storage buckets update gs://wamn-dev-tofu-state --project wamn-dev --versioning
+   ```
 
 ## 2. Project resources
 
@@ -118,33 +133,71 @@ cargo build --locked -p wamn-scenario-worker
 
 ### 4.2 Cluster
 
-gcloud cannot name the first pool of a new cluster. The cluster starts with a temporary `default-pool`, and the pool `main` of 1 Spot node replaces it. The pool `pg` holds one node for PostgreSQL alone: its taint keeps every other pod off, and the `Cluster` selects it (section 4.5). The pool `bench` holds one Spot node for the Receiving host alone: its taint keeps every other pod off, and an admission policy places the host there (section 4.9). The 8-vCPU project quota sets its size. The create writes the cluster into `KUBECONFIG` and makes it the current context:
+The owner runs this procedure. Use the owner's own credentials for OpenTofu. The state bucket of section 1 and the project resources of section 2 must exist first.
+
+[deploy/gcp/project.k](../../deploy/gcp/project.k) declares the cluster and the pools `main`, `pg` and `bench`. The pool `main` holds one Spot node. A taint restricts which pods can use a node. The pool `pg` holds one node for PostgreSQL alone. Its taint keeps every other pod off, and the `Cluster` selects it (section 4.5).
+
+The pool `bench` holds one Spot node for the Receiving host alone. Its taint keeps every other pod off, and an admission policy places the host there (section 4.9). The 8-vCPU project quota sets its size.
+
+From the checkout used in section 4.1, render the document into a private directory:
 
 ```bash
-NSA=wamn-nodes@wamn-dev.iam.gserviceaccount.com
-gcloud container clusters create wamn --project wamn-dev --zone us-central1-a \
-  --release-channel regular --network wamn --subnetwork wamn-us-central1 \
-  --enable-ip-alias --cluster-secondary-range-name pods \
-  --services-secondary-range-name services --workload-pool wamn-dev.svc.id.goog \
-  --logging=SYSTEM --monitoring=SYSTEM --no-enable-managed-prometheus \
-  --service-account $NSA --disk-type pd-standard --disk-size 30 \
-  --num-nodes 1 --machine-type e2-standard-2 --spot
-gcloud container node-pools create main --cluster wamn --project wamn-dev \
-  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 1 \
-  --disk-type pd-standard --disk-size 30 --service-account $NSA \
-  --max-surge-upgrade 0 --max-unavailable-upgrade 1
-gcloud container node-pools create bench --cluster wamn --project wamn-dev \
-  --zone us-central1-a --machine-type e2-standard-2 --spot --num-nodes 1 \
-  --disk-type pd-standard --disk-size 30 --service-account $NSA \
-  --max-surge-upgrade 0 --max-unavailable-upgrade 1 \
-  --node-labels role=bench-host --node-taints role=bench-host:NoSchedule
-gcloud container node-pools create pg --cluster wamn --project wamn-dev \
-  --zone us-central1-a --machine-type e2-standard-2 --num-nodes 1 \
-  --disk-type pd-standard --disk-size 50 --service-account $NSA \
-  --node-labels role=postgres --node-taints role=postgres:NoSchedule
-gcloud container node-pools delete default-pool --cluster wamn --project wamn-dev --zone us-central1-a --quiet
+W=$HOME/.cache/wamn-install
+mkdir -m 700 "$W/project"
+target/debug/wamn-ctl project render deploy/gcp/project.k \
+  --state-bucket wamn-dev-tofu-state --state-prefix project "$W/project"
+```
+
+The renderer writes `main.tf.json`. Its import blocks adopt the existing cluster and pools into OpenTofu state on the first apply.
+
+Install OpenTofu from the checkout with `tools/install-tofu`. The installer prints the path to its binary:
+
+```bash
+TOFU=$(tools/install-tofu)
+```
+
+With the owner's credentials, initialize OpenTofu in the rendered directory:
+
+```bash
+(
+  cd "$W/project"
+  "$TOFU" init
+)
+```
+
+Review the plan for the existing cluster and pools:
+
+```bash
+(
+  cd "$W/project"
+  "$TOFU" plan
+)
+```
+
+Apply the plan:
+
+```bash
+(
+  cd "$W/project"
+  "$TOFU" apply
+)
+```
+
+After the apply, make sure that the plan shows no changes:
+
+```bash
+(
+  cd "$W/project"
+  "$TOFU" plan
+)
+```
+
+Write the cluster credentials to the agent's kubeconfig, the file that selects its cluster. Use the agent's `CLOUDSDK_CONFIG` and `KUBECONFIG` for this command (rule 7):
+
+```bash
+CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent \
+KUBECONFIG=$HOME/.kube/wamn-dev \
 gcloud container clusters get-credentials wamn --project wamn-dev --zone us-central1-a
-kubectl get nodes
 ```
 
 The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubectl get nodes` lists no node after 03:00 New York time, run section 5.1.
