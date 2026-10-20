@@ -204,7 +204,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 
 ### 4.3 cert-manager and the edge certificate
 
-From the repository root, run `wamn-ctl platform apply <cluster.k>` to run sections 4.3 through 4.5 and the broker part of 4.8. The verb holds one install lock and writes a kubeconfig in its work directory. On GCP, it requests the production certificate directly. It stops after PostgreSQL and event NATS are ready and the tap stream Job completes. It does not start the port forward. Run the remaining steps by hand with the commands below.
+From the repository root, run `wamn-ctl platform apply <cluster.k>`. The verb runs sections 4.3 through 4.7, the broker part of 4.8, and 4.9 in order. It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory. On GCP, it requests the production certificate directly. It adds the build in 4.6, provisioning in 4.7, and platform inputs in 4.9 without editing committed files. Run sections 4.10 onward by hand with the commands below.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 

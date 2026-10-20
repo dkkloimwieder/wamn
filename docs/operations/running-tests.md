@@ -499,16 +499,26 @@ These cases test connection reuse and authority isolation without measuring thro
 
 ### Platform and environment apply on kind
 
-The platform test needs Docker, kind, Helm and kubectl on PATH and network access to public registries.
+The platform test needs Docker, kind, Helm, kubectl and pnpm on PATH and network access to public registries.
+It also needs the [package build tools and workspace dependencies](building.md#wamn-build).
+It reads the debug binaries `target/debug/wamn` and `target/debug/wamn-ctl`.
 It needs no existing database, bucket or DNS.
-It writes its files under `/var/tmp` and deletes only its own cluster after success or failure.
+It writes its files under `/var/tmp` and deletes only its own cluster and registry container after success or failure.
 
 ```bash
+cargo build -p wamn-ctl --bins
 cargo test -p wamn-control --test platform_apply_kind -- --ignored --nocapture
 ```
 
-The test runs `platform apply` through sections 4.3 to 4.5 and the broker part of 4.8.
+The fixture starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
+Docker selects a free loopback port, and `cluster.k` names the registry as `localhost:<port>`.
+The fixture writes one Receiving environment and builds its package with a temporary PostgreSQL 18 container.
+It builds and pushes the platform images before the install.
+It prints the fixture build start time, end time, and elapsed time separately from the install.
+
+The test runs `platform apply` through sections 4.3 to 4.7, the broker part of 4.8, and 4.9.
 It requires ready PostgreSQL and NATS, a completed tap stream Job, and `WAMN_TAP` in the Job log.
+It also requires both `identity-ca` ConfigMaps, the identity database Secret, and the three completion ConfigMaps for the provisioning Jobs.
 A second apply must report every step as skipped.
 
 The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.
