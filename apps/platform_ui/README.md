@@ -16,6 +16,10 @@ DashboardShell and DashboardPanel frame each screen.
 FormView and TableView render forms and record lists through their application-owned bindings.
 The sign-in, invitation, recovery, and reset pages use `@wfe/form` with FormView.
 Their rules also exist in both shells until M3.
+After sign-in, the audience choice replaces the form in the centered identity panel.
+It uses wfe's [SidebarGroup](../../web/wfe/docs/layout.md#icon-sidebar) for expanded org and project groups.
+Each org lists its held Control entry first, then its projects and held environments.
+One audience opens automatically.
 
 Each dashboard uses `Theme` from `@wfe/components` with its unchanged light defaults.
 WFE owns the theme properties, styles, fonts, and licenses.

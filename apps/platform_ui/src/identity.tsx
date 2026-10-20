@@ -1,9 +1,10 @@
-import { createSignal, onCleanup, Show, type Component } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
-import { Button, FieldError, Input } from "@wfe/components/fields";
+import { FieldError, Input } from "@wfe/components/fields";
+import { SidebarGroup } from "@wfe/components/layout";
+import { Icon } from "@wfe/components";
 import { createForm, type FormContext } from "@wfe/form";
 import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/generator";
-import { Records } from "./records";
 import { emailError } from "./email";
 import {
   enroll,
@@ -89,6 +90,22 @@ export function SignInForm(props: {
   );
 }
 
+function AudienceGroup(props: { label: string; children: JSX.Element }): JSX.Element {
+  const [open, setOpen] = createSignal(true);
+  return (
+    <SidebarGroup
+      label={props.label}
+      icon={<Icon name="navigation" />}
+      compact={false}
+      open={open()}
+      onOpenChange={setOpen}
+      onExpand={() => setOpen(true)}
+    >
+      {() => props.children}
+    </SidebarGroup>
+  );
+}
+
 /** Identity names the reachable audiences; the session reads their permissions. */
 function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element {
   const [credentials, setCredentials] = createSignal<{ email: string; password: string } | null>(null);
@@ -120,47 +137,83 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
     >
       <Frame header={<span>{props.title}</span>}>
         <Page class="identity-panel">
-          <SignInForm
-            address={props.address}
-            trouble={null}
-            submit={async (email, password, context) => {
-              const found = await environments(email, password, props.scope, props.options);
-              if (context.signal.aborted) return;
-              setReachable(found);
-              setCredentials({ email, password });
-              const only = found.length === 1 ? found[0] : undefined;
-              if (only) await enter(email, password, only.aud, context.signal);
-            }}
-          />
-          <Show when={credentials()}>
-            {(held) => (
-              <>
-                <Records
-                  id="audiences"
-                  title="Audiences"
-                  rows={reachable().length > 1 ? reachable() : []}
-                  rowKey={(environment) => environment.aud}
-                  columns={[{ id: "audience", header: "Audience" }]}
-                  cells={{
-                    audience: (cell) => (
-                      <Button
-                        disabled={entering()}
-                        onClick={() =>
-                          void enter(held().email, held().password, cell.row.aud).catch((error: unknown) => {
-                            if (active) setTrouble(signInFailed(error));
-                          })
-                        }
-                      >
-                        {cell.row.project === undefined
-                          ? "Control"
-                          : `${cell.row.org}/${cell.row.project}/${cell.row.env ?? ""}`}
-                      </Button>
-                    ),
+          <Show
+            when={credentials()}
+            fallback={
+              <SignInForm
+                address={props.address}
+                trouble={null}
+                submit={async (email, password, context) => {
+                  const found = await environments(email, password, props.scope, props.options);
+                  if (context.signal.aborted) return;
+                  setReachable(found);
+                  const only = found.length === 1 ? found[0] : undefined;
+                  if (only) await enter(email, password, only.aud, context.signal);
+                  else setCredentials({ email, password });
+                }}
+              />
+            }
+          >
+            {(held) => {
+              const Entry = (props: { environment: Environment }) => (
+                <a
+                  href={`/${props.environment.aud}`}
+                  aria-disabled={entering() ? "true" : undefined}
+                  data-ui-text="system"
+                  onClick={(event) => {
+                    if (
+                      event.defaultPrevented ||
+                      event.button !== 0 ||
+                      event.ctrlKey ||
+                      event.metaKey ||
+                      event.shiftKey ||
+                      event.altKey
+                    )
+                      return;
+                    event.preventDefault();
+                    if (entering()) return;
+                    void enter(held().email, held().password, props.environment.aud).catch((error: unknown) => {
+                      if (active) setTrouble(signInFailed(error));
+                    });
                   }}
-                />
-                <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-              </>
-            )}
+                >
+                  {props.environment.project === undefined ? "Control" : props.environment.env}
+                </a>
+              );
+              return (
+                <>
+                  <nav aria-label="Audiences">
+                    <For each={[...new Set(reachable().map((environment) => environment.org))]}>
+                      {(org) => {
+                        const entries = createMemo(() => reachable().filter((environment) => environment.org === org));
+                        const projects = createMemo(() => [
+                          ...new Set(
+                            entries().flatMap((entry) => (entry.project === undefined ? [] : [entry.project])),
+                          ),
+                        ]);
+                        return (
+                          <AudienceGroup label={org}>
+                            <For each={entries().filter((entry) => entry.project === undefined)}>
+                              {(environment) => <Entry environment={environment} />}
+                            </For>
+                            <For each={projects()}>
+                              {(project) => (
+                                <AudienceGroup label={project}>
+                                  <For each={entries().filter((entry) => entry.project === project)}>
+                                    {(environment) => <Entry environment={environment} />}
+                                  </For>
+                                </AudienceGroup>
+                              )}
+                            </For>
+                          </AudienceGroup>
+                        );
+                      }}
+                    </For>
+                  </nav>
+                  <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+                </>
+              );
+            }}
           </Show>
         </Page>
       </Frame>

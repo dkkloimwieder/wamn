@@ -74,9 +74,25 @@ try {
   await page.getByRole("button", { name: "sign in", exact: true }).waitFor();
   await capture(page, "sign-in");
   await signIn(page, required("WAMN_BROWSER_EMAIL"));
-  const control = page.getByRole("button", { name: "Control", exact: true });
+  const audiences = page.getByRole("navigation", { name: "Audiences", exact: true });
+  const orgGroup = audiences.locator("details").filter({
+    has: page.locator(":scope > summary").getByText(org, { exact: true }),
+  });
+  const projectGroup = orgGroup.locator("details").filter({
+    has: page.locator(":scope > summary").getByText(fixture.releaseProject, { exact: true }),
+  });
+  const control = orgGroup.getByRole("link", { name: "Control", exact: true });
   await control.waitFor();
-  await page.getByRole("button", { name: `${org}/receiving/dev`, exact: true }).waitFor();
+  await projectGroup.getByRole("link", { name: fixture.releaseEnv, exact: true }).waitFor();
+  assert.equal(await orgGroup.getAttribute("open"), "");
+  assert.equal(await projectGroup.getAttribute("open"), "");
+  assert.deepEqual(await audiences.getByRole("link").allTextContents(), ["Control", fixture.releaseEnv]);
+  assert.equal(await control.getAttribute("href"), controlPath);
+  assert.equal(await page.getByLabel("email", { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("password", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "sign in", exact: true }).count(), 0);
+  assert.equal(await audiences.getByRole("table").count(), 0);
+  assert.equal(await page.locator(".identity-panel").getByRole("navigation", { name: "Audiences" }).count(), 1);
   await capture(page, "audience-choice");
   const mine = page.waitForResponse((response) => response.url().endsWith("/api/wamn_control/control/mine"));
   await control.click();
@@ -297,10 +313,29 @@ try {
   );
   const receiving = await browser.newPage({ viewport });
   await signIn(receiving, required("WAMN_BROWSER_EMAIL"));
-  await receiving.getByRole("button", { name: `${org}/receiving/dev`, exact: true }).click();
+  const receivingOrg = receiving
+    .getByRole("navigation", { name: "Audiences" })
+    .locator("details")
+    .filter({
+      has: receiving.locator(":scope > summary").getByText(org, { exact: true }),
+    });
+  const receivingProject = receivingOrg.locator("details").filter({
+    has: receiving.locator(":scope > summary").getByText(fixture.releaseProject, { exact: true }),
+  });
+  const environment = receivingProject.getByRole("link", { name: fixture.releaseEnv, exact: true });
+  await environment.waitFor();
+  const environmentPath = await environment.getAttribute("href");
+  assert.ok(
+    environmentPath.startsWith(`/urn:wamn:project-env:${org}:${fixture.releaseProject}:${fixture.releaseEnv}:`),
+  );
+  await environment.click();
   await receiving.getByRole("button", { name: "sign out", exact: true }).waitFor();
+  assert.equal(new URL(receiving.url()).pathname, environmentPath);
   await capture(receiving, "receiving-layout");
   await receiving.close();
+  console.log(
+    "PASS: audience hierarchy replaces sign-in; Control first; org/project/environment entries enter their audiences",
+  );
   assert.deepEqual(
     [...captured].sort(),
     [

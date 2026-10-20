@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, screen, waitFor, within } from "@solidjs/testing-library";
 import { flush } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { AUD, CONTROL, ONE, identity, input, open, signIn } from "./fixtures";
@@ -83,21 +83,93 @@ describe("identity pages", () => {
     const { state, fetch } = identity(false, [...ONE, { aud: PROD, org: "acme", project: "widgets", env: "prod" }]);
     open("/", fetch);
     await signIn();
-    expect(await screen.findByText("acme/widgets/prod")).toBeDefined();
+    const audiences = await screen.findByRole("navigation", { name: "Audiences" });
     expect(
-      Array.from(
-        document.querySelectorAll('.ui-form button[type="submit"], [data-generator-view="audiences"] tbody button'),
-      ).map((button) => button.textContent),
-    ).toEqual(["sign in", "acme/widgets/dev", "acme/widgets/prod"]);
+      within(audiences)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["dev", "prod"]);
+    expect(screen.queryByLabelText("email")).toBeNull();
+    expect(screen.queryByLabelText("password")).toBeNull();
+    expect(screen.queryByRole("button", { name: "sign in" })).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(audiences.closest(".identity-panel")).not.toBeNull();
     expect(state.bodies[state.calls.indexOf("/password/environments")]).toEqual({
       email: "someone@wamn.dev",
       password: "a long password string",
       org: "acme",
     });
     flush();
-    fireEvent.click(screen.getByText("acme/widgets/prod"));
+    fireEvent.click(within(audiences).getByRole("link", { name: "prod" }));
     expect(await screen.findByText("pallets screen")).toBeDefined();
     await waitFor(() => expect(window.location.pathname).toBe(`/${PROD}/pallets`));
+  });
+
+  it("groups only held audiences by org and project, with Control first and every group open", async () => {
+    const listed = [
+      ...["widgets", "gadgets"].flatMap((project) =>
+        ["dev", "prod"].map((env) => ({
+          aud: `urn:wamn:project-env:acme:${project}:${env}:k3m9x2p7`,
+          org: "acme",
+          project,
+          env,
+        })),
+      ),
+      { aud: "urn:wamn:project-env:other:widgets:dev:q8w4e2r6", org: "other", project: "widgets", env: "dev" },
+      { aud: CONTROL, org: "acme" },
+    ];
+    const { state, fetch } = identity(false, listed);
+    open("/", fetch);
+    await signIn();
+    const audiences = await screen.findByRole("navigation", { name: "Audiences" });
+    function group(element: Element): unknown {
+      const details = element.querySelector(":scope > details")!;
+      expect(details).toHaveProperty("open", true);
+      return {
+        label: details.querySelector(":scope > summary")?.textContent,
+        entries: Array.from(details.querySelector(".ui-dashboard-menu")!.children).map((child) =>
+          child.tagName === "A" ? { label: child.textContent, href: child.getAttribute("href") } : group(child),
+        ),
+      };
+    }
+    expect(Array.from(audiences.children).map(group)).toEqual([
+      {
+        label: "acme",
+        entries: [
+          { label: "Control", href: `/${CONTROL}` },
+          ...["widgets", "gadgets"].map((project) => ({
+            label: project,
+            entries: ["dev", "prod"].map((env) => ({
+              label: env,
+              href: `/urn:wamn:project-env:acme:${project}:${env}:k3m9x2p7`,
+            })),
+          })),
+        ],
+      },
+      {
+        label: "other",
+        entries: [
+          {
+            label: "widgets",
+            entries: [{ label: "dev", href: "/urn:wamn:project-env:other:widgets:dev:q8w4e2r6" }],
+          },
+        ],
+      },
+    ]);
+    const links = within(audiences).getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href")).sort()).toEqual(
+      listed.map((entry) => `/${entry.aud}`).sort(),
+    );
+    fireEvent.click(links[5]!);
+    // Selection uses the returned audience; the shell still enforces this deploy's org.
+    expect(await screen.findByText("This address names an environment of another org.")).toBeDefined();
+    await waitFor(() => expect(window.location.pathname).toBe("/urn:wamn:project-env:other:widgets:dev:q8w4e2r6"));
+    expect(state.bodies[state.calls.indexOf("/password/session")]).toEqual({
+      email: "someone@wamn.dev",
+      password: "a long password string",
+      aud: listed[4]!.aud,
+      carrier: "cookie",
+    });
   });
 
   it("shows only that no access has been granted when identity lists no environment", async () => {

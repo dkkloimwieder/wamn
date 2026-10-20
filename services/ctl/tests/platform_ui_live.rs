@@ -219,6 +219,12 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         let output = browser.wait_with_output().await?;
         println!("{}", String::from_utf8_lossy(&output.stdout));
         ensure!(output.status.success(), "browser failed: {}", output.status);
+        ensure!(
+            String::from_utf8_lossy(&output.stdout).contains(
+                "PASS: audience hierarchy replaces sign-in; Control first; org/project/environment entries enter their audiences"
+            ),
+            "browser did not complete the audience hierarchy assertions"
+        );
         drop(admin);
         driver.await??;
         Ok::<_, anyhow::Error>(())
