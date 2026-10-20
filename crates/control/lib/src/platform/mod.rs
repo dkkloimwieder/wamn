@@ -2,4 +2,5 @@
 
 pub mod document;
 pub mod project;
+pub mod provider;
 pub mod steps;
