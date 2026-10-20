@@ -7,17 +7,19 @@ use clap::{Args, ValueEnum};
 use wamn_catalog::RequirementType;
 use wamn_control::bind_connection::{self, BindConnectionRequest};
 
-/// The one connection type the CLI can name today. The enum is the command
+/// The connection types the CLI can name today. The enum is the command
 /// line's closed vocabulary, so a descriptor is never authored from a string.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum RequirementTypeArg {
     Blobstore,
+    Http,
 }
 
 impl RequirementTypeArg {
     fn requirement_type(self) -> RequirementType {
         match self {
             Self::Blobstore => RequirementType::Blobstore,
+            Self::Http => RequirementType::Http,
         }
     }
 }
@@ -102,4 +104,15 @@ pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
         bound.validation_hash
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_http_argument_selects_the_http_requirement() {
+        let argument = RequirementTypeArg::from_str("http", false).unwrap();
+        assert_eq!(argument.requirement_type(), RequirementType::Http);
+    }
 }

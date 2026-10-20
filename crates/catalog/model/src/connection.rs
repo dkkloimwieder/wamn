@@ -137,12 +137,14 @@ pub enum CredentialInjection {
 #[serde(rename_all = "kebab-case")]
 pub enum RequirementType {
     Blobstore,
+    Http,
 }
 
 impl RequirementType {
     pub fn descriptor(self) -> ConnectionTypeDescriptor {
         match self {
             Self::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
+            Self::Http => ConnectionTypeDescriptor::http_v1(),
         }
     }
 
@@ -152,6 +154,7 @@ impl RequirementType {
     /// reads is a key nobody validates. An `s3` definition may omit `provider`.
     fn coordinates(self, provider: Option<&str>) -> Result<&'static [&'static str], String> {
         match (self, provider) {
+            (Self::Http, _) => Ok(&["primary-authority", "tls-verification"]),
             (Self::Blobstore, None) => Ok(&["endpoint", "container", "prefix"]),
             (Self::Blobstore, Some("s3")) => Ok(&["provider", "endpoint", "container", "prefix"]),
             (Self::Blobstore, Some("gcs")) => Ok(&["provider", "container", "prefix"]),
@@ -313,6 +316,64 @@ fn ownership(field: ConnectionField, owner: ConnectionFieldOwner) -> ConnectionF
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_uses_the_existing_descriptor() {
+        assert_eq!(
+            RequirementType::Http.descriptor(),
+            ConnectionTypeDescriptor::http_v1()
+        );
+    }
+
+    #[test]
+    fn an_http_definition_needs_exactly_the_coordinates_the_plugin_reads() {
+        RequirementType::Http
+            .check_definition(&serde_json::json!({
+                "primary-authority": "https://erp.example", "tls-verification": "verify-authority"
+            }))
+            .expect("the two coordinates the plugin reads are a complete definition");
+    }
+
+    #[test]
+    fn a_missing_http_primary_authority_is_refused_by_name() {
+        let error = RequirementType::Http
+            .check_definition(&serde_json::json!({"tls-verification": "verify-authority"}))
+            .expect_err("primary-authority is read at resolve time");
+        assert!(error.contains("lacks primary-authority"), "{error}");
+    }
+
+    #[test]
+    fn a_missing_http_tls_verification_is_refused_by_name() {
+        let error = RequirementType::Http
+            .check_definition(&serde_json::json!({"primary-authority": "https://erp.example"}))
+            .expect_err("tls-verification is read at resolve time");
+        assert!(error.contains("lacks tls-verification"), "{error}");
+    }
+
+    #[test]
+    fn an_extra_http_coordinate_is_refused_by_name() {
+        let error = RequirementType::Http
+            .check_definition(&serde_json::json!({
+                "primary-authority": "https://erp.example", "tls-verification": "verify-authority",
+                "provider": "s3"
+            }))
+            .expect_err("HTTP never reads provider");
+        assert!(error.contains("carries provider"), "{error}");
+    }
+
+    #[test]
+    fn an_empty_http_coordinate_is_refused_by_name() {
+        for coordinate in ["primary-authority", "tls-verification"] {
+            let mut definition = serde_json::json!({
+                "primary-authority": "https://erp.example", "tls-verification": "verify-authority"
+            });
+            definition[coordinate] = serde_json::json!("");
+            let error = RequirementType::Http
+                .check_definition(&definition)
+                .expect_err("the plugin needs a nonempty coordinate");
+            assert!(error.contains(&format!("{coordinate} is empty")), "{error}");
+        }
+    }
 
     /// Confinement is the split itself: an author may name an OBJECT, and may
     /// not name a CONTAINER. If a bucket or prefix ever became author-owned,

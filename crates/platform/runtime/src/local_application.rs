@@ -777,6 +777,35 @@ mod tests {
     }
 
     #[test]
+    fn local_facts_accept_the_http_descriptor() {
+        let (mut facts, manifest) = fixture();
+        let requirement = wamn_catalog::ComponentConnectionRequirement::new(
+            &facts.components[0].component_digest,
+            "erp",
+            wamn_catalog::ConnectionTypeDescriptor::http_v1(),
+        );
+        facts.bindings.push(super::LocalBindingFacts {
+            requirement: requirement.clone(),
+            selection: crate::plugins::wamn_postgres::CandidateConnectionBinding {
+                component_digest: requirement.component_digest().to_owned(),
+                store_alias: "erp".to_owned(),
+                requirement_hash: requirement.requirement_hash(),
+                instance_id: "fixture-http".to_owned(),
+                instance_revision: 1,
+                requirement_type: "http".to_owned(),
+                contract: "wamn:connection/http@0.1.0".to_owned(),
+                validation_hash: "fixture-validation".to_owned(),
+                generation: 1,
+                definition_hash: "fixture-definition".to_owned(),
+                credential_set_handle: Some("fixture-http".to_owned()),
+            },
+        });
+        facts.requirements.push(requirement);
+        super::validate_local_facts(&facts, &manifest, "tenant-a")
+            .expect("local admission accepts the HTTP requirement and its binding");
+    }
+
+    #[test]
     fn missing_local_admission_facts_refuse_before_loading() {
         let (mut facts, manifest) = fixture();
         let requirement = wamn_catalog::ComponentConnectionRequirement::new(
