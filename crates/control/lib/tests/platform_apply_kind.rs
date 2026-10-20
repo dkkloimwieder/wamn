@@ -1,9 +1,13 @@
 //! Install the platform on a private kind cluster and require an unchanged rerun.
 //!
-//! Requires Docker, kind, Helm, kubectl, pnpm and the package build tools.
-//! Build target/debug/wamn and target/debug/wamn-ctl first.
-//! The fixture owns a registry:2 container and builds the platform images.
-//! It times that build separately from the install and needs public registries.
+//! Requires Docker with buildx manifest reads, kind, Helm, kubectl, pnpm,
+//! package build tools, and debug wamn and wamn-ctl binaries.
+//! The runner exports CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent and
+//! DOCKER_CONFIG pointing to a config.json with the GCP gcloud credential helper.
+//! The fixture reads deploy/gcp/cluster.k and requires its registry to hold all
+//! six images of Chart.yaml's version. It copies them to its registry:2 container
+//! and stamps them. It never builds images or needs image build tools.
+//! Network access to the GCP registry and public registries is required.
 //! No external database, bucket or DNS is required. The test keeps its input,
 //! kubeconfig and progress under /var/tmp and removes its cluster and registry.
 
@@ -19,7 +23,8 @@ use serde_json::Value;
 use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_control::kubectl;
 use wamn_control::platform::document::ClusterDocument;
-use wamn_control::platform::{build, install, steps};
+use wamn_control::platform::{install, steps};
+use wash_runtime::oci::{OciConfig, OciPullPolicy, pull_component, push_component};
 
 struct ClusterGuard {
     name: String,
@@ -60,7 +65,7 @@ const STEP_TITLES: [&str; 8] = [
 ];
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm, kubectl, pnpm, debug CLI binaries, package build tools and public registries"]
+#[ignore = "requires: docker, kind, helm, kubectl, pnpm, debug CLI binaries, package build tools, agent identity, GCP and public registry access; no image builds"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
     let mut suffix = [0u8; 6];
     SystemRandom::new()
@@ -71,6 +76,35 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
     std::fs::create_dir(&directory).context("create the fixture directory")?;
     let work = directory.join("work");
     std::fs::create_dir(&work).context("create the install work directory")?;
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let version =
+        steps::read_platform_version(&repository.join("deploy/platform/release/Chart.yaml"))?;
+    let source_registry =
+        ClusterDocument::compile(&repository.join("deploy/gcp/cluster.k"))?.registry;
+    let agent = Path::new(&std::env::var_os("HOME").context("HOME is required")?)
+        .join(".config/gcloud-wamn-agent");
+    ensure!(
+        std::env::var_os("CLOUDSDK_CONFIG").as_deref() == Some(agent.as_os_str()),
+        "export CLOUDSDK_CONFIG={} for the agent identity",
+        agent.display()
+    );
+    let docker_config = std::env::var_os("DOCKER_CONFIG")
+        .context("export DOCKER_CONFIG with the GCP gcloud credential helper")?;
+    let credentials: Value = serde_json::from_slice(&std::fs::read(
+        Path::new(&docker_config).join("config.json"),
+    )?)?;
+    let host = source_registry.split('/').next().context("registry host")?;
+    ensure!(
+        credentials["credHelpers"][host] == "gcloud",
+        "DOCKER_CONFIG must select the gcloud credential helper for {host}"
+    );
+    println!("work directory {}", directory.display());
+    stamp_registry(
+        &repository,
+        &source_registry,
+        &version,
+        &directory.join("source-chart"),
+    )?;
     let _cluster = ClusterGuard { name: name.clone() };
     let port = registry(&name)?;
     let file = directory.join("cluster.k");
@@ -95,10 +129,10 @@ cluster.Cluster {{
         ),
     )?;
     let document = ClusterDocument::compile(&file).context("compile the kind cluster document")?;
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let version =
-        steps::read_platform_version(&repository.join("deploy/platform/release/Chart.yaml"))?;
-    println!("work directory {}", directory.display());
+    copy_images(&source_registry, &document.registry, &version).await?;
+    let fixture_chart = directory.join("fixture-chart");
+    stamp_registry(&repository, &document.registry, &version, &fixture_chart)?;
+    let chart: Value = serde_yaml::from_slice(&std::fs::read(fixture_chart.join("values.yaml"))?)?;
     let environments = directory.join("environments");
     std::fs::create_dir(&environments)?;
     let source = repository.join("deploy/gcp/environments/dkk--receiving--dev.k");
@@ -120,27 +154,6 @@ cluster.Cluster {{
     values["registry"] = document.registry.clone().into();
     values["route_host"] = environment.route_host.into();
     values["web_client"]["bucket"] = "".into();
-    // Package discovery needs only packages. Fill the gates image from the fixture build below.
-    values["gates_image"] = "".into();
-    std::fs::write(
-        input.with_extension("json"),
-        serde_json::to_vec_pretty(&values)?,
-    )?;
-
-    let fixture = directory.join("fixture");
-    std::fs::create_dir(&fixture)?;
-    let start = Instant::now();
-    println!("platform image fixture start {}", Utc::now().to_rfc3339());
-    let built = build::apply(&document, &version, &repository, &environments, &fixture).await;
-    println!(
-        "platform image fixture end {} elapsed {:?} result {}",
-        Utc::now().to_rfc3339(),
-        start.elapsed(),
-        if built.is_ok() { "pass" } else { "fail" }
-    );
-    built?;
-    let chart: Value =
-        serde_yaml::from_slice(&std::fs::read(fixture.join("release-chart/values.yaml"))?)?;
     values["gates_image"] = chart["platform"]["gates"]["image"].clone();
     std::fs::write(
         input.with_extension("json"),
@@ -255,6 +268,59 @@ cluster.Cluster {{
     )
     .await?;
     require_steps(&second, "skipped")?;
+    Ok(())
+}
+
+fn stamp_registry(
+    repository: &Path,
+    registry: &str,
+    version: &str,
+    out: &Path,
+) -> anyhow::Result<()> {
+    let target = std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into());
+    let output = Command::new(repository.join(target).join("debug/wamn-ctl"))
+        .current_dir(repository)
+        .args([
+            "build-platform",
+            "--stamp-only",
+            "--registry",
+            registry,
+            "--out",
+        ])
+        .arg(out)
+        .stdin(Stdio::null())
+        .output()
+        .with_context(|| format!("stamp registry images of platform {version}"))?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    eprint!("{stderr}");
+    if !output.status.success() {
+        ensure!(
+            stderr.contains(version),
+            "stamp-only error does not name version {version}: {stderr}"
+        );
+        anyhow::bail!("stamp registry images of platform {version}: {stderr}");
+    }
+    Ok(())
+}
+
+async fn copy_images(source: &str, destination: &str, version: &str) -> anyhow::Result<()> {
+    for name in ["wamn-host", "wamn-runner", "wamn-gates", "wamn-identity"] {
+        let from = format!("{source}/{name}:{version}");
+        let to = format!("{destination}/{name}:{version}");
+        docker(&["pull", &from])?;
+        docker(&["tag", &from, &to])?;
+        docker(&["push", &to])?;
+    }
+    for role in ["http", "materializer"] {
+        let from = format!("{source}/wamn/{role}:{version}");
+        let to = format!("{destination}/wamn/{role}:{version}");
+        let (bytes, _) = pull_component(&from, OciConfig::default(), OciPullPolicy::Always)
+            .await
+            .with_context(|| format!("pull {from}"))?;
+        push_component(&to, &bytes, OciConfig::new_insecure(), None)
+            .await
+            .with_context(|| format!("push {to}"))?;
+    }
     Ok(())
 }
 

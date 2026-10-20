@@ -508,22 +508,42 @@ These cases test connection reuse and authority isolation without measuring thro
 
 ### Platform and environment apply on kind
 
-The platform test needs Docker, kind, Helm, kubectl and pnpm on PATH and network access to public registries.
-It also needs the [package build tools and workspace dependencies](building.md#wamn-build).
-It reads the debug binaries `target/debug/wamn` and `target/debug/wamn-ctl`.
+The platform test needs Docker with buildx manifest reads, kind, Helm, kubectl, pnpm, and the gcloud credential helper on PATH.
+It needs network access to the GCP registry and public registries.
+It also needs the [package build tools and workspace dependencies](building.md#wamn-build), but no image build tools.
+It reads the debug binaries `wamn` and `wamn-ctl` from `CARGO_TARGET_DIR/debug`, or `target/debug` when that variable is unset.
+The local platform UI bundle must exist before the registry stamp.
 It needs no existing database, bucket or DNS.
-It writes its files under `/var/tmp` and deletes only its own cluster and registry container after success or failure.
+It writes files under `/var/tmp` and deletes only its own cluster and registry container after success or failure.
+
+The runner must use the agent identity and a Docker configuration that selects the gcloud credential helper:
 
 ```bash
+export CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent
+export DOCKER_CONFIG=$(mktemp -d /var/tmp/platform-apply-docker.XXXXXX)
+echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > "$DOCKER_CONFIG/config.json"
 cargo build -p wamn-ctl --bins
+pnpm --filter @wamn/platform-ui build
 cargo test -p wamn-control --test platform_apply_kind -- --ignored --nocapture
 ```
 
-The fixture starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
+The version in `deploy/platform/release/Chart.yaml` must have all six images in the registry from `deploy/gcp/cluster.k`.
+For each new platform version, a lane runs this explicit build once before the test, with the agent identity and Docker configuration above.
+The package outputs required by [building](building.md) must exist first.
+Use the `registry` value from `deploy/gcp/cluster.k` for `<registry>` and a new directory for `<dir>`:
+
+```bash
+wamn-ctl build-platform --registry <registry> --out <dir>
+```
+
+Before creating a registry or cluster, the test runs `build-platform --stamp-only` against the GCP registry.
+If this fails, the error names the platform version.
+The fixture then starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
 Docker selects a free loopback port, and `cluster.k` names the registry as `localhost:<port>`.
-The fixture writes one Receiving environment and builds its package with a temporary PostgreSQL 18 container.
-It builds and pushes the platform images before the install.
-It prints the fixture build start time, end time, and elapsed time separately from the install.
+The fixture copies four images and two role components from GCP, then stamps their local digests.
+The environment JSON gets its gates image from this local stamp.
+Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container and stamps the local registry images.
+The test never builds platform images.
 
 The test runs `platform apply` through sections 4.3 to 4.7, the broker part of 4.8, and 4.9.
 It requires ready PostgreSQL and NATS, a completed tap stream Job, and `WAMN_TAP` in the Job log.
