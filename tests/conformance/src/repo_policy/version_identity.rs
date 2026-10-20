@@ -97,11 +97,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "crates/platform/runtime/src/connection_generation.rs",
-        exact: r#"pub const HTTP_CONNECTION_CONTRACT: &str = "wamn:connection/http@0.1.0";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/platform/runtime/src/plugins/connection_http.rs",
         exact: r#"const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";"#,
         expected_count: 1,

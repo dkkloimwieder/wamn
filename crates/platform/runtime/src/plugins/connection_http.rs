@@ -523,7 +523,7 @@ fn require_direct_transport(
 ) -> Result<(), ConnectionError> {
     if matches!(
         definition.get("proxy-transport"),
-        Some(serde_json::Value::Null)
+        None | Some(serde_json::Value::Null)
     ) && matches!(
         definition.get("proxy-authority"),
         None | Some(serde_json::Value::Null)
@@ -1122,6 +1122,69 @@ mod tests {
 
     fn digest(byte: char) -> String {
         format!("sha256:{}", byte.to_string().repeat(64))
+    }
+
+    #[test]
+    fn direct_transport_accepts_the_catalog_definition_and_explicit_null() {
+        let mut definition = serde_json::json!({
+            "primary-authority": "http://http-fixture:8080/",
+            "tls-verification": "disabled"
+        });
+        wamn_catalog::RequirementType::Http
+            .check_definition(&definition)
+            .expect("the catalog accepts the two-key definition");
+        require_direct_transport(definition.as_object().unwrap())
+            .expect("an omitted proxy transport is direct");
+
+        definition["proxy-transport"] = serde_json::Value::Null;
+        require_direct_transport(definition.as_object().unwrap())
+            .expect("an explicit null proxy transport is direct");
+        definition["proxy-authority"] = serde_json::Value::Null;
+        require_direct_transport(definition.as_object().unwrap())
+            .expect("an explicit null proxy authority is direct");
+        definition
+            .as_object_mut()
+            .unwrap()
+            .remove("proxy-transport");
+        require_direct_transport(definition.as_object().unwrap())
+            .expect("a null proxy authority needs no proxy transport");
+    }
+
+    #[test]
+    fn direct_transport_refuses_non_null_proxy_fields() {
+        for value in [
+            serde_json::json!("connect"),
+            serde_json::json!(""),
+            serde_json::json!(false),
+            serde_json::json!(0),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            let definition = serde_json::json!({"proxy-transport": value});
+            assert!(matches!(
+                require_direct_transport(definition.as_object().unwrap()),
+                Err(ConnectionError::Incompatible)
+            ));
+        }
+        for value in [
+            serde_json::json!("http://proxy.internal:8080/"),
+            serde_json::json!(""),
+            serde_json::json!(false),
+            serde_json::json!(0),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            let mut definition = serde_json::json!({"proxy-authority": value});
+            assert!(matches!(
+                require_direct_transport(definition.as_object().unwrap()),
+                Err(ConnectionError::Incompatible)
+            ));
+            definition["proxy-transport"] = serde_json::Value::Null;
+            assert!(matches!(
+                require_direct_transport(definition.as_object().unwrap()),
+                Err(ConnectionError::Incompatible)
+            ));
+        }
     }
 
     fn invocation() -> ConnectionInvocation {
