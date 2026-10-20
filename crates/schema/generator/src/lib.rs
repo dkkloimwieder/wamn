@@ -45,6 +45,7 @@ mod rustfmt;
 mod sql;
 mod sql_lex;
 mod sqlx_metadata;
+mod tofu;
 mod upgrade_stage;
 
 pub use authoring::{
@@ -95,6 +96,8 @@ pub use package_catalog::project_package_catalog;
 pub use sqlx_metadata::{
     SqlxVerifier, package_database_url, prepare_sqlx_metadata, stage_sqlx_verifier,
 };
+#[doc(inline)]
+pub use tofu::render_project_tofu;
 #[doc(inline)]
 pub use upgrade_stage::{
     BackfillStage, UpgradeStage, UpgradeStageException, UpgradeStagePhase, validate_upgrade_stage,
