@@ -413,6 +413,27 @@ mod tests {
     }
 
     #[test]
+    fn lane_start_prints_only_the_checkout_environment() {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let key = checkout_key(&repository).unwrap();
+        let output = std::process::Command::new(repository.join("tools/lane-start"))
+            .arg("--print-env")
+            .arg(&repository)
+            .env("HOME", "/var/tmp/wamn-lane-env-test")
+            .output()
+            .expect("print the lane environment without building");
+        assert!(output.status.success(), "{:?}", output.stderr);
+        assert!(output.stderr.is_empty(), "{:?}", output.stderr);
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap(),
+            format!(
+                "export CARGO_TARGET_DIR=/var/tmp/wamn-lane-env-test/.cache/wamn-target/{key}\n\
+                 export WAMN_CHECKOUT_KEY={key}\n"
+            )
+        );
+    }
+
+    #[test]
     fn the_receipt_digest_covers_paths_and_bytes_of_the_ui() {
         let dist =
             std::env::temp_dir().join(format!("wamn-platform-ui-digest-{}", std::process::id()));

@@ -8,6 +8,16 @@ TypeScript 7 compiles the web packages. The TypeScript 6 compatibility package s
 The guest workspaces are `apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml`.
 [Components](../architecture/components.md) defines artifact and interface boundaries.
 
+Install the web dependencies with `pnpm install` before this setup.
+Before a lane or test run, prepare the checkout once from its repository root:
+
+```bash
+eval "$(tools/lane-start "$PWD")"
+```
+
+The script initializes submodules, sets the checkout caches, builds the native tools, and runs `wamn build` for every package.
+Docker supplies a private PostgreSQL 18 container that the script removes when it exits.
+
 ## Native programs and app components
 
 Build native programs in debug mode by default:
@@ -141,6 +151,8 @@ Authored publication references use the current source manifest, even when an ea
 Build every package before you compile the apps workspace, the app test crates, or an app web: their sources include files from the build output.
 `build.json` is the build receipt, schema `wamn.build/v1`, in canonical JSON.
 It records the input files and their digest, the base packages, the generator identity, and the digest of each output.
+If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
+It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
 For a package that has a `web/` directory, the build then runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web` (platform-deploy.md §7.1 step 8).
 Run `pnpm install` at the repository root first.
@@ -210,7 +222,8 @@ Keep one Cargo process per target directory.
 
 Target caches are per checkout, both locally and in Docker builds.
 The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
-A lane sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` at startup and passes the key as Docker's `WAMN_CHECKOUT_KEY` build argument.
+[`tools/lane-start`](../../tools/lane-start) sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` and exports the key as `WAMN_CHECKOUT_KEY`.
+Pass that key as Docker's `WAMN_CHECKOUT_KEY` build argument.
 A new checkout starts with a cold build.
 
 Reuse that worktree's own target, and let Cargo decide which artifacts need rebuilding.

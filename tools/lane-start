@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage: tools/lane-start [--print-env] <worktree>'
+
+fail() {
+  printf 'lane-start: %s\n' "$*" >&2
+  exit 1
+}
+
+print_only=false
+if [[ "${1:-}" == --print-env ]]; then
+  print_only=true
+  shift
+fi
+if (($# != 1)); then
+  printf '%s\n' "$WAMN_USAGE" >&2
+  exit 64
+fi
+
+worktree=$(realpath -- "$1") || fail "cannot resolve worktree: $1"
+[[ "$(git -C "$worktree" rev-parse --is-inside-work-tree 2>/dev/null)" == true ]] \
+  || fail "not a git worktree: $worktree"
+git_root=$(git -C "$worktree" rev-parse --show-toplevel)
+[[ "$(realpath -- "$git_root")" == "$worktree" ]] \
+  || fail "use the git worktree root: $git_root"
+
+WAMN_CHECKOUT_KEY=$(printf '%s' "$worktree" | sha256sum | cut -c1-16)
+export WAMN_CHECKOUT_KEY
+export CARGO_TARGET_DIR="$HOME/.cache/wamn-target/$WAMN_CHECKOUT_KEY"
+
+print_env() {
+  printf 'export CARGO_TARGET_DIR=%q\n' "$CARGO_TARGET_DIR"
+  printf 'export WAMN_CHECKOUT_KEY=%q\n' "$WAMN_CHECKOUT_KEY"
+}
+
+if "$print_only"; then
+  print_env
+  exit 0
+fi
+
+cd -- "$worktree"
+printf 'lane-start: initialize submodules\n' >&2
+git submodule update --init --recursive >&2
+printf 'lane-start: build native binaries\n' >&2
+cargo build --locked -p wamn-ctl --bin wamn --bin wamn-ctl >&2
+cargo build --locked -p wamn-scenario-worker >&2
+
+# These are the bases of the repository's two overlays. The CLI requires
+# bases first. Discover all other packages, including the overlays, below.
+packages=(apps/platform_fixture apps/wamn_receiving)
+for manifest in apps/*/wamn.k; do
+  [[ -f "$manifest" ]] || continue
+  package=${manifest%/wamn.k}
+  case "$package" in
+    apps/platform_fixture|apps/wamn_receiving) ;;
+    *) packages+=("$package") ;;
+  esac
+done
+
+container="wamn-lane-$WAMN_CHECKOUT_KEY-build-pg-$$"
+container_id=
+cleanup() {
+  if [[ -n "$container_id" ]]; then
+    docker rm -f -v "$container_id" >&2
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+printf 'lane-start: start the package build database\n' >&2
+container_id=$(docker create --name "$container" \
+  -e POSTGRES_HOST_AUTH_METHOD=trust -p 127.0.0.1:0:5432 postgres:18)
+docker start "$container_id" >&2
+deadline=$((SECONDS + 300))
+until docker exec "$container_id" pg_isready -h 127.0.0.1 -U postgres >&2; do
+  ((SECONDS < deadline)) || fail 'the package build database did not become ready in 300 seconds'
+  sleep 1
+done
+binding=$(docker port "$container_id" 5432/tcp)
+[[ "$binding" =~ ^127\.0\.0\.1:([0-9]+)$ ]] \
+  || fail 'the package build database has no loopback port'
+export DATABASE_URL="postgres://postgres@127.0.0.1:${BASH_REMATCH[1]}/postgres"
+printf 'lane-start: build every package\n' >&2
+"$CARGO_TARGET_DIR/debug/wamn" build "${packages[@]}" >&2
+cleanup
+container_id=
+print_env

@@ -4,6 +4,15 @@ Run commands from the repository root unless a command changes directories.
 [Testing strategy](../testing/strategy.md) defines what each test method establishes.
 [Building](building.md) lists the toolchain and build prerequisites.
 
+Before a test run, prepare the checkout once from its repository root:
+
+```bash
+eval "$(tools/lane-start "$PWD")"
+```
+
+The script prepares submodules, native tools, every package, and the checkout caches.
+It needs Docker and the [build prerequisites](building.md), including installed web dependencies.
+
 ## Select the relevant tests
 
 Run only relevant existing tests for a behavior change or a concrete failure.

@@ -127,8 +127,7 @@ The install keeps its files in the private work directory `$HOME/.cache/wamn-ins
 ```bash
 W=$HOME/.cache/wamn-install
 mkdir -p -m 700 $W
-cargo build --locked -p wamn-ctl --bin wamn --bin wamn-ctl
-cargo build --locked -p wamn-scenario-worker
+eval "$(tools/lane-start "$PWD")"
 ```
 
 ### 4.2 Cluster
