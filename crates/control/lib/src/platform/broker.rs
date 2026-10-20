@@ -23,11 +23,11 @@ const SERVER: &str = "nats://evt-nats.platform.svc.cluster.local:4222";
 
 #[derive(Serialize, Deserialize)]
 struct Authorization {
-    users: Vec<User>,
+    users: Vec<Account>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct User {
+struct Account {
     user: String,
     password: String,
     permissions: Permissions,
@@ -235,7 +235,7 @@ fn render(
             hex::encode(bytes)
         };
         let subscribe = vec![format!("_INBOX_{username}.>")];
-        let user = User {
+        let user = Account {
             user: username.clone(),
             password: password.clone(),
             permissions: Permissions {

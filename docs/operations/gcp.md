@@ -204,7 +204,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 ### 4.3 cert-manager and the edge certificate
 
 From the repository root, run `wamn-ctl platform apply <cluster.k>`.
-The verb runs sections 4.3 through 4.11 in order.
+The verb runs sections 4.3 through 4.12 in order.
 It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
 On GCP, it requests the production certificate directly.
 It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
@@ -221,7 +221,11 @@ The Job mounts a private document copy, database credentials, and the scheduler 
 It uses the runner's pinned KCL compiler and its own Kubernetes account.
 Step 4.10 needs no file because the verb supplies the existing environment variables directly.
 An unchanged completed Job skips when its input digest matches.
-Run sections 4.12 onward by hand with the commands below.
+Step 4.12 reads the owner's `identity-resend` Secret and refuses a missing, empty, or whitespace-bearing key with the section 1 command.
+It prepares session targets as Jobs, then installs the identity chart with values derived from the document and stamped images.
+Jobs read the active session key, publish and activate a key when none is active, and request the public keys over TLS.
+The public Job results stay with their completion digests so a retry can reuse a published key.
+Run sections 4.13 onward by hand with the commands below.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 
@@ -388,6 +392,9 @@ for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file
 
 ### 4.8 Event NATS
 
+`platform apply` now runs this step.
+The following commands describe the manual procedure.
+
 One event NATS serves both environments. Write the users of each environment into its own private directory. The tenant is `<org>--<project>--<env>`, the tenant that `env apply` gives the environment:
 
 ```bash
@@ -537,6 +544,10 @@ Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.i
 
 ### 4.11 First apply
 
+`platform apply` now runs this step with private document copies.
+It does not edit the committed host group files.
+The following commands describe the manual procedure.
+
 `publish-release` needs the environment database and its installed packages, so the first apply names no release. The documents in [deploy/gcp/environments](../../deploy/gcp/environments) name a release, so apply a private copy with `release = "none"`. The apply records the environment with a new instance suffix, and makes the `Database`, the roles, the run plane and the credential Secrets:
 
 ```bash
@@ -561,6 +572,9 @@ git diff deploy/gcp/host-group-*.yaml
 ```
 
 ### 4.12 Identity and session key
+
+`platform apply` now runs this step after the owner creates the Resend Secret from section 1.
+The following commands describe the manual procedure.
 
 Prepare the session target of each environment in namespace `identity`. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) names both Secrets:
 

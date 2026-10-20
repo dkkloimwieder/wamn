@@ -144,14 +144,14 @@ fn permissions() -> Vec<Access> {
             namespace: "hosts".into(),
             rules: vec![
                 PolicyRule {
-                    api_groups: vec!["".into()],
+                    api_groups: vec![String::new()],
                     resources: vec!["secrets".into()],
                     verbs: ["get", "list", "watch", "create", "patch"]
                         .map(str::to_owned)
                         .into(),
                 },
                 PolicyRule {
-                    api_groups: vec!["".into()],
+                    api_groups: vec![String::new()],
                     resources: vec!["pods".into()],
                     verbs: ["get", "list", "watch"].map(str::to_owned).into(),
                 },

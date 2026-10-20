@@ -42,6 +42,12 @@ pub struct JobRequest {
     pub files: BTreeMap<String, String>,
     /// Namespace-scoped access required by this Job.
     pub permissions: Vec<Access>,
+    /// Override the executable for an existing tool, such as identity or psql.
+    pub command: Vec<String>,
+    /// Retain public command output with the completion digest.
+    pub capture_output: bool,
+    /// UID for tools whose image user cannot read the private input volume.
+    pub run_as_user: Option<u32>,
 }
 
 impl std::fmt::Debug for JobRequest {
@@ -159,9 +165,17 @@ struct PodSpec {
     automount_service_account_token: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     service_account_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    security_context: Option<SecurityContext>,
     containers: Vec<Container>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     volumes: Vec<Volume>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecurityContext {
+    run_as_user: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -317,7 +331,11 @@ fn owned_metadata(name: &str, owner: &Metadata) -> anyhow::Result<Metadata> {
 
 fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
     let mut args = request.arguments.clone();
-    let mut command = vec!["/usr/local/bin/wamn-ctl".into()];
+    let mut command = if request.command.is_empty() {
+        vec!["/usr/local/bin/wamn-ctl".into()]
+    } else {
+        request.command.clone()
+    };
     let mut volumes = Vec::new();
     let mut volume_mounts = Vec::new();
     if request.emits_secret {
@@ -361,6 +379,9 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
                     restart_policy: "Never",
                     automount_service_account_token: request.calls_kubernetes,
                     service_account_name: request.calls_kubernetes.then(|| request.name.clone()),
+                    security_context: request
+                        .run_as_user
+                        .map(|run_as_user| SecurityContext { run_as_user }),
                     containers: vec![Container {
                         name: request.name.clone(),
                         image: request.image.clone(),
@@ -432,7 +453,8 @@ pub async fn run(
     let digest = input_digest(&json!({
         "inputs": inputs, "image": request.image, "arguments": request.arguments,
         "environment": request.environment, "files": request.files,
-        "permissions": request.permissions
+        "permissions": request.permissions, "command": request.command,
+        "capture_output": request.capture_output, "run_as_user": request.run_as_user
     }));
     let marker = format!("wamn-install-{}", request.name);
     let completed = kubectl::get(
@@ -621,7 +643,11 @@ pub async fn run(
     .await;
     let cleanup = finish(target, work_directory, request).await;
     result?;
-    cleanup?;
+    let output = cleanup?;
+    let mut data: BTreeMap<_, _> = [("digest".into(), digest)].into();
+    if request.capture_output {
+        data.insert("output".into(), output);
+    }
     kubectl::apply(
         &target.kubeconfig,
         &target.context,
@@ -630,14 +656,14 @@ pub async fn run(
             api_version: "v1".into(),
             kind: "ConfigMap".into(),
             metadata: metadata(&marker, "platform"),
-            data: [("digest".into(), digest)].into(),
+            data,
         },
     )
     .await?;
     Ok(true)
 }
 
-async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyhow::Result<()> {
+async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyhow::Result<String> {
     let name = &request.name;
     let log = kubectl::kubectl(
         &target.kubeconfig,
@@ -691,9 +717,35 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
         )
         .await?;
     }
-    Ok(())
+    if request.capture_output {
+        log.context("read the public Job result")
+    } else {
+        Ok(String::new())
+    }
 }
 
+/// Read the public result retained by a completed Job.
+///
+/// # Errors
+///
+/// Returns an error when the completion or its result is absent.
+pub async fn output(target: &Target, request: &JobRequest) -> anyhow::Result<String> {
+    let marker = format!("wamn-install-{}", request.name);
+    let completion: Completion = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "configmap",
+        &marker,
+    )
+    .await?
+    .context("the Job has no completion")?;
+    completion
+        .data
+        .get("output")
+        .cloned()
+        .context("the Job has no public result")
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -801,6 +853,28 @@ mod tests {
         assert_eq!(pod["containers"][0]["args"][0], HANDOFF);
         assert_eq!(pod["containers"][0]["args"][1], request.name);
         assert_eq!(pod["containers"][0]["args"][2], "provision-system");
+    }
+
+    #[test]
+    fn mounted_credentials_never_enter_the_job_or_debug_output() {
+        let mut request = request();
+        request
+            .files
+            .insert("tls.key".into(), "private-mounted-key".into());
+        request
+            .environment
+            .insert("WAMN_AUTH_NATS_TLS_KEY".into(), "/inputs/tls.key".into());
+        let job = serde_json::to_value(render(&request, "platform", &[])).unwrap();
+        assert!(!job.to_string().contains("private-mounted-key"));
+        assert!(!format!("{request:?}").contains("private-mounted-key"));
+        assert_eq!(
+            job["spec"]["template"]["spec"]["volumes"][0]["secret"],
+            json!({"secretName":"platform-system-files","defaultMode":256})
+        );
+        assert_eq!(
+            job["spec"]["template"]["spec"]["containers"][0]["env"][0],
+            json!({"name":"WAMN_AUTH_NATS_TLS_KEY","value":"/inputs/tls.key"})
+        );
     }
 
     #[test]

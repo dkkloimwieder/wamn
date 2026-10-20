@@ -1,4 +1,4 @@
-//! Install the platform through runbook step 4.11 using kubectl and Helm.
+//! Install the platform through runbook step 4.12 using kubectl and Helm.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -22,7 +22,7 @@ use super::{build, lock};
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.11 under the install lock.
+/// Apply steps 4.3 through 4.12 under the install lock.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -78,6 +78,10 @@ pub async fn apply(
             "4.11" => {
                 super::environments::apply(&target, document, environments, work_directory).await?
             }
+            "4.12" => {
+                super::identity::apply(&target, document, repository, environments, work_directory)
+                    .await?
+            }
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
         progress(&format!(
@@ -87,7 +91,7 @@ pub async fn apply(
             if changed { "done" } else { "skipped" }
         ))?;
     }
-    progress("Steps after 4.11 come later.")?;
+    progress("Steps after 4.12 come later.")?;
     Ok(())
 }
 
@@ -100,7 +104,7 @@ fn applied_steps(
         .filter(|step| {
             matches!(
                 step.number,
-                "4.3" | "4.4" | "4.4.1" | "4.5" | "4.6" | "4.7" | "4.8" | "4.9" | "4.11"
+                "4.3" | "4.4" | "4.4.1" | "4.5" | "4.6" | "4.7" | "4.8" | "4.9" | "4.11" | "4.12"
             )
         })
 }
@@ -109,6 +113,7 @@ pub(super) const DATABASE_HOST: &str = "wamn-pg-rw.platform.svc.cluster.local";
 
 #[derive(Deserialize)]
 pub(super) struct SecretData {
+    #[serde(default)]
     data: std::collections::BTreeMap<String, String>,
 }
 
@@ -796,7 +801,10 @@ async fn install_operator(
     Ok(true)
 }
 
-async fn helm(target: &Target, arguments: &[&std::ffi::OsStr]) -> anyhow::Result<Vec<u8>> {
+pub(super) async fn helm(
+    target: &Target,
+    arguments: &[&std::ffi::OsStr],
+) -> anyhow::Result<Vec<u8>> {
     let output = Command::new("helm")
         .arg("--kubeconfig")
         .arg(&target.kubeconfig)
@@ -884,7 +892,7 @@ mod tests {
         assert_eq!(
             numbers,
             [
-                "4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9", "4.11"
+                "4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9", "4.11", "4.12"
             ]
         );
     }
