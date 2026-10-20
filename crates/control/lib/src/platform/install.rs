@@ -73,7 +73,7 @@ pub async fn apply(
                 )
                 .await?
             }
-            "4.8" => broker(&target, document, repository, &step).await?,
+            "4.8" => broker(&target, document, repository, environments, &step).await?,
             "4.9" => platform_inputs(&target, document, repository).await?,
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
@@ -479,6 +479,7 @@ async fn broker(
     target: &Target,
     document: &ClusterDocument,
     repository: &Path,
+    environments: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
     let authorization: Option<Value> = kubectl::get(
@@ -494,13 +495,24 @@ async fn broker(
         kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
         changed = true;
     }
-    changed |= apply_file(
-        target,
-        document,
-        repository,
-        "deploy/gcp/nats-jetstream.yaml",
+    changed |= super::broker::apply(target, repository, environments, &document.org).await?;
+    let authorization: Value = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "evt-nats-authorization",
     )
-    .await?;
+    .await?
+    .context("missing Secret platform/evt-nats-authorization")?;
+    for mut object in objects(repository, "deploy/gcp/nats-jetstream.yaml", document)? {
+        if object["kind"] == "StatefulSet" {
+            object["spec"]["template"]["metadata"]["annotations"] = json!({
+                "wamn.dev/event-authorization": job::input_digest(&authorization["data"])
+            });
+        }
+        changed |= apply_object(target, &object).await?;
+    }
     rollout(target, step, "platform", "statefulset/evt-nats", "300s").await?;
     Ok(changed)
 }
@@ -579,7 +591,7 @@ async fn apply_file(
     Ok(changed)
 }
 
-async fn apply_object(target: &Target, object: &Value) -> anyhow::Result<bool> {
+pub(super) async fn apply_object(target: &Target, object: &Value) -> anyhow::Result<bool> {
     let namespace = object["metadata"]["namespace"]
         .as_str()
         .unwrap_or(&target.namespace);

@@ -203,7 +203,20 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 
 ### 4.3 cert-manager and the edge certificate
 
-From the repository root, run `wamn-ctl platform apply <cluster.k>`. The verb runs sections 4.3 through 4.7, the broker part of 4.8, and 4.9 in order. It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory. On GCP, it requests the production certificate directly. It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files. Before `platform apply`, build each new platform version once with `build-platform`, as section 4.6 describes. Run sections 4.10 onward by hand with the commands below.
+From the repository root, run `wamn-ctl platform apply <cluster.k>`.
+The verb runs sections 4.3 through 4.9 in order.
+It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory.
+On GCP, it requests the production certificate directly.
+It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
+Step 4.8 derives event users from the built packages of each `environments/*.k` beside `cluster.k`.
+It preserves `platform-seal` and existing passwords, merges authorization, and writes each environment's credential Secrets.
+The `platform-seal` user denies all publish and subscribe subjects.
+The Secrets use `evt-nats-<org>--<project>--<env>-<role>` names.
+Provisioning, publisher, and observer Secrets live in `platform`.
+Runtime, materializer, and a publisher copy live in `hosts`.
+An unchanged apply writes no broker Secret.
+Before `platform apply`, build each new platform version once with `build-platform`, as section 4.6 describes.
+Run sections 4.10 onward by hand with the commands below.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 
