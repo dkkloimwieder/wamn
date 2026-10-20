@@ -122,14 +122,14 @@ None of E4–E6 needs the sidecar: pure-Rust clients exist. C1 serves C23 and ot
 
 ## 4. Epic order
 
-Each epic names a goal and an exit condition. Only Epic 1 has issues. The order after Epic 1 is expected, not fixed; the owner re-orders at each review.
+Each epic names a goal and an exit condition. Only Epic 2 has issues. The order after Epic 2 is expected, not fixed; the owner re-orders at each review.
 
 ### Cloud
 
 | Epic | Goal | Exit condition |
 | --- | --- | --- |
-| **1 (scoped)** | C0. An HTTP connection is bound in a deployed environment and a guest sends through it. | §5. |
-| 2 | C9, C4, C10. Webhook in, schedule, webhook out. | A signed POST starts a run; a declared schedule starts a run once per due moment; a package signs and sends a webhook from a run. |
+| 1 (done at `05f7659d`, `wamn-jstjf`) | C0. An HTTP connection is bound in a deployed environment and a guest sends through it. | Met. |
+| **2 (scoped, `wamn-5i3v9`)** | C9, C4, C10. Webhook in, schedule, webhook out. | §5. |
 | 3 | C2, C3, C20. OAuth credential types; the REST connector package. | One OAuth2 and one OAuth1 connection send through `connection_http` with a host-held token; C20 pages a public API in a kind case. |
 | 4 | C21, C22. NetSuite REST and RESTlet over C20. | A record read and a SuiteQL query against the owner's account from a deployed package. |
 | 5 | C27, C29, C31, C37. Packages over C20. | Each sends once from a run. |
@@ -152,33 +152,31 @@ Each epic names a goal and an exit condition. Only Epic 1 has issues. The order 
 
 Edge Epic A may run in parallel with cloud Epic 1: they share no files.
 
-## 5. Epic 1 — HTTP connection provisionable (scoped)
+## 5. Epic 2 — Webhook in, schedule, webhook out (scoped)
 
 ### Goal
 
-A deployed application binds an HTTP connection through `wamn-ctl bind-connection` and `environment.k`, with the credential held by the host, and a guest `send` reaches the bound endpoint. No new WIT, no new plugin, no credential shape change.
+A signed POST starts a run. A declared schedule starts one run per due moment. A package signs and sends a webhook from a run. Branch `work/integrations` from `05f7659d`. No UI, no OAuth, no Secret Manager, no event-path change, and no hand edit of `wamn.json` outside the generator.
 
 ### Rulings
 
 | Ruling | Invariant to measure |
 | --- | --- |
-| `RequirementType` gains `Http` mapped to the existing `ConnectionTypeDescriptor::http_v1`. | `bind-connection --requirement-type http` writes instance, generation and binding rows; `blobstore` behavior is byte-identical before and after (existing live test unchanged). |
-| An HTTP definition carries exactly what the plugin reads: `primary-authority`, `tls-verification`; `check_definition` refuses a missing, empty or extra key by name. | A definition with an unread key is refused before any row is written. |
-| The credential keeps the `{"headers":{…}}` shape from `wamn_credentials.rs`; the handle is the instance id as `environment/expand.rs::credential_handle` sets it. | The host resolves the handle from the mounted file with no code change in `WamnCredentials`. |
-| `environment.k::Connection.type` admits `"http"`; `env apply` binds it through the same `bind`. | `show` after `apply` reproduces the document; a second `apply` is a no-op. |
-| No admin screen, no OAuth, no Secret Manager in this epic. | Diff touches no `web/` file and no `connection_http.rs` credential code. |
+| C9. `AttachmentAuthPolicy::Signature` beside `None \| Pat \| Session`. The attachment declares `header` and `credential`, a handle in the credentials file with the secret `{"hmac":{"algorithm":"sha256","secret":"…"}}`. The route layer verifies HMAC-SHA256 over the raw body with a constant-time compare, before delivery. A failure answers 401 with no body detail. The principal is the same as `none`. No timestamp or replay window; idempotency stays the route's. | A wrong or missing signature never reaches the guest. A right one delivers unchanged. |
+| C4. `workflows.<id>.schedule: str` (five-field cron, UTC) in `manifest.k` beside `registration`; exactly one of the two. Apply-package stores it; publish derives it into the serving manifest. One host task per environment computes the next due moment of each workflow and calls `Workflows::start` with `idempotency_key = "<workflow id>:<due RFC 3339>"`, `Trigger::Schedule { workflow_id, due }` and input `{"due":"…"}`. No backfill at start, no leader. `AttachmentType::Cron` and its `validate_route_target` refusal go, with their tests. | Two hosts over one due moment leave one `runs` row. A restart in the middle of an interval starts nothing late. |
+| C10. Credential type `hmac` in `connection_http.rs` beside `credential_headers`. The host computes `<header>: sha256=<hex>` over the request body from the C9 secret shape with `header` added, and injects it. The guest sees nothing. No new node: a package sends through `http-request`. Retry is the workflow queue's. | The fixture server verifies the signature it received. The request of the guest carried no secret. |
 
 ### Issues
 
-1. **Catalog and ctl.** `RequirementType::Http`, `descriptor`, `coordinates`, `check_definition`; `RequirementTypeArg::Http`; `local_application.rs` already accepts `http_v1`, confirm with a unit test. Unit tests: refusal messages for each missing and extra key; blobstore cases unchanged.
-2. **Environment document.** `environment.k::Connection.type: "blobstore" | "http"`; `document.rs::ConnectionDefinition` validation; `expand.rs` binds an http connection. Tests: the `show`/`apply` round trip with one http connection; the existing blobstore round trip unchanged.
-3. **Live proof.** A kind case: bind the existing `http-request` palette node (`apps/platform/no-std/http-request`) to a fixture HTTP server in the cluster, mount a credentials Secret carrying a bearer header, send once, assert the fixture saw the header and the guest saw 200. Reuse the fixture and shape of `crates/control/lib/tests/bind_connection_live.rs`. Document the credential Secret and `environment.k` example in `docs/operations/deployment.md` beside the blobstore one.
+1. **C9** (`wamn-5i3v9.1`). The enum, manifest validation, the serving manifest, route verification and the refusal path. Unit tests for a good, a bad and a missing signature, and for raw-body fidelity.
+2. **C4** (`wamn-5i3v9.2`). The schema, the apply-package row, the publish derivation, the host schedule task, `Trigger::Schedule`, and `workflow list` shows the schedule. Delete `Cron`. Unit tests for the next-due arithmetic and the idempotency key. A Postgres live test starts one moment from two callers and lists one run.
+3. **C10 and the kind case** (`wamn-5i3v9.3`). The `hmac` credential type. The Epic 1 kind case gains a signed inbound POST, a scheduled workflow that fires once, and a signed outbound POST that the fixture verifies. The issue lists the fixture needs before the case is written.
 
-Per-issue budget: build, clippy, unit tests. The kind case runs once at epic close.
+Per-issue budget: build, clippy, fmt check, unit tests. The live Postgres test runs at issue 2. The kind case runs once at epic close. Before the merge, the live targets that touch the changed files run. A stage silent past 30 minutes is killed. A seam of the Epic 1 class (a plugin assumption that only the dev loop satisfied) is fixed in place and recorded in the close reason.
 
 ### Closeout
 
-Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the workspace test log path. Then stop. Epic 2 is scoped after the owner's review.
+Rebase, regenerate, no diff, fast-forward to main, close the epic bead with the test log path, delete the remote branch. Then stop. Epic 3 is scoped after the owner's review.
 
 ## 6. Sidecar shape (for Epic 6, not before)
 

@@ -8,7 +8,7 @@ Each page below is a plan with its status: done, live or deferred, and its bead.
 - [Environment teardown](environment-teardown.md): done, `wamn-psss`.
 - [Generated operations](generated-operations.md): done, `wamn-iowb`.
 - [Identity](identity.md): deferred, `wamn-jpx2`.
-- [Integrations](integrations.md): live, `wamn-jstjf` (Epic 1).
+- [Integrations](integrations.md): live, `wamn-5i3v9` (Epic 2); Epic 1 `wamn-jstjf` is done.
 - [Manifest authoring](manifest-authoring.md): done, `wamn-j1ti`.
 - [NATS outage](nats-outage.md): deferred, `wamn-gdex` and `wamn-ifh7`.
 - [Operator image](operator-image.md): done, `wamn-n5d1` and `wamn-lo7z`.
