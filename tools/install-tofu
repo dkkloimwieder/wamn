@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Install the exact upstream OpenTofu CLI for the rendered project document.
+set -euo pipefail
+
+readonly version=1.12.8
+# Published in the v1.12.8 release's tofu_1.12.8_SHA256SUMS file.
+readonly archive_digest=de50b220b2f243685f05f8acec0b39440bbdeaa4a5a85b02024d293a1299a625
+readonly digest=69d8b926640ead3a632063069f20f724268a7f45213c9b199f4f928678f08202
+readonly asset=tofu_${version}_linux_amd64.tar.gz
+readonly repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+readonly install_dir="$repo_root/.tools/tofu/$version"
+readonly binary="$install_dir/tofu"
+
+if [[ "$(uname -s)/$(uname -m)" != Linux/x86_64 ]]; then
+  echo 'install-tofu: the pinned artifact requires Linux x86_64' >&2
+  exit 2
+fi
+
+matches_digest() {
+  printf '%s  %s\n' "$1" "$2" | sha256sum --status --check
+}
+
+if [[ -x "$binary" ]] && matches_digest "$digest" "$binary"; then
+  printf '%s\n' "$binary"
+  exit 0
+fi
+
+mkdir -p -- "$install_dir"
+install_temp=$(mktemp -d "$install_dir/.tofu.XXXXXXXX")
+trap 'rm -rf -- "$install_temp"' EXIT
+curl --fail --silent --show-error --location --retry 2 \
+  "https://github.com/opentofu/opentofu/releases/download/v$version/$asset" \
+  --output "$install_temp/$asset"
+if ! matches_digest "$archive_digest" "$install_temp/$asset"; then
+  echo 'install-tofu: downloaded bytes do not match the pinned SHA-256' >&2
+  exit 1
+fi
+tar -xzf "$install_temp/$asset" -C "$install_temp" tofu
+if ! matches_digest "$digest" "$install_temp/tofu"; then
+  echo 'install-tofu: the extracted tofu does not match the pinned SHA-256' >&2
+  exit 1
+fi
+chmod 755 -- "$install_temp/tofu"
+mv -f -- "$install_temp/tofu" "$binary"
+printf '%s\n' "$binary"
