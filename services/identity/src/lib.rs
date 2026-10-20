@@ -42,7 +42,7 @@ pub struct IdentityConfig {
     issuer: String,
     connection: IdentityIssuerConnection,
     targets: BTreeMap<String, SessionTarget>,
-    mail: Option<mail::ResendConfig>,
+    mail: Option<mail::MailConfig>,
     changes: wamn_platform_identity::auth_changes::AuthChanges,
 }
 
@@ -72,7 +72,13 @@ impl IdentityConfig {
 
     /// Enable invitation and password endpoints with explicit mail configuration.
     pub fn with_resend(mut self, mail: mail::ResendConfig) -> Self {
-        self.mail = Some(mail);
+        self.mail = Some(mail::MailConfig::Resend(mail));
+        self
+    }
+
+    /// Record local identity mail in a private file without a network sender.
+    pub fn with_local_mail(mut self, path: std::path::PathBuf) -> Self {
+        self.mail = Some(mail::MailConfig::Local(path));
         self
     }
 

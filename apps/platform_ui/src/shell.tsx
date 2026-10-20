@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { uiScope } from "@wfe/components";
 import { Button } from "@wfe/components/fields";
 import { permission } from "@wamn/control-client";
-import { control, environment, member, project, projectAdmin, release, user } from "@wamn/control-org-client";
+import { control, environment, member, orgAdmin, project, projectAdmin, release, user } from "@wamn/control-org-client";
 import {
   createTransport,
   keepSession,
@@ -96,6 +96,11 @@ export function controlHolds(mine: control.ControlMineResult): Holds {
   ]);
   const orgOperations = new Set([
     user.USER_LIST_ROUTE.operation,
+    user.USER_INVITE_ROUTE.operation,
+    user.USER_ACTIVATE_ROUTE.operation,
+    user.USER_DEACTIVATE_ROUTE.operation,
+    orgAdmin.ORG_ADMIN_GRANT_ROUTE.operation,
+    orgAdmin.ORG_ADMIN_REVOKE_ROUTE.operation,
     project.PROJECT_LIST_ROUTE.operation,
     project.PROJECT_CREATE_ROUTE.operation,
     project.PROJECT_ACTIVATE_ROUTE.operation,

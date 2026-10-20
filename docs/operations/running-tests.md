@@ -653,19 +653,30 @@ It shows that the CSS entry compiles.
 
 `local_control_projects_and_membership` runs the built platform UI in headless Chrome.
 It starts `wamn dev up` on disposable services through the existing `delivery_timings` fixture.
-The test uses platform verbs to enroll the org admin and a second user.
-It grants the admin membership in `receiving/dev`, requires both audiences, and chooses Control.
+
+The test uses platform verbs to enroll the org admin.
+The admin invites the second user from the Users screen.
+The test reads the invitation code from the [local mail file](development-loop.md#wamn-dev-environment-developer-session) and passes it to the browser.
+The second user sets a password on the platform UI invite page and signs in.
+The admin deactivates and reactivates the user, then grants and revokes org-admin.
+Each write must update the Users screen, including after a reload.
+
+The fixture grants the admin membership in `receiving/dev`, requires both audiences, and chooses Control.
 Control opens Projects, and the shell root carries `data-ui`.
 The fixture runs `wamn dev --config <root>/dev.json --overlay-root apps/wamn_receiving --hold` to install and start the Receiving release.
 The browser creates `browser-project` and opens its Project screen.
 The fixture then calls `provision_project_env` and `reconcile_journey_run_plane` to prepare `browser-project/dev` on the disposable PostgreSQL server.
 It prepares the administration credential through `run_workload_action` and installs its emitted file in the local control host's credential directory.
-The browser grants and revokes membership and project-admin for the second user.
+
+The browser grants and revokes membership and project-admin for the second user from both User and Project.
+The User screen scopes every write to the principal in its address.
 Each write must update the screen.
-The second user sees only that project, and an address for `receiving` shows no page.
+The second user sees only that project. Addresses for `receiving`, Users, and User show no page.
 The project-admin session uses the project names from `control.mine` and never calls `project.list`.
 Project inactivation and activation must each show only the opposite action, including after a page reload.
+
 The browser also opens `receiving/dev` from Project, reads its runtime status and release profile, and toggles its state with a reload.
+If identity limits session renewals, the browser waits for its `Retry-After` period before it reloads the same address.
 The test prints its elapsed time and fails if it exceeds 15 minutes.
 
 Build the native programs and components described in [the development loop](development-loop.md).

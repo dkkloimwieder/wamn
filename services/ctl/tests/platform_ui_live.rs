@@ -143,9 +143,7 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             required("WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT")?,
         )
         .env("WAMN_DEV_ENV_ROUTE_HOST", required("WAMN_ROUTE_HOST")?)
-        .env("WAMN_DEV_ENV_PLATFORM_DOMAIN", "example.invalid")
-        .env("RESEND_API_KEY", "unused-development-fixture")
-        .env("RESEND_FROM", "WAMN <fixture@example.invalid>");
+        .env("WAMN_DEV_ENV_PLATFORM_DOMAIN", "example.invalid");
     let mut application = None;
     let result = async {
         run(&mut up).await?;
@@ -185,13 +183,6 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             .json(&json!({"principal_id": user.as_str(), "invitation": invitation.secret(), "password": PASSWORD}))
             .send().await?;
         ensure!(enrolled.status() == reqwest::StatusCode::NO_CONTENT, "password enrollment refused: {}", enrolled.status());
-        let second = create_or_reuse_user(&admin, SECOND_EMAIL, "Project Administrator").await?.principal_id;
-        wamn_platform_identity::org::activate_org_membership(&admin, &second, ORG).await?;
-        let invitation = wamn_platform_identity::password::issue_invitation(&mut admin, &actor, &second).await?;
-        let enrolled = reqwest::Client::new().post(format!("{url}/password/enroll"))
-            .json(&json!({"principal_id": second.as_str(), "invitation": invitation.secret(), "password": PASSWORD}))
-            .send().await?;
-        ensure!(enrolled.status() == reqwest::StatusCode::NO_CONTENT, "second password enrollment refused: {}", enrolled.status());
         let mut browser = Command::new("pnpm").current_dir(&repository)
             .args(["exec", "node", "apps/platform_ui/test/browser.mjs"])
             .env("WAMN_BROWSER_URL", url)
@@ -201,9 +192,20 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit())
             .kill_on_drop(true).spawn()?;
         let mut input = browser.stdin.take().context("browser input")?;
-        input.write_all(format!("{}\n", json!({"principalId": second.as_str(), "email": SECOND_EMAIL, "project": BROWSER_PROJECT, "env": ENVIRONMENT, "releaseProject": PROJECT, "releaseEnv": ENVIRONMENT, "releaseDigest": endpoint["digest"]})).as_bytes()).await?;
+        input.write_all(format!("{}\n", json!({"email": SECOND_EMAIL, "project": BROWSER_PROJECT, "env": ENVIRONMENT, "releaseProject": PROJECT, "releaseEnv": ENVIRONMENT, "releaseDigest": endpoint["digest"]})).as_bytes()).await?;
         let mut output = BufReader::new(browser.stdout.take().context("browser output")?);
         let mut line = String::new();
+        output.read_line(&mut line).await?;
+        ensure!(line.trim() == "invitation-created", "browser did not invite the user: {line}");
+        let identity: Value = serde_json::from_slice(&std::fs::read(root.join("identity-process.json"))?)?;
+        let mail = std::fs::read_to_string(Path::new(identity["directory"].as_str().context("identity directory")?).join("mail.jsonl"))?;
+        let invitation = mail.lines().map(serde_json::from_str::<Value>).collect::<Result<Vec<_>, _>>()?
+            .into_iter().find(|message| message["to"] == SECOND_EMAIL && message["subject"] == "Your WAMN invitation")
+            .context("local sender did not record the browser invitation")?;
+        let code = invitation["text"].as_str().context("invitation text")?.lines()
+            .find_map(|line| line.strip_prefix("Invitation code: ")).context("invitation code")?;
+        input.write_all(format!("{}\n", json!({"code": code})).as_bytes()).await?;
+        line.clear();
         output.read_line(&mut line).await?;
         ensure!(line.trim() == "project-created", "browser did not create the project: {line}");
         provision_browser_environment(&admin, system.url(), &root).await?;

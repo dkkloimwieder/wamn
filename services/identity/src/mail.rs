@@ -1,6 +1,7 @@
-//! Resend invitation delivery with bounded requests and redacted credentials.
+//! Invitation delivery through Resend or a private local mail file.
 
 use std::fmt;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -64,8 +65,122 @@ impl ResendConfig {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum MailConfig {
+    Resend(ResendConfig),
+    Local(PathBuf),
+}
+
 #[derive(Debug)]
-pub(super) struct Mailer {
+pub(super) enum Mailer {
+    Resend(ResendMailer),
+    Local(tokio::sync::Mutex<tokio::fs::File>),
+}
+
+impl Mailer {
+    pub(super) fn new(config: MailConfig) -> Result<Self, IdentityServiceError> {
+        match config {
+            MailConfig::Resend(config) => Ok(Self::Resend(ResendMailer::new(config)?)),
+            MailConfig::Local(path) => {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                let file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(path)
+                    .map_err(|_| IdentityServiceError::new("create local mail file failed"))?;
+                Ok(Self::Local(tokio::sync::Mutex::new(
+                    tokio::fs::File::from_std(file),
+                )))
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-util"))]
+    pub(super) fn fixture(endpoint: String) -> Self {
+        Self::Resend(ResendMailer::fixture(endpoint))
+    }
+
+    pub(super) async fn invite(
+        &self,
+        email: &str,
+        principal: &str,
+        secret: &str,
+        expires_at: &str,
+    ) -> Result<(), IdentityServiceError> {
+        match self {
+            Self::Resend(mail) => mail.invite(email, principal, secret, expires_at).await,
+            Self::Local(file) => {
+                record(
+                    file,
+                    email,
+                    "Your WAMN invitation",
+                    &Zeroizing::new(invitation_text(None, principal, secret, expires_at)),
+                )
+                .await
+            }
+        }
+    }
+
+    pub(super) async fn reset(
+        &self,
+        email: &str,
+        secret: &str,
+        expires_at: &str,
+    ) -> Result<(), IdentityServiceError> {
+        match self {
+            Self::Resend(mail) => mail.reset(email, secret, expires_at).await,
+            Self::Local(file) => {
+                record(
+                    file,
+                    email,
+                    "Reset your WAMN password",
+                    &Zeroizing::new(reset_text(None, secret, expires_at)),
+                )
+                .await
+            }
+        }
+    }
+
+    pub(super) async fn password_changed(&self, email: &str) -> Result<(), IdentityServiceError> {
+        match self {
+            Self::Resend(mail) => mail.password_changed(email).await,
+            Self::Local(file) => {
+                record(
+                    file,
+                    email,
+                    "Your WAMN password changed",
+                    "Your WAMN password changed.",
+                )
+                .await
+            }
+        }
+    }
+}
+
+async fn record(
+    file: &tokio::sync::Mutex<tokio::fs::File>,
+    email: &str,
+    subject: &str,
+    text: &str,
+) -> Result<(), IdentityServiceError> {
+    use tokio::io::AsyncWriteExt as _;
+    let mut bytes = Zeroizing::new(
+        serde_json::to_vec(&serde_json::json!({"to": email, "subject": subject, "text": text}))
+            .map_err(|_| IdentityServiceError::new("encode local mail failed"))?,
+    );
+    bytes.push(b'\n');
+    let mut file = file.lock().await;
+    file.write_all(&bytes)
+        .await
+        .map_err(|_| IdentityServiceError::new("write local mail failed"))?;
+    file.flush()
+        .await
+        .map_err(|_| IdentityServiceError::new("flush local mail failed"))
+}
+
+#[derive(Debug)]
+pub(super) struct ResendMailer {
     config: ResendConfig,
     client: reqwest::Client,
     #[cfg(any(test, feature = "test-util"))]
@@ -80,7 +195,7 @@ struct Email<'a> {
     text: &'a str,
 }
 
-impl Mailer {
+impl ResendMailer {
     pub(super) fn new(config: ResendConfig) -> Result<Self, IdentityServiceError> {
         #[cfg(feature = "test-util")]
         if let Some(endpoint) = std::env::var_os("WAMN_TEST_RESEND_ENDPOINT") {
@@ -247,6 +362,65 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
+    #[tokio::test]
+    async fn local_sender_records_invitation_code_without_a_network_client() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = std::env::temp_dir().join(format!(
+            "wamn-local-mail-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mail = Mailer::new(MailConfig::Local(path.clone())).unwrap();
+        assert!(matches!(mail, Mailer::Local(_)));
+        mail.invite(
+            "person@example.invalid",
+            "principal",
+            "wamn_inv_secret",
+            "2026-10-19 12:00",
+        )
+        .await
+        .unwrap();
+        mail.reset(
+            "person@example.invalid",
+            "wamn_reset_secret",
+            "2026-10-19 12:00",
+        )
+        .await
+        .unwrap();
+        mail.password_changed("person@example.invalid")
+            .await
+            .unwrap();
+        let recorded = std::fs::read_to_string(&path).unwrap();
+        let messages: Vec<serde_json::Value> = recorded
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0]["to"], "person@example.invalid");
+        assert_eq!(messages[0]["subject"], "Your WAMN invitation");
+        assert!(
+            messages[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Invitation code: principal:wamn_inv_secret")
+        );
+        assert!(
+            messages[1]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Reset secret: wamn_reset_secret")
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        drop(mail);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn an_invite_url_makes_each_mail_one_line_and_one_link() {
         let config = ResendConfig::new("key".into(), "WAMN <fixture@example.invalid>".into())
@@ -310,7 +484,7 @@ mod tests {
             )
             .unwrap();
             assert!(!format!("{config:?}").contains("test-secret"));
-            let mail = Mailer {
+            let mail = ResendMailer {
                 endpoint: None,
                 config,
                 client: reqwest::Client::builder()

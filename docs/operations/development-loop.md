@@ -106,7 +106,15 @@ Read `control-web.log` in the environment directory if control startup fails.
 The identity process keeps running across application builds.
 Startup creates its signing key once. Application rebuilds preserve that key and the identity database.
 The `session_identity` field supplies the issuer address, certificate authority file, and environment instance to each application host.
-The identity process uses the existing [password configuration](deployment.md#identity-password-configuration), including `.env` in the working directory.
+
+`dev up` selects the local mail sender through `--local-mail` in `crates/control/lib/src/dev/pat_issuer.rs`.
+The sender records mail in `mail.jsonl` inside the private directory named by `identity-process.json`.
+Each line contains `to`, `subject`, and `text`. Invitation text includes `Invitation code: <principal>:<secret>`.
+
+Open the platform UI at `/invite#<principal>:<secret>` to set the invited user's password.
+The file has mode `0600`, and `dev down` removes it with the private identity directory.
+Local identity sends no network mail, even when `.env` contains Resend credentials.
+Deployed identity keeps the existing [password configuration](deployment.md#identity-password-configuration).
 
 At environment teardown, stop the owned processes:
 

@@ -33,7 +33,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     IdentityServiceError, Inner, connect_database,
-    mail::{Mailer, ResendConfig},
+    mail::{MailConfig, Mailer},
     response, session, unavailable,
 };
 
@@ -54,7 +54,7 @@ pub(super) struct State {
 }
 impl State {
     pub(super) fn new(
-        mail: ResendConfig,
+        mail: MailConfig,
         connection: IdentityIssuerConnection,
     ) -> Result<Self, IdentityServiceError> {
         Ok(Self {
@@ -1059,8 +1059,11 @@ mod tests {
             IdentityConfig::new(issuer, url.as_str())
                 .unwrap()
                 .with_resend(
-                    ResendConfig::new("unused".into(), "WAMN <fixture@example.invalid>".into())
-                        .unwrap(),
+                    crate::mail::ResendConfig::new(
+                        "unused".into(),
+                        "WAMN <fixture@example.invalid>".into(),
+                    )
+                    .unwrap(),
                 ),
         )
         .await

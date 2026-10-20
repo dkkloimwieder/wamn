@@ -51,6 +51,9 @@ impl fmt::Debug for Cli {
 /// Email environment inputs with credential-safe diagnostics.
 #[derive(clap::Args)]
 struct MailArgs {
+    /// Private mail file selected by the local development environment.
+    #[arg(long)]
+    local_mail: Option<PathBuf>,
     #[arg(
         long,
         env = "RESEND_API_KEY",
@@ -68,6 +71,7 @@ impl fmt::Debug for MailArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MailArgs")
             .field("resend_api_key", &"[REDACTED]")
+            .field("local_mail", &self.local_mail)
             .field("resend_from", &self.resend_from)
             .field("invite_url", &self.invite_url)
             .finish()
@@ -128,19 +132,23 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
         session_target,
     } = cli.command
     {
-        let config = match (mail.resend_api_key, mail.resend_from) {
-            (Some(key), Some(from)) => {
-                let resend = crate::mail::ResendConfig::new(key, from)?;
-                config.with_resend(match mail.invite_url {
-                    Some(base) => resend.with_invite_url(&base)?,
-                    None => resend,
-                })
-            }
-            (None, None) => config,
-            _ => {
-                return Err(IdentityServiceError::new(
-                    "Resend key and sender are required together",
-                ));
+        let config = if let Some(path) = mail.local_mail {
+            config.with_local_mail(path)
+        } else {
+            match (mail.resend_api_key, mail.resend_from) {
+                (Some(key), Some(from)) => {
+                    let resend = crate::mail::ResendConfig::new(key, from)?;
+                    config.with_resend(match mail.invite_url {
+                        Some(base) => resend.with_invite_url(&base)?,
+                        None => resend,
+                    })
+                }
+                (None, None) => config,
+                _ => {
+                    return Err(IdentityServiceError::new(
+                        "Resend key and sender are required together",
+                    ));
+                }
             }
         };
         let mut targets = Vec::with_capacity(session_target.len());

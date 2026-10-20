@@ -104,6 +104,9 @@ impl Bootstrap {
             .kill_on_drop(false);
         if let Some(target) = &self.session_target {
             command.arg("--session-target").arg(target);
+            command
+                .arg("--local-mail")
+                .arg(self.files.0.join("mail.jsonl"));
         }
         let child = command
             .spawn()
