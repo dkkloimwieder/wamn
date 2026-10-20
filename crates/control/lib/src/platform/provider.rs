@@ -38,10 +38,11 @@ impl Provider {
                     .any(|name| name.trim() == document.cluster_name)
                 {
                     let registry = path.with_extension("registry");
-                    std::fs::create_dir_all(&registry)
+                    let host = document.registry.split('/').next().unwrap_or_default();
+                    std::fs::create_dir_all(registry.join(host))
                         .context("create the kind registry directory")?;
                     std::fs::write(
-                        registry.join("hosts.toml"),
+                        registry.join(host).join("hosts.toml"),
                         registry_hosts(&document.cluster_name),
                     )
                     .context("write the kind registry mapping")?;
@@ -49,7 +50,7 @@ impl Provider {
                         .context("find the kind registry directory")?;
                     std::fs::write(
                         &configuration,
-                        serde_yaml::to_string(&kind_configuration(&document.registry, &registry))?,
+                        serde_yaml::to_string(&kind_configuration(&registry))?,
                     )
                     .context("write the kind configuration")?;
                 }
@@ -115,10 +116,10 @@ fn registry_hosts(cluster: &str) -> String {
     )
 }
 
-fn kind_configuration(registry: &str, directory: &Path) -> Value {
-    let host = registry.split('/').next().unwrap_or_default();
+fn kind_configuration(directory: &Path) -> Value {
     // kind's local registry pattern uses containerd's per-authority hosts file.
-    // Mount it at creation so it also survives a node restart.
+    // Mount the whole hosts directory at creation so it also survives a node
+    // restart: Docker refuses a mount target with the authority's port colon.
     json!({
         "kind": "Cluster",
         "apiVersion": "kind.x-k8s.io/v1alpha4",
@@ -129,7 +130,7 @@ fn kind_configuration(registry: &str, directory: &Path) -> Value {
             "role": "control-plane",
             "extraMounts": [{
                 "hostPath": directory,
-                "containerPath": format!("/etc/containerd/certs.d/{host}"),
+                "containerPath": "/etc/containerd/certs.d",
                 "readOnly": true
             }]
         }]
@@ -272,8 +273,8 @@ mod tests {
     }
 
     #[test]
-    fn kind_mounts_the_registry_mapping_for_the_documents_authority() {
-        let value = kind_configuration("localhost:5017/team", Path::new("/var/tmp/kind registry"));
+    fn kind_mounts_the_registry_hosts_directory() {
+        let value = kind_configuration(Path::new("/var/tmp/kind registry"));
         assert_eq!(value["apiVersion"], "kind.x-k8s.io/v1alpha4");
         assert_eq!(value["kind"], "Cluster");
         assert_eq!(
@@ -282,7 +283,7 @@ mod tests {
                 "role":"control-plane",
                 "extraMounts":[{
                     "hostPath":"/var/tmp/kind registry",
-                    "containerPath":"/etc/containerd/certs.d/localhost:5017",
+                    "containerPath":"/etc/containerd/certs.d",
                     "readOnly":true
                 }]
             }])
