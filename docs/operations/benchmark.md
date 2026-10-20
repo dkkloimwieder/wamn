@@ -349,6 +349,7 @@ Epic `wamn-c8a5v`, issue `wamn-c8a5v.1` ([plan](../plan/perf-arch.md), M4 and M5
 The result is [`tests/bench/gcp-pg-0.1.36.json`](../../tests/bench/gcp-pg-0.1.36.json).
 The gap is the update replay p50 minus the simple-update p50, at c16 for 60 s each.
 The row "update, triggers off" is the update replay with both record-history triggers disabled (M4).
+It ran after the update replay on the same data, with about 35,000 more write log and history rows, so the trigger share is a low estimate.
 
 | Run | simple-update | update replay | Gap | update, triggers off | Trigger share of the gap |
 | --- | --- | --- | --- | --- | --- |
@@ -363,7 +364,8 @@ The Cluster restart that loaded `auto_explain` ended at 11:28:13 UTC. Nothing el
 The runner installs Receiving into its own database `wamn_pg_floor` with `pg_floor_database`.
 That database carries the local statement statistics: `pg_stat_statements.track = all`, `track_planning`, `track_io_timing`, `track_wal_io_timing`, and 1% transaction and statement sampling.
 The environment databases do not carry these settings. They keep the Cluster's `track = top`, so the calls per request of `tier.sh` stay comparable.
-The Cluster loads `auto_explain` with the values of `local.sh` for every database.
+During this run, the Cluster set the `auto_explain` values of `local.sh` for every database.
+After this run, the Cluster keeps `auto_explain` loaded but silent (`log_min_duration = -1`), and `gcp.sh` sets those values on `wamn_pg_floor` alone.
 The kubelet rotates the PostgreSQL container log, so the run kept only 378 analyzed plans. The split below uses `pg_stat_statements`.
 
 The split uses means, because pipeline command timings overlap. The mean gap is 20.45 ms (27.35 ms against 6.90 ms).

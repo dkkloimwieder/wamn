@@ -41,8 +41,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The floor database carries the statement statistics of local.sh. The
-# environment databases keep the Cluster's track=top.
+# The floor database carries the statement statistics and the auto_explain
+# values of local.sh. The environment databases keep the Cluster's track=top
+# and a silent auto_explain.
 psql "postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable" -X -v ON_ERROR_STOP=1 >"$work/database.log" <<'SQL'
 DROP DATABASE IF EXISTS wamn_pg_floor WITH (FORCE);
 CREATE DATABASE wamn_pg_floor;
@@ -53,6 +54,14 @@ ALTER DATABASE wamn_pg_floor SET track_wal_io_timing = on;
 ALTER DATABASE wamn_pg_floor SET log_transaction_sample_rate = 0.01;
 ALTER DATABASE wamn_pg_floor SET log_min_duration_sample = 0;
 ALTER DATABASE wamn_pg_floor SET log_statement_sample_rate = 0.01;
+ALTER DATABASE wamn_pg_floor SET auto_explain.log_min_duration = 0;
+ALTER DATABASE wamn_pg_floor SET auto_explain.log_analyze = on;
+ALTER DATABASE wamn_pg_floor SET auto_explain.log_buffers = on;
+ALTER DATABASE wamn_pg_floor SET auto_explain.log_wal = on;
+ALTER DATABASE wamn_pg_floor SET auto_explain.log_nested_statements = on;
+ALTER DATABASE wamn_pg_floor SET auto_explain.log_timing = off;
+ALTER DATABASE wamn_pg_floor SET auto_explain.sample_rate = 0.01;
+ALTER DATABASE wamn_pg_floor SET auto_explain.log_format = json;
 SQL
 "$CARGO_TARGET_DIR/debug/examples/pg_floor_database" \
   "postgresql://postgres:$PGPASSWORD@127.0.0.1:15432/wamn_pg_floor?sslmode=disable" \
