@@ -1,18 +1,18 @@
 # wamn images (SR1 pattern: one build, one final stage per artifact; SR9 split).
-#   docker build --target host       -t wamn-host:dev       .  # HTTP + durable queue host
-#   docker build --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
-#   docker build --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
-#   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
-#   docker build --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
-#   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
-#   docker build --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
-#   docker build --target roles --output type=local,dest=DIR .  # http and materializer role components
-#   docker build --build-context apps-target=apps/target/wamn --target runner -t wamn-runner:dev .  # qualification runner: FROM ctl + the case binaries
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target host       -t wamn-host:dev       .  # HTTP + durable queue host
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target roles --output type=local,dest=DIR .  # http and materializer role components
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --build-context apps-target=apps/target/wamn --target runner -t wamn-runner:dev .  # qualification runner: FROM ctl + the case binaries
 # `wamn-ctl build-platform` builds host, runner, gates, identity and roles, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches and one
-# locked target cache per build stage, so the stages no longer wait on each
-# other. Each retained native image builds only its top-level package. The
+# locked target cache per checkout and build stage, so stages do not wait on
+# each other. Each retained native image builds only its top-level package. The
 # host artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
 # IDENTICAL host stage so Jobs exercise the same host lib code they verify.
@@ -57,56 +57,69 @@ COPY deploy ./deploy
 # pinned Rust line, and copying it would force a rustup download in the image.
 
 FROM root-source AS build-host
+ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-host,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-host -p wamn-runtime --bin wamn-host --bin docker-credential-wamn \
+    --mount=type=cache,id=wamn-root-target-host-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-host -p wamn-runtime --bin wamn-host --bin docker-credential-wamn \
  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host \
  && install -D -m 0755 target/release/docker-credential-wamn /native-output/docker-credential-wamn
 
 FROM root-source AS build-scenario-worker
+ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-scenario-worker,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-scenario-worker \
+    --mount=type=cache,id=wamn-root-target-scenario-worker-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-scenario-worker \
  && install -D -m 0755 target/release/wamn-scenario-worker /native-output/wamn-scenario-worker
 
 FROM root-source AS build-ctl
+ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-ctl,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-ctl \
+    --mount=type=cache,id=wamn-root-target-ctl-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-ctl \
  && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -D -m 0755 target/release/wamn-ctl /native-output/wamn-ctl \
  && install -D -m 0755 target/release/wamn-ctl-ops /native-output/wamn-ctl-ops
 
 FROM root-source AS build-cdc-reader
+ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-cdc-reader,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-cdc-reader \
+    --mount=type=cache,id=wamn-root-target-cdc-reader-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-cdc-reader \
  && install -D -m 0755 target/release/wamn-cdc-reader /native-output/wamn-cdc-reader
 
 FROM root-source AS build-identity
+ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-identity,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-identity \
+    --mount=type=cache,id=wamn-root-target-identity-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-identity \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
 
 # The test image is outside the retained MVP image set. It remains a
 # separate, package-scoped build with its own target cache.
 FROM root-source AS build-gates
+ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-gates,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-gates \
+    --mount=type=cache,id=wamn-root-target-gates-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-gates \
  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
 
 # ---- edge box binary: aarch64 release, cross-compiled ----------------------
 # docs/history/edge.md 4.10 option A. The C code in aws-lc-sys and libsqlite3-sys
 # needs the Debian cross compiler; the Rust linker is the same compiler.
 FROM root-source AS build-edge
+ARG WAMN_CHECKOUT_KEY
 RUN apt-get update && apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libc6-dev-arm64-cross && rm -rf /var/lib/apt/lists/* \
  && rustup target add aarch64-unknown-linux-gnu
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
@@ -114,8 +127,9 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
     AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-edge,target=/build/target,sharing=locked \
-    cargo build --locked --release -p wamn-edge --target aarch64-unknown-linux-gnu \
+    --mount=type=cache,id=wamn-root-target-edge-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo build --locked --release -p wamn-edge --target aarch64-unknown-linux-gnu \
  && mkdir -p /native-output \
  && aarch64-linux-gnu-strip -o /native-output/wamn-edge target/aarch64-unknown-linux-gnu/release/wamn-edge
 
@@ -135,10 +149,12 @@ WORKDIR /build/apps
 # each guest here has the digest of the same guest built by wamn build.
 # The router must match the pin beside its crate, as in wamn build.
 FROM component-toolchain AS component-builder
+ARG WAMN_CHECKOUT_KEY
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked \
-    export RUSTFLAGS="$(/build/tools/guest-rustflags)" \
+    --mount=type=cache,id=wamn-component-target-${WAMN_CHECKOUT_KEY},target=/build/apps/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && export RUSTFLAGS="$(/build/tools/guest-rustflags)" \
  && cargo +1.99.0 build --locked --release --target wasm32-wasip2 \
       -p http-route \
  && (cd target/wasm32-wasip2/release \
@@ -237,15 +253,17 @@ COPY --from=component-builder /component-output/materializer.wasm /materializer.
 # ---- qualification cases: the cluster case executables ----------------------
 # The cases compile against the package outputs of `wamn build`, which the
 # build takes as the named context apps-target:
-#   docker build --build-context apps-target=apps/target/wamn --target runner .
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --build-context apps-target=apps/target/wamn --target runner .
 # Each executable is installed as /cases/<package>, and keeps reading the
 # repository files it names from /build, where the runner carries them.
 FROM root-source AS build-cases
+ARG WAMN_CHECKOUT_KEY
 COPY --from=apps-target . /build/apps/target/wamn
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=shared \
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=shared \
-    --mount=type=cache,id=wamn-root-target-cases,target=/build/target,sharing=locked \
-    cargo test --locked --no-run --message-format=json --features cluster \
+    --mount=type=cache,id=wamn-root-target-cases-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
+    test -n "$WAMN_CHECKOUT_KEY" \
+ && cargo test --locked --no-run --message-format=json --features cluster \
       -p wamn-wms-tests -p wamn-receiving-tests > /tmp/cases.json \
  && install -d /cases \
  && for package in wamn-wms-tests wamn-receiving-tests; do \

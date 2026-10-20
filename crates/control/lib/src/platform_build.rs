@@ -79,6 +79,17 @@ fn sha256(bytes: &[u8]) -> String {
     )
 }
 
+/// The first 16 SHA-256 hex digits of the checkout's canonical absolute path.
+fn checkout_key(repository: &Path) -> anyhow::Result<String> {
+    let repository =
+        std::fs::canonicalize(repository).context("find the checkout for its cache")?;
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        repository.as_os_str().as_encoded_bytes(),
+    );
+    Ok(hex::encode(digest.as_ref())[..16].to_owned())
+}
+
 /// The inputs of one platform build.
 #[derive(Debug, Clone)]
 pub struct BuildPlatformRequest {
@@ -262,7 +273,7 @@ async fn build_then_push(
     let mut references = Vec::new();
     for target in ["host", "runner", "gates", "identity"] {
         let reference = format!("{}/wamn-{target}:{CHART_VERSION}", request.registry);
-        run(docker(&request.repository)
+        run(docker(&request.repository)?
             .args(["--target", target, "--tag", &reference])
             .arg(format!("--label=wamn.dev/source-head={}", head.trim()))
             .arg("--label=wamn.dev/build-profile=release")
@@ -270,7 +281,7 @@ async fn build_then_push(
         .await?;
         references.push((target, reference));
     }
-    run(docker(&request.repository)
+    run(docker(&request.repository)?
         .args(["--target", "roles", "--output"])
         .arg(format!("type=local,dest={}", roles.display()))
         .arg(&request.repository))
@@ -295,10 +306,12 @@ async fn build_then_push(
 /// `docker build` of one target of the root `Dockerfile`, for amd64. The
 /// runner's cases compile against the package outputs of `wamn build`, the
 /// named context `apps-target`.
-fn docker(repository: &Path) -> Command {
+fn docker(repository: &Path) -> anyhow::Result<Command> {
     let mut command = Command::new("docker");
     command
         .args(["build", "--platform=linux/amd64", "--provenance=false"])
+        .arg("--build-arg")
+        .arg(format!("WAMN_CHECKOUT_KEY={}", checkout_key(repository)?))
         .arg("--build-context")
         .arg(format!(
             "apps-target={}",
@@ -306,7 +319,7 @@ fn docker(repository: &Path) -> Command {
         ))
         .arg("--file")
         .arg(repository.join("Dockerfile"));
-    command
+    Ok(command)
 }
 
 /// Push the built `reference` and return it pinned by the digest the
@@ -392,6 +405,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn checkout_key_matches_the_shell_hash_of_a_canonical_path() {
+        // printf '%s' "$(realpath /)" | sha256sum | cut -c1-16
+        assert_eq!(checkout_key(Path::new("/")).unwrap(), "8a5edab282632443");
+        assert_eq!(checkout_key(Path::new("/./")).unwrap(), "8a5edab282632443");
+        assert!(checkout_key(Path::new("/nonexistent/wamn-checkout")).is_err());
+    }
+
+    #[test]
     fn the_receipt_digest_covers_paths_and_bytes_of_the_ui() {
         let dist =
             std::env::temp_dir().join(format!("wamn-platform-ui-digest-{}", std::process::id()));
@@ -469,7 +490,7 @@ mod tests {
         let mut calls = Vec::new();
         let error = build_then_push(
             &BuildPlatformRequest {
-                repository: PathBuf::from("/checkout"),
+                repository: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."),
                 registry: "localhost:5000".to_owned(),
                 out: PathBuf::from("/chart"),
             },
@@ -628,5 +649,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(builds.len(), 5, "{calls:?}");
         assert!(builds.iter().all(|index| *index < first_push), "{calls:?}");
+        let key = checkout_key(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")).unwrap();
+        assert!(
+            builds.iter().all(
+                |index| calls[*index].contains(&format!("--build-arg WAMN_CHECKOUT_KEY={key}"))
+            ),
+            "{calls:?}"
+        );
     }
 }

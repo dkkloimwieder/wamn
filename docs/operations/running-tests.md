@@ -26,7 +26,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 Selected packages run their default tests with the required features of their targets.
 Use [`wamn build`](building.md#wamn-build) or `tools/repo-lint` to compile guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
-If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder`.
+If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)"`.
 These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
 The stage checks the router pin, as the guest build of `wamn build` does, because the two builds diverged once (`wamn-lt7y`).
 `tools/test-changes --cluster` runs no guest build.

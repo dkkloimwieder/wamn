@@ -91,7 +91,7 @@ for required in "$docker_executable" "$kind_executable"; do
 done
 
 build=(
-  buildx build
+  buildx build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$context")" | sha256sum | cut -c1-16)"
   --progress=plain
   --load
   --target gates

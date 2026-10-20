@@ -112,7 +112,7 @@ ensure() {
   image="wamn-$name:src-$source_identity"
   if ! "$docker_executable" image inspect "$image" >/dev/null 2>&1; then
     "$docker_executable" build --platform=linux/amd64 --provenance=false \
-      --file "$repository/Dockerfile" --target "$target" --tag "$image" \
+      --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$repository")" | sha256sum | cut -c1-16)" --file "$repository/Dockerfile" --target "$target" --tag "$image" \
       --label "wamn.dev/source-identity=$source_identity" \
       --label wamn.dev/build-profile=release "$repository" >&2
   fi

@@ -74,7 +74,8 @@ fn stage_caches(contents: &str, owner: &str, stage_name: &str, problems: &mut Pr
             || format!("{owner} lost shared download cache {id}"),
         );
     }
-    let target = format!("id=wamn-root-target-{stage_name},target=/build/target");
+    let target =
+        format!("id=wamn-root-target-{stage_name}-${{WAMN_CHECKOUT_KEY}},target=/build/target");
     problems.require(
         mounts
             .iter()
@@ -276,7 +277,8 @@ fn build_graph_has_one_source_stage_and_no_retired_leg(dockerfile: &str, problem
         });
     }
     problems.require(
-        dockerfile.contains("id=wamn-component-target,target=/build/apps/target"),
+        dockerfile
+            .contains("id=wamn-component-target-${WAMN_CHECKOUT_KEY},target=/build/apps/target"),
         || "the component build lost its own target cache".to_owned(),
     );
 

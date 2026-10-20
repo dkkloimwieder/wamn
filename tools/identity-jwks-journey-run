@@ -180,17 +180,17 @@ if [[ "$session_exchange" == true ]]; then
   sha256sum deploy/sql/record-history.sql deploy/sql/record-history-app-grants.sql deploy/sql/app-schema.sql >>"$evidence_dir/source-inputs.sha256"
 fi
 identity_owned=true
-run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
+run docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$repo_root")" | sha256sum | cut -c1-16)" --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
   --target identity --tag "$identity_image" --label "wamn.dev/source-head=$head" "$repo_root" \
   2>&1 | tee "$evidence_dir/build-identity.log"
 # The gates DAG also needs these components. Their Cargo caches differ from
 # the native caches, so finish this branch before gates can schedule both.
 # Cache-only output retains no extra image or tag.
-run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
+run docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$repo_root")" | sha256sum | cut -c1-16)" --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
   --target component-builder --output=type=cacheonly "$repo_root" \
   2>&1 | tee "$evidence_dir/build-component-builder.log"
 gates_owned=true
-run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
+run docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$repo_root")" | sha256sum | cut -c1-16)" --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
   --target gates --tag "$gates_image" --label "wamn.dev/source-head=$head" "$repo_root" \
   2>&1 | tee "$evidence_dir/build-gates.log"
 assert_clean_source

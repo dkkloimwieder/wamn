@@ -46,7 +46,8 @@ pub async fn apply(
     if chart.exists() {
         std::fs::remove_dir_all(&chart).context("remove the old install chart")?;
     }
-    let mut command = Command::new(repository.join("target/debug/wamn-ctl"));
+    let ctl = debug_directory(&repository, std::env::var_os("CARGO_TARGET_DIR")).join("wamn-ctl");
+    let mut command = Command::new(&ctl);
     command
         .current_dir(&repository)
         .env("DOCKER_CONFIG", &docker)
@@ -56,12 +57,12 @@ pub async fn apply(
         .kill_on_drop(true)
         .output()
         .await
-        .context("start build-platform --stamp-only from target/debug/wamn-ctl")?;
+        .with_context(|| format!("start build-platform --stamp-only from {}", ctl.display()))?;
     if build_after_stamp(
         output.status.success(),
         &String::from_utf8_lossy(&output.stderr),
     ) {
-        run(Command::new(repository.join("target/debug/wamn-ctl"))
+        run(Command::new(&ctl)
             .current_dir(&repository)
             .env("DOCKER_CONFIG", &docker)
             .args(platform_arguments(&document.registry, &chart, false)))
@@ -75,6 +76,12 @@ pub async fn apply(
         chart.display()
     );
     Ok(true)
+}
+
+fn debug_directory(repository: &Path, target: Option<OsString>) -> PathBuf {
+    repository
+        .join(target.unwrap_or_else(|| "target".into()))
+        .join("debug")
 }
 
 fn platform_arguments(registry: &str, chart: &Path, stamp_only: bool) -> Vec<OsString> {
@@ -279,15 +286,17 @@ async fn build_packages(
             .strip_prefix("127.0.0.1:")
             .context("the package build database has no loopback port")?
             .parse()?;
-        run(Command::new(repository.join("target/debug/wamn"))
-            .current_dir(repository)
-            .env("DOCKER_CONFIG", docker)
-            .env(
-                "DATABASE_URL",
-                format!("postgres://postgres@127.0.0.1:{port}/postgres"),
-            )
-            .arg("build")
-            .args(packages))
+        run(Command::new(
+            debug_directory(repository, std::env::var_os("CARGO_TARGET_DIR")).join("wamn"),
+        )
+        .current_dir(repository)
+        .env("DOCKER_CONFIG", docker)
+        .env(
+            "DATABASE_URL",
+            format!("postgres://postgres@127.0.0.1:{port}/postgres"),
+        )
+        .arg("build")
+        .args(packages))
         .await?;
         Ok(())
     }
@@ -333,6 +342,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn debug_binaries_use_the_cargo_target_or_the_repository_default() {
+        let repository = Path::new("/checkout");
+        for (target, expected) in [
+            (None, "/checkout/target/debug"),
+            (Some("/cache/target"), "/cache/target/debug"),
+            (Some("local-target"), "/checkout/local-target/debug"),
+        ] {
+            assert_eq!(
+                debug_directory(repository, target.map(OsString::from)),
+                Path::new(expected)
+            );
+        }
+    }
+
+    #[test]
     fn platform_arguments_keep_registry_and_output_as_single_arguments() {
         for stamp in [false, true] {
             let mut expected = vec!["build-platform"];
@@ -358,7 +382,7 @@ mod tests {
 
     #[test]
     fn only_missing_registry_images_trigger_a_build() {
-        let missing = "Error: the registry does not hold 1 of the 0.1.36 images: localhost/wamn-runner (not found)";
+        let missing = "Error: the registry does not hold 1 of the 0.1.37 images: localhost/wamn-runner (not found)";
         assert!(build_after_stamp(false, missing));
         assert!(!build_after_stamp(true, missing));
         for error in [

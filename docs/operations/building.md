@@ -197,7 +197,7 @@ The edge box is an aarch64 Linux computer, for example a Raspberry Pi 3B.
 Build its release binary with the Dockerfile target `edge`:
 
 ```bash
-docker build --target edge --output type=local,dest=target/edge .
+docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .
 ```
 
 The result is one stripped file, `target/edge/wamn-edge`.
@@ -207,7 +207,12 @@ The target compiles with the Debian trixie cross compiler, so the box needs glib
 ## Isolated worktrees
 
 Keep one Cargo process per target directory.
-Use a worktree and target under `$HOME/.cache/wamn-lanes` for independent work.
+
+Target caches are per checkout, both locally and in Docker builds.
+The key uses the first 16 hexadecimal characters of the SHA-256 hash of the canonical absolute checkout path, with no trailing newline.
+A lane sets `CARGO_TARGET_DIR=$HOME/.cache/wamn-target/<key>` at startup and passes the key as Docker's `WAMN_CHECKOUT_KEY` build argument.
+A new checkout starts with a cold build.
+
 Reuse that worktree's own target, and let Cargo decide which artifacts need rebuilding.
 Keep large build targets off temporary memory filesystems.
 [Running tests](running-tests.md#capture-a-run) explains result reporting and optional output directories.

@@ -299,7 +299,7 @@ if [[ "$WAMN_CLUSTER" != true ]]; then
   done <<<"$WAMN_PLAN"
   if [[ "$guest_selected" == true ]]; then
     wamn_guest_check "guests (Dockerfile $WAMN_GUEST_STAGE)" \
-      "$WAMN_DOCKER" build --target "$WAMN_GUEST_STAGE" "$WAMN_REPOSITORY_ROOT"
+      "$WAMN_DOCKER" build --target "$WAMN_GUEST_STAGE" --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$WAMN_REPOSITORY_ROOT")" | sha256sum | cut -c1-16)" "$WAMN_REPOSITORY_ROOT"
   fi
 fi
 ((failed == 0))
