@@ -119,7 +119,7 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
       }
     >
       <Frame header={<span>{props.title}</span>}>
-        <Page>
+        <Page class="identity-panel">
           <SignInForm
             address={props.address}
             trouble={null}
@@ -210,7 +210,7 @@ function NewPassword(
   } as const satisfies FormDescription<typeof defaults>;
   return (
     <Frame header={<span>{props.title}</span>}>
-      <Page>
+      <Page class="identity-panel">
         <Show when={props.missing && !form.errors.form}>
           <FieldError role="alert">{props.missing}</FieldError>
         </Show>
@@ -278,7 +278,7 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
   } as const satisfies FormDescription<typeof defaults>;
   return (
     <Frame header={<span>{props.title}</span>}>
-      <Page>
+      <Page class="identity-panel">
         <FormView
           description={description}
           bindings={{

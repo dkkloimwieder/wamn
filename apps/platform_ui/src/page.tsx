@@ -4,9 +4,9 @@ import { Theme } from "@wfe/components";
 import { DashboardPanel, DashboardShell, type DashboardShellProps } from "@wfe/components/layout";
 import "./page.css";
 
-export function Page(props: { title?: string; children?: JSX.Element }): JSX.Element {
+export function Page(props: { title?: string; class?: string; children?: JSX.Element }): JSX.Element {
   return (
-    <DashboardPanel>
+    <DashboardPanel class={props.class}>
       <Show when={props.title}>{(title) => <h1>{title()}</h1>}</Show>
       {props.children}
     </DashboardPanel>

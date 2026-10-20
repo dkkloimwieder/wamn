@@ -1,3 +1,10 @@
 body {
   margin: 0;
 }
+
+.identity-panel {
+  width: fit-content;
+  min-width: min(100%, calc(var(--ui-form-max-width) + 2 * var(--ui-cell-padding-x) + 2px));
+  height: fit-content;
+  margin: auto;
+}

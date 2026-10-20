@@ -249,7 +249,7 @@ function Session(
       when={state()?.status === "signedIn"}
       fallback={
         <Frame header={<span>{props.title}</span>}>
-          <Page>
+          <Page class="identity-panel">
             <Show when={state() !== null}>
               <SignInForm
                 address={props.address}
