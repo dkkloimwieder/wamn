@@ -17,9 +17,10 @@ use std::process::{Command, Stdio};
 use std::time::Instant;
 
 use anyhow::{Context as _, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::Utc;
 use ring::rand::{SecureRandom as _, SystemRandom};
-use serde_json::Value;
+use serde_json::{Value, json};
 use wamn_control::environment::document::{DeclaredRelease, EnvironmentDocument};
 use wamn_control::kubectl;
 use wamn_control::platform::document::ClusterDocument;
@@ -53,7 +54,7 @@ impl Drop for ClusterGuard {
     }
 }
 
-const STEP_TITLES: [&str; 8] = [
+const STEP_TITLES: [&str; 10] = [
     "4.3 cert-manager and the edge certificate",
     "4.4 Namespaces, runtime operator and internal CA",
     "4.4.1 Collector",
@@ -62,6 +63,8 @@ const STEP_TITLES: [&str; 8] = [
     "4.7 System database, org and identity issuer",
     "4.8 Event NATS",
     "4.9 Platform install inputs",
+    "4.11 First apply",
+    "4.12 Identity and session key",
 ];
 
 #[tokio::test(flavor = "current_thread")]
@@ -160,6 +163,30 @@ cluster.Cluster {{
         serde_json::to_vec_pretty(&values)?,
     )?;
 
+    // The fixture supplies the owner input before the verb starts.
+    let kubeconfig = work.join(format!("{name}.kubeconfig"));
+    let context = document.provider.kubeconfig(&document, &kubeconfig).await?;
+    kubectl::apply(
+        &kubeconfig,
+        &context,
+        "identity",
+        &json!({
+            "apiVersion":"v1","kind":"Namespace","metadata":{"name":"identity"}
+        }),
+    )
+    .await?;
+    kubectl::apply(
+        &kubeconfig,
+        &context,
+        "identity",
+        &json!({
+            "apiVersion":"v1","kind":"Secret","type":"Opaque",
+            "metadata":{"name":"identity-resend","namespace":"identity"},
+            "stringData":{"api-key":"re_platform_fixture"}
+        }),
+    )
+    .await?;
+
     let mut progress = std::fs::File::create(directory.join("progress.log"))?;
     let mut first = Vec::new();
     let start = Instant::now();
@@ -223,6 +250,26 @@ cluster.Cluster {{
             "configmap",
             "wamn-install-platform-identity-issuer",
         ),
+        (
+            "identity",
+            "secret",
+            "wamn-session-role-reader-test--receiving--dev",
+        ),
+        (
+            "platform",
+            "configmap",
+            "wamn-install-platform-first-apply-test--receiving--dev",
+        ),
+        (
+            "platform",
+            "configmap",
+            "wamn-install-platform-session-key-activate",
+        ),
+        (
+            "platform",
+            "configmap",
+            "wamn-install-platform-identity-check",
+        ),
     ] {
         let object: Option<Value> =
             kubectl::get(&kubeconfig, &context, namespace, kind, name).await?;
@@ -251,6 +298,38 @@ cluster.Cluster {{
         anonymous.contains("Authorization Violation") && !anonymous.contains("PONG"),
         "event NATS accepted an anonymous connection: {anonymous}"
     );
+    let secrets = secret_versions(&kubeconfig, &context).await?;
+    let mut logs = first.join("\n");
+    for entry in std::fs::read_dir(work.join("jobs"))? {
+        logs.push_str(&std::fs::read_to_string(entry?.path())?);
+    }
+    for (_, secret) in &secrets {
+        for (key, encoded) in secret["data"].as_object().context("Secret has no data")? {
+            let encoded = encoded.as_str().context("Secret data is not text")?;
+            let decoded = STANDARD.decode(encoded).context("decode fixture Secret")?;
+            let value = std::str::from_utf8(&decoded).context("fixture Secret is not UTF-8")?;
+            let mut private = Vec::new();
+            if matches!(key.as_str(), "password" | "api-key" | "url") {
+                private.push(value.to_owned());
+                if key == "url" {
+                    private_url_password(value, &mut private);
+                }
+            } else if matches!(
+                key.as_str(),
+                "binding.json" | "target.json" | "authorization.conf"
+            ) {
+                let value: Value =
+                    serde_json::from_str(value.strip_prefix("authorization: ").unwrap_or(value))?;
+                private_values(&value, &mut private);
+            }
+            for value in private {
+                ensure!(
+                    !logs.contains(&value) && !logs.contains(&STANDARD.encode(&value)),
+                    "a credential reached the install progress or Job logs"
+                );
+            }
+        }
+    }
 
     let mut second = Vec::new();
     install::apply(
@@ -268,7 +347,69 @@ cluster.Cluster {{
     )
     .await?;
     require_steps(&second, "skipped")?;
+    for ((name, first), (_, second)) in secrets
+        .iter()
+        .zip(secret_versions(&kubeconfig, &context).await?)
+    {
+        ensure!(
+            first["metadata"]["resourceVersion"] == second["metadata"]["resourceVersion"],
+            "unchanged apply rewrote Secret {name}"
+        );
+    }
     Ok(())
+}
+
+fn private_values(value: &Value, values: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                if matches!(key.as_str(), "password" | "database_url") {
+                    if let Some(value) = value.as_str() {
+                        values.push(value.to_owned());
+                        if key == "database_url" {
+                            private_url_password(value, values);
+                        }
+                    }
+                } else {
+                    private_values(value, values);
+                }
+            }
+        }
+        Value::Array(array) => array.iter().for_each(|value| private_values(value, values)),
+        _ => {}
+    }
+}
+
+fn private_url_password(value: &str, values: &mut Vec<String>) {
+    if let Ok(url) = url::Url::parse(value)
+        && let Some(password) = url.password()
+    {
+        values.push(password.to_owned());
+    }
+}
+
+async fn secret_versions(kubeconfig: &Path, context: &str) -> anyhow::Result<Vec<(String, Value)>> {
+    let names = [
+        ("platform", "wamn-pg-superuser"),
+        ("platform", "evt-nats-authorization"),
+        ("platform", "evt-nats-test--receiving--dev-provisioning"),
+        ("platform", "evt-nats-test--receiving--dev-publisher"),
+        ("platform", "evt-nats-test--receiving--dev-observer"),
+        ("hosts", "evt-nats-test--receiving--dev-publisher"),
+        ("hosts", "evt-nats-test--receiving--dev-runtime"),
+        ("hosts", "evt-nats-test--receiving--dev-materializer"),
+        ("identity", "wamn-session-role-reader-test--receiving--dev"),
+        ("identity", "identity-resend"),
+        ("identity", "wamn-identity-db"),
+    ];
+    let mut secrets = Vec::new();
+    for (namespace, name) in names {
+        let secret = kubectl::get(kubeconfig, context, namespace, "secret", name)
+            .await?
+            .with_context(|| format!("missing Secret {namespace}/{name}"))?;
+        secrets.push((format!("{namespace}/{name}"), secret));
+    }
+    Ok(secrets)
 }
 
 fn stamp_registry(

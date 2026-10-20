@@ -545,10 +545,16 @@ The environment JSON gets its gates image from this local stamp.
 Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container and stamps the local registry images.
 The test never builds platform images.
 
-The test runs `platform apply` through sections 4.3 to 4.7, the broker part of 4.8, and 4.9.
+The fixture creates `identity/identity-resend` with a stand-in key before the install.
+The test runs `platform apply` through section 4.12.
+The runner image must contain the pinned KCL compiler for the first environment apply.
 It requires ready PostgreSQL and NATS.
-It also requires both `identity-ca` ConfigMaps, the identity database Secret, and the three completion ConfigMaps for the provisioning Jobs.
+An anonymous CONNECT must return `Authorization Violation` without `PONG`.
+It also requires both `identity-ca` ConfigMaps, identity database and session target Secrets, and the completion ConfigMaps for the environment and identity Jobs.
+The identity Job requests public keys over TLS and requires the active key in the response.
+The test refuses credentials in progress or Job logs.
 A second apply must report every step as skipped.
+The broker and session target Secrets must keep their resource versions.
 
 The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.
 Build `apps/edge_device` with `wamn build` first.

@@ -96,7 +96,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         "{}, each environment's route_host from the registry",
         document.route_hosts.control
     );
-    let environments = "each environment of the registry (read at the step)";
+    let environments = "environments/*.k beside cluster.k (read at the step)";
     let tenants = "<org>--<project>--<env>";
     let blob_account = format!("wamn-blob@{project}.iam.gserviceaccount.com");
     let otel_account = format!("wamn-otel@{project}.iam.gserviceaccount.com");
@@ -199,7 +199,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.10", title: "Platform file",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("registry", registry.clone()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("release namespace", "hosts".into()), ("database host", "wamn-pg-rw.platform.svc.cluster.local".into()), ("database namespace", "platform".into()), ("platform file", "$HOME/.cache/wamn-install/platform.sh".into())],
+            inputs: vec![("registry", registry.clone()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("release namespace", "hosts".into()), ("database host", "wamn-pg-rw.platform.svc.cluster.local".into()), ("database namespace", "platform".into()), ("platform inputs", "existing WAMN_* environment variables and mounted Job inputs; no platform.sh file".into())],
             owner_inputs: vec![],
         },
         InstallStep {
