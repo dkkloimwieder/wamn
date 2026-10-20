@@ -387,7 +387,6 @@ async fn install_operator(
                         "platform".as_ref(),
                         "-o".as_ref(),
                         "json".as_ref(),
-                        "--all".as_ref(),
                     ],
                 )
                 .await?,
