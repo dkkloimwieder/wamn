@@ -54,7 +54,7 @@ pub fn render_project_tofu(
         "remove_default_node_pool": true,
         "initial_node_count": 1,
         "deletion_protection": true,
-        "lifecycle": {"prevent_destroy": true, "ignore_changes": ["initial_node_count"]},
+        "lifecycle": {"prevent_destroy": true, "ignore_changes": ["initial_node_count", "remove_default_node_pool"]},
     });
     let mut imports = vec![json!({"to": "google_container_cluster.cluster", "id": cluster_id})];
     let mut pools = Map::new();
@@ -99,7 +99,7 @@ pub fn render_project_tofu(
                 "taint": taints,
                 "service_account": project.node_service_account,
             },
-            "lifecycle": {"prevent_destroy": true, "ignore_changes": ["node_count"]},
+            "lifecycle": {"prevent_destroy": true, "ignore_changes": ["node_count", "node_config[0].taint"]},
         });
         if pool.spot {
             resource["upgrade_settings"] = json!({"max_surge": 0, "max_unavailable": 1});
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(cluster["lifecycle"]["prevent_destroy"], true);
         assert_eq!(
             cluster["lifecycle"]["ignore_changes"],
-            json!(["initial_node_count"])
+            json!(["initial_node_count", "remove_default_node_pool"])
         );
 
         let pools = resources["google_container_node_pool"].as_object().unwrap();
@@ -243,7 +243,10 @@ mod tests {
             assert!(pool.get("initial_node_count").is_none());
             assert!(pool.get("autoscaling").is_none());
             assert_eq!(pool["lifecycle"]["prevent_destroy"], true);
-            assert_eq!(pool["lifecycle"]["ignore_changes"], json!(["node_count"]));
+            assert_eq!(
+                pool["lifecycle"]["ignore_changes"],
+                json!(["node_count", "node_config[0].taint"])
+            );
             for field in ["machine_type", "spot", "disk_type"] {
                 assert_eq!(pool["node_config"][field], source[field]);
             }
