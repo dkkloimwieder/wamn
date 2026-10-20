@@ -497,6 +497,28 @@ bash tools/http-reuse-run trusted_http_route::tests::real_http_guest_reuses_conn
 Each command creates a fresh registry container, runs its exact test, and removes only owned containers and volumes.
 These cases test connection reuse and authority isolation without measuring throughput.
 
+### Platform and environment apply on kind
+
+The platform test needs Docker, kind, Helm and kubectl on PATH and network access to public registries.
+It needs no existing database, bucket or DNS.
+It writes its files under `/var/tmp` and deletes only its own cluster after success or failure.
+
+```bash
+cargo test -p wamn-control --test platform_apply_kind -- --ignored --nocapture
+```
+
+The test runs `platform apply` through sections 4.3 to 4.5 and the broker part of 4.8.
+It requires ready PostgreSQL and NATS, a completed tap stream Job, and `WAMN_TAP` in the Job log.
+A second apply must report every step as skipped.
+
+The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.
+Build `apps/edge_device` with `wamn build` first.
+Its [test source](../../crates/control/lib/tests/environment_apply_kind.rs) describes the required images and fixtures.
+
+```bash
+WAMN_RELEASE_CHART=<chart> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture
+```
+
 ### Registry image archive in kind
 
 This test runs `tools/journey-image-cache` and `case_release::image_archive` of `wamn-gate-harness` against a private registry with a login and TLS.
