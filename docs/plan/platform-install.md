@@ -46,7 +46,7 @@ Why: the 2026-10-19 greenfield stopped seven times. Four were runbook lines that
 | 4.3 cert-manager, edge certificate | helm, kubectl | `helm`, `kubectl`; wildcard certificate of the control host's domain |
 | 4.4 namespaces, operator, CA, collector | helm, kubectl | `helm`, `kubectl`; values rendered from the document |
 | 4.5 PostgreSQL | kubectl, CNPG | CNPG CR from the document's policy; pd-balanced |
-| 4.6 packages, platform build | cargo, wamn | unchanged commands, invoked by the verb; `--stamp-only` when the version exists |
+| 4.6 packages, platform build | cargo, wamn | unchanged commands, invoked by the verb; the verb runs `--stamp-only` and refuses a version that the registry does not hold. An operator builds each new version once with `build-platform` (owner ruling 2026-10-20) |
 | 4.7 system database, org, issuer | wamn-ctl verbs | same verbs, called in order |
 | 4.8 event NATS | helm, kubectl, Jobs | Helm SDK; the tap Job as a Kubernetes Job object |
 | 4.9–4.11 platform inputs, file, first apply | wamn-ctl | `env apply` for each environment of the registry's environment rows, `release = none` |
