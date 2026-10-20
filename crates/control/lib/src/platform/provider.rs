@@ -5,6 +5,7 @@ use std::path::Path;
 use std::process::{Output, Stdio};
 
 use anyhow::{Context as _, ensure};
+use serde_json::{Value, json};
 use tokio::process::Command;
 
 use super::document::{ClusterDocument, Provider};
@@ -31,10 +32,32 @@ impl Provider {
                 let output = run(Command::new("kind").args(kind_list_arguments())).await?;
                 let clusters =
                     std::str::from_utf8(&output.stdout).context("decode kind get clusters")?;
+                let configuration = path.with_extension("kind.yaml");
+                if !clusters
+                    .lines()
+                    .any(|name| name.trim() == document.cluster_name)
+                {
+                    let registry = path.with_extension("registry");
+                    std::fs::create_dir_all(&registry)
+                        .context("create the kind registry directory")?;
+                    std::fs::write(
+                        registry.join("hosts.toml"),
+                        registry_hosts(&document.cluster_name),
+                    )
+                    .context("write the kind registry mapping")?;
+                    let registry = std::fs::canonicalize(registry)
+                        .context("find the kind registry directory")?;
+                    std::fs::write(
+                        &configuration,
+                        serde_yaml::to_string(&kind_configuration(&document.registry, &registry))?,
+                    )
+                    .context("write the kind configuration")?;
+                }
                 run(Command::new("kind").args(kind_arguments(
                     &document.cluster_name,
                     path,
                     clusters,
+                    &configuration,
                 )))
                 .await?;
             }
@@ -60,20 +83,57 @@ fn kind_list_arguments() -> [&'static str; 2] {
     ["get", "clusters"]
 }
 
-fn kind_arguments(cluster_name: &str, path: &Path, clusters: &str) -> [OsString; 6] {
-    let (verb, object) = if clusters.lines().any(|name| name.trim() == cluster_name) {
+fn kind_arguments(
+    cluster_name: &str,
+    path: &Path,
+    clusters: &str,
+    configuration: &Path,
+) -> Vec<OsString> {
+    let exists = clusters.lines().any(|name| name.trim() == cluster_name);
+    let (verb, object) = if exists {
         ("export", "kubeconfig")
     } else {
         ("create", "cluster")
     };
-    [
+    let mut arguments = vec![
         verb.into(),
         object.into(),
         "--name".into(),
         cluster_name.into(),
         "--kubeconfig".into(),
         path.as_os_str().to_owned(),
-    ]
+    ];
+    if !exists {
+        arguments.extend(["--config".into(), configuration.as_os_str().to_owned()]);
+    }
+    arguments
+}
+
+fn registry_hosts(cluster: &str) -> String {
+    format!(
+        "server = \"http://{cluster}-registry:5000\"\n[host.\"http://{cluster}-registry:5000\"]\n  capabilities = [\"pull\", \"resolve\"]\n"
+    )
+}
+
+fn kind_configuration(registry: &str, directory: &Path) -> Value {
+    let host = registry.split('/').next().unwrap_or_default();
+    // kind's local registry pattern uses containerd's per-authority hosts file.
+    // Mount it at creation so it also survives a node restart.
+    json!({
+        "kind": "Cluster",
+        "apiVersion": "kind.x-k8s.io/v1alpha4",
+        "containerdConfigPatches": [
+            "[plugins.\"io.containerd.grpc.v1.cri\".registry]\n  config_path = \"/etc/containerd/certs.d\"\n"
+        ],
+        "nodes": [{
+            "role": "control-plane",
+            "extraMounts": [{
+                "hostPath": directory,
+                "containerPath": format!("/etc/containerd/certs.d/{host}"),
+                "readOnly": true
+            }]
+        }]
+    })
 }
 
 fn context_name(provider: Provider, document: &ClusterDocument) -> String {
@@ -109,7 +169,10 @@ async fn run(command: &mut Command) -> anyhow::Result<Output> {
 
 #[cfg(test)]
 mod tests {
-    use super::{context_name, gcp_arguments, kind_arguments, kind_list_arguments};
+    use super::{
+        context_name, gcp_arguments, kind_arguments, kind_configuration, kind_list_arguments,
+        registry_hosts,
+    };
     use crate::platform::document::{Buckets, ClusterDocument, Provider, RouteHosts};
     use std::ffi::OsString;
     use std::path::Path;
@@ -164,7 +227,8 @@ mod tests {
                 kind_arguments(
                     "install-test",
                     Path::new("/var/tmp/install kubeconfig"),
-                    clusters
+                    clusters,
+                    Path::new("/var/tmp/install.kind.yaml"),
                 ),
                 [
                     "create",
@@ -173,6 +237,8 @@ mod tests {
                     "install-test",
                     "--kubeconfig",
                     "/var/tmp/install kubeconfig",
+                    "--config",
+                    "/var/tmp/install.kind.yaml",
                 ]
                 .map(OsString::from)
             );
@@ -187,6 +253,7 @@ mod tests {
                 &document.cluster_name,
                 Path::new("/var/tmp/install kubeconfig"),
                 "other\ninstall-test\n",
+                Path::new("/var/tmp/install.kind.yaml"),
             ),
             [
                 "export",
@@ -201,6 +268,34 @@ mod tests {
         assert_eq!(
             context_name(document.provider, &document),
             "kind-install-test"
+        );
+    }
+
+    #[test]
+    fn kind_mounts_the_registry_mapping_for_the_documents_authority() {
+        let value = kind_configuration("localhost:5017/team", Path::new("/var/tmp/kind registry"));
+        assert_eq!(value["apiVersion"], "kind.x-k8s.io/v1alpha4");
+        assert_eq!(value["kind"], "Cluster");
+        assert_eq!(
+            value["nodes"],
+            serde_json::json!([{
+                "role":"control-plane",
+                "extraMounts":[{
+                    "hostPath":"/var/tmp/kind registry",
+                    "containerPath":"/etc/containerd/certs.d/localhost:5017",
+                    "readOnly":true
+                }]
+            }])
+        );
+        assert_eq!(
+            value["containerdConfigPatches"],
+            serde_json::json!([
+                "[plugins.\"io.containerd.grpc.v1.cri\".registry]\n  config_path = \"/etc/containerd/certs.d\"\n"
+            ])
+        );
+        assert_eq!(
+            registry_hosts("install-test"),
+            "server = \"http://install-test-registry:5000\"\n[host.\"http://install-test-registry:5000\"]\n  capabilities = [\"pull\", \"resolve\"]\n"
         );
     }
 }
