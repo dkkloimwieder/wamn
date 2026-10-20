@@ -203,7 +203,7 @@ The pools have a fixed size and no autoscaler, so a scale to 0 holds. If `kubect
 
 ### 4.3 cert-manager and the edge certificate
 
-From the repository root, run `wamn-ctl platform apply <cluster.k>`. The verb runs sections 4.3 through 4.7, the broker part of 4.8, and 4.9 in order. It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory. On GCP, it requests the production certificate directly. It adds the build in 4.6, provisioning in 4.7, and platform inputs in 4.9 without editing committed files. Run sections 4.10 onward by hand with the commands below.
+From the repository root, run `wamn-ctl platform apply <cluster.k>`. The verb runs sections 4.3 through 4.7, the broker part of 4.8, and 4.9 in order. It holds one install lock and writes its kubeconfig, stamped chart, and Job logs in its work directory. On GCP, it requests the production certificate directly. It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files. Before `platform apply`, build each new platform version once with `build-platform`, as section 4.6 describes. Run sections 4.10 onward by hand with the commands below.
 
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 
@@ -302,22 +302,31 @@ docker rm -f wamn-install-build-pg
 
 `wamn-ctl build-platform` builds the host, runner, gates and identity images and the `http` and `materializer` role components. When every build succeeded, it pushes them with the tag of the chart version and stamps their digests into the release chart ([delivery](delivery.md#release-qualification)). The repository `wamn` has immutable tags, so a version that is already in the registry cannot be built again. A reinstall at an unchanged version uses the registry (`docs/plan/platform-deploy.md` R15). With `--stamp-only`, the command builds nothing. It reads the registry digests of the six images of the version and stamps them into the release chart. It refuses if one of them is missing. Both modes record the local platform UI digest beside the stamped chart ([building](building.md#platform-ui)).
 
-The build pushes for longer than one hour, and a `docker login` token expires after one hour. Give Docker a configuration of its own with the gcloud credential helper, which gets a new token for each push. The file holds no credential. Then build if the host image of the version is absent, and stamp only if it is present:
+`platform apply` builds the environment packages and the local UI, then always runs `build-platform --stamp-only`.
+It never builds platform images.
+If registry images are missing, it stops with the version and the explicit build command.
+
+Before applying a new platform version, build it once with the agent identity.
+Use the registry from `deploy/gcp/cluster.k`.
+Give Docker its own configuration with the gcloud credential helper, which refreshes tokens during long pushes.
+The file holds no credential.
+The package outputs from the preceding commands must exist.
 
 ```bash
+export CLOUDSDK_CONFIG=$HOME/.config/gcloud-wamn-agent
 W=$HOME/.cache/wamn-install
-mkdir -m 700 $W/docker
-echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > $W/docker/config.json
-V=$(sed -n 's/^pub const CHART_VERSION: &str = "\(.*\)";/\1/p' crates/control/lib/src/release_chart.rs)
-if gcloud artifacts docker images describe us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-host:$V >/dev/null 2>&1; then
-  pnpm --filter @wamn/platform-ui build
-  STAMP=--stamp-only
-else
-  STAMP=
-fi
-echo "platform $V ${STAMP:-build}"
-DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform $STAMP \
-  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out $W/release-chart
+mkdir -p -m 700 "$W/docker"
+echo '{"credHelpers":{"us-central1-docker.pkg.dev":"gcloud"}}' > "$W/docker/config.json"
+DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform \
+  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out "$W/release-chart"
+```
+
+For an existing version, build the local UI and stamp the registry images into a new output directory:
+
+```bash
+pnpm --filter @wamn/platform-ui build
+DOCKER_CONFIG=$W/docker target/debug/wamn-ctl build-platform --stamp-only \
+  --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out "$W/reinstall-chart"
 ```
 
 Three files in `deploy/gcp` pin images of the chart. Write the new runner and identity images into them:

@@ -14,7 +14,7 @@ use crate::delivery::environment::EnvironmentFile;
 use super::document::{ClusterDocument, Provider};
 use super::steps::read_platform_version;
 
-/// Build or stamp step 4.6, unless the work directory already holds this image set.
+/// Build packages and stamp step 4.6 unless this image set is already present.
 ///
 /// # Errors
 ///
@@ -51,25 +51,21 @@ pub async fn apply(
     command
         .current_dir(&repository)
         .env("DOCKER_CONFIG", &docker)
-        .args(platform_arguments(&document.registry, &chart, true));
+        .args(platform_arguments(&document.registry, &chart));
     let output = command
         .stdin(Stdio::null())
         .kill_on_drop(true)
         .output()
         .await
         .with_context(|| format!("start build-platform --stamp-only from {}", ctl.display()))?;
-    if build_after_stamp(
-        output.status.success(),
-        &String::from_utf8_lossy(&output.stderr),
-    ) {
-        run(Command::new(&ctl)
-            .current_dir(&repository)
-            .env("DOCKER_CONFIG", &docker)
-            .args(platform_arguments(&document.registry, &chart, false)))
-        .await?;
-    } else {
-        successful(output, "build-platform --stamp-only")?;
-    }
+    successful(output, "build-platform --stamp-only").with_context(|| {
+        format!(
+            "could not stamp platform {version}; build its images once with \
+             `wamn-ctl build-platform --registry {} --out {}`",
+            document.registry,
+            chart.display()
+        )
+    })?;
     ensure!(
         stamped(&chart, &document.registry, version)?,
         "build-platform did not stamp every image of {version} into {}",
@@ -84,22 +80,15 @@ fn debug_directory(repository: &Path, target: Option<OsString>) -> PathBuf {
         .join("debug")
 }
 
-fn platform_arguments(registry: &str, chart: &Path, stamp_only: bool) -> Vec<OsString> {
-    let mut arguments = vec!["build-platform".into()];
-    if stamp_only {
-        arguments.push("--stamp-only".into());
-    }
-    arguments.extend([
+fn platform_arguments(registry: &str, chart: &Path) -> Vec<OsString> {
+    vec![
+        "build-platform".into(),
+        "--stamp-only".into(),
         "--registry".into(),
         registry.into(),
         "--out".into(),
         chart.as_os_str().to_owned(),
-    ]);
-    arguments
-}
-
-fn build_after_stamp(success: bool, stderr: &str) -> bool {
-    !success && stderr.contains("the registry does not hold ") && stderr.contains(" images:")
+    ]
 }
 
 fn packages(environments: &Path) -> anyhow::Result<Vec<PathBuf>> {
@@ -358,40 +347,23 @@ mod tests {
 
     #[test]
     fn platform_arguments_keep_registry_and_output_as_single_arguments() {
-        for stamp in [false, true] {
-            let mut expected = vec!["build-platform"];
-            if stamp {
-                expected.push("--stamp-only");
-            }
-            expected.extend([
+        assert_eq!(
+            platform_arguments(
+                "localhost:5001/wamn",
+                Path::new("/var/tmp/install space/release-chart"),
+            ),
+            [
+                "build-platform",
+                "--stamp-only",
                 "--registry",
                 "localhost:5001/wamn",
                 "--out",
                 "/var/tmp/install space/release-chart",
-            ]);
-            assert_eq!(
-                platform_arguments(
-                    "localhost:5001/wamn",
-                    Path::new("/var/tmp/install space/release-chart"),
-                    stamp
-                ),
-                expected.into_iter().map(OsString::from).collect::<Vec<_>>()
-            );
-        }
-    }
-
-    #[test]
-    fn only_missing_registry_images_trigger_a_build() {
-        let missing = "Error: the registry does not hold 1 of the 0.1.38 images: localhost/wamn-runner (not found)";
-        assert!(build_after_stamp(false, missing));
-        assert!(!build_after_stamp(true, missing));
-        for error in [
-            "the chart output exists",
-            "the platform UI build is absent",
-            "start docker: permission denied",
-        ] {
-            assert!(!build_after_stamp(false, error));
-        }
+            ]
+            .into_iter()
+            .map(OsString::from)
+            .collect::<Vec<_>>()
+        );
     }
 
     #[test]
