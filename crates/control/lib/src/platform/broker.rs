@@ -149,8 +149,13 @@ pub(super) async fn apply(
     // Preserve the original bytes when the user set did not change. Formatting
     // alone must not rewrite an existing broker Secret.
     let desired = serde_json::to_value(&authorization)?;
-    let original: Value = serde_json::from_str(text.strip_prefix("authorization: ").unwrap())
-        .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
+    let original: Value = text
+        .strip_prefix("authorization: ")
+        .context("the broker authorization does not start with `authorization: `")
+        .and_then(|body| {
+            serde_json::from_str(body)
+                .map_err(|_| anyhow::anyhow!("decode the broker authorization"))
+        })?;
     if desired != original {
         let object = secret(
             "platform",
