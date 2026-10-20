@@ -2,6 +2,7 @@
 
 pub mod document;
 pub mod install;
+pub mod job;
 pub mod lock;
 pub mod manifests;
 pub mod project;
