@@ -1,4 +1,4 @@
-//! Repository manifests and provider edits for install steps 4.3 through 4.8.
+//! Repository manifests and provider edits for install steps 4.3 through 4.9.
 
 use std::path::Path;
 
@@ -18,6 +18,11 @@ pub fn objects(
     path: &str,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
+    let hosts = matches!(
+        path,
+        "deploy/platform/wamn-host-serviceaccount.yaml"
+            | "deploy/platform/control-status-rbac.yaml"
+    );
     let path = repository.join(path);
     let source = std::fs::read_to_string(&path)
         .with_context(|| format!("read manifest {}", path.display()))?;
@@ -29,7 +34,7 @@ pub fn objects(
             continue;
         }
         // These are the two substitutions in the runbook's environment templates.
-        if object["metadata"]["namespace"] == "__ENVIRONMENT_NAMESPACE__" {
+        if hosts || object["metadata"]["namespace"] == "__ENVIRONMENT_NAMESPACE__" {
             object["metadata"]["namespace"] = "hosts".into();
         }
         if object["kind"] == "RoleBinding"
@@ -46,6 +51,29 @@ pub fn objects(
         objects.push(object);
     }
     Ok(objects)
+}
+
+pub(super) fn platform_inputs(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut inputs = Vec::new();
+    for path in [
+        "deploy/gcp/registry-helper.yaml",
+        "deploy/gcp/auth-nats-clients.yaml",
+        "deploy/platform/wamn-host-serviceaccount.yaml",
+        "deploy/platform/control-status-rbac.yaml",
+    ] {
+        inputs.extend(objects(repository, path, document)?);
+    }
+    if document.provider == Provider::Gcp {
+        inputs.extend(objects(
+            repository,
+            "deploy/gcp/bench-host-placement.yaml",
+            document,
+        )?);
+    }
+    Ok(inputs)
 }
 
 /// Merge the two operator values files in the runbook's order.
@@ -82,11 +110,30 @@ fn merge(base: &mut Value, overlay: Value) {
 }
 
 fn provider_edits(value: &mut Value, document: &ClusterDocument) -> anyhow::Result<()> {
+    if value["kind"] == "Certificate" && value["metadata"]["name"] == "operator-dkk" {
+        let name = format!("operator-{}", document.org);
+        value["metadata"]["name"] = name.clone().into();
+        value["spec"]["commonName"] = name.clone().into();
+        value["spec"]["secretName"] = name.into();
+    }
+    if value["kind"] == "ConfigMap" && value["metadata"]["name"] == "wamn-registry-helper" {
+        let host = document.registry.split('/').next().unwrap_or_default();
+        value["data"]["config.json"] = match document.provider {
+            Provider::Gcp => json!({"credHelpers": {host: "wamn"}}),
+            Provider::Kind => json!({}),
+        }
+        .to_string()
+        .into();
+    }
     match document.provider {
         Provider::Gcp => {
             if value["kind"] == "ServiceAccount" && value["metadata"]["name"] == "otel-collector" {
                 value["metadata"]["annotations"]["iam.gke.io/gcp-service-account"] =
                     format!("wamn-otel@{}.iam.gserviceaccount.com", document.project_id).into();
+            }
+            if value["kind"] == "ServiceAccount" && value["metadata"]["name"] == "wamn-host" {
+                value["metadata"]["annotations"]["iam.gke.io/gcp-service-account"] =
+                    format!("wamn-blob@{}.iam.gserviceaccount.com", document.project_id).into();
             }
         }
         Provider::Kind => {
@@ -360,6 +407,93 @@ mod tests {
             assert_eq!(values["gateway"]["enabled"], false);
             let written = serde_yaml::to_string(&values).unwrap();
             assert_eq!(serde_yaml::from_str::<Value>(&written).unwrap(), values);
+        }
+    }
+
+    #[test]
+    fn provisioning_certificates_and_platform_inputs_follow_each_provider() {
+        for provider in [Provider::Gcp, Provider::Kind] {
+            let mut document = document(provider);
+            document.registry = "registry.example.com/team".into();
+            let certificates = objects(
+                repository(),
+                "deploy/gcp/identity-certificate.yaml",
+                &document,
+            )
+            .unwrap();
+            assert_eq!(
+                object(&certificates, "Certificate", "identity")["spec"]["secretName"],
+                "identity-tls"
+            );
+            let operator = objects(
+                repository(),
+                "deploy/gcp/identity-operator-ca.yaml",
+                &document,
+            )
+            .unwrap();
+            assert_eq!(
+                object(&operator, "Certificate", "operator-test")["spec"]["commonName"],
+                "operator-test"
+            );
+            assert_eq!(
+                object(&operator, "Certificate", "operator-test")["spec"]["secretName"],
+                "operator-test"
+            );
+            assert_eq!(
+                object(&operator, "Issuer", "identity-operator")["spec"]["ca"]["secretName"],
+                "identity-operator-ca"
+            );
+            let inputs = platform_inputs(repository(), &document).unwrap();
+            let account = object(&inputs, "ServiceAccount", "wamn-host");
+            assert_eq!(account["metadata"]["namespace"], "hosts");
+            for kind in ["Role", "RoleBinding"] {
+                assert_eq!(
+                    object(&inputs, kind, "wamn-control-status")["metadata"]["namespace"],
+                    "hosts"
+                );
+            }
+            assert_eq!(
+                object(&inputs, "RoleBinding", "wamn-control-status")["subjects"][0]["name"],
+                "wamn-host"
+            );
+            assert_eq!(
+                object(&inputs, "Certificate", "wamn-ctl-auth-nats")["metadata"]["namespace"],
+                "platform"
+            );
+            assert_eq!(
+                object(&inputs, "Certificate", "wasmcloud-runtime-tls")["metadata"]["namespace"],
+                "identity"
+            );
+            let helper: Value = serde_json::from_str(
+                object(&inputs, "ConfigMap", "wamn-registry-helper")["data"]["config.json"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+            let policies: Vec<_> = inputs
+                .iter()
+                .filter(|o| {
+                    o["kind"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("MutatingAdmissionPolicy")
+                })
+                .collect();
+            if provider == Provider::Gcp {
+                assert_eq!(
+                    helper,
+                    json!({"credHelpers":{"registry.example.com":"wamn"}})
+                );
+                assert_eq!(
+                    account["metadata"]["annotations"]["iam.gke.io/gcp-service-account"],
+                    "wamn-blob@test-project.iam.gserviceaccount.com"
+                );
+                assert_eq!(policies.len(), 2);
+            } else {
+                assert_eq!(helper, json!({}));
+                assert!(account["metadata"].get("annotations").is_none());
+                assert!(policies.is_empty());
+            }
         }
     }
 

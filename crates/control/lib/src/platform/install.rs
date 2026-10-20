@@ -1,11 +1,12 @@
-//! Install the platform through runbook step 4.8 using kubectl and Helm.
+//! Install the platform through runbook step 4.9 using kubectl and Helm.
 
 use std::path::Path;
 use std::process::Stdio;
 
 use anyhow::{Context as _, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ring::rand::SecureRandom as _;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::process::Command;
 
@@ -13,6 +14,7 @@ use crate::kubectl;
 use crate::release_chart::Target;
 
 use super::document::ClusterDocument;
+use super::job::{self, JobRequest, JobSecret};
 use super::manifests::{already_applied, objects, operator_values};
 use super::steps::{InstallStep, install_steps};
 use super::{build, lock};
@@ -20,7 +22,7 @@ use super::{build, lock};
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.6 and the broker part of 4.8 under the install lock.
+/// Apply steps 4.3 through 4.9 under the install lock.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -60,7 +62,19 @@ pub async fn apply(
                 )
                 .await?
             }
+            "4.7" => {
+                provisioning(
+                    &target,
+                    document,
+                    platform_version,
+                    repository,
+                    work_directory,
+                    &step,
+                )
+                .await?
+            }
             "4.8" => broker(&target, document, repository, &step).await?,
+            "4.9" => platform_inputs(&target, document, repository).await?,
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
         progress(&format!(
@@ -70,7 +84,7 @@ pub async fn apply(
             if changed { "done" } else { "skipped" }
         ))?;
     }
-    progress("Steps after 4.8 come later.")?;
+    progress("Steps after 4.9 come later.")?;
     Ok(())
 }
 
@@ -80,7 +94,199 @@ fn applied_steps(
 ) -> impl Iterator<Item = InstallStep> {
     install_steps(document, platform_version)
         .into_iter()
-        .filter(|step| matches!(step.number, "4.3" | "4.4" | "4.4.1" | "4.5" | "4.6" | "4.8"))
+        .filter(|step| {
+            matches!(
+                step.number,
+                "4.3" | "4.4" | "4.4.1" | "4.5" | "4.6" | "4.7" | "4.8" | "4.9"
+            )
+        })
+}
+
+const DATABASE_HOST: &str = "wamn-pg-rw.platform.svc.cluster.local";
+
+#[derive(Deserialize)]
+struct SecretData {
+    data: std::collections::BTreeMap<String, String>,
+}
+
+fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<String> {
+    let encoded = secret
+        .data
+        .get(key)
+        .with_context(|| format!("the Secret has no {key}"))?;
+    let bytes = STANDARD
+        .decode(encoded)
+        .map_err(|_| anyhow::anyhow!("the Secret key {key} is not base64"))?;
+    String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("the Secret key {key} is not UTF-8"))
+}
+
+fn administrator(secret: &SecretData) -> anyhow::Result<JobSecret> {
+    let mut url = url::Url::parse(&format!(
+        "postgresql://postgres@{DATABASE_HOST}/wamn_system"
+    ))?;
+    url.set_password(Some(&secret_text(secret, "password")?.replace('%', "%25")))
+        .map_err(|()| anyhow::anyhow!("encode the system administrator password"))?;
+    Ok(JobSecret {
+        name: "wamn-system-admin".into(),
+        key: "url".into(),
+        value: url.into(),
+        environment: "WAMN_SYSTEM_ADMIN_URL".into(),
+    })
+}
+
+fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest; 3] {
+    let domain = document
+        .route_hosts
+        .control
+        .split_once('.')
+        .map_or(document.route_hosts.control.as_str(), |(_, domain)| domain);
+    [
+        (
+            "platform-system",
+            vec!["provision-system", "--platform-domain", domain],
+            false,
+        ),
+        (
+            "platform-org",
+            vec![
+                "provision-org",
+                "--org",
+                &document.org,
+                "--template",
+                "trials",
+                "--pool",
+                "wamn-pg",
+                "--admin",
+                &document.owner_email,
+            ],
+            false,
+        ),
+        (
+            "platform-identity-issuer",
+            vec![
+                "provision-identity-issuer",
+                "--issuer",
+                "https://identity.identity.svc.cluster.local",
+                "--prepare-generation",
+                "a",
+                "--namespace",
+                "identity",
+                "--emit-secret",
+                "/out/secret.json",
+                "--db-host",
+                DATABASE_HOST,
+            ],
+            true,
+        ),
+    ]
+    .map(|(name, arguments, emits_secret)| JobRequest {
+        name: name.into(),
+        image: image.into(),
+        arguments: arguments.into_iter().map(str::to_owned).collect(),
+        calls_kubernetes: false,
+        emits_secret,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaConfigMap {
+    api_version: &'static str,
+    kind: &'static str,
+    metadata: SecretMetadata,
+    data: std::collections::BTreeMap<&'static str, String>,
+}
+
+fn identity_ca(secret: &SecretData) -> anyhow::Result<[CaConfigMap; 2]> {
+    let ca = secret_text(secret, "ca.crt")?;
+    Ok(["hosts", "edge"].map(|namespace| CaConfigMap {
+        api_version: "v1",
+        kind: "ConfigMap",
+        metadata: SecretMetadata {
+            name: "identity-ca",
+            namespace,
+        },
+        data: [("ca.crt", ca.clone())].into(),
+    }))
+}
+
+async fn provisioning(
+    target: &Target,
+    document: &ClusterDocument,
+    version: &str,
+    repository: &Path,
+    directory: &Path,
+    step: &InstallStep,
+) -> anyhow::Result<bool> {
+    let path = directory.join("release-chart/values.yaml");
+    let values: Value = serde_yaml::from_slice(
+        &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+    )?;
+    let image = values["platform"]["runner"]["image"]
+        .as_str()
+        .filter(|image| image.contains("@sha256:"))
+        .context("the stamped release chart has no pinned runner image")?;
+    let secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-pg-superuser",
+    )
+    .await?
+    .context("missing Secret platform/wamn-pg-superuser")?;
+    let secrets = [administrator(&secret)?];
+    let inputs = json!({"document": document, "chart_version": version});
+    let mut changed = false;
+    for request in provisioning_jobs(document, image) {
+        changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
+    }
+    for path in [
+        "deploy/gcp/identity-certificate.yaml",
+        "deploy/gcp/identity-operator-ca.yaml",
+    ] {
+        for object in objects(repository, path, document)? {
+            changed |= apply_object(target, &object).await?;
+            if object["kind"] == "Certificate" {
+                ready(
+                    target,
+                    step,
+                    "identity",
+                    "certificate",
+                    object["metadata"]["name"]
+                        .as_str()
+                        .context("identity Certificate has no name")?,
+                    "120s",
+                )
+                .await?;
+            }
+        }
+    }
+    let secret = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "identity",
+        "secret",
+        "identity-tls",
+    )
+    .await?
+    .context("missing Secret identity/identity-tls")?;
+    for configmap in identity_ca(&secret)? {
+        changed |= apply_object(target, &serde_json::to_value(configmap)?).await?;
+    }
+    Ok(changed)
+}
+
+async fn platform_inputs(
+    target: &Target,
+    document: &ClusterDocument,
+    repository: &Path,
+) -> anyhow::Result<bool> {
+    let mut changed = false;
+    for object in super::manifests::platform_inputs(repository, document)? {
+        changed |= apply_object(target, &object).await?;
+    }
+    Ok(changed)
 }
 
 async fn certificates(
@@ -624,6 +830,7 @@ async fn helm(target: &Target, arguments: &[&std::ffi::OsStr]) -> anyhow::Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::document::Provider;
 
     #[test]
     fn broker_secrets_render_only_the_tap_administrator_and_its_context() {
@@ -687,7 +894,7 @@ mod tests {
     }
 
     #[test]
-    fn applied_step_list_ends_with_the_broker_after_postgres() {
+    fn applied_step_list_keeps_the_runbook_order_through_platform_inputs() {
         let document: ClusterDocument = serde_json::from_value(json!({
             "provider": "kind", "project_id": "", "zone": "",
             "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
@@ -698,7 +905,89 @@ mod tests {
         let numbers: Vec<_> = applied_steps(&document, "test")
             .map(|step| step.number)
             .collect();
-        assert_eq!(numbers, ["4.3", "4.4", "4.4.1", "4.5", "4.6", "4.8"]);
+        assert_eq!(
+            numbers,
+            ["4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9"]
+        );
+    }
+
+    #[test]
+    fn provision_jobs_use_the_document_and_the_stamped_runner_for_both_providers() {
+        for provider in [Provider::Gcp, Provider::Kind] {
+            let document: ClusterDocument = serde_json::from_value(json!({
+                "provider": provider, "project_id": "", "zone": "",
+                "cluster_name": "test", "org": "acme", "owner_email": "owner@example.com",
+                "registry": "localhost:5000", "buckets": {"web": "", "otel": ""},
+                "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
+            })).unwrap();
+            let jobs = provisioning_jobs(&document, "registry/runner:1@sha256:abc");
+            assert!(jobs.iter().all(|job| !job.calls_kubernetes && job.image == "registry/runner:1@sha256:abc"));
+            assert_eq!(
+                jobs[0].arguments,
+                ["provision-system", "--platform-domain", "example.com"]
+            );
+            assert_eq!(
+                jobs[1].arguments,
+                [
+                    "provision-org",
+                    "--org",
+                    "acme",
+                    "--template",
+                    "trials",
+                    "--pool",
+                    "wamn-pg",
+                    "--admin",
+                    "owner@example.com"
+                ]
+            );
+            assert_eq!(
+                jobs[2].arguments,
+                [
+                    "provision-identity-issuer",
+                    "--issuer",
+                    "https://identity.identity.svc.cluster.local",
+                    "--prepare-generation",
+                    "a",
+                    "--namespace",
+                    "identity",
+                    "--emit-secret",
+                    "/out/secret.json",
+                    "--db-host",
+                    DATABASE_HOST
+                ]
+            );
+            assert!(!jobs[0].emits_secret && !jobs[1].emits_secret && jobs[2].emits_secret);
+        }
+    }
+
+    #[test]
+    fn admin_url_encodes_the_password_and_ca_copies_decode_the_certificate() {
+        let secret = SecretData {
+            data: [
+                ("password".into(), STANDARD.encode("p@ss:/?#%")),
+                ("ca.crt".into(), STANDARD.encode("certificate\n")),
+            ]
+            .into(),
+        };
+        let admin = administrator(&secret).unwrap();
+        assert_eq!(
+            admin.value,
+            format!("postgresql://postgres:p%40ss%3A%2F%3F%23%25@{DATABASE_HOST}/wamn_system")
+        );
+        assert_eq!(admin.name, "wamn-system-admin");
+        for (configmap, namespace) in identity_ca(&secret)
+            .unwrap()
+            .into_iter()
+            .zip(["hosts", "edge"])
+        {
+            assert_eq!(
+                serde_json::to_value(configmap).unwrap(),
+                json!({
+                    "apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"identity-ca","namespace":namespace},
+                    "data":{"ca.crt":"certificate\n"}
+                })
+            );
+        }
     }
 
     #[test]

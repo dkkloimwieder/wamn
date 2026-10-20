@@ -47,6 +47,8 @@ struct Metadata {
     uid: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     owner_references: Vec<OwnerReference>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    labels: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -621,6 +623,18 @@ mod tests {
         assert_eq!(pod["containers"][0]["args"][0], HANDOFF);
         assert_eq!(pod["containers"][0]["args"][1], request.name);
         assert_eq!(pod["containers"][0]["args"][2], "provision-system");
+    }
+
+    #[test]
+    fn emitted_identity_secret_keeps_its_labels_and_credential() {
+        let output = json!({
+            "apiVersion":"v1", "kind":"Secret", "type":"Opaque",
+            "metadata":{"name":"wamn-identity-db","namespace":"identity",
+                "labels":{"app.kubernetes.io/name":"wamn-identity","app.kubernetes.io/managed-by":"wamn"}},
+            "stringData":{"url":"private"}
+        });
+        let secret: Secret = serde_json::from_value(output.clone()).unwrap();
+        assert_eq!(serde_json::to_value(secret).unwrap(), output);
     }
 
     #[test]
