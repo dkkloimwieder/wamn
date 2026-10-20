@@ -16,7 +16,7 @@ import {
 } from "@wamn/web-runtime";
 import type { Address } from "./address";
 import type { Scope } from "./scope";
-import { Link, Page } from "./page";
+import { Frame, Page } from "./page";
 
 interface IdentityProps {
   readonly title: string;
@@ -72,14 +72,19 @@ export function SignInForm(props: {
       { field: "password", label: "password", control: "custom" },
     ],
     submit: { id: "sign-in", label: "sign in" },
+    actions: [{ id: "recover", label: "forgot password", variant: "ghost" }],
   } as const satisfies FormDescription<Credentials>;
   return (
     <>
-      <FormView description={description} bindings={{ form, fields: { email: Email, password: Password } }} />
+      <FormView
+        description={description}
+        bindings={{
+          form,
+          fields: { email: Email, password: Password },
+          actions: { recover: { run: () => props.address.navigate("/recover") } },
+        }}
+      />
       <Show when={!form.errors.form && props.trouble}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-      <Link address={props.address} href="/recover">
-        forgot password
-      </Link>
     </>
   );
 }
@@ -107,52 +112,58 @@ function ChooseEnvironment(props: IdentityProps & { scope: Scope }): JSX.Element
   return (
     <Show
       when={credentials() === null || reachable().length > 0}
-      fallback={<Page title="No access has been granted." />}
+      fallback={
+        <Frame header={<span>No access has been granted.</span>}>
+          <Page />
+        </Frame>
+      }
     >
-      <Page title={props.title}>
-        <SignInForm
-          address={props.address}
-          trouble={null}
-          submit={async (email, password, context) => {
-            const found = await environments(email, password, props.scope, props.options);
-            if (context.signal.aborted) return;
-            setReachable(found);
-            setCredentials({ email, password });
-            const only = found.length === 1 ? found[0] : undefined;
-            if (only) await enter(email, password, only.aud, context.signal);
-          }}
-        />
-        <Show when={credentials()}>
-          {(held) => (
-            <>
-              <Records
-                id="audiences"
-                title="Audiences"
-                rows={reachable().length > 1 ? reachable() : []}
-                rowKey={(environment) => environment.aud}
-                columns={[{ id: "audience", header: "Audience" }]}
-                cells={{
-                  audience: (cell) => (
-                    <Button
-                      disabled={entering()}
-                      onClick={() =>
-                        void enter(held().email, held().password, cell.row.aud).catch((error: unknown) => {
-                          if (active) setTrouble(signInFailed(error));
-                        })
-                      }
-                    >
-                      {cell.row.project === undefined
-                        ? "Control"
-                        : `${cell.row.org}/${cell.row.project}/${cell.row.env ?? ""}`}
-                    </Button>
-                  ),
-                }}
-              />
-              <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
-            </>
-          )}
-        </Show>
-      </Page>
+      <Frame header={<span>{props.title}</span>}>
+        <Page>
+          <SignInForm
+            address={props.address}
+            trouble={null}
+            submit={async (email, password, context) => {
+              const found = await environments(email, password, props.scope, props.options);
+              if (context.signal.aborted) return;
+              setReachable(found);
+              setCredentials({ email, password });
+              const only = found.length === 1 ? found[0] : undefined;
+              if (only) await enter(email, password, only.aud, context.signal);
+            }}
+          />
+          <Show when={credentials()}>
+            {(held) => (
+              <>
+                <Records
+                  id="audiences"
+                  title="Audiences"
+                  rows={reachable().length > 1 ? reachable() : []}
+                  rowKey={(environment) => environment.aud}
+                  columns={[{ id: "audience", header: "Audience" }]}
+                  cells={{
+                    audience: (cell) => (
+                      <Button
+                        disabled={entering()}
+                        onClick={() =>
+                          void enter(held().email, held().password, cell.row.aud).catch((error: unknown) => {
+                            if (active) setTrouble(signInFailed(error));
+                          })
+                        }
+                      >
+                        {cell.row.project === undefined
+                          ? "Control"
+                          : `${cell.row.org}/${cell.row.project}/${cell.row.env ?? ""}`}
+                      </Button>
+                    ),
+                  }}
+                />
+                <Show when={trouble()}>{(text) => <FieldError role="alert">{text()}</FieldError>}</Show>
+              </>
+            )}
+          </Show>
+        </Page>
+      </Frame>
     </Show>
   );
 }
@@ -198,18 +209,20 @@ function NewPassword(
     submit: { id: "set-password", label: "set password" },
   } as const satisfies FormDescription<typeof defaults>;
   return (
-    <Page title={props.title}>
-      <Show when={props.missing && !form.errors.form}>
-        <FieldError role="alert">{props.missing}</FieldError>
-      </Show>
-      <FormView
-        description={description}
-        bindings={{
-          form,
-          fields: { email: Email, password: NewPasswordInput, again: NewPasswordInput },
-        }}
-      />
-    </Page>
+    <Frame header={<span>{props.title}</span>}>
+      <Page>
+        <Show when={props.missing && !form.errors.form}>
+          <FieldError role="alert">{props.missing}</FieldError>
+        </Show>
+        <FormView
+          description={description}
+          bindings={{
+            form,
+            fields: { email: Email, password: NewPasswordInput, again: NewPasswordInput },
+          }}
+        />
+      </Page>
+    </Frame>
   );
 }
 
@@ -261,17 +274,24 @@ function RecoverPassword(props: IdentityProps): JSX.Element {
     id: "recover",
     fields: [{ field: "email", label: "email", control: "custom" }],
     submit: { id: "recover", label: "send reset link" },
+    actions: [{ id: "sign-in", label: "sign in", variant: "ghost" }],
   } as const satisfies FormDescription<typeof defaults>;
   return (
-    <Page title={props.title}>
-      <FormView description={description} bindings={{ form, fields: { email: Email } }} />
-      <Show when={form.phase === "success"}>
-        <p>If this address has an account, a mail with a reset link is on its way.</p>
-      </Show>
-      <Link address={props.address} href="/">
-        sign in
-      </Link>
-    </Page>
+    <Frame header={<span>{props.title}</span>}>
+      <Page>
+        <FormView
+          description={description}
+          bindings={{
+            form,
+            fields: { email: Email },
+            actions: { "sign-in": { run: () => props.address.navigate("/") } },
+          }}
+        />
+        <Show when={form.phase === "success"}>
+          <p>If this address has an account, a mail with a reset link is on its way.</p>
+        </Show>
+      </Page>
+    </Frame>
   );
 }
 

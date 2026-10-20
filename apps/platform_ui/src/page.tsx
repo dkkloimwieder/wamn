@@ -1,14 +1,14 @@
 import type { JSX } from "@solidjs/web";
+import { Show } from "solid-js";
 import { uiScope } from "@wfe/components";
 import { DashboardPanel, DashboardShell, type DashboardShellProps } from "@wfe/components/layout";
 import { appearance } from "./appearance";
 import "./appearance.css";
-import type { Address } from "./address";
 
-export function Page(props: { title: string; children?: JSX.Element }): JSX.Element {
+export function Page(props: { title?: string; children?: JSX.Element }): JSX.Element {
   return (
     <DashboardPanel>
-      <h1>{props.title}</h1>
+      <Show when={props.title}>{(title) => <h1>{title()}</h1>}</Show>
       {props.children}
     </DashboardPanel>
   );
@@ -23,21 +23,6 @@ export function Frame(props: DashboardShellProps): JSX.Element {
       class="platform-appearance"
       style={{ ...scope.style, ...appearance, height: "100dvh", ...props.style }}
     />
-  );
-}
-
-export function Link(props: { address: Address; href: string; children: JSX.Element }): JSX.Element {
-  return (
-    <a
-      href={props.href}
-      onClick={(event) => {
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        event.preventDefault();
-        props.address.navigate(props.href);
-      }}
-    >
-      {props.children}
-    </a>
   );
 }
 

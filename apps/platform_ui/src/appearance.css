@@ -37,15 +37,6 @@ body {
 .platform-appearance .ui-dashboard-panel {
   box-shadow: var(--ui-panel-shadow);
 }
-.platform-appearance .ui-form {
-  inline-size: 100%;
-  margin-inline: auto;
-}
-
-.platform-appearance .ui-form:not(:has(.ui-form-grid[data-columns="2"], .ui-form-grid[data-columns="3"])) {
-  max-inline-size: var(--ui-form-max-width, 30rem);
-}
-
 /* Table cell controls retain the compact row profile. */
 .platform-appearance .table-scroll > table > tbody > tr > td {
   --ui-control-height: var(--ui-table-control-height, 26px);

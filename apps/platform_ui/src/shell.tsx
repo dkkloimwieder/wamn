@@ -165,7 +165,7 @@ export function Shell(props: ShellProps): JSX.Element {
             when={audience()}
             keyed
             fallback={
-              <Frame>
+              <Frame header={<span>{props.title}</span>}>
                 <NotFound />
               </Frame>
             }
@@ -175,8 +175,8 @@ export function Shell(props: ShellProps): JSX.Element {
                 when={audienceKind(aud, props)}
                 keyed
                 fallback={
-                  <Frame>
-                    <Page title={props.title}>
+                  <Frame header={<span>{props.title}</span>}>
+                    <Page>
                       <p>This address names an environment of another org.</p>
                       <a href="/">sign in</a>
                     </Page>
@@ -189,11 +189,7 @@ export function Shell(props: ShellProps): JSX.Element {
           </Show>
         }
       >
-        {(Identity) => (
-          <Frame>
-            <Identity title={props.title} scope={props} options={options} address={address} />
-          </Frame>
-        )}
+        {(Identity) => <Identity title={props.title} scope={props} options={options} address={address} />}
       </Show>
     </Loading>
   );
@@ -252,8 +248,8 @@ function Session(
     <Show
       when={state()?.status === "signedIn"}
       fallback={
-        <Frame>
-          <Page title={props.title}>
+        <Frame header={<span>{props.title}</span>}>
+          <Page>
             <Show when={state() !== null}>
               <SignInForm
                 address={props.address}
@@ -268,7 +264,7 @@ function Session(
       <Show
         when={view()}
         fallback={
-          <Frame>
+          <Frame header={<span>{props.title}</span>}>
             <DashboardPanel>
               <Show when={trouble()}>{(text) => <p role="alert">{text()}</p>}</Show>
             </DashboardPanel>
