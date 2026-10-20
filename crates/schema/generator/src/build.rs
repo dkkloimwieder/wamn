@@ -103,8 +103,69 @@ pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
 ///
 /// When [`generate_package`] or [`build_components`] refuses.
 pub async fn build_package(request: &BuildRequest) -> Result<BuildReceipt> {
+    if let Some(receipt) = current_build(request)? {
+        eprintln!("{} is current", receipt.package.id);
+        return Ok(receipt);
+    }
     let receipt = generate_package(request).await?;
     build_components(request, &receipt.package.id).await
+}
+
+/// Find the matching inputs without compiling KCL or writing temporary files.
+fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
+    let directories = match fs::read_dir(&request.output_root) {
+        Ok(directories) => directories,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("read the package build output root"),
+    };
+    let digest = crate::receipt::input_digest(&request.package_root)?;
+    for directory in directories {
+        let output = directory?.path();
+        let Ok(receipt) = crate::receipt::read(&output) else {
+            continue;
+        };
+        if receipt.inputs.digest != digest
+            || !receipt
+                .outputs
+                .files
+                .keys()
+                .all(|path| output.join(path).is_file())
+            || !receipt
+                .outputs
+                .components
+                .iter()
+                .all(|component| output.join(&component.path).is_file())
+            || receipt.outputs.web.as_ref().is_some_and(|digest| {
+                web_digest(&output.join(WEB_OUTPUT)).as_ref().ok() != Some(digest)
+            })
+            || !receipt.dependencies.iter().all(|dependency| {
+                crate::receipt::read(&package_output(&request.output_root, &dependency.id))
+                    .is_ok_and(|base| {
+                        base.package.version == dependency.version
+                            && base.outputs.manifest == dependency.digest
+                    })
+            })
+        {
+            continue;
+        }
+        // Generation writes a receipt before component compilation. Do not
+        // accept that intermediate result after a failed component build.
+        if request.package_root.join("../Cargo.toml").is_file() {
+            let manifest =
+                PackageManifest::from_slice(&fs::read(output.join(COMPILED_MANIFEST_NAME))?)?;
+            if !manifest.components.keys().all(|name| {
+                receipt
+                    .outputs
+                    .components
+                    .iter()
+                    .any(|component| &component.name == name)
+            }) {
+                continue;
+            }
+        }
+        return Ok(Some(receipt));
+    }
+    Ok(None)
 }
 
 /// Every step of [`build_package`] except the component build (step 7): the
@@ -772,8 +833,12 @@ async fn build_web(package_root: &Path, package_output: &Path) -> Result<Option<
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    Ok(Some(web_digest(&web)?))
+}
+
+fn web_digest(web: &Path) -> Result<String> {
     let mut files = BTreeMap::new();
-    for relative in existing_files(&web)? {
+    for relative in existing_files(web)? {
         let path = web.join(&relative);
         let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         let key = relative
@@ -784,13 +849,10 @@ async fn build_web(package_root: &Path, package_output: &Path) -> Result<Option<
     }
     ensure!(
         !files.is_empty(),
-        "pnpm build in {} wrote no file to {}",
-        source.display(),
+        "the web build has no file in {}",
         web.display()
     );
-    Ok(Some(sha256(&canonical_json_bytes(&serde_json::json!(
-        files
-    )))))
+    Ok(sha256(&canonical_json_bytes(&serde_json::json!(files))))
 }
 
 #[cfg(test)]
@@ -799,6 +861,73 @@ mod tests {
 
     use super::*;
     use crate::describe::DescribedColumn;
+
+    #[tokio::test]
+    async fn current_build_preserves_files_and_changed_inputs_rebuild() {
+        let manifest = json!({
+            "package": {"id": "current_fixture", "version": "0.1.0"},
+            "required_platform_policy_contract": {"id": "current_fixture_data_access", "state": "satisfied"},
+            "connections": [],
+            "components": {"fixture": {"connections": []}},
+            "models": {}
+        });
+        let manifest = serde_json::to_vec(&manifest).unwrap();
+        PackageManifest::from_slice(&manifest).expect("parse the test manifest");
+        let database = wamn_test_postgres::database();
+        let root = std::env::temp_dir().join(format!("wamn-current-build-{}", std::process::id()));
+        fs::create_dir_all(root.join("package")).unwrap();
+        let package = root.join("package");
+        fs::write(package.join("wamn.json"), manifest).unwrap();
+        let request = BuildRequest::new(&package, &root.join("target"), database.url());
+        let first = build_package(&request).await.expect("build the package");
+        let output = package_output(&request.output_root, &first.package.id);
+        let snapshot = || {
+            existing_files(&output)
+                .unwrap()
+                .into_iter()
+                .map(|relative| {
+                    let path = output.join(&relative);
+                    (
+                        relative,
+                        (
+                            fs::read(&path).unwrap(),
+                            fs::metadata(path).unwrap().modified().unwrap(),
+                        ),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>()
+        };
+        // Fix old mtimes so even an immediate identical rewrite fails the test.
+        for relative in existing_files(&output).unwrap() {
+            fs::File::options()
+                .write(true)
+                .open(output.join(relative))
+                .unwrap()
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1))
+                .unwrap();
+        }
+        let before = snapshot();
+        let second = build_package(&request)
+            .await
+            .expect("reuse the current build");
+        assert_eq!(first, second);
+        assert_eq!(before, snapshot(), "a current build wrote an output file");
+        fs::write(package.join("input.txt"), "changed input").unwrap();
+        let rebuilt = build_package(&request)
+            .await
+            .expect("rebuild the changed input");
+        assert_ne!(first.inputs.digest, rebuilt.inputs.digest);
+        assert_ne!(
+            before[Path::new(RECEIPT_FILE)],
+            snapshot()[Path::new(RECEIPT_FILE)]
+        );
+        fs::remove_file(output.join(COMPILED_MANIFEST_NAME)).unwrap();
+        build_package(&request)
+            .await
+            .expect("replace a missing output");
+        assert!(output.join(COMPILED_MANIFEST_NAME).is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn paged_query_warns_for_each_allowed_sort_field_without_an_index() {
