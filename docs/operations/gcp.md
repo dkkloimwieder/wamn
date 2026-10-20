@@ -143,7 +143,7 @@ From the checkout used in section 4.1, render the document into a private direct
 
 ```bash
 W=$HOME/.cache/wamn-install
-mkdir -m 700 "$W/project"
+mkdir -p -m 700 "$W/project"
 target/debug/wamn-ctl project render deploy/gcp/project.k \
   --state-bucket wamn-dev-tofu-state --state-prefix project "$W/project"
 ```
