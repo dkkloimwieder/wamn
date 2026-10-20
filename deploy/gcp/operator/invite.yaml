@@ -30,7 +30,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: invite
-          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:0.1.35@sha256:130125cd20fb19b7d7c04b5c87ea3591ef4b9fb744a706316e685c85d9fe0fe4
+          image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:0.1.36@sha256:ef8956e916419aa7d169acedebecc078fde5d7ecdf8bcbe0f13dc21123d0187a
           command: ["/bin/sh", "-ec"]
           args:
             - |

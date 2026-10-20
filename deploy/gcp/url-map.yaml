@@ -126,25 +126,25 @@ pathMatchers:
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /platform-ui/0.1.35/assets/
+            pathPrefixRewrite: /platform-ui/0.1.36/assets/
       - priority: 4
         matchRules:
           - fullPathMatch: /config.json
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /platform-ui/0.1.35/config.json
+            pathPrefixRewrite: /platform-ui/0.1.36/config.json
       - priority: 5
         matchRules:
           - fullPathMatch: /
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathPrefixRewrite: /platform-ui/0.1.35/index.html
+            pathPrefixRewrite: /platform-ui/0.1.36/index.html
       - priority: 6
         matchRules:
           - pathTemplateMatch: /{page=**}
         service: https://www.googleapis.com/compute/v1/projects/wamn-dev/global/backendBuckets/wamn-edge-files
         routeAction:
           urlRewrite:
-            pathTemplateRewrite: /platform-ui/0.1.35/index.html
+            pathTemplateRewrite: /platform-ui/0.1.36/index.html
