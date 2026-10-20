@@ -10,8 +10,18 @@ async fn main() -> anyhow::Result<()> {
         std::path::PathBuf::from(std::env::args().nth(2).context("Receiving package root")?);
     let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls).await?;
     tokio::spawn(connection);
+    // A shared server, such as the GCP floor, already has both roles.
     client
-        .batch_execute("CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN;")
+        .batch_execute(
+            "DO $roles$ BEGIN
+               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
+                 CREATE ROLE wamn_app NOLOGIN;
+               END IF;
+               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author') THEN
+                 CREATE ROLE wamn_scenario_author NOLOGIN;
+               END IF;
+             END $roles$;",
+        )
         .await?;
     client
         .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())

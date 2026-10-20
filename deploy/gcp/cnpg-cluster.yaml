@@ -8,6 +8,11 @@
 # it from the pg_stat_statements.* parameters: it preloads the library and
 # creates the extension in every database. Without such a parameter, CNPG
 # drops the extension from every database.
+# auto_explain serves the statement plans of the Postgres floor
+# (wamn-c8a5v.1). CNPG preloads it from the auto_explain.* parameters, so a
+# change of the library list restarts the pod. The values match
+# tools/bench/local.sh: 1% of statements, with analyze, buffers and WAL, no
+# per-node timing, and nested statements.
 # The instance runs alone on the node pool pg (gcp.md section 4.2): the node
 # selector puts it there, and the taint keeps every other pod off. A shared
 # 2-vCPU node made each SQL span about 4 times slower (wamn-48d4d). CNPG
@@ -49,6 +54,14 @@ spec:
       max_slot_wal_keep_size: "4GB"
       pg_stat_statements.max: "10000"
       pg_stat_statements.track: "top"
+      auto_explain.log_min_duration: "0"
+      auto_explain.log_analyze: "on"
+      auto_explain.log_buffers: "on"
+      auto_explain.log_wal: "on"
+      auto_explain.log_nested_statements: "on"
+      auto_explain.log_timing: "off"
+      auto_explain.sample_rate: "0.01"
+      auto_explain.log_format: "json"
   bootstrap:
     initdb:
       database: wamn_system

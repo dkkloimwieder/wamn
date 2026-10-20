@@ -9,7 +9,11 @@ from result import write_result
 
 work, output = map(Path, sys.argv[1:3])
 result = {}
-for call in ("select-only", "simple-update", "get", "update"):
+calls = ["select-only", "simple-update", "get", "update"]
+# Only gcp.sh runs the update replay without triggers (perf-arch.md M4).
+if (work / "update-no-triggers.log").exists():
+    calls.append("update-no-triggers")
+for call in calls:
     log = (work / f"{call}.log").read_text()
     tps, = re.findall(r"^tps = ([0-9.]+)", log, re.M)
     failures, = re.findall(r"^number of failed transactions: ([0-9]+)", log, re.M)
@@ -35,6 +39,7 @@ for call in ("select-only", "simple-update", "get", "update"):
         ),
     }
 updates, finished = map(int, (work / "update-counts").read_text().strip().split("|"))
-if updates != result["update"]["calls"] or finished != updates:
+replayed = sum(result[call]["calls"] for call in calls if call.startswith("update"))
+if updates != replayed or finished != updates:
     raise SystemExit(f"Update replay mismatch: {updates} changed rows, {finished} finished claims")
 write_result(output, int(sys.argv[3]), result)

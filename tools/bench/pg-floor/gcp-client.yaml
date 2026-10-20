@@ -1,0 +1,40 @@
+# The pgbench client of the GCP Postgres floor (wamn-c8a5v.1). gcp.sh copies
+# the replay scripts in and runs pgbench through kubectl exec. It runs alone
+# on pool bench, never on pool pg: a client on the Postgres node slows every
+# statement (wamn-48d4d). The image is the one of the Cluster, so pgbench and
+# the server are the same major version.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pg-floor-client
+  namespace: platform
+  labels:
+    app.kubernetes.io/managed-by: wamn
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        role: bench-host
+      tolerations:
+        - key: role
+          operator: Equal
+          value: bench-host
+          effect: NoSchedule
+      containers:
+        - name: pgbench
+          image: ghcr.io/cloudnative-pg/postgresql:18
+          command: ["sleep", "7200"]
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-pg-superuser
+                  key: password
+          resources:
+            requests:
+              cpu: "1500m"
+              memory: "256Mi"
