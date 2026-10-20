@@ -1,4 +1,4 @@
-//! Install the platform through runbook step 4.9 using kubectl and Helm.
+//! Install the platform through runbook step 4.11 using kubectl and Helm.
 
 use std::path::Path;
 use std::process::Stdio;
@@ -22,7 +22,7 @@ use super::{build, lock};
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.9 under the install lock.
+/// Apply steps 4.3 through 4.11 under the install lock.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -75,6 +75,9 @@ pub async fn apply(
             }
             "4.8" => broker(&target, document, repository, environments, &step).await?,
             "4.9" => platform_inputs(&target, document, repository).await?,
+            "4.11" => {
+                super::environments::apply(&target, document, environments, work_directory).await?
+            }
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
         progress(&format!(
@@ -84,7 +87,7 @@ pub async fn apply(
             if changed { "done" } else { "skipped" }
         ))?;
     }
-    progress("Steps after 4.9 come later.")?;
+    progress("Steps after 4.11 come later.")?;
     Ok(())
 }
 
@@ -97,19 +100,19 @@ fn applied_steps(
         .filter(|step| {
             matches!(
                 step.number,
-                "4.3" | "4.4" | "4.4.1" | "4.5" | "4.6" | "4.7" | "4.8" | "4.9"
+                "4.3" | "4.4" | "4.4.1" | "4.5" | "4.6" | "4.7" | "4.8" | "4.9" | "4.11"
             )
         })
 }
 
-const DATABASE_HOST: &str = "wamn-pg-rw.platform.svc.cluster.local";
+pub(super) const DATABASE_HOST: &str = "wamn-pg-rw.platform.svc.cluster.local";
 
 #[derive(Deserialize)]
-struct SecretData {
+pub(super) struct SecretData {
     data: std::collections::BTreeMap<String, String>,
 }
 
-fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<String> {
+pub(super) fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<String> {
     let encoded = secret
         .data
         .get(key)
@@ -120,7 +123,7 @@ fn secret_text(secret: &SecretData, key: &str) -> anyhow::Result<String> {
     String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("the Secret key {key} is not UTF-8"))
 }
 
-fn administrator(secret: &SecretData) -> anyhow::Result<JobSecret> {
+pub(super) fn administrator(secret: &SecretData) -> anyhow::Result<JobSecret> {
     let mut url = url::Url::parse(&format!(
         "postgresql://postgres@{DATABASE_HOST}/wamn_system"
     ))?;
@@ -185,6 +188,7 @@ fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [JobRequest; 3]
         arguments: arguments.into_iter().map(str::to_owned).collect(),
         calls_kubernetes: false,
         emits_secret,
+        ..JobRequest::default()
     })
 }
 
@@ -218,14 +222,7 @@ async fn provisioning(
     directory: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let path = directory.join("release-chart/values.yaml");
-    let values: Value = serde_yaml::from_slice(
-        &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-    )?;
-    let image = values["platform"]["runner"]["image"]
-        .as_str()
-        .filter(|image| image.contains("@sha256:"))
-        .context("the stamped release chart has no pinned runner image")?;
+    let image = runner_image(directory)?;
     let secret: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -238,7 +235,7 @@ async fn provisioning(
     let secrets = [administrator(&secret)?];
     let inputs = json!({"document": document, "chart_version": version});
     let mut changed = false;
-    for request in provisioning_jobs(document, image) {
+    for request in provisioning_jobs(document, &image) {
         changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
     }
     for path in [
@@ -277,6 +274,17 @@ async fn provisioning(
     Ok(changed)
 }
 
+pub(super) fn runner_image(directory: &Path) -> anyhow::Result<String> {
+    let path = directory.join("release-chart/values.yaml");
+    let values: Value = serde_yaml::from_slice(
+        &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
+    )?;
+    values["platform"]["runner"]["image"]
+        .as_str()
+        .filter(|image| image.contains("@sha256:"))
+        .map(str::to_owned)
+        .context("the stamped release chart has no pinned runner image")
+}
 async fn platform_inputs(
     target: &Target,
     document: &ClusterDocument,
@@ -875,7 +883,9 @@ mod tests {
             .collect();
         assert_eq!(
             numbers,
-            ["4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9"]
+            [
+                "4.3", "4.4", "4.4.1", "4.5", "4.6", "4.7", "4.8", "4.9", "4.11"
+            ]
         );
     }
 

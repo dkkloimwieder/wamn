@@ -28,7 +28,7 @@ cat /out/secret.json && rm /out/secret.json
 "#;
 
 /// Inputs to one install Job. Arguments contain no credentials.
-#[derive(Debug)]
+#[derive(Default)]
 pub struct JobRequest {
     pub name: String,
     pub image: String,
@@ -36,6 +36,72 @@ pub struct JobRequest {
     pub calls_kubernetes: bool,
     /// The command writes its Secret to `/out/secret.json`.
     pub emits_secret: bool,
+    /// Public environment inputs. Credentials use `JobSecret`.
+    pub environment: BTreeMap<String, String>,
+    /// Private mounted inputs, keyed by filename under `/inputs`.
+    pub files: BTreeMap<String, String>,
+    /// Namespace-scoped access required by this Job.
+    pub permissions: Vec<Access>,
+}
+
+impl std::fmt::Debug for JobRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JobRequest")
+            .field("name", &self.name)
+            .field("image", &self.image)
+            .field("arguments", &self.arguments)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Kubernetes permissions for one namespace.
+#[derive(Debug, Serialize)]
+pub struct Access {
+    pub namespace: String,
+    pub rules: Vec<PolicyRule>,
+}
+
+/// One Kubernetes authorization rule.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PolicyRule {
+    pub api_groups: Vec<String>,
+    pub resources: Vec<String>,
+    pub verbs: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Role {
+    api_version: &'static str,
+    kind: &'static str,
+    metadata: Metadata,
+    rules: Vec<PolicyRule>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RoleBinding {
+    api_version: &'static str,
+    kind: &'static str,
+    metadata: Metadata,
+    role_ref: RoleRef,
+    subjects: Vec<Subject>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RoleRef {
+    api_group: &'static str,
+    kind: &'static str,
+    name: String,
+}
+
+#[derive(Serialize)]
+struct Subject {
+    kind: &'static str,
+    name: String,
+    namespace: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -114,7 +180,10 @@ struct Container {
 #[serde(rename_all = "camelCase")]
 struct Environment {
     name: String,
-    value_from: SecretSource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value_from: Option<SecretSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,7 +209,17 @@ struct VolumeMount {
 #[serde(rename_all = "camelCase")]
 struct Volume {
     name: &'static str,
-    empty_dir: EmptyDir,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    empty_dir: Option<EmptyDir>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    secret: Option<SecretVolume>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretVolume {
+    secret_name: String,
+    default_mode: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -246,14 +325,29 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
         args.splice(0..0, [HANDOFF.into(), request.name.clone()]);
         volumes.push(Volume {
             name: "out",
-            empty_dir: EmptyDir {
+            empty_dir: Some(EmptyDir {
                 medium: "Memory",
                 size_limit: "1Mi",
-            },
+            }),
+            secret: None,
         });
         volume_mounts.push(VolumeMount {
             name: "out",
             mount_path: "/out",
+        });
+    }
+    if !request.files.is_empty() {
+        volumes.push(Volume {
+            name: "inputs",
+            empty_dir: None,
+            secret: Some(SecretVolume {
+                secret_name: format!("{}-files", request.name),
+                default_mode: 0o400,
+            }),
+        });
+        volume_mounts.push(VolumeMount {
+            name: "inputs",
+            mount_path: "/inputs",
         });
     }
     Job {
@@ -276,13 +370,19 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
                             .iter()
                             .map(|secret| Environment {
                                 name: secret.environment.clone(),
-                                value_from: SecretSource {
+                                value_from: Some(SecretSource {
                                     secret_key_ref: SecretKey {
                                         name: secret.name.clone(),
                                         key: secret.key.clone(),
                                     },
-                                },
+                                }),
+                                value: None,
                             })
+                            .chain(request.environment.iter().map(|(name, value)| Environment {
+                                name: name.clone(),
+                                value: Some(value.clone()),
+                                value_from: None,
+                            }))
                             .collect(),
                         volume_mounts,
                     }],
@@ -330,7 +430,9 @@ pub async fn run(
     secrets: &[JobSecret],
 ) -> anyhow::Result<bool> {
     let digest = input_digest(&json!({
-        "inputs": inputs, "image": request.image, "arguments": request.arguments
+        "inputs": inputs, "image": request.image, "arguments": request.arguments,
+        "environment": request.environment, "files": request.files,
+        "permissions": request.permissions
     }));
     let marker = format!("wamn-install-{}", request.name);
     let completed = kubectl::get(
@@ -353,7 +455,7 @@ pub async fn run(
     )
     .await?;
     if existing.is_some() {
-        finish(target, work_directory, &request.name).await?;
+        finish(target, work_directory, request).await?;
     }
     let rendered = render(request, &target.namespace, secrets);
     let input = serde_json::to_vec(&rendered)?;
@@ -376,12 +478,76 @@ pub async fn run(
             )
             .await?;
         }
+        for access in &request.permissions {
+            // A namespaced Job cannot own objects in another namespace. These
+            // Roles and bindings are deleted explicitly with the Job.
+            let role = Role {
+                api_version: "rbac.authorization.k8s.io/v1",
+                kind: "Role",
+                metadata: metadata(&request.name, &access.namespace),
+                rules: access
+                    .rules
+                    .iter()
+                    .map(|rule| PolicyRule {
+                        api_groups: rule.api_groups.clone(),
+                        resources: rule.resources.clone(),
+                        verbs: rule.verbs.clone(),
+                    })
+                    .collect(),
+            };
+            kubectl::apply(
+                &target.kubeconfig,
+                &target.context,
+                &access.namespace,
+                &role,
+            )
+            .await?;
+            let binding = RoleBinding {
+                api_version: "rbac.authorization.k8s.io/v1",
+                kind: "RoleBinding",
+                metadata: metadata(&request.name, &access.namespace),
+                role_ref: RoleRef {
+                    api_group: "rbac.authorization.k8s.io",
+                    kind: "Role",
+                    name: request.name.clone(),
+                },
+                subjects: vec![Subject {
+                    kind: "ServiceAccount",
+                    name: request.name.clone(),
+                    namespace: target.namespace.clone(),
+                }],
+            };
+            kubectl::apply(
+                &target.kubeconfig,
+                &target.context,
+                &access.namespace,
+                &binding,
+            )
+            .await?;
+        }
         for secret in secrets {
             kubectl::apply(
                 &target.kubeconfig,
                 &target.context,
                 &target.namespace,
                 &owned_secret(secret, &created.metadata)?,
+            )
+            .await?;
+        }
+        if !request.files.is_empty() {
+            let secret = Secret {
+                api_version: "v1".into(),
+                kind: "Secret".into(),
+                metadata: owned_metadata(&format!("{}-files", request.name), &created.metadata)?,
+                string_data: request.files.clone(),
+                data: BTreeMap::new(),
+                content_type: "Opaque".into(),
+            };
+            kubectl::apply(
+                &target.kubeconfig,
+                &target.context,
+                &target.namespace,
+                &secret,
             )
             .await?;
         }
@@ -453,7 +619,7 @@ pub async fn run(
         .await
     }
     .await;
-    let cleanup = finish(target, work_directory, &request.name).await;
+    let cleanup = finish(target, work_directory, request).await;
     result?;
     cleanup?;
     kubectl::apply(
@@ -471,7 +637,8 @@ pub async fn run(
     Ok(true)
 }
 
-async fn finish(target: &Target, directory: &Path, name: &str) -> anyhow::Result<()> {
+async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyhow::Result<()> {
+    let name = &request.name;
     let log = kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
@@ -514,6 +681,16 @@ async fn finish(target: &Target, directory: &Path, name: &str) -> anyhow::Result
     .await;
     saved?;
     deleted?;
+    for access in &request.permissions {
+        kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            &access.namespace,
+            &["delete", "role,rolebinding", name, "--ignore-not-found"],
+            None,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -532,6 +709,7 @@ mod tests {
             ],
             calls_kubernetes: false,
             emits_secret: false,
+            ..JobRequest::default()
         }
     }
 

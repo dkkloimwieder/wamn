@@ -283,9 +283,11 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 FROM ctl AS runner
 ADD --checksum=sha256:5c0d19f31fece1accd0358bb8cff591fe25d7b6cba19f0fd412cbfdc07f75ff6 https://download.docker.com/linux/static/stable/x86_64/docker-28.5.1.tgz /tmp/docker.tgz
 ADD --checksum=sha256:9adafecab4d406853bba163a70e9f104f47dbbf65ce24b7653bae7e36150bcb6 https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz /tmp/helm.tgz
+ADD --checksum=sha256:1cb3490c4df4c823ae6b76289797791c1077611f677d2b3a3d0bc292dc704f2e https://github.com/kcl-lang/cli/releases/download/v0.13.0/kcl-v0.13.0-linux-amd64.tar.gz /tmp/kcl.tgz
 RUN tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker \
  && tar -xzf /tmp/helm.tgz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
- && rm /tmp/docker.tgz /tmp/helm.tgz
+ && tar -xzf /tmp/kcl.tgz -C /usr/local/bin kcl \
+ && rm /tmp/docker.tgz /tmp/helm.tgz /tmp/kcl.tgz
 ADD --chmod=0755 --checksum=sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54 https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64 /usr/local/bin/kind
 # The cases run kubectl v1.36.2; ctl's own pin stays as it is.
 ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl /usr/local/bin/kubectl

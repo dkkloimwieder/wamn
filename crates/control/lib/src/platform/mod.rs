@@ -3,6 +3,7 @@
 mod broker;
 pub mod build;
 pub mod document;
+mod environments;
 pub mod install;
 pub mod job;
 pub mod lock;
