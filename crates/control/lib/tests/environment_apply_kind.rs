@@ -87,6 +87,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
+use tokio::io::AsyncReadExt as _;
 use tokio::process::{Child, Command};
 use wamn_control::delivery::qualification_artifact::{
     self, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload, image_set_digests,
@@ -1619,44 +1620,110 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .kill_on_drop(true)
         .spawn()
         .context("follow the host log")?;
+    let mut watch = Command::new("kubectl")
+        .args([
+            "-n",
+            NAMESPACE,
+            "get",
+            "pod",
+            &pod,
+            "--watch",
+            "--output-watch-events",
+            "-o",
+            "json",
+        ])
+        .env("KUBECONFIG", work.join("kubeconfig"))
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .context("watch the host pod")?;
+    let mut stdout = watch.stdout.take().context("the pod watch's stdout")?;
+    let mut buffer = Vec::new();
+    let mut next_event = async || -> anyhow::Result<Option<Value>> {
+        loop {
+            let mut stream = serde_json::Deserializer::from_slice(&buffer).into_iter::<Value>();
+            match stream.next() {
+                Some(Ok(event)) => {
+                    let consumed = stream.byte_offset();
+                    buffer.drain(..consumed);
+                    return Ok(Some(event));
+                }
+                Some(Err(error)) if !error.is_eof() => return Err(error.into()),
+                _ => {}
+            }
+            if stdout.read_buf(&mut buffer).await? == 0 {
+                ensure!(
+                    buffer.iter().all(u8::is_ascii_whitespace),
+                    "the pod watch ended in an incomplete event"
+                );
+                return Ok(None);
+            }
+        }
+    };
+    // Read the initial object before deleting, so the watch retains every
+    // subsequent change from that object's resource version.
+    let mut event = tokio::time::timeout(Duration::from_secs(grace + 30), next_event())
+        .await
+        .context("wait for the initial pod watch event")??
+        .context("the pod watch ended before deletion")?;
     let deleted = Instant::now();
-    run.run(
-        "kubectl",
-        &["-n", NAMESPACE, "delete", "pod", &pod, "--wait=false"],
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(grace + 30);
+    tokio::time::timeout_at(
+        deadline,
+        run.run(
+            "kubectl",
+            &["-n", NAMESPACE, "delete", "pod", &pod, "--wait=false"],
+        ),
     )
-    .await?;
+    .await
+    .context("delete the watched host pod")??;
     let mut exit_code = None;
     let mut exited_after = None;
     while deleted.elapsed() < Duration::from_secs(grace + 30) {
-        let text = run
-            .run(
-                "kubectl",
-                &[
-                    "-n",
-                    NAMESPACE,
-                    "get",
-                    "pod",
-                    &pod,
-                    "--ignore-not-found",
-                    "-o",
-                    "json",
-                ],
-            )
-            .await?;
-        if text.trim().is_empty() {
-            exited_after.get_or_insert(deleted.elapsed().as_secs());
-            break;
-        }
-        let observed: Value = serde_json::from_str(&text)?;
+        let observed = &event["object"];
         if let Some(code) =
             observed["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"].as_i64()
         {
             exit_code = Some(code);
-            exited_after = Some(deleted.elapsed().as_secs());
+            exited_after.get_or_insert(deleted.elapsed().as_secs());
+        }
+        if event["type"] == "DELETED" {
+            exited_after.get_or_insert(deleted.elapsed().as_secs());
             break;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        match tokio::time::timeout_at(deadline, next_event()).await {
+            Ok(Ok(Some(observed))) => event = observed,
+            Ok(Ok(None)) => {
+                let text = tokio::time::timeout_at(
+                    deadline,
+                    run.run(
+                        "kubectl",
+                        &[
+                            "-n",
+                            NAMESPACE,
+                            "get",
+                            "pod",
+                            &pod,
+                            "--ignore-not-found",
+                            "-o",
+                            "json",
+                        ],
+                    ),
+                )
+                .await
+                .context("check the pod after the watch ended")??;
+                ensure!(
+                    text.trim().is_empty(),
+                    "the pod watch ended before deletion"
+                );
+                exited_after.get_or_insert(deleted.elapsed().as_secs());
+                break;
+            }
+            Ok(Err(error)) => return Err(error),
+            Err(_) => break,
+        }
     }
+    let _ = watch.kill().await;
     let finished = project
         .query_one(
             "SELECT r.status, EXISTS (SELECT 1 FROM wamn_run.run_queue q \
@@ -1687,7 +1754,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .collect();
     run.pass(
         "host_exits_before_its_grace_period",
-        &format!("kubectl -n {NAMESPACE} delete pod {pod}; kubectl get pod {pod} -o json"),
+        &format!("kubectl -n {NAMESPACE} get pod {pod} --watch --output-watch-events -o json; kubectl -n {NAMESPACE} delete pod {pod} --wait=false"),
         json!({"grace_seconds": grace, "exit_code": exit_code, "exited_after_seconds": exited_after,
             "run_status": status, "run_queued": queued,
             "other_release_run_status": other_status, "other_release_run_queued": other_queued,
