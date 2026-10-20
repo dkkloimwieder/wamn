@@ -9,10 +9,12 @@ from result import write_result
 
 work, output = map(Path, sys.argv[1:3])
 result = {}
-calls = ["select-only", "simple-update", "get", "update"]
-# Only gcp.sh runs the update replay without triggers (perf-arch.md M4).
-if (work / "update-no-triggers.log").exists():
-    calls.append("update-no-triggers")
+# Only gcp.sh runs the update replay without triggers (perf-arch.md M4) and
+# the record_receipt replay (M7), and its CALLS can name a subset.
+calls = [call for call in ("select-only", "simple-update", "get", "update", "update-no-triggers")
+         if (work / f"{call}.log").exists()]
+calls += sorted((path.stem for path in work.glob("receipt-*.log")
+                 if "." not in path.stem), key=lambda call: int(call.split("-")[1]))
 for call in calls:
     log = (work / f"{call}.log").read_text()
     tps, = re.findall(r"^tps = ([0-9.]+)", log, re.M)
@@ -38,8 +40,29 @@ for call in calls:
             for row in csv.DictReader((work / f"{call}.statements.csv").read_text().splitlines())
         ),
     }
-updates, finished = map(int, (work / "update-counts").read_text().strip().split("|"))
-replayed = sum(result[call]["calls"] for call in calls if call.startswith("update"))
-if updates != replayed or finished != updates:
-    raise SystemExit(f"Update replay mismatch: {updates} changed rows, {finished} finished claims")
+    if call.startswith("receipt-"):
+        lines = int(call.split("-")[1])
+        receipts, receipt_lines = map(int, (work / f"{call}.receipt-counts").read_text().strip().split("|"))
+        if receipts != len(latencies) or receipt_lines != receipts * lines:
+            raise SystemExit(f"{call}: {receipts} receipts and {receipt_lines} lines for {len(latencies)} calls")
+        statement = sum(
+            float(row["total_exec_time"])
+            for row in csv.DictReader((work / f"{call}.statements.csv").read_text().splitlines())
+            if row["toplevel"] == "t" and row["query"].startswith("WITH requested AS")
+        )
+        # The generated trigger functions of the Receiving relations.
+        triggers = sum(
+            float(row["total_time"])
+            for row in csv.DictReader((work / f"{call}.functions.csv").read_text().splitlines())
+            if row["schemaname"] == "wamn_history" and row["funcname"].startswith("receiving__")
+        )
+        result[call]["lines"] = lines
+        result[call]["statement_ms_per_row"] = statement / (receipts * lines)
+        result[call]["trigger_ms_per_row"] = triggers / (receipts * lines)
+        result[call]["trigger_share"] = triggers / statement
+if any(call.startswith("update") for call in calls):
+    updates, finished = map(int, (work / "update-counts").read_text().strip().split("|"))
+    replayed = sum(result[call]["calls"] for call in calls if call.startswith("update"))
+    if updates != replayed or finished != updates:
+        raise SystemExit(f"Update replay mismatch: {updates} changed rows, {finished} finished claims")
 write_result(output, int(sys.argv[3]), result)
