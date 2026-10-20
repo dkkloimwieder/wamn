@@ -674,7 +674,9 @@ async fn apply_object(target: &Target, object: &Value) -> anyhow::Result<bool> {
     {
         return Ok(false);
     }
-    kubectl::apply(&target.kubeconfig, &target.context, namespace, object).await?;
+    kubectl::apply(&target.kubeconfig, &target.context, namespace, object)
+        .await
+        .with_context(|| format!("apply {resource} {namespace}/{name}"))?;
     Ok(true)
 }
 

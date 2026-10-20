@@ -22,6 +22,25 @@ pub async fn kubectl(
     arguments: &[&str],
     input: Option<&[u8]>,
 ) -> anyhow::Result<String> {
+    run(
+        kubeconfig,
+        context,
+        namespace,
+        arguments,
+        input,
+        input.is_none(),
+    )
+    .await
+}
+
+async fn run(
+    kubeconfig: &Path,
+    context: &str,
+    namespace: &str,
+    arguments: &[&str],
+    input: Option<&[u8]>,
+    show_error: bool,
+) -> anyhow::Result<String> {
     let mut child = Command::new("kubectl")
         .arg("--kubeconfig")
         .arg(kubeconfig)
@@ -47,7 +66,7 @@ pub async fn kubectl(
     }
     let output = child.wait_with_output().await.context("wait for kubectl")?;
     if !output.status.success() {
-        if input.is_some() {
+        if !show_error {
             bail!(
                 "kubectl {} exited {}",
                 arguments.first().copied().unwrap_or_default(),
@@ -69,6 +88,8 @@ pub async fn kubectl(
 
 /// Apply one typed object with server-side apply.
 ///
+/// A failure names kubectl's standard error unless the object is a Secret.
+///
 /// # Errors
 ///
 /// Returns an error if serialization or kubectl fails.
@@ -79,9 +100,20 @@ pub async fn apply<T: Serialize>(
     object: &T,
 ) -> anyhow::Result<()> {
     let (arguments, input) = apply_request(object)?;
-    kubectl(kubeconfig, context, namespace, &arguments, Some(&input))
-        .await
-        .map(drop)
+    let secret = serde_json::to_value(object)
+        .context("encode the kubectl object")?
+        .get("kind")
+        .is_none_or(|kind| kind == "Secret");
+    run(
+        kubeconfig,
+        context,
+        namespace,
+        &arguments,
+        Some(&input),
+        !secret,
+    )
+    .await
+    .map(drop)
 }
 
 fn apply_request<T: Serialize>(object: &T) -> anyhow::Result<([&'static str; 4], Vec<u8>)> {
