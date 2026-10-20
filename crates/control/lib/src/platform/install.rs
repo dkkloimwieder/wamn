@@ -537,6 +537,7 @@ fn render_broker_secret(password: &str) -> BrokerSecret {
     // An empty users list lets nats-server accept anonymous clients, so the
     // authorization holds one user that may do nothing until the environment
     // step rewrites it. Nothing keeps the password.
+    // It stays plain text: it grants nothing, so a hash would protect nothing.
     let authorization = json!({
         "users": [{
             "user": "platform-seal",
