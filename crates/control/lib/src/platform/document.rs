@@ -6,7 +6,7 @@
 //! which this module reads into [`ClusterDocument`]. Its canonical form is
 //! RFC 8785 JSON, as `environment.k` is.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
@@ -29,7 +29,6 @@ pub struct ClusterDocument {
     pub service_secondary_range_name: String,
     pub node_service_account: String,
     pub node_pools: Vec<NodePool>,
-    pub platform_version: String,
     pub org: String,
     pub owner_email: String,
     /// Registry host and optional repository path, without a URL scheme.
@@ -75,13 +74,11 @@ pub struct Buckets {
     pub otel: String,
 }
 
-/// The control host and each environment's route host.
+/// The control route host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteHosts {
     pub control: String,
-    /// Full org/project/env coordinate to route host.
-    pub environments: BTreeMap<String, String>,
 }
 
 impl ClusterDocument {
@@ -113,16 +110,6 @@ impl ClusterDocument {
             "cluster_name is not a lowercase name"
         );
         ensure!(coordinate_name(&self.org), "org is not a coordinate name");
-        let version: Vec<_> = self.platform_version.split('.').collect();
-        ensure!(
-            version.len() == 3
-                && version.iter().all(|part| {
-                    !part.is_empty()
-                        && part.bytes().all(|byte| byte.is_ascii_digit())
-                        && (part.len() == 1 || !part.starts_with('0'))
-                }),
-            "platform_version is not major.minor.patch"
-        );
         for (field, value) in [
             ("owner_email", &self.owner_email),
             ("resend_from", &self.resend_from),
@@ -228,20 +215,6 @@ impl ClusterDocument {
             dns_name(&self.route_hosts.control),
             "route_hosts.control is not a lowercase DNS name"
         );
-        let mut hosts = BTreeSet::from([&self.route_hosts.control]);
-        for (coordinate, host) in &self.route_hosts.environments {
-            let parts: Vec<_> = coordinate.split('/').collect();
-            ensure!(
-                parts.len() == 3
-                    && parts[0] == self.org
-                    && parts.iter().all(|part| coordinate_name(part)),
-                "route coordinate {coordinate:?} does not belong to org/project/env"
-            );
-            ensure!(
-                dns_name(host) && hosts.insert(host),
-                "route host {host:?} is invalid or repeated"
-            );
-        }
         Ok(())
     }
 
@@ -359,12 +332,10 @@ mod tests {
                 {"name": "bench", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "role=bench-host", "taint": "role=bench-host:NoSchedule"},
                 {"name": "pg", "machine_type": "e2-standard-2", "spot": false, "disk_type": "pd-standard", "disk_size": 50, "size": 1, "label": "role=postgres", "taint": "role=postgres:NoSchedule"}
             ],
-            "platform_version": "0.1.35", "org": "dkk", "owner_email": "dkkloimwieder@gmail.com",
+            "org": "dkk", "owner_email": "dkkloimwieder@gmail.com",
             "registry": "us-central1-docker.pkg.dev/wamn-dev/wamn",
             "buckets": {"web": "wamn-dev-web", "otel": "wamn-dev-otel"},
-            "route_hosts": {"control": "control.wamn.dev", "environments": {
-                "dkk/receiving/dev": "receiving.wamn.dev", "dkk/wms/dev": "wms.wamn.dev"
-            }},
+            "route_hosts": {"control": "control.wamn.dev"},
             "resend_from": "noreply@wamn.dev"
         })
     }
@@ -432,17 +403,12 @@ mod tests {
             ("/node_pools/0/taint", json!("role=main:unknown")),
             ("/node_pools/1/name", json!("main")),
             ("/node_pools", json!([])),
-            ("/platform_version", json!("latest")),
-            ("/org", json!("other")),
+            ("/org", json!("Bad")),
             ("/owner_email", json!("owner")),
             ("/resend_from", json!("no reply@wamn.dev")),
             ("/registry", json!("https://registry.example")),
             ("/buckets/web", json!("")),
             ("/route_hosts/control", json!("bad..host")),
-            (
-                "/route_hosts/environments/dkk~1wms~1dev",
-                json!("control.wamn.dev"),
-            ),
         ] {
             let mut bad = document();
             *bad.pointer_mut(pointer).unwrap() = value;
@@ -453,6 +419,26 @@ mod tests {
                 "JSON accepted {pointer}"
             );
         }
+    }
+
+    #[test]
+    fn install_steps_use_the_supplied_version_and_control_domain() {
+        let mut value = document();
+        value["route_hosts"]["control"] = json!("control.example.org");
+        let parsed = ClusterDocument::from_json(value.to_string().as_bytes()).unwrap();
+        let steps = super::super::steps::install_steps(&parsed, "2.3.4");
+        let certificate = steps.iter().find(|step| step.number == "4.3").unwrap();
+        assert!(
+            certificate
+                .inputs
+                .contains(&("certificate DNS name", "*.example.org".into(),))
+        );
+        let build = steps.iter().find(|step| step.number == "4.6").unwrap();
+        assert!(build.inputs.contains(&("platform_version", "2.3.4".into())));
+        assert!(build.inputs.contains(&(
+            "platform images",
+            "us-central1-docker.pkg.dev/wamn-dev/wamn/{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn/http,wamn/materializer}:2.3.4".into(),
+        )));
     }
 
     #[test]

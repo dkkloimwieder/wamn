@@ -36,15 +36,9 @@ schema Buckets:
 
 schema RouteHosts:
     control: str
-    # Full org/project/env coordinate to route host.
-    environments: {str:str}
 
     check:
         len(control) <= 253 and regex.match(control, _host), "control is a lowercase DNS name"
-        all coordinate, host in environments {
-            regex.match(coordinate, r"^[a-z][a-z0-9_-]*/[a-z][a-z0-9_-]*/[a-z][a-z0-9_-]*$") and len(host) <= 253 and regex.match(host, _host)
-        }, "environments maps coordinates to lowercase DNS names"
-        len({host: True for coordinate, host in environments}) == len(environments) and all coordinate, host in environments {host != control}, "route hosts are distinct"
 
 schema Cluster:
     provider: "gcp" | "kind"
@@ -59,7 +53,6 @@ schema Cluster:
     service_secondary_range_name: str
     node_service_account: str
     node_pools: [NodePool]
-    platform_version: str
     org: str
     owner_email: str
     registry: str
@@ -70,12 +63,10 @@ schema Cluster:
     check:
         len(cluster_name) <= 40 and regex.match(cluster_name, _name), "cluster_name is a lowercase name of at most 40 characters"
         regex.match(org, r"^[a-z][a-z0-9_-]*$"), "org is a coordinate name"
-        regex.match(platform_version, r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$"), "platform_version is major.minor.patch"
         regex.match(owner_email, _email), "owner_email is an email address"
         regex.match(resend_from, _email), "resend_from is an email address"
         regex.match(registry, r"^[a-z0-9][a-z0-9.:-]*(/[a-z0-9][a-z0-9._-]*)*$"), "registry is a registry host and optional repository path"
         len(node_pools) > 0 and len({pool.name: True for pool in node_pools}) == len(node_pools), "node pools are nonempty with distinct names"
-        all coordinate in route_hosts.environments {coordinate.startswith(org + "/")}, "route coordinates belong to org"
         provider == "kind" or regex.match(project_id, r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$"), "project_id is a GCP project id"
         provider == "kind" or regex.match(zone, r"^[a-z]+-[a-z]+[0-9]+-[a-z]$"), "zone is a GCP zone"
         release_channel in ["rapid", "regular", "stable", "extended"] or (provider == "kind" and release_channel == ""), "release_channel is a named channel"

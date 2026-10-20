@@ -1,12 +1,12 @@
 //! Arguments and output of the `platform` verbs.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use clap::{Args, Subcommand};
 use wamn_control::platform::document::ClusterDocument;
-use wamn_control::platform::steps::install_steps;
+use wamn_control::platform::steps::{install_steps, read_platform_version};
 
 /// One `platform` verb.
 #[derive(Debug, Subcommand)]
@@ -32,7 +32,19 @@ pub struct ShowArgs {
     pub file: PathBuf,
 }
 
-pub fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<()> {
+pub fn run(command: PlatformCommand, output: impl Write) -> anyhow::Result<()> {
+    run_with_chart(
+        command,
+        Path::new("deploy/platform/release/Chart.yaml"),
+        output,
+    )
+}
+
+fn run_with_chart(
+    command: PlatformCommand,
+    chart: &Path,
+    mut output: impl Write,
+) -> anyhow::Result<()> {
     match command {
         PlatformCommand::Show(args) => {
             let document = ClusterDocument::compile(&args.file)?;
@@ -46,8 +58,10 @@ pub fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<(
                 "platform apply: only --dry-run exists until E2"
             );
             let document = ClusterDocument::compile(&args.file)?;
-            for step in install_steps(&document)? {
+            let version = read_platform_version(chart)?;
+            for step in install_steps(&document, &version) {
                 writeln!(output, "{} {}", step.number, step.title)?;
+                writeln!(output, "  runs: {}", step.runs)?;
                 for (name, value) in step.inputs {
                     let mut lines = value.lines();
                     writeln!(output, "  {name}: {}", lines.next().unwrap_or_default())?;
@@ -73,7 +87,7 @@ pub fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{ClusterDocument, run};
+    use super::{ClusterDocument, run, run_with_chart};
     use crate::{Cli, Command};
     use clap::Parser as _;
     use std::path::Path;
@@ -109,16 +123,38 @@ mod tests {
             panic!("expected a platform command");
         };
         let mut output = Vec::new();
-        run(command, &mut output).expect("print the install plan");
+        let chart =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/platform/release/Chart.yaml");
+        run_with_chart(command, &chart, &mut output).expect("print the install plan");
         assert_eq!(String::from_utf8(output).unwrap(), EXPECTED_PLAN);
     }
 
+    #[test]
+    fn apply_dry_run_names_an_unreadable_chart_before_printing() {
+        let committed = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/gcp/cluster.k");
+        let chart = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../deploy/platform/release/Chart.yaml/missing");
+        let command = super::PlatformCommand::Apply(super::ApplyArgs {
+            file: committed,
+            dry_run: true,
+        });
+        let mut output = Vec::new();
+        let error = run_with_chart(command, &chart, &mut output).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("read platform chart {}", chart.display())
+        );
+        assert!(output.is_empty());
+    }
+
     const EXPECTED_PLAN: &str = r#"4.1 Work directory and binaries
+  runs: from the verb (local build)
   work directory: $HOME/.cache/wamn-install
   binaries: wamn, wamn-ctl, wamn-scenario-worker
   owner inputs: none
 
 4.2 Cluster
+  runs: from the verb (GKE API)
   provider: gcp
   project_id: wamn-dev
   zone: us-central1-a
@@ -142,18 +178,20 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 1 (docs/operations/gcp.md section 2)
 
 4.3 cert-manager and the edge certificate
+  runs: from the verb (Helm SDK, Kubernetes API)
   project_id: wamn-dev
   owner_email: dkkloimwieder@gmail.com
-  route hosts: control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  route hosts: control.wamn.dev, each environment's route_host from the registry
   certificate DNS name: *.wamn.dev
   issuers: letsencrypt-staging, letsencrypt
   certificate and Secret: edge/wamn-edge-tls
-  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, each environment's route_host from the registry
     made by the owner: docs/history/gcp-install-history.md sections 4.3 (docs/operations/gcp.md section 2)
   owner input: roles/dns.admin for cert-manager/cert-manager on zone wamn-dev
     made by the owner: docs/history/gcp-install-history.md sections 2.5, 4.3 (docs/operations/gcp.md section 2)
 
 4.4 Namespaces, runtime operator and internal CA
+  runs: from the verb (Helm SDK, Kubernetes API)
   namespaces: platform, identity, hosts, edge
   operator release: platform/wamn (runtime-operator 2.10.3); watches hosts
   CA Secret and issuer: platform/wasmcloud-ca, cert-manager/wasmcloud-ca; ClusterIssuer wasmcloud-ca
@@ -162,6 +200,7 @@ mod tests {
   owner inputs: none
 
 4.4.1 Collector
+  runs: from the verb (Kubernetes API)
   project_id: wamn-dev
   region: us-central1
   cluster_name: wamn
@@ -181,6 +220,7 @@ mod tests {
       --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[platform/otel-collector]"
 
 4.5 PostgreSQL
+  runs: from the verb (Kubernetes API)
   project_id: wamn-dev
   region: us-central1
   node pools: main: label="", taint=""; bench: label="role=bench-host", taint="role=bench-host:NoSchedule"; pg: label="role=postgres", taint="role=postgres:NoSchedule"
@@ -193,16 +233,16 @@ mod tests {
       --dimensions region=us-central1 --preferred-value 200
 
 4.6 Packages and platform build
+  runs: from the verb (local build)
   platform_version: 0.1.35
   registry: us-central1-docker.pkg.dev/wamn-dev/wamn
-  environments: dkk/receiving/dev, dkk/wms/dev
   platform images: us-central1-docker.pkg.dev/wamn-dev/wamn/{wamn-host,wamn-runner,wamn-gates,wamn-identity,wamn/http,wamn/materializer}:0.1.35
   release chart: $HOME/.cache/wamn-install/release-chart
-  packages: package roots and versions from environment documents
   owner input: Artifact Registry us-central1-docker.pkg.dev/wamn-dev/wamn (immutable tags)
     made by the owner: docs/history/gcp-install-history.md sections 1 (docs/operations/gcp.md section 2)
 
 4.7 System database, org and identity issuer
+  runs: Kubernetes Job platform/platform-system
   org: dkk
   owner_email: dkkloimwieder@gmail.com
   platform domain: wamn.dev
@@ -213,8 +253,9 @@ mod tests {
   owner inputs: none
 
 4.8 Event NATS
-  environments: dkk/receiving/dev, dkk/wms/dev
-  tenants: dkk--receiving--dev, dkk--wms--dev
+  runs: Kubernetes Job platform/evt-nats-tap-stream
+  environments: each environment of the registry (read at the step)
+  tenants: <org>--<project>--<env>
   event NATS: nats://evt-nats.platform.svc.cluster.local:4222
   broker Secrets: platform/evt-nats-authorization, platform/evt-nats-bootstrap
   tap stream and Job: WAMN_TAP, platform/evt-nats-tap-stream
@@ -222,9 +263,9 @@ mod tests {
   owner inputs: none
 
 4.9 Platform install inputs
+  runs: from the verb (Kubernetes API)
   project_id: wamn-dev
   registry: us-central1-docker.pkg.dev/wamn-dev/wamn
-  environments: dkk/receiving/dev, dkk/wms/dev
   node placement: main: label="", taint=""; bench: label="role=bench-host", taint="role=bench-host:NoSchedule"; pg: label="role=postgres", taint="role=postgres:NoSchedule"
   host service account: hosts/wamn-host -> wamn-blob@wamn-dev.iam.gserviceaccount.com
   registry helper and Role: hosts/wamn-registry-helper, hosts/wamn-control-status
@@ -236,10 +277,10 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 5.1 (docs/operations/gcp.md section 2)
 
 4.10 Platform file
+  runs: from the verb (Kubernetes API)
   registry: us-central1-docker.pkg.dev/wamn-dev/wamn
   package artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/packages
   release artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/releases
-  environments: dkk/receiving/dev, dkk/wms/dev
   release namespace: hosts
   database host: wamn-pg-rw.platform.svc.cluster.local
   database namespace: platform
@@ -247,21 +288,22 @@ mod tests {
   owner inputs: none
 
 4.11 First apply
-  environments: dkk/receiving/dev, dkk/wms/dev
-  environment documents: deploy/gcp/environments/dkk--receiving--dev.k, deploy/gcp/environments/dkk--wms--dev.k
-  tenants: dkk--receiving--dev, dkk--wms--dev
-  database names: wamn-db-dkk--receiving--dev--<new instance suffix>, wamn-db-dkk--wms--dev--<new instance suffix>
+  runs: Kubernetes Job platform/platform-first-apply-<org>--<project>--<env>
+  environments: each environment of the registry (read at the step)
+  tenants: <org>--<project>--<env>
+  database names: wamn-db-<org>--<project>--<env>--<new instance suffix>
   release: none
   release namespace: hosts
   owner inputs: none
 
 4.12 Identity and session key
+  runs: Kubernetes Job identity/platform-identity
   org: dkk
-  environments: dkk/receiving/dev, dkk/wms/dev
-  session target Secrets: identity/wamn-session-role-reader-dkk--receiving--dev, identity/wamn-session-role-reader-dkk--wms--dev
+  environments: each environment of the registry (read at the step)
+  session target Secrets: identity/wamn-session-role-reader-<org>--<project>--<env>
   identity image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:0.1.35 (digest from 4.6)
   resend_from: noreply@wamn.dev
-  route hosts: control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  route hosts: control.wamn.dev, each environment's route_host from the registry
   identity issuer: https://identity.identity.svc.cluster.local
   invite Job: identity/invite (docs/operations/gcp.md section 5.3)
   owner_email: dkkloimwieder@gmail.com
@@ -269,13 +311,13 @@ mod tests {
   admin Secret: identity/wamn-system-admin (owned by invite Job)
   owner input: Secret identity/identity-resend, key api-key (nonempty, no whitespace)
     kubectl -n identity create secret generic identity-resend --from-literal=api-key="$(tr -d '[:space:]' < <file>)"
-  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, each environment's route_host from the registry
     made by the owner: docs/history/gcp-install-history.md sections 4.3 (docs/operations/gcp.md section 2)
 
 4.13 Packages
-  environments: dkk/receiving/dev, dkk/wms/dev
-  environment documents: deploy/gcp/environments/dkk--receiving--dev.k, deploy/gcp/environments/dkk--wms--dev.k
-  tenants: dkk--receiving--dev, dkk--wms--dev
+  runs: Kubernetes Job platform/platform-packages-<org>--<project>--<env>
+  environments: each environment of the registry (read at the step)
+  tenants: <org>--<project>--<env>
   package artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/packages
   component artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/components
   package versions: from environment documents
@@ -283,10 +325,11 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 1 (docs/operations/gcp.md section 2)
 
 4.14 Releases
+  runs: Kubernetes Job identity/platform-releases-<org>--<project>--<env>
   org: dkk
-  environments: dkk/receiving/dev, dkk/wms/dev
-  tenants: dkk--receiving--dev, dkk--wms--dev
-  publisher principals: wamn-management-author-dkk--receiving--dev, wamn-management-author-dkk--wms--dev
+  environments: each environment of the registry (read at the step)
+  tenants: <org>--<project>--<env>
+  publisher principals: wamn-management-author-<org>--<project>--<env>
   package artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/packages
   release artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/releases
   operator certificate: identity/operator-dkk
@@ -296,7 +339,8 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 1 (docs/operations/gcp.md section 2)
 
 4.15 Qualification
-  environments: dkk/receiving/dev, dkk/wms/dev
+  runs: Kubernetes Job platform/platform-qualify-<org>--<project>--<env>
+  environments: each environment of the registry (read at the step)
   platform_version: 0.1.35
   release artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/releases
   release chart: $HOME/.cache/wamn-install/release-chart
@@ -305,29 +349,30 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 1 (docs/operations/gcp.md section 2)
 
 4.15.1 Benchmark
+  runs: Kubernetes Job platform/platform-benchmark-<org>--<project>--<env>
   project_id: wamn-dev
   zone: us-central1-a
   platform_version: 0.1.35
-  environments: dkk/receiving/dev, dkk/wms/dev
+  environments: each environment of the registry (read at the step)
   result: tests/bench/platform-0.1.35.json
   first install prerequisite: complete 4.17 through 4.21; bench VM and binary from section 5.8
   owner inputs: none
 
 4.16 Record the releases
-  environments: dkk/receiving/dev, dkk/wms/dev
-  environment documents: deploy/gcp/environments/dkk--receiving--dev.k, deploy/gcp/environments/dkk--wms--dev.k
-  route hosts: control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  runs: from the verb (Kubernetes API)
+  environments: each environment of the registry (read at the step)
+  route hosts: control.wamn.dev, each environment's route_host from the registry
   web bucket: gs://wamn-dev-web/clients/<package>/<release digest hex>/
   release digests: from 4.14, qualified by 4.15
   owner inputs: none
 
 4.17 Apply with the release
-  environments: dkk/receiving/dev, dkk/wms/dev
-  environment documents: deploy/gcp/environments/dkk--receiving--dev.k, deploy/gcp/environments/dkk--wms--dev.k
+  runs: Kubernetes Job platform/platform-apply-<org>--<project>--<env>
+  environments: each environment of the registry (read at the step)
   registry: us-central1-docker.pkg.dev/wamn-dev/wamn
   platform_version: 0.1.35
   release namespace: hosts
-  releases and host groups: r-dev-ee95c37ee965257ff856, r-dev-8f6b3ee8ac75e40affb1
+  releases and host groups: r-<env>-<coordinate hash>
   release digests: from 4.16
   identity CA: hosts/identity-ca
   owner input: Workload Identity hosts/wamn-host -> wamn-blob@wamn-dev.iam.gserviceaccount.com
@@ -337,16 +382,18 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 5.1 (docs/operations/gcp.md section 2)
 
 4.18 CDC readers
-  environments: dkk/receiving/dev, dkk/wms/dev
-  replication Secrets: hosts/wamn-cdc-dkk--receiving--dev, hosts/wamn-cdc-dkk--wms--dev
-  registry-reader Secrets: hosts/wamn-registry-reader-dkk--receiving--dev, hosts/wamn-registry-reader-dkk--wms--dev
+  runs: from the verb (Kubernetes API)
+  environments: each environment of the registry (read at the step)
+  replication Secrets: hosts/wamn-cdc-<org>--<project>--<env>
+  registry-reader Secrets: hosts/wamn-registry-reader-<org>--<project>--<env>
   reader image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-cdc-reader (digest from deploy/gcp/cdc-reader*.yaml)
   event NATS: nats://evt-nats.platform.svc.cluster.local:4222
   service account: hosts/event-reader
   owner inputs: none
 
 4.19 Web clients
-  environments: dkk/receiving/dev, dkk/wms/dev
+  runs: Kubernetes Job platform/platform-web-<org>--<project>--<env>
+  environments: each environment of the registry (read at the step)
   package artifact base: us-central1-docker.pkg.dev/wamn-dev/wamn/packages
   buckets.web: wamn-dev-web
   client destination: gs://wamn-dev-web/clients/<package>/<release digest hex>/
@@ -354,6 +401,7 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 1, 4.3 (docs/operations/gcp.md section 2)
 
 4.19.1 Control host and platform UI
+  runs: Kubernetes Job hosts/platform-control
   org: dkk
   owner_email: dkkloimwieder@gmail.com
   platform_version: 0.1.35
@@ -364,20 +412,21 @@ mod tests {
   platform UI destination: gs://wamn-dev-web/platform-ui/0.1.35/
   owner input: web bucket gs://wamn-dev-web and upload IAM
     made by the owner: docs/history/gcp-install-history.md sections 1, 4.3 (docs/operations/gcp.md section 2)
-  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, each environment's route_host from the registry
     made by the owner: docs/history/gcp-install-history.md sections 4.3 (docs/operations/gcp.md section 2)
 
 4.20 Edge and load balancer
+  runs: from the verb (Kubernetes API)
   project_id: wamn-dev
   zone: us-central1-a
-  route hosts: control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  route hosts: control.wamn.dev, each environment's route_host from the registry
   buckets.web: wamn-dev-web
   platform_version: 0.1.35
   control Service: hosts/c-dkk-http
   edge release and endpoint group: edge/wamn-edge, wamn-edge
   backend service and URL map: wamn-edge-platform, wamn-edge
   certificate Secret and CronJob: edge/wamn-edge-tls, edge/edge-cert
-  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, each environment's route_host from the registry
     made by the owner: docs/history/gcp-install-history.md sections 4.3 (docs/operations/gcp.md section 2)
   owner input: load balancer wamn-edge in wamn-dev: address, health check, firewall rule, backend bucket, backend service, URL map, proxy, forwarding rule, certificate entry
     made by the owner: docs/history/gcp-install-history.md sections 4.3 (docs/operations/gcp.md section 2)
@@ -385,10 +434,11 @@ mod tests {
     made by the owner: docs/history/gcp-install-history.md sections 4.3.1 (docs/operations/gcp.md section 2)
 
 4.21 Check
-  route hosts: control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  runs: from the verb (Kubernetes API)
+  route hosts: control.wamn.dev, each environment's route_host from the registry
   HTTP checks: / and /config.json: 200; unauthenticated application API calls: 401
   certificate Secret: edge/wamn-edge-tls
-  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, receiving.wamn.dev, wms.wamn.dev
+  owner input: Cloud DNS zone wamn-dev; records control.wamn.dev, each environment's route_host from the registry
     made by the owner: docs/history/gcp-install-history.md sections 4.3 (docs/operations/gcp.md section 2)
 
 "#;

@@ -43,17 +43,12 @@ cluster.Cluster {
             taint = "role=postgres:NoSchedule"
         }
     ]
-    platform_version = "0.1.35"
     org = "dkk"
     owner_email = "dkkloimwieder@gmail.com"
     registry = "us-central1-docker.pkg.dev/wamn-dev/wamn"
     buckets = {web = "wamn-dev-web", otel = "wamn-dev-otel"}
     route_hosts = {
         control = "control.wamn.dev"
-        environments = {
-            "dkk/receiving/dev" = "receiving.wamn.dev"
-            "dkk/wms/dev" = "wms.wamn.dev"
-        }
     }
     resend_from = "noreply@wamn.dev"
 }
