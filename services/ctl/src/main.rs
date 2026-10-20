@@ -169,7 +169,7 @@ async fn main() -> anyhow::Result<()> {
         Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
         Command::Env(command) => Box::pin(env_verbs::run(command)).await,
-        Command::Platform(command) => platform_verbs::run(command, std::io::stdout().lock()),
+        Command::Platform(command) => platform_verbs::run(command, std::io::stdout().lock()).await,
         Command::Project(command) => project_verbs::run(command),
     }
 }

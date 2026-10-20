@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use clap::{Args, Subcommand};
 use wamn_control::platform::document::ClusterDocument;
 use wamn_control::platform::steps::{install_steps, read_platform_version};
@@ -13,7 +13,7 @@ use wamn_control::platform::steps::{install_steps, read_platform_version};
 pub enum PlatformCommand {
     /// Print a cluster.k file in its standard KCL form.
     Show(ShowArgs),
-    /// Print the ordered install steps and owner inputs of a cluster.k file.
+    /// Install the platform, or print its plan with --dry-run.
     Apply(ApplyArgs),
 }
 
@@ -32,7 +32,19 @@ pub struct ShowArgs {
     pub file: PathBuf,
 }
 
-pub fn run(command: PlatformCommand, output: impl Write) -> anyhow::Result<()> {
+pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Result<()> {
+    if let PlatformCommand::Apply(args) = &command
+        && !args.dry_run
+    {
+        let document = ClusterDocument::compile(&args.file)?;
+        let version = read_platform_version(Path::new("deploy/platform/release/Chart.yaml"))?;
+        let directory = wamn_control::platform::lock::work_directory()?;
+        return wamn_control::platform::install::apply(&document, &version, &directory, |line| {
+            writeln!(output, "{line}")?;
+            output.flush().context("write install progress")
+        })
+        .await;
+    }
     run_with_chart(
         command,
         Path::new("deploy/platform/release/Chart.yaml"),
@@ -53,10 +65,6 @@ fn run_with_chart(
                 .context("write the cluster document")?;
         }
         PlatformCommand::Apply(args) => {
-            ensure!(
-                args.dry_run,
-                "platform apply: only --dry-run exists until E2"
-            );
             let document = ClusterDocument::compile(&args.file)?;
             let version = read_platform_version(chart)?;
             for step in install_steps(&document, &version) {
@@ -94,19 +102,16 @@ mod tests {
     use std::path::Path;
     use wamn_control::platform::steps::Runner;
 
-    #[test]
-    fn apply_without_dry_run_refuses_before_reading_the_file() {
+    #[tokio::test]
+    async fn apply_without_dry_run_reads_the_document_before_starting() {
         let cli = Cli::try_parse_from(["wamn-ctl", "platform", "apply", "/missing/cluster.k"])
             .expect("parse platform apply");
         let Command::Platform(command) = cli.command else {
             panic!("expected a platform command");
         };
         let mut output = Vec::new();
-        let error = run(command, &mut output).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "platform apply: only --dry-run exists until E2"
-        );
+        let error = run(command, &mut output).await.unwrap_err();
+        assert_eq!(error.to_string(), "read /missing/cluster.k");
         assert!(output.is_empty());
     }
 
@@ -193,7 +198,12 @@ mod tests {
             panic!("expected a platform command");
         };
         let mut output = Vec::new();
-        run(command, &mut output).expect("show the cluster document");
+        run_with_chart(
+            command,
+            Path::new("deploy/platform/release/Chart.yaml"),
+            &mut output,
+        )
+        .expect("show the cluster document");
         output
     }
 
