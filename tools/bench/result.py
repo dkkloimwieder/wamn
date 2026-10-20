@@ -11,6 +11,9 @@ def write_result(output, concurrency, measurements):
             "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "calls", "errors",
             "pg_stat_statements_calls_per_request",
         )}
+        # local.sh samples the host process over the timed interval.
+        if "host_cpu_ms_per_request" in run:
+            result[call]["host_cpu_ms_per_request"] = run["host_cpu_ms_per_request"]
         # The record_receipt floor replay adds its per-row times (perf-arch.md M7).
         result[call].update({key: run[key] for key in (
             "lines", "statement_ms_per_row", "trigger_ms_per_row", "trigger_share",
@@ -38,5 +41,9 @@ if __name__ == "__main__":
         else:
             statements = run["statements_per_request"]
         run["pg_stat_statements_calls_per_request"] = statements
+        cpu = work / f"{call}.host-cpu"
+        if cpu.exists():
+            start, end, ticks_per_sec = map(int, cpu.read_text().split())
+            run["host_cpu_ms_per_request"] = (end - start) * 1000 / ticks_per_sec / run["calls"]
         measurements[call] = run
     write_result(output, int(sys.argv[3]), measurements)

@@ -412,6 +412,13 @@ print(json.load(open(sys.argv[1]))["target_database_url"])
 PY
 )
 sql() { psql "$database_url" -XAt -v ON_ERROR_STOP=1 -c "$1"; }
+# Print the host's utime + stime in clock ticks, fields 14 and 15 of its stat.
+host_cpu_ticks() {
+  local stat fields
+  stat=$(<"/proc/$(<"$work/host.pid")/stat")
+  read -ra fields <<<"${stat##*) }"
+  echo $((fields[11] + fields[12]))
+}
 seed_scale=1000
 if $app_path; then seed_scale=1; fi
 seed_receiving "$seed_scale"
@@ -457,6 +464,7 @@ UNWIND
       fi
       sleep 0.05
     done
+    cpu_start=$(host_cpu_ticks)
     start_database_profile "$label"
     if $profile; then
       host_pid=$(<"$work/host.pid")
@@ -468,6 +476,7 @@ UNWIND
     fi
     wait "$bench_pid" || { cat "$work/$label.log" >&2; exit 1; }
     bench_pid=
+    echo "$cpu_start $(host_cpu_ticks) $(getconf CLK_TCK)" >"$work/$label.host-cpu"
     if [[ -n $perf_pid ]]; then
       kill -INT "$perf_pid" 2>/dev/null || true
       record_status=0

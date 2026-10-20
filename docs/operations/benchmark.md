@@ -46,6 +46,7 @@ The raw results and logs stay in a private directory under `TMPDIR`.
 If `TMPDIR` is unset, the script uses `/var/tmp`.
 On exit, the script stops its development processes and removes only its own containers and volumes.
 Each baseline includes throughput, p50, p95, p99, completed calls, errors, and PostgreSQL statement counts per request.
+A `local.sh` result also includes `host_cpu_ms_per_request`. This value is the user and system CPU time of the host process in the timed interval, divided by the completed calls.
 The raw results retain guest digests, edge selection, maximum latency, and version conflicts.
 Throughput counts all completed attempts, including errors and conflicts.
 
