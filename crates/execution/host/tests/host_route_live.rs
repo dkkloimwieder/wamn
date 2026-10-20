@@ -620,6 +620,7 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
     let delivery = HostRouteDelivery::new(
         release,
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: None,
             control,
             writer,

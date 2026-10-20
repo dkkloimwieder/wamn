@@ -3,7 +3,7 @@ import type { JSX } from "@solidjs/web";
 import { uiScope } from "@wfe/components";
 import { Button } from "@wfe/components/fields";
 import { permission } from "@wamn/control-client";
-import { control, environment, member, project, projectAdmin, user } from "@wamn/control-org-client";
+import { control, environment, member, project, projectAdmin, release, user } from "@wamn/control-org-client";
 import {
   createTransport,
   keepSession,
@@ -86,6 +86,8 @@ async function applicationView(transport: Transport, sections: readonly ShellSec
 export function controlHolds(mine: control.ControlMineResult): Holds {
   const projectOperations = new Set([
     environment.ENVIRONMENT_LIST_ROUTE.operation,
+    environment.ENVIRONMENT_STATUS_ROUTE.operation,
+    release.RELEASE_PROFILE_ROUTE.operation,
     member.MEMBER_LIST_ROUTE.operation,
     member.MEMBER_GRANT_ROUTE.operation,
     member.MEMBER_REVOKE_ROUTE.operation,
@@ -98,6 +100,8 @@ export function controlHolds(mine: control.ControlMineResult): Holds {
     project.PROJECT_CREATE_ROUTE.operation,
     project.PROJECT_ACTIVATE_ROUTE.operation,
     project.PROJECT_INACTIVATE_ROUTE.operation,
+    environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
+    environment.ENVIRONMENT_INACTIVATE_ROUTE.operation,
   ]);
   return (operation, scope) => {
     if (operation === control.CONTROL_MINE_ROUTE.operation)

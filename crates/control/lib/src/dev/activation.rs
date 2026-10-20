@@ -464,6 +464,11 @@ impl DevActivation {
         &self.active.workload_id
     }
 
+    /// The workloads that the local host starts for this activation.
+    pub fn workload_ids(&self) -> [&str; 2] {
+        [self.workload_id(), MATERIALIZER_WORKLOAD_ID]
+    }
+
     /// Loopback HTTP endpoint published by the supervised host heartbeat.
     pub fn http_base_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.active.http_port)

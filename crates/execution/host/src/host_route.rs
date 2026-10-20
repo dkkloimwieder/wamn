@@ -53,6 +53,8 @@ pub enum HostRouteHandlers {
         /// The mounted Secret `wamn-control-administration-<org>`: one file
         /// per environment that holds its administration login.
         administration: Option<std::path::PathBuf>,
+        /// The runtime status source selected by the serving mode.
+        status: Arc<dyn crate::environment_status::StatusSource>,
         org: String,
         /// Publishes each users row and status change of an environment.
         changes: AuthChanges,
@@ -184,6 +186,7 @@ impl HostRouteDelivery {
                     writer,
                     identity,
                     administration,
+                    status,
                     org,
                     changes,
                 },
@@ -193,6 +196,7 @@ impl HostRouteDelivery {
                     writer,
                     identity: identity.as_ref(),
                     administration: administration.as_deref(),
+                    status: status.as_ref(),
                     org,
                     changes,
                 }

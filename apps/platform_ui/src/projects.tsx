@@ -6,14 +6,9 @@ import { createForm } from "@wfe/form";
 import { control, environment, member, project, projectAdmin } from "@wamn/control-org-client";
 import type { Outcome } from "@wamn/web-runtime";
 import { Page } from "./page";
+import { value } from "./outcome";
+import { Environment } from "./environment";
 import type { ScreenProps, ShellSection } from "./shell";
-
-function value<T>(outcome: Outcome<T>): T {
-  if (outcome.status === "completed") return outcome.value;
-  if (outcome.status === "refused") throw new Error(outcome.text ?? outcome.code ?? "The operation was refused.");
-  if (outcome.status === "uncertain") throw new Error(`The result is unknown: ${outcome.reason}`);
-  throw new Error(`The operation completed in part: ${JSON.stringify(outcome.failedOutcome)}`);
-}
 
 export function Projects(props: ScreenProps): JSX.Element {
   const [projects, setProjects] = createSignal<readonly string[]>(props.controlProjects ?? []);
@@ -175,7 +170,15 @@ export function Project(props: ScreenProps): JSX.Element {
       </Show>
       <h2>Environments</h2>
       <ul aria-label="Environments">
-        <For each={environments()}>{(env) => <li>{env}</li>}</For>
+        <For each={environments()}>
+          {(env) => (
+            <li>
+              <Button onClick={() => props.open(`projects/${encodeURIComponent(name)}/${encodeURIComponent(env)}`)}>
+                {env}
+              </Button>
+            </li>
+          )}
+        </For>
       </ul>
       <h2>Members</h2>
       <Show when={props.holds(member.MEMBER_GRANT_ROUTE.operation)}>
@@ -287,6 +290,13 @@ export const controlSections: readonly ShellSection[] = [
     screens: [
       { path: "projects", label: "Projects", operation: control.CONTROL_MINE_ROUTE.operation, component: Projects },
     ],
-    routes: [{ path: "projects/:project", operation: member.MEMBER_LIST_ROUTE.operation, component: Project }],
+    routes: [
+      { path: "projects/:project", operation: member.MEMBER_LIST_ROUTE.operation, component: Project },
+      {
+        path: "projects/:project/:env",
+        operation: environment.ENVIRONMENT_STATUS_ROUTE.operation,
+        component: Environment,
+      },
+    ],
   },
 ];

@@ -1029,6 +1029,13 @@ impl ProductionDevStageRunner {
             self.config.route_host(),
             target_instance,
         );
+        let identity = self.config.activation_identity();
+        let status_endpoint = serde_json::json!({
+            "base_url": endpoint.base_url(), "route_host": endpoint.route_host(),
+            "org": identity.org, "project": identity.project, "env": identity.environment,
+            "digest": release.manifest_digest.as_str(), "host_id": activation.host_id(),
+            "workloads": activation.workload_ids(),
+        });
         self.activation = Some(activation);
         if let Some(reader) = self.config.cdc_reader() {
             // After the package migrations, as the cluster runs the verb after
@@ -1052,9 +1059,16 @@ impl ProductionDevStageRunner {
             );
         }
         crate::provision_project_env::write_secret_json(
-            &self.config.local_artifacts().directory.with_file_name("application-endpoint.json"),
-            &serde_json::json!({"base_url": endpoint.base_url(), "route_host": endpoint.route_host()}),
-        ).map_err(|source| ProductionDevStageError::owner("publish the local web endpoint", source))?;
+            &self
+                .config
+                .local_artifacts()
+                .directory
+                .with_file_name("application-endpoint.json"),
+            &status_endpoint,
+        )
+        .map_err(|source| {
+            ProductionDevStageError::owner("publish the local web endpoint", source)
+        })?;
         self.read_publisher.set_runtime_endpoint(endpoint);
         Ok(())
     }

@@ -317,6 +317,7 @@ async fn org_routes_write_through_the_control_login_and_refuse_a_non_admin() -> 
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
@@ -546,6 +547,7 @@ async fn project_routes_admit_a_project_admin_and_refuse_a_covered_revoke() -> a
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
@@ -765,6 +767,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
@@ -955,6 +958,7 @@ async fn status_routes_mirror_the_status_into_each_environment_leaves_first() ->
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
             identity: None,
@@ -1190,6 +1194,7 @@ async fn project_create_writes_a_project_that_every_org_admin_administers() -> a
     let delivery = HostRouteDelivery::new(
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
             control: Arc::new(connect(&control_url).await?),
             writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),

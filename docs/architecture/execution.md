@@ -106,6 +106,10 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:project/activate@0.9.0` | Takes `project`, and makes every environment of the project active. Answers `project` and `status`. |
 | `wamn-control:project/inactivate@0.9.0` | Takes `project`, and makes every environment of the project inactive. Answers `project` and `status`. |
 
+The control host selects one status source. Kubernetes reads the release namespace.
+With `--local-control`, the local source reads the development loop's endpoint record and queries its selected host through NATS.
+Both sources return the same digest, rollout, workloads, and live set.
+
 An application route runs under the administration credential, in a host-owned READ COMMITTED transaction that binds the caller and the sealed operation id.
 A host-run write stamps that sealed operation id in its history entries.
 A role or permission write first takes the tenant lock that `wamn-ctl` and release reconciliation take.

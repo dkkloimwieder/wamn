@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import { control, environment, member, project, projectAdmin, user } from "@wamn/control-org-client";
+import { control, environment, member, project, projectAdmin, release, user } from "@wamn/control-org-client";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
 import { controlSections, Project, Projects } from "../src/projects";
@@ -16,6 +16,8 @@ const projectAdminOnly = controlHolds({
 });
 const projectOperations = [
   environment.ENVIRONMENT_LIST_ROUTE.operation,
+  environment.ENVIRONMENT_STATUS_ROUTE.operation,
+  release.RELEASE_PROFILE_ROUTE.operation,
   member.MEMBER_LIST_ROUTE.operation,
   member.MEMBER_GRANT_ROUTE.operation,
   member.MEMBER_REVOKE_ROUTE.operation,
@@ -28,6 +30,8 @@ const orgOperations = [
   project.PROJECT_CREATE_ROUTE.operation,
   project.PROJECT_ACTIVATE_ROUTE.operation,
   project.PROJECT_INACTIVATE_ROUTE.operation,
+  environment.ENVIRONMENT_ACTIVATE_ROUTE.operation,
+  environment.ENVIRONMENT_INACTIVATE_ROUTE.operation,
 ];
 
 describe("control holds", () => {

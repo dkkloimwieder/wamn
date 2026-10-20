@@ -656,6 +656,7 @@ It starts `wamn dev up` on disposable services through the existing `delivery_ti
 The test uses platform verbs to enroll the org admin and a second user.
 It grants the admin membership in `receiving/dev`, requires both audiences, and chooses Control.
 Control opens Projects, and the shell root carries `data-ui`.
+The fixture runs `wamn dev --config <root>/dev.json --overlay-root apps/wamn_receiving --hold` to install and start the Receiving release.
 The browser creates `browser-project` and opens its Project screen.
 The fixture then calls `provision_project_env` and `reconcile_journey_run_plane` to prepare `browser-project/dev` on the disposable PostgreSQL server.
 It prepares the administration credential through `run_workload_action` and installs its emitted file in the local control host's credential directory.
@@ -664,6 +665,7 @@ Each write must update the screen.
 The second user sees only that project, and an address for `receiving` shows no page.
 The project-admin session uses the project names from `control.mine` and never calls `project.list`.
 Project inactivation and activation must each show only the opposite action, including after a page reload.
+The browser also opens `receiving/dev` from Project, reads its runtime status and release profile, and toggles its state with a reload.
 The test prints its elapsed time and fails if it exceeds 15 minutes.
 
 Build the native programs and components described in [the development loop](development-loop.md).

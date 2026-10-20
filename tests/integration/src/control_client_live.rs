@@ -215,6 +215,7 @@ async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<
     let delivery = Arc::new(HostRouteDelivery::new(
         release,
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: None,
             control,
             writer,

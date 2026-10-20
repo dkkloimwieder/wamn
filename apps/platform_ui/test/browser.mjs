@@ -110,7 +110,37 @@ try {
   assert.equal(await page.getByRole("button", { name: "Activate project", exact: true }).count(), 0);
   await page.reload();
   await page.getByRole("button", { name: "Inactivate project", exact: true }).waitFor();
+  await page.goto(`${base}${controlPath}/projects/${fixture.releaseProject}`);
+  await page.getByRole("heading", { name: fixture.releaseProject, exact: true }).waitFor();
+  await page
+    .getByRole("list", { name: "Environments", exact: true })
+    .getByRole("button", { name: fixture.releaseEnv, exact: true })
+    .click();
+  assert.equal(new URL(page.url()).pathname, `${controlPath}/projects/${fixture.releaseProject}/${fixture.releaseEnv}`);
+  await page.getByRole("heading", { name: `${fixture.releaseProject}/${fixture.releaseEnv}`, exact: true }).waitFor();
+  await page
+    .getByRole("region", { name: "Environment status" })
+    .getByText(`Release: ${fixture.releaseDigest}`, { exact: true })
+    .waitFor();
+  await page
+    .getByRole("region", { name: "Release profile" })
+    .getByText(fixture.releaseDigest, { exact: true })
+    .waitFor();
+  assert.ok((await page.getByRole("list", { name: "Operations", exact: true }).getByRole("listitem").count()) > 0);
+  await page.getByRole("button", { name: "Inactivate environment", exact: true }).click();
+  await page.getByText("Environment state: inactive", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Inactivate environment", exact: true }).count(), 0);
+  await page.reload();
+  await page.getByRole("button", { name: "Activate environment", exact: true }).click();
+  await page.getByText("Environment state: active", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Activate environment", exact: true }).count(), 0);
+  await page.reload();
+  await page.getByRole("button", { name: "Inactivate environment", exact: true }).waitFor();
+  await page.getByRole("region", { name: "Release profile" }).waitFor();
   assert.deepEqual(errors, []);
+  console.log(
+    "PASS: Environment navigation, local runtime status, release profile, single activate/inactivate action and reload state",
+  );
   console.log(
     "PASS: Control lands on Projects; create, membership grant/revoke, project-admin grant/revoke, scoped access, activate/inactivate and reload state",
   );

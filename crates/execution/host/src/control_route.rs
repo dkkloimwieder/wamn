@@ -27,9 +27,8 @@
 //! `project.create` writes a project of the org with no environment, and
 //! `project-admin` in it for each `org-admin` of the org (§5.1).
 //!
-//! `environment.status` reads one environment of the project from Kubernetes
-//! with the host's read-only ServiceAccount, and writes nothing
-//! (docs/plan/platform-deploy.md §11.4).
+//! `environment.status` reads the runtime through the host-selected
+//! [`crate::environment_status::StatusSource`] and writes nothing.
 //!
 //! `release.profile` reads one installed release of one environment of the
 //! project from its `catalog.releases`, and the columns of its application
@@ -126,6 +125,8 @@ pub(crate) struct ControlRoutes<'a> {
     /// The mounted Secret of the org's administration logins, one file per
     /// environment.
     pub(crate) administration: Option<&'a Path>,
+    /// The runtime reader selected by the host mode.
+    pub(crate) status: &'a dyn crate::environment_status::StatusSource,
     pub(crate) org: &'a str,
     /// Publishes each users row and status change of an environment.
     pub(crate) changes: &'a AuthChanges,
@@ -314,10 +315,10 @@ impl ControlRoutes<'_> {
                         detail: json!({ "field": "env" }),
                     });
                 }
-                Ok(
-                    crate::environment_status::read(self.org, &request.project, &request.env)
-                        .await?,
-                )
+                Ok(self
+                    .status
+                    .read(self.org, &request.project, &request.env)
+                    .await?)
             }
             HostHandler::ReleaseProfile => {
                 let request: ReleaseRequest = parse(payload)?;

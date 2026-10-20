@@ -1369,6 +1369,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     writer: Arc::clone(&connection.writer),
                     identity,
                     administration: args.control_administration_dir.clone(),
+                    status: match &args.local_control {
+                        Some(directory) => {
+                            Arc::new(wamn_execution_host::environment_status::LocalSource {
+                                endpoint: directory.with_file_name("application-endpoint.json"),
+                                nats: scheduler_nats_client.clone(),
+                            })
+                        }
+                        None => Arc::new(wamn_execution_host::environment_status::KubernetesSource),
+                    },
                     org: connection.org.clone(),
                     changes: auth_changes.clone(),
                 },

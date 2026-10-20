@@ -5705,6 +5705,7 @@ name = "wamn-execution-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "async-trait",
  "base64 0.22.1",
  "boon",

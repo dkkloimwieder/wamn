@@ -737,10 +737,10 @@ const PROJECT_MEMBERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name, \
     ARRAY(SELECT m.env FROM identity.project_env_memberships m \
         WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2 ORDER BY m.env) \
     FROM identity.principals p \
-    WHERE EXISTS (SELECT 1 FROM identity.project_env_memberships m \
+    WHERE p.type = 'user' AND (EXISTS (SELECT 1 FROM identity.project_env_memberships m \
         WHERE m.principal_id = p.id AND m.org = $1 AND m.project = $2) \
     OR EXISTS (SELECT 1 FROM identity.project_roles r \
-        WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2) \
+        WHERE r.principal_id = p.id AND r.org = $1 AND r.project = $2)) \
     ORDER BY p.email";
 
 /// One user of a project.

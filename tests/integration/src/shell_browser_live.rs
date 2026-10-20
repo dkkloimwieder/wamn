@@ -313,6 +313,7 @@ async fn the_shell_signs_in_and_shows_only_what_each_caller_holds() -> anyhow::R
     let control_delivery = Arc::new(HostRouteDelivery::new(
         release,
         HostRouteHandlers::Control {
+            status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             administration: Some(logins.clone()),
             control: control_client,
             writer,

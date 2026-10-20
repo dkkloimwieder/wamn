@@ -146,8 +146,26 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         .env("WAMN_DEV_ENV_PLATFORM_DOMAIN", "example.invalid")
         .env("RESEND_API_KEY", "unused-development-fixture")
         .env("RESEND_FROM", "WAMN <fixture@example.invalid>");
+    let mut application = None;
     let result = async {
         run(&mut up).await?;
+        let mut child = Command::new(&wamn)
+            .current_dir(&repository)
+            .args(["dev", "--config"])
+            .arg(root.join("dev.json"))
+            .arg("--overlay-root").arg(repository.join("apps/wamn_receiving"))
+            .arg("--hold")
+            .stdout(Stdio::piped()).stderr(Stdio::inherit())
+            .kill_on_drop(true).spawn()?;
+        let stdout = child.stdout.take().context("local application output")?;
+        application = Some(child);
+        let mut lines = BufReader::new(stdout).lines();
+        loop {
+            let line = lines.next_line().await?.context("local application stopped before readiness")?;
+            println!("{line}");
+            if line == "run holding" { break; }
+        }
+        let endpoint: Value = serde_json::from_slice(&std::fs::read(root.join("application-endpoint.json"))?)?;
         let (mut admin, driver) = tokio_postgres::connect(system.url(), tokio_postgres::NoTls).await?;
         let driver = tokio::spawn(driver);
         let actor: wamn_platform_identity::PrincipalId =
@@ -183,7 +201,7 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit())
             .kill_on_drop(true).spawn()?;
         let mut input = browser.stdin.take().context("browser input")?;
-        input.write_all(format!("{}\n", json!({"principalId": second.as_str(), "email": SECOND_EMAIL, "project": BROWSER_PROJECT, "env": ENVIRONMENT})).as_bytes()).await?;
+        input.write_all(format!("{}\n", json!({"principalId": second.as_str(), "email": SECOND_EMAIL, "project": BROWSER_PROJECT, "env": ENVIRONMENT, "releaseProject": PROJECT, "releaseEnv": ENVIRONMENT, "releaseDigest": endpoint["digest"]})).as_bytes()).await?;
         let mut output = BufReader::new(browser.stdout.take().context("browser output")?);
         let mut line = String::new();
         output.read_line(&mut line).await?;
@@ -199,6 +217,22 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         driver.await??;
         Ok::<_, anyhow::Error>(())
     }.await;
+    let application_cleanup = async {
+        if let Some(mut child) = application {
+            if let Some(pid) = child.id() {
+                run(Command::new("kill").args(["-INT", &pid.to_string()])).await?;
+            }
+            let status = child.wait().await?;
+            ensure!(
+                status.success(),
+                "local application shutdown failed: {status}"
+            );
+            Ok::<_, anyhow::Error>(())
+        } else {
+            Ok(())
+        }
+    }
+    .await;
     let cleanup = if root.join("identity-process.json").exists() {
         run(Command::new(&wamn)
             .current_dir(&repository)
@@ -215,6 +249,7 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         if cleanup.is_ok() { "PASS" } else { "FAIL" }
     );
     result?;
+    application_cleanup?;
     cleanup?;
     ensure!(
         started.elapsed().as_secs() < 900,
