@@ -43,6 +43,11 @@ pub async fn run(command: PlatformCommand, mut output: impl Write) -> anyhow::Re
             &document,
             &version,
             Path::new("."),
+            &args
+                .file
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join("environments"),
             &directory,
             |line| {
                 writeln!(output, "{line}")?;

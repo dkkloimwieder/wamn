@@ -81,12 +81,19 @@ cluster.Cluster {{
     println!("work directory {}", directory.display());
     let mut progress = std::fs::File::create(directory.join("progress.log"))?;
     let mut first = Vec::new();
-    install::apply(&document, &version, &repository, &work, |line| {
-        println!("{line}");
-        writeln!(progress, "{line}")?;
-        first.push(line.to_owned());
-        Ok(())
-    })
+    install::apply(
+        &document,
+        &version,
+        &repository,
+        &directory.join("environments"),
+        &work,
+        |line| {
+            println!("{line}");
+            writeln!(progress, "{line}")?;
+            first.push(line.to_owned());
+            Ok(())
+        },
+    )
     .await?;
     require_steps(&first, "done")?;
 
@@ -140,12 +147,19 @@ cluster.Cluster {{
     );
 
     let mut second = Vec::new();
-    install::apply(&document, &version, &repository, &work, |line| {
-        println!("{line}");
-        writeln!(progress, "{line}")?;
-        second.push(line.to_owned());
-        Ok(())
-    })
+    install::apply(
+        &document,
+        &version,
+        &repository,
+        &directory.join("environments"),
+        &work,
+        |line| {
+            println!("{line}");
+            writeln!(progress, "{line}")?;
+            second.push(line.to_owned());
+            Ok(())
+        },
+    )
     .await?;
     require_steps(&second, "skipped")?;
     Ok(())

@@ -13,14 +13,14 @@ use crate::kubectl;
 use crate::release_chart::Target;
 
 use super::document::ClusterDocument;
-use super::lock;
 use super::manifests::{already_applied, objects, operator_values};
 use super::steps::{InstallStep, install_steps};
+use super::{build, lock};
 
 // The runtime operator version pinned by docs/operations/gcp.md section 4.4.
 const OPERATOR_VERSION: &str = "2.10.3";
 
-/// Apply steps 4.3 through 4.5 and the broker part of 4.8 under the install lock.
+/// Apply steps 4.3 through 4.6 and the broker part of 4.8 under the install lock.
 ///
 /// `progress` receives one line at the start and end of each step.
 ///
@@ -31,6 +31,7 @@ pub async fn apply(
     document: &ClusterDocument,
     platform_version: &str,
     repository: &Path,
+    environments: &Path,
     work_directory: &Path,
     mut progress: impl FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
@@ -49,6 +50,16 @@ pub async fn apply(
             "4.4" => runtime(&target, document, repository, work_directory, &step).await?,
             "4.4.1" => collector(&target, document, repository, &step).await?,
             "4.5" => postgres(&target, document, repository, &step).await?,
+            "4.6" => {
+                build::apply(
+                    document,
+                    platform_version,
+                    repository,
+                    environments,
+                    work_directory,
+                )
+                .await?
+            }
             "4.8" => broker(&target, document, repository, &step).await?,
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
@@ -69,7 +80,7 @@ fn applied_steps(
 ) -> impl Iterator<Item = InstallStep> {
     install_steps(document, platform_version)
         .into_iter()
-        .filter(|step| matches!(step.number, "4.3" | "4.4" | "4.4.1" | "4.5" | "4.8"))
+        .filter(|step| matches!(step.number, "4.3" | "4.4" | "4.4.1" | "4.5" | "4.6" | "4.8"))
 }
 
 async fn certificates(
@@ -687,7 +698,7 @@ mod tests {
         let numbers: Vec<_> = applied_steps(&document, "test")
             .map(|step| step.number)
             .collect();
-        assert_eq!(numbers, ["4.3", "4.4", "4.4.1", "4.5", "4.8"]);
+        assert_eq!(numbers, ["4.3", "4.4", "4.4.1", "4.5", "4.6", "4.8"]);
     }
 
     #[test]
