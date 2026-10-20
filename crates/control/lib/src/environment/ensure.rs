@@ -18,12 +18,9 @@
 use std::io::Write as _;
 use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, bail};
-use tokio::io::AsyncWriteExt as _;
-use tokio::process::Command;
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_control_registry::Triple;
 
@@ -459,58 +456,21 @@ async fn wait_applied(platform: &Platform, kind: &str, name: &str) -> anyhow::Re
     .with_context(|| format!("wait for {kind} {name} to report status.applied"))
 }
 
-/// Run `kubectl` against the platform's cluster in `namespace`. A call that
-/// sends input never shows `kubectl`'s standard error, because the input can
-/// be a Secret.
+/// Run `kubectl` against the platform's cluster in `namespace`.
 pub(super) async fn kubectl(
     platform: &Platform,
     namespace: &str,
     arguments: &[&str],
     input: Option<&[u8]>,
 ) -> anyhow::Result<String> {
-    let mut child = Command::new("kubectl")
-        .arg("--kubeconfig")
-        .arg(&platform.target.kubeconfig)
-        .args(["--context", &platform.target.context, "-n", namespace])
-        .args(arguments)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .context("start kubectl")?;
-    if let Some(input) = input {
-        let mut stdin = child.stdin.take().context("open the kubectl input")?;
-        stdin
-            .write_all(input)
-            .await
-            .context("write the kubectl input")?;
-        drop(stdin);
-    }
-    let output = child.wait_with_output().await.context("wait for kubectl")?;
-    if !output.status.success() {
-        if input.is_some() {
-            bail!(
-                "kubectl {} exited {}",
-                arguments.first().copied().unwrap_or_default(),
-                output.status
-            );
-        }
-        bail!(
-            "kubectl {} exited {}: {}",
-            arguments.join(" "),
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8(output.stdout)
-        .context("kubectl wrote text")?
-        .trim()
-        .to_owned())
+    crate::kubectl::kubectl(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        namespace,
+        arguments,
+        input,
+    )
+    .await
 }
 
 /// A replication password: 32 random bytes in hexadecimal.
