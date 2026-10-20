@@ -864,12 +864,23 @@ mod tests {
 
     #[tokio::test]
     async fn current_build_preserves_files_and_changed_inputs_rebuild() {
+        // Use the package built by the pagination-index test below.
         let manifest = json!({
-            "package": {"id": "current_fixture", "version": "0.1.0"},
-            "required_platform_policy_contract": {"id": "current_fixture_data_access", "state": "satisfied"},
-            "connections": [],
-            "components": {"fixture": {"connections": []}},
-            "models": {}
+            "package": {"id": "sort_fixture", "version": "0.1.0"},
+            "required_platform_policy_contract": {"id": "sort_fixture_data_access", "state": "satisfied"},
+            "connections": ["postgres"],
+            "components": {"fixture": {"connections": ["postgres"]}},
+            "models": {"order_row": {
+                "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
+                "server_owned_fields": ["id"],
+                "audit_log": {"columns": ["created_at"], "retention": "none"},
+                "operations": {"query": {
+                    "permission": "order_row.query", "result": "page",
+                    "sort": {"fields": ["created_at", "status"], "directions": ["ascending", "descending"]},
+                    "pagination": {"default_sort": {"field": "created_at", "direction": "ascending"}, "tie_breaker": {"field": "id"}},
+                    "limit": {"default": 100, "minimum": 1, "maximum": 100}
+                }}
+            }}
         });
         let manifest = serde_json::to_vec(&manifest).unwrap();
         PackageManifest::from_slice(&manifest).expect("parse the test manifest");
@@ -878,6 +889,21 @@ mod tests {
         fs::create_dir_all(root.join("package")).unwrap();
         let package = root.join("package");
         fs::write(package.join("wamn.json"), manifest).unwrap();
+        fs::create_dir(package.join("migrations")).unwrap();
+        fs::write(
+            package.join("migrations/0001_initial.sql"),
+            "CREATE TABLE receiving.order_row (
+                 id uuid CONSTRAINT order_row_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
+                 status text NOT NULL DEFAULT 'open',
+                 created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+             );",
+        )
+        .unwrap();
+        fs::write(
+            package.join("migrations/0002_default_index.sql"),
+            "CREATE INDEX order_row_id_created_at_idx ON receiving.order_row (created_at, id);",
+        )
+        .unwrap();
         let request = BuildRequest::new(&package, &root.join("target"), database.url());
         let first = build_package(&request).await.expect("build the package");
         let output = package_output(&request.output_root, &first.package.id);
