@@ -1,5 +1,6 @@
 //! Install the platform through runbook step 4.9 using kubectl and Helm.
 
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -73,7 +74,7 @@ pub async fn apply(
                 )
                 .await?
             }
-            "4.8" => broker(&target, document, repository, &step).await?,
+            "4.8" => broker(&target, document, repository, work_directory, &step).await?,
             "4.9" => platform_inputs(&target, document, repository).await?,
             _ => unreachable!("the install step filter selects only implemented steps"),
         };
@@ -479,6 +480,7 @@ async fn broker(
     target: &Target,
     document: &ClusterDocument,
     repository: &Path,
+    work_directory: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
     let authorization: Option<Value> = kubectl::get(
@@ -506,7 +508,7 @@ async fn broker(
     )
     .await?;
     rollout(target, step, "platform", "statefulset/evt-nats", "300s").await?;
-    kubectl::wait(
+    if let Err(error) = kubectl::wait(
         &target.kubeconfig,
         &target.context,
         "platform",
@@ -516,8 +518,43 @@ async fn broker(
         "180s",
     )
     .await
-    .map_err(|error| wait_error(step, error))?;
+    {
+        save_tap_job(target, work_directory).await;
+        return Err(wait_error(step, error));
+    }
     Ok(changed)
+}
+
+/// Save the tap Job's log and pod state beside the Job runner's logs, so a
+/// failed 4.8 can be read after its cluster is gone.
+async fn save_tap_job(target: &Target, work_directory: &Path) {
+    let mut text = String::new();
+    for arguments in [
+        &["logs", "job/evt-nats-tap-stream", "--all-containers=true"][..],
+        &["describe", "job,pods", "-l", "job-name=evt-nats-tap-stream"][..],
+    ] {
+        let _ = writeln!(text, "$ kubectl {}", arguments.join(" "));
+        match kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            "platform",
+            arguments,
+            None,
+        )
+        .await
+        {
+            Ok(output) => text.push_str(&output),
+            Err(error) => {
+                let _ = writeln!(text, "unavailable: {error:#}");
+            }
+        }
+    }
+    let directory = work_directory.join("jobs");
+    let saved = std::fs::create_dir_all(&directory)
+        .and_then(|()| std::fs::write(directory.join("evt-nats-tap-stream.log"), text));
+    if let Err(error) = saved {
+        eprintln!("save the tap Job log: {error}");
+    }
 }
 
 #[derive(Serialize)]
