@@ -8,14 +8,13 @@ TypeScript 7 compiles the web packages. The TypeScript 6 compatibility package s
 The guest workspaces are `apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml`.
 [Components](../architecture/components.md) defines artifact and interface boundaries.
 
-Install the web dependencies with `pnpm install` before this setup.
 Before a lane or test run, prepare the checkout once from its repository root:
 
 ```bash
 eval "$(tools/lane-start "$PWD")"
 ```
 
-The script initializes submodules, sets the checkout caches, builds the native tools, and runs `wamn build` for every package.
+The script initializes submodules, sets the checkout caches, builds the native tools, installs the web dependencies, and runs `wamn build` for every package.
 Docker supplies a private PostgreSQL 18 container that the script removes when it exits.
 
 ## Native programs and app components

@@ -45,6 +45,8 @@ git submodule update --init --recursive >&2
 printf 'lane-start: build native binaries\n' >&2
 cargo build --locked -p wamn-ctl --bin wamn --bin wamn-ctl >&2
 cargo build --locked -p wamn-scenario-worker >&2
+printf 'lane-start: install web dependencies\n' >&2
+pnpm install --frozen-lockfile >&2
 
 # These are the bases of the repository's two overlays. The CLI requires
 # bases first. Discover all other packages, including the overlays, below.
