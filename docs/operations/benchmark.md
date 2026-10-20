@@ -342,6 +342,50 @@ pgbench ran in a pod in the cluster against `wamn-pg-1`, at scale 10 with 16 cli
 
 The item commit p50 of update (8.42 ms) is near the simple-update p50 of pgbench (6.88 ms), which also ends in a commit.
 
+### Update gap on GCP
+
+Epic `wamn-c8a5v`, issue `wamn-c8a5v.1` ([plan](../plan/perf-arch.md), M4 and M5).
+`tools/bench/pg-floor/gcp.sh` runs the replays of `local.sh --pg-floor` against `wamn-pg-1`.
+The result is [`tests/bench/gcp-pg-0.1.36.json`](../../tests/bench/gcp-pg-0.1.36.json).
+The gap is the update replay p50 minus the simple-update p50, at c16 for 60 s each.
+The row "update, triggers off" is the update replay with both record-history triggers disabled (M4).
+
+| Run | simple-update | update replay | Gap | update, triggers off | Trigger share of the gap |
+| --- | --- | --- | --- | --- | --- |
+| Local 0.1.28, [`local-pg-0.1.28.json`](../../tests/bench/local-pg-0.1.28.json) | 2489/s, p50 6.20 | 1386/s, p50 11.58 | 5.39 ms | not measured | not measured |
+| GCP tier 2, 0.1.36, 2026-10-20 12:12–12:18 UTC | 2319/s, p50 6.35 | 585/s, p50 26.02 | 19.66 ms | 1110/s, p50 13.46 | 12.55 ms, 64% |
+
+The GCP run used pool `pg` for PostgreSQL alone, on an `e2-standard-2` node.
+The pgbench client ran in the Job `tools/bench/pg-floor/gcp-client.yaml` on pool `bench`, beside the idle Receiving host.
+The platform pods on pool `main` were present. During the run, the other databases on `wamn-pg-1` committed about 8 transactions per second.
+The Cluster restart that loaded `auto_explain` ended at 11:28:13 UTC. Nothing else ran against the cluster between the restart and the runs.
+
+The runner installs Receiving into its own database `wamn_pg_floor` with `pg_floor_database`.
+That database carries the local statement statistics: `pg_stat_statements.track = all`, `track_planning`, `track_io_timing`, `track_wal_io_timing`, and 1% transaction and statement sampling.
+The environment databases do not carry these settings. They keep the Cluster's `track = top`, so the calls per request of `tier.sh` stay comparable.
+The Cluster loads `auto_explain` with the values of `local.sh` for every database.
+The kubelet rotates the PostgreSQL container log, so the run kept only 378 analyzed plans. The split below uses `pg_stat_statements`.
+
+The split uses means, because pipeline command timings overlap. The mean gap is 20.45 ms (27.35 ms against 6.90 ms).
+
+| Share | Mean latency | Server time per transaction | WAL per transaction | Source |
+| --- | --- | --- | --- | --- |
+| Triggers | 12.94 ms | 6.78 ms | 1,176 bytes, and 2,389 against 9 full-page images in total | M4 latency difference |
+| Write log, claim and finish | part of the rest | 0.42 ms | 987 bytes | `pg_stat_statements`, triggers off |
+| Logical message | part of the rest | 0.02 ms | 149 bytes | `pg_stat_statements`, triggers off |
+| Rest | 7.51 ms, write log and message included | 0.62 ms | 407 bytes | remainder |
+
+Without triggers, the server spends 1.06 ms per transaction on top-level statements, so most of the rest is waiting.
+That waiting covers the four round trips, the commit flush and CPU queueing of 16 clients on 2 vCPUs.
+The commit trip has a mean of 8.07 ms, against 3.44 ms for the `END` of simple-update.
+The replay's extra parameter query is part of the rest, with a mean of 1.65 ms.
+
+With triggers, the update command statement takes 7.21 ms of server time against 0.41 ms.
+Inside the triggers, the dynamic history `INSERT` is planned again for each row: 35,012 plans of 0.23 ms for 35,012 updates. Its execution takes 1.23 ms.
+The catalog queries are planned once per session and run for each row. `row_image` runs twice at 0.28 ms, and the primary key query takes 0.32 ms.
+The `jsonb_each` diff takes 0.27 ms, the tenant lookup 0.13 ms, and the stamp write-back 0.11 ms.
+Every trigger and command statement ran as `wamn_app`. The foreign key check ran as `wamn_db_owner`.
+
 ## Request round-trips
 
 Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)).
