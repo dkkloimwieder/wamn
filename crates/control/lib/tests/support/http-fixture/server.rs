@@ -3,8 +3,13 @@
 use std::collections::HashMap;
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
 
-fn serve_socket(mut socket: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+use hmac::{Hmac, KeyInit as _, Mac as _};
+use serde_json::json;
+use sha2::Sha256;
+
+fn serve_socket(mut socket: TcpStream, secret: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let mut head = Vec::new();
         let mut byte = [0_u8; 1];
@@ -30,10 +35,23 @@ fn serve_socket(mut socket: TcpStream) -> Result<(), Box<dyn std::error::Error>>
         assert!(length <= 65_536, "fixture body exceeds 64 KiB");
         let mut body = vec![0_u8; length];
         socket.read_exact(&mut body)?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret)?;
+        mac.update(&body);
+        let signature_verified = headers
+            .get("x-wamn-signature")
+            .and_then(|value| value.strip_prefix("sha256="))
+            .and_then(|value| hex::decode(value).ok())
+            .is_some_and(|signature| mac.verify_slice(&signature).is_ok());
         // Record every request before answering. TCP readiness opens no request.
         {
             let mut log = std::io::stdout().lock();
-            log.write_all(head.as_bytes())?;
+            writeln!(
+                log,
+                "{}",
+                json!({
+                    "head": head, "body": body, "signature_verified": signature_verified
+                })
+            )?;
             log.flush()?;
         }
         write!(
@@ -47,9 +65,14 @@ fn serve_socket(mut socket: TcpStream) -> Result<(), Box<dyn std::error::Error>>
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let secret: Arc<str> = std::env::var("WAMN_HTTP_FIXTURE_HMAC_SECRET")?.into();
+    assert!(!secret.is_empty(), "fixture HMAC secret is empty");
     for socket in TcpListener::bind("0.0.0.0:8080")?.incoming() {
         let socket = socket?;
-        std::thread::spawn(move || serve_socket(socket).expect("serve the fixture request"));
+        let secret = Arc::clone(&secret);
+        std::thread::spawn(move || {
+            serve_socket(socket, secret.as_bytes()).expect("serve the fixture request")
+        });
     }
     Ok(())
 }

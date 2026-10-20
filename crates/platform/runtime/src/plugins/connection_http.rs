@@ -461,7 +461,8 @@ impl ConnectionHttp {
             .vault
             .lookup(&self.project, handle)
             .ok_or(ConnectionError::CredentialUnavailable)?;
-        let credential_headers = credential_headers(&secret)?;
+        let credential_headers =
+            credential_headers(&secret, request.body.as_deref().unwrap_or_default())?;
         let scope = ClientScope {
             connection: ConnectionScope {
                 tenant: self.tenant.clone(),
@@ -745,17 +746,48 @@ pub(crate) fn authorize_snapshot(
     Ok(())
 }
 
-fn credential_headers(secret: &str) -> Result<HashMap<String, String>, ConnectionError> {
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HmacCredential {
+    algorithm: String,
+    secret: String,
+    header: String,
+}
+
+fn credential_headers(
+    secret: &str,
+    body: &[u8],
+) -> Result<HashMap<String, String>, ConnectionError> {
     let value: serde_json::Value =
         serde_json::from_str(secret).map_err(|_| ConnectionError::CredentialUnavailable)?;
     let object = value
         .as_object()
         .ok_or(ConnectionError::CredentialUnavailable)?;
-    if object.len() != 1 || !object.contains_key("headers") {
+    if object.len() != 1 {
         return Err(ConnectionError::CredentialUnavailable);
     }
-    object["headers"]
-        .as_object()
+    if let Some(hmac) = object.get("hmac") {
+        use hmac::{Hmac, KeyInit as _, Mac as _};
+
+        let credential: HmacCredential = serde_json::from_value(hmac.clone())
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        let header = reqwest::header::HeaderName::from_bytes(credential.header.as_bytes())
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        if credential.algorithm != "sha256"
+            || credential.secret.is_empty()
+            || reserved_header(&header)
+        {
+            return Err(ConnectionError::CredentialUnavailable);
+        }
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(credential.secret.as_bytes())
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        mac.update(body);
+        let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+        return Ok([(credential.header, signature)].into());
+    }
+    object
+        .get("headers")
+        .and_then(serde_json::Value::as_object)
         .ok_or(ConnectionError::CredentialUnavailable)?
         .iter()
         .map(|(name, value)| {
@@ -1538,6 +1570,91 @@ mod tests {
             authorize_snapshot(&wrong_contract, &http_descriptor()),
             Err(ConnectionError::Incompatible)
         ));
+    }
+
+    #[test]
+    fn hmac_credential_signs_exact_body_bytes_with_rfc_4231_vector() {
+        // RFC 4231 test case 2: the expected value is independent of this signer.
+        let secret = r#"{"hmac":{"algorithm":"sha256","secret":"Jefe","header":"x-signature"}}"#;
+        let body = b"what do ya want for nothing?";
+        let credentials = credential_headers(secret, body).expect("HMAC credential");
+        assert_eq!(
+            credentials["x-signature"],
+            "sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        assert_ne!(
+            credentials,
+            credential_headers(secret, b"what do ya want for nothing?\n").unwrap()
+        );
+        assert_eq!(
+            credential_headers(secret, b"").unwrap()["x-signature"],
+            "sha256=923598ca6d64af2a5dba79dcd021a8a0fe5c5f557519adaaf0ad532d4506dd30"
+        );
+        let request = Request {
+            body: Some(body.to_vec()),
+            ..effect_request(Vec::new())
+        };
+        let headers = outbound_headers(&request, credentials).expect("signed headers");
+        assert!(headers.contains_key("x-signature"));
+        assert!(
+            request.headers.is_empty(),
+            "the guest supplied no credential"
+        );
+        assert_eq!(request.body.as_deref(), Some(body.as_slice()));
+    }
+
+    #[test]
+    fn malformed_credentials_are_refused() {
+        for secret in [
+            "not json",
+            "null",
+            "{}",
+            r#"{"other":{}}"#,
+            r#"{"hmac":null}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature","extra":true}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature"},"extra":true}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature"},"headers":{}}"#,
+            r#"{"hmac":{"secret":"key","header":"x-signature"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","header":"x-signature"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key"}}"#,
+            r#"{"hmac":{"algorithm":"sha512","secret":"key","header":"x-signature"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"","header":"x-signature"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":123,"header":"x-signature"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":""}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"bad header"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature\r\n"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"Content-Length"}}"#,
+            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"Idempotency-Key"}}"#,
+            r#"{"headers":{"authorization":123}}"#,
+            r#"{"headers":{"host":"elsewhere"}}"#,
+            r#"{"headers":{"authorization":"bad\r\nvalue"}}"#,
+        ] {
+            assert!(
+                matches!(
+                    credential_headers(secret, b"body"),
+                    Err(ConnectionError::CredentialUnavailable)
+                ),
+                "accepted malformed credential: {secret}"
+            );
+        }
+    }
+
+    #[test]
+    fn headers_credential_keeps_its_shape_and_overrides_guest_values() {
+        let secret = r#"{"headers":{"authorization":"Bearer host-token"}}"#;
+        let request = effect_request(vec![Header {
+            name: "Authorization".into(),
+            value: b"guest-token".to_vec(),
+        }]);
+        let headers =
+            outbound_headers(&request, credential_headers(secret, b"body").unwrap()).unwrap();
+        assert_eq!(headers["authorization"], "Bearer host-token");
+        assert_eq!(headers.get_all("authorization").iter().count(), 1);
+        assert!(
+            credential_headers(r#"{"headers":{}}"#, b"")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

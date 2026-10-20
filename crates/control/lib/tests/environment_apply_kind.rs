@@ -18,10 +18,14 @@
 //!    connection's generation. The fixture's components declare no store
 //!    alias, so there is no binding to change.
 //! 4. `env show` output applied again writes nothing.
-//!    A separate HTTP environment binds one requirement, reproduces its
+//!    A separate HTTP environment binds two requirements, reproduces its
 //!    document through show, and preserves its rows and Helm revision on reapply.
 //!    One POST through transform -> http-request reaches its recording server.
 //!    The server sees one bearer header and the guest returns status 200.
+//!    A signed inbound POST delivers inline like the unsigned route and sends once.
+//!    Wrong and missing signatures return 401 with an empty body and no fixture request.
+//!    Two minute ticks each leave one completed schedule run without a principal.
+//!    A second wiring sends a POST that the fixture verifies with its HMAC secret.
 //! 5. A12: two environments in one namespace; every object and Secret name
 //!    differs and derives from the coordinate, and each host mounts only its
 //!    own Secrets.
@@ -78,6 +82,11 @@
 //! `WAMN_RELEASE_CHART` names, which `wamn-ctl build-platform` stamped
 //! (§9.3, R15): the host is loaded onto the node and the http role is copied
 //! into the suite's registry, and a copy of that chart is stamped with them.
+//! Rebuild that chart at this branch head for the signature and schedule code.
+//! The suite rebuilds its HTTP fixture image, loads it into its own cluster,
+//! and provides its outbound secret through `WAMN_HTTP_FIXTURE_HMAC_SECRET`.
+//! The existing environment database stores the schedule runs. No new database
+//! or registry is needed. The schedule assertion waits at most 150 seconds.
 //!
 //! Run (epic closeout only), after `wamn build apps/edge_device`:
 //! `WAMN_RELEASE_CHART=<chart> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
@@ -1202,16 +1211,18 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .to_owned();
     let mut http = document("http", "http.orders.example");
     http.release = DeclaredRelease::Digest(http_digest.clone());
-    http.connections.insert(
-        "upstream".to_owned(),
-        ConnectionDefinition {
-            requirement_type: wamn_catalog::RequirementType::Http,
-            definition: json!({
-                "primary-authority": format!("{}/", http_connection::ORIGIN),
-                "tls-verification": "disabled"
-            }),
-        },
-    );
+    for handle in ["upstream", http_connection::OUTBOUND_HANDLE] {
+        http.connections.insert(
+            handle.to_owned(),
+            ConnectionDefinition {
+                requirement_type: wamn_catalog::RequirementType::Http,
+                definition: json!({
+                    "primary-authority": format!("{}/", http_connection::ORIGIN),
+                    "tls-verification": "disabled"
+                }),
+            },
+        );
+    }
     apply(&http, "http-first").await?;
     let http_name = release_name(ORG, PROJECT, "http")?;
     let http_revisions = run.revisions(&http_name).await?;
@@ -1229,23 +1240,28 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     ))
     .await?;
     let http_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
-    // Register the same gated graph that the fixture release carries.
-    let wiring = http_connection::wiring()?;
-    http_project
-        .execute(
-            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
+    // Register the same gated graphs that the fixture release carries.
+    for wiring in [
+        http_connection::wiring()?,
+        http_connection::signed_wiring()?,
+        http_connection::scheduled_wiring()?,
+    ] {
+        http_project
+            .execute(
+                "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
          version, graph_json, wiring_hash) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
-            &[
-                &http_tenant,
-                &PACKAGE,
-                &version,
-                &wiring.wiring_id,
-                &1_i32,
-                &serde_json::to_string(&wiring)?,
-                &wiring.wiring_hash().as_str(),
-            ],
-        )
-        .await?;
+                &[
+                    &http_tenant,
+                    &PACKAGE,
+                    &version,
+                    &wiring.wiring_id,
+                    &1_i32,
+                    &serde_json::to_string(&wiring)?,
+                    &wiring.wiring_hash().as_str(),
+                ],
+            )
+            .await?;
+    }
     let http_rows = async || -> anyhow::Result<Value> {
         Ok(http_project
             .query_one(
@@ -1268,18 +1284,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         &format!("wamn-ctl env show {ORG}/{PROJECT}/http; SELECT connection rows"),
         json!({"document": http_shown.to_kcl(), "rows": http_before}),
         http_shown == http
-            && http_before["instances"].as_array().is_some_and(|rows| rows.len() == 1)
-            && http_before["instances"][0]["requirement_type"] == "http"
-            && http_before["instances"][0]["active_generation"] == 1
-            && http_before["generations"].as_array().is_some_and(|rows| rows.len() == 1)
-            && http_before["generations"][0]["definition_json"] == http.connections["upstream"].definition
-            && http_before["generations"][0]["credential_set_handle"] == "upstream"
-            && http_before["bindings"].as_array().is_some_and(|rows| rows.len() == 1)
-            && http_before["bindings"][0]["manifest_digest"] == http_digest
-            && http_before["bindings"][0]["instance_id"] == "upstream"
-            && http_before["bindings"][0]["store_alias"] == "upstream"
-            && http_before["bindings"][0]["binding_status"] == "active"
-            && http_before["bindings"][0]["validation_status"] == "valid",
+            && http_connection::bindings_match(&http_before, &http, &http_digest),
     );
     apply(&http, "http-again").await?;
     let http_second = http_rows().await?;
@@ -1321,6 +1326,16 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         assertion.is_ok(),
     );
     assertion?;
+    http_connection::assert_triggers(
+        run,
+        &http_project,
+        &http_tenant,
+        &http_name,
+        &http.route_host,
+        status,
+        &body,
+    )
+    .await?;
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;
@@ -2082,7 +2097,7 @@ fn the_fixture_releases_are_canonical_manifests() {
     ]
     .into_iter()
     .map(|template| {
-        let declaration: Value = serde_json::from_str(template).expect("a guest declaration");
+        let declaration = http_connection::declaration(template).expect("a guest declaration");
         let mut descriptor = serde_json::to_value(&device).expect("a descriptor");
         for field in [
             "component",
@@ -2121,16 +2136,67 @@ fn the_fixture_releases_are_canonical_manifests() {
     assert_eq!(http.attachments, h.attachments);
     assert_eq!(
         http.workflow.wirings,
-        [wamn_catalog::ServingWiring::new(
-            PACKAGE,
-            http_connection::wiring().expect("the HTTP wiring"),
-        )]
+        [
+            wamn_catalog::ServingWiring::new(
+                PACKAGE,
+                http_connection::wiring().expect("the HTTP wiring"),
+            ),
+            wamn_catalog::ServingWiring::new(
+                PACKAGE,
+                http_connection::signed_wiring().expect("the signed HTTP wiring"),
+            ),
+            wamn_catalog::ServingWiring::new(
+                PACKAGE,
+                http_connection::scheduled_wiring().expect("the scheduled HTTP wiring"),
+            )
+        ]
         .into()
     );
     assert_eq!(
         http.workflow.attachments["http-send"].wiring_id,
         "http-send"
     );
+    assert_eq!(http.workflow.attachments.len(), 3);
+    assert_eq!(
+        http.workflow.attachments["http-signed"].auth_policy,
+        json!({
+            "modes": ["signature"], "header": "x-hub-signature-256",
+            "credential": http_connection::INBOUND_HANDLE,
+        })
+    );
+    assert_eq!(
+        http.workflow.attachments["http-signed-send"].wiring_id,
+        "http-signed-send"
+    );
+    let schedule = &http.workflow.schedules[&format!("{PACKAGE}::{}", http_connection::SCHEDULE)];
+    assert_eq!(schedule.schedule, "* * * * *");
+    assert_eq!(schedule.wiring_id, http_connection::SCHEDULE);
+    assert_eq!(schedule.wiring_version, 1);
+    let scheduled = serde_json::to_value(http_connection::scheduled_wiring().unwrap()).unwrap();
+    assert_eq!(scheduled["nodes"].as_object().unwrap().len(), 2);
+    assert!(
+        scheduled["nodes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|node| node.get("terminal").is_none())
+    );
+    let request = http
+        .components
+        .iter()
+        .find(|component| component.descriptor.component == "http-request")
+        .unwrap();
+    assert_eq!(request.descriptor.connections.len(), 2);
+    let signed = serde_json::to_value(http_connection::signed_wiring().unwrap()).unwrap();
+    assert_eq!(
+        signed["nodes"]["send"]["params"],
+        json!({
+            "requirement": http_connection::OUTBOUND_HANDLE, "method": "POST", "path-and-query": "/signed"
+        })
+    );
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(!text.contains(http_connection::INBOUND_SECRET));
+    assert!(!text.contains(http_connection::OUTBOUND_SECRET));
 }
 
 /// GET `url` from a pod in the namespace with `Host: route_host`, and return
@@ -2144,7 +2210,10 @@ async fn route_probe_post(run: &Run, url: &str, route_host: &str) -> anyhow::Res
         run,
         url,
         route_host,
-        "--request POST --header 'Content-Type: application/json' --data '{\"id\":1}'",
+        &format!(
+            "--request POST --header 'Content-Type: application/json' --data '{}'",
+            http_connection::BODY
+        ),
     )
     .await
 }

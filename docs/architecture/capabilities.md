@@ -73,6 +73,14 @@ A request names a requirement, method, relative path and query, headers, optiona
 The guest does not supply an endpoint or credential.
 The host resolves the admitted requirement and confines the request to that connection.
 
+The credential secret accepts `{"headers":{…}}` or `{"hmac":{"algorithm":"sha256","secret":"…","header":"…"}}`.
+HMAC is a signature that uses a shared secret.
+The host signs the exact outbound body bytes and injects `sha256=<lowercase hex>` in the declared header.
+The secret and header name must be nonempty, and the name must be valid and not reserved by the host.
+The HMAC shape refuses unknown fields and algorithms other than `sha256`.
+
+The guest receives no credential. The workflow queue owns retries.
+
 The transport pins the approved peer and compares the connected peer.
 Its client identity includes the connection scope and credential generation.
 It does not follow redirects or retry a request automatically.

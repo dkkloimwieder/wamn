@@ -4,18 +4,26 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
+use chrono::{Timelike as _, Utc};
 use serde_json::{Value, json};
 
 use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
 use wamn_catalog::{
     AttachmentType, ComponentDescriptor, ComponentPackageScope, DefinitionHash, ServingComponent,
-    ServingManifest, ServingWiring, WiringAttachment, WiringDocument, WorkflowSection,
+    ServingManifest, ServingSchedule, ServingWiring, WiringAttachment, WiringDocument,
+    WorkflowSection,
 };
 
 pub const SERVICE: &str = "http-fixture";
 pub const SECRET: &str = "apply-http-credentials";
 pub const ORIGIN: &str = "http://http-fixture:8080";
+pub const INBOUND_HANDLE: &str = "inbound-signature";
+pub const INBOUND_SECRET: &str = "fixture-inbound-key";
+pub const OUTBOUND_HANDLE: &str = "signed-upstream";
+pub const OUTBOUND_SECRET: &str = "fixture-outbound-key";
+pub const SCHEDULE: &str = "http-minute";
+pub const BODY: &str = "{ \"id\" : 1 }";
 
 pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
     let image = format!("{}-http-fixture:debug", run.cluster);
@@ -45,9 +53,18 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                     "apiVersion": "v1", "kind": "Secret",
                     "metadata": {"name": SECRET, "namespace": NAMESPACE},
                     "stringData": {"credentials.json": json!({
-                        PROJECT: {"upstream": json!({
-                            "headers": {"authorization": "Bearer fixture-token"}
-                        }).to_string()}
+                        PROJECT: {
+                            "upstream": json!({
+                                "headers": {"authorization": "Bearer fixture-token"}
+                            }).to_string(),
+                            INBOUND_HANDLE: json!({"hmac": {
+                                "algorithm": "sha256", "secret": INBOUND_SECRET
+                            }}).to_string(),
+                            OUTBOUND_HANDLE: json!({"hmac": {
+                                "algorithm": "sha256", "secret": OUTBOUND_SECRET,
+                                "header": "x-wamn-signature"
+                            }}).to_string()
+                        }
                     }).to_string()}
                 },
                 {
@@ -58,6 +75,8 @@ pub async fn deploy(run: &Run, repository: &Path) -> anyhow::Result<()> {
                             "spec": {"containers": [{
                                 "name": SERVICE, "image": image, "imagePullPolicy": "Never",
                                 "ports": [{"containerPort": 8080}],
+                                "env": [{"name": "WAMN_HTTP_FIXTURE_HMAC_SECRET",
+                                    "value": OUTBOUND_SECRET}],
                                 "readinessProbe": {"tcpSocket": {"port": 8080}}
                             }]}}}
                 },
@@ -130,7 +149,7 @@ pub async fn component(
     let template = std::fs::read_to_string(
         repository.join(format!("apps/platform/no-std/{name}/declaration.json.in")),
     )?;
-    let declaration = serde_json::from_str(
+    let declaration = serde_json::from_value(declaration(
         &template
             .replace(
                 "__TENANT_ID__",
@@ -138,7 +157,7 @@ pub async fn component(
             )
             .replace("__PACKAGE_ID__", PACKAGE)
             .replace("__PACKAGE_VERSION__", version),
-    )?;
+    )?)?;
     let engine = wamn_engine::build_engine(&[])?;
     let admitted = wamn_engine::component_admission::validate_component_admission(
         &engine,
@@ -191,6 +210,20 @@ pub async fn component(
     ))
 }
 
+/// Declare both handles before admission, so the fixture uses ordinary binding.
+pub fn declaration(template: &str) -> anyhow::Result<Value> {
+    let mut declaration: Value = serde_json::from_str(template)?;
+    if declaration["component"] == "http-request" {
+        declaration["connections"]
+            .as_array_mut()
+            .expect("HTTP requirements")
+            .push(json!({
+                "store-alias": OUTBOUND_HANDLE, "requirement-type": "http"
+            }));
+    }
+    Ok(declaration)
+}
+
 pub fn wiring() -> anyhow::Result<WiringDocument> {
     Ok(serde_json::from_value(json!({
         "format-version": "0.1", "wiring-id": "http-send", "version": 1,
@@ -205,6 +238,25 @@ pub fn wiring() -> anyhow::Result<WiringDocument> {
         },
         "edges": [{"from": "input", "to": "send"}]
     }))?)
+}
+
+pub fn signed_wiring() -> anyhow::Result<WiringDocument> {
+    let mut graph = serde_json::to_value(wiring()?)?;
+    graph["wiring-id"] = json!("http-signed-send");
+    graph["nodes"]["send"]["params"]["requirement"] = json!(OUTBOUND_HANDLE);
+    graph["nodes"]["send"]["params"]["path-and-query"] = json!("/signed");
+    Ok(serde_json::from_value(graph)?)
+}
+
+pub fn scheduled_wiring() -> anyhow::Result<WiringDocument> {
+    let mut graph = serde_json::to_value(wiring()?)?;
+    graph["wiring-id"] = json!(SCHEDULE);
+    graph["nodes"]["send"]
+        .as_object_mut()
+        .unwrap()
+        .remove("terminal");
+    graph["nodes"]["send"]["params"]["path-and-query"] = json!("/scheduled");
+    Ok(serde_json::from_value(graph)?)
 }
 
 pub fn release(
@@ -223,33 +275,76 @@ pub fn release(
         .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
         .collect();
     let wiring = wiring()?;
-    wamn_control::author_wiring::gate_wiring_document(&wiring, &scope, &facts)?;
+    let signed_wiring = signed_wiring()?;
+    let scheduled_wiring = scheduled_wiring()?;
+    for graph in [&wiring, &signed_wiring, &scheduled_wiring] {
+        wamn_control::author_wiring::gate_wiring_document(graph, &scope, &facts)?;
+    }
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
     for (descriptor, fact) in components.into_iter().zip(&facts) {
         manifest
             .components
             .insert(ServingComponent::project(fact, descriptor.connections)?);
     }
-    let definition = json!({
-        "id": "http-send", "type": "http",
-        "route": {"method": "POST", "path": "/http/send"},
-        "run-deadline-ms": 30000
-    });
-    manifest.workflow = WorkflowSection {
-        wirings: [ServingWiring::new(PACKAGE, wiring)].into(),
-        attachments: [(
-            "http-send".to_owned(),
+    let mut attachments = std::collections::BTreeMap::new();
+    for (id, path, wiring_id, auth_policy) in [
+        (
+            "http-send",
+            "/http/send",
+            "http-send",
+            json!({"modes": ["none"]}),
+        ),
+        (
+            "http-signed",
+            "/http/signed",
+            "http-send",
+            json!({
+                "modes": ["signature"], "header": "x-hub-signature-256", "credential": INBOUND_HANDLE
+            }),
+        ),
+        (
+            "http-signed-send",
+            "/http/signed-send",
+            "http-signed-send",
+            json!({"modes": ["none"]}),
+        ),
+    ] {
+        let definition = json!({
+            "id": id, "type": "http", "route": {"method": "POST", "path": path},
+            "run-deadline-ms": 30000
+        });
+        attachments.insert(
+            id.to_owned(),
             WiringAttachment {
                 type_: AttachmentType::Http,
                 package_id: PACKAGE.to_owned(),
-                wiring_id: "http-send".to_owned(),
+                wiring_id: wiring_id.to_owned(),
                 wiring_version: 1,
                 definition_hash: DefinitionHash::parse(
                     wamn_execution_contract::canonical_json_sha256(&definition),
                 )?,
                 definition,
-                auth_policy: json!({"modes": ["none"]}),
+                auth_policy,
                 registered_operation: None,
+            },
+        );
+    }
+    manifest.workflow = WorkflowSection {
+        wirings: [
+            ServingWiring::new(PACKAGE, wiring),
+            ServingWiring::new(PACKAGE, signed_wiring),
+            ServingWiring::new(PACKAGE, scheduled_wiring),
+        ]
+        .into(),
+        attachments,
+        schedules: [(
+            format!("{PACKAGE}::{SCHEDULE}"),
+            ServingSchedule {
+                package_id: PACKAGE.to_owned(),
+                workflow_id: SCHEDULE.to_owned(),
+                wiring_id: SCHEDULE.to_owned(),
+                wiring_version: 1,
+                schedule: "* * * * *".to_owned(),
             },
         )]
         .into(),
@@ -268,8 +363,11 @@ pub fn assert_observed_request(status: u16, body: &str, log: &str) -> anyhow::Re
         response["body"] == json!({"id": 1}),
         "guest body: {response}"
     );
-    let normalized = log.replace("\r\n", "\n");
-    let requests: Vec<_> = normalized.split("\n\n").filter(|s| !s.is_empty()).collect();
+    let records = route_requests(log)?;
+    let requests: Vec<_> = records
+        .iter()
+        .map(|record| record["head"].as_str().unwrap_or_default())
+        .collect();
     ensure!(
         requests.len() == 1,
         "fixture saw {} requests",
@@ -278,6 +376,10 @@ pub fn assert_observed_request(status: u16, body: &str, log: &str) -> anyhow::Re
     ensure!(
         requests[0].lines().next() == Some("POST /reuse HTTP/1.1"),
         "fixture received the wrong target or protocol"
+    );
+    ensure!(
+        records[0]["body"] == json!(br#"{"id":1}"#.as_slice()),
+        "fixture received the wrong body"
     );
     let headers: Vec<_> = requests[0]
         .lines()
@@ -301,4 +403,240 @@ pub fn assert_observed_request(status: u16, body: &str, log: &str) -> anyhow::Re
         "effect omitted its delivery idempotency key"
     );
     Ok(())
+}
+
+pub fn request_records(log: &str) -> anyhow::Result<Vec<Value>> {
+    log.lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_str(line).map_err(Into::into))
+        .collect()
+}
+
+fn route_requests(log: &str) -> anyhow::Result<Vec<Value>> {
+    Ok(request_records(log)?
+        .into_iter()
+        .filter(|record| {
+            // The schedule has its own target, so its traffic cannot count as a route request.
+            !record["head"]
+                .as_str()
+                .is_some_and(|head| head.starts_with("POST /scheduled HTTP/1.1\r\n"))
+        })
+        .collect())
+}
+
+pub fn inbound_signature(body: &[u8]) -> String {
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, INBOUND_SECRET.as_bytes());
+    format!(
+        "sha256={}",
+        hex::encode(ring::hmac::sign(&key, body).as_ref())
+    )
+}
+
+pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, digest: &str) -> bool {
+    ["instances", "generations", "bindings"]
+        .iter()
+        .all(|name| rows[name].as_array().is_some_and(|rows| rows.len() == 2))
+        && ["upstream", OUTBOUND_HANDLE].iter().all(|handle| {
+            let find = |table: &str| {
+                rows[table]
+                    .as_array()
+                    .and_then(|rows| rows.iter().find(|row| row["instance_id"] == *handle))
+            };
+            let (Some(instance), Some(generation), Some(binding)) =
+                (find("instances"), find("generations"), find("bindings"))
+            else {
+                return false;
+            };
+            instance["requirement_type"] == "http"
+                && instance["active_generation"] == 1
+                && generation["definition_json"] == document.connections[*handle].definition
+                && generation["credential_set_handle"] == *handle
+                && binding["manifest_digest"] == digest
+                && binding["store_alias"] == *handle
+                && binding["binding_status"] == "active"
+                && binding["validation_status"] == "valid"
+        })
+}
+
+async fn request_log(run: &Run) -> anyhow::Result<String> {
+    run.run(
+        "kubectl",
+        &["-n", NAMESPACE, "logs", &format!("deployment/{SERVICE}")],
+    )
+    .await
+}
+
+pub async fn assert_triggers(
+    run: &mut Run,
+    database: &tokio_postgres::Client,
+    tenant: &str,
+    release_name: &str,
+    route_host: &str,
+    unsigned_status: u16,
+    unsigned_body: &str,
+) -> anyhow::Result<()> {
+    let base = format!("http://{release_name}-http.{NAMESPACE}.svc.cluster.local");
+    let before = route_requests(&request_log(run).await?)?;
+    ensure!(
+        before.len() == 1,
+        "the unsigned route must send exactly one request"
+    );
+    // The wrong signature signs equivalent JSON with different raw bytes.
+    for (label, signature) in [
+        ("wrong", Some(inbound_signature(br#"{"id":1}"#))),
+        ("missing", None),
+    ] {
+        let header = signature
+            .map(|value| format!("--header 'x-hub-signature-256: {value}'"))
+            .unwrap_or_default();
+        let (status, body) = super::route_probe_request(
+            run,
+            &format!("{base}/http/signed"),
+            route_host,
+            &format!(
+                "--request POST --header 'Content-Type: application/json' {header} --data '{BODY}'"
+            ),
+        )
+        .await?;
+        let after = route_requests(&request_log(run).await?)?;
+        let passed = status == 401 && body.is_empty() && after == before;
+        run.pass(
+            &format!("{label} inbound signature refuses without a fixture request"),
+            "POST /http/signed; kubectl logs deployment/http-fixture",
+            json!({"status": status, "body": body, "before": before, "after": after}),
+            passed,
+        );
+        ensure!(passed, "{label} inbound signature did not refuse cleanly");
+    }
+    let signature = inbound_signature(BODY.as_bytes());
+    let (status, body) = super::route_probe_request(
+        run,
+        &format!("{base}/http/signed"),
+        route_host,
+        &format!(
+            "--request POST --header 'Content-Type: application/json' \
+            --header 'x-hub-signature-256: {signature}' --data '{BODY}'"
+        ),
+    )
+    .await?;
+    let after = route_requests(&request_log(run).await?)?;
+    let assertion = after
+        .last()
+        .context("the signed route sent no request")
+        .and_then(|record| assert_observed_request(status, &body, &serde_json::to_string(record)?));
+    let passed = status == unsigned_status
+        && serde_json::from_str::<Value>(&body)? == serde_json::from_str::<Value>(unsigned_body)?
+        && after.starts_with(&before)
+        && after.len() == before.len() + 1
+        && assertion.is_ok();
+    run.pass(
+        "right inbound signature delivers inline like none and sends once",
+        "POST /http/signed; kubectl logs deployment/http-fixture",
+        json!({"status": status, "body": body, "requests": after,
+            "error": assertion.as_ref().err().map(ToString::to_string)}),
+        passed,
+    );
+    ensure!(
+        passed,
+        "signed inbound delivery differs from the unsigned route"
+    );
+
+    let (status, body) =
+        super::route_probe_post(run, &format!("{base}/http/signed-send"), route_host).await?;
+    let observed = request_log(run).await?;
+    let records = request_records(&observed)?;
+    let signed: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            record["head"]
+                .as_str()
+                .is_some_and(|head| head.starts_with("POST /signed HTTP/1.1\r\n"))
+        })
+        .collect();
+    let passed = status == 200
+        && serde_json::from_str::<Value>(&body)? == serde_json::from_str::<Value>(unsigned_body)?
+        && signed.len() == 1
+        && signed[0]["signature_verified"] == true
+        && signed[0]["body"] == json!(br#"{"id":1}"#.as_slice());
+    run.pass(
+        "HTTP guest sends once with a verified host signature",
+        "POST /http/signed-send; kubectl logs deployment/http-fixture",
+        json!({"status": status, "body": body, "requests": signed}),
+        passed,
+    );
+    ensure!(
+        passed,
+        "the fixture did not verify one signed outbound request"
+    );
+
+    let result =
+        tokio::time::timeout(Duration::from_secs(150), scheduled_runs(database, tenant)).await;
+    let result = result
+        .context("schedule did not complete two due moments within 150 seconds")
+        .and_then(std::convert::identity);
+    run.pass("schedule starts exactly one run per due key without a principal",
+        "SELECT schedule runs from wamn_run.runs",
+        json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
+        result.is_ok());
+    result?;
+    Ok(())
+}
+
+async fn scheduled_runs(database: &tokio_postgres::Client, tenant: &str) -> anyhow::Result<Value> {
+    let first_due = Utc::now()
+        .with_second(0)
+        .unwrap()
+        .with_nanosecond(0)
+        .unwrap()
+        + chrono::Duration::minutes(1);
+    let dues = [first_due, first_due + chrono::Duration::minutes(1)]
+        .map(|due| due.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    let keys = dues.map(|due| format!("{PACKAGE}/{SCHEDULE}:{due}"));
+    loop {
+        let rows: Value = database.query_one(
+            "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
+                'idempotency_key', idempotency_key, 'trigger_source', trigger_source, \
+                'service_principal_id', service_principal_id, 'invocation_context', invocation_context, \
+                'input_json', input_json, 'status', status, 'manifest_digest', manifest_digest, \
+                'package_id', package_id, 'wiring_id', wiring_id, 'wiring_version', wiring_version) \
+                ORDER BY idempotency_key), '[]'::jsonb) FROM wamn_run.runs \
+                WHERE tenant_id = $1 AND idempotency_key = ANY($2)",
+            &[&tenant, &keys.as_slice()],
+        ).await?.get(0);
+        let runs = rows.as_array().context("schedule run rows")?;
+        for key in &keys {
+            let matching: Vec<_> = runs
+                .iter()
+                .filter(|row| row["idempotency_key"] == *key)
+                .collect();
+            ensure!(
+                matching.len() <= 1,
+                "multiple schedule runs for {key}: {rows}"
+            );
+            if let Some(row) = matching.first() {
+                ensure!(
+                    row["trigger_source"] == "schedule"
+                        && row["service_principal_id"].is_null()
+                        && row["invocation_context"] == json!({})
+                        && row["package_id"] == PACKAGE
+                        && row["wiring_id"] == SCHEDULE
+                        && row["wiring_version"] == 1
+                        && row["input_json"]
+                            == json!({"due": key.strip_prefix(&format!("{PACKAGE}/{SCHEDULE}:")).unwrap()}),
+                    "schedule run has wrong identity, input or principal: {row}"
+                );
+                ensure!(
+                    !matches!(
+                        row["status"].as_str(),
+                        Some("failed" | "infrastructure-failure" | "effect-uncertain")
+                    ),
+                    "scheduled workflow failed: {row}"
+                );
+            }
+        }
+        if runs.len() == 2 && runs.iter().all(|row| row["status"] == "completed") {
+            return Ok(rows);
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }
