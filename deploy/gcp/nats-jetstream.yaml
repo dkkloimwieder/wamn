@@ -232,7 +232,9 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: evt-nats
+        # Not evt-nats: the evt-nats Services select that name, and a ready Job
+        # pod would receive broker connections it cannot serve.
+        app.kubernetes.io/name: evt-nats-tap-stream
         app.kubernetes.io/component: router-tap-stream
     spec:
       restartPolicy: OnFailure
