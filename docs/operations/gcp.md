@@ -396,7 +396,7 @@ PY
 )
 ```
 
-Make the broker Secrets, install the broker, and make the user Secrets:
+Make the broker Secret, install the broker, and make the user Secrets:
 
 ```bash
 W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-nats

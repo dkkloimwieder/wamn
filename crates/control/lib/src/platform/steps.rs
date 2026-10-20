@@ -187,7 +187,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.8", title: "Event NATS",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("environments", environments.into()), ("tenants", tenants.into()), ("event NATS", "nats://evt-nats.platform.svc.cluster.local:4222".into()), ("broker Secrets", "platform/evt-nats-authorization, platform/evt-nats-bootstrap".into()), ("users per tenant", "provisioning, publisher, observer, runtime, materializer".into())],
+            inputs: vec![("environments", environments.into()), ("tenants", tenants.into()), ("event NATS", "nats://evt-nats.platform.svc.cluster.local:4222".into()), ("broker Secret", "platform/evt-nats-authorization".into()), ("users per tenant", "provisioning, publisher, observer, runtime, materializer".into())],
             owner_inputs: vec![],
         },
         InstallStep {

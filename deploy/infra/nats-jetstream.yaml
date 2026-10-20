@@ -10,9 +10,8 @@
 #   kubectl -n wamn-system rollout status statefulset/evt-nats --timeout=180s
 #   kubectl -n wamn-system exec evt-nats-0 -- nats-server --help >/dev/null   # sanity
 #
-# Before apply, provision evt-nats-authorization with authorization.conf and
-# evt-nats-bootstrap with context.json. Both are required Secrets; this file
-# contains no passwords. The authorization file uses existing NATS users and
+# Before apply, provision evt-nats-authorization with authorization.conf. It
+# is a required Secret; this file contains no passwords. The authorization file uses existing NATS users and
 # subject permissions on the shared account, with no anonymous/default user.
 # Give each environment separate provisioning, materializer, publisher and
 # observer credentials. Only provisioning creates streams and consumers.
@@ -23,8 +22,6 @@
 # NEXT and ACK subjects, and subscribe only to its private inbox prefix. It
 # cannot create a stream/consumer or publish events. Other roles receive only
 # their required stream operations and their own _INBOX_<username>.> replies.
-# The bootstrap context contains the tap-stream administrator credentials and
-# its private inbox_prefix; the Job reads that file without exposing passwords.
 #
 # The retained streambench recipe covers publish/consume, Nats-Msg-Id dedupe,
 # and R3 survival after one node deletion; its in-cluster Job is archived for MVP.

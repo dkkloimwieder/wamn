@@ -2,8 +2,8 @@
 # of deploy/infra/nats-jetstream.yaml. It runs one server in namespace
 # platform, so it has no cluster block, no cluster port and no anti-affinity
 # spread. The event streams use one replica. The volume is pd-standard.
-# The comments of deploy/infra/nats-jetstream.yaml explain the users. docs/history/gcp-install-history.md section 3 makes the Secrets
-# evt-nats-authorization and evt-nats-bootstrap and applies this file.
+# The comments of deploy/infra/nats-jetstream.yaml explain the users. docs/history/gcp-install-history.md section 3 makes the Secret
+# evt-nats-authorization and applies this file.
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -490,12 +490,8 @@ async fn broker(
     )
     .await?;
     let mut changed = false;
-    if let Some(secrets) = broker_secrets(authorization.as_ref())? {
-        // Write the context first so a partial failure cannot leave authorization
-        // present without the matching bootstrap password.
-        for secret in secrets {
-            kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
-        }
+    if let Some(secret) = broker_secret(authorization.as_ref())? {
+        kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
         changed = true;
     }
     changed |= apply_file(
@@ -526,7 +522,7 @@ struct SecretMetadata {
     namespace: &'static str,
 }
 
-fn broker_secrets(authorization: Option<&Value>) -> anyhow::Result<Option<[BrokerSecret; 2]>> {
+fn broker_secret(authorization: Option<&Value>) -> anyhow::Result<Option<BrokerSecret>> {
     if authorization.is_some() {
         return Ok(None);
     }
@@ -534,51 +530,37 @@ fn broker_secrets(authorization: Option<&Value>) -> anyhow::Result<Option<[Broke
     ring::rand::SystemRandom::new()
         .fill(&mut random)
         .map_err(|_| anyhow::anyhow!("generate broker password"))?;
-    Ok(Some(render_broker_secrets(&hex::encode(random))))
+    Ok(Some(render_broker_secret(&hex::encode(random))))
 }
 
-fn render_broker_secrets(password: &str) -> [BrokerSecret; 2] {
-    // event_broker_files owns the same format in test infrastructure, which is
-    // not a production dependency of wamn-control.
+fn render_broker_secret(password: &str) -> BrokerSecret {
+    // An empty users list lets nats-server accept anonymous clients, so the
+    // authorization holds one user that may do nothing until the environment
+    // step rewrites it. Nothing keeps the password.
     let authorization = json!({
         "users": [{
-            "user": "tap-admin",
+            "user": "platform-seal",
             "password": password,
             "permissions": {
-                "publish": {"allow": [
-                    "$JS.API.STREAM.INFO.WAMN_TAP",
-                    "$JS.API.STREAM.CREATE.WAMN_TAP",
-                    "$JS.API.STREAM.UPDATE.WAMN_TAP",
-                    "_INBOX_tap-admin.>"
-                ]},
-                "subscribe": {"allow": ["_INBOX_tap-admin.>"]}
+                "publish": {"deny": [">"]},
+                "subscribe": {"deny": [">"]}
             }
         }]
     });
-    let context = json!({
-        "url": "nats://evt-nats.platform.svc.cluster.local:4222",
-        "user": "tap-admin",
-        "password": password,
-        "inbox_prefix": "_INBOX_tap-admin"
-    });
-    [
-        ("evt-nats-bootstrap", "context.json", context.to_string()),
-        (
-            "evt-nats-authorization",
-            "authorization.conf",
-            format!("authorization: {authorization}\n"),
-        ),
-    ]
-    .map(|(name, key, value)| BrokerSecret {
+    BrokerSecret {
         api_version: "v1",
         kind: "Secret",
         metadata: SecretMetadata {
-            name,
+            name: "evt-nats-authorization",
             namespace: "platform",
         },
         secret_type: "Opaque",
-        string_data: [(key, value)].into(),
-    })
+        string_data: [(
+            "authorization.conf",
+            format!("authorization: {authorization}\n"),
+        )]
+        .into(),
+    }
 }
 
 async fn apply_file(
@@ -824,64 +806,46 @@ mod tests {
     use crate::platform::document::Provider;
 
     #[test]
-    fn broker_secrets_render_only_the_tap_administrator_and_its_context() {
-        let [bootstrap, authorization] = render_broker_secrets("fixed-password");
-        let bootstrap = serde_json::to_value(bootstrap).unwrap();
+    fn broker_secret_renders_one_user_without_allows() {
+        let secret = serde_json::to_value(broker_secret(None).unwrap().unwrap()).unwrap();
+        assert_eq!(secret["apiVersion"], "v1");
+        assert_eq!(secret["kind"], "Secret");
+        assert_eq!(secret["type"], "Opaque");
         assert_eq!(
-            bootstrap,
-            json!({
-                "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-                "metadata": {"name": "evt-nats-bootstrap", "namespace": "platform"},
-                "stringData": {"context.json": json!({
-                    "url": "nats://evt-nats.platform.svc.cluster.local:4222",
-                    "user": "tap-admin", "password": "fixed-password",
-                    "inbox_prefix": "_INBOX_tap-admin"
-                }).to_string()}
-            })
-        );
-        let authorization = serde_json::to_value(authorization).unwrap();
-        assert_eq!(authorization["apiVersion"], "v1");
-        assert_eq!(authorization["kind"], "Secret");
-        assert_eq!(authorization["type"], "Opaque");
-        assert_eq!(
-            authorization["metadata"],
+            secret["metadata"],
             json!({"name": "evt-nats-authorization", "namespace": "platform"})
         );
-        let data = authorization["stringData"].as_object().unwrap();
+        let data = secret["stringData"].as_object().unwrap();
         assert_eq!(data.len(), 1);
         let text = data["authorization.conf"].as_str().unwrap();
-        let users: Value =
+        let authorization: Value =
             serde_json::from_str(text.strip_prefix("authorization: ").unwrap()).unwrap();
+        let users = authorization["users"].as_array().unwrap();
+        assert_eq!(users.len(), 1);
+        let password = users[0]["password"].as_str().unwrap();
+        assert_eq!(hex::decode(password).unwrap().len(), 32);
         assert_eq!(
-            users,
-            json!({"users": [{
-                "user": "tap-admin", "password": "fixed-password",
+            users[0],
+            json!({
+                "user": "platform-seal", "password": password,
                 "permissions": {
-                    "publish": {"allow": [
-                        "$JS.API.STREAM.INFO.WAMN_TAP",
-                        "$JS.API.STREAM.CREATE.WAMN_TAP",
-                        "$JS.API.STREAM.UPDATE.WAMN_TAP",
-                        "_INBOX_tap-admin.>"
-                    ]},
-                    "subscribe": {"allow": ["_INBOX_tap-admin.>"]}
+                    "publish": {"deny": [">"]},
+                    "subscribe": {"deny": [">"]}
                 }
-            }]})
+            })
         );
+        // The password appears only inside the authorization file itself.
+        assert_eq!(secret.to_string().matches(password).count(), 1);
     }
 
     #[test]
-    fn existing_authorization_skips_both_secrets_without_reading_its_users() {
+    fn existing_authorization_skips_the_secret_without_reading_its_users() {
         for existing in [
             json!({}),
             json!({"data": {"authorization.conf": "e3-users"}}),
         ] {
-            assert!(broker_secrets(Some(&existing)).unwrap().is_none());
+            assert!(broker_secret(Some(&existing)).unwrap().is_none());
         }
-        let secrets = broker_secrets(None).unwrap().unwrap();
-        let context: Value = serde_json::from_str(&secrets[0].string_data["context.json"]).unwrap();
-        let password = context["password"].as_str().unwrap();
-        assert_eq!(password.len(), 64);
-        assert_eq!(hex::decode(password).unwrap().len(), 32);
     }
 
     #[test]

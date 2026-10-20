@@ -228,6 +228,29 @@ cluster.Cluster {{
             kubectl::get(&kubeconfig, &context, namespace, kind, name).await?;
         ensure!(object.is_some(), "missing {kind} {namespace}/{name}");
     }
+    // nats-server opens to anonymous clients when its users list is empty.
+    let anonymous = kubectl::kubectl(
+        &kubeconfig,
+        &context,
+        "platform",
+        &[
+            "exec",
+            "-i",
+            "evt-nats-0",
+            "--",
+            "nc",
+            "-w",
+            "2",
+            "127.0.0.1",
+            "4222",
+        ],
+        Some(b"CONNECT {}\r\nPING\r\n"),
+    )
+    .await?;
+    ensure!(
+        anonymous.contains("Authorization Violation") && !anonymous.contains("PONG"),
+        "event NATS accepted an anonymous connection: {anonymous}"
+    );
 
     let mut second = Vec::new();
     install::apply(
