@@ -1,9 +1,8 @@
 import type { JSX } from "@solidjs/web";
 import { Show } from "solid-js";
-import { uiScope } from "@wfe/components";
+import { Theme } from "@wfe/components";
 import { DashboardPanel, DashboardShell, type DashboardShellProps } from "@wfe/components/layout";
-import { appearance } from "./appearance";
-import "./appearance.css";
+import "./page.css";
 
 export function Page(props: { title?: string; children?: JSX.Element }): JSX.Element {
   return (
@@ -15,14 +14,10 @@ export function Page(props: { title?: string; children?: JSX.Element }): JSX.Ele
 }
 
 export function Frame(props: DashboardShellProps): JSX.Element {
-  const scope = uiScope();
   return (
-    <DashboardShell
-      {...scope}
-      {...props}
-      class="platform-appearance"
-      style={{ ...scope.style, ...appearance, height: "100dvh", ...props.style }}
-    />
+    <Theme>
+      <DashboardShell {...props} style={{ height: "100dvh", ...props.style }} />
+    </Theme>
   );
 }
 

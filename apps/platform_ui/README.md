@@ -17,10 +17,10 @@ FormView and TableView render forms and record lists through their application-o
 The sign-in, invitation, recovery, and reset pages use `@wfe/form` with FormView.
 Their rules also exist in both shells until M3.
 
-[appearance.ts](src/appearance.ts) owns the resolved WFE default appearance, its Open Props source notes, and its MIT license.
-It follows [Library defaults and application overrides](../../web/wfe/packages/components/src/styles/README.md#library-defaults-and-application-overrides) and [Shared presentation](../../web/wfe/docs/component-gallery.md#shared-presentation).
-Each dashboard root uses `uiScope()` and those properties.
-The unchanged Fira Code files retain their [SIL Open Font License](src/fonts/OFL.txt).
+Each dashboard uses `Theme` from `@wfe/components` with its unchanged light defaults.
+WFE owns the theme properties, styles, fonts, and licenses.
+This follows [Adopt the components](../../web/wfe/docs/adoption.md) and [Default theme](../../web/wfe/docs/theme.md).
+The application owns page height and removes the browser's body margin.
 
 The type check keeps `strict` enabled and omits `exactOptionalPropertyTypes`, which the wfe form source does not support.
 

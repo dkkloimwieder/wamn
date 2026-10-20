@@ -23,8 +23,9 @@ const captured = new Set();
 async function capture(page, screen) {
   if (captured.has(screen)) return;
   await page.evaluate(() => document.fonts.ready);
-  const root = page.locator("#app > .ui-dashboard[data-ui]");
-  assert.equal(await root.count(), 1, `${screen} has one dashboard shell`);
+  const root = page.locator("#app > .ui-theme[data-ui]");
+  assert.equal(await root.count(), 1, `${screen} has one theme root`);
+  assert.equal(await root.locator(":scope > .ui-dashboard").count(), 1, `${screen} has one dashboard shell`);
   assert.equal(await root.getAttribute("data-ui-density"), "compact");
   assert.equal(await root.getAttribute("data-ui-theme"), null);
   assert.ok(await root.locator(".ui-dashboard-panel").count(), `${screen} has a dashboard panel`);
