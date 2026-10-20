@@ -145,7 +145,7 @@ mod tests {
         );
         for step in &steps {
             match step.runs {
-                Runner::Verb(name) | Runner::Job(name) => {
+                Runner::Verb(name) | Runner::Job(name) | Runner::Owner(name) => {
                     assert!(!name.is_empty(), "{} names its runner", step.number);
                 }
             }

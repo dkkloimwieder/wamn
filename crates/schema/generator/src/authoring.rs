@@ -206,6 +206,11 @@ pub fn compile_schema_file(file: &Path, name: &str) -> Result<Vec<u8>> {
             ENVIRONMENT_MODULE,
         ),
         "cluster" => SchemaModule::write("cluster", CLUSTER_MODULE_DECLARATION, CLUSTER_MODULE),
+        "project" => SchemaModule::write(
+            "project",
+            include_str!("../kcl/project/kcl.mod"),
+            include_str!("../kcl/project/project.k"),
+        ),
         _ => bail!("unknown embedded schema module {name:?}"),
     }?;
     // KCL also resolves imports in the document's own directory. A document

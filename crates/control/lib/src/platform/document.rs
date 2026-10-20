@@ -1,12 +1,11 @@
 //! The cluster document, `cluster.k` (docs/plan/platform-install.md P1, P3).
 //!
-//! The document names the cluster, its node pools and the platform inputs,
+//! The document names the cluster and the platform inputs,
 //! and nothing else. Owner resources are read by name, never created from
 //! this document. It compiles with the `cluster` KCL schema module to JSON,
 //! which this module reads into [`ClusterDocument`]. Its canonical form is
 //! RFC 8785 JSON, as `environment.k` is.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
@@ -22,13 +21,6 @@ pub struct ClusterDocument {
     pub project_id: String,
     pub zone: String,
     pub cluster_name: String,
-    pub release_channel: String,
-    pub network: String,
-    pub subnetwork: String,
-    pub pod_secondary_range_name: String,
-    pub service_secondary_range_name: String,
-    pub node_service_account: String,
-    pub node_pools: Vec<NodePool>,
     pub org: String,
     pub owner_email: String,
     /// Registry host and optional repository path, without a URL scheme.
@@ -44,26 +36,6 @@ pub struct ClusterDocument {
 pub enum Provider {
     Gcp,
     Kind,
-}
-
-/// One fixed-size node pool.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NodePool {
-    pub name: String,
-    pub machine_type: String,
-    pub spot: bool,
-    pub disk_type: String,
-    /// Disk size in GiB.
-    pub disk_size: u32,
-    /// The fixed node count, including zero.
-    pub size: u32,
-    /// One key=value label, or an empty string.
-    #[serde(default)]
-    pub label: String,
-    /// One key=value:effect taint, or an empty string.
-    #[serde(default)]
-    pub taint: String,
 }
 
 /// Owner-supplied buckets, by name. Empty strings for kind.
@@ -122,13 +94,6 @@ impl ClusterDocument {
                 && registry.all(|part| token(part, "._-")),
             "registry is not a registry host and optional repository path"
         );
-        ensure!(
-            matches!(
-                self.release_channel.as_str(),
-                "rapid" | "regular" | "stable" | "extended"
-            ) || (self.provider == Provider::Kind && self.release_channel.is_empty()),
-            "release_channel is not a named channel"
-        );
         if self.provider == Provider::Gcp {
             ensure!(
                 self.project_id.len() >= 6 && name(&self.project_id, 30),
@@ -142,74 +107,12 @@ impl ClusterDocument {
                 },
                 "zone is not a GCP zone"
             );
-            for (field, value) in [
-                ("network", &self.network),
-                ("subnetwork", &self.subnetwork),
-                ("pod_secondary_range_name", &self.pod_secondary_range_name),
-                (
-                    "service_secondary_range_name",
-                    &self.service_secondary_range_name,
-                ),
-            ] {
-                ensure!(name(value, 63), "{field} is not a lowercase name");
-            }
-            ensure!(
-                self.node_service_account
-                    .split_once('@')
-                    .is_some_and(|(account, domain)| {
-                        name(account, usize::MAX)
-                            && domain
-                                .strip_suffix(".iam.gserviceaccount.com")
-                                .is_some_and(|project| name(project, usize::MAX))
-                    }),
-                "node_service_account is not a GCP service account email"
-            );
             for (field, value) in [("web", &self.buckets.web), ("otel", &self.buckets.otel)] {
                 ensure!(
                     (3..=63).contains(&value.len()) && dns_name(value),
                     "buckets.{field} is not a lowercase bucket name"
                 );
             }
-        }
-        ensure!(!self.node_pools.is_empty(), "node_pools is empty");
-        let mut pools = BTreeSet::new();
-        for pool in &self.node_pools {
-            ensure!(
-                name(&pool.name, 63) && pools.insert(&pool.name),
-                "node pool names are invalid or repeated"
-            );
-            ensure!(
-                name(&pool.machine_type, usize::MAX),
-                "node pool {} has an invalid machine_type",
-                pool.name
-            );
-            ensure!(
-                matches!(
-                    pool.disk_type.as_str(),
-                    "pd-standard" | "pd-balanced" | "pd-ssd"
-                ),
-                "node pool {} has an invalid disk_type",
-                pool.name
-            );
-            ensure!(
-                pool.disk_size > 0,
-                "node pool {} has zero disk_size",
-                pool.name
-            );
-            ensure!(
-                pool.label.is_empty() || label(&pool.label),
-                "node pool {} has an invalid label",
-                pool.name
-            );
-            ensure!(
-                pool.taint.is_empty()
-                    || pool.taint.split_once(':').is_some_and(|(value, effect)| {
-                        label(value)
-                            && matches!(effect, "NoSchedule" | "PreferNoSchedule" | "NoExecute")
-                    }),
-                "node pool {} has an invalid taint",
-                pool.name
-            );
         }
         ensure!(
             dns_name(&self.route_hosts.control),
@@ -235,11 +138,11 @@ impl ClusterDocument {
     }
 }
 
-fn lower(value: &str) -> bool {
+pub(super) fn lower(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_lowercase())
 }
 
-fn token(value: &str, punctuation: &str) -> bool {
+pub(super) fn token(value: &str, punctuation: &str) -> bool {
     value
         .bytes()
         .next()
@@ -251,7 +154,7 @@ fn token(value: &str, punctuation: &str) -> bool {
         })
 }
 
-fn name(value: &str, max: usize) -> bool {
+pub(super) fn name(value: &str, max: usize) -> bool {
     value.len() <= max
         && token(value, "-")
         && value.starts_with(|c: char| c.is_ascii_lowercase())
@@ -280,14 +183,8 @@ fn email(value: &str) -> bool {
         })
 }
 
-fn label(value: &str) -> bool {
-    value
-        .split_once('=')
-        .is_some_and(|(key, value)| token(key, "_.-") && token(value, "_.-"))
-}
-
 /// JSON strings also quote KCL strings; booleans use KCL's spelling.
-fn kcl_value(value: &Value) -> String {
+pub(super) fn kcl_value(value: &Value) -> String {
     match value {
         Value::Bool(true) => "True".to_owned(),
         Value::Bool(false) => "False".to_owned(),
@@ -323,15 +220,7 @@ mod tests {
     fn document() -> Value {
         json!({
             "provider": "gcp", "project_id": "wamn-dev", "zone": "us-central1-a",
-            "cluster_name": "wamn", "release_channel": "regular",
-            "network": "wamn", "subnetwork": "wamn-us-central1",
-            "pod_secondary_range_name": "pods", "service_secondary_range_name": "services",
-            "node_service_account": "wamn-nodes@wamn-dev.iam.gserviceaccount.com",
-            "node_pools": [
-                {"name": "main", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "", "taint": ""},
-                {"name": "bench", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "role=bench-host", "taint": "role=bench-host:NoSchedule"},
-                {"name": "pg", "machine_type": "e2-standard-2", "spot": false, "disk_type": "pd-standard", "disk_size": 50, "size": 1, "label": "role=postgres", "taint": "role=postgres:NoSchedule"}
-            ],
+            "cluster_name": "wamn",
             "org": "dkk", "owner_email": "dkkloimwieder@gmail.com",
             "registry": "us-central1-docker.pkg.dev/wamn-dev/wamn",
             "buckets": {"web": "wamn-dev-web", "otel": "wamn-dev-otel"},
@@ -372,7 +261,7 @@ mod tests {
 
     #[test]
     fn kcl_and_json_refuse_fields_the_schema_lacks() {
-        for pointer in ["", "/node_pools/0", "/buckets", "/route_hosts"] {
+        for pointer in ["", "/buckets", "/route_hosts"] {
             let mut unknown = document();
             unknown.pointer_mut(pointer).unwrap()["unknown"] = json!("refused");
             let source = format!("import cluster\ncluster.Cluster {}\n", kcl_value(&unknown));
@@ -392,17 +281,6 @@ mod tests {
             ("/project_id", json!("bad")),
             ("/zone", json!("us-central1")),
             ("/cluster_name", json!("Bad")),
-            ("/release_channel", json!("latest")),
-            ("/network", json!("")),
-            ("/node_service_account", json!("nodes@example.com")),
-            ("/node_pools/0/disk_size", json!(0)),
-            ("/node_pools/0/size", json!(-1)),
-            ("/node_pools/0/disk_type", json!("unknown")),
-            ("/node_pools/0/spot", json!("true")),
-            ("/node_pools/0/label", json!("role")),
-            ("/node_pools/0/taint", json!("role=main:unknown")),
-            ("/node_pools/1/name", json!("main")),
-            ("/node_pools", json!([])),
             ("/org", json!("Bad")),
             ("/owner_email", json!("owner")),
             ("/resend_from", json!("no reply@wamn.dev")),
@@ -477,24 +355,14 @@ mod tests {
     }
 
     #[test]
-    fn kind_needs_no_gcp_resources_and_zero_sized_pools_round_trip() {
+    fn kind_needs_no_gcp_resources() {
         let mut value = document();
         value["provider"] = json!("kind");
-        for field in [
-            "project_id",
-            "zone",
-            "release_channel",
-            "network",
-            "subnetwork",
-            "pod_secondary_range_name",
-            "service_secondary_range_name",
-            "node_service_account",
-        ] {
+        for field in ["project_id", "zone"] {
             value[field] = json!("");
         }
         value["buckets"] = json!({"web": "", "otel": ""});
         value["registry"] = json!("localhost:5000/wamn");
-        value["node_pools"][0]["size"] = json!(0);
         let parsed = ClusterDocument::from_json(value.to_string().as_bytes()).unwrap();
         let bytes = compile(&parsed.to_kcl()).expect("kind compiles without GCP resources");
         assert_eq!(ClusterDocument::from_json(&bytes).unwrap(), parsed);

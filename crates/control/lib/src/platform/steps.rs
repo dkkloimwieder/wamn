@@ -21,13 +21,15 @@ pub struct InstallStep {
     pub owner_inputs: Vec<OwnerInput>,
 }
 
-/// Where a step runs (P9): from the verb, or as a Kubernetes Job the verb waits on.
+/// Where a step runs: from the verb, as a Kubernetes Job, or by the owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Runner {
     /// From the verb, through the named tools.
     Verb(&'static str),
     /// As the named Kubernetes Job, `namespace/name`.
     Job(&'static str),
+    /// By the owner, through the named tools.
+    Owner(&'static str),
 }
 
 impl std::fmt::Display for Runner {
@@ -35,6 +37,7 @@ impl std::fmt::Display for Runner {
         match self {
             Self::Verb(tools) => write!(f, "from the verb ({tools})"),
             Self::Job(job) => write!(f, "Kubernetes Job {job}"),
+            Self::Owner(tools) => write!(f, "by the owner ({tools})"),
         }
     }
 }
@@ -134,20 +137,13 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         },
         InstallStep {
             number: "4.2", title: "Cluster",
-            runs: Runner::Verb("GKE API"),
+            runs: Runner::Owner("tofu, from project.k"),
             inputs: vec![
                 ("provider", match document.provider { Provider::Gcp => "gcp", Provider::Kind => "kind" }.into()),
                 ("project_id", project.clone()), ("zone", document.zone.clone()),
-                ("cluster_name", document.cluster_name.clone()), ("release_channel", document.release_channel.clone()),
-                ("network", document.network.clone()), ("subnetwork", document.subnetwork.clone()),
-                ("pod_secondary_range_name", document.pod_secondary_range_name.clone()),
-                ("service_secondary_range_name", document.service_secondary_range_name.clone()),
-                ("node_service_account", document.node_service_account.clone()),
-                ("workload pool", workload_pool),
-                ("node pools", document.node_pools.iter().map(|pool| format!("{}: machine_type={}, spot={}, disk_type={}, disk_size={}, size={}, label={:?}, taint={:?}", pool.name, pool.machine_type, pool.spot, pool.disk_type, pool.disk_size, pool.size, pool.label, pool.taint)).collect::<Vec<_>>().join("\n")),
-                ("temporary pool", "default-pool".into()),
+                ("cluster_name", document.cluster_name.clone()),
             ],
-            owner_inputs: vec![history(format!("VPC {} and subnet {}", document.network, document.subnetwork), "2.2"), history(format!("node service account {} and IAM", document.node_service_account), "2.3"), history(format!("APIs and quotas for {project}"), "1")],
+            owner_inputs: vec![history(format!("APIs and quotas for {project}"), "1")],
         },
         InstallStep {
             number: "4.3", title: "cert-manager and the edge certificate",
@@ -173,7 +169,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.5", title: "PostgreSQL",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("project_id", project.clone()), ("region", region.into()), ("node pools", document.node_pools.iter().map(|pool| format!("{}: label={:?}, taint={:?}", pool.name, pool.label, pool.taint)).collect::<Vec<_>>().join("; ")), ("cluster, database, Secret", "platform/wamn-pg, wamn_system, platform/wamn-pg-superuser".into()), ("database host", "wamn-pg-rw.platform.svc.cluster.local".into()), ("storage class", "premium-rwo (pd-balanced)".into())],
+            inputs: vec![("project_id", project.clone()), ("region", region.into()), ("node placement", "label=role=postgres, taint=role=postgres:NoSchedule".into()), ("cluster, database, Secret", "platform/wamn-pg, wamn_system, platform/wamn-pg-superuser".into()), ("database host", "wamn-pg-rw.platform.svc.cluster.local".into()), ("storage class", "premium-rwo (pd-balanced)".into())],
             owner_inputs: vec![quota],
         },
         InstallStep {
@@ -197,7 +193,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.9", title: "Platform install inputs",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", document.node_pools.iter().map(|pool| format!("{}: label={:?}, taint={:?}", pool.name, pool.label, pool.taint)).collect::<Vec<_>>().join("; ")), ("host service account", format!("hosts/wamn-host -> {blob_account}")), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("auth NATS certificate", "platform/wamn-ctl-auth-nats".into())],
+            inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", "label=role=bench-host, taint=role=bench-host:NoSchedule".into()), ("host service account", format!("hosts/wamn-host -> {blob_account}")), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("auth NATS certificate", "platform/wamn-ctl-auth-nats".into())],
             owner_inputs: vec![blob_binding.clone(), blob_iam.clone()],
         },
         InstallStep {
