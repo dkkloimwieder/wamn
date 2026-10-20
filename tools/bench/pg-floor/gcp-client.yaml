@@ -1,8 +1,10 @@
 # The pgbench client of the GCP Postgres floor (wamn-c8a5v.1). gcp.sh copies
-# the replay scripts in and runs pgbench through kubectl exec. It runs alone
-# on pool bench, never on pool pg: a client on the Postgres node slows every
-# statement (wamn-48d4d). The image is the one of the Cluster, so pgbench and
-# the server are the same major version.
+# the replay scripts in and runs pgbench through kubectl exec. It runs on pool
+# bench beside the idle Receiving host, never on pool pg: a client on the
+# Postgres node slows every statement (wamn-48d4d). The CPU request fits
+# beside the host's request, and pgbench can use the idle CPU above it. The
+# image is the one of the Cluster, so pgbench and the server are the same
+# major version.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -36,5 +38,5 @@ spec:
                   key: password
           resources:
             requests:
-              cpu: "1500m"
+              cpu: "500m"
               memory: "256Mi"

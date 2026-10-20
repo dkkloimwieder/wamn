@@ -32,7 +32,9 @@ operation=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["op
 
 PGPASSWORD=$(kubectl -n platform get secret wamn-pg-superuser -o jsonpath='{.data.password}' | base64 -d)
 export PGPASSWORD
-database_url="postgresql://postgres@127.0.0.1:15432/wamn_pg_floor"
+# A TLS handshake through kubectl port-forward ends the forward, so every
+# forwarded URL disables TLS.
+database_url="postgresql://postgres@127.0.0.1:15432/wamn_pg_floor?sslmode=disable"
 client_url="postgresql://postgres@wamn-pg-rw.platform.svc:5432/wamn_pg_floor"
 cleanup() {
   kubectl -n platform delete job pg-floor-client --ignore-not-found --wait=false >/dev/null
@@ -41,7 +43,7 @@ trap cleanup EXIT
 
 # The floor database carries the statement statistics of local.sh. The
 # environment databases keep the Cluster's track=top.
-psql "postgresql://postgres@127.0.0.1:15432/postgres" -X -v ON_ERROR_STOP=1 >"$work/database.log" <<'SQL'
+psql "postgresql://postgres@127.0.0.1:15432/postgres?sslmode=disable" -X -v ON_ERROR_STOP=1 >"$work/database.log" <<'SQL'
 DROP DATABASE IF EXISTS wamn_pg_floor WITH (FORCE);
 CREATE DATABASE wamn_pg_floor;
 ALTER DATABASE wamn_pg_floor SET pg_stat_statements.track = 'all';
@@ -53,7 +55,7 @@ ALTER DATABASE wamn_pg_floor SET log_min_duration_sample = 0;
 ALTER DATABASE wamn_pg_floor SET log_statement_sample_rate = 0.01;
 SQL
 "$CARGO_TARGET_DIR/debug/examples/pg_floor_database" \
-  "postgresql://postgres:$PGPASSWORD@127.0.0.1:15432/wamn_pg_floor" \
+  "postgresql://postgres:$PGPASSWORD@127.0.0.1:15432/wamn_pg_floor?sslmode=disable" \
   "$repository/apps/wamn_receiving" >>"$work/database.log" 2>&1 || {
     cat "$work/database.log" >&2
     exit 1
@@ -75,6 +77,7 @@ seed_receiving 1000
 psql "$database_url" -X -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements' >"$work/extension.log" 2>&1
 
 kubectl apply -f tools/bench/pg-floor/gcp-client.yaml >/dev/null
+until [[ -n $(kubectl -n platform get pod -l job-name=pg-floor-client -o name) ]]; do sleep 2; done
 kubectl -n platform wait pod -l job-name=pg-floor-client --for=condition=Ready --timeout=600s >/dev/null
 client=$(kubectl -n platform get pod -l job-name=pg-floor-client -o jsonpath='{.items[0].metadata.name}')
 kubectl -n platform get pod "$client" -o jsonpath='{.spec.nodeName}' >"$work/client-node"
@@ -84,9 +87,10 @@ for script in get update; do
 done
 kubectl -n platform exec "$client" -- pgbench "$client_url" -i -s 10 >"$work/pgbench-init.log" 2>&1
 
-run=$(date +%s)
 for call in select-only simple-update get update update-no-triggers; do
   echo "Postgres floor: $call (c$concurrency, ${duration}s)"
+  # Each replay claims its own request IDs.
+  run=$(date +%s)
   url=$client_url
   case "$call" in
     select-only|simple-update) script=(-b "$call") ;;
