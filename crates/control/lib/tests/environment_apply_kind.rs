@@ -2008,6 +2008,62 @@ fn the_fixture_releases_are_canonical_manifests() {
         served.carries(&device.operations["edge-device:sample/read@2.1.0"]),
         "release H carries the admitted device operation"
     );
+
+    let components = [
+        include_str!("../../../../apps/platform/no-std/transform/declaration.json.in"),
+        include_str!("../../../../apps/platform/no-std/http-request/declaration.json.in"),
+    ]
+    .into_iter()
+    .map(|template| {
+        let declaration: Value = serde_json::from_str(template).expect("a guest declaration");
+        let mut descriptor = serde_json::to_value(&device).expect("a descriptor");
+        for field in [
+            "component",
+            "interface-version",
+            "operations",
+            "connections",
+        ] {
+            descriptor[field] = declaration[field].clone();
+        }
+        for operation in descriptor["operations"]
+            .as_object_mut()
+            .expect("guest operations")
+            .values_mut()
+        {
+            for field in ["input-ports", "output-ports", "parameters"] {
+                for item in operation[field].as_array_mut().expect("operation facts") {
+                    item["schema"] = json!({"schema": item["schema"]});
+                }
+            }
+        }
+        serde_json::from_value(descriptor).expect("a fake guest descriptor")
+    })
+    .collect();
+    let bytes = http_connection::release(&h.canonical_bytes(), "2.1.0", components)
+        .expect("the HTTP fixture release is canonical");
+    let (http, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
+        .expect("the HTTP fixture release");
+    assert_eq!(
+        http.components
+            .iter()
+            .map(|component| component.descriptor.component.as_str())
+            .collect::<Vec<_>>(),
+        ["device", "http-request", "transform"]
+    );
+    assert_eq!(http.routes, h.routes);
+    assert_eq!(http.attachments, h.attachments);
+    assert_eq!(
+        http.workflow.wirings,
+        [wamn_catalog::ServingWiring::new(
+            PACKAGE,
+            http_connection::wiring().expect("the HTTP wiring"),
+        )]
+        .into()
+    );
+    assert_eq!(
+        http.workflow.attachments["http-send"].wiring_id,
+        "http-send"
+    );
 }
 
 /// GET `url` from a pod in the namespace with `Host: route_host`, and return

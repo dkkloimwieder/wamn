@@ -4,11 +4,14 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context as _, ensure};
+use anyhow::ensure;
 use serde_json::{Value, json};
 
 use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
-use wamn_catalog::{ComponentDescriptor, ComponentPackageScope, ServingComponent, WiringDocument};
+use wamn_catalog::{
+    AttachmentType, ComponentDescriptor, ComponentPackageScope, DefinitionHash, ServingComponent,
+    ServingManifest, ServingWiring, WiringAttachment, WiringDocument, WorkflowSection,
+};
 
 pub const SERVICE: &str = "http-fixture";
 pub const SECRET: &str = "apply-http-credentials";
@@ -221,32 +224,39 @@ pub fn release(
         .collect();
     let wiring = wiring()?;
     wamn_control::author_wiring::gate_wiring_document(&wiring, &scope, &facts)?;
-    let mut manifest: Value = serde_json::from_slice(h)?;
+    let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
     for (descriptor, fact) in components.into_iter().zip(&facts) {
-        manifest["components"]
-            .as_array_mut()
-            .context("release H components")?
-            .push(serde_json::to_value(ServingComponent::project(
-                fact,
-                descriptor.connections,
-            )?)?);
+        manifest
+            .components
+            .insert(ServingComponent::project(fact, descriptor.connections)?);
     }
     let definition = json!({
         "id": "http-send", "type": "http",
         "route": {"method": "POST", "path": "/http/send"},
         "run-deadline-ms": 30000
     });
-    manifest["workflow"] = json!({
-        "wirings": [wamn_catalog::ServingWiring::new(PACKAGE, wiring)],
-        "attachments": {"http-send": {
-            "type": "http", "package-id": PACKAGE,
-            "wiring-id": "http-send", "wiring-version": 1,
-            "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
-            "definition": definition, "auth-policy": {"modes": ["none"]}
-        }}
-    });
-    let bytes = wamn_execution_contract::canonical_json_bytes(&manifest);
-    wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    manifest.workflow = WorkflowSection {
+        wirings: [ServingWiring::new(PACKAGE, wiring)].into(),
+        attachments: [(
+            "http-send".to_owned(),
+            WiringAttachment {
+                type_: AttachmentType::Http,
+                package_id: PACKAGE.to_owned(),
+                wiring_id: "http-send".to_owned(),
+                wiring_version: 1,
+                definition_hash: DefinitionHash::parse(
+                    wamn_execution_contract::canonical_json_sha256(&definition),
+                )?,
+                definition,
+                auth_policy: json!({"modes": ["none"]}),
+                registered_operation: None,
+            },
+        )]
+        .into(),
+        ..WorkflowSection::default()
+    };
+    let bytes = manifest.canonical_bytes();
+    ServingManifest::from_canonical_bytes(&bytes)?;
     Ok(bytes)
 }
 
