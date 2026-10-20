@@ -11,6 +11,10 @@ def write_result(output, concurrency, measurements):
             "throughput_per_sec", "p50_ms", "p95_ms", "p99_ms", "calls", "errors",
             "pg_stat_statements_calls_per_request",
         )}
+        # The record_receipt floor replay adds its per-row times (perf-arch.md M7).
+        result[call].update({key: run[key] for key in (
+            "lines", "statement_ms_per_row", "trigger_ms_per_row", "trigger_share",
+        ) if key in run})
     with Path(output).open("x") as destination:
         json.dump(result, destination, indent=2)
         destination.write("\n")

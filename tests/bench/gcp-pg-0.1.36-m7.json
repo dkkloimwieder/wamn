@@ -1,0 +1,42 @@
+{
+  "concurrency": 16,
+  "receipt-1": {
+    "throughput_per_sec": 389.75395,
+    "p50_ms": 35.334,
+    "p95_ms": 77.023,
+    "p99_ms": 168.729,
+    "calls": 23367,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 13,
+    "lines": 1,
+    "statement_ms_per_row": 13.27306621217956,
+    "trigger_ms_per_row": 6.608085890358197,
+    "trigger_share": 0.4978567713535943
+  },
+  "receipt-5": {
+    "throughput_per_sec": 218.487972,
+    "p50_ms": 68.735,
+    "p95_ms": 112.11,
+    "p99_ms": 178.767,
+    "calls": 13099,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 29,
+    "lines": 5,
+    "statement_ms_per_row": 5.701481753782747,
+    "trigger_ms_per_row": 2.418434659134285,
+    "trigger_share": 0.4241765147331626
+  },
+  "receipt-20": {
+    "throughput_per_sec": 133.484008,
+    "p50_ms": 111.531,
+    "p95_ms": 180.186,
+    "p99_ms": 317.287,
+    "calls": 8004,
+    "errors": 0,
+    "pg_stat_statements_calls_per_request": 89,
+    "lines": 20,
+    "statement_ms_per_row": 3.817299142435024,
+    "trigger_ms_per_row": 1.8810726886556721,
+    "trigger_share": 0.4927758130728395
+  }
+}

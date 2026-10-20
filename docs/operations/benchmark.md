@@ -397,6 +397,45 @@ Their server time per update fell from 6.78 ms to 2.63 ms, and the nested plans 
 Update throughput rose from 585/s to 668/s. Simple-update fell from 2319/s to 2039/s on the new nodes, so compare the rows within each run.
 Before this run, the Cluster kept `auto_explain` silent outside `wamn_pg_floor`, and the other databases committed about 6 transactions per second.
 
+### Group commit and rows per command on GCP
+
+Issue `wamn-c8a5v.3` ([plan](../plan/perf-arch.md), M6 and M7) used the venue of the update gap: GCP tier 2, PostgreSQL alone on pool `pg`, and the pgbench Job on pool `bench`.
+The source was `215029220` with the `gcp.sh` changes of this issue, on platform 0.1.36, on 2026-10-20 between 15:17 and 15:51 UTC.
+Every run lasted 60 s and had 0 failed transactions.
+
+M6 sets `commit_delay = 1000` and `commit_siblings = 5` on `wamn_pg_floor` alone, with `COMMIT_DELAY=1000 tools/bench/pg-floor/gcp.sh`.
+Each row is one complete `gcp.sh` run on a new database. The result files are `tests/bench/gcp-pg-0.1.36-m6-c<n>-<off|1000>.json`.
+
+| Concurrency | `commit_delay` | simple-update | update replay | update, triggers off | WAL fsyncs in the update replay |
+| --- | --- | --- | --- | --- | --- |
+| c16 | 0 | 2209/s, p50 6.61 | 842/s, p50 17.08, p99 48.53 | 1069/s, p50 13.89 | 13,595 for 50,417 updates |
+| c16 | 1000 µs | 2019/s, p50 7.45 | 809/s, p50 18.57, p99 45.71 | 994/s, p50 14.96 | 9,482 for 48,515 updates |
+| c4 | 0 | 946/s, p50 4.03 | 613/s, p50 6.11, p99 13.16 | 712/s, p50 5.27 | not compared |
+| c4 | 1000 µs | 945/s, p50 4.02 | 590/s, p50 5.94, p99 25.67 | 737/s, p50 5.11 | not compared |
+
+At c16 the delay cut the WAL fsyncs by 30%, but update throughput fell by 4% and the p50 rose by 1.5 ms.
+At c4 the differences are within one run's spread, except a higher update p99.
+The measurement does not adopt the setting. That decision is open decision 5 of the plan.
+
+M7 ran as a floor replay, not through the host.
+`CALLS="receipt-1 receipt-5 receipt-20" tools/bench/pg-floor/gcp.sh` replays `record_receipt` with 1, 5 and 20 lines per receipt at c16.
+The replay `tools/bench/pg-floor/receipt.sql` follows the statement sequence of a local `wamn-bench` run (`f025f5876`, 2026-10-18), and `gcp.sh` puts the current command SQL into it.
+`receipt-slots.sql` reserves the orders and lines of each client on the floor seed, so no receipt exceeds a remaining quantity.
+The receipt calls set `track_functions = pl`, and the trigger time is the `pg_stat_user_functions` time of the generated `receiving__*` functions.
+The statement time is the `pg_stat_statements` execution time of the `record_receipt` statement, triggers included.
+The result file is [`tests/bench/gcp-pg-0.1.36-m7.json`](../../tests/bench/gcp-pg-0.1.36-m7.json).
+
+| Lines per receipt | Receipts | p50 | Statement time per row | Trigger time per row | Trigger share |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 390/s | 35.33 ms | 13.27 ms | 6.61 ms | 50% |
+| 5 | 218/s | 68.74 ms | 5.70 ms | 2.42 ms | 42% |
+| 20 | 133/s | 111.53 ms | 3.82 ms | 1.88 ms | 49% |
+
+The per-row trigger cost falls with more lines, because the order triggers fire once for each receipt.
+The line trigger `receiving__purchase_order_line_log` stays at about 1.7 ms for each line at 5 and 20 lines.
+The triggers keep about half of the statement time at every line count.
+The 16 clients saturate the 2 vCPUs: most sampled sessions had no wait event, so the times include CPU queueing.
+
 ## Request round-trips
 
 Epic `wamn-stxy9` ([plan](../plan/request-round-trips.md)).
